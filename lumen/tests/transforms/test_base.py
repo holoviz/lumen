@@ -82,6 +82,17 @@ def test_dropna_transform(mixed_df):
     assert len(DropNA.apply_to(mixed_df, axis=1, how='all').columns) == 4
 
 
+def test_dropna_transform_with_thresh():
+    df = pd.DataFrame({
+        'a': [1.0, None, 3.0],
+        'b': [1.0, 2.0, None],
+    })
+
+    result = DropNA.apply_to(df, thresh=2)
+
+    pd.testing.assert_frame_equal(result, df.dropna(thresh=2))
+
+
 def test_project_lnglat_default_params():
     """Regression test: latitude default was 'longitude' (copy-paste bug)."""
     transform = project_lnglat()
