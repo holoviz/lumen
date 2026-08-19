@@ -43,6 +43,12 @@ PROVIDER_SPECS = [
     pytest.param(Ollama, {"api_key": "ollama"}, set(), 0.25, id="ollama"),
 ]
 
+ROUTED_MODEL_KWARGS = {
+    "default": {"model": "base-model"},
+    "edit": {"model": "edit-model", "routing": {"model": "router-model"}, "description": "Best for editing tables and visualizations"},
+    "sql": {"model": "sql-model"},
+}
+
 def _make_test_image() -> Image:
     """Create a tiny 1x1 PNG encoded as an instructor Image."""
     pixel = base64.b64encode(
@@ -877,22 +883,16 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
 # Model routing
 # ---------------------------------------------------------------------------
 
-ROUTED_MODEL_KWARGS = {
-    "default": {"model": "base-model"},
-    "edit": {"model": "edit-model", "routing": {"model": "router-model"}, "description": "Best for editing tables and visualizations"},
-    "sql": {"model": "sql-model"},
-}
-
-
-def _routing_llm():
+@pytest.fixture
+def routing_llm():
     llm = _make(OpenAI, {})
     llm.model_kwargs = {k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()}
     return llm
 
 
-def test_route_spec_model_constrains_to_current_model_kwargs_keys():
+def test_route_spec_model_constrains_to_current_model_kwargs_keys(routing_llm):
     """The Literal is rebuilt from model_kwargs at call time and rejects unknown keys."""
-    llm = _routing_llm()
+    llm = routing_llm
     route_spec_model = llm._route_spec_model()
     schema = route_spec_model.model_json_schema()["properties"]["model_spec"]
     assert set(schema["enum"]) == set(ROUTED_MODEL_KWARGS)
@@ -901,10 +901,10 @@ def test_route_spec_model_constrains_to_current_model_kwargs_keys():
         route_spec_model(model_spec="bogus")
 
 
-async def test_no_routing_key_passes_through(monkeypatch):
+async def test_no_routing_key_passes_through(monkeypatch, routing_llm):
     """Without a 'routing' key the model_spec passes through unchanged and the
     routing model is never invoked."""
-    llm = _routing_llm()
+    llm = routing_llm
 
     async def fail_invoke(*args, **kwargs):
         raise AssertionError("routing model must not be invoked")  # pragma: no cover
@@ -914,11 +914,11 @@ async def test_no_routing_key_passes_through(monkeypatch):
     assert await llm._resolve_routing("sql", messages) == "sql"
 
 
-async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
+async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch, routing_llm):
     """When a 'routing' key is present, the routing model is invoked with a dict
     spec, a dedicated system prompt and no tools, and its decision resolves to
     the chosen entry's config dict."""
-    llm = _routing_llm()
+    llm = routing_llm
     calls = []
 
     async def fake_invoke(messages, **kwargs):
@@ -939,11 +939,11 @@ async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch):
     assert issubclass(routed_kwargs["response_model"], BaseModel)
 
 
-async def test_routing_prompt_lists_options_with_descriptions(monkeypatch):
+async def test_routing_prompt_lists_options_with_descriptions(monkeypatch, routing_llm):
     """The routing call gets a dedicated system prompt listing every configured
     option with its optional description, and does not inherit the caller's
     system prompt."""
-    llm = _routing_llm()
+    llm = routing_llm
     llm.model_kwargs["edit"]["description"] = "Best for editing tasks"
     llm.model_kwargs["sql"]["description"] = "Best for SQL tasks"
     calls = []
@@ -966,11 +966,11 @@ async def test_routing_prompt_lists_options_with_descriptions(monkeypatch):
     assert routed_messages == [{"role": "user", "content": "hi"}]
 
 
-async def test_routing_exception_falls_back(monkeypatch):
+async def test_routing_exception_falls_back(monkeypatch, routing_llm):
     """If the routing call raises, the fallback returns the original entry's
     config dict (not the bare string) so the dict-bypass prevents
     re-routing downstream."""
-    llm = _routing_llm()
+    llm = routing_llm
 
     async def fail_invoke(*args, **kwargs):
         raise RuntimeError("router down")
@@ -984,10 +984,10 @@ async def test_routing_exception_falls_back(monkeypatch):
     assert "description" not in result
 
 
-async def test_dict_model_spec_never_routed(monkeypatch):
+async def test_dict_model_spec_never_routed(monkeypatch, routing_llm):
     """A dict model_spec is never routed, even when its contents match keys used
     elsewhere in the config."""
-    llm = _routing_llm()
+    llm = routing_llm
 
     async def fail_invoke(*args, **kwargs):
         raise AssertionError("dict model_spec must not be routed")  # pragma: no cover
@@ -1046,11 +1046,11 @@ async def test_get_client_strips_description_key(monkeypatch):
     assert "description" not in fake.call_args.kwargs
 
 
-async def test_invoke_uses_routed_model_spec(monkeypatch):
+async def test_invoke_uses_routed_model_spec(monkeypatch, routing_llm):
     """invoke() resolves routing through the real path: the routing model runs
     first (with a dedicated prompt and no tools), then the resolved config
     reaches run_client with no 'routing' key."""
-    llm = _routing_llm()
+    llm = routing_llm
     run_client_specs = []
 
     async def fake_run_client(model_spec, messages, **kwargs):
@@ -1082,11 +1082,11 @@ def _stream_chunks(text: str = "", tool_calls: list[dict] | None = None):
     return gen()
 
 
-async def test_stream_resolves_routing_per_invoke_not_per_stream(monkeypatch):
+async def test_stream_resolves_routing_per_invoke_not_per_stream(monkeypatch, routing_llm):
     """Routing is resolved inside invoke(), not stream(). Both success and
     fallback paths return a dict, so the dict-bypass mechanism prevents
     re-routing across tool-loop rounds."""
-    llm = _routing_llm()
+    llm = routing_llm
     router_invocations = []
     stream_specs = []
 
@@ -1123,12 +1123,12 @@ async def test_stream_resolves_routing_per_invoke_not_per_stream(monkeypatch):
     assert "final answer" in outputs
 
 
-async def test_stream_router_down_single_timeout(monkeypatch):
+async def test_stream_router_down_single_timeout(monkeypatch, routing_llm):
     """When the router is unreachable, _resolve_routing returns a dict
     (the fallback config) so the dict-bypass prevents re-routing on
     every subsequent call — router-down pays exactly one routing attempt
     per turn, not one per stream+invoke pair nor one per tool round."""
-    llm = _routing_llm()
+    llm = routing_llm
     routing_calls = []
 
     async def fake_run_client(model_spec, messages, **kwargs):
@@ -1147,11 +1147,11 @@ async def test_stream_router_down_single_timeout(monkeypatch):
     assert routing_calls[0] == {"model": "router-model"}
 
 
-async def test_stream_router_down_no_reroute_across_rounds(monkeypatch):
+async def test_stream_router_down_no_reroute_across_rounds(monkeypatch, routing_llm):
     """When routing fails during stream(), the fallback dict prevents
     re-routing on tool-loop recursion — stream rounds use the resolved
     model directly without paying another routing timeout."""
-    llm = _routing_llm()
+    llm = routing_llm
     routing_attempts = []
     stream_specs = []
 
@@ -1189,10 +1189,10 @@ async def test_stream_router_down_no_reroute_across_rounds(monkeypatch):
     assert "fallback answer" in outputs
 
 
-async def test_routing_receives_only_last_user_message(monkeypatch):
+async def test_routing_receives_only_last_user_message(monkeypatch, routing_llm):
     """The routing call receives only the last user message, not the full
     conversation history (which could be thousands of chars)."""
-    llm = _routing_llm()
+    llm = routing_llm
     calls = []
 
     async def fake_invoke(messages, **kwargs):
@@ -1210,10 +1210,10 @@ async def test_routing_receives_only_last_user_message(monkeypatch):
     assert calls[0] == [{"role": "user", "content": "second question"}]
 
 
-async def test_routing_strips_images_from_messages(monkeypatch):
+async def test_routing_strips_images_from_messages(monkeypatch, routing_llm):
     """The routing call never receives raw image data — image content parts
     are stripped so a small text-only router model is not sent base64 blobs."""
-    llm = _routing_llm()
+    llm = routing_llm
     calls = []
 
     async def fake_invoke(messages, **kwargs):
@@ -1231,10 +1231,10 @@ async def test_routing_strips_images_from_messages(monkeypatch):
     assert calls[0] == [{"role": "user", "content": [{"type": "text", "text": "describe this chart"}]}]
 
 
-async def test_routing_strips_binary_image_content(monkeypatch):
+async def test_routing_strips_binary_image_content(monkeypatch, routing_llm):
     """Binary image content in the last user message is replaced with empty
     string so the router does not receive raw bytes."""
-    llm = _routing_llm()
+    llm = routing_llm
     calls = []
 
     async def fake_invoke(messages, **kwargs):
@@ -1250,11 +1250,11 @@ async def test_routing_strips_binary_image_content(monkeypatch):
     assert calls[0] == [{"role": "user", "content": ""}]
 
 
-def test_spec_descriptions_used_as_fallback_in_routing_prompt():
+def test_spec_descriptions_used_as_fallback_in_routing_prompt(routing_llm):
     """When model_kwargs entries lack a 'description' key, spec_descriptions
     is consulted as fallback so the routing prompt is not full of
     'No description provided.' lines."""
-    llm = _routing_llm()
+    llm = routing_llm
     llm.spec_descriptions = {
         "default": "General purpose model",
         "sql": "For SQL queries",
@@ -1267,10 +1267,10 @@ def test_spec_descriptions_used_as_fallback_in_routing_prompt():
     assert "No description provided" not in prompt
 
 
-def test_explicit_description_overrides_spec_descriptions():
+def test_explicit_description_overrides_spec_descriptions(routing_llm):
     """An explicit 'description' key in model_kwargs takes priority over
     spec_descriptions."""
-    llm = _routing_llm()
+    llm = routing_llm
     llm.model_kwargs["sql"]["description"] = "Custom SQL description"
     llm.spec_descriptions = {"sql": "Fallback SQL description"}
     prompt = llm._routing_system_prompt("edit")
@@ -1372,10 +1372,10 @@ def test_spec_descriptions_documented_by_default():
     assert "No description provided." not in prompt
 
 
-def test_routing_prompt_names_the_requested_spec():
+def test_routing_prompt_names_the_requested_spec(routing_llm):
     """The router picks a model for a task, so it is told which task was asked
     for rather than inferring it from the user message alone."""
-    llm = _routing_llm()
+    llm = routing_llm
     assert "sql" in llm._routing_system_prompt("sql")
 
 
