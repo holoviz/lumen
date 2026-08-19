@@ -16,7 +16,7 @@ from panel_material_ui import (
 )
 
 from .agents import Agent
-from .llm import Llm
+from .llm import SPEC_DESCRIPTIONS, Llm
 from .utils import class_name_to_llm_spec_key
 
 LLM_CONFIG_HELP = """
@@ -89,15 +89,12 @@ class LLMModelCard(Viewer):
         self.model_select.param.watch(self._on_model_change, "value")
 
     def _get_default_models(self):
-        """Get models for the select dropdown from the LLM class."""
-        llm_type = type(self.llm)
+        """Get models for the select dropdown from the LLM.
 
-        # Check if the LLM class has a select_models attribute (now a param)
-        if hasattr(llm_type, 'select_models'):
-            available = list(llm_type.select_models)
-        else:
-            # Fallback to empty list
-            available = []
+        Read from the instance, not the class, so a ``select_models`` list
+        passed at construction is what the dropdown offers.
+        """
+        available = list(self.llm.select_models)
 
         # Get current model to ensure it's included
         current_config = self.llm.model_kwargs.get(self.model_type, {})
@@ -239,6 +236,11 @@ class LLMConfigDialog(Viewer):
         # Initialize model cards
         self._refresh_model_cards()
 
+        # Expose agent descriptions to the LLM so the routing prompt can use
+        # them even when model_kwargs entries lack a 'description' key.
+        # Descriptions set on the LLM win, so explicit config is not clobbered.
+        self.llm.spec_descriptions = {**self._get_all_agent_types(), **self.llm.spec_descriptions}
+
         # Flag to prevent update loops during provider changes
         self._updating_provider = False
 
@@ -309,15 +311,9 @@ class LLMConfigDialog(Viewer):
         Get all possible agent types by using param.concrete_descendents to find all Agent classes.
         Returns a dict mapping llm_spec_key to description.
         """
-        agent_types = {}
-
-        # Add common predefined types first (only non-duplicate ones)
-        predefined_types = {
-            "default": "General purpose model for most tasks",
-            "edit": "Advanced model for retry & edit tasks",
-            "ui": "Lightweight model for UI interactions"
-        }
-        agent_types.update(predefined_types)
+        # The universal spec keys are described alongside the routing prompt
+        # that also consumes them, so the two cannot drift apart.
+        agent_types = dict(SPEC_DESCRIPTIONS)
 
         # Get all concrete descendant classes of Agent
         agent_classes = []
@@ -377,7 +373,7 @@ class LLMConfigDialog(Viewer):
             if model_type not in self.llm.model_kwargs:
                 # Use the default model from model_kwargs if available, otherwise use first select_models
                 default_model_config = self.llm.model_kwargs.get("default", {}).copy()
-                if not default_model_config and hasattr(self.llm, 'select_models') and self.llm.select_models:
+                if not default_model_config and self.llm.select_models:
                     default_model_config = {"model": self.llm.select_models[0]}
                 self.llm.model_kwargs[model_type] = default_model_config
 
