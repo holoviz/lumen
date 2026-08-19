@@ -46,8 +46,8 @@ config:
 
 For complete authentication documentation, see:
 
-- [Panel Authentication Guide](https://panel.holoviz.org/user_guide/Authentication.html)
-- [OAuth Setup Guide](https://panel.holoviz.org/user_guide/Authentication.html#oauth)
+- [Panel Authentication Guide](https://panel.holoviz.org/how_to/authentication/index.html)
+- [OAuth Setup Guide](https://panel.holoviz.org/how_to/authentication/index.html)
 
 ## Common patterns
 
@@ -90,6 +90,6 @@ layouts:
 
 ## Next steps
 
-- **[Panel Authentication Guide](https://panel.holoviz.org/user_guide/Authentication.html)** - Complete authentication documentation
+- **[Panel Authentication Guide](https://panel.holoviz.org/how_to/authentication/index.html)** - Complete authentication documentation
 - **[Deployment guide](deployment.md)** - Deploy secured dashboards
 - **[Variables guide](variables.md)** - Use environment variables for secrets

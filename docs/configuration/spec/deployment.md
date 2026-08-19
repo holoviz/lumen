@@ -510,5 +510,5 @@ Test dashboards in CI/CD:
 ## Next steps
 
 - **[Authentication guide](authentication.md)** - Secure your deployments
-- **[Panel deployment docs](https://panel.holoviz.org/user_guide/Deploy_and_Export.html)** - Advanced deployment options
+- **[Panel deployment docs](https://panel.holoviz.org/how_to/deployment/index.html)** - Advanced deployment options
 - **[Variables guide](variables.md)** - Manage environment-specific configuration
