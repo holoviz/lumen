@@ -352,6 +352,47 @@ def test_dropna_matches_pandas(constructor):
     assert result["a"].tolist() == reference["a"].tolist() == [1.0]
 
 
+def test_as_pandas_keeps_nullable_integer_and_boolean(constructor):
+    """Converting must not widen a nullable column, or an id renders as 3.0."""
+    data = {
+        "i": pd.Series([1, None, 3], dtype="Int64"),
+        "u": pd.Series([1, None, 3], dtype="UInt8"),
+        "b": pd.Series([True, None, False], dtype="boolean"),
+    }
+    result = as_pandas(constructor(data))
+    assert [str(dtype) for dtype in result.dtypes] == ["Int64", "UInt8", "boolean"]
+    assert result["i"].tolist() == [1, pd.NA, 3]
+
+
+def test_as_pandas_leaves_a_column_without_nulls_alone(constructor):
+    """Only the columns the conversion would widen may change."""
+    result = as_pandas(constructor({"i": [1, 2, 3], "b": [True, False, True]}))
+    assert [str(dtype) for dtype in result.dtypes] == ["int64", "bool"]
+
+
+def test_as_pandas_keeps_an_integer_beyond_float_precision(constructor):
+    """Above 2**53 the float detour returns a different number, silently."""
+    big = 2**62 + 1
+    result = as_pandas(constructor({"i": pd.Series([big, None], dtype="Int64")}))
+    # Compared as an int: a float64 comparison rounds both sides and passes on
+    # a value that has already been corrupted.
+    assert int(result["i"][0]) == big
+
+
+def test_fallback_keeps_the_dtype_the_narwhals_path_keeps(constructor):
+    """Two configurations of one transform must not disagree on the schema.
+
+    Both configurations here leave the null in ``id``: one drops on ``v``
+    natively, the other converts to pandas because ``how='all'`` has no
+    narwhals counterpart. The dtype must not depend on which one ran.
+    """
+    data = {"id": pd.Series([1, 2, None, 4], dtype="Int64"), "v": [1.0, None, 3.0, 4.0]}
+    native = as_pandas(DropNA.apply_to(constructor(data), subset=["v"]))
+    fallback = as_pandas(DropNA.apply_to(constructor(data), how="all"))
+    assert native["id"].isna().any() and fallback["id"].isna().any()
+    assert str(fallback["id"].dtype) == str(native["id"].dtype) == "Int64"
+
+
 def test_lazy_transforms_stay_lazy():
     pl = pytest.importorskip("polars")
     frame = pl.LazyFrame({"i": [0, 1, 2, 3]})

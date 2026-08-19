@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 import panel as pn
 import param
+import pyarrow as pa
 import yaml
 
 from jinja2 import DebugUndefined, Environment, Undefined
@@ -109,6 +110,41 @@ def collect_lazy(df):
 
 DATAFRAME_BACKENDS = ['pandas', 'polars', 'pyarrow']
 
+# The pandas dtype that holds each arrow integer and boolean type without
+# widening it. numpy has no missing value for either, which is the whole
+# problem _to_pandas below exists to solve.
+_NULLABLE_DTYPES = {
+    getattr(pa, f'{prefix}int{width}')(): pd.api.types.pandas_dtype(
+        f'{prefix.upper()}Int{width}'
+    )
+    for prefix in ('', 'u') for width in (8, 16, 32, 64)
+}
+_NULLABLE_DTYPES[pa.bool_()] = pd.BooleanDtype()
+
+
+def _to_pandas(narwhals_df):
+    """Convert to pandas without widening an integer or boolean column.
+
+    Every backend but pandas holds nulls in the column's own type, and
+    ``to_pandas`` lands those on numpy, which has no missing value for an
+    integer or a boolean. An id comes back as 3.0 and, past 2**53, as a
+    different number entirely. The columns that would widen come across
+    through arrow as the pandas nullable dtype instead.
+
+    Only those columns are rerouted. Sending the whole frame through arrow
+    would be shorter and would break more: pyarrow cannot convert the
+    dictionary indices behind a polars categorical, which polars itself
+    converts fine.
+    """
+    df = narwhals_df.to_pandas()
+    for name, dtype in narwhals_df.collect_schema().items():
+        widened = df[name].dtype.kind in 'fO'
+        if widened and (dtype.is_integer() or isinstance(dtype, nw.Boolean)):
+            df[name] = narwhals_df[name].to_arrow().to_pandas(
+                types_mapper=_NULLABLE_DTYPES.get
+            )
+    return df
+
 
 def to_backend(df, backend):
     """Return df as a frame of the named dataframe library.
@@ -127,7 +163,7 @@ def to_backend(df, backend):
     if narwhals_df.implementation.name.lower() == backend:
         return df
     if backend == 'pandas':
-        return narwhals_df.to_pandas()
+        return _to_pandas(narwhals_df)
     if backend == 'polars':
         return narwhals_df.to_polars()
     return narwhals_df.to_arrow()
@@ -148,7 +184,7 @@ def as_pandas(df):
         return df
     if is_lazyframe(narwhals_df):
         narwhals_df = narwhals_df.collect()
-    return narwhals_df.to_pandas()
+    return _to_pandas(narwhals_df)
 
 
 def _narwhals_dataframe_schema(df, columns=None):
