@@ -90,7 +90,7 @@ class BaseViewAgent(BaseLumenAgent):
         errors_context = self._build_errors_context(pipeline, context, errors)
         doc = self.view_type.__doc__.split("\n\n")[0] if self.view_type.__doc__ else self.view_type.__name__
         gridded = get_gridded_metadata(pipeline)
-        response = await self._stream_prompt(
+        response = self._stream_prompt(
             "main",
             messages,
             context,
