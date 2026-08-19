@@ -1,10 +1,33 @@
 import pandas as pd
 import pytest
 
+from hvplot.ui import Colormapping
+
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.views import base as views_base
 from lumen.views.base import hvPlotBaseView, hvPlotUIView, hvPlotView
+
+# hvPlot gained the color_key control after this was written, and a keyword no
+# control claims is rejected by hvPlotExplorer.__init__, so what the view may
+# forward depends on the installed version.
+EXPLORER_HAS_COLOR_KEY = "color_key" in Colormapping.param
+requires_explorer_color_key = pytest.mark.skipif(
+    not EXPLORER_HAS_COLOR_KEY, reason="hvPlot has no color_key control"
+)
+
+# Building the explorer builds an hvPlot converter, and a datashaded one asks
+# for datashader immediately. It is not a Lumen dependency, so the tests that
+# go through the explorer are optional; hvPlotView covers the same forwarding
+# without it.
+try:
+    import datashader
+except ImportError:
+    datashader = None
+
+requires_datashader = pytest.mark.skipif(
+    datashader is None, reason="datashader is not installed"
+)
 
 # ---- Fixtures ----
 
@@ -131,6 +154,7 @@ def test_hvplot_view_keeps_dict_cmap_kwarg(categorical_pipeline, categorical_df)
 
 # ---- hvPlotUIView forwards to the explorer ----
 
+@requires_datashader
 def test_hvplot_ui_view_forwards_datashade(categorical_pipeline):
     """The explorer keeps these on nested controls rather than on
     hvPlotExplorer itself, so _get_args has to look there."""
@@ -149,9 +173,47 @@ def test_hvplot_ui_view_forwards_datashade(categorical_pipeline):
 
     assert kwargs["datashade"] is True
     assert kwargs["dynspread"] is True
+
+
+@requires_datashader
+@requires_explorer_color_key
+def test_hvplot_ui_view_forwards_color_key(categorical_pipeline):
+    view = hvPlotUIView(
+        pipeline=categorical_pipeline,
+        kind="points",
+        x="x",
+        y="y",
+        by=["ancestry"],
+        datashade=True,
+        color_key=COLOR_KEY,
+    )
+
+    _args, kwargs = view._get_args()
+
     assert kwargs["color_key"] == COLOR_KEY
 
 
+@requires_datashader
+def test_hvplot_ui_view_omits_color_key_without_the_control(categorical_pipeline):
+    """Forwarding a keyword no control claims makes hvPlotExplorer.__init__
+    reject it outright, so on an hvPlot without the control the plot has to
+    fall back to the default palette rather than fail."""
+    view = hvPlotUIView(
+        pipeline=categorical_pipeline,
+        kind="points",
+        x="x",
+        y="y",
+        by=["ancestry"],
+        datashade=True,
+        color_key=COLOR_KEY,
+    )
+
+    _args, kwargs = view._get_args()
+
+    assert ("color_key" in kwargs) is EXPLORER_HAS_COLOR_KEY
+
+
+@requires_datashader
 def test_hvplot_ui_view_builds_explorer(categorical_pipeline):
     """hvPlotExplorer.__init__ raises on any keyword no control claims, so
     constructing it proves the forwarded names are routable."""
@@ -168,7 +230,8 @@ def test_hvplot_ui_view_builds_explorer(categorical_pipeline):
     explorer = view.get_panel()
 
     assert explorer.operations.datashade is True
-    assert explorer.colormapping.color_key == COLOR_KEY
+    if EXPLORER_HAS_COLOR_KEY:
+        assert explorer.colormapping.color_key == COLOR_KEY
 
 
 # ---- Render-size cap ----
