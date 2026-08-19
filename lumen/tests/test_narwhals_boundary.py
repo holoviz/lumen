@@ -15,7 +15,7 @@ import pytest
 
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
-from lumen.sources.base import DerivedSource, InMemorySource
+from lumen.sources.base import DerivedSource, InMemorySource, Source
 from lumen.transforms.base import (
     Aggregate, Columns, DropNA, Filter as FilterTransform, Iloc, Melt, Query,
     Rename, Sample, Sort,
@@ -418,3 +418,38 @@ def test_describe_data_accepts_any_backend(constructor):
     from lumen.ai.utils import describe_data_sync
     summary = describe_data_sync(constructor({"i": [0, 1, 2], "s": ["a", "b", "c"]}))
     assert "data_shape" in summary
+
+
+def test_uncached_source_may_return_a_lazy_frame():
+    """A Source that skips the cache can hand back a frame it has not read."""
+    pl = pytest.importorskip("polars")
+
+    class ScanSource(Source):
+
+        def get_tables(self):
+            return ["t"]
+
+        def get(self, table, **query):
+            return pl.LazyFrame({"n": [0, 1, 2]})
+
+    pipeline = Pipeline(source=ScanSource(), table="t")
+    assert isinstance(pipeline.data, pl.DataFrame)
+    assert pipeline.data["n"].to_list() == [0, 1, 2]
+
+
+def test_pipeline_collects_a_lazy_frame_for_its_own_backend():
+    """dataframe_backend returns early when it already matches, so the collect
+    cannot be left to it.
+    """
+    pl = pytest.importorskip("polars")
+
+    class ScanSource(Source):
+
+        def get_tables(self):
+            return ["t"]
+
+        def get(self, table, **query):
+            return pl.LazyFrame({"n": [0, 1]})
+
+    pipeline = Pipeline(source=ScanSource(), table="t", dataframe_backend="polars")
+    assert isinstance(pipeline.data, pl.DataFrame)
