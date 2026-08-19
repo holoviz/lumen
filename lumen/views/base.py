@@ -81,10 +81,9 @@ REDUCING_KINDS = GRIDDED_KINDS + (
 # Keep the Selector in sync with tabular kinds that produce plots in hvPlot.
 # The explorer is handled by hvPlotUIView, while dataset returns a bare
 # hv.Dataset with no plotting class for hvPlotView to render.
-HVPLOT_TABULAR_KINDS = [
+HVPLOT_KINDS = [
     kind for kind in hvPlotTabular.__all__ if kind not in {"explorer", "dataset"}
-]
-HVPLOT_KINDS = HVPLOT_TABULAR_KINDS + list(GRIDDED_KINDS)
+] + list(GRIDDED_KINDS)
 
 
 class View(MultiTypeComponent, Viewer):
