@@ -216,6 +216,12 @@ below run on it natively. Things to know before choosing one:
   Vega only read pandas. Returning polars saves work up to the view, not through
   it.
 
+A `Source` that skips the cache may return a lazy frame, such as a polars
+`LazyFrame` from `scan_parquet`. The Pipeline collects it once after the last
+transform, so `Pipeline.data` is eager as always. The built-in Sources collect
+before returning, because `Source.get` is contracted to hand back an eager
+frame and source mirrors and table previews rely on that.
+
 To pin what `Pipeline.data` comes back as regardless of the Source, set
 `dataframe_backend` to `pandas`, `polars` or `pyarrow`. Leaving it unset keeps
 whatever the Source produced, which avoids a conversion:
