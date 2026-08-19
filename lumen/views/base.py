@@ -21,6 +21,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
+from hvplot import hvPlotTabular  # type: ignore
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
 from panel.pane.holoviews import HoloViews as HoloViewsPane
@@ -76,6 +77,13 @@ MAX_RENDER_ROWS = 250_000
 REDUCING_KINDS = GRIDDED_KINDS + (
     "heatmap", "hexbin", "hist", "kde", "box", "violin", "bivariate",
 )
+
+# Keep the Selector in sync with tabular kinds that produce plots in hvPlot.
+# The explorer is handled by hvPlotUIView, while dataset returns a bare
+# hv.Dataset with no plotting class for hvPlotView to render.
+HVPLOT_KINDS = [
+    kind for kind in hvPlotTabular.__all__ if kind not in {"explorer", "dataset"}
+] + list(GRIDDED_KINDS)
 
 
 class View(MultiTypeComponent, Viewer):
@@ -950,12 +958,7 @@ class hvPlotBaseView(View):
 
     kind = param.Selector(
         default=None, doc="The kind of plot, e.g. 'scatter' or 'line'.",
-        objects=[
-            'area', 'bar', 'barh', 'bivariate', 'box', 'contour', 'contourf',
-            'errorbars', 'hist', 'image', 'kde', 'labels',
-            'line', 'scatter', 'heatmap', 'hexbin', 'ohlc', 'paths', 'points',
-            'polygons', 'quadmesh', 'step', 'violin'
-        ]
+        objects=HVPLOT_KINDS
     )
 
     x = param.Selector(doc="The column to render on the x-axis.")
