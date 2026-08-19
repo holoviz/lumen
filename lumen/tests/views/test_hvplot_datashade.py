@@ -8,25 +8,14 @@ from lumen.sources.base import InMemorySource
 from lumen.views import base as views_base
 from lumen.views.base import hvPlotBaseView, hvPlotUIView, hvPlotView
 
+from ..utils import requires_datashader
+
 # hvPlot gained the color_key control after this was written, and a keyword no
 # control claims is rejected by hvPlotExplorer.__init__, so what the view may
 # forward depends on the installed version.
 EXPLORER_HAS_COLOR_KEY = "color_key" in Colormapping.param
 requires_explorer_color_key = pytest.mark.skipif(
     not EXPLORER_HAS_COLOR_KEY, reason="hvPlot has no color_key control"
-)
-
-# Building the explorer builds an hvPlot converter, and a datashaded one asks
-# for datashader immediately. It is not a Lumen dependency, so the tests that
-# go through the explorer are optional; hvPlotView covers the same forwarding
-# without it.
-try:
-    import datashader
-except ImportError:
-    datashader = None
-
-requires_datashader = pytest.mark.skipif(
-    datashader is None, reason="datashader is not installed"
 )
 
 # ---- Fixtures ----

@@ -1051,8 +1051,8 @@ class hvPlotBaseView(View):
             return self.color_key
         # glasbey_hv carries 256 distinct hues; a Category palette repeats
         # after 10 or 20 and would hand two categories the same color.
-        spare = [c for c in process_cmap('glasbey_hv', categorical=True)
-                 if c not in set(self.color_key.values())]
+        chosen = set(self.color_key.values())
+        spare = [c for c in process_cmap('glasbey_hv', categorical=True) if c not in chosen]
         return dict(self.color_key, **dict(zip(missing, spare, strict=False)))
 
     def _check_render_size(self, df) -> None:

@@ -81,9 +81,11 @@ class hvPlotAgent(BaseViewAgent):
             spec["groupby"] = groupby
         else:
             spec.pop("groupby", None)
-        # z belongs to the gridded kinds; elsewhere hvPlot only warns it is
-        # unused, which is a warning nobody reads.
-        if spec.get("kind") not in GRIDDED_KINDS and spec.get("kind") != "heatmap":
+        # z belongs to the gridded kinds, plus heatmap, which takes the same
+        # column as C. Elsewhere hvPlot only warns that it is unused, which is
+        # a warning nobody reads.
+        kind = spec.get("kind")
+        if kind not in GRIDDED_KINDS and kind != "heatmap":
             spec.pop("z", None)
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
