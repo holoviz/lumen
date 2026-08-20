@@ -357,3 +357,62 @@ def test_completion_covers_a_categorical_dtype(categorical_pipeline, categorical
     resolved = view._complete_color_key(framed)
 
     assert set(resolved) == set(framed["ancestry"].cat.categories)
+
+
+# ---- Aggregator ----
+
+def test_aggregator_declared():
+    assert "aggregator" in hvPlotBaseView.param
+    assert "count_cat" not in hvPlotBaseView.param.aggregator.objects
+
+
+def test_aggregator_forwarded(categorical_pipeline, categorical_df):
+    view = hvPlotView(
+        pipeline=categorical_pipeline, kind="points", x="x", y="y",
+        rasterize=True, aggregator="count",
+    )
+
+    assert record_hvplot_call(view, categorical_df)["aggregator"] == "count"
+
+
+def test_value_aggregator_needs_a_column(categorical_pipeline, categorical_df):
+    """hvPlot answers this from inside the datashader operation with a message
+    that never mentions the spec, so it is caught here instead."""
+    view = hvPlotView(
+        pipeline=categorical_pipeline, kind="points", x="x", y="y",
+        rasterize=True, aggregator="mean",
+    )
+
+    with pytest.raises(ValueError, match="reduces a value column"):
+        record_hvplot_call(view, categorical_df)
+
+
+def test_value_aggregator_accepts_a_column(categorical_pipeline, categorical_df):
+    view = hvPlotView(
+        pipeline=categorical_pipeline, kind="points", x="x", y="y",
+        rasterize=True, aggregator="mean", color="x",
+    )
+
+    assert record_hvplot_call(view, categorical_df)["aggregator"] == "mean"
+
+
+def test_aggregator_needs_server_side_aggregation(categorical_pipeline, categorical_df):
+    view = hvPlotView(
+        pipeline=categorical_pipeline, kind="points", x="x", y="y",
+        aggregator="mean", color="x",
+    )
+
+    with pytest.raises(ValueError, match="aggregated server-side"):
+        record_hvplot_call(view, categorical_df)
+
+
+@requires_datashader
+def test_aggregator_reaches_the_explorer(categorical_pipeline):
+    view = hvPlotUIView(
+        pipeline=categorical_pipeline, kind="points", x="x", y="y",
+        rasterize=True, aggregator="count",
+    )
+
+    _args, kwargs = view._get_args()
+
+    assert kwargs["aggregator"] == "count"

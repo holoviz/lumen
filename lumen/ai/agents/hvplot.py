@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from ...views import hvPlotUIView
-from ...views.base import GRIDDED_KINDS
+from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..translate import param_to_pydantic
@@ -87,6 +87,10 @@ class hvPlotAgent(BaseViewAgent):
         kind = spec.get("kind")
         if kind not in GRIDDED_KINDS and kind != "heatmap":
             spec.pop("z", None)
+        # Reducing a value column needs one named, and the spec has no field for
+        # it, so an aggregator asking for that has nothing to work on.
+        if spec.get("aggregator") in VALUE_AGGREGATORS:
+            spec.pop("aggregator", None)
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]

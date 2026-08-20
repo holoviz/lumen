@@ -86,6 +86,15 @@ HVPLOT_KINDS = [
     kind for kind in hvPlotTabular.__all__ if kind not in {"explorer", "dataset"}
 ] + list(GRIDDED_KINDS)
 
+# The datashader reductions hvPlot's own explorer offers by name. count_cat is
+# left out deliberately: hvPlot builds it from `by`, and naming it here only
+# gets as far as a bare string that never becomes a categorical reduction.
+AGGREGATORS = [None, "any", "count", "max", "mean", "min", "sum"]
+
+# These reduce a value column rather than counting rows, so hvPlot needs to be
+# told which column via `color`; without it datashader cannot pick a dimension.
+VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
+
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -966,6 +975,12 @@ class hvPlotBaseView(View):
 
     y = param.Selector(doc="The column to render on the y-axis.")
 
+    aggregator = param.Selector(default=None, objects=AGGREGATORS, doc="""
+        How datashader reduces the rows landing in one pixel, e.g. 'mean' to
+        shade by an average rather than a row count. Only meaningful with
+        datashade or rasterize; all but 'count' and 'any' reduce a value
+        column, which is named with `color`.""")
+
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
     color_key = param.Dict(default=None, doc="""
@@ -1055,6 +1070,26 @@ class hvPlotBaseView(View):
         spare = [c for c in process_cmap('glasbey_hv', categorical=True) if c not in chosen]
         return dict(self.color_key, **dict(zip(missing, spare, strict=False)))
 
+    def _check_aggregator(self, plot_kwargs) -> None:
+        """Refuse an aggregator that has nothing to reduce.
+
+        Left to hvPlot this surfaces from inside the datashader operation as
+        "Could not determine dimension to apply 'aggregate' operation to",
+        which says nothing about the spec that caused it.
+        """
+        if self.aggregator not in VALUE_AGGREGATORS:
+            return
+        if not (self.datashade or plot_kwargs.get('rasterize')):
+            raise ValueError(
+                f"aggregator={self.aggregator!r} only applies when the data is "
+                "aggregated server-side; set datashade or rasterize."
+            )
+        if not (plot_kwargs.get('c') or plot_kwargs.get('color')):
+            raise ValueError(
+                f"aggregator={self.aggregator!r} reduces a value column, so one "
+                "must be named with color; use 'count' or 'any' to reduce rows."
+            )
+
     def _check_render_size(self, df) -> None:
         """Refuse to render more per-row glyphs than a browser tab can hold.
 
@@ -1114,6 +1149,7 @@ class hvPlotUIView(hvPlotBaseView):
         # older hvPlot rather than simply coloring from the default palette.
         if 'color_key' in params:
             params['color_key'] = self._complete_color_key(data)
+        self._check_aggregator(self.kwargs)
         return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
@@ -1263,6 +1299,9 @@ class hvPlotView(hvPlotBaseView):
             processed['dynspread'] = True
         if self.color_key is not None:
             processed['color_key'] = self._complete_color_key(df)
+        if self.aggregator is not None:
+            self._check_aggregator(processed)
+            processed['aggregator'] = self.aggregator
 
         kind = self.kind
         plot_source = df

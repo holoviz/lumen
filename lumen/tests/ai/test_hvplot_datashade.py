@@ -153,3 +153,23 @@ async def test_z_is_kept_for_gridded_kinds(kind):
     spec = await extract({"kind": kind, "x": "x", "y": "y", "z": "c"}, 10)
 
     assert spec["z"] == "c"
+
+
+# ---- Aggregator the spec cannot support ----
+
+async def test_value_aggregator_is_dropped():
+    """The spec has no field naming a value column, so mean has nothing to
+    reduce and hvPlot would raise from inside the datashader operation."""
+    spec = await extract(
+        {"kind": "points", "x": "x", "y": "y", "rasterize": True, "aggregator": "mean"}, 10
+    )
+
+    assert "aggregator" not in spec
+
+
+async def test_row_counting_aggregator_survives():
+    spec = await extract(
+        {"kind": "points", "x": "x", "y": "y", "rasterize": True, "aggregator": "count"}, 10
+    )
+
+    assert spec["aggregator"] == "count"
