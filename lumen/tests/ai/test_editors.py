@@ -233,12 +233,15 @@ async def test_render_pipeline_keeps_full_data_control_in_layout(limited_sql_pip
     controls, _table = layout.objects
 
     assert controls.sizing_mode == "stretch_width"
-    assert controls.margin == (0, 40, 5, 0)
+    assert controls.margin == 0
     assert isinstance(controls.objects[0], HSpacer)
-    assert controls.objects[1].label == "Full data"
-    assert controls.objects[1].visible
+    full_data = controls.objects[1]
+    assert full_data.label == "Full data"
+    assert full_data.width is None
+    assert full_data.margin == (0, 10, 0, 0)
+    assert full_data.visible
 
-    controls.objects[1].value = True
+    full_data.value = True
     assert editor.component.sql_transforms[0].limit is None
     assert len(editor.component.data) == 4
 

@@ -217,9 +217,7 @@ class LumenEditor(Viewer):
             """
             ]
         )
-        controls = Row(
-            HSpacer(), sizing_mode='stretch_width', margin=(0, 40, 5, 0)
-        )
+        controls = Row(HSpacer(), sizing_mode='stretch_width')
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
                 break
@@ -232,7 +230,7 @@ class LumenEditor(Viewer):
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
                 full_data = Checkbox(
-                    label='Full data', width=100, visible=limited
+                    label='Full data', margin=(0, 10, 0, 0), visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.append(full_data)
