@@ -380,6 +380,39 @@ def test_a_dtype_pandas_cannot_hold_raises_rather_than_corrupting():
         as_pandas(frame)
 
 
+@pytest.mark.parametrize("index_type", ["uint8", "uint16", "uint32", "uint64"])
+def test_as_pandas_converts_an_unsigned_dictionary_column(index_type):
+    """polars writes uint32 indices for a Categorical, and pyarrow before 23
+    cannot convert an unsigned dictionary index to pandas at all."""
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({
+        "c": pa.DictionaryArray.from_arrays(
+            pa.array([0, 1, None], getattr(pa, index_type)()), pa.array(["x", "y"])
+        ),
+        "n": [1.0, 2.0, 3.0],
+    })
+    result = as_pandas(table)
+    assert isinstance(result["c"].dtype, pd.CategoricalDtype)
+    assert result["c"].tolist()[:2] == ["x", "y"]
+    assert result["c"].isna().tolist() == [False, False, True]
+
+
+def test_as_pandas_keeps_a_dictionary_column_ordered():
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({"c": pa.DictionaryArray.from_arrays(
+        pa.array([1, 0], pa.uint8()), pa.array(["lo", "hi"]), ordered=True
+    )})
+    assert as_pandas(table)["c"].dtype.ordered
+
+
+def test_as_pandas_keeps_a_polars_categorical_through_pyarrow():
+    """The end of the road for the issue: a polars Categorical read as arrow."""
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pyarrow")
+    table = pl.DataFrame({"c": pl.Series(["x", "y", "x"], dtype=pl.Categorical)}).to_arrow()
+    assert as_pandas(table)["c"].tolist() == ["x", "y", "x"]
+
+
 def test_as_pandas_keeps_nullable_integer_and_boolean(constructor):
     """Converting must not widen a nullable column, or an id renders as 3.0."""
     data = {
