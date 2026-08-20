@@ -8,7 +8,6 @@ import panel as pn
 import param
 import pytest
 
-from panel.layout import HSpacer
 from PIL import Image
 
 import lumen.ai.editors as editors_module
@@ -225,17 +224,22 @@ def limited_sql_pipeline_editor(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_render_pipeline_keeps_full_data_control_in_layout(limited_sql_pipeline_editor):
+async def test_render_pipeline_places_full_data_control_in_table_footer(limited_sql_pipeline_editor):
     editor = limited_sql_pipeline_editor
     assert len(editor.component.data) == 3
 
     layout = await editor._render_pipeline(editor.component)
-    controls, _table = layout.objects
+    _table, controls = layout.objects
 
-    assert controls.sizing_mode == "stretch_width"
+    assert layout.styles == {'position': 'relative'}
+    assert controls.width == 115
     assert controls.margin == 0
-    assert isinstance(controls.objects[0], HSpacer)
-    full_data = controls.objects[1]
+    assert controls.styles == {
+        'position': 'absolute', 'right': '0px', 'bottom': '0px',
+        'margin-left': 'auto',
+    }
+    assert "position: static !important" in controls.stylesheets[0]
+    full_data = controls.objects[0]
     assert full_data.label == "Full data"
     assert full_data.width is None
     assert full_data.margin == (0, 10, 0, 0)

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import param
 
 from panel.config import config
-from panel.layout import Column, HSpacer, Row
+from panel.layout import Column, Row
 from panel.pane import (
     PDF, DeckGL, Image as PnImage, Markdown, panel as as_panel,
 )
@@ -212,12 +212,28 @@ class LumenEditor(Viewer):
             .tabulator-footer {
             display: flex;
             text-align: left;
-            padding: 0px;
+            padding: 0px 125px 0px 0px;
+            }
+            @media (max-width: 430px) {
+              .tabulator-footer { padding-right: 0px; }
             }
             """
             ]
         )
-        controls = Row(HSpacer(), sizing_mode='stretch_width')
+        controls = Row(
+            width=115,
+            styles={
+                'position': 'absolute', 'right': '0px', 'bottom': '0px',
+                'margin-left': 'auto',
+            },
+            stylesheets=[
+                """
+                @media (max-width: 430px) {
+                  :host { position: static !important; }
+                }
+                """
+            ],
+        )
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
                 break
@@ -234,7 +250,7 @@ class LumenEditor(Viewer):
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.append(full_data)
-        return Column(controls, table)
+        return Column(table, controls, styles={'position': 'relative'})
 
     async def render_context(self):
         view = self.component
