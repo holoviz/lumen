@@ -21,9 +21,10 @@ from lumen.transforms.base import (
     Rename, Sample, Sort,
 )
 from lumen.util import (
-    as_narwhals, as_pandas, get_dataframe_schema, is_lazyframe,
+    _NULLABLE_DTYPES, as_narwhals, as_pandas, get_dataframe_schema,
+    is_lazyframe,
 )
-from lumen.views.base import Table
+from lumen.views.base import Table, hvPlotView
 
 
 class ParamHolder(param.Parameterized):
@@ -352,6 +353,33 @@ def test_dropna_matches_pandas(constructor):
     assert result["a"].tolist() == reference["a"].tolist() == [1.0]
 
 
+def test_every_arrow_integer_type_has_a_nullable_pandas_dtype():
+    """An unmapped type would convert to whatever pandas defaults to.
+
+    The reroute in ``_to_pandas`` fires on any integer narwhals reports, so a
+    gap here is a column that silently keeps the widened dtype.
+    """
+    pa = pytest.importorskip("pyarrow")
+    arrow_integers = {
+        getattr(pa, f"{prefix}int{width}")()
+        for prefix in ("", "u") for width in (8, 16, 32, 64)
+    }
+    assert arrow_integers <= set(_NULLABLE_DTYPES)
+    assert pa.bool_() in _NULLABLE_DTYPES
+
+
+def test_a_dtype_pandas_cannot_hold_raises_rather_than_corrupting():
+    """polars Int128 has no pandas or arrow counterpart.
+
+    It already fails in ``to_pandas`` before the reroute, and failing is the
+    correct outcome: the alternative is a column of quietly wrong numbers.
+    """
+    pl = pytest.importorskip("polars")
+    frame = pl.DataFrame({"i": pl.Series([1, None], dtype=pl.Int128)})
+    with pytest.raises(Exception, match="i128"):
+        as_pandas(frame)
+
+
 def test_as_pandas_keeps_nullable_integer_and_boolean(constructor):
     """Converting must not widen a nullable column, or an id renders as 3.0."""
     data = {
@@ -379,7 +407,7 @@ def test_as_pandas_keeps_an_integer_beyond_float_precision(constructor):
     assert int(result["i"][0]) == big
 
 
-def test_fallback_keeps_the_dtype_the_narwhals_path_keeps(constructor):
+def test_fallback_and_native_paths_agree_on_dtype(constructor):
     """Two configurations of one transform must not disagree on the schema.
 
     Both configurations here leave the null in ``id``: one drops on ``v``
@@ -391,6 +419,23 @@ def test_fallback_keeps_the_dtype_the_narwhals_path_keeps(constructor):
     fallback = as_pandas(DropNA.apply_to(constructor(data), how="all"))
     assert native["id"].isna().any() and fallback["id"].isna().any()
     assert str(fallback["id"].dtype) == str(native["id"].dtype) == "Int64"
+
+
+def test_hvplot_view_gets_numpy_dtypes(constructor):
+    """datashader raises on a pandas extension dtype, so plots take numpy.
+
+    Rasterizing is the case that breaks, but every kind can reach datashader
+    through an operation, so the whole hvPlot path widens.
+    """
+    data = {"id": pd.Series([1, 2, None, 4], dtype="Int64"), "v": [1.0, None, 3.0, 4.0]}
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"t": constructor(data)}), table="t",
+        transforms=[DropNA(how="all")],
+    )
+    plotted = hvPlotView(pipeline=pipeline, kind="scatter", x="v", y="id").get_data()
+    assert str(plotted["id"].dtype) == "float64"
+    # The table is not a datashader consumer and keeps the id an id.
+    assert str(Table(pipeline=pipeline).get_data()["id"].dtype) == "Int64"
 
 
 def test_lazy_transforms_stay_lazy():

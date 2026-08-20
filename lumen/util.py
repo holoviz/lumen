@@ -111,15 +111,15 @@ def collect_lazy(df):
 DATAFRAME_BACKENDS = ['pandas', 'polars', 'pyarrow']
 
 # The pandas dtype that holds each arrow integer and boolean type without
-# widening it. numpy has no missing value for either, which is the whole
-# problem _to_pandas below exists to solve.
+# widening it, because numpy has no missing value for either. Arrow has no
+# other integer type, so every column _to_pandas reroutes has an entry here.
 _NULLABLE_DTYPES = {
-    getattr(pa, f'{prefix}int{width}')(): pd.api.types.pandas_dtype(
-        f'{prefix.upper()}Int{width}'
-    )
-    for prefix in ('', 'u') for width in (8, 16, 32, 64)
+    pa.int8(): pd.Int8Dtype(), pa.int16(): pd.Int16Dtype(),
+    pa.int32(): pd.Int32Dtype(), pa.int64(): pd.Int64Dtype(),
+    pa.uint8(): pd.UInt8Dtype(), pa.uint16(): pd.UInt16Dtype(),
+    pa.uint32(): pd.UInt32Dtype(), pa.uint64(): pd.UInt64Dtype(),
+    pa.bool_(): pd.BooleanDtype(),
 }
-_NULLABLE_DTYPES[pa.bool_()] = pd.BooleanDtype()
 
 
 def _to_pandas(narwhals_df):
@@ -143,6 +143,27 @@ def _to_pandas(narwhals_df):
             df[name] = narwhals_df[name].to_arrow().to_pandas(
                 types_mapper=_NULLABLE_DTYPES.get
             )
+    return df
+
+
+def widen_nullable(df):
+    """Return df with the nullable dtypes _to_pandas keeps widened to numpy.
+
+    datashader reads the dtype of every plotted column and raises on a pandas
+    extension dtype, so a rasterized plot cannot take the nullable columns.
+    numpy widens them exactly the way ``to_pandas`` used to: an integer holding
+    a null becomes float64, a boolean becomes object, and a column with no
+    nulls keeps its type.
+    """
+    widened = [c for c in df.columns if df[c].dtype in _NULLABLE_DTYPES.values()]
+    if not widened:
+        return df
+    # Copied rather than assigned in place because the caller hands out a
+    # cached frame, and item assignment takes a column named anything, which
+    # DataFrame.assign does not.
+    df = df.copy()
+    for name in widened:
+        df[name] = np.asarray(df[name])
     return df
 
 

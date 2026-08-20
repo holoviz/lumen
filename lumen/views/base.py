@@ -46,7 +46,7 @@ from ..transforms.sql import SQLTransform
 from ..util import (
     VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
     geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
-    try_import_xarray,
+    try_import_xarray, widen_nullable,
 )
 from ..validation import ValidationError
 
@@ -1002,6 +1002,13 @@ class hvPlotBaseView(View):
     @classproperty
     def _valid_keys_(cls):
         return None
+
+    def get_data(self):
+        # Every hvPlot kind can reach datashader, through rasterize/datashade
+        # or an operation, and datashader rejects the pandas nullable dtypes
+        # the pipeline now preserves. Plots take the numpy widening instead;
+        # tables and downloads keep the nullable columns.
+        return widen_nullable(super().get_data())
 
     def _check_render_size(self, df) -> None:
         """Refuse to render more per-row glyphs than a browser tab can hold.
