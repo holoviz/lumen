@@ -122,6 +122,33 @@ _NULLABLE_DTYPES = {
 }
 
 
+def _cast_unsigned_dictionaries(narwhals_df):
+    """Return the frame with any unsigned dictionary index cast to int32.
+
+    pyarrow before 23 refuses to convert an unsigned dictionary index to
+    pandas, and polars writes uint32 indices for a Categorical, so a
+    pyarrow-backed frame carrying one cannot reach pandas at all. int32 is
+    the index pyarrow 23 produces for the same column, so the cast leaves the
+    resulting categorical identical and is dead weight once the floor moves.
+    """
+    table = narwhals_df.to_native()
+    if not isinstance(table, pa.Table):
+        return narwhals_df
+
+    def signed(field):
+        if not (pa.types.is_dictionary(field.type) and
+                pa.types.is_unsigned_integer(field.type.index_type)):
+            return field
+        return field.with_type(
+            pa.dictionary(pa.int32(), field.type.value_type, field.type.ordered)
+        )
+
+    fields = [signed(field) for field in table.schema]
+    if fields == list(table.schema):
+        return narwhals_df
+    return nw.from_native(table.cast(pa.schema(fields)))
+
+
 def _to_pandas(narwhals_df):
     """Convert to pandas without widening an integer or boolean column.
 
@@ -136,6 +163,7 @@ def _to_pandas(narwhals_df):
     dictionary indices behind a polars categorical, which polars itself
     converts fine.
     """
+    narwhals_df = _cast_unsigned_dictionaries(narwhals_df)
     df = narwhals_df.to_pandas()
     for name, dtype in narwhals_df.collect_schema().items():
         widened = df[name].dtype.kind in 'fO'
