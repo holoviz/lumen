@@ -12,6 +12,7 @@ from decimal import Decimal
 import pandas as pd
 import param
 import pytest
+import yaml
 
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
@@ -453,3 +454,79 @@ def test_pipeline_collects_a_lazy_frame_for_its_own_backend():
 
     pipeline = Pipeline(source=ScanSource(), table="t", dataframe_backend="polars")
     assert isinstance(pipeline.data, pl.DataFrame)
+
+
+def test_describe_data_samples_before_converting():
+    """The summary reads 5000 rows, so only 5000 rows may reach pandas."""
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
+
+    converted = []
+    original = pl.DataFrame.to_pandas
+
+    def spy(self, *args, **kwargs):
+        converted.append(self.height)
+        return original(self, *args, **kwargs)
+
+    rows = PROFILE_SAMPLE_ROWS * 4
+    frame = pl.DataFrame({"i": range(rows), "s": ["a", "b", "c", "d"] * (rows // 4)})
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pl.DataFrame, "to_pandas", spy)
+        describe_data_sync(frame)
+    assert converted == [PROFILE_SAMPLE_ROWS]
+
+
+def test_describe_data_reports_true_shape_when_sampled(constructor):
+    """Sampling must not shrink the row count the summary reports."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
+
+    rows = PROFILE_SAMPLE_ROWS + 1000
+    summary = yaml.safe_load(describe_data_sync(constructor({
+        "i": list(range(rows)), "f": [float(i) for i in range(rows)],
+    })))
+    assert summary["summary"]["data_shape"] == [rows, 2]
+    assert summary["summary"]["is_sampled"]
+    assert summary["stats"]["i"]["count"] == PROFILE_SAMPLE_ROWS
+
+
+def test_describe_data_matches_pandas_across_backends(constructor):
+    """Below the sampling threshold every backend describes the same frame."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync
+
+    data = {
+        "i": list(range(200)),
+        "f": [i / 3 for i in range(200)],
+        "s": ["foo", "bar"] * 100,
+    }
+    summary = yaml.safe_load(describe_data_sync(constructor(data)))
+    expected = yaml.safe_load(describe_data_sync(pd.DataFrame(data)))
+    assert summary["summary"] == expected["summary"]
+    assert summary["stats"].keys() == expected["stats"].keys()
+    assert summary["stats"]["s"]["nunique"] == expected["stats"]["s"]["nunique"]
+
+
+async def test_get_frame_skips_the_pandas_conversion(constructor):
+    """The summary callers take the source's own frame; everyone else pandas."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import get_data, get_frame
+
+    frame = constructor({"i": [0, 1, 2]})
+    pipeline = Pipeline(source=InMemorySource(tables={"t": frame}), table="t")
+    assert type(await get_frame(pipeline)) is type(frame)
+    assert isinstance(await get_data(pipeline), pd.DataFrame)
+
+
+def test_describe_data_summarises_a_dask_frame():
+    """A dask frame answers shape with a Delayed, so it must be computed."""
+    dd = pytest.importorskip("dask.dataframe")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
+
+    rows = PROFILE_SAMPLE_ROWS + 1000
+    frame = pd.DataFrame({"i": range(rows), "s": ["a", "b"] * (rows // 2)})
+    summary = yaml.safe_load(describe_data_sync(dd.from_pandas(frame, npartitions=4)))
+    assert summary["summary"]["data_shape"] == [rows, 2]
+    assert summary["stats"]["i"]["count"] == PROFILE_SAMPLE_ROWS
