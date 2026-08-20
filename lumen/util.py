@@ -15,6 +15,7 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
+import chardet
 import narwhals as narwhals_any
 import narwhals.stable.v2 as nw
 import numpy as np
@@ -23,6 +24,7 @@ import panel as pn
 import param
 import yaml
 
+from hvplot.utilities import hvplot_extension  # type: ignore
 from jinja2 import DebugUndefined, Environment, Undefined
 from packaging.version import Version
 from pandas.core.dtypes.dtypes import CategoricalDtype
@@ -641,22 +643,15 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
     except UnicodeDecodeError:
         pass
 
-    # Use chardet if available, otherwise fallback
-    try:
-        import chardet  # noqa: PLC0415
-        result = chardet.detect(data)
-        encoding = result.get('encoding', 'latin-1')
-        # Clean up common names
-        if encoding and encoding.lower() in ['iso-8859-1', 'ascii']:
-            return 'utf-8' if encoding.lower() == 'ascii' else 'latin-1'
-        return encoding.lower() if encoding else 'latin-1'
-    except ImportError:
-        # Simple fallback without chardet
-        return 'latin-1'  # Can decode any byte sequence
+    result = chardet.detect(data)
+    encoding = result.get('encoding', 'latin-1')
+    # Clean up common names
+    if encoding and encoding.lower() in ['iso-8859-1', 'ascii']:
+        return 'utf-8' if encoding.lower() == 'ascii' else 'latin-1'
+    return encoding.lower() if encoding else 'latin-1'
 
 def _set_backend_opts(element, cur_opts, compat_opts):
     """Utility to make it possible to serialize hvPlot generated plots"""
-    from hvplot.utilities import hvplot_extension  # noqa: PLC0415
     element = element.opts(**cur_opts, backend='bokeh')
     if hvplot_extension.compatibility and compat_opts:
         element = element.opts(**compat_opts, backend=hvplot_extension.compatibility)

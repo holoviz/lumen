@@ -810,7 +810,6 @@ class SQLPreFilter(SQLFilterBase):
         Table
             Subquery expression that can replace the original table
         """
-        from sqlglot.expressions import Identifier  # noqa: PLC0415
 
         # Start with SELECT * FROM table_name
         base_table = Table(this=Identifier(this=table_name, quoted=True))

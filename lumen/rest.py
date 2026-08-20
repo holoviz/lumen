@@ -195,6 +195,8 @@ class SchemaHandler(web.RequestHandler):
 
 
 def lumen_rest_provider(files, endpoint):
+    # Deferred: panel.io.rest loads this module through the panel.io.rest
+    # entry point, so importing it at the top is a circular import.
     from panel.io.rest import _exec_files  # noqa: PLC0415
     _exec_files(files)
     if endpoint:

@@ -398,7 +398,7 @@ class VegaLiteEditor(LumenEditor):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            import vl_convert as vlc
+            import vl_convert as vlc  # noqa: PLC0415
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)

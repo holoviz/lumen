@@ -12,6 +12,7 @@ import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
 
+from holoviews import Dataset  # type: ignore
 from panel.io.document import unlocked
 from panel.io.state import state as pn_state
 from panel.layout import Column, Row
@@ -335,7 +336,6 @@ class Pipeline(Viewer, Component):
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
-            from holoviews import Dataset  # type: ignore  # noqa: PLC0415
             if filt.value is not None:
                 # HoloViews only learned to read narwhals frames in 1.22 and the
                 # floor is lower than that, so hand it pandas.

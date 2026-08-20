@@ -29,6 +29,7 @@ from ..controls.ingest.result import SourceResult
 from ..llm import Message
 from ..schemas import Metaset, get_metaset
 from ..tools import FunctionTool
+from ..tools.source_lookup import _control_hash
 from ..translate import doc_descriptions
 from ..utils import (
     describe_data, get_pipeline, log_debug, result_to_dataframe,
@@ -261,9 +262,6 @@ class SourceAgent(Agent):
         ctrl_map: dict[str, BaseSourceControls] = {}
         for c in controls:
             if c._supports_tools:
-                from ..tools.source_lookup import (  # noqa: PLC0415
-                    _control_hash,
-                )
                 ctrl_map[_control_hash(c)] = c
 
         tools: list[FunctionTool] = []

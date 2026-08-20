@@ -14,6 +14,7 @@ import param
 import sqlglot
 
 from ..config import config
+from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..transforms import Filter
 from ..transforms.sql import (
@@ -311,7 +312,6 @@ class DuckDBSource(BaseSQLSource):
         if 'mirrors' not in spec:
             return spec
 
-        from ..pipeline import Pipeline  # noqa: PLC0415
         mirrors = {}
         for table, mirror in spec['mirrors'].items():
             if isinstance(mirror, pd.DataFrame):
@@ -391,7 +391,6 @@ class DuckDBSource(BaseSQLSource):
                 source = cls.from_spec(src_spec)
                 resolved_mirrors[table] = (source, src_table)
             elif mirror.get('type') == 'pipeline':
-                from ..pipeline import Pipeline  # noqa: PLC0415
                 resolved_mirrors[table] = Pipeline.from_spec(mirror)
             else:
                 resolved_mirrors[table] = Serializer.deserialize(mirror)

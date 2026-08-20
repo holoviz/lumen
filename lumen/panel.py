@@ -6,6 +6,7 @@ import param  # type: ignore
 
 from panel import panel
 from panel.custom import JSComponent
+from panel.links import Callback
 from panel.reactive import ReactiveHTML
 from panel.widgets import FileDownload
 
@@ -149,7 +150,6 @@ class IconButton(ReactiveHTML):
         self._callbacks.append(callback)
 
     def js_on_click(self, args=None, code=""):
-        from panel.links import Callback  # noqa: PLC0415
         if args is None:
             args = {}
         return Callback(self, code={'event:'+self._event: code}, args=args)

@@ -35,6 +35,7 @@ except ImportError:
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
+from ..config import config
 from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
@@ -381,7 +382,6 @@ class Source(MultiTypeComponent):
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
-        from ..config import config  # noqa: PLC0415
         params['root'] = Path(params.get('root', config.root))
         super().__init__(**params)
         self.param.watch(self.clear_cache, self._reload_params)
