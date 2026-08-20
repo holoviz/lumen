@@ -276,12 +276,15 @@ class XArraySQLSource(BaseSQLSource):
         return self.execute(self._build_sql(table, **query))
 
     def to_dataset(self, table, **query):
-        """Return the query result as a gridded ``xr.Dataset``.
+        """Return the query result as a gridded ``xr.Dataset``, or None.
 
         Uses xarray-sql's ``to_dataset`` (lazy, keeps the data gridded) when
         the installed version supports it, so a gridded source is never
         materialized as long-form. Falls back to pivoting the long-form result
         on the dataset dims for xarray-sql < 0.3.
+
+        None means the result is not a grid, and callers fall back to the
+        long-form frame.
         """
         result = self._ctx.sql(self._build_sql(table, **query))
         if hasattr(result, 'to_dataset'):
@@ -295,7 +298,12 @@ class XArraySQLSource(BaseSQLSource):
             return result.to_dataset(dims=dims)
         df = result.to_pandas()
         present = [d for d in self._dataset.dims if d in df.columns]
-        return df.set_index(present).to_xarray() if present else df
+        if not present or df.duplicated(subset=present).any():
+            # A projecting sql_transform that drops a dim leaves the rows that
+            # dim separated on top of each other, so the surviving dims no
+            # longer index one row each and there is no grid to build.
+            return None
+        return df.set_index(present).to_xarray()
 
     def create_sql_expr_source(
         self,
