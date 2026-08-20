@@ -206,13 +206,14 @@ def test_render_controls_inserts_add_filter_menu(sql_pipeline_editor):
 
 @pytest.fixture
 def limited_sql_pipeline_editor(monkeypatch):
-    """Return an editor whose SQL limit exactly matches the result size."""
+    """Return an editor whose source data exceeds its SQL limit."""
     source = DuckDBSource(tables={
         'tiny': """
             SELECT * FROM (
               VALUES (1,'A'),
                      (2,'B'),
-                     (3,'C')
+                     (3,'C'),
+                     (4,'D')
             ) AS t(id, category)
         """
     })
@@ -226,6 +227,8 @@ def limited_sql_pipeline_editor(monkeypatch):
 @pytest.mark.asyncio
 async def test_render_pipeline_keeps_full_data_control_in_layout(limited_sql_pipeline_editor):
     editor = limited_sql_pipeline_editor
+    assert len(editor.component.data) == 3
+
     layout = await editor._render_pipeline(editor.component)
     controls, _table = layout.objects
 
@@ -237,6 +240,7 @@ async def test_render_pipeline_keeps_full_data_control_in_layout(limited_sql_pip
 
     controls.objects[1].value = True
     assert editor.component.sql_transforms[0].limit is None
+    assert len(editor.component.data) == 4
 
 
 @pytest.fixture
