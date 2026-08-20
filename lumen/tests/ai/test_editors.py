@@ -8,6 +8,7 @@ import panel as pn
 import param
 import pytest
 
+from panel.layout import HSpacer
 from PIL import Image
 
 import lumen.ai.editors as editors_module
@@ -18,6 +19,7 @@ from lumen.ai.editors import (
 from lumen.base import Component
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
+from lumen.transforms.sql import SQLLimit
 
 
 class MockComponent(Component):
@@ -200,6 +202,41 @@ def test_render_controls_inserts_add_filter_menu(sql_pipeline_editor):
     controls = sql_pipeline_editor.render_controls(task=None, interface=None)
     labels = [getattr(c, "label", None) for c in controls]
     assert "Add Filter" in labels
+
+
+@pytest.fixture
+def limited_sql_pipeline_editor(monkeypatch):
+    """Return an editor whose SQL limit exactly matches the result size."""
+    source = DuckDBSource(tables={
+        'tiny': """
+            SELECT * FROM (
+              VALUES (1,'A'),
+                     (2,'B'),
+                     (3,'C')
+            ) AS t(id, category)
+        """
+    })
+    pipeline = Pipeline(
+        source=source, table='tiny', sql_transforms=[SQLLimit(limit=3)]
+    )
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    return SQLEditor(component=pipeline, spec="SELECT * FROM tiny")
+
+
+@pytest.mark.asyncio
+async def test_render_pipeline_keeps_full_data_control_in_layout(limited_sql_pipeline_editor):
+    editor = limited_sql_pipeline_editor
+    layout = await editor._render_pipeline(editor.component)
+    controls, _table = layout.objects
+
+    assert controls.sizing_mode == "stretch_width"
+    assert controls.margin == (0, 40, 5, 0)
+    assert isinstance(controls.objects[0], HSpacer)
+    assert controls.objects[1].label == "Full data"
+    assert controls.objects[1].visible
+
+    controls.objects[1].value = True
+    assert editor.component.sql_transforms[0].limit is None
 
 
 @pytest.fixture

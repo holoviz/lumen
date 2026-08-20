@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import param
 
 from panel.config import config
-from panel.layout import Column, Row
+from panel.layout import Column, HSpacer, Row
 from panel.pane import (
     PDF, DeckGL, Image as PnImage, Markdown, panel as as_panel,
 )
@@ -218,7 +218,7 @@ class LumenEditor(Viewer):
             ]
         )
         controls = Row(
-            styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
+            HSpacer(), sizing_mode='stretch_width', margin=(0, 40, 5, 0)
         )
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
@@ -235,7 +235,7 @@ class LumenEditor(Viewer):
                     label='Full data', width=100, visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
-                controls.insert(0, full_data)
+                controls.append(full_data)
         return Column(controls, table)
 
     async def render_context(self):
