@@ -15,7 +15,6 @@ from pathlib import Path
 from subprocess import check_output
 
 import bokeh
-import chardet
 import narwhals as narwhals_any
 import narwhals.stable.v2 as nw
 import numpy as np
@@ -643,12 +642,19 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
     except UnicodeDecodeError:
         pass
 
-    result = chardet.detect(data)
-    encoding = result.get('encoding', 'latin-1')
-    # Clean up common names
-    if encoding and encoding.lower() in ['iso-8859-1', 'ascii']:
-        return 'utf-8' if encoding.lower() == 'ascii' else 'latin-1'
-    return encoding.lower() if encoding else 'latin-1'
+    # Use chardet if available, otherwise fallback; the core install does not
+    # pull it in, only the ai extra does.
+    try:
+        import chardet  # noqa: PLC0415
+        result = chardet.detect(data)
+        encoding = result.get('encoding', 'latin-1')
+        # Clean up common names
+        if encoding and encoding.lower() in ['iso-8859-1', 'ascii']:
+            return 'utf-8' if encoding.lower() == 'ascii' else 'latin-1'
+        return encoding.lower() if encoding else 'latin-1'
+    except ImportError:
+        # Simple fallback without chardet
+        return 'latin-1'  # Can decode any byte sequence
 
 def _set_backend_opts(element, cur_opts, compat_opts):
     """Utility to make it possible to serialize hvPlot generated plots"""
