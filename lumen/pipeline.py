@@ -645,6 +645,8 @@ class Pipeline(Viewer, Component):
         chain_update = kwargs.pop('_chain_update', False)
         if sql_transforms:
             try:
+                # Deferred: .sources.duckdb needs duckdb, which the core
+                # install does not pull in.
                 from .sources.duckdb import DuckDBSource  # noqa: PLC0415
             except Exception as e:
                 raise RuntimeError(

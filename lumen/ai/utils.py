@@ -1278,6 +1278,8 @@ def _get_token_encoder():
     if "encoder" in _TOKEN_ENCODER_CACHE:
         return _TOKEN_ENCODER_CACHE["encoder"]
     try:
+        # Deferred so a missing tiktoken degrades to the character estimate
+        # rather than breaking the import.
         import tiktoken  # noqa: PLC0415
 
         encoder = tiktoken.get_encoding(TOKEN_ENCODING)

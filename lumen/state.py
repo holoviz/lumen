@@ -23,10 +23,6 @@ class _session_state:
     The session_state object holds both global and session specific
     state making it easy to manage access to Sources and Filters
     across components.
-
-    Every ``lumen.*`` import in the method bodies below is deferred on
-    purpose: the components this module hands back all import ``state``
-    themselves, so resolving them at module scope is a cycle.
     """
 
     global_sources: dict[str, Source] = {}
@@ -123,6 +119,7 @@ class _session_state:
 
     @property
     def variables(self) -> Variables:
+        # Deferred: .variables imports state at module scope.
         from .variables import Variables  # noqa: PLC0415
         if self._variable is None:
             self._variable = Variables.create_variables()
@@ -137,6 +134,7 @@ class _session_state:
 
     @property
     def _global_filters(self):
+        # Deferred: .filters imports state at module scope.
         from .filters import Filter  # noqa: PLC0415
         return {
             source: {
@@ -177,18 +175,21 @@ class _session_state:
         variables = variables or self.variables
         context = {}
         if auth:
+            # Deferred: .dashboard imports state at module scope.
             from .dashboard import AuthSpec  # noqa: PLC0415
             if isinstance(auth, dict):
                 context['auth'] = AuthSpec.validate(auth)
             else:
                 context['auth'] = auth.to_spec()
         if config:
+            # Deferred: .dashboard imports state at module scope.
             from .dashboard import Config  # noqa: PLC0415
             if isinstance(config, dict):
                 context['config'] = Config.validate(config)
             else:
                 context['config'] = config.to_spec()
         if defaults:
+            # Deferred: .dashboard imports state at module scope.
             from .dashboard import Defaults  # noqa: PLC0415
             if isinstance(defaults, dict):
                 context['defaults'] = Defaults.validate(defaults)
@@ -250,6 +251,7 @@ class _session_state:
         """
         Loads global sources shared across all layouts.
         """
+        # Deferred: .sources.base imports state at module scope.
         from .sources.base import Source  # noqa: PLC0415
         for name, source_spec in self.spec.get('sources', {}).items():
             if not source_spec.get('shared'):
@@ -290,6 +292,7 @@ class _session_state:
             }
 
     def load_pipelines(self, **kwargs):
+        # Deferred: .pipeline imports state at module scope.
         from .pipeline import Pipeline  # noqa: PLC0415
         pipelines = self.pipelines
         for name, pipeline_spec in self.spec.get('pipelines', {}).items():
@@ -299,7 +302,9 @@ class _session_state:
         return pipelines
 
     def load_source(self, name: str, source_spec: dict[str, Any]):
+        # Deferred: .filters.base imports state at module scope.
         from .filters.base import Filter  # noqa: PLC0415
+        # Deferred: .sources.base imports state at module scope.
         from .sources.base import Source  # noqa: PLC0415
         source_spec = dict(source_spec)
         filter_specs = source_spec.pop('filters', None)
@@ -326,6 +331,7 @@ class _session_state:
         return source
 
     def resolve_views(self):
+        # Deferred: .views imports state at module scope.
         from .views import View  # noqa: PLC0415
         exts = []
         for layout in self.spec.get('layouts', []):
@@ -350,6 +356,7 @@ class _session_state:
             refs = cast(tuple[str], refs)
             (sourceref,) = refs
 
+        # Deferred: .sources.base imports state at module scope.
         from .sources.base import Source  # noqa: PLC0415
         source = Source.from_spec(sourceref)
         if len(refs) == 1:
@@ -370,6 +377,7 @@ class _session_state:
     def resolve_reference(self, reference: str, variables: Variables = None):
         if not is_ref(reference):
             raise ValueError('References should be prefixed by $ symbol.')
+        # Deferred: .variables imports state at module scope.
         from .variables import Variable  # noqa: PLC0415
         refs = tuple(reference[1:].split('.'))
         if len(refs) > 3:

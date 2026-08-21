@@ -986,6 +986,7 @@ class hvPlotBaseView(View):
     def __init__(self, **params):
         if 'dask' in sys.modules:
             try:
+                # Deferred: registers hvPlot's dask accessor, and dask is optional.
                 import hvplot.dask  # type: ignore  # noqa: F401, PLC0415
             except Exception:
                 pass
@@ -1064,6 +1065,7 @@ class hvPlotUIView(hvPlotBaseView):
         # and quadmesh work; tabular data uses the dataframe explorer.
         gridded = self._source_dataset()
         if gridded is not None:
+            # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
             import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
             args, kwargs = self._get_args(hvGridExplorer, gridded)
             return hvGridExplorer(*args, **kwargs)
@@ -1158,6 +1160,7 @@ class hvPlotView(hvPlotBaseView):
         else the long-form frame pivoted to xarray."""
         gridded = self._source_dataset()
         if gridded is not None:
+            # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
             import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
             return gridded
         if isinstance(df, pd.DataFrame):
@@ -1751,6 +1754,8 @@ class GraphicWalker(View):
     @classproperty
     def _panel_type(cls):
         try:
+            # Deferred so the view class still resolves without panel_gwalker,
+            # which the core install does not pull in.
             from panel_gwalker import GraphicWalker  # noqa: PLC0415
         except Exception:
             GraphicWalker = None
