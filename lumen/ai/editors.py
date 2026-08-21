@@ -209,13 +209,13 @@ class LumenEditor(Viewer):
             pipeline=pipeline, pagination='remote',
             min_height=200, sizing_mode="stretch_both", stylesheets=[
             """
-            .tabulator-footer {
-            display: flex;
-            text-align: left;
-            padding: 0px 125px 0px 0px;
+            .tabulator .tabulator-footer .tabulator-footer-contents {
+              padding-right: 125px !important;
             }
             @media (max-width: 430px) {
-              .tabulator-footer { padding-right: 0px; }
+              .tabulator .tabulator-footer .tabulator-footer-contents {
+                padding-right: 10px !important;
+              }
             }
             """
             ]
