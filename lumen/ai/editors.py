@@ -212,24 +212,50 @@ class LumenEditor(Viewer):
             .tabulator .tabulator-footer .tabulator-footer-contents {
               padding-right: 125px !important;
             }
-            @media (max-width: 430px) {
-              .tabulator .tabulator-footer .tabulator-footer-contents {
-                padding-right: 10px !important;
-              }
-            }
             """
             ]
         )
         controls = Row(
-            width=115,
+            width=115, height=30, align='center',
+            css_classes=['full-data-controls'],
             styles={
-                'position': 'absolute', 'right': '0px', 'bottom': '0px',
+                'position': 'absolute', 'right': '0px', 'bottom': '5px',
                 'margin-left': 'auto',
+                'align-items': 'center',
             },
             stylesheets=[
                 """
+                :host { align-items: center !important; }
                 @media (max-width: 430px) {
-                  :host { position: static !important; }
+                  :host {
+                    position: static !important;
+                    width: 100% !important;
+                    justify-content: flex-end !important;
+                  }
+                }
+                """
+            ],
+        )
+        layout = Column(
+            table, controls,
+            css_classes=['full-data-table-container'],
+            styles={'position': 'relative', 'container-type': 'inline-size'},
+            stylesheets=[
+                """
+                @container (max-width: 760px) {
+                  .full-data-controls {
+                    position: static !important;
+                    width: 100% !important;
+                    justify-content: flex-end !important;
+                  }
+                  .tabulator .tabulator-footer .tabulator-footer-contents {
+                    padding-right: 10px !important;
+                  }
+                }
+                @media (max-width: 430px) {
+                  .tabulator .tabulator-footer .tabulator-footer-contents {
+                    padding-right: 10px !important;
+                  }
                 }
                 """
             ],
@@ -253,7 +279,7 @@ class LumenEditor(Viewer):
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.append(full_data)
-        return Column(table, controls, styles={'position': 'relative'})
+        return layout
 
     async def render_context(self):
         view = self.component

@@ -231,15 +231,20 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     layout = await editor._render_pipeline(editor.component)
     table, controls = layout.objects
 
-    assert layout.styles == {'position': 'relative'}
+    assert layout.styles == {'position': 'relative', 'container-type': 'inline-size'}
+    assert layout.css_classes == ['full-data-table-container']
     assert table._pane.page_size == 10
     assert controls.width == 115
+    assert controls.height == 30
+    assert controls.align == 'center'
     assert controls.margin == 0
     assert controls.styles == {
-        'position': 'absolute', 'right': '0px', 'bottom': '0px',
+        'position': 'absolute', 'right': '0px', 'bottom': '5px',
         'margin-left': 'auto',
+        'align-items': 'center',
     }
     assert "position: static !important" in controls.stylesheets[0]
+    assert "@container (max-width: 760px)" in layout.stylesheets[0]
     full_data = controls.objects[0]
     assert full_data.label == "Full data"
     assert full_data.width is None
