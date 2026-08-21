@@ -20,6 +20,7 @@ from typing import (
 )
 from urllib.parse import quote, urlparse
 
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -41,7 +42,10 @@ from ..transforms.sql import (
     ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
     SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
-from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..util import (
+    as_narwhals, collect_lazy, get_dataframe_schema, is_lazyframe, is_narwhals,
+    is_ref, merge_schemas,
+)
 from ..validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
@@ -140,6 +144,11 @@ def cached(method, locks=None):
             filtered = FilterTransform.apply_to(
                 df, conditions=list(query.items())
             )
+        collected = collect_lazy(filtered)
+        if collected is not filtered:
+            # A lazy frame answers to collect, not compute, so it would
+            # otherwise sail past the dask branch below and fail much later.
+            return collected
         if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
             return filtered
         return filtered.compute()
@@ -496,6 +505,23 @@ class Source(MultiTypeComponent):
                 filename = f'{table}.parq'
             path = self.root / self.cache_dir / filename
             if path.is_file():
+                # A sidecar records which dataframe library wrote the file, so
+                # a warm cache hands back the same kind of frame the cold path
+                # produced rather than silently switching everything to pandas.
+                backend = path.with_suffix('.backend')
+                if backend.is_file():
+                    try:
+                        return (
+                            nw.read_parquet(
+                                str(path), backend=backend.read_text()
+                            ).to_native(),
+                            not bool(query)
+                        )
+                    except Exception:
+                        # The library that wrote this cache is no longer
+                        # installed. Parquet is portable, so read it as pandas
+                        # rather than treating the cache as a miss.
+                        pass
                 return pd.read_parquet(path), not bool(query)
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
@@ -531,12 +557,29 @@ class Source(MultiTypeComponent):
                 if isinstance(data, dd.DataFrame):
                     filepath = filepath.with_suffix('')
             try:
-                data.to_parquet(filepath)
+                narwhals_data = as_narwhals(data)
+                if is_narwhals(narwhals_data) and not isinstance(data, pd.DataFrame):
+                    # polars and pyarrow spell this write_parquet, and only an
+                    # eager frame has it. The sidecar written below is what
+                    # lets the read hand back this same kind of frame.
+                    if is_lazyframe(narwhals_data):
+                        narwhals_data = narwhals_data.collect()
+                    narwhals_data.write_parquet(str(filepath))
+                    filepath.with_suffix('.backend').write_text(
+                        str(narwhals_data.implementation)
+                    )
+                else:
+                    data.to_parquet(filepath)
+                    # A sidecar from an earlier non-pandas write would make the
+                    # next read hand back the wrong kind of frame.
+                    filepath.with_suffix('.backend').unlink(missing_ok=True)
             except Exception as e:
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    shutil.rmtree(path)
+                # Remove the file this write was aiming at, not the whole cache
+                # directory it lives in.
+                if filepath.is_file():
+                    filepath.unlink()
+                elif filepath.is_dir():
+                    shutil.rmtree(filepath)
                 self.param.warning(
                     f"Could not cache '{table}' to parquet file. "
                     f"Error during saving process: {e}"
@@ -797,6 +840,7 @@ class InMemorySource(Source):
         dask = query.pop('__dask', False)
         table = self.tables.get(table)
         df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        df = collect_lazy(df)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
     def add_table(self, name, table):
@@ -1746,8 +1790,8 @@ class DerivedSource(Source):
             transforms = list(self.transforms)
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
-            df = transform.apply(df)
-        return df
+            df = transform.apply(transform._coerce(df))
+        return collect_lazy(df)
 
     get.__doc__ = Source.get.__doc__
 

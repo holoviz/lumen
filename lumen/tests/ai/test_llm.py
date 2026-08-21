@@ -18,12 +18,13 @@ try:
         MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
         LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
     )
+    from lumen.ai.tools import FunctionTool
 
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from instructor.processing.multimodal import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,6 +42,12 @@ PROVIDER_SPECS = [
     pytest.param(LiteLLM, {}, set(), 0.7, id="litellm"),
     pytest.param(Ollama, {"api_key": "ollama"}, set(), 0.25, id="ollama"),
 ]
+
+ROUTED_MODEL_KWARGS = {
+    "default": {"model": "base-model"},
+    "edit": {"model": "edit-model", "routing": {"model": "router-model"}, "description": "Best for editing tables and visualizations"},
+    "sql": {"model": "sql-model"},
+}
 
 def _make_test_image() -> Image:
     """Create a tiny 1x1 PNG encoded as an instructor Image."""
@@ -870,3 +877,513 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
     assert OpenAI().api_key == "sk-from-env"
+
+
+# ---------------------------------------------------------------------------
+# Model routing
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def routing_llm():
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()}
+    return llm
+
+
+def test_route_spec_model_constrains_to_current_model_kwargs_keys(routing_llm):
+    """The Literal is rebuilt from model_kwargs at call time and rejects unknown keys."""
+    llm = routing_llm
+    route_spec_model = llm._route_spec_model()
+    schema = route_spec_model.model_json_schema()["properties"]["model_spec"]
+    assert set(schema["enum"]) == set(ROUTED_MODEL_KWARGS)
+    assert route_spec_model(model_spec="sql").model_spec == "sql"
+    with pytest.raises(ValidationError):
+        route_spec_model(model_spec="bogus")
+
+
+async def test_no_routing_key_passes_through(monkeypatch, routing_llm):
+    """Without a 'routing' key the model_spec passes through unchanged and the
+    routing model is never invoked."""
+    llm = routing_llm
+
+    async def fail_invoke(*args, **kwargs):
+        raise AssertionError("routing model must not be invoked")  # pragma: no cover
+
+    monkeypatch.setattr(llm, "invoke", fail_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    assert await llm._resolve_routing("sql", messages) == "sql"
+
+
+async def test_routing_invoked_with_dict_spec_and_decision_used(monkeypatch, routing_llm):
+    """When a 'routing' key is present, the routing model is invoked with a dict
+    spec, a dedicated system prompt and no tools, and its decision resolves to
+    the chosen entry's config dict."""
+    llm = routing_llm
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append((messages, kwargs))
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    resolved = await llm._resolve_routing("edit", messages)
+    assert resolved["model"] == "sql-model"
+    assert "routing" not in resolved
+
+    routed_messages, routed_kwargs = calls[0]
+    assert routed_messages == [{"role": "user", "content": "hi"}]
+    assert routed_kwargs["model_spec"] == {"model": "router-model"}
+    assert routed_kwargs["tools"] == []
+    assert routed_kwargs["system"] == llm._routing_system_prompt("edit")
+    assert issubclass(routed_kwargs["response_model"], BaseModel)
+
+
+async def test_routing_prompt_lists_options_with_descriptions(monkeypatch, routing_llm):
+    """The routing call gets a dedicated system prompt listing every configured
+    option with its optional description, and does not inherit the caller's
+    system prompt."""
+    llm = routing_llm
+    llm.model_kwargs["edit"]["description"] = "Best for editing tasks"
+    llm.model_kwargs["sql"]["description"] = "Best for SQL tasks"
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append((messages, kwargs))
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [
+        {"role": "system", "content": "You are a data analyst."},
+        {"role": "user", "content": "hi"},
+    ]
+    await llm._resolve_routing("edit", messages)
+
+    routed_messages, routed_kwargs = calls[0]
+    assert routed_kwargs["system"] == llm._routing_system_prompt("edit")
+    assert "Best for editing tasks" in routed_kwargs["system"]
+    assert "Best for SQL tasks" in routed_kwargs["system"]
+    assert routed_messages == [{"role": "user", "content": "hi"}]
+
+
+async def test_routing_exception_falls_back(monkeypatch, routing_llm):
+    """If the routing call raises, the fallback returns the original entry's
+    config dict (not the bare string) so the dict-bypass prevents
+    re-routing downstream."""
+    llm = routing_llm
+
+    async def fail_invoke(*args, **kwargs):
+        raise RuntimeError("router down")
+
+    monkeypatch.setattr(llm, "invoke", fail_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    result = await llm._resolve_routing("edit", messages)
+    assert isinstance(result, dict)
+    assert result["model"] == "edit-model"
+    assert "routing" not in result
+    assert "description" not in result
+
+
+async def test_dict_model_spec_never_routed(monkeypatch, routing_llm):
+    """A dict model_spec is never routed, even when its contents match keys used
+    elsewhere in the config."""
+    llm = routing_llm
+
+    async def fail_invoke(*args, **kwargs):
+        raise AssertionError("dict model_spec must not be routed")  # pragma: no cover
+
+    monkeypatch.setattr(llm, "invoke", fail_invoke)
+    messages = [{"role": "user", "content": "hi"}]
+    spec = {"model": "router-model", "routing": {"model": "other"}}
+    assert await llm._resolve_routing(spec, messages) == spec
+
+
+def test_combine_tools_empty_list_opts_out_of_instance_tools():
+    """tools=[] opts out of instance tools, while None uses them and a non-empty
+    list merges them."""
+    llm = _make(OpenAI, {})
+    llm.tools = ["instance-tool"]
+    assert llm._combine_tools(None) == ["instance-tool"]
+    assert llm._combine_tools([]) == []
+    assert llm._combine_tools(["per-call"]) == ["instance-tool", "per-call"]
+
+
+def test_invalid_routing_config_rejected_at_construction():
+    """A non-dict 'routing' entry fails loudly at construction time, not silently
+    at call time."""
+    with pytest.raises(ValueError, match="routing"):
+        OpenAI(api_key="sk-test", model_kwargs={
+            "default": {"model": "base"},
+            "edit": {"model": "edit-model", "routing": "router-model"},
+        })
+
+
+async def test_get_client_strips_routing_key(monkeypatch):
+    """The 'routing' key must never reach the SDK constructor (reviewer repro:
+    AsyncOpenAI.__init__ must not receive an unexpected 'routing' kwarg)."""
+    fake = MagicMock()
+    monkeypatch.setattr(openai, "AsyncOpenAI", fake)
+    llm = OpenAI(
+        api_key="sk-test",
+        model_kwargs={k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()},
+    )
+    client = await llm.get_client("edit")
+    assert client is not None
+    assert "routing" not in fake.call_args.kwargs
+
+
+async def test_get_client_strips_description_key(monkeypatch):
+    """The 'description' key must never reach the SDK constructor — it is
+    routing metadata only."""
+    fake = MagicMock()
+    monkeypatch.setattr(openai, "AsyncOpenAI", fake)
+    llm = OpenAI(
+        api_key="sk-test",
+        model_kwargs={k: dict(v) for k, v in ROUTED_MODEL_KWARGS.items()},
+    )
+    client = await llm.get_client("edit")
+    assert client is not None
+    assert "description" not in fake.call_args.kwargs
+
+
+async def test_invoke_uses_routed_model_spec(monkeypatch, routing_llm):
+    """invoke() resolves routing through the real path: the routing model runs
+    first (with a dedicated prompt and no tools), then the resolved config
+    reaches run_client with no 'routing' key."""
+    llm = routing_llm
+    run_client_specs = []
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        run_client_specs.append(dict(model_spec))
+        if kwargs.get("response_model") is not None:
+            return kwargs["response_model"](model_spec="sql")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+
+    output = await llm.invoke([{"role": "user", "content": "hi"}], model_spec="edit")
+    assert output == "done"
+    assert [spec["model"] for spec in run_client_specs] == ["router-model", "sql-model"]
+    assert all("routing" not in spec for spec in run_client_specs)
+
+
+def _stream_chunks(text: str = "", tool_calls: list[dict] | None = None):
+    async def gen():
+        if tool_calls:
+            for call in tool_calls:
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content="", tool_calls=[call]))]
+                )
+        else:
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content=text, tool_calls=None))]
+            )
+
+    return gen()
+
+
+async def test_stream_resolves_routing_per_invoke_not_per_stream(monkeypatch, routing_llm):
+    """Routing is resolved inside invoke(), not stream(). Both success and
+    fallback paths return a dict, so the dict-bypass mechanism prevents
+    re-routing across tool-loop rounds."""
+    llm = routing_llm
+    router_invocations = []
+    stream_specs = []
+
+    def add(a: int, b: int) -> int:
+        """Adds two integers."""
+        return a + b
+
+    tool = FunctionTool(add)
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        spec = dict(model_spec) if isinstance(model_spec, dict) else model_spec
+        if kwargs.get("response_model") is not None:
+            router_invocations.append(spec)
+            return kwargs["response_model"](model_spec="sql")
+        stream_specs.append(spec)
+        if kwargs.get("stream"):
+            if len(stream_specs) == 1:
+                return _stream_chunks(tool_calls=[
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": "add", "arguments": ""}},
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": None, "arguments": '{"a": 1, "b": 2}'}},
+                ])
+            return _stream_chunks(text="final answer")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    messages = [{"role": "user", "content": "hi"}]
+    outputs = [out async for out in llm.stream(messages, model_spec="edit", tools=[tool])]
+
+    assert len(router_invocations) == 1
+    assert [spec["model"] for spec in router_invocations] == ["router-model"]
+    assert [spec["model"] for spec in stream_specs] == ["sql-model", "sql-model"]
+    assert "final answer" in outputs
+
+
+async def test_stream_router_down_single_timeout(monkeypatch, routing_llm):
+    """When the router is unreachable, _resolve_routing returns a dict
+    (the fallback config) so the dict-bypass prevents re-routing on
+    every subsequent call — router-down pays exactly one routing attempt
+    per turn, not one per stream+invoke pair nor one per tool round."""
+    llm = routing_llm
+    routing_calls = []
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        if kwargs.get("response_model") is not None:
+            routing_calls.append(model_spec)
+            raise RuntimeError("router down")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    messages = [{"role": "user", "content": "hi"}]
+    output = await llm.invoke(messages, model_spec="edit")
+    assert output == "done"
+    # Exactly one routing attempt — the fallback dict is returned and
+    # used directly, so invoke() never tries routing a second time.
+    assert len(routing_calls) == 1
+    assert routing_calls[0] == {"model": "router-model"}
+
+
+async def test_stream_router_down_no_reroute_across_rounds(monkeypatch, routing_llm):
+    """When routing fails during stream(), the fallback dict prevents
+    re-routing on tool-loop recursion — stream rounds use the resolved
+    model directly without paying another routing timeout."""
+    llm = routing_llm
+    routing_attempts = []
+    stream_specs = []
+
+    def add(a: int, b: int) -> int:
+        """Adds two integers."""
+        return a + b
+
+    tool = FunctionTool(add)
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        spec = dict(model_spec) if isinstance(model_spec, dict) else model_spec
+        if kwargs.get("response_model") is not None:
+            routing_attempts.append(spec)
+            raise RuntimeError("router down")
+        stream_specs.append(spec)
+        if kwargs.get("stream"):
+            if len(stream_specs) == 1:
+                return _stream_chunks(tool_calls=[
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": "add", "arguments": ""}},
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": None, "arguments": '{"a": 1, "b": 2}'}},
+                ])
+            return _stream_chunks(text="fallback answer")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    messages = [{"role": "user", "content": "hi"}]
+    outputs = [out async for out in llm.stream(messages, model_spec="edit", tools=[tool])]
+
+    assert len(routing_attempts) == 1
+    assert routing_attempts[0] == {"model": "router-model"}
+    assert all(spec["model"] == "edit-model" for spec in stream_specs)
+    assert all("routing" not in spec for spec in stream_specs)
+    assert "fallback answer" in outputs
+
+
+async def test_routing_receives_only_last_user_message(monkeypatch, routing_llm):
+    """The routing call receives only the last user message, not the full
+    conversation history (which could be thousands of chars)."""
+    llm = routing_llm
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [
+        {"role": "system", "content": "You are helpful."},
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "user", "content": "second question"},
+    ]
+    await llm._resolve_routing("edit", messages)
+    assert calls[0] == [{"role": "user", "content": "second question"}]
+
+
+async def test_routing_strips_images_from_messages(monkeypatch, routing_llm):
+    """The routing call never receives raw image data — image content parts
+    are stripped so a small text-only router model is not sent base64 blobs."""
+    llm = routing_llm
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    messages = [
+        {"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            {"type": "text", "text": "describe this chart"},
+        ]},
+    ]
+    await llm._resolve_routing("edit", messages)
+    assert calls[0] == [{"role": "user", "content": [{"type": "text", "text": "describe this chart"}]}]
+
+
+async def test_routing_strips_binary_image_content(monkeypatch, routing_llm):
+    """Binary image content in the last user message is replaced with empty
+    string so the router does not receive raw bytes."""
+    llm = routing_llm
+    calls = []
+
+    async def fake_invoke(messages, **kwargs):
+        calls.append(messages)
+        return SimpleNamespace(model_spec="sql")
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    image_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    messages = [
+        {"role": "user", "content": image_bytes},
+    ]
+    await llm._resolve_routing("edit", messages)
+    assert calls[0] == [{"role": "user", "content": ""}]
+
+
+def test_spec_descriptions_used_as_fallback_in_routing_prompt(routing_llm):
+    """When model_kwargs entries lack a 'description' key, spec_descriptions
+    is consulted as fallback so the routing prompt is not full of
+    'No description provided.' lines."""
+    llm = routing_llm
+    llm.spec_descriptions = {
+        "default": "General purpose model",
+        "sql": "For SQL queries",
+    }
+    prompt = llm._routing_system_prompt("edit")
+    assert "General purpose model" in prompt
+    # edit already has an explicit description in ROUTED_MODEL_KWARGS
+    assert "Best for editing tables and visualizations" in prompt
+    assert "For SQL queries" in prompt
+    assert "No description provided" not in prompt
+
+
+def test_explicit_description_overrides_spec_descriptions(routing_llm):
+    """An explicit 'description' key in model_kwargs takes priority over
+    spec_descriptions."""
+    llm = routing_llm
+    llm.model_kwargs["sql"]["description"] = "Custom SQL description"
+    llm.spec_descriptions = {"sql": "Fallback SQL description"}
+    prompt = llm._routing_system_prompt("edit")
+    assert "Custom SQL description" in prompt
+    assert "Fallback SQL description" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Routing resolution through the model_kwargs fallback
+# ---------------------------------------------------------------------------
+
+async def _route_and_record(llm, model_spec, decision="sql"):
+    """Invoke through the real routing path, returning the models actually called."""
+    models = []
+
+    async def fake_run_client(spec, messages, **kwargs):
+        model = llm._get_model_kwargs(spec).get("model")
+        models.append(model)
+        if kwargs.get("response_model") is not None:
+            return SimpleNamespace(model_spec=decision)
+        return "done"
+
+    llm.run_client = fake_run_client
+    await llm.invoke([{"role": "user", "content": "hi"}], model_spec=model_spec)
+    return models
+
+
+@pytest.mark.parametrize("model_spec", ["sql", "chat", "vega_lite", "default"])
+async def test_routing_applies_to_specs_resolved_from_default(model_spec):
+    """Actors derive model_spec from their class name (sql, chat, vega_lite, ...),
+    which providers do not enumerate in model_kwargs. Those specs resolve to the
+    'default' entry, so 'default' declaring routing must route them too."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {
+        "default": {"model": "base-model", "routing": {"model": "router-model"}},
+        "ui": {"model": "ui-model"},
+    }
+    models = await _route_and_record(llm, model_spec, decision="ui")
+    assert models == ["router-model", "ui-model"]
+
+
+async def test_routing_skipped_when_resolved_entry_declares_none():
+    """An explicitly configured entry without routing is used as-is, even when
+    the 'default' entry declares routing."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {
+        "default": {"model": "base-model", "routing": {"model": "router-model"}},
+        "ui": {"model": "ui-model"},
+    }
+    assert await _route_and_record(llm, "ui") == ["ui-model"]
+
+
+async def test_llamacpp_repo_id_spec_never_routed():
+    """LlamaCpp resolves a '/' repo id to that model directly, so routing must
+    not override a model the caller named explicitly."""
+    llm = LlamaCpp(model_kwargs={
+        "default": {"repo_id": "unsloth/Qwen3-32B-GGUF", "routing": {"model": "router-model"}},
+    })
+    assert await llm._resolve_routing("unsloth/Qwen3-Coder-32B-A3B-Instruct-GGUF", []) == (
+        "unsloth/Qwen3-Coder-32B-A3B-Instruct-GGUF"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routing context stripping
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("content", [
+    pytest.param(_make_test_image(), id="bare-image"),
+    pytest.param(["describe this", _make_test_image()], id="list-image"),
+    pytest.param([{"type": "text", "text": "hi"},
+                  {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}],
+                 id="list-image-url-dict"),
+])
+def test_strip_for_routing_removes_every_image_shape(content):
+    """The routing model is small and usually text-only, so no image payload may
+    reach it in any of the content shapes _check_for_image produces."""
+    llm = _make(OpenAI, {})
+    stripped = llm._strip_for_routing([{"role": "user", "content": content}])
+    remaining = stripped[0]["content"]
+    items = remaining if isinstance(remaining, list) else [remaining]
+    assert not any(isinstance(item, Image) for item in items)
+    assert not any(isinstance(item, dict) and item.get("type") == "image_url" for item in items)
+
+
+# ---------------------------------------------------------------------------
+# Routing prompt content
+# ---------------------------------------------------------------------------
+
+def test_spec_descriptions_documented_by_default():
+    """The universal spec keys describe themselves without the UI layer having
+    been constructed, so headless routing is not left with bare key names."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {
+        "default": {"model": "base-model", "routing": {"model": "router-model"}},
+        "ui": {"model": "ui-model"},
+    }
+    prompt = llm._routing_system_prompt("default")
+    assert "No description provided." not in prompt
+
+
+def test_routing_prompt_names_the_requested_spec(routing_llm):
+    """The router picks a model for a task, so it is told which task was asked
+    for rather than inferring it from the user message alone."""
+    llm = routing_llm
+    assert "sql" in llm._routing_system_prompt("sql")
+
+
+def test_model_card_offers_user_supplied_select_models():
+    """select_models is user-settable at construction, so the dialog dropdown has
+    to read the instance rather than the provider class default."""
+    from lumen.ai.llm_dialog import LLMModelCard
+
+    llm = OpenAI(model_kwargs={"default": {"model": "m"}}, select_models=["my-model", "other"])
+    card = LLMModelCard(llm=llm, model_type="default", llm_choices=[], description="")
+    assert card._get_default_models() == ["m", "my-model", "other"]

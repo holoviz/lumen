@@ -46,13 +46,17 @@ from ..pipeline import Pipeline
 from ..sources.base import Source
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log, try_import_xarray
+from ..util import (
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, log, try_import,
+    try_import_xarray,
+)
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
+    from narwhals.stable.v2.typing import Frame, IntoFrame
     from panel.chat.step import ChatStep
 
     from .editors import VegaLiteEditor
@@ -622,14 +626,27 @@ async def get_pipeline(**kwargs):
     return await asyncio.to_thread(get_pipeline_sync)
 
 
+async def get_frame(pipeline):
+    """
+    Return pipeline.data off the main thread, in whichever dataframe
+    library the source produced it.
+
+    For consumers that accept any of them; everything written against pandas
+    calls get_data instead.
+    """
+    def get_frame_sync():
+        return pipeline.data
+    return await asyncio.to_thread(get_frame_sync)
+
+
 async def get_data(pipeline):
     """
-    A wrapper be able to use asyncio.to_thread and not
-    block the main thread when calling pipeline.data
+    Return pipeline.data as pandas, off the main thread.
+
+    result_to_dataframe, the LLM code sandbox and the plotting agents are
+    all written against pandas.
     """
-    def get_data_sync():
-        return pipeline.data
-    return await asyncio.to_thread(get_data_sync)
+    return as_pandas(await get_frame(pipeline))
 
 
 def _score_column_relevance(series: pd.Series, n_rows: int) -> float:
@@ -738,8 +755,56 @@ def _select_relevant_columns(
     return selected, len(selected) < len(columns)
 
 
+def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int, int], bool]:
+    """
+    Return df as pandas, row-sampled for profiling, along with its true shape.
+
+    Sampling before the pandas conversion is the point of this function. The
+    summary reads PROFILE_SAMPLE_ROWS rows at most, and converting first pays
+    for the whole frame to get them: on a 2M x 15 polars frame the conversion
+    alone costs 0.38s and allocates ~700MB.
+
+    The shape returned is the frame's own rather than the sample's, so the
+    summary still reports the real row count.
+
+    Parameters
+    ----------
+    df : IntoFrame | Frame
+        The frame to profile, in pandas, dask or any library narwhals
+        supports.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, tuple[int, int], bool]
+        The (possibly sampled) pandas frame, the original frame's shape, and
+        whether the frame was sampled.
+    """
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        # A dask frame reports its shape as a Delayed, which none of the
+        # branches below can act on. Sampling partitions would have to compute
+        # the row count anyway, so compute the frame and profile the result.
+        df = df.compute()
+
+    narwhals_df = df if isinstance(df, pd.DataFrame) else as_narwhals(df)
+    if is_lazyframe(narwhals_df):
+        # Collect in the frame's own library rather than through pandas; the
+        # sample below is what keeps the conversion small.
+        narwhals_df = narwhals_df.collect()
+    if is_narwhals(narwhals_df):
+        shape = narwhals_df.shape
+        if shape[0] <= PROFILE_SAMPLE_ROWS:
+            return narwhals_df.to_pandas(), shape, False
+        return narwhals_df.sample(n=PROFILE_SAMPLE_ROWS).to_pandas(), shape, True
+
+    shape = df.shape
+    if shape[0] <= PROFILE_SAMPLE_ROWS:
+        return df, shape, False
+    return df.sample(PROFILE_SAMPLE_ROWS), shape, True
+
+
 def describe_data_sync(
-    df: pd.DataFrame,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -751,8 +816,8 @@ def describe_data_sync(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
@@ -776,8 +841,8 @@ def describe_data_sync(
     str
         YAML-formatted summary of the DataFrame
     """
-    size = df.size
-    shape = df.shape
+    df, shape, is_sampled = _sample_for_summary(df)
+    size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
         records = df.to_dict(orient='records')
@@ -786,11 +851,6 @@ def describe_data_sync(
     if size < 100:
         header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return header + df.to_markdown(index=False)
-
-    is_sampled = False
-    if shape[0] > PROFILE_SAMPLE_ROWS:
-        is_sampled = True
-        df = df.sample(PROFILE_SAMPLE_ROWS)
 
     df = df.sort_index()
 
@@ -935,7 +995,7 @@ def describe_data_sync(
 
 
 async def describe_data(
-    df: pd.DataFrame,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -947,8 +1007,8 @@ async def describe_data(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool

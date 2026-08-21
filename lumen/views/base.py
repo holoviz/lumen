@@ -44,8 +44,9 @@ from ..state import state
 from ..transforms.base import Transform
 from ..transforms.sql import SQLTransform
 from ..util import (
-    VARIABLE_RE, catch_and_notify, geometry_to_geojson, geometry_to_wkt,
-    is_geodataframe, is_ref, resolve_module_reference, try_import_xarray,
+    VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
+    geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
+    try_import_xarray,
 )
 from ..validation import ValidationError
 
@@ -617,7 +618,10 @@ class View(MultiTypeComponent, Viewer):
             return self._cache
         if self.pipeline.data is None:
             self.pipeline._update_data()
-        self._cache = data = self.pipeline.data
+        # Views hand the frame straight to hvplot, Tabulator, Perspective, Vega
+        # and friends, none of which read anything but pandas, so this is where
+        # any other dataframe library is materialized.
+        self._cache = data = as_pandas(self.pipeline.data)
         if self.limit is not None:
             data = data.iloc[:self.limit]
         return data.copy()
