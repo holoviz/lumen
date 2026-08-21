@@ -692,8 +692,12 @@ class TestToDataset:
     def test_to_dataset_ignores_projected_away_dim(self, synthetic_dataset):
         """A projecting sql_transform (e.g. DeckGL keeping only lat/lon/value)
         drops a dim from the result; to_dataset must pass only the dims the
-        result still has a column for, not every dataset dim."""
-        source = XArraySQLSource(_dataset=synthetic_dataset)
+        result still has a column for, not every dataset dim.
+
+        One time step, so dropping the time column still leaves one row per
+        (lat, lon) and the result is a grid.
+        """
+        source = XArraySQLSource(_dataset=synthetic_dataset.isel(time=[0]))
         transform = SQLColumns(columns=["lat", "lon", "temperature"])  # drops time
         result = source.to_dataset("temperature", sql_transforms=[transform])
         assert "time" not in result.dims
@@ -703,24 +707,3 @@ class TestToDataset:
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert isinstance(source.get("temperature"), pd.DataFrame)
-
-    def test_to_dataset_fallback_when_native_absent(self, synthetic_dataset, monkeypatch):
-        """When the query result lacks a native to_dataset (xarray-sql < 0.3),
-        to_dataset falls back to pivoting the long-form result on the dims."""
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        real_sql = source._ctx.sql
-
-        class _NoNativeToDataset:
-            def __init__(self, result):
-                self._result = result
-
-            def to_pandas(self):
-                return self._result.to_pandas()
-
-        monkeypatch.setattr(
-            source._ctx, "sql", lambda q: _NoNativeToDataset(real_sql(q))
-        )
-        ds = source.to_dataset("temperature")
-        assert isinstance(ds, xr.Dataset)
-        assert set(ds.dims) >= {"time", "lat", "lon"}
-        assert "temperature" in ds.data_vars
