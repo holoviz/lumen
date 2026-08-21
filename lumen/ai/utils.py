@@ -1804,7 +1804,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     if isinstance(result, Source):
         return None
 
-    # SourceResult from controls — extract the DataFrame from the first source
+    # SourceResult from controls — extract the DataFrame from the first source.
+    # Deferred: the controls package reaches .editors, which imports this module.
     from .controls.ingest.result import SourceResult  # noqa: PLC0415
     if isinstance(result, SourceResult):
         if not result.sources or not result.table:

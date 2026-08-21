@@ -23,6 +23,10 @@ class _session_state:
     The session_state object holds both global and session specific
     state making it easy to manage access to Sources and Filters
     across components.
+
+    Every ``lumen.*`` import in the method bodies below is deferred on
+    purpose: the components this module hands back all import ``state``
+    themselves, so resolving them at module scope is a cycle.
     """
 
     global_sources: dict[str, Source] = {}

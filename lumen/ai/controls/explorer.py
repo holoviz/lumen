@@ -98,6 +98,7 @@ class TableExplorer(Viewer):
         if not self.table_slug:
             return
 
+        # Deferred: .editors imports the controls package, which imports this module.
         from ..editors import SQLEditor  # noqa: PLC0415
 
         source = self.source_map[self.table_slug]

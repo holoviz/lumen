@@ -584,6 +584,8 @@ class VectorStore(LLMUser):
         -------
         List of assigned IDs for the added items.
         """
+        # Deferred for the same reason as get_markitdown: markitdown reaches
+        # pandas through its xlsx converter and costs ~2s to import.
         from markitdown import (  # noqa: PLC0415
             FileConversionException, StreamInfo,
         )

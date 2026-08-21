@@ -765,6 +765,7 @@ class Llm(param.Parameterized):
             else:
                 tool_context = None
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
+                # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
                 from .tools import FunctionTool  # noqa: PLC0415
                 tool = FunctionTool(tool)
             if hasattr(tool, "_model"):
@@ -941,6 +942,7 @@ class Llm(param.Parameterized):
         tool_contexts: dict[str, Any],
         messages: list[Message],
     ) -> list[Message]:
+        # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
         from .tools import FunctionTool, MCPTool  # noqa: PLC0415
 
         async def run_single_tool_call(call: Any) -> Message | None:
