@@ -207,7 +207,7 @@ class LumenEditor(Viewer):
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote',
-            page_size=20, min_height=200, sizing_mode="stretch_both", stylesheets=[
+            page_size=10, min_height=200, sizing_mode="stretch_both", stylesheets=[
             """
             .tabulator .tabulator-footer .tabulator-footer-contents {
               padding-right: 125px !important;

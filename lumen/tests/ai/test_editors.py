@@ -232,7 +232,7 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     table, controls = layout.objects
 
     assert layout.styles == {'position': 'relative'}
-    assert table._pane.page_size == 20
+    assert table._pane.page_size == 10
     assert controls.width == 115
     assert controls.margin == 0
     assert controls.styles == {
