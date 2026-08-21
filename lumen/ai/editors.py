@@ -213,8 +213,18 @@ class LumenEditor(Viewer):
               padding-right: 125px !important;
             }
             @media (max-width: 1600px) {
-              .tabulator .tabulator-pages .tabulator-page:not(.active) {
-                display: none !important;
+              .tabulator .tabulator-page {
+                min-width: 0 !important;
+                padding-left: 6px !important;
+                padding-right: 6px !important;
+                font-size: 0.9em !important;
+              }
+              .tabulator .tabulator-pages {
+                margin-left: 4px !important;
+                margin-right: 4px !important;
+              }
+              .tabulator .tabulator-paginator {
+                min-width: 0 !important;
               }
               .tabulator .tabulator-footer .tabulator-footer-contents {
                 padding-right: 110px !important;
@@ -224,10 +234,10 @@ class LumenEditor(Viewer):
             ]
         )
         controls = Row(
-            width=110, height=30, align='center',
+            width=110, height=36, align='center',
             css_classes=['full-data-controls'],
             styles={
-                'position': 'absolute', 'right': '0px', 'bottom': '12px',
+                'position': 'absolute', 'right': '0px', 'bottom': '9px',
                 'margin-left': 'auto',
                 'align-items': 'center',
             },
@@ -238,7 +248,7 @@ class LumenEditor(Viewer):
                   :host {
                     position: absolute !important;
                     right: 0 !important;
-                    bottom: 12px !important;
+                    bottom: 9px !important;
                     width: 110px !important;
                     justify-content: flex-end !important;
                   }
@@ -267,7 +277,7 @@ class LumenEditor(Viewer):
 
                 full_data = Checkbox(
                     label='Full data', css_classes=['full-data-checkbox'],
-                    margin=0, visible=limited
+                    height=36, margin=0, visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.append(full_data)

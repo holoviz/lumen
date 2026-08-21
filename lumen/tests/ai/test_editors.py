@@ -235,20 +235,26 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     assert layout.css_classes == ['full-data-table-container']
     assert table._pane.page_size == 10
     assert controls.width == 110
-    assert controls.height == 30
+    assert controls.height == 36
     assert controls.align == 'center'
     assert controls.margin == 0
     assert controls.styles == {
-        'position': 'absolute', 'right': '0px', 'bottom': '12px',
+        'position': 'absolute', 'right': '0px', 'bottom': '9px',
         'margin-left': 'auto',
         'align-items': 'center',
     }
     assert ":host { align-items: center !important; }" in controls.stylesheets[0]
     assert not layout.stylesheets
-    assert "tabulator-page:not(.active)" in table._pane.stylesheets[0]
+    table_styles = table._pane.stylesheets[0]
+    assert "tabulator-page:not(.active)" not in table_styles
+    assert "padding-left: 6px !important" in table_styles
+    assert "padding-right: 6px !important" in table_styles
+    assert "font-size: 0.9em !important" in table_styles
+    assert "min-width: 0 !important" in table_styles
     full_data = controls.objects[0]
     assert full_data.label == "Full data"
     assert full_data.width is None
+    assert full_data.height == 36
     assert full_data.css_classes == ['full-data-checkbox']
     assert full_data.margin == 0
     assert full_data.visible
