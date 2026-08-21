@@ -207,7 +207,7 @@ class LumenEditor(Viewer):
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote',
-            min_height=200, sizing_mode="stretch_both", stylesheets=[
+            page_size=20, min_height=200, sizing_mode="stretch_both", stylesheets=[
             """
             .tabulator .tabulator-footer .tabulator-footer-contents {
               padding-right: 125px !important;
@@ -243,8 +243,11 @@ class LumenEditor(Viewer):
             data = as_pandas(pipeline.data)
             limited = len(data) == sql_limit.limit
             if limited:
+                limited_limit = sql_limit.limit
+
                 def unlimit(e):
-                    sql_limit.limit = None if e.new else 1_000_000
+                    sql_limit.limit = None if e.new else limited_limit
+
                 full_data = Checkbox(
                     label='Full data', margin=(0, 10, 0, 0), visible=limited
                 )

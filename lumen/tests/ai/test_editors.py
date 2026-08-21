@@ -229,9 +229,10 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     assert len(editor.component.data) == 3
 
     layout = await editor._render_pipeline(editor.component)
-    _table, controls = layout.objects
+    table, controls = layout.objects
 
     assert layout.styles == {'position': 'relative'}
+    assert table._pane.page_size == 20
     assert controls.width == 115
     assert controls.margin == 0
     assert controls.styles == {
@@ -248,6 +249,10 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     full_data.value = True
     assert editor.component.sql_transforms[0].limit is None
     assert len(editor.component.data) == 4
+
+    full_data.value = False
+    assert editor.component.sql_transforms[0].limit == 3
+    assert len(editor.component.data) == 3
 
 
 @pytest.fixture
