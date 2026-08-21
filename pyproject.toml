@@ -27,34 +27,17 @@ classifiers = [
 ]
 dependencies = [
     "bokeh",
-    "chardet",
-    "duckdb >=1.2.0",
-    "lxml",
-    "griffe",
     "holoviews >=1.17.0",
     "hvplot",
-    "instructor >=1.14.3",
-    "intake <2",
     "jinja2 >3.0",
-    "markitdown",
     "narwhals >=2",
-    "nbformat",
     "numpy",
     "packaging",
     "pandas",
     "panel >=1.7.5",
-    "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
-    "panel-splitjs >=0.4.0",
     "param >=2.2.1",
-    "pyarrow",
-    "pydantic >=2.8.0",
-    "pydantic-extra-types",
-    "semchunk",
     "sqlglot[c]",
-    "tabulate",
-    "tiktoken",
-    "vl-convert-python",
 ]
 
 [project.urls]
@@ -63,12 +46,25 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars', 'pyarrow']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'chardet', 'lxml', 'polars', 'pyarrow']
 dev = [
-    'lumen[tests,sql,ai-openai,xarray,geo]',
+    'lumen[tests,sql,ai,duckdb,intake,graphic-walker,xarray,geo]',
     'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
+ai = [
+    'instructor >=1.14.3',
+    'griffe',
+    'markitdown',
+    'nbformat',
+    'pydantic >=2.8.0',
+    'pydantic-extra-types',
+    'semchunk',
+    'tabulate',
+    'tiktoken',
+    'vl-convert-python',
+    'panel-splitjs >=0.4.0',
+]
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-openrouter = ['lumen[ai-openai]']
@@ -82,6 +78,9 @@ ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
+duckdb = ['duckdb >=1.2.0']
+graphic-walker = ['panel-graphic-walker[kernel] >=0.6.4']
+intake = ['intake <2']
 xarray = ['xarray', 'xarray-sql >=0.3.1', 'netCDF4', 'zarr']
 xarray-grib = ['lumen[xarray]', 'cfgrib', 'eccodes']
 geo = ['geopandas', 'geoviews']
