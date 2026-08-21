@@ -212,6 +212,10 @@ below run on it natively. Things to know before choosing one:
   empty `value_vars`.
 - Anything touching the pandas index (`query`, `eval`, `stack`, `unstack`,
   `set_index`, `reset_index`) always converts.
+- Converting does not change an integer or boolean column's type. numpy has no
+  missing value for either, so a column holding one comes across as the pandas
+  nullable dtype (`Int64`, `boolean`) rather than widening to `float64` or
+  `object`. An id stays an id, whichever configuration ran.
 - Views convert to pandas regardless, because hvPlot, Tabulator, Perspective and
   Vega only read pandas. Returning polars saves work up to the view, not through
   it.

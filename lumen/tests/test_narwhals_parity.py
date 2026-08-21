@@ -31,6 +31,11 @@ FRAMES = {
                'i': [4, 3, 2, 1]},
     'infkey': {'g': [1.0, float('inf'), 1.0, 2.0], 'v': [1.0, 2.0, 3.0, 4.0],
                'i': [4, 3, 2, 1]},
+    # A nullable integer and boolean is the one shape pandas cannot hold in a
+    # numpy dtype, so it is where a conversion silently changes the schema.
+    'nullable': {'g': ['b', 'a', 'b', 'a'], 'v': [1.0, 2.0, 3.0, 4.0],
+                 'i': pd.Series([4, None, 2, 1], dtype='Int64'),
+                 'b': pd.Series([True, None, False, True], dtype='boolean')},
 }
 
 # (transform, kwargs, frame name). Anything a spec can legally express.
@@ -88,7 +93,14 @@ CASES = [
     (Filter, {'conditions': [('v', (1.0, 3.0))]}, 'nulls'),
     (Filter, {'conditions': [('v', [(1.0, 1.0), (4.0, 4.0)])]}, 'nulls'),
     (Filter, {'conditions': [('i', 3), ('g', ['a'])]}, 'plain'),
+    (DropNA, {'how': 'all'}, 'nullable'),
+    (Sort, {'by': []}, 'nullable'),
+    (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'median'}, 'nullable'),
 ]
+
+# The subset of CASES above that converts to pandas on a frame holding a
+# nullable column, which is where the conversion used to change the schema.
+NULLABLE_FALLBACKS = [c for c in CASES if c[2] == 'nullable']
 
 
 def assert_native_path(caplog, backend):
@@ -180,6 +192,23 @@ def test_row_order_matches_pandas(constructor, transform, kwargs, frame_name):
     result = as_pandas(transform.apply_to(constructor(data), **kwargs))
     assert [_missing_to_none(r) for r in result.values.tolist()] == \
         [_missing_to_none(r) for r in reference.values.tolist()]
+
+
+@pytest.mark.parametrize("transform, kwargs, frame_name", [
+    pytest.param(t, k, f, id=f"{t.__name__}-{f}-{sorted(k.items())}")
+    for t, k, f in NULLABLE_FALLBACKS
+])
+def test_fallback_dtypes_match_pandas(constructor, transform, kwargs, frame_name):
+    """The comparison above passes check_dtype=False; this is the dtype half.
+
+    A configuration that converts must come back with the dtypes the pandas
+    path produces, or two adjacent configurations of one transform disagree on
+    the schema and an id renders as 3.0.
+    """
+    data = FRAMES[frame_name]
+    reference = as_pandas(transform.apply_to(pd.DataFrame(data), **kwargs))
+    result = as_pandas(transform.apply_to(constructor(data), **kwargs))
+    assert result.dtypes.astype(str).to_dict() == reference.dtypes.astype(str).to_dict()
 
 
 def test_schema_matches_pandas_over_dtypes(constructor):
