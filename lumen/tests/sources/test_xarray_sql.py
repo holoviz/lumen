@@ -662,23 +662,6 @@ class TestAsync:
 
 # ---- to_dataset (gridded output via xarray-sql) ----
 
-def _drop_native_to_dataset(source, monkeypatch):
-    """Make source take the long-form pivot fallback rather than the native
-    to_dataset, so the fallback is covered whatever xarray-sql is installed."""
-    real_sql = source._ctx.sql
-
-    class _NoNativeToDataset:
-        """A query result as xarray-sql < 0.3 returns it, without to_dataset."""
-
-        def __init__(self, result):
-            self._result = result
-
-        def to_pandas(self):
-            return self._result.to_pandas()
-
-    monkeypatch.setattr(source._ctx, "sql", lambda q: _NoNativeToDataset(real_sql(q)))
-
-
 class TestToDataset:
 
     def test_to_dataset_returns_gridded(self, synthetic_dataset):
@@ -720,40 +703,7 @@ class TestToDataset:
         assert "time" not in result.dims
         assert set(result.dims) == {"lat", "lon"}
 
-    def test_to_dataset_declines_a_result_that_is_not_a_grid(
-        self, synthetic_dataset, monkeypatch
-    ):
-        """Projecting a dim away leaves the rows it separated on top of each
-        other, so the remaining dims no longer index one row each. Callers
-        take the long-form frame when there is no grid, so None is the answer
-        rather than an error from inside xarray.
-        """
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        _drop_native_to_dataset(source, monkeypatch)
-        transform = SQLColumns(columns=["lat", "lon", "temperature"])
-        assert source.to_dataset("temperature", sql_transforms=[transform]) is None
-
-    def test_to_dataset_declines_a_result_with_no_dim_column(
-        self, synthetic_dataset, monkeypatch
-    ):
-        """An aggregating transform can leave no dim column at all, and a
-        Dataset cannot be built without one."""
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        _drop_native_to_dataset(source, monkeypatch)
-        transform = SQLColumns(columns=["temperature"])
-        assert source.to_dataset("temperature", sql_transforms=[transform]) is None
-
     def test_get_still_returns_long_form(self, synthetic_dataset):
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert isinstance(source.get("temperature"), pd.DataFrame)
-
-    def test_to_dataset_fallback_when_native_absent(self, synthetic_dataset, monkeypatch):
-        """When the query result lacks a native to_dataset (xarray-sql < 0.3),
-        to_dataset falls back to pivoting the long-form result on the dims."""
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        _drop_native_to_dataset(source, monkeypatch)
-        ds = source.to_dataset("temperature")
-        assert isinstance(ds, xr.Dataset)
-        assert set(ds.dims) >= {"time", "lat", "lon"}
-        assert "temperature" in ds.data_vars

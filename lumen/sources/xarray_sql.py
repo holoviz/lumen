@@ -276,34 +276,20 @@ class XArraySQLSource(BaseSQLSource):
         return self.execute(self._build_sql(table, **query))
 
     def to_dataset(self, table, **query):
-        """Return the query result as a gridded ``xr.Dataset``, or None.
+        """Return the query result as a gridded ``xr.Dataset``.
 
-        Uses xarray-sql's ``to_dataset`` (lazy, keeps the data gridded) when
-        the installed version supports it, so a gridded source is never
-        materialized as long-form. Falls back to pivoting the long-form result
-        on the dataset dims for xarray-sql < 0.3.
-
-        None means the result is not a grid, and callers fall back to the
-        long-form frame.
+        Uses xarray-sql's ``to_dataset``, which is lazy and keeps the data
+        gridded, so a gridded source is never materialized as long-form.
         """
         result = self._ctx.sql(self._build_sql(table, **query))
-        if hasattr(result, 'to_dataset'):
-            # Pass only the dims the result actually has a column for. Multiple
-            # data vars need dims passed explicitly (the FROM clause is
-            # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
-            # aggregating sql_transform can leave a dataset dim out of the
-            # result, and to_dataset(dims=...) errors on a dim it can't find.
-            names = set(result.schema().names)
-            dims = [d for d in self._dataset.dims if d in names]
-            return result.to_dataset(dims=dims)
-        df = result.to_pandas()
-        present = [d for d in self._dataset.dims if d in df.columns]
-        if not present or df.duplicated(subset=present).any():
-            # A projecting sql_transform that drops a dim leaves the rows that
-            # dim separated on top of each other, so the surviving dims no
-            # longer index one row each and there is no grid to build.
-            return None
-        return df.set_index(present).to_xarray()
+        # Pass only the dims the result actually has a column for. Multiple
+        # data vars need dims passed explicitly (the FROM clause is
+        # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
+        # aggregating sql_transform can leave a dataset dim out of the
+        # result, and to_dataset(dims=...) errors on a dim it can't find.
+        names = set(result.schema().names)
+        dims = [d for d in self._dataset.dims if d in names]
+        return result.to_dataset(dims=dims)
 
     def create_sql_expr_source(
         self,
