@@ -276,6 +276,19 @@ class Transform(MultiTypeComponent):
         """
         return table
 
+    def requires_columns(self) -> set[str] | None:
+        """
+        Return the columns this transform reads, or None if it may read any.
+
+        A Pipeline uses this to narrow the query it sends to a SQL source to
+        the columns something actually needs. None is the safe answer and the
+        default: it means the query cannot be narrowed, because a projection
+        might drop a column this transform reads. Only override it where
+        every column the transform touches is named by its parameters, and
+        return None for the parameter values that mean "all the rest".
+        """
+        return None
+
     @property
     def control_panel(self) -> Viewable:
         return pn.Param(
@@ -514,6 +527,12 @@ class Aggregate(Transform):
 
     _narwhals: ClassVar[bool] = True
 
+    def requires_columns(self) -> set[str] | None:
+        if not self.columns:
+            # Without an explicit selection every numeric column is aggregated.
+            return None
+        return set(self.by or []) | set(self.columns)
+
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
             if self.method not in _NARWHALS_AGGREGATIONS:
@@ -588,6 +607,9 @@ class Sort(Transform):
 
     _narwhals: ClassVar[bool] = True
 
+    def requires_columns(self) -> set[str] | None:
+        return set(self.by or [])
+
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
             if not self.by:
@@ -658,6 +680,9 @@ class Columns(Transform):
     _field_params: ClassVar[list[str]] = ['columns']
 
     _narwhals: ClassVar[bool] = True
+
+    def requires_columns(self) -> set[str] | None:
+        return set(self.columns or [])
 
     def apply(self, table: DataFrame) -> DataFrame:
         result, table = self._try_narwhals(table, lambda f: f.select(self.columns))
@@ -960,6 +985,11 @@ class SetIndex(Transform):
     transform_type: ClassVar[str] = 'set_index'
 
     _field_params: ClassVar[list[str]] = ['keys']
+
+    def requires_columns(self) -> set[str] | None:
+        if self.keys is None:
+            return None
+        return {self.keys} if isinstance(self.keys, str) else set(self.keys)
 
     def apply(self, table: DataFrame) -> DataFrame:
         return table.set_index(
