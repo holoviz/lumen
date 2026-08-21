@@ -1332,7 +1332,9 @@ def _get_token_encoder():
     if "encoder" in _TOKEN_ENCODER_CACHE:
         return _TOKEN_ENCODER_CACHE["encoder"]
     try:
-        import tiktoken
+        # Deferred so a missing tiktoken degrades to the character estimate
+        # rather than breaking the import.
+        import tiktoken  # noqa: PLC0415
 
         encoder = tiktoken.get_encoding(TOKEN_ENCODING)
     except Exception as e:
@@ -1858,8 +1860,9 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     if isinstance(result, Source):
         return None
 
-    # SourceResult from controls — extract the DataFrame from the first source
-    from .controls.ingest.result import SourceResult
+    # SourceResult from controls — extract the DataFrame from the first source.
+    # Deferred: the controls package reaches .editors, which imports this module.
+    from .controls.ingest.result import SourceResult  # noqa: PLC0415
     if isinstance(result, SourceResult):
         if not result.sources or not result.table:
             return None
@@ -2085,7 +2088,7 @@ def normalize_vegalite_spec(
     """
     if editor_type is None:
         # Imported lazily to avoid an editors -> utils import cycle.
-        from .editors import VegaLiteEditor
+        from .editors import VegaLiteEditor  # noqa: PLC0415
         editor_type = VegaLiteEditor
 
     # Remove wrapper properties that aren't part of Vega-Lite spec

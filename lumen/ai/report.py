@@ -40,7 +40,8 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    format_output, make_md_cell, make_preamble, write_notebook,
+    docx_add_chart, docx_add_markdown, docx_add_table, format_output,
+    make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
@@ -1237,9 +1238,7 @@ class Report(TaskGroup):
                 "Exporting a report to Word requires python-docx; install it with "
                 "`pip install python-docx`."
             )
-        from docx import Document
-
-        from .export import docx_add_chart, docx_add_markdown, docx_add_table
+        from docx import Document  # noqa: PLC0415
 
         doc = Document()
         pending: list[tuple[int, str]] = []

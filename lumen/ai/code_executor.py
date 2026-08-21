@@ -338,7 +338,7 @@ class AltairExecutor(CodeExecutor):
 
     @classmethod
     def _get_injected_modules(cls) -> dict[str, Any]:
-        import altair as alt
+        import altair as alt  # noqa: PLC0415
         return {'alt': alt, 'altair': alt}
 
     @classmethod
@@ -348,7 +348,7 @@ class AltairExecutor(CodeExecutor):
 
     @classmethod
     def _validate_result(cls, result: Any) -> None:
-        import altair as alt
+        import altair as alt  # noqa: PLC0415
         valid_types = (
             alt.Chart, alt.LayerChart, alt.HConcatChart,
             alt.VConcatChart, alt.FacetChart, alt.RepeatChart
@@ -366,11 +366,11 @@ class PyDeckExecutor(CodeExecutor):
 
     @classmethod
     def _get_injected_modules(cls) -> dict[str, Any]:
-        import pydeck as pdk
+        import pydeck as pdk  # noqa: PLC0415
         return {'pdk': pdk, 'pydeck': pdk}
 
     @classmethod
     def _validate_result(cls, result: Any) -> None:
-        import pydeck as pdk
+        import pydeck as pdk  # noqa: PLC0415
         if not isinstance(result, pdk.Deck):
             raise ValueError(f"'deck' must be a pydeck.Deck, got {type(result).__name__}")

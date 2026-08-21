@@ -951,7 +951,7 @@ class Melt(Transform):
         if isinstance(table, pd.DataFrame):
             melt = pd.melt
         else:
-            import dask.dataframe as dd
+            import dask.dataframe as dd  # noqa: PLC0415
             melt = dd.melt
         return melt(
             table, id_vars=self.id_vars, value_vars=self.value_vars,
