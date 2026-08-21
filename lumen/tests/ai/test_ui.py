@@ -1952,3 +1952,38 @@ def test_resolve_data_geojson_startup(tmp_path):
     # this verifies loading without needing the GEOMETRY fetch fix from #1903
     wkt = source.execute("SELECT ST_AsText(geometry) AS wkt FROM counties LIMIT 1")
     assert wkt["wkt"].iloc[0].startswith("POLYGON")
+
+
+# ---------------------------------------------------------------------------
+# Resolved model footer label (issue #2043)
+# ---------------------------------------------------------------------------
+
+def test_ensure_model_label_adds_label(explorer_ui):
+    """_ensure_model_label inserts an 'Answered by <model>' Typography when
+    the LLM has a resolved model name."""
+    ui = explorer_ui
+    ui.llm._resolved_model = "gpt-test"
+    footer = []
+    ui._ensure_model_label(footer)
+    assert len(footer) == 1
+    assert "gpt-test" in footer[0].object
+    assert footer[0].name == "ModelLabel"
+
+
+def test_ensure_model_label_no_duplicate(explorer_ui):
+    """_ensure_model_label does not add a second label if one already exists."""
+    ui = explorer_ui
+    ui.llm._resolved_model = "gpt-test"
+    footer = []
+    ui._ensure_model_label(footer)
+    ui._ensure_model_label(footer)
+    assert len(footer) == 1
+
+
+def test_ensure_model_label_skips_when_no_model(explorer_ui):
+    """_ensure_model_label is a no-op when _resolved_model is None."""
+    ui = explorer_ui
+    ui.llm._resolved_model = None
+    footer = []
+    ui._ensure_model_label(footer)
+    assert len(footer) == 0
