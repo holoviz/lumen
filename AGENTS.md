@@ -11,15 +11,22 @@ back everything from ad hoc chat queries to reusable dashboard specs.
 - `lumen/ai/` — AI agent framework: LLM providers, agents, coordinator, prompts, tools
 - `lumen/sources/` — data connectors (SQL, files, remote APIs)
 - `lumen/transforms/` — data transformation primitives
+- `lumen/filters/` — data filtering primitives
 - `lumen/views/` — visualization and output rendering
+- `lumen/variables/` — runtime variable management
+- `lumen/ui/` — non-AI UI components (Wizard, Builder, gallery dashboards). Do not
+  confuse with `lumen/ai/ui.py`, which contains the AI chat interfaces (`ChatUI`,
+  `ExplorerUI`).
+- `lumen/command/` — CLI entry points (ai, builder, validate, precache)
 - `lumen/tests/` — test suite, mirrors package layout
-- `docs/` — documentation source (zensical/mkdocs)
+- `docs/` — documentation source (zensical)
 - `examples/` — example notebooks and dashboard specs
 
 ## Key entry points
 
 - `lumen/dashboard.py` — `Dashboard` class, the primary way to build an app from a YAML spec
 - `lumen/pipeline.py` — `Pipeline` class, chains Source → Transform → Filter → View
+- `lumen/ai/actor.py` — `Actor` class, the shared base for both `Agent` and `Tool`
 - `lumen/ai/ui.py` — `ChatUI` and `ExplorerUI`, top-level Panel apps for the AI chat interface
 - `lumen/ai/llm.py` — `Llm` base class and provider subclasses; `invoke()`, `stream()`, `model_kwargs`, routing logic
 - `lumen/ai/agents/base.py` — `Agent` base class, all agents inherit from this
@@ -42,7 +49,7 @@ pixi install -e lint             # lint environment
 Or with pip:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[tests]"
 ```
 
 ## Testing
@@ -64,7 +71,8 @@ pixi run -e lint lint       # ruff, isort, pygrep pre-commit hooks
 pixi run -e lint typecheck  # pyright on lumen/ai/
 ```
 
-- Ruff line length 165; select B/E/F/FLY/ICN/NPY/PIE/PLC/PLE/PLR/PLW/RUF/T20/UP/W
+- Ruff selects B/E/F/FLY/ICN/NPY/PIE/PLC/PLE/PLR/PLW/RUF/T20/UP/W; E501 (line
+  length) is in the ignore list and not enforced. Ruff excludes the `tests/` directory.
 - Pre-commit blocks `breakpoint()` calls and private keys
 
 ## Code conventions
@@ -76,9 +84,10 @@ pixi run -e lint typecheck  # pyright on lumen/ai/
 
 ## Key patterns
 
-- **LLM routing**: agents resolve their model via `llm_spec_key`, derived
-  from the class name (`SQLAgent` → `"sql"`, `ChatAgent` → `"chat"`),
-  mapping to entries in `Llm.model_kwargs`
+- **LLM routing**: `llm_spec_key` is defined on `Actor` (`lumen/ai/actor.py:411`)
+  via the helper `class_name_to_llm_spec_key` in `lumen/ai/utils.py:1572`. Both
+  `Agent` and `Tool` inherit it and route to model entries in `Llm.model_kwargs`
+  the same way (`SQLAgent` → `"sql"`, `ChatAgent` → `"chat"`).
 - **Declarative pipelines**: Source → Transform → Filter → View chains are
   serializable as YAML/JSON
 - **Prompt templates**: agent prompts live in `lumen/ai/prompts/` as Jinja2
@@ -88,20 +97,12 @@ pixi run -e lint typecheck  # pyright on lumen/ai/
 
 ## Prompt authoring conventions
 
-Agent prompts live in `lumen/ai/prompts/` as Jinja2 templates. When editing
-or adding prompts, follow the conventions in `lumen/ai/prompts/GUIDANCE.md`:
-
-- Use `##` for sections, `###` for subsections; never `#` alone
-- Title Case headings, no trailing colons
-- Guard conditionals on the value (`memory.get('k')`), not the key
-- No emoji or pictographs; at most two emphasis markers per template
-- Caveman-compress prose (strip articles, auxiliaries, redundant prepositions;
-  preserve content words and code blocks verbatim)
-- Extend base templates via `{{ super() }}`, not copy-paste
-- Label injected `memory['data']` as a summary, not the dataset
-- Cap injected payloads in tokens (`truncate_to_tokens`), not characters
-
-`lumen/tests/ai/test_prompts.py` enforces these mechanically across all templates.
+Agent prompts live in `lumen/ai/prompts/` as Jinja2 templates. The full set of
+conventions (headings, inheritance, conditional guards, caveman compression,
+emoji rules, data-summary framing, payload sizing) is documented in
+`lumen/ai/prompts/GUIDANCE.md` — treat that file as the source of truth and
+do not duplicate its rules here. `lumen/tests/ai/test_prompts.py` enforces
+the mechanical conventions across every template.
 
 ## Extending Lumen
 
@@ -120,8 +121,16 @@ Choose **Lumen** as the extension type and `py311`+ for minimum Python version.
 
 ## PR & commit conventions
 
-- Branch naming: `fix/issue-name`, `feat/feature-name`, or `feat/issue-number`
-- Commit style: present tense — `Fix: ...`, `Add: ...`, `feat: ...`, `fix: ...`
-- Reference issues: `Closes #123`, `Fixes #456`
+- Branch naming: `fix/issue-name` (from `docs/contributing.md`)
+- Commit style: present tense with prefix — `Fix: ...` (from `docs/contributing.md`)
+- Reference issues: `Fixes #123`
 - Target `main` on `holoviz/lumen`
 - CI runs on Linux, macOS, Windows across Python 3.12 and 3.13
+
+## AI Disclosure
+
+If you use AI tools to prepare a PR, disclose the tool and model in the PR
+description as required by the HoloViz
+[AI contribution guidelines](https://holoviz.org/contribute.html#ai-readme).
+The PR template includes an AI Disclosure section with checkboxes for testing
+and taking responsibility for AI-generated content.
