@@ -119,7 +119,8 @@ class _session_state:
 
     @property
     def variables(self) -> Variables:
-        from .variables import Variables
+        # Deferred: .variables imports state at module scope.
+        from .variables import Variables  # noqa: PLC0415
         if self._variable is None:
             self._variable = Variables.create_variables()
         doc = pn.state.curdoc
@@ -133,7 +134,8 @@ class _session_state:
 
     @property
     def _global_filters(self):
-        from .filters import Filter
+        # Deferred: .filters imports state at module scope.
+        from .filters import Filter  # noqa: PLC0415
         return {
             source: {
                 name: Filter.from_spec(spec, schema)
@@ -173,19 +175,22 @@ class _session_state:
         variables = variables or self.variables
         context = {}
         if auth:
-            from .dashboard import AuthSpec
+            # Deferred: .dashboard imports state at module scope.
+            from .dashboard import AuthSpec  # noqa: PLC0415
             if isinstance(auth, dict):
                 context['auth'] = AuthSpec.validate(auth)
             else:
                 context['auth'] = auth.to_spec()
         if config:
-            from .dashboard import Config
+            # Deferred: .dashboard imports state at module scope.
+            from .dashboard import Config  # noqa: PLC0415
             if isinstance(config, dict):
                 context['config'] = Config.validate(config)
             else:
                 context['config'] = config.to_spec()
         if defaults:
-            from .dashboard import Defaults
+            # Deferred: .dashboard imports state at module scope.
+            from .dashboard import Defaults  # noqa: PLC0415
             if isinstance(defaults, dict):
                 context['defaults'] = Defaults.validate(defaults)
             else:
@@ -246,7 +251,8 @@ class _session_state:
         """
         Loads global sources shared across all layouts.
         """
-        from .sources.base import Source
+        # Deferred: .sources.base imports state at module scope.
+        from .sources.base import Source  # noqa: PLC0415
         for name, source_spec in self.spec.get('sources', {}).items():
             if not source_spec.get('shared'):
                 continue
@@ -286,7 +292,8 @@ class _session_state:
             }
 
     def load_pipelines(self, **kwargs):
-        from .pipeline import Pipeline
+        # Deferred: .pipeline imports state at module scope.
+        from .pipeline import Pipeline  # noqa: PLC0415
         pipelines = self.pipelines
         for name, pipeline_spec in self.spec.get('pipelines', {}).items():
             pipelines[name] = Pipeline.from_spec(
@@ -295,8 +302,10 @@ class _session_state:
         return pipelines
 
     def load_source(self, name: str, source_spec: dict[str, Any]):
-        from .filters.base import Filter
-        from .sources.base import Source
+        # Deferred: .filters.base imports state at module scope.
+        from .filters.base import Filter  # noqa: PLC0415
+        # Deferred: .sources.base imports state at module scope.
+        from .sources.base import Source  # noqa: PLC0415
         source_spec = dict(source_spec)
         filter_specs = source_spec.pop('filters', None)
         if self.loading_msg:
@@ -322,7 +331,8 @@ class _session_state:
         return source
 
     def resolve_views(self):
-        from .views import View
+        # Deferred: .views imports state at module scope.
+        from .views import View  # noqa: PLC0415
         exts = []
         for layout in self.spec.get('layouts', []):
             views = layout.get('views', [])
@@ -346,7 +356,8 @@ class _session_state:
             refs = cast(tuple[str], refs)
             (sourceref,) = refs
 
-        from .sources.base import Source
+        # Deferred: .sources.base imports state at module scope.
+        from .sources.base import Source  # noqa: PLC0415
         source = Source.from_spec(sourceref)
         if len(refs) == 1:
             return source
@@ -366,7 +377,8 @@ class _session_state:
     def resolve_reference(self, reference: str, variables: Variables = None):
         if not is_ref(reference):
             raise ValueError('References should be prefixed by $ symbol.')
-        from .variables import Variable
+        # Deferred: .variables imports state at module scope.
+        from .variables import Variable  # noqa: PLC0415
         refs = tuple(reference[1:].split('.'))
         if len(refs) > 3:
             raise ValueError(

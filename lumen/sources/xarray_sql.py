@@ -127,7 +127,7 @@ class XArraySQLSource(BaseSQLSource):
             variables=self.variables,
         )
 
-        from xarray_sql import XarrayContext
+        from xarray_sql import XarrayContext  # noqa: PLC0415
         self._ctx = XarrayContext()
         chunk_spec = self._resolve_chunks(self._dataset, self.chunks)
 

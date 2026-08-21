@@ -180,7 +180,7 @@ class MCPTool(Tool):
         list[MCPTool]
             One MCPTool per tool advertised by the server.
         """
-        from fastmcp import Client
+        from fastmcp import Client  # noqa: PLC0415
 
         client = server if isinstance(server, Client) else Client(server)
         async with client:
@@ -228,7 +228,7 @@ class MCPTool(Tool):
             The tool result.  Structured ``.data`` is preferred; falls
             back to concatenated text content blocks.
         """
-        from fastmcp import Client
+        from fastmcp import Client  # noqa: PLC0415
 
         client = self.server if isinstance(self.server, Client) else Client(self.server)
         async with client:

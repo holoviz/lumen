@@ -376,11 +376,11 @@ class Defaults(Component):
         if not isinstance(download_defaults, dict):
             msg = f'Defaults for Download component must be declared as a dictionary, not as a {type(download_defaults)}.'
             raise ValidationError(msg, spec, 'download:')
-        for p in download_defaults:
+        for p, default in download_defaults.items():
             if p in Download.param:
                 pobj = Download.param[p]
                 try:
-                    pobj._validate(download_defaults[p])
+                    pobj._validate(default)
                 except Exception as e:
                     msg = f"The default for Download {p!r} parameter failed validation: {e!s}"
                     raise ValidationError(msg, download_defaults, p) from e
