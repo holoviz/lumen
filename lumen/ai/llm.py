@@ -7,7 +7,7 @@ import os
 import traceback
 
 from collections.abc import Callable
-from functools import partial
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import (
     TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
@@ -23,7 +23,7 @@ from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from .interceptor import Interceptor
 from .services import (
@@ -84,6 +84,34 @@ ADAPTIVE_KWARGS = {
     "reasoning_effort": "none",
 }
 
+# Every content shape a message may carry an image in, before and after
+# _check_for_image normalises it.
+IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
+
+# model_kwargs entries that configure routing rather than the provider client,
+# and so must never reach an SDK constructor.
+ROUTING_KEYS = ("routing", "description")
+
+# The spec keys every provider shares, described for the routing prompt. Agent
+# specs are added on top by the UI layer, which can reach agent metadata.
+SPEC_DESCRIPTIONS = {
+    "default": "General purpose model for most tasks",
+    "edit": "Advanced model for retry & edit tasks",
+    "ui": "Lightweight model for UI interactions",
+}
+
+
+@lru_cache
+def build_route_spec_model(spec_keys: tuple[str, ...]) -> type[BaseModel]:
+    """Build the pydantic model constraining the routing model's output.
+
+    The ``model_spec`` field is constrained via a ``Literal`` to the keys
+    present in ``model_kwargs``, so a hallucinated key cannot silently fall
+    back to ``'default'`` unnoticed. Cached on the keys because instructor
+    re-derives the JSON schema per class, and routing runs on every call.
+    """
+    return create_model("RouteSpec", model_spec=(Literal[*spec_keys], ...))
+
 
 def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
     """Find a provider 400 on an exception's cause chain, if there is one."""
@@ -141,7 +169,24 @@ class Llm(param.Parameterized):
     model_kwargs = param.Dict(default={}, doc="""
         LLM model definitions indexed by type. Supported types include
         'default', 'reasoning' and 'sql'. Agents may pick which model to
-        invoke for different reasons.""")
+        invoke for different reasons.
+
+        An entry may declare an optional 'description' (shown to the routing
+        model so it can reason about what each option is for) and an optional
+        'routing' key to opt in to model routing for that type: the routing
+        model is invoked first to pick which entry to actually use for each
+        call, e.g.
+        {"default": {"model": "gpt-5.4-mini"},
+         "edit": {"model": "gpt-5.2",
+                  "description": "Best for editing tables and visualizations",
+                  "routing": {"model": "nemotron-switchyard"}}}""")
+
+    spec_descriptions = param.Dict(default=SPEC_DESCRIPTIONS, doc="""
+        Mapping of spec key to human-readable description, used as a
+        fallback in the routing prompt when ``model_kwargs`` entries
+        do not declare their own ``description``. Seeded with the spec
+        keys every provider shares and enriched by the UI layer from
+        agent class metadata.""")
 
     tools = param.List(default=[], doc="""
         Default tools that are always available to this LLM instance.
@@ -219,6 +264,13 @@ class Llm(param.Parameterized):
                 f"Please specify a 'default' model in the model_kwargs "
                 f"parameter for {self.__class__.__name__}."
             )
+        for spec_name, config in self.model_kwargs.items():
+            routing = config.get("routing") if isinstance(config, dict) else None
+            if routing is not None and not isinstance(routing, dict):
+                raise ValueError(
+                    f"Invalid 'routing' entry for model spec {spec_name!r} in "
+                    f"model_kwargs: expected a dict, got {type(routing).__name__}."
+                )
 
     @param.depends("logfire_tags", watch=True)
     def _update_logfire_tags(self):
@@ -233,12 +285,19 @@ class Llm(param.Parameterized):
         """
         Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
         or as a string that is a model type; else the actual name of the model.
+
+        The ``routing`` and ``description`` keys are routing-only directives and are
+        stripped here so they can never reach a provider's ``get_client`` and from
+        there the SDK constructor. ``_get_model_kwargs`` is the single place every
+        provider resolves its model config, so stripping here protects them all.
         """
         if isinstance(model_spec, dict):
-            return model_spec
-
-        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        return dict(model_kwargs)
+            model_kwargs = dict(model_spec)
+        else:
+            model_kwargs = dict(self.model_kwargs.get(model_spec) or self.model_kwargs["default"])
+        for key in ROUTING_KEYS:
+            model_kwargs.pop(key, None)
+        return model_kwargs
 
     def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
         kwargs = dict(self.create_kwargs)
@@ -393,6 +452,133 @@ class Llm(param.Parameterized):
         files.
         """
 
+    def _route_spec_model(self) -> type[BaseModel]:
+        """The routing response model for the current ``model_kwargs`` keys."""
+        return build_route_spec_model(tuple(self.model_kwargs))
+
+    def _spec_description(self, model_spec: str) -> str | None:
+        """How *model_spec* describes itself to the routing model, if at all.
+
+        An explicit ``description`` on the ``model_kwargs`` entry wins over
+        ``spec_descriptions``, so per-provider config beats the generic
+        agent metadata the UI layer supplies.
+        """
+        config = self.model_kwargs.get(model_spec)
+        if isinstance(config, dict) and "description" in config:
+            return config["description"]
+        return self.spec_descriptions.get(model_spec)
+
+    def _routing_system_prompt(self, model_spec: str) -> str:
+        """Build the dedicated system prompt for the routing call.
+
+        The router is told which task was requested and is given each
+        ``model_kwargs`` entry's description, so it chooses between documented
+        options for a named task rather than guessing from bare key names.
+
+        See ``_spec_description`` for how each option describes itself.
+        """
+        options = "\n".join(
+            f"- {key}: {self._spec_description(key) or 'No description provided.'}"
+            for key, config in self.model_kwargs.items()
+            if isinstance(config, dict)
+        )
+        described = self._spec_description(model_spec)
+        task = f"{model_spec!r} ({described})" if described else repr(model_spec)
+        return (
+            "You are a routing model. Choose the configured model type best "
+            f"suited to handle the request below, which was made for the {task} "
+            "task. Weigh how much capability the request actually needs, so "
+            "simple requests go to cheaper models.\n"
+            "Available model types:\n"
+            f"{options}\n"
+            "Reply with exactly one of the option names above."
+        )
+
+    def _strip_for_routing(self, messages: list[Message]) -> list[Message]:
+        """Prepare messages for the routing call: last user message only, images removed.
+
+        Routing models are chosen for being small and cheap and are typically
+        text-only, so every image shape ``_check_for_image`` can produce has to
+        be dropped here, not just the OpenAI-native content-part dicts.
+        """
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        if not user_msgs:
+            return []
+        last = dict(user_msgs[-1])
+        content = last.get("content")
+        if isinstance(content, list):
+            last["content"] = [
+                item for item in content
+                if not isinstance(item, IMAGE_TYPES)
+                and not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, IMAGE_TYPES):
+            last["content"] = ""
+        return [last]
+
+    def _routing_config(self, model_spec: str) -> dict | None:
+        """The ``routing`` config governing *model_spec*, or None if it is not routed.
+
+        Resolution mirrors ``_get_model_kwargs``: a spec that names no entry
+        falls back to ``'default'``. Actors derive their spec from their class
+        name (``sql``, ``chat``, ``vega_lite``, ...) and providers enumerate
+        only a handful of entries, so without the fallback routing would never
+        fire for the calls Lumen actually makes.
+        """
+        return (self.model_kwargs.get(model_spec) or self.model_kwargs["default"]).get("routing")
+
+    async def _resolve_routing(
+        self,
+        model_spec: str | dict,
+        messages: list[Message],
+    ) -> str | dict:
+        """
+        Pick which ``model_kwargs`` entry to use via a routing model when the
+        entry named by ``model_spec`` declares a ``routing`` config.
+
+        Only string ``model_spec`` values are routed, and only when the entry
+        they resolve to declares ``routing`` (see ``_routing_config``). Dict
+        specs bypass the ``model_kwargs`` lookup entirely, so they are never
+        routed.
+
+        The routing call itself uses a dict spec and ``tools=[]``, so it can
+        never trigger routing for itself nor run the real tool loop. Both
+        the success and fallback paths return a dict config: dict specs
+        bypass ``_resolve_routing`` downstream, so a resolved spec threads
+        through the tool loop and ``stream()`` recursion without being
+        re-resolved (and without paying another routing call per round).
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        routing_spec = self._routing_config(model_spec)
+        if not routing_spec:
+            return model_spec
+
+        routing_spec = dict(routing_spec)
+        routing_prompt = self._routing_system_prompt(model_spec)
+        routing_messages = self._strip_for_routing(messages)
+        try:
+            route = await self.invoke(
+                messages=routing_messages,
+                system=routing_prompt,
+                model_spec=routing_spec,
+                response_model=self._route_spec_model(),
+                tools=[],
+            )
+        except Exception:
+            log_debug(
+                [
+                    f"Routing for {model_spec!r} failed; falling back to {model_spec!r}",
+                    traceback.format_exc(),
+                ],
+                prefix="[LLM routing]",
+                show_sep="above",
+            )
+            return self._get_model_kwargs(model_spec)
+        log_debug(f"Routing {model_spec!r} -> {route.model_spec!r}", prefix="[LLM routing]")
+        return self._get_model_kwargs(route.model_spec)
+
     async def invoke(
         self,
         messages: list[Message],
@@ -431,6 +617,8 @@ class Llm(param.Parameterized):
         """
         system = system.strip().replace("\n\n", "\n")
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
+        messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
         max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
 
         kwargs = dict(self._client_kwargs)
@@ -440,7 +628,6 @@ class Llm(param.Parameterized):
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
-        messages, contains_image = self._check_for_image(messages)
         if contains_image:
             # Currently instructor does not support streaming with multimodal
             # https://github.com/567-labs/instructor/issues/1872
@@ -547,12 +734,19 @@ class Llm(param.Parameterized):
         self,
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
     ) -> list[dict[str, Any] | FunctionTool | MCPTool] | None:
-        """Combine instance-level ``self.tools`` with per-call *tools*."""
-        if self.tools and tools:
+        """Combine instance-level ``self.tools`` with per-call *tools*.
+
+        ``tools=None`` means "use instance tools"; an explicit empty list opts
+        out of instance tools entirely (used by the routing call so the routing
+        model never runs the real tool loop).
+        """
+        if tools is None:
+            return list(self.tools) if self.tools else None
+        if not tools:
+            return []
+        if self.tools:
             return list(self.tools) + list(tools)
-        elif self.tools:
-            return list(self.tools)
-        return tools
+        return list(tools)
 
     @classmethod
     def _normalize_tools(
@@ -561,7 +755,7 @@ class Llm(param.Parameterized):
     ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool | MCPTool], dict[str, Any]]:
         tool_instances: dict[str, FunctionTool | MCPTool] = {}
         tool_contexts: dict[str, Any] = {}
-        if tools is None:
+        if not tools:
             return None, tool_instances, tool_contexts
         tool_specs: list[dict[str, Any]] = []
         for tool in tools:
@@ -864,6 +1058,7 @@ class Llm(param.Parameterized):
         combined_tools = self._combine_tools(tools)
         _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
         if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
                 messages,
@@ -1052,14 +1247,20 @@ class LlamaCpp(Llm, LlamaCppMixin):
     # LlamaCpp doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
 
-    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
-        if isinstance(model_spec, dict):
-            return model_spec
+    def _routing_config(self, model_spec: str) -> dict | None:
+        # A repo id names a model directly rather than resolving to an entry,
+        # so routing must not override a model the caller asked for by name.
+        if model_spec not in self.model_kwargs and "/" in model_spec:
+            return None
+        return super()._routing_config(model_spec)
 
-        if model_spec in self.model_kwargs or "/" not in model_spec:
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        if isinstance(model_spec, dict) or model_spec in self.model_kwargs or "/" not in model_spec:
             model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            base_kwargs = self.model_kwargs["default"]
+            # super() strips the routing keys, so the resolved repo id inherits
+            # a base config that is already safe to hand to the SDK.
+            base_kwargs = super()._get_model_kwargs("default")
             model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
         if "n_ctx" not in model_kwargs:
@@ -2554,12 +2755,6 @@ class MLX(Llm):
         if self._use_endpoint:
             # Override to use OpenAI-compatible wrapper
             self._instructor_wrapper = "openai"
-
-    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
-        if isinstance(model_spec, dict):
-            return model_spec
-        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        return dict(model_kwargs)
 
     def _load_mlx_model(self, model_id: str) -> tuple:
         """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
