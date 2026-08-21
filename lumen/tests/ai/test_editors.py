@@ -231,24 +231,26 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     layout = await editor._render_pipeline(editor.component)
     table, controls = layout.objects
 
-    assert layout.styles == {'position': 'relative', 'container-type': 'inline-size'}
+    assert layout.styles == {'position': 'relative'}
     assert layout.css_classes == ['full-data-table-container']
     assert table._pane.page_size == 10
-    assert controls.width == 115
+    assert controls.width == 110
     assert controls.height == 30
     assert controls.align == 'center'
     assert controls.margin == 0
     assert controls.styles == {
-        'position': 'absolute', 'right': '0px', 'bottom': '5px',
+        'position': 'absolute', 'right': '0px', 'bottom': '12px',
         'margin-left': 'auto',
         'align-items': 'center',
     }
-    assert "position: static !important" in controls.stylesheets[0]
-    assert "@container (max-width: 760px)" in layout.stylesheets[0]
+    assert ":host { align-items: center !important; }" in controls.stylesheets[0]
+    assert not layout.stylesheets
+    assert "tabulator-page:not(.active)" in table._pane.stylesheets[0]
     full_data = controls.objects[0]
     assert full_data.label == "Full data"
     assert full_data.width is None
-    assert full_data.margin == (0, 10, 0, 0)
+    assert full_data.css_classes == ['full-data-checkbox']
+    assert full_data.margin == 0
     assert full_data.visible
 
     full_data.value = True

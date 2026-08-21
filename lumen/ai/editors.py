@@ -212,24 +212,34 @@ class LumenEditor(Viewer):
             .tabulator .tabulator-footer .tabulator-footer-contents {
               padding-right: 125px !important;
             }
+            @media (max-width: 1600px) {
+              .tabulator .tabulator-pages .tabulator-page:not(.active) {
+                display: none !important;
+              }
+              .tabulator .tabulator-footer .tabulator-footer-contents {
+                padding-right: 110px !important;
+              }
+            }
             """
             ]
         )
         controls = Row(
-            width=115, height=30, align='center',
+            width=110, height=30, align='center',
             css_classes=['full-data-controls'],
             styles={
-                'position': 'absolute', 'right': '0px', 'bottom': '5px',
+                'position': 'absolute', 'right': '0px', 'bottom': '12px',
                 'margin-left': 'auto',
                 'align-items': 'center',
             },
             stylesheets=[
                 """
                 :host { align-items: center !important; }
-                @media (max-width: 430px) {
+                @media (max-width: 1600px) {
                   :host {
-                    position: static !important;
-                    width: 100% !important;
+                    position: absolute !important;
+                    right: 0 !important;
+                    bottom: 12px !important;
+                    width: 110px !important;
                     justify-content: flex-end !important;
                   }
                 }
@@ -239,26 +249,7 @@ class LumenEditor(Viewer):
         layout = Column(
             table, controls,
             css_classes=['full-data-table-container'],
-            styles={'position': 'relative', 'container-type': 'inline-size'},
-            stylesheets=[
-                """
-                @container (max-width: 760px) {
-                  .full-data-controls {
-                    position: static !important;
-                    width: 100% !important;
-                    justify-content: flex-end !important;
-                  }
-                  .tabulator .tabulator-footer .tabulator-footer-contents {
-                    padding-right: 10px !important;
-                  }
-                }
-                @media (max-width: 430px) {
-                  .tabulator .tabulator-footer .tabulator-footer-contents {
-                    padding-right: 10px !important;
-                  }
-                }
-                """
-            ],
+            styles={'position': 'relative'},
         )
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
@@ -275,7 +266,8 @@ class LumenEditor(Viewer):
                     sql_limit.limit = None if e.new else limited_limit
 
                 full_data = Checkbox(
-                    label='Full data', margin=(0, 10, 0, 0), visible=limited
+                    label='Full data', css_classes=['full-data-checkbox'],
+                    margin=0, visible=limited
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.append(full_data)
