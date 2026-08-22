@@ -2857,6 +2857,13 @@ class ExplorerUI(UI):
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
+            if self.interface.objects:
+                last_message = self.interface.objects[-1]
+                footer_objects = list(last_message.footer_objects or [])
+                self._ensure_model_label(footer_objects)
+                if footer_objects:
+                    last_message.footer_objects = footer_objects
+
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
             return
