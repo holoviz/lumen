@@ -23,7 +23,7 @@ from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_data, get_pipeline,
+    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_frame, get_pipeline,
     log_debug, parse_table_slug, retry_llm_output, stream_details,
     truncate_to_tokens,
 )
@@ -713,13 +713,15 @@ class SQLAgent(BaseLumenAgent):
         else:
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
 
-        # Get data summary
-        df = await get_data(pipeline)
+        # Get data summary. The frame is only counted and summarised, and
+        # describe_data reads any library, so there is nothing here worth
+        # converting a polars or pyarrow result to pandas for.
+        df = await get_frame(pipeline)
 
         # Reject before promoting the new source: retry_llm_output re-runs this
         # method on failure, and a rejected query left installed as
         # ``context["source"]`` becomes the base every later attempt builds on.
-        if df.empty and raise_if_empty:
+        if not len(df) and raise_if_empty:
             raise ValueError(
                 f"\nQuery `{sql_query}` returned empty results."
                 "\nUse `run_exploration_sql` to check what values actually exist before filtering."

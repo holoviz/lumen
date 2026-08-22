@@ -370,6 +370,37 @@ async def test_base_sql_source_get_async():
     assert len(result_async_filtered) <= len(expected)  # Should be filtered
 
 
+def test_fetch_default_delegates_to_execute():
+    """A subclass that only implements execute keeps working through fetch.
+
+    The signature here is the one an out-of-tree subclass is likely to have:
+    no params argument at all. fetch has to pass params in a way that such a
+    subclass swallows rather than rejects.
+    """
+    from lumen.sources.base import BaseSQLSource
+
+    class MockSQLSource(BaseSQLSource):
+
+        def __init__(self, **params):
+            super().__init__(**params)
+            self.tables = {'test_table': 'test_table'}
+
+        def execute(self, sql_query, *args, **kwargs):
+            return pd.DataFrame({'id': [1, 2, 3]})
+
+        def get_tables(self):
+            return list(self.tables)
+
+        def get_sql_expr(self, table):
+            return f"SELECT * FROM {table}"
+
+    source = MockSQLSource()
+    assert source.dataframe_backend is None
+    fetched = source.fetch("SELECT * FROM test_table")
+    assert isinstance(fetched, pd.DataFrame)
+    assert_df_equal(fetched, source.execute("SELECT * FROM test_table"))
+
+
 def test_set_schema_cache_respects_cache_schema_flag(make_filesource):
     """Test that _set_schema_cache checks cache_schema, not cache_metadata.
 

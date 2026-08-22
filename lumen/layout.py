@@ -25,7 +25,7 @@ from .panel import IconButton
 from .pipeline import Pipeline
 from .sources.base import Source
 from .state import state
-from .util import catch_and_notify, extract_refs
+from .util import as_pandas, catch_and_notify, extract_refs
 from .validation import ValidationError, match_suggestion_message
 from .views.base import DOWNLOAD_FORMATS, View
 
@@ -401,7 +401,8 @@ class Download(Component, Viewer):
         else:
             io = BytesIO()
         table = self._select_download.value
-        data = self.pipelines[table].data
+        # Every writer below is a pandas method; polars spells them write_*.
+        data = as_pandas(self.pipelines[table].data)
         if self.format == 'csv':
             data.to_csv(io, **self.kwargs)
         elif self.format == 'json':

@@ -1401,6 +1401,113 @@ def test_duckdb_geometry_returns_geodataframe():
     assert str(result.geometry.dtype) == 'geometry'
 
 
+def _backend_source():
+    return DuckDBSource(
+        uri=':memory:',
+        initializers=[
+            "CREATE TABLE t AS SELECT i::BIGINT AS n, (i * 1.5) AS amount, "
+            "(DATE '2020-01-01' + i::INTEGER) AS day, "
+            "('c' || (i % 3)::VARCHAR) AS g FROM range(20) tbl(i)"
+        ],
+        tables={'t': 'SELECT * FROM t'},
+    )
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_native_fetch_matches_pandas(backend):
+    """A frame DuckDB builds natively must hold what the pandas one holds."""
+    pytest.importorskip(backend)
+    from lumen.util import as_narwhals, as_pandas
+
+    query = "SELECT * FROM t"
+    native = _backend_source()
+    native.dataframe_backend = backend
+    fetched = native.fetch(query)
+    assert as_narwhals(fetched).implementation.name.lower() == backend
+
+    expected = _backend_source().fetch(query)
+    # check_dtype is off on purpose. DuckDB types i*1.5 as DECIMAL, which
+    # fetch_df widens to float64 while arrow and polars keep it a Decimal, and
+    # a DATE comes back as datetime.date through arrow but datetime64 through
+    # polars. The values are the same either way, which is what is asserted.
+    pd.testing.assert_frame_equal(
+        as_pandas(fetched).astype({'day': 'datetime64[us]'}),
+        expected.astype({'day': 'datetime64[us]'}),
+        check_dtype=False,
+    )
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_native_fetch_keeps_date_a_date(backend):
+    """A DATE must stay a date, not silently become a string or a number.
+
+    get fetches with date_as_object, so the pandas path yields datetime.date.
+    DuckDB's own frames type the column Date and date32 respectively; both are
+    real date types, and both have to carry the same days.
+    """
+    pytest.importorskip(backend)
+    import narwhals.stable.v2 as nw
+
+    native = _backend_source()
+    native.dataframe_backend = backend
+    frame = nw.from_native(native.fetch("SELECT * FROM t"))
+    assert isinstance(frame.collect_schema()['day'], (nw.Date, nw.Datetime))
+
+    expected = _backend_source().fetch("SELECT * FROM t")['day']
+    assert [d.year for d in expected] == [2020] * 20
+    days = frame.get_column('day').to_list()
+    assert [dt.date(d.year, d.month, d.day) for d in days] == list(expected)
+
+
+def _sql_geometry_source():
+    """A GEOMETRY table built in SQL alone, so no geopandas is needed.
+
+    The geopandas-backed _spatial_source skips wherever geopandas is absent,
+    which is every environment in pixi.toml, so a test written against it
+    never runs. The rule under test here holds without it.
+    """
+    try:
+        return DuckDBSource(
+            uri=':memory:',
+            initializers=[
+                "INSTALL spatial;", "LOAD spatial;",
+                "CREATE TABLE geo_tbl AS SELECT 'a' AS name, ST_Point(0, 0) AS geometry "
+                "UNION ALL SELECT 'b', ST_Point(1, 1)",
+            ],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - needs network on first install
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_native_fetch_geometry_stays_pandas(backend):
+    """Geometry has no narwhals dtype, so it must not leave pandas at all.
+
+    Not merely 'is not fetched natively': converting the pandas frame after
+    fetching it is just as bad, because the column comes out the far side as
+    opaque bytes, drops from the schema, and renders a blank map with nothing
+    raising.
+    """
+    pytest.importorskip(backend)
+    source = _sql_geometry_source()
+    source.dataframe_backend = backend
+    result = source.get('geo')
+    assert isinstance(result, pd.DataFrame)
+    assert 'geometry' in result.columns
+    assert 'geometry' in source.get_schema('geo')
+
+
+def test_native_fetch_geometry_returns_geodataframe():
+    """With geopandas present the geometry column is still a real geometry."""
+    pytest.importorskip("polars")
+    source, gpd = _spatial_source()
+    source.dataframe_backend = 'polars'
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert str(result.geometry.dtype) == 'geometry'
+
+
 def test_duckdb_geometry_crs_read_from_column_type(tmp_path):
     """ST_Read reports a CRS-carrying column as GEOMETRY('EPSG:4326'), so the
     type must be matched by prefix and the CRS taken from it."""

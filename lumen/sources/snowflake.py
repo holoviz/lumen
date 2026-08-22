@@ -376,7 +376,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr, self.table_params.get(table, []))
+        return self.fetch(sql_expr, self.table_params.get(table, []))
 
     async def get_async(self, table, **query):
         """

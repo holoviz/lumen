@@ -638,6 +638,115 @@ async def test_get_frame_skips_the_pandas_conversion(constructor):
     assert isinstance(await get_data(pipeline), pd.DataFrame)
 
 
+@pytest.mark.parametrize("backend", [None, "pandas", "polars", "pyarrow"])
+def test_sql_source_dataframe_backend(backend, tmp_path):
+    """dataframe_backend picks the library get returns, and nothing else."""
+    duckdb = pytest.importorskip("duckdb")
+    if backend not in (None, "pandas"):
+        pytest.importorskip(backend)
+    from lumen.sources.duckdb import DuckDBSource
+
+    def source(**params):
+        return DuckDBSource(
+            uri=":memory:", tables={"t": "SELECT * FROM t"},
+            initializers=[
+                "CREATE TABLE t AS SELECT i::BIGINT AS n, "
+                "('c' || (i % 3)::VARCHAR) AS g FROM range(50) tbl(i)"
+            ],
+            **params,
+        )
+
+    default, pinned = source(), source(dataframe_backend=backend)
+    frame = pinned.get("t")
+    assert rows(frame) == 50
+
+    if backend in (None, "pandas"):
+        assert isinstance(frame, pd.DataFrame)
+    else:
+        assert as_narwhals(frame).implementation.name.lower() == backend
+
+    # execute and everything reading it stay on pandas whatever get returns,
+    # which is what keeps the .iloc and dtype.kind reads in get_schema working.
+    assert isinstance(pinned.execute("SELECT * FROM t"), pd.DataFrame)
+    # Sorted because array_agg(DISTINCT) fixes no order, so two runs of the
+    # same query disagree on it whatever the backend.
+    def schema(source):
+        return {
+            name: {k: sorted(v) if k == "enum" else v for k, v in col.items()}
+            if isinstance(col, dict) else col
+            for name, col in source.get_schema("t").items()
+        }
+    assert schema(pinned) == schema(default)
+    pd.testing.assert_frame_equal(as_pandas(frame), default.get("t"))
+
+
+def test_sql_source_backend_change_clears_the_cache():
+    """The backend is a param, so flipping it must not serve the old frame."""
+    pytest.importorskip("duckdb")
+    pl = pytest.importorskip("polars")
+    from lumen.sources.duckdb import DuckDBSource
+
+    source = DuckDBSource(
+        uri=":memory:", tables={"t": "SELECT * FROM t"},
+        initializers=["CREATE TABLE t AS SELECT i::BIGINT AS n FROM range(5) tbl(i)"],
+    )
+    assert isinstance(source.get("t"), pd.DataFrame)
+    source.dataframe_backend = "polars"
+    assert isinstance(source.get("t"), pl.DataFrame)
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_sql_summary_reads_the_source_frame_unconverted(backend):
+    """The LLM summary path takes the source's own frame, not a pandas copy.
+
+    This is the end of the chain the dataframe_backend param exists for: a
+    DuckDB source builds polars or arrow, the Pipeline keeps it, and the
+    summary is generated from it without the whole frame ever reaching pandas.
+    """
+    pytest.importorskip("duckdb")
+    pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync, get_frame
+    from lumen.sources.duckdb import DuckDBSource
+
+    def source(**params):
+        return DuckDBSource(
+            uri=":memory:", tables={"t": "SELECT * FROM t"},
+            initializers=[
+                "CREATE TABLE t AS SELECT i::BIGINT AS n, "
+                "('c' || (i % 3)::VARCHAR) AS g FROM range(50) tbl(i)"
+            ],
+            **params,
+        )
+
+    frame = await get_frame(Pipeline(source=source(dataframe_backend=backend), table="t"))
+    assert as_narwhals(frame).implementation.name.lower() == backend
+    assert len(frame) == 50  # what the empty-result check reads
+
+    expected = await get_frame(Pipeline(source=source(), table="t"))
+    assert isinstance(expected, pd.DataFrame)
+    assert describe_data_sync(frame) == describe_data_sync(expected)
+
+
+@pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
+async def test_empty_result_is_detectable_on_any_backend(backend):
+    """The SQL agent rejects an empty result with len, not the pandas .empty."""
+    pytest.importorskip("duckdb")
+    if backend is not None:
+        pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import get_frame
+    from lumen.sources.duckdb import DuckDBSource
+
+    source = DuckDBSource(
+        tables={"e": "SELECT * FROM (VALUES (1, 'a')) AS t(n, g) WHERE n > 99"},
+        dataframe_backend=backend,
+    )
+    frame = await get_frame(Pipeline(source=source, table="e"))
+    assert len(frame) == 0
+    assert as_narwhals(frame).columns == ["n", "g"]  # empty of rows, not columns
+
+
 def test_describe_data_keeps_decimal_and_date_numeric():
     """A money or date column must be described, not listed as an enum.
 
