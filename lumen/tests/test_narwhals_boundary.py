@@ -638,6 +638,65 @@ async def test_get_frame_skips_the_pandas_conversion(constructor):
     assert isinstance(await get_data(pipeline), pd.DataFrame)
 
 
+def test_describe_data_keeps_decimal_and_date_numeric():
+    """A money or date column must be described, not listed as an enum.
+
+    The constructor fixture cannot express this: it builds from a dict, and a
+    dict of Decimal or date lands on object in pandas, which is the very dtype
+    under test. Each backend's frame is built with its own type instead.
+    """
+    pl = pytest.importorskip("polars")
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync
+
+    rows = 200
+    decimals = [Decimal(f"{i}.50") for i in range(rows)]
+    dates = [dt.date(2020, 1, 1) + dt.timedelta(days=i) for i in range(rows)]
+    # A null is what makes an integer widen, so the column has to carry one.
+    ints = [None if i % 50 == 0 else i for i in range(rows)]
+    labels = ["a", "b"] * (rows // 2)
+
+    frames = [
+        pd.DataFrame({
+            "amount": [i + 0.5 for i in range(rows)],
+            "day": pd.to_datetime(dates),
+            "n": pd.array(ints, dtype="Int64"),
+            "g": labels,
+        }),
+        # pandas produces object columns of Decimal and date for a DECIMAL or
+        # DATE result of its own, so this is not only about other libraries.
+        pd.DataFrame({
+            "amount": decimals,
+            "day": dates,
+            "n": pd.array(ints, dtype="Int64"),
+            "g": labels,
+        }),
+        pl.DataFrame({
+            "amount": pl.Series(decimals, dtype=pl.Decimal(12, 2)),
+            "day": pl.Series(dates, dtype=pl.Date),
+            "n": pl.Series(ints, dtype=pl.Int64),
+            "g": labels,
+        }),
+        pa.table({
+            "amount": pa.array(decimals, pa.decimal128(12, 2)),
+            "day": pa.array(dates, pa.date32()),
+            "n": pa.array(ints, pa.int64()),
+            "g": labels,
+        }),
+    ]
+    summaries = [describe_data_sync(frame) for frame in frames]
+
+    # safe_load is the assertion, not a convenience: an object column of
+    # Decimal renders as !!python/object/apply, which SafeLoader refuses.
+    expected, *rest = [yaml.safe_load(summary) for summary in summaries]
+    assert expected["stats"]["amount"]["mean"] == 100
+    assert "enum" not in expected["stats"]["day"]
+    assert expected["tail"]["n"] == 198
+    for summary in rest:
+        assert summary == expected
+
+
 def test_describe_data_summarises_a_dask_frame():
     """A dask frame answers shape with a Delayed, so it must be computed."""
     dd = pytest.importorskip("dask.dataframe")
