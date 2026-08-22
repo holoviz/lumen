@@ -76,7 +76,7 @@ netcdf4 = "*"
 zarr = "*"
 
 [feature.xarray.pypi-dependencies]
-xarray-sql = "*"
+xarray-sql = ">=0.3.1"
 
 # =============================================
 # =================== TESTS ===================
