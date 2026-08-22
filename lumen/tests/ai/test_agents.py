@@ -22,6 +22,7 @@ from lumen.ai.agents import (
     AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
 )
 from lumen.ai.agents.analysis import make_analysis_model
+from lumen.ai.agents.base_lumen import BaseLumenAgent
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
@@ -830,6 +831,55 @@ async def test_revise_forwards_resolved_table_to_prompt(llm):
             {"metaset": ms, "table": "orders"}, spec="SELECT 1", language="sql",
         )
     assert captured.get("revise_table") == t1
+
+
+async def test_revise_recovers_from_malformed_sql_via_retry(llm):
+    """A line-patch edit that sqlglot cannot parse must not surface a raw
+    ParseError to the user: revise() should feed the parse error back to the
+    LLM as feedback and retry, the same recovery _validate_sql already uses
+    for execution errors, rather than letting clean_sql's exception escape
+    straight through revise() to the caller."""
+    agent = SQLAgent(llm=llm)
+    view = SimpleNamespace(
+        component=SimpleNamespace(source=SimpleNamespace(dialect="duckdb")),
+        language="sql",
+    )
+    seen_instructions = []
+
+    async def fake_super_revise(instruction, messages, context, view=None, spec=None, language=None, **kwargs):
+        seen_instructions.append(instruction)
+        if len(seen_instructions) == 1:
+            return "SELECT * WHERE \"a\" = 'x' FROM t"  # WHERE before FROM: unparsable
+        return "SELECT * FROM t WHERE \"a\" = 'x'"
+
+    with patch.object(BaseLumenAgent, "revise", side_effect=fake_super_revise):
+        result = await agent.revise("fix it", [{"role": "user", "content": "fix"}], {}, view=view)
+
+    assert len(seen_instructions) == 2
+    assert "ParseError" in seen_instructions[1]
+    assert result == 'SELECT\n  *\nFROM t\nWHERE\n  "a" = \'x\''
+
+
+async def test_revise_raises_after_retries_exhausted_on_malformed_sql(llm):
+    """When the LLM keeps producing unparsable SQL, revise() must eventually
+    raise (bounded retries, matching _validate_sql's max_retries pattern)
+    rather than retrying forever."""
+    agent = SQLAgent(llm=llm)
+    view = SimpleNamespace(
+        component=SimpleNamespace(source=SimpleNamespace(dialect="duckdb")),
+        language="sql",
+    )
+    calls = []
+
+    async def fake_super_revise(instruction, messages, context, view=None, spec=None, language=None, **kwargs):
+        calls.append(instruction)
+        return "SELECT * WHERE \"a\" = 'x' FROM t"  # always unparsable
+
+    with patch.object(BaseLumenAgent, "revise", side_effect=fake_super_revise):
+        with pytest.raises(Exception, match="Invalid expression"):
+            await agent.revise("fix it", [{"role": "user", "content": "fix"}], {}, view=view, max_retries=2)
+
+    assert len(calls) == 2
 
 
 def test_sqlagent_active_filters_describes_conditions():
