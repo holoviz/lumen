@@ -21,7 +21,19 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
+from holoviews import Overlay  # type: ignore
+from holoviews.core import (  # type: ignore
+    Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
+)
+from holoviews.core.operation import Operation  # type: ignore
+from holoviews.element import Annotation  # type: ignore
+from holoviews.operation import method as hv_method  # type: ignore
+from holoviews.selection import link_selections  # type: ignore
+from holoviews.streams import Pipe  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
+from hvplot.ui import (  # type: ignore
+    Geographic, hvDataFrameExplorer, hvGridExplorer, hvPlotExplorer,
+)
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
 from panel.pane.holoviews import HoloViews as HoloViewsPane
@@ -42,17 +54,16 @@ from ..panel import HtmlPdfDownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms.base import Transform
-from ..transforms.sql import SQLTransform
+from ..transforms.sql import SQLLimit, SQLTransform
 from ..util import (
     VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
     geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
-    try_import_xarray,
+    try_import_xarray, widen_nullable,
 )
 from ..validation import ValidationError
 
 if TYPE_CHECKING:
     from bokeh.document import Document  # type: ignore
-    from holoviews.selection import link_selections  # type: ignore
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
@@ -243,7 +254,6 @@ class View(MultiTypeComponent, Viewer):
             View._selections[doc] = {}
         self._ls = View._selections.get(doc, {}).get(self.selection_group)
         if self._ls is None:
-            from holoviews.selection import link_selections
             self._ls = link_selections.instance()
             if self.selection_group:
                 View._selections[doc][self.selection_group] = self._ls
@@ -312,11 +322,10 @@ class View(MultiTypeComponent, Viewer):
         return components
 
     def _serialize_operation(self, obj, objects, refs, depth=0):
-        from holoviews.operation import method
         op_spec = self._serialize_parameterized(obj, objects, refs, depth=depth, include_name=False)
         # TODO: Find way to clean this up in hvPlot. No references to hvPlot Converter should be held
         #       by a HoloViews object.
-        if isinstance(obj, method) and obj.args and "_set_backends_opts" in str(obj.args[0]):
+        if isinstance(obj, hv_method) and obj.args and "_set_backends_opts" in str(obj.args[0]):
             op_spec["args"] = [{"type": "lumen.util._set_backend_opts", "instance": False}]
         return op_spec
 
@@ -351,9 +360,6 @@ class View(MultiTypeComponent, Viewer):
 
     @bothmethod
     def _serialize_holoviews(self, obj, objects=None, refs=None, depth=0, include_name=True):
-        from holoviews.core import (
-            Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
-        )
         if obj is None:
             return None
         pipeline = self.pipeline
@@ -398,19 +404,12 @@ class View(MultiTypeComponent, Viewer):
 
     @classmethod
     def _materialize_dimension(cls, spec):
-        from holoviews.core import Dimension
         spec = dict(spec)
         name = (spec.pop('name'), spec.pop('label')) if 'label' in spec else spec.pop('name')
         return Dimension(name, **spec)
 
     @classmethod
     def _materialize_holoviews(cls, spec, objects=None, unresolved=None, depth=0, obj_type=None):
-        from holoviews.core import (
-            Dataset, DynamicMap, NdMapping, ViewableTree,
-        )
-        from holoviews.core.operation import Operation
-        from holoviews.element import Annotation
-
         spec = dict(spec)
         spec_type = spec.pop('type')
         obj_type = resolve_module_reference(spec_type)
@@ -844,7 +843,6 @@ class HoloViews(View):
     _panel_type = pn.pane.HoloViews
 
     def __init__(self, **params):
-        from holoviews.streams import Pipe
         super().__init__(**params)
         self._data_stream = Pipe()
 
@@ -988,7 +986,8 @@ class hvPlotBaseView(View):
     def __init__(self, **params):
         if 'dask' in sys.modules:
             try:
-                import hvplot.dask  # type: ignore  # noqa: F401
+                # Deferred: registers hvPlot's dask accessor, and dask is optional.
+                import hvplot.dask  # type: ignore  # noqa: F401, PLC0415
             except Exception:
                 pass
         if 'by' in params and isinstance(params['by'], str):
@@ -1002,6 +1001,13 @@ class hvPlotBaseView(View):
     @classproperty
     def _valid_keys_(cls):
         return None
+
+    def get_data(self):
+        # Every hvPlot kind can reach datashader, through rasterize/datashade
+        # or an operation, and datashader rejects the pandas nullable dtypes
+        # the pipeline now preserves. Plots take the numpy widening instead;
+        # tables and downloads keep the nullable columns.
+        return widen_nullable(super().get_data())
 
     def _check_render_size(self, df) -> None:
         """Refuse to render more per-row glyphs than a browser tab can hold.
@@ -1040,7 +1046,6 @@ class hvPlotUIView(hvPlotBaseView):
     view_type = 'hvplot_ui'
 
     def _get_args(self, explorer_cls=None, data=None):
-        from hvplot.ui import Geographic, hvPlotExplorer  # type: ignore
         if explorer_cls is None:
             explorer_cls = hvPlotExplorer
         if data is None:
@@ -1062,16 +1067,13 @@ class hvPlotUIView(hvPlotBaseView):
         return pn.bind(ui, self.param.rerender)
 
     def get_panel(self):
-        from hvplot.ui import (  # type: ignore
-            hvDataFrameExplorer, hvGridExplorer,
-        )
-
         # An xarray-backed pipeline explores the compact gridded Dataset (via
         # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
         # and quadmesh work; tabular data uses the dataframe explorer.
         gridded = self._source_dataset()
         if gridded is not None:
-            import hvplot.xarray  # type: ignore  # noqa: F401
+            # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
+            import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
             args, kwargs = self._get_args(hvGridExplorer, gridded)
             return hvGridExplorer(*args, **kwargs)
         args, kwargs = self._get_args()
@@ -1154,7 +1156,7 @@ class hvPlotView(hvPlotBaseView):
         # Reached only when xarray is available (an xarray object passed
         # through, or a pivotable DataFrame). Register hvPlot's xarray accessor
         # so .hvplot works on the returned xarray object.
-        import hvplot.xarray  # type: ignore  # noqa: F401
+        import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
         if not isinstance(df, pd.DataFrame):
             return df
         return df.set_index(self._gridded_index())[self.z].to_xarray()
@@ -1165,7 +1167,8 @@ class hvPlotView(hvPlotBaseView):
         else the long-form frame pivoted to xarray."""
         gridded = self._source_dataset()
         if gridded is not None:
-            import hvplot.xarray  # type: ignore  # noqa: F401
+            # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
+            import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
             return gridded
         if isinstance(df, pd.DataFrame):
             blocker = self._gridded_pivot_blocker(df)
@@ -1248,7 +1251,6 @@ class hvPlotView(hvPlotBaseView):
     def _get_params(self):
         df = self.get_data()
         if self.streaming:
-            from holoviews.streams import Pipe  # type: ignore
             self._data_stream = Pipe(data=df)
         return dict(object=self.get_plot(df))
 
@@ -1300,7 +1302,6 @@ class hvOverlayView(View):
     _supports_selections = True
 
     def _get_params(self):
-        from holoviews import Overlay
         overlay = Overlay([layer.get_plot(layer.get_data()) for layer in self.layers])
         return dict(object=overlay)
 
@@ -1663,7 +1664,7 @@ class AltairView(View):
     _panel_type = pn.pane.Vega
 
     def _transform_encoding(self, encoding: str, value: Any) -> Any:
-        import altair as alt  # type: ignore
+        import altair as alt  # type: ignore  # noqa: PLC0415
         if isinstance(value, dict):
             value = dict(value)
             for kw, val in value.items():
@@ -1679,7 +1680,7 @@ class AltairView(View):
         return value
 
     def _get_params(self) -> dict[str, Any]:
-        import altair as alt
+        import altair as alt  # noqa: PLC0415
         df = self.get_data()
         chart = alt.Chart(df, **self.chart)
         mark = getattr(chart, f'mark_{self.marker}')(**self.mark)
@@ -1714,7 +1715,7 @@ class YdataProfilingView(View):
         return dict(df=df, **self.kwargs)
 
     def get_panel(self) -> pn.pane.HTML:
-        from ydata_profiling import ProfileReport
+        from ydata_profiling import ProfileReport  # noqa: PLC0415
         report_html = ProfileReport(**self._get_params()).html
 
         escaped_html = html.escape(report_html)
@@ -1760,13 +1761,14 @@ class GraphicWalker(View):
     @classproperty
     def _panel_type(cls):
         try:
-            from panel_gwalker import GraphicWalker
+            # Deferred so the view class still resolves without panel_gwalker,
+            # which the core install does not pull in.
+            from panel_gwalker import GraphicWalker  # noqa: PLC0415
         except Exception:
             GraphicWalker = None
         return GraphicWalker
 
     def _get_params(self) -> dict[str, Any]:
-        from ..transforms.sql import SQLLimit
         pipeline = self.pipeline
         if (
             pipeline.source.source_type == 'duckdb' and
