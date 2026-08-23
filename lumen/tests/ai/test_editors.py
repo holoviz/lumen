@@ -231,26 +231,18 @@ async def test_render_pipeline_places_full_data_control_in_table_footer(limited_
     layout = await editor._render_pipeline(editor.component)
     table, controls = layout.objects
 
-    assert layout.styles == {'position': 'relative'}
     assert layout.css_classes == ['full-data-table-container']
     assert table._pane.page_size == 10
-    assert controls.width == 110
+    assert controls.sizing_mode == 'stretch_width'
     assert controls.height == 36
-    assert controls.align == 'center'
+    assert controls.align == 'end'
     assert controls.margin == 0
     assert controls.styles == {
-        'position': 'absolute', 'right': '0px', 'bottom': '9px',
-        'margin-left': 'auto',
+        'justify-content': 'flex-end',
         'align-items': 'center',
     }
-    assert ":host { align-items: center !important; }" in controls.stylesheets[0]
-    assert not layout.stylesheets
-    table_styles = table._pane.stylesheets[0]
-    assert "tabulator-page:not(.active)" not in table_styles
-    assert "padding-left: 6px !important" in table_styles
-    assert "padding-right: 6px !important" in table_styles
-    assert "font-size: 0.9em !important" in table_styles
-    assert "min-width: 0 !important" in table_styles
+    assert not table._pane.stylesheets
+    assert not controls.stylesheets
     full_data = controls.objects[0]
     assert full_data.label == "Full data"
     assert full_data.width is None

@@ -207,59 +207,19 @@ class LumenEditor(Viewer):
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote',
-            page_size=10, min_height=200, sizing_mode="stretch_both", stylesheets=[
-            """
-            .tabulator .tabulator-footer .tabulator-footer-contents {
-              padding-right: 125px !important;
-            }
-            @media (max-width: 1600px) {
-              .tabulator .tabulator-page {
-                min-width: 0 !important;
-                padding-left: 6px !important;
-                padding-right: 6px !important;
-                font-size: 0.9em !important;
-              }
-              .tabulator .tabulator-pages {
-                margin-left: 4px !important;
-                margin-right: 4px !important;
-              }
-              .tabulator .tabulator-paginator {
-                min-width: 0 !important;
-              }
-              .tabulator .tabulator-footer .tabulator-footer-contents {
-                padding-right: 110px !important;
-              }
-            }
-            """
-            ]
+            page_size=10, min_height=200, sizing_mode="stretch_both",
         )
         controls = Row(
-            width=110, height=36, align='center',
+            height=36, align='end', sizing_mode='stretch_width',
             css_classes=['full-data-controls'],
             styles={
-                'position': 'absolute', 'right': '0px', 'bottom': '9px',
-                'margin-left': 'auto',
+                'justify-content': 'flex-end',
                 'align-items': 'center',
             },
-            stylesheets=[
-                """
-                :host { align-items: center !important; }
-                @media (max-width: 1600px) {
-                  :host {
-                    position: absolute !important;
-                    right: 0 !important;
-                    bottom: 9px !important;
-                    width: 110px !important;
-                    justify-content: flex-end !important;
-                  }
-                }
-                """
-            ],
         )
         layout = Column(
             table, controls,
             css_classes=['full-data-table-container'],
-            styles={'position': 'relative'},
         )
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
