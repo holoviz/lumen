@@ -39,14 +39,17 @@ def _label(path: Path) -> str:
     return LABELS.get(path, path.stem.replace("_", " "))
 
 
-def _at(*trail: str):
-    """Pages whose nav group is exactly *trail*, e.g. Examples/Gallery."""
-    return lambda path: TRAILS.get(path) == trail
-
-
-def _under(*trail: str):
-    """Pages whose nav group starts with *trail*, e.g. everything under Reference."""
-    return lambda path: TRAILS.get(path, ())[: len(trail)] == trail
+def _section(title: str, description: str, *trail: str, group: str | None = None, under: bool = False) -> LlmsSection:
+    """One LlmsSection for a nav group, matched either exactly (*trail*) or by prefix (*under*)."""
+    matches_trail = (lambda path: TRAILS.get(path, ())[: len(trail)] == trail) if under else (lambda path: TRAILS.get(path) == trail)
+    return LlmsSection(
+        title=title,
+        description=description,
+        path_prefix=Path("."),
+        path_filter=matches_trail,
+        label_builder=_label,
+        group=group,
+    )
 
 
 CONFIG = LlmsBuildConfig(
@@ -62,56 +65,12 @@ CONFIG = LlmsBuildConfig(
     markdown_base_url="/markdown",
     sources=(MarkdownSource(source_dir=DOCS_DIR, output_dir=OUTPUT_DIR),),
     sections=(
-        LlmsSection(
-            title="Overview",
-            description="Quick start, installation, and top-level pages.",
-            path_prefix=Path("."),
-            path_filter=_at(),
-            label_builder=_label,
-        ),
-        LlmsSection(
-            title="Getting Started",
-            description="Launching Lumen, navigating the UI, and building your first app.",
-            path_prefix=Path("."),
-            path_filter=_at("Getting Started"),
-            label_builder=_label,
-        ),
-        LlmsSection(
-            title="Tutorials",
-            description="Full walkthroughs building an AI-driven data exploration app end to end.",
-            path_prefix=Path("."),
-            path_filter=_at("Examples", "Tutorials"),
-            label_builder=_label,
-            group="Examples",
-        ),
-        LlmsSection(
-            title="Gallery",
-            description="Short example specs demonstrating individual sources, transforms, and views.",
-            path_prefix=Path("."),
-            path_filter=_at("Examples", "Gallery"),
-            label_builder=_label,
-            group="Examples",
-        ),
-        LlmsSection(
-            title="Configuration",
-            description="Top-level spec reference: sources, transforms, views, agents, and more.",
-            path_prefix=Path("."),
-            path_filter=_at("Configuration"),
-            label_builder=_label,
-        ),
-        LlmsSection(
-            title="YAML Spec",
-            description="Detailed reference for writing a Lumen dashboard spec by hand.",
-            path_prefix=Path("."),
-            path_filter=_at("Configuration", "Specs"),
-            label_builder=_label,
-        ),
-        LlmsSection(
-            title="API Reference",
-            description="Python API reference for Lumen's pipeline, sources, transforms, views, and AI components.",
-            path_prefix=Path("."),
-            path_filter=_under("Reference"),
-            label_builder=_label,
-        ),
+        _section("Overview", "Quick start, installation, and top-level pages."),
+        _section("Getting Started", "Launching Lumen, navigating the UI, and building your first app.", "Getting Started"),
+        _section("Tutorials", "Full walkthroughs building an AI-driven data exploration app end to end.", "Examples", "Tutorials", group="Examples"),
+        _section("Gallery", "Short example specs demonstrating individual sources, transforms, and views.", "Examples", "Gallery", group="Examples"),
+        _section("Configuration", "Top-level spec reference: sources, transforms, views, agents, and more.", "Configuration"),
+        _section("YAML Spec", "Detailed reference for writing a Lumen dashboard spec by hand.", "Configuration", "Specs"),
+        _section("API Reference", "Python API reference for Lumen's pipeline, sources, transforms, views, and AI components.", "Reference", under=True),
     ),
 )
