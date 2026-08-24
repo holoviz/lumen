@@ -16,6 +16,12 @@ DOCS_DIR = ROOT / "docs"
 BUILTDOCS_DIR = ROOT / "builtdocs"
 OUTPUT_DIR = BUILTDOCS_DIR / "markdown"
 
+# Pages that carry no LLM code-gen value and should be excluded from the build.
+EXCLUDE_FILES = (
+    Path("releases.md"),
+    Path("contributing.md"),
+)
+
 
 def _flatten_nav(nav: list, trail: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], str, Path]]:
     """Flatten zensical's nav into (group trail, label, path) triples."""
@@ -63,7 +69,7 @@ CONFIG = LlmsBuildConfig(
     markdown_root=OUTPUT_DIR,
     llms_output_path=BUILTDOCS_DIR / "llms.txt",
     markdown_base_url="/markdown",
-    sources=(MarkdownSource(source_dir=DOCS_DIR, output_dir=OUTPUT_DIR),),
+    sources=(MarkdownSource(source_dir=DOCS_DIR, output_dir=OUTPUT_DIR, exclude_files=EXCLUDE_FILES),),
     sections=(
         _section("Overview", "Quick start, installation, and top-level pages."),
         _section("Getting Started", "Launching Lumen, navigating the UI, and building your first app.", "Getting Started"),
