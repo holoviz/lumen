@@ -1530,24 +1530,29 @@ class VegaLiteView(View):
         if not isinstance(spec, dict):
             return
 
-        if "encoding" in spec and isinstance(spec["encoding"], dict):
+        if isinstance(spec.get("encoding"), dict):
             for _channel, config in spec["encoding"].items():
-                if isinstance(config, dict) and "field" in config:
-                    field = config["field"]
-                    if field in df.columns:
-                        is_dt = False
-                        if pd.api.types.is_datetime64_any_dtype(df[field]):
+                if not isinstance(config, dict) or "field" not in config:
+                    continue
+
+                field = config["field"]
+                if field not in df.columns:
+                    continue
+
+                series = df[field]
+                is_dt = pd.api.types.is_datetime64_any_dtype(series)
+
+                if not is_dt and (pd.api.types.is_string_dtype(series) or series.dtype.name == 'category'):
+                    first_valid = series.dropna()
+                    if not first_valid.empty:
+                        try:
+                            pd.to_datetime(first_valid.iloc[0], errors='raise')
                             is_dt = True
-                        elif pd.api.types.is_string_dtype(df[field]) or df[field].dtype.name == 'category':
-                            first_valid = df[field].dropna()
-                            if not first_valid.empty:
-                                try:
-                                    pd.to_datetime(first_valid.iloc[0], errors='raise')
-                                    is_dt = True
-                                except (ValueError, TypeError):
-                                    pass
-                        if is_dt:
-                            config["type"] = "temporal"
+                        except (ValueError, TypeError):
+                            pass
+
+                if is_dt:
+                    config["type"] = "temporal"
 
         for value in spec.values():
             if isinstance(value, dict):
