@@ -2877,13 +2877,13 @@ class ExplorerUI(UI):
                 description="Rerun with the same plan and context"
             )
             buttons = [rerun_button, replan_button]
-        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in footer_objects):
+        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in last_message.footer_objects or []):
             retry_button = Button(
                 label="Retry", icon="replay", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
                 description="Try re-running failed steps"
             )
             buttons = [retry_button]
-        last_message.footer_objects = footer_objects + buttons
+        last_message.footer_objects = list(last_message.footer_objects or []) + buttons
         if exploration.parent:
             exploration.parent.conversation = exploration.conversation
 
