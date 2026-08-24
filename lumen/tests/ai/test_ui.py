@@ -1959,31 +1959,30 @@ def test_resolve_data_geojson_startup(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_ensure_model_label_adds_label(explorer_ui):
-    """_ensure_model_label inserts an 'Answered by <model>' Typography when
+    """_ensure_model_label appends model name to timestamp_format when
     the LLM has a resolved model name."""
     ui = explorer_ui
     ui.llm._resolved_model = "gpt-test"
-    footer = []
-    ui._ensure_model_label(footer)
-    assert len(footer) == 1
-    assert "gpt-test" in footer[0].object
-    assert footer[0].name == "ModelLabel"
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    assert "(used gpt-test)" in message.timestamp_format
+    assert message.timestamp_format.startswith('%H:%M')
 
 
 def test_ensure_model_label_no_duplicate(explorer_ui):
     """_ensure_model_label does not add a second label if one already exists."""
     ui = explorer_ui
     ui.llm._resolved_model = "gpt-test"
-    footer = []
-    ui._ensure_model_label(footer)
-    ui._ensure_model_label(footer)
-    assert len(footer) == 1
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    ui._ensure_model_label(message)
+    assert message.timestamp_format.count("(used gpt-test)") == 1
 
 
 def test_ensure_model_label_skips_when_no_model(explorer_ui):
     """_ensure_model_label is a no-op when _resolved_model is None."""
     ui = explorer_ui
     ui.llm._resolved_model = None
-    footer = []
-    ui._ensure_model_label(footer)
-    assert len(footer) == 0
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    assert message.timestamp_format == '%H:%M'
