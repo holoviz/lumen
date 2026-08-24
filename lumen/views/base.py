@@ -1585,7 +1585,7 @@ class VegaLiteView(View):
         df = self.get_data()
         spec_data = self.spec.get('data', {})
         spec = dict(self.spec)
-        
+
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
