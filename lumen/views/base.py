@@ -1521,46 +1521,65 @@ class VegaLiteView(View):
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
 
-    def _coerce_temporal(self, spec: dict[str, Any], df: pd.DataFrame) -> None:
+    def _coerce_temporal(self, spec: Any, df: pd.DataFrame) -> Any:
         """
         Recursively walk the spec. If an encoding channel references a field that
         contains datetimes (or strings that cleanly parse as datetimes), force
         its type to 'temporal' to preserve chronological ordering.
+        Returns a new spec if changes were made, otherwise returns the original.
         """
-        if not isinstance(spec, dict):
-            return
+        if isinstance(spec, dict):
+            new_spec = None
+            if isinstance(spec.get("encoding"), dict):
+                for _channel, config in spec["encoding"].items():
+                    if not isinstance(config, dict) or "field" not in config:
+                        continue
 
-        if isinstance(spec.get("encoding"), dict):
-            for _channel, config in spec["encoding"].items():
-                if not isinstance(config, dict) or "field" not in config:
+                    field = config["field"]
+                    if field not in df.columns:
+                        continue
+
+                    series = df[field]
+                    is_dt = pd.api.types.is_datetime64_any_dtype(series)
+
+                    if not is_dt and (pd.api.types.is_string_dtype(series) or series.dtype.name == 'category'):
+                        first_valid = series.dropna()
+                        if not first_valid.empty:
+                            try:
+                                pd.to_datetime(first_valid, errors='raise')
+                                is_dt = True
+                            except (ValueError, TypeError):
+                                pass
+
+                    if is_dt and config.get("type") != "temporal":
+                        if new_spec is None:
+                            new_spec = dict(spec)
+                            new_spec["encoding"] = dict(spec["encoding"])
+                        new_config = dict(config)
+                        new_config["type"] = "temporal"
+                        new_spec["encoding"][_channel] = new_config
+
+            for key, value in spec.items():
+                if key == "encoding" and new_spec is not None and "encoding" in new_spec:
                     continue
+                coerced_value = self._coerce_temporal(value, df)
+                if coerced_value is not value:
+                    if new_spec is None:
+                        new_spec = dict(spec)
+                    new_spec[key] = coerced_value
+            return new_spec if new_spec is not None else spec
 
-                field = config["field"]
-                if field not in df.columns:
-                    continue
+        elif isinstance(spec, list):
+            new_list = None
+            for i, item in enumerate(spec):
+                coerced_item = self._coerce_temporal(item, df)
+                if coerced_item is not item:
+                    if new_list is None:
+                        new_list = list(spec)
+                    new_list[i] = coerced_item
+            return new_list if new_list is not None else spec
 
-                series = df[field]
-                is_dt = pd.api.types.is_datetime64_any_dtype(series)
-
-                if not is_dt and (pd.api.types.is_string_dtype(series) or series.dtype.name == 'category'):
-                    first_valid = series.dropna()
-                    if not first_valid.empty:
-                        try:
-                            pd.to_datetime(first_valid, errors='raise')
-                            is_dt = True
-                        except (ValueError, TypeError):
-                            pass
-
-                if is_dt:
-                    config["type"] = "temporal"
-
-        for value in spec.values():
-            if isinstance(value, dict):
-                self._coerce_temporal(value, df)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, dict):
-                        self._coerce_temporal(item, df)
+        return spec
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
@@ -1570,7 +1589,7 @@ class VegaLiteView(View):
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
-        self._coerce_temporal(spec, df)
+        spec = self._coerce_temporal(spec, df)
 
         if self._declares_own_data(spec):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
