@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import html
 import sys
+import warnings
 
 from io import BytesIO, StringIO
 from typing import (
@@ -1545,11 +1546,13 @@ class VegaLiteView(View):
                     if not is_dt and (pd.api.types.is_string_dtype(series) or series.dtype.name == 'category'):
                         first_valid = series.dropna()
                         if not first_valid.empty:
-                            try:
-                                pd.to_datetime(first_valid, errors='raise')
-                                is_dt = True
-                            except (ValueError, TypeError):
-                                pass
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore", UserWarning)
+                                try:
+                                    pd.to_datetime(first_valid, errors='raise')
+                                    is_dt = True
+                                except (ValueError, TypeError):
+                                    pass
 
                     if is_dt and config.get("type") != "temporal":
                         if new_spec is None:
