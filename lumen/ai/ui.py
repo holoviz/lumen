@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import os
 import tempfile
+import traceback
 
 from contextlib import contextmanager
 from functools import partial
@@ -456,7 +457,7 @@ class UI(Viewer):
     source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
-    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadSourceControls.
         Common options include 'accepted_filetypes' and 'max_file_size'.
         See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
 
@@ -600,7 +601,9 @@ class UI(Viewer):
                     continue
                 elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
                     try:
-                        from ..sources.sqlalchemy import SQLAlchemySource
+                        from ..sources.sqlalchemy import (  # noqa: PLC0415
+                            SQLAlchemySource,
+                        )
                     except ImportError as e:
                         raise ImportError(
                             "SQLAlchemy is required for database connection strings. "
@@ -626,7 +629,9 @@ class UI(Viewer):
                         sources.append(source)
                     else:
                         try:
-                            from ..sources.sqlalchemy import SQLAlchemySource
+                            from ..sources.sqlalchemy import (  # noqa: PLC0415
+                                SQLAlchemySource,
+                            )
                         except ImportError as e:
                             raise ImportError(
                                 "SQLAlchemy is required to read .db files. "
@@ -745,7 +750,6 @@ class UI(Viewer):
             self._chat_input.disabled = False
             self.interface.disabled = False
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
@@ -1820,7 +1824,7 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor"},
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor", "texteditor"},
                 css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page
@@ -1828,7 +1832,7 @@ class UI(Viewer):
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor", "texteditor"},
             notifications=True,
             css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
         )

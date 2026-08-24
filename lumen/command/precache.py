@@ -5,6 +5,7 @@ from pathlib import Path
 from bokeh.command.subcommand import Argument, Subcommand  # type: ignore
 
 from lumen.config import config
+from lumen.dashboard import load_yaml
 from lumen.state import state
 from lumen.variables import Variables
 
@@ -28,7 +29,6 @@ class Precache(Subcommand):
     )
 
     def invoke(self, args: argparse.Namespace):
-        from ..dashboard import load_yaml
         for yaml_file in args.files:
             config.root = str(Path(yaml_file).parent)
             state.spec = load_yaml(Path(yaml_file).read_text())

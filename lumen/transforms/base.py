@@ -5,12 +5,16 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import math
 
 from collections.abc import Callable
+from functools import reduce
+from operator import and_, or_
 from typing import (
     TYPE_CHECKING, Any, ClassVar, Literal,
 )
 
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -21,15 +25,34 @@ from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
 from ..state import state
-from ..util import is_ref
+from ..util import (
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, is_ref, log,
+)
 
 pd_version = Version(pd.__version__)
+
+# Aggregation names whose narwhals result is verified equal to pandas on every
+# backend. Anything absent takes the pandas path, because a shared name is not
+# a shared meaning: pyarrow's median is approximate, and narwhals `first` does
+# not skip missing values the way pandas groupby.first does.
+_NARWHALS_AGGREGATIONS = frozenset({
+    'max', 'mean', 'min', 'std', 'sum', 'var',
+})
 
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
+
+
+def _is_missing(value):
+    """True for every spelling of a missing value a schema enum can carry.
+
+    The pandas schema path emits NaN for a missing string where the narwhals
+    path emits None, and either can arrive back here as a filter value.
+    """
+    return value is None or (isinstance(value, float) and math.isnan(value))
 
 
 class Transform(MultiTypeComponent):
@@ -43,6 +66,14 @@ class Transform(MultiTypeComponent):
     transform_type: ClassVar[str | None] = None
 
     _field_params: ClassVar[list[str]] = []
+
+    # Whether apply() can work on a lazy frame. False means _narwhals_frame
+    # collects one first, because slicing, sampling and len() need real rows.
+    _lazy: ClassVar[bool] = True
+
+    # Whether apply() handles narwhals frames. False means _coerce materializes
+    # the data to pandas first, which keeps third-party subclasses working.
+    _narwhals: ClassVar[bool] = False
 
     _valid_keys: ClassVar[list[str] | Literal['params'] | None] = 'params'
 
@@ -126,6 +157,82 @@ class Transform(MultiTypeComponent):
         return transform
 
     @classmethod
+    def _coerce(cls, table: Any) -> Any:
+        """Materialize to pandas for transforms with no narwhals implementation.
+
+        Most transforms encode a pandas concept narwhals has no counterpart for,
+        such as the index or the query expression language. Rather than fail deep
+        inside another dataframe library, they convert and say what it cost.
+        """
+        if cls._narwhals:
+            return table
+        return cls._coerce_to_pandas(table)
+
+    @classmethod
+    def _coerce_to_pandas(cls, table: Any) -> Any:
+        """Convert a non-pandas frame to pandas, saying what it cost."""
+        if isinstance(table, pd.DataFrame):
+            return table
+        narwhals_table = as_narwhals(table)
+        if not is_narwhals(narwhals_table):
+            return table
+        cls.param.warning(
+            f'{cls.__name__} has no narwhals implementation, so the data was '
+            'converted to pandas, loading the whole frame into memory.'
+        )
+        return as_pandas(narwhals_table)
+
+    def _narwhals_frame(self, table: Any, lazy: bool = False):
+        """Return table as a narwhals frame, or None to take the pandas path."""
+        if isinstance(table, pd.DataFrame):
+            return None
+        narwhals_table = as_narwhals(table)
+        if not is_narwhals(narwhals_table):
+            return None
+        if not (self._lazy or lazy) and is_lazyframe(narwhals_table):
+            return narwhals_table.collect()
+        return narwhals_table
+
+    def _to_native(self, frame, source):
+        """Return frame as the same kind of object the caller handed in."""
+        if is_lazyframe(as_narwhals(source)) and not is_lazyframe(frame):
+            return frame.lazy().to_native()
+        return frame.to_native()
+
+    def _try_narwhals(self, table, build, lazy=False):
+        """Run build() on a narwhals frame, or hand back a pandas table.
+
+        Returns (result, table). A result of None means take the pandas path
+        using the returned table, which has been converted if it was not
+        pandas already.
+
+        Every narwhals gap routes through here: an option narwhals has no
+        counterpart for, an expression method it does not implement, a dtype a
+        backend rejects. Catching them in one place is what stops each ported
+        transform needing its own hand-written predicate for what narwhals can
+        and cannot do, which is where the divergences kept coming from.
+        """
+        frame = self._narwhals_frame(table, lazy=lazy)
+        if frame is None:
+            return None, table
+        try:
+            return self._to_native(build(frame), table), table
+        except (MemoryError, RecursionError):
+            # Recovering by materializing the same data as pandas would only
+            # exhaust the same resource again, with the first failure hidden.
+            raise
+        except Exception as e:
+            log.debug(
+                '%s could not be expressed in narwhals, using pandas: %r',
+                type(self).__name__, e, exc_info=True
+            )
+            type(self).param.warning(
+                f'{type(self).__name__} could not run this configuration on '
+                f'{type(table).__name__}, so the data was converted to pandas.'
+            )
+            return None, as_pandas(table)
+
+    @classmethod
     def apply_to(cls, table: DataFrame, **kwargs) -> DataFrame:
         """
         Calls the apply method based on keyword arguments passed to define transform.
@@ -138,7 +245,7 @@ class Transform(MultiTypeComponent):
         -------
         A DataFrame with the results of the transformation.
         """
-        return cls(**kwargs).apply(table)
+        return cls(**kwargs).apply(cls._coerce(table))
 
     def __hash__(self) -> int:
         """
@@ -169,6 +276,19 @@ class Transform(MultiTypeComponent):
         """
         return table
 
+    def requires_columns(self) -> set[str] | None:
+        """
+        Return the columns this transform reads, or None if it may read any.
+
+        A Pipeline uses this to narrow the query it sends to a SQL source to
+        the columns something actually needs. None is the safe answer and the
+        default: it means the query cannot be narrowed, because a projection
+        might drop a column this transform reads. Only override it where
+        every column the transform touches is named by its parameters, and
+        return None for the parameter values that mean "all the rest".
+        """
+        return None
+
     @property
     def control_panel(self) -> Viewable:
         return pn.Param(
@@ -197,13 +317,84 @@ class Filter(Transform):
       List of filter conditions expressed as tuples of the column
       name and the filter value.""")
 
+    _narwhals: ClassVar[bool] = True
+
+    @staticmethod
+    def _widen_dates(start: Any, end: Any) -> tuple[Any, Any]:
+        """Grow a date range to cover the whole of its first and last day."""
+        if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+            start = dt.datetime(*start.timetuple()[:3], 0, 0, 0)
+        if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+            end = dt.datetime(*end.timetuple()[:3], 23, 59, 59)
+        return start, end
+
+    @classmethod
+    def _range_expr(cls, temporal: bool, name: str, start: Any, end: Any):
+        """Narwhals counterpart of _range_filter, expressed against a column name."""
+        if temporal:
+            start, end = cls._widen_dates(start, end)
+        if start is None and end is None:
+            return None
+        column = nw.col(name)
+        if start is None:
+            return column <= end
+        if end is None:
+            return column >= start
+        return (column >= start) & (column <= end)
+
+    def _apply_narwhals(self, df):
+        schema = df.collect_schema()
+        exprs = []
+        for k, val in self.conditions:
+            if k not in schema.names():
+                continue
+            temporal = isinstance(schema[k], (nw.Datetime, nw.Date))
+            if np.isscalar(val) or isinstance(val, dt.date):
+                if temporal:
+                    val, _ = self._widen_dates(val, None)
+                expr = nw.col(k) == val
+            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
+                ranges = [
+                    self._range_expr(temporal, k, *v) for v in val if v is not None
+                ]
+                ranges = [r for r in ranges if r is not None]
+                if not ranges:
+                    continue
+                expr = reduce(or_, ranges)
+            elif isinstance(val, list):
+                if not val:
+                    continue
+                # A None in the list matches nulls for pandas isin on an object
+                # column, but polars drops those rows, so ask for nulls
+                # separately. The schema emits such lists for nullable columns.
+                # Numeric columns are excluded because pandas isin([None]) does
+                # not match NaN there, and matching it would be a difference.
+                # A missing marker matches nulls for pandas isin on an object
+                # column, but polars drops those rows, so ask for nulls
+                # separately. Numeric columns are excluded because pandas
+                # isin([None]) does not match NaN there.
+                members = [v for v in val if not _is_missing(v)]
+                expr = nw.col(k).is_in(members) if members else nw.col(k).is_null() & ~nw.col(k).is_null()
+                if len(members) != len(val) and not schema[k].is_numeric():
+                    expr = expr | nw.col(k).is_null()
+            elif isinstance(val, tuple):
+                expr = self._range_expr(temporal, k, *val)
+            else:
+                self.param.warning(
+                    f'Condition {val!r} on {k!r} column not understood. '
+                    'Filter query will not be applied.'
+                )
+                continue
+            if expr is not None:
+                exprs.append(expr)
+        if exprs:
+            df = df.filter(reduce(and_, exprs))
+        return df
+
     @classmethod
     def _range_filter(cls, column: Series, start: Any, end: Any) -> Series | None:
         if column.dtype.kind == 'M':
-            if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
-                start = dt.datetime(*start.timetuple()[:3], 0, 0, 0)
-            if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-                end = dt.datetime(*end.timetuple()[:3], 23, 59, 59)
+            start, end = cls._widen_dates(start, end)
         if start is None and end is None:
             return None
         elif start is None:
@@ -215,6 +406,9 @@ class Filter(Transform):
         return mask
 
     def apply(self, df: DataFrame) -> DataFrame:
+        result, df = self._try_narwhals(df, self._apply_narwhals)
+        if result is not None:
+            return result
         filters = []
         for k, val in self.conditions:
             if k not in df.columns:
@@ -223,7 +417,7 @@ class Filter(Transform):
             if np.isscalar(val) or isinstance(val, dt.date):
                 if (column.dtype.kind == 'M' and isinstance(val, dt.date)
                     and not isinstance(val, dt.datetime)):
-                    val = dt.datetime(*val.timetuple()[:3], 0, 0, 0)
+                    val, _ = self._widen_dates(val, None)
                 mask = column == val
             elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
                 val = [v for v in val if v is not None]
@@ -243,7 +437,7 @@ class Filter(Transform):
                 mask = self._range_filter(column, *val)
             else:
                 self.param.warning(
-                    'Condition {val!r} on {col!r} column not understood. '
+                    f'Condition {val!r} on {k!r} column not understood. '
                     'Filter query will not be applied.'
                 )
                 continue
@@ -331,7 +525,54 @@ class Aggregate(Transform):
 
     _field_params: ClassVar[list[str]] = ['by', 'columns']
 
+    _narwhals: ClassVar[bool] = True
+
+    def requires_columns(self) -> set[str] | None:
+        if not self.columns:
+            # Without an explicit selection every numeric column is aggregated.
+            return None
+        return set(self.by or []) | set(self.columns)
+
     def apply(self, table: DataFrame) -> DataFrame:
+        def build(frame):
+            if self.method not in _NARWHALS_AGGREGATIONS:
+                raise NotImplementedError(self.method)
+            schema = frame.collect_schema()
+            cols = self.columns or [
+                name for name, dtype in schema.items()
+                if dtype.is_numeric() and name not in self.by
+            ]
+            # pandas aggregations skip NaN; polars propagates it. narwhals
+            # skips nulls, so map NaN onto null for the float columns first.
+            floats = [
+                c for c in cols
+                if schema[c].is_numeric() and not schema[c].is_integer()
+            ]
+            aggs = [getattr(nw.col(c), self.method)(**self.kwargs) for c in cols]
+            # Two things pandas groupby does that narwhals does not: it drops
+            # rows whose key is null or NaN, and it sorts by the key. polars
+            # treats NaN as a value, so exclude it explicitly.
+            keys = reduce(
+                and_, [
+                    (~nw.col(c).is_nan() & ~nw.col(c).is_null())
+                    if schema[c].is_numeric() and not schema[c].is_integer()
+                    else ~nw.col(c).is_null()
+                    for c in self.by
+                ]
+            )
+            if floats:
+                frame = frame.with_columns(*[
+                    nw.when(~nw.col(c).is_nan()).then(nw.col(c)).alias(c)
+                    for c in floats
+                ])
+            return frame.filter(keys).group_by(self.by).agg(*aggs).sort(self.by)
+
+        if not self.with_index:
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        # with_index moves the group keys into an index narwhals does not have.
+        table = type(self)._coerce_to_pandas(table)
         grouped = table.groupby(self.by)
         if self.columns:
             cols = self.columns
@@ -364,7 +605,47 @@ class Sort(Transform):
 
     _field_params: ClassVar[list[str]] = ['by']
 
+    _narwhals: ClassVar[bool] = True
+
+    def requires_columns(self) -> set[str] | None:
+        return set(self.by or [])
+
     def apply(self, table: DataFrame) -> DataFrame:
+        def build(frame):
+            if not self.by:
+                # sort_values([]) is a no-op in pandas but raises in narwhals,
+                # and converting a whole frame to do nothing would be absurd.
+                raise NotImplementedError('by is empty')
+            descending = (
+                [not a for a in self.ascending]
+                if isinstance(self.ascending, list) else [not self.ascending] * len(self.by)
+            )
+            # narwhals sorts nulls first by default and polars orders NaN above
+            # every value; pandas puts both last whichever way the sort runs.
+            schema = frame.collect_schema()
+            flags, keys, order = {}, [], []
+            for column, desc in zip(self.by, descending, strict=True):
+                if schema[column].is_numeric() and not schema[column].is_integer():
+                    # The flag has to sort immediately before its own column,
+                    # so NaN lands last within each group of the keys to its
+                    # left rather than being pushed to the end of the frame.
+                    flag = f'_nan_{column}'
+                    flags[flag] = nw.col(column).is_nan()
+                    keys.append(flag)
+                    order.append(False)
+                keys.append(column)
+                order.append(desc)
+            if not flags:
+                return frame.sort(self.by, descending=descending, nulls_last=True)
+            return (
+                frame.with_columns(**flags)
+                .sort(keys, descending=order, nulls_last=True)
+                .drop(list(flags))
+            )
+
+        result, table = self._try_narwhals(table, build)
+        if result is not None:
+            return result
         return table.sort_values(self.by, ascending=self.ascending)
 
 
@@ -398,7 +679,15 @@ class Columns(Transform):
 
     _field_params: ClassVar[list[str]] = ['columns']
 
+    _narwhals: ClassVar[bool] = True
+
+    def requires_columns(self) -> set[str] | None:
+        return set(self.columns or [])
+
     def apply(self, table: DataFrame) -> DataFrame:
+        result, table = self._try_narwhals(table, lambda f: f.select(self.columns))
+        if result is not None:
+            return result
         return table[self.columns]
 
 
@@ -473,7 +762,22 @@ class Iloc(Transform):
 
     transform_type: ClassVar[str] = 'iloc'
 
+    _lazy: ClassVar[bool] = False
+
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        if is_lazyframe(as_narwhals(table)) and not self.start and self.end and self.end > 0:
+            # A leading slice is head(), which a lazy backend pushes down
+            # rather than materializing the whole frame to throw most away.
+            result, table = self._try_narwhals(
+                table, lambda f: f.head(self.end), lazy=True
+            )
+            if result is not None:
+                return result
+        result, table = self._try_narwhals(table, lambda f: f[self.start:self.end])
+        if result is not None:
+            return result
         return table.iloc[self.start:self.end]
 
 
@@ -495,7 +799,18 @@ class Sample(Transform):
 
     transform_type: ClassVar[str] = 'sample'
 
+    _lazy: ClassVar[bool] = False
+
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        result, table = self._try_narwhals(table, lambda f: f.sample(
+            **self._drop_none_values(
+                n=self.n, fraction=self.frac, with_replacement=self.replace
+            )
+        ))
+        if result is not None:
+            return result
         return table.sample(
             **self._drop_none_values(n=self.n, frac=self.frac, replace=self.replace)
         )
@@ -609,12 +924,34 @@ class Melt(Transform):
 
     _field_params: ClassVar[list[str]] = ['id_vars', 'value_vars']
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        def build(frame):
+            if self.value_vars == []:
+                # pandas reads an empty value_vars differently depending on
+                # whether id_vars was given. Not worth reimplementing.
+                raise NotImplementedError
+            # pandas never melts a column that is already an id_var.
+            on = self.value_vars or [
+                c for c in frame.collect_schema().names() if c not in self.id_vars
+            ]
+            on = [c for c in on if c not in self.id_vars]
+            # ignore_index has no counterpart: unpivot never keeps an index.
+            return frame.unpivot(
+                on=on, index=self.id_vars,
+                variable_name='variable' if self.var_name is None else self.var_name,
+                value_name=self.value_name,
+            )
+
+        result, table = self._try_narwhals(table, build)
+        if result is not None:
+            return result
         melt: Callable
         if isinstance(table, pd.DataFrame):
             melt = pd.melt
         else:
-            import dask.dataframe as dd
+            import dask.dataframe as dd  # noqa: PLC0415
             melt = dd.melt
         return melt(
             table, id_vars=self.id_vars, value_vars=self.value_vars,
@@ -648,6 +985,11 @@ class SetIndex(Transform):
     transform_type: ClassVar[str] = 'set_index'
 
     _field_params: ClassVar[list[str]] = ['keys']
+
+    def requires_columns(self) -> set[str] | None:
+        if self.keys is None:
+            return None
+        return {self.keys} if isinstance(self.keys, str) else set(self.keys)
 
     def apply(self, table: DataFrame) -> DataFrame:
         return table.set_index(
@@ -720,7 +1062,23 @@ class Rename(Transform):
 
     transform_type: ClassVar[str] = 'rename'
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        renaming_columns = self.columns or (self.mapper and self.axis in (1, 'columns'))
+        if renaming_columns and self.level is None and not (self.columns and self.mapper):
+            # Only the columns case maps over: index and level are pandas index
+            # concepts, and narwhals has no index to rename. Unknown columns are
+            # dropped from the mapping because pandas rename ignores them.
+            def build(frame):
+                mapping = self.columns or self.mapper
+                known = set(frame.collect_schema().names())
+                return frame.rename({k: v for k, v in mapping.items() if k in known})
+
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        table = type(self)._coerce_to_pandas(table)
         kwargs: dict[str, Any] = dict(
             axis=self.axis, columns=self.columns,
             index=self.index, mapper=self.mapper, level=self.level,
@@ -875,11 +1233,37 @@ class DropNA(Transform):
 
     transform_type: ClassVar[str] = 'dropna'
 
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        droppable = self.axis in (0, 'index') and self.thresh is None
+        if droppable and self.how in (None, 'any'):
+            def build(frame):
+                # drop_nulls is row-wise how='any' only; axis=1, how='all' and
+                # thresh have no counterpart and take the pandas path below.
+                # It also keeps NaN, which pandas dropna removes, so float
+                # columns need the extra predicate.
+                schema = frame.collect_schema()
+                considered = self.subset or schema.names()
+                floats = [
+                    c for c in considered
+                    if schema[c].is_numeric() and not schema[c].is_integer()
+                ]
+                frame = frame.drop_nulls(subset=self.subset)
+                if floats:
+                    frame = frame.filter(
+                        reduce(and_, [~nw.col(c).is_nan() for c in floats])
+                    )
+                return frame
+
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        table = type(self)._coerce_to_pandas(table)
         kwargs = {'axis': self.axis, 'subset': self.subset}
-        if self.how:
+        if self.how and self.thresh is None:
             kwargs['how'] = self.how
-        if self.thresh:
+        if self.thresh is not None:
             kwargs['thresh'] = self.thresh
         return table.dropna(**kwargs)
 

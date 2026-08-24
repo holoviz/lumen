@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 
 from functools import partial
@@ -7,10 +8,12 @@ from itertools import product
 from typing import Any, ClassVar, Literal
 
 import numpy as np
+import pandas as pd
 import panel as pn
 import param  # type: ignore
 import tqdm  # type: ignore
 
+from holoviews import Dataset  # type: ignore
 from panel.io.document import unlocked
 from panel.io.state import state as pn_state
 from panel.layout import Column, Row
@@ -22,10 +25,11 @@ from .base import Component
 from .filters.base import Filter, ParamFilter, WidgetFilter
 from .sources.base import Source
 from .state import state
-from .transforms.base import Filter as FilterTransform, Transform
-from .transforms.sql import SQLTransform
+from .transforms.base import Columns, Filter as FilterTransform, Transform
+from .transforms.sql import SQLColumns, SQLTransform
 from .util import (
-    VARIABLE_RE, catch_and_notify, get_dataframe_schema, is_ref,
+    DATAFRAME_BACKENDS, VARIABLE_RE, as_narwhals, as_pandas, catch_and_notify,
+    collect_lazy, get_dataframe_schema, is_narwhals, is_ref, to_backend,
 )
 from .validation import ValidationError, match_suggestion_message
 
@@ -60,7 +64,20 @@ def auto_filters(schema: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
 class DataFrame(param.DataFrame):
     """
     DataFrame parameter that resolves data on access.
+
+    param.DataFrame is a ClassSelector on pandas.DataFrame, which would reject
+    a frame from any other dataframe library before a Source could hand one
+    over, so the check is widened to anything narwhals can read.
     """
+
+    def _validate(self, val):
+        if val is None or isinstance(val, pd.DataFrame):
+            super()._validate(val)
+        elif not is_narwhals(as_narwhals(val)):
+            raise ValueError(
+                f'{self.name!r} expects a pandas DataFrame or a frame from a '
+                f'dataframe library narwhals supports, not {type(val).__name__}.'
+            )
 
     def __get__(self, obj, objtype):
         if obj is not None:
@@ -105,6 +122,11 @@ class Pipeline(Viewer, Component):
 
     schema = param.Dict(doc="The schema of the input data.")
 
+    dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
+        The dataframe library `Pipeline.data` is returned as. Leave unset to
+        get whatever the Source produced, which avoids a conversion."""
+    )
+
     auto_update = param.Boolean(default=True, constant=True, doc="""
         Whether changes in filters, transforms and references automatically
         trigger updates in the data or whether an update has to be triggered
@@ -125,6 +147,13 @@ class Pipeline(Viewer, Component):
 
     sql_transforms = param.List(item_type=SQLTransform, doc="""
         A list of SQLTransforms to apply to the source data."""
+    )
+
+    sql_pushdown = param.Boolean(default=True, doc="""
+        Whether to narrow the query to the columns the transforms actually
+        need when the Source supports SQL, instead of fetching every column
+        and projecting in pandas. Only applied where the result is provably
+        identical; set to False to always fetch the full table."""
     )
 
     transforms = param.List(item_type=Transform, doc="""
@@ -197,7 +226,13 @@ class Pipeline(Viewer, Component):
 
     def __panel__(self) -> Row:
         controls = self.control_panel
-        table = Tabulator(self.param.data, pagination='remote', sizing_mode="stretch_both", min_height=200)
+        # Tabulator reads .index and .iloc, so it needs real pandas. This is
+        # the notebook and pn.panel(pipeline) path, which does not go through
+        # View.get_data where the other materialization lives.
+        table = Tabulator(
+            param.rx(as_pandas)(self.param.data), pagination='remote',
+            sizing_mode="stretch_both", min_height=200
+        )
         if controls:
             return Row(self.control_panel, table)
         return table
@@ -280,6 +315,56 @@ class Pipeline(Viewer, Component):
             query['sql_transforms'] = self.sql_transforms
         return self.source.to_dataset(self.table, **query)
 
+    def _pushdown_transform(self) -> SQLColumns | None:
+        """
+        Return a projection to push into the query, or None when narrowing
+        the query cannot be proven to leave the result unchanged.
+
+        The transforms still run in pandas afterwards. This only spares the
+        source from sending columns that nothing downstream reads: on a
+        2M x 9 DuckDB table, projecting to one column takes the frame the
+        source hands back from 454MB to 16MB.
+        """
+        if not self.sql_pushdown or self.pipeline is not None or not self.source._supports_sql:
+            return None
+        if any(isinstance(filt, ParamFilter) for filt in self.filters):
+            # _compute_data runs these against the source output before the
+            # transforms, so they may read a column no transform names.
+            return None
+
+        # The last Columns decides how wide the result is. Without one the
+        # pipeline returns every column, so there is nothing to narrow to.
+        projections = [i for i, t in enumerate(self.transforms) if isinstance(t, Columns) and t.columns]
+        if not projections:
+            return None
+        last = projections[-1]
+
+        required = set(self.transforms[last].columns)
+        for transform in self.transforms[:last]:
+            columns = transform.requires_columns()
+            if columns is None:
+                # The transform may read a column it does not name, so the
+                # union below would be incomplete.
+                return None
+            required |= columns
+        # A source with filter_in_sql off filters in pandas after the query,
+        # so every filtered column has to survive the projection. Keeping them
+        # unconditionally costs a column or two and spares this from having to
+        # know which sources declare that parameter.
+        required |= {filt.field for filt in self.filters if filt.field}
+
+        if any(re.search(r'\W', col) for col in required):
+            # SQLColumns renders the names unquoted, and quoting them here
+            # would change identifier case-sensitivity for existing users.
+            return None
+        # The schema carries the row count alongside the columns.
+        schema_columns = [col for col in self.schema if col != '__len__']
+        columns = [col for col in schema_columns if col in required]
+        if len(columns) != len(required) or len(columns) == len(schema_columns):
+            # A column the schema does not know, or nothing to save.
+            return None
+        return SQLColumns(columns=columns)
+
     def _compute_data(self):
         query = self._filter_query()
 
@@ -292,6 +377,10 @@ class Pipeline(Viewer, Component):
                         f'Found source typed {self.source.source_type!r} instead.'
                     )
                 query['sql_transforms'] = self.sql_transforms
+            if pushdown := self._pushdown_transform():
+                # Last, so the filter and the declared transforms above still
+                # see every column.
+                query['sql_transforms'] = [*query.get('sql_transforms', []), pushdown]
             data = self.source.get(self.table, **query)
         else:
             pipelines = []
@@ -309,15 +398,20 @@ class Pipeline(Viewer, Component):
         for filt in self.filters:
             if not isinstance(filt, ParamFilter):
                 continue
-            from holoviews import Dataset  # type: ignore
             if filt.value is not None:
-                ds = Dataset(data)
+                # HoloViews only learned to read narwhals frames in 1.22 and the
+                # floor is lower than that, so hand it pandas.
+                ds = Dataset(as_pandas(data))
                 data = ds.select(filt.value).data
 
         # Apply transforms
         for transform in self.transforms:
+            data = transform._coerce(data)
             data = transform.apply(data)
-        return data
+        # A lazy Source stays lazy through the transforms above and is
+        # collected exactly once here, because everything downstream of
+        # Pipeline.data calls len(), .iloc or .index on it.
+        return to_backend(collect_lazy(data), self.dataframe_backend)
 
     def get_schema(self):
         """
@@ -613,7 +707,9 @@ class Pipeline(Viewer, Component):
         chain_update = kwargs.pop('_chain_update', False)
         if sql_transforms:
             try:
-                from .sources.duckdb import DuckDBSource
+                # Deferred: .sources.duckdb needs duckdb, which the core
+                # install does not pull in.
+                from .sources.duckdb import DuckDBSource  # noqa: PLC0415
             except Exception as e:
                 raise RuntimeError(
                     'Cannot chain SQL transforms on a Pipeline without '

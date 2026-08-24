@@ -11,7 +11,7 @@ import lumen as lm
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
-    SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
+    SQLSample, SQLSchemaStats, SQLSelectFrom, SQLSort, SQLTransform,
 )
 
 try:
@@ -204,6 +204,55 @@ def test_sql_columns():
     result = SQLColumns.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
     expected = "SELECT A, B FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
+
+
+def test_sql_sort():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"])
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A ASC"
+    assert result == expected
+
+
+def test_sql_sort_descending():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"], ascending=False)
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A DESC"
+    assert result == expected
+
+
+def test_sql_sort_per_column_direction():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A", "B"], ascending=[True, False])
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A ASC, B DESC"
+    assert result == expected
+
+
+def test_sql_sort_nonalphanum_characters():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A_B-123"])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY "A_B-123" ASC'
+    assert result == expected
+
+
+def test_sql_sort_without_columns_is_a_noop():
+    assert SQLSort.apply_to("SELECT * FROM TABLE", by=[]) == "SELECT * FROM TABLE"
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "postgres", "mysql", "snowflake", "bigquery", "sqlite"])
+def test_sql_sort_renders_for_dialect(dialect):
+    """Every dialect gets an ORDER BY, whatever it does with null placement."""
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"], ascending=False, write=dialect)
+    assert "ORDER BY" in result and "DESC" in result
+
+
+def test_sql_sort_before_limit_is_a_top_n_query():
+    """The pairing SQLSort exists for: ordering inside, limit outside."""
+    if DuckDBSource is None:
+        pytest.skip("duckdb is not installed")
+    source = DuckDBSource(tables={"t": "SELECT * FROM t"}, uri=":memory:")
+    source._connection.execute(
+        "CREATE TABLE t AS SELECT * FROM (VALUES (3), (1), (2)) v(n)"
+    )
+    sql = SQLLimit.apply_to(
+        SQLSort.apply_to("SELECT * FROM t", by=["n"], ascending=False), limit=2
+    )
+    assert source._connection.execute(sql).fetchall() == [(3,), (2,)]
 
 
 def test_sql_distinct():

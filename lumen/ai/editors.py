@@ -11,9 +11,9 @@ from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
 import param
+import vl_convert as vlc
 
 from panel.config import config
-from panel.custom import JSComponent
 from panel.layout import Column, Row
 from panel.pane import (
     PDF, DeckGL, Image as PnImage, Markdown, panel as as_panel,
@@ -39,95 +39,12 @@ from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_data
+from .utils import describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
-
-
-class EditableProse(JSComponent):
-    """
-    A paragraph of Markdown the user can edit in place, like a document editor.
-
-    It shows the rendered Markdown until it is clicked, then swaps to the raw
-    text to edit and renders again on blur, so the story reads as prose rather
-    than as Markdown source. ``value`` is only written back into the element
-    when it differs from what is already there, because assigning to a
-    contenteditable node resets the caret to the start, which would make it
-    impossible to type.
-    """
-
-    value = param.String(default="", doc="""
-        The Markdown source of the paragraph.""")
-
-    _rendered = param.String(default="", doc="""
-        ``value`` rendered to HTML, shown while the paragraph is not edited.""")
-
-    _esm = """
-    export function render({ model }) {
-      const div = document.createElement('div')
-      div.className = 'editable-prose'
-      div.title = 'Click to edit'
-
-      const show = () => { div.innerHTML = model._rendered }
-      const edit = () => {
-        div.textContent = model.value
-        div.contentEditable = 'true'
-        div.classList.add('editing')
-        div.focus()
-      }
-
-      div.addEventListener('click', () => { if (div.contentEditable !== 'true') edit() })
-      div.addEventListener('input', () => { model.value = div.textContent })
-      div.addEventListener('blur', () => {
-        div.contentEditable = 'false'
-        div.classList.remove('editing')
-        show()
-      })
-      model.on('_rendered', () => { if (div.contentEditable !== 'true') show() })
-      model.on('value', () => {
-        // Only while editing, and only if it really changed, or the caret jumps.
-        if (div.contentEditable === 'true' && div.textContent !== model.value) {
-          div.textContent = model.value
-        }
-      })
-
-      show()
-      return div
-    }
-    """
-
-    _stylesheets = [
-        """
-        .editable-prose {
-          outline: none;
-          padding: 4px 6px;
-          border-radius: 4px;
-          cursor: text;
-        }
-        .editable-prose > :first-child { margin-top: 0; }
-        .editable-prose > :last-child { margin-bottom: 0; }
-        .editable-prose:hover { background: rgba(127, 127, 127, 0.08); }
-        .editable-prose.editing {
-          background: rgba(127, 127, 127, 0.12);
-          white-space: pre-wrap;
-        }
-        """
-    ]
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        self._render_markdown()
-
-    @param.depends("value", watch=True)
-    def _render_markdown(self):
-        # Rendered with the same engine as Panel's Markdown pane, so the story
-        # reads identically on screen and in the exports.
-        from markdown_it import MarkdownIt
-
-        self._rendered = MarkdownIt("gfm-like").render(self.value)
 
 
 class LumenEditor(Viewer):
@@ -309,8 +226,7 @@ class LumenEditor(Viewer):
         else:
             sql_limit = None
         if sql_limit:
-            data = pipeline.data
-            limited = len(data) == sql_limit.limit
+            limited = len(pipeline.data) == sql_limit.limit
             if limited:
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
@@ -327,7 +243,7 @@ class LumenEditor(Viewer):
             # If output is a view we provide the full View specification
             return {"view": self._spec_dict}
         elif isinstance(view, Pipeline):
-            data = await get_data(view)
+            data = await get_frame(view)
             return {
                 "pipeline": view,
                 "table": view.table,
@@ -481,7 +397,6 @@ class VegaLiteEditor(LumenEditor):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            import vl_convert as vlc
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)

@@ -5,7 +5,8 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, DropNA, Eval, Sum, Transform, project_lnglat,
+    Aggregate, Columns, Count, DropNA, Eval, Filter, SetIndex, Sort, Sum,
+    Transform, project_lnglat,
 )
 
 
@@ -82,8 +83,52 @@ def test_dropna_transform(mixed_df):
     assert len(DropNA.apply_to(mixed_df, axis=1, how='all').columns) == 4
 
 
+def test_dropna_transform_with_thresh():
+    df = pd.DataFrame({
+        'a': [1.0, None, 3.0],
+        'b': [1.0, 2.0, None],
+    })
+
+    result = DropNA.apply_to(df, thresh=2)
+
+    pd.testing.assert_frame_equal(result, df.dropna(thresh=2))
+
+
 def test_project_lnglat_default_params():
     """Regression test: latitude default was 'longitude' (copy-paste bug)."""
     transform = project_lnglat()
     assert transform.longitude == 'longitude'
     assert transform.latitude == 'latitude'
+
+
+def test_filter_invalid_condition_warns(caplog):
+    df = pd.DataFrame({'A': [1, 2]})
+
+    result = Filter(conditions=[('A', {'unexpected': True})]).apply(df)
+
+    pd.testing.assert_frame_equal(result, df)
+    assert (
+        "Condition {'unexpected': True} on 'A' column not understood. "
+        "Filter query will not be applied."
+    ) in caplog.text
+
+
+def test_requires_columns_defaults_to_unknown():
+    """The default has to be the safe answer, since a subclass may read anything."""
+    assert Transform().requires_columns() is None
+    assert DropNA().requires_columns() is None
+
+
+def test_requires_columns_reports_declared_columns():
+    assert Sort(by=['a', 'b']).requires_columns() == {'a', 'b'}
+    assert Columns(columns=['a']).requires_columns() == {'a'}
+    assert SetIndex(keys='a').requires_columns() == {'a'}
+    assert SetIndex(keys=['a', 'b']).requires_columns() == {'a', 'b'}
+    assert Aggregate(by=['a'], columns=['b']).requires_columns() == {'a', 'b'}
+
+
+def test_requires_columns_is_unknown_for_open_ended_parameters():
+    """A parameter that means "all the rest" has to report None, not a subset."""
+    assert Aggregate(by=['a']).requires_columns() is None
+    assert SetIndex().requires_columns() is None
+    assert Sort().requires_columns() == set()

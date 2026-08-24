@@ -23,6 +23,7 @@ from panel import cache as pn_cache, state as pn_state
 from tqdm.auto import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
+from .config import get_markitdown
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
 from .utils import log_debug
@@ -583,11 +584,15 @@ class VectorStore(LLMUser):
         -------
         List of assigned IDs for the added items.
         """
-        from markitdown import FileConversionException, MarkItDown, StreamInfo
+        # Deferred for the same reason as get_markitdown: markitdown reaches
+        # pandas through its xlsx converter and costs ~2s to import.
+        from markitdown import (  # noqa: PLC0415
+            FileConversionException, StreamInfo,
+        )
 
         if metadata is None:
             metadata = {}
-        mdit = MarkItDown()
+        mdit = get_markitdown()
 
         # Run the potentially blocking file operations in a thread
         if isinstance(filename, str) and filename.startswith(("http://", "https://")):
@@ -1727,7 +1732,7 @@ class ChromaDBVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        import chromadb
+        import chromadb  # noqa: PLC0415
 
         if self.uri is None:
             self._client = chromadb.Client()
