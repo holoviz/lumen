@@ -1546,7 +1546,7 @@ class VegaLiteView(View):
                     first_valid = series.dropna()
                     if not first_valid.empty:
                         try:
-                            pd.to_datetime(first_valid.iloc[0], errors='raise')
+                            pd.to_datetime(first_valid, errors='raise')
                             is_dt = True
                         except (ValueError, TypeError):
                             pass
