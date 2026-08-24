@@ -429,7 +429,7 @@ def make_apply_filter_tool(pipeline: Pipeline) -> FunctionTool:
             pipeline.add_filter(filt)
         except Exception as exc:
             return f"Could not apply filter on {field!r} with value {value!r}: {exc}"
-        return f"Applied filter on {field!r} ({value!r}); {len(pipeline.data)} rows match."
+        return f"Applied filter on {field!r} ({value!r})."
 
     fields = ", ".join(filterable) or "(none)"
     apply_filter.__doc__ = (
@@ -983,14 +983,30 @@ class SQLAgent(BaseLumenAgent):
         spec: str | None = None,
         language: str | None = None,
         errors: list[str] | None = None,
+        max_retries: int = 2,
         **kwargs
     ) -> str:
         result = await super().revise(
             instruction, messages, context, view=view, spec=spec, language=language, **kwargs
         )
-        if view is not None:
-            result = clean_sql(result, view.component.source.dialect, prettify=True)
-        return result
+        if view is None:
+            return result
+        dialect = view.component.source.dialect
+        revise_language = view.language
+        for i in range(max_retries):
+            try:
+                cleaned = clean_sql(result, dialect, prettify=True)
+                view.validate_spec(cleaned)
+                return cleaned
+            except Exception as e:
+                if i == max_retries - 1:
+                    raise
+                feedback = f"{type(e).__name__}: {e!s}"
+                result = await super().revise(
+                    instruction, messages, context, spec=result, language=revise_language,
+                    errors=[feedback], **kwargs
+                )
+        return clean_sql(result, dialect, prettify=True)
 
     async def respond(
         self,

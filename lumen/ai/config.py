@@ -169,7 +169,7 @@ def get_markitdown():
     Built on first use rather than at import, because markitdown reaches
     pandas through its xlsx converter and costs about 0.7s to import.
     """
-    from markitdown import MarkItDown
+    from markitdown import MarkItDown  # noqa: PLC0415
 
     return MarkItDown()
 

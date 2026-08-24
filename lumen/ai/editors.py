@@ -11,6 +11,7 @@ from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
 import param
+import vl_convert as vlc
 
 from panel.config import config
 from panel.layout import Column, Row
@@ -38,7 +39,7 @@ from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_data
+from .utils import describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
@@ -225,8 +226,7 @@ class LumenEditor(Viewer):
         else:
             sql_limit = None
         if sql_limit:
-            data = pipeline.data
-            limited = len(data) == sql_limit.limit
+            limited = len(pipeline.data) == sql_limit.limit
             if limited:
                 def unlimit(e):
                     sql_limit.limit = None if e.new else 1_000_000
@@ -243,7 +243,7 @@ class LumenEditor(Viewer):
             # If output is a view we provide the full View specification
             return {"view": self._spec_dict}
         elif isinstance(view, Pipeline):
-            data = await get_data(view)
+            data = await get_frame(view)
             return {
                 "pipeline": view,
                 "table": view.table,
@@ -397,7 +397,6 @@ class VegaLiteEditor(LumenEditor):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            import vl_convert as vlc
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)

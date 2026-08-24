@@ -140,7 +140,9 @@ class SQLAlchemySource(BaseSQLSource):
             )
 
             if self._driver_is_async:
-                from sqlalchemy.ext.asyncio import create_async_engine
+                from sqlalchemy.ext.asyncio import (  # noqa: PLC0415
+                    create_async_engine,
+                )
                 self._engine = create_async_engine(self._url, **engine_kwargs)
             else:
                 self._engine = create_engine(self._url, **engine_kwargs)

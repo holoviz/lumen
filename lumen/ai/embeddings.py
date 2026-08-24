@@ -147,7 +147,7 @@ class HuggingFaceEmbeddings(Embeddings):
 
     def __init__(self, **params):
         super().__init__(**params)
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
         self._model = SentenceTransformer(self.model, device=self.device)
         self.embedding_dim = self._model.get_sentence_embedding_dimension()
 
@@ -188,7 +188,7 @@ class LlamaCppEmbeddings(Embeddings, LlamaCppMixin):
     })
 
     def __init__(self, **params):
-        import llama_cpp
+        import llama_cpp  # noqa: PLC0415
         super().__init__(**params)
         if "pooling_type" not in self.model_kwargs["default"]:
             self.model_kwargs["default"]["pooling_type"] = llama_cpp.LLAMA_POOLING_TYPE_CLS
