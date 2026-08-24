@@ -1565,13 +1565,8 @@ class VegaLiteView(View):
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
-
-        # Deepcopy the spec to avoid mutating the original instance state (like encoding types),
-        # but avoid deepcopying 'data' or 'datasets' which can be large DataFrames.
-        spec = copy.deepcopy({k: v for k, v in self.spec.items() if k not in ('data', 'datasets')})
-        if 'datasets' in self.spec:
-            spec['datasets'] = dict(self.spec['datasets'])
-
+        spec = dict(self.spec)
+        
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
@@ -1581,9 +1576,11 @@ class VegaLiteView(View):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
             # travels as a named dataset for lookups to join against rather than
             # replacing it.
-            datasets = spec.get('datasets', {})
+            # Copied rather than mutated in place: self.spec is reused across
+            # renders, and growing its datasets dict would leak frames.
+            datasets = dict(self.spec.get('datasets', {}))
             datasets[self.pipeline.table] = df
-            spec = {k: v for k, v in spec.items() if k != 'datasets'}
+            spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
