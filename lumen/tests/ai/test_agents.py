@@ -838,16 +838,28 @@ async def test_revise_recovers_from_malformed_sql_via_retry(llm):
     ParseError to the user: revise() should feed the parse error back to the
     LLM as feedback and retry, the same recovery _validate_sql already uses
     for execution errors, rather than letting clean_sql's exception escape
-    straight through revise() to the caller."""
+    straight through revise() to the caller.
+
+    The retry must keep the user's original instruction intact (as `feedback`
+    in the prompt) and carry the parse error separately via `errors`, rather
+    than replacing the instruction with the error text - `errors` is a
+    distinct prompt slot the base template already renders. It must also
+    still run `view.validate_spec()` on the spec it settles on, same as the
+    first attempt.
+    """
     agent = SQLAgent(llm=llm)
+    validated = []
     view = SimpleNamespace(
         component=SimpleNamespace(source=SimpleNamespace(dialect="duckdb")),
         language="sql",
+        validate_spec=lambda spec: validated.append(spec) or spec,
     )
     seen_instructions = []
+    seen_errors = []
 
-    async def fake_super_revise(instruction, messages, context, view=None, spec=None, language=None, **kwargs):
+    async def fake_super_revise(instruction, messages, context, view=None, spec=None, language=None, errors=None, **kwargs):
         seen_instructions.append(instruction)
+        seen_errors.append(errors)
         if len(seen_instructions) == 1:
             return "SELECT * WHERE \"a\" = 'x' FROM t"  # WHERE before FROM: unparsable
         return "SELECT * FROM t WHERE \"a\" = 'x'"
@@ -856,8 +868,10 @@ async def test_revise_recovers_from_malformed_sql_via_retry(llm):
         result = await agent.revise("fix it", [{"role": "user", "content": "fix"}], {}, view=view)
 
     assert len(seen_instructions) == 2
-    assert "ParseError" in seen_instructions[1]
+    assert seen_instructions[1] == "fix it"  # original instruction preserved, not overwritten by the error
+    assert seen_errors[1] is not None and "ParseError" in seen_errors[1][0]
     assert result == 'SELECT\n  *\nFROM t\nWHERE\n  "a" = \'x\''
+    assert validated == [result]  # the settled spec was validated, same as the first attempt
 
 
 async def test_revise_raises_after_retries_exhausted_on_malformed_sql(llm):
@@ -868,6 +882,7 @@ async def test_revise_raises_after_retries_exhausted_on_malformed_sql(llm):
     view = SimpleNamespace(
         component=SimpleNamespace(source=SimpleNamespace(dialect="duckdb")),
         language="sql",
+        validate_spec=lambda spec: spec,
     )
     calls = []
 
@@ -880,6 +895,33 @@ async def test_revise_raises_after_retries_exhausted_on_malformed_sql(llm):
             await agent.revise("fix it", [{"role": "user", "content": "fix"}], {}, view=view, max_retries=2)
 
     assert len(calls) == 2
+
+
+async def test_revise_max_retries_zero_still_cleans_sql(llm):
+    """max_retries=0 must not silently return the unprettified, unvalidated
+    LLM output by falling through an empty `range(0)` loop - it should still
+    attempt clean_sql once (and raise, not swallow, if that attempt fails)."""
+    agent = SQLAgent(llm=llm)
+    view = SimpleNamespace(
+        component=SimpleNamespace(source=SimpleNamespace(dialect="duckdb")),
+        language="sql",
+        validate_spec=lambda spec: spec,
+    )
+
+    async def fake_super_revise(instruction, messages, context, view=None, spec=None, language=None, **kwargs):
+        return "select  *   from t"  # parsable but not prettified
+
+    with patch.object(BaseLumenAgent, "revise", side_effect=fake_super_revise):
+        result = await agent.revise("fix it", [{"role": "user", "content": "fix"}], {}, view=view, max_retries=0)
+
+    assert result == "SELECT\n  *\nFROM t"  # cleaned/prettified, not the raw passthrough
+
+    async def fake_super_revise_bad(instruction, messages, context, view=None, spec=None, language=None, **kwargs):
+        return "SELECT * WHERE \"a\" = 'x' FROM t"  # unparsable
+
+    with patch.object(BaseLumenAgent, "revise", side_effect=fake_super_revise_bad):
+        with pytest.raises(Exception, match="Invalid expression"):
+            await agent.revise("fix it", [{"role": "user", "content": "fix"}], {}, view=view, max_retries=0)
 
 
 def test_sqlagent_active_filters_describes_conditions():

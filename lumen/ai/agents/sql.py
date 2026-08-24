@@ -995,15 +995,18 @@ class SQLAgent(BaseLumenAgent):
         revise_language = view.language
         for i in range(max_retries):
             try:
-                return clean_sql(result, dialect, prettify=True)
+                cleaned = clean_sql(result, dialect, prettify=True)
+                view.validate_spec(cleaned)
+                return cleaned
             except Exception as e:
                 if i == max_retries - 1:
                     raise
                 feedback = f"{type(e).__name__}: {e!s}"
                 result = await super().revise(
-                    feedback, messages, context, spec=result, language=revise_language, **kwargs
+                    instruction, messages, context, spec=result, language=revise_language,
+                    errors=[feedback], **kwargs
                 )
-        return result
+        return clean_sql(result, dialect, prettify=True)
 
     async def respond(
         self,
