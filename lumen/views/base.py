@@ -1513,22 +1513,64 @@ class VegaLiteView(View):
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
 
+    def _coerce_temporal(self, spec: dict[str, Any], df: pd.DataFrame) -> None:
+        """
+        Recursively walk the spec. If an encoding channel references a field that
+        contains datetimes (or strings that cleanly parse as datetimes), force
+        its type to 'temporal' to preserve chronological ordering.
+        """
+        if not isinstance(spec, dict):
+            return
+
+        if "encoding" in spec and isinstance(spec["encoding"], dict):
+            for channel, config in spec["encoding"].items():
+                if isinstance(config, dict) and "field" in config:
+                    field = config["field"]
+                    if field in df.columns:
+                        is_dt = False
+                        if pd.api.types.is_datetime64_any_dtype(df[field]):
+                            is_dt = True
+                        elif pd.api.types.is_string_dtype(df[field]) or df[field].dtype.name == 'category':
+                            first_valid = df[field].dropna()
+                            if not first_valid.empty:
+                                try:
+                                    pd.to_datetime(first_valid.iloc[0], errors='raise')
+                                    is_dt = True
+                                except (ValueError, TypeError):
+                                    pass
+                        if is_dt:
+                            config["type"] = "temporal"
+
+        for value in spec.values():
+            if isinstance(value, dict):
+                self._coerce_temporal(value, df)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        self._coerce_temporal(item, df)
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
-        spec = dict(self.spec)
+        
+        # Deepcopy the spec to avoid mutating the original instance state (like encoding types),
+        # but avoid deepcopying 'data' or 'datasets' which can be large DataFrames.
+        spec = copy.deepcopy({k: v for k, v in self.spec.items() if k not in ('data', 'datasets')})
+        if 'datasets' in self.spec:
+            spec['datasets'] = dict(self.spec['datasets'])
+            
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
+            
+        self._coerce_temporal(spec, df)
 
         if self._declares_own_data(spec):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
             # travels as a named dataset for lookups to join against rather than
             # replacing it.
-            # Copied rather than mutated in place: self.spec is reused across
-            # renders, and growing its datasets dict would leak frames.
-            datasets = dict(self.spec.get('datasets', {}))
+            datasets = spec.get('datasets', {})
             datasets[self.pipeline.table] = df
-            spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
+            spec = {k: v for k, v in spec.items() if k != 'datasets'}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
@@ -1542,6 +1584,7 @@ class VegaLiteView(View):
         else:
             encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
+
 
     def get_panel(self) -> pn.pane.Vega:
         spec = self._normalize_params(self._get_params())
