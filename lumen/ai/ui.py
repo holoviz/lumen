@@ -1678,26 +1678,23 @@ class UI(Viewer):
         if hasattr(self, '_coordinator'):
             await self._coordinator.sync(self.context)
 
-    def _ensure_model_label(self, footer_objects: list) -> None:
-        """Append a 'Answered by <model>' label to *footer_objects* if missing.
+    def _ensure_model_label(self, message) -> None:
+        """Embed the resolved model name into *message.timestamp_format*.
 
         Reads the resolved model name from ``self.llm._resolved_model``
-        (set by ``Llm.invoke()`` after routing).  The label is identified
-        by ``name="ModelLabel"`` so duplicate checks are straightforward.
+        (set by ``Llm.invoke()`` after routing).  The model name is
+        appended to the existing timestamp format string so the rendered
+        footer reads e.g. ``09:23 AM (used gpt-5.6-luna)``.
         """
         if not getattr(self, "llm", None):
             return
         model_name = getattr(self.llm, "_resolved_model", None)
         if not model_name:
             return
-        if any(getattr(obj, "name", None) == "ModelLabel" for obj in footer_objects):
+        fmt = message.timestamp_format or "%H:%M"
+        if f"(used {model_name})" in fmt:
             return
-        footer_objects.insert(0, Typography(
-            f"Answered by {model_name}",
-            name="ModelLabel",
-            margin=(5, 0, 0, 0),
-            styles={"opacity": "0.7", "font-size": "0.75rem"},
-        ))
+        message.timestamp_format = f"{fmt} (used {model_name})"
 
     def _add_suggestions_to_footer(
         self,
@@ -1803,9 +1800,9 @@ class UI(Viewer):
 
         if len(self.interface):
             message = self.interface.objects[-1]
+            self._ensure_model_label(message)
             if inplace:
                 footer_objects = list(message.footer_objects or [])
-                self._ensure_model_label(footer_objects)
                 prev_suggestions = [obj for obj in footer_objects if obj.name == "Suggestions"]
                 if prev_suggestions:
                     prev_suggestions[0][:] = list(suggestion_buttons)
@@ -2859,10 +2856,7 @@ class ExplorerUI(UI):
 
             if self.interface.objects:
                 last_message = self.interface.objects[-1]
-                footer_objects = list(last_message.footer_objects or [])
-                self._ensure_model_label(footer_objects)
-                if footer_objects:
-                    last_message.footer_objects = footer_objects
+                self._ensure_model_label(last_message)
 
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
@@ -2871,8 +2865,7 @@ class ExplorerUI(UI):
         # On error we have to sync the conversation, unwatch the plan,
         # and remove the exploration if it was newly create
         last_message = self.interface.objects[-1]
-        footer_objects = list(last_message.footer_objects or [])
-        self._ensure_model_label(footer_objects)
+        self._ensure_model_label(last_message)
         buttons = []
         if is_new:
             replan_button = Button(
