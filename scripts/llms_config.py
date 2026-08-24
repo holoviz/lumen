@@ -105,7 +105,6 @@ CONFIG = LlmsBuildConfig(
             path_prefix=Path("."),
             path_filter=_at("Configuration", "Specs"),
             label_builder=_label,
-            group="Configuration",
         ),
         LlmsSection(
             title="API Reference",
