@@ -1523,7 +1523,7 @@ class VegaLiteView(View):
             return
 
         if "encoding" in spec and isinstance(spec["encoding"], dict):
-            for channel, config in spec["encoding"].items():
+            for _channel, config in spec["encoding"].items():
                 if isinstance(config, dict) and "field" in config:
                     field = config["field"]
                     if field in df.columns:
@@ -1552,16 +1552,16 @@ class VegaLiteView(View):
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
-        
+
         # Deepcopy the spec to avoid mutating the original instance state (like encoding types),
         # but avoid deepcopying 'data' or 'datasets' which can be large DataFrames.
         spec = copy.deepcopy({k: v for k, v in self.spec.items() if k not in ('data', 'datasets')})
         if 'datasets' in self.spec:
             spec['datasets'] = dict(self.spec['datasets'])
-            
+
         if "$schema" not in spec:
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
-            
+
         self._coerce_temporal(spec, df)
 
         if self._declares_own_data(spec):
