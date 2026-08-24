@@ -55,7 +55,7 @@ def _parse_accumulate_meta(annotation: Any) -> AccumulateSpec | None:
       annotation = get_args(annotation)[0]
   if get_origin(annotation) is not Annotated:
       return None
-  base, *meta = get_args(annotation)
+  _base, *meta = get_args(annotation)
   # accept either a tuple ("accumulate", "source"), a Callabe or an AccumulateSpec
   for m in meta:
       if isinstance(m, AccumulateSpec):

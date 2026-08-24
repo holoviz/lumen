@@ -3,7 +3,7 @@ from __future__ import annotations
 import param
 
 from panel.viewable import Viewer
-from panel_material_ui import Column, LinearProgress
+from panel_material_ui import Column, LinearProgress, Typography
 
 
 class Progress(Viewer):
@@ -83,7 +83,6 @@ class Progress(Viewer):
         -------
         Typography or similar widget
         """
-        from panel_material_ui import Typography
         return Typography(
             styles={"margin-left": "auto", "margin-right": "auto"},
             visible=False

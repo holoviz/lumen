@@ -286,7 +286,7 @@ class Planner(Coordinator):
                     title=f"Gathering context with {tool_name}",
                     steps_layout=self.steps_layout,
                 )
-                outputs, out_context = await task.execute(context)
+                _outputs, out_context = await task.execute(context)
                 if task.status == "error":
                     step.stream(f"\n\n✗ Failed to gather context from {tool_name}")
                     continue

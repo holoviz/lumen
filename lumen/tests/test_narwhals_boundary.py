@@ -22,9 +22,10 @@ from lumen.transforms.base import (
     Rename, Sample, Sort,
 )
 from lumen.util import (
-    as_narwhals, as_pandas, get_dataframe_schema, is_lazyframe,
+    _NULLABLE_DTYPES, as_narwhals, as_pandas, get_dataframe_schema,
+    is_lazyframe,
 )
-from lumen.views.base import Table
+from lumen.views.base import Table, hvPlotView
 
 
 class ParamHolder(param.Parameterized):
@@ -351,6 +352,124 @@ def test_dropna_matches_pandas(constructor):
     reference = DropNA.apply_to(pd.DataFrame(data))
     result = as_pandas(DropNA.apply_to(constructor(data)))
     assert result["a"].tolist() == reference["a"].tolist() == [1.0]
+
+
+def test_every_arrow_integer_type_has_a_nullable_pandas_dtype():
+    """An unmapped type would convert to whatever pandas defaults to.
+
+    The reroute in ``_to_pandas`` fires on any integer narwhals reports, so a
+    gap here is a column that silently keeps the widened dtype.
+    """
+    pa = pytest.importorskip("pyarrow")
+    arrow_integers = {
+        getattr(pa, f"{prefix}int{width}")()
+        for prefix in ("", "u") for width in (8, 16, 32, 64)
+    }
+    assert arrow_integers <= set(_NULLABLE_DTYPES)
+    assert pa.bool_() in _NULLABLE_DTYPES
+
+
+def test_a_dtype_pandas_cannot_hold_raises_rather_than_corrupting():
+    """polars Int128 has no pandas or arrow counterpart.
+
+    It already fails in ``to_pandas`` before the reroute, and failing is the
+    correct outcome: the alternative is a column of quietly wrong numbers.
+    """
+    pl = pytest.importorskip("polars")
+    frame = pl.DataFrame({"i": pl.Series([1, None], dtype=pl.Int128)})
+    with pytest.raises(Exception, match="i128"):
+        as_pandas(frame)
+
+
+@pytest.mark.parametrize("index_type", ["uint8", "uint16", "uint32", "uint64"])
+def test_as_pandas_converts_an_unsigned_dictionary_column(index_type):
+    """polars writes uint32 indices for a Categorical, and pyarrow before 23
+    cannot convert an unsigned dictionary index to pandas at all."""
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({
+        "c": pa.DictionaryArray.from_arrays(
+            pa.array([0, 1, None], getattr(pa, index_type)()), pa.array(["x", "y"])
+        ),
+        "n": [1.0, 2.0, 3.0],
+    })
+    result = as_pandas(table)
+    assert isinstance(result["c"].dtype, pd.CategoricalDtype)
+    assert result["c"].tolist()[:2] == ["x", "y"]
+    assert result["c"].isna().tolist() == [False, False, True]
+
+
+def test_as_pandas_keeps_a_dictionary_column_ordered():
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({"c": pa.DictionaryArray.from_arrays(
+        pa.array([1, 0], pa.uint8()), pa.array(["lo", "hi"]), ordered=True
+    )})
+    assert as_pandas(table)["c"].dtype.ordered
+
+
+def test_as_pandas_keeps_a_polars_categorical_through_pyarrow():
+    """The end of the road for the issue: a polars Categorical read as arrow."""
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pyarrow")
+    table = pl.DataFrame({"c": pl.Series(["x", "y", "x"], dtype=pl.Categorical)}).to_arrow()
+    assert as_pandas(table)["c"].tolist() == ["x", "y", "x"]
+
+
+def test_as_pandas_keeps_nullable_integer_and_boolean(constructor):
+    """Converting must not widen a nullable column, or an id renders as 3.0."""
+    data = {
+        "i": pd.Series([1, None, 3], dtype="Int64"),
+        "u": pd.Series([1, None, 3], dtype="UInt8"),
+        "b": pd.Series([True, None, False], dtype="boolean"),
+    }
+    result = as_pandas(constructor(data))
+    assert [str(dtype) for dtype in result.dtypes] == ["Int64", "UInt8", "boolean"]
+    assert result["i"].tolist() == [1, pd.NA, 3]
+
+
+def test_as_pandas_leaves_a_column_without_nulls_alone(constructor):
+    """Only the columns the conversion would widen may change."""
+    result = as_pandas(constructor({"i": [1, 2, 3], "b": [True, False, True]}))
+    assert [str(dtype) for dtype in result.dtypes] == ["int64", "bool"]
+
+
+def test_as_pandas_keeps_an_integer_beyond_float_precision(constructor):
+    """Above 2**53 the float detour returns a different number, silently."""
+    big = 2**62 + 1
+    result = as_pandas(constructor({"i": pd.Series([big, None], dtype="Int64")}))
+    # Compared as an int: a float64 comparison rounds both sides and passes on
+    # a value that has already been corrupted.
+    assert int(result["i"][0]) == big
+
+
+def test_fallback_and_native_paths_agree_on_dtype(constructor):
+    """Two configurations of one transform must not disagree on the schema.
+
+    Both configurations here leave the null in ``id``: one drops on ``v``
+    natively, the other converts to pandas because ``how='all'`` has no
+    narwhals counterpart. The dtype must not depend on which one ran.
+    """
+    data = {"id": pd.Series([1, 2, None, 4], dtype="Int64"), "v": [1.0, None, 3.0, 4.0]}
+    native = as_pandas(DropNA.apply_to(constructor(data), subset=["v"]))
+    fallback = as_pandas(DropNA.apply_to(constructor(data), how="all"))
+    assert native["id"].isna().any() and fallback["id"].isna().any()
+    assert str(fallback["id"].dtype) == str(native["id"].dtype) == "Int64"
+
+
+def test_hvplot_view_gets_numpy_dtypes(constructor):
+    """datashader raises on a pandas extension dtype, so plots take numpy.
+
+    Rasterizing is the case that breaks, but every kind can reach datashader
+    through an operation, so the whole hvPlot path widens.
+    """
+    data = {"id": pd.Series([1, 2, None, 4], dtype="Int64"), "v": [1.0, None, 3.0, 4.0]}
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"t": constructor(data)}), table="t",
+        transforms=[DropNA(how="all")],
+    )
+    plotted = hvPlotView(pipeline=pipeline, kind="scatter", x="v", y="id").get_data()
+    assert str(plotted["id"].dtype) == "float64"
+    # The table is not a datashader consumer and keeps the id an id.
+    assert str(Table(pipeline=pipeline).get_data()["id"].dtype) == "Int64"
 
 
 def test_lazy_transforms_stay_lazy():
