@@ -28,11 +28,13 @@ from holoviews.core import (  # type: ignore
 from holoviews.core.operation import Operation  # type: ignore
 from holoviews.element import Annotation  # type: ignore
 from holoviews.operation import method as hv_method  # type: ignore
+from holoviews.plotting.util import process_cmap  # type: ignore
 from holoviews.selection import link_selections  # type: ignore
 from holoviews.streams import Pipe  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
 from hvplot.ui import (  # type: ignore
-    Geographic, hvDataFrameExplorer, hvGridExplorer, hvPlotExplorer,
+    Colormapping, Geographic, Operations, hvDataFrameExplorer, hvGridExplorer,
+    hvPlotExplorer,
 )
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
@@ -96,6 +98,15 @@ REDUCING_KINDS = GRIDDED_KINDS + (
 HVPLOT_KINDS = [
     kind for kind in hvPlotTabular.__all__ if kind not in {"explorer", "dataset"}
 ] + list(GRIDDED_KINDS)
+
+# The datashader reductions hvPlot's own explorer offers by name. count_cat is
+# left out deliberately: hvPlot builds it from `by`, and naming it here only
+# gets as far as a bare string that never becomes a categorical reduction.
+AGGREGATORS = [None, "any", "count", "max", "mean", "min", "sum"]
+
+# These reduce a value column rather than counting rows, so hvPlot needs to be
+# told which column via `color`; without it datashader cannot pick a dimension.
+VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
 
 
 class View(MultiTypeComponent, Viewer):
@@ -967,7 +978,27 @@ class hvPlotBaseView(View):
 
     y = param.Selector(doc="The column to render on the y-axis.")
 
+    aggregator = param.Selector(default=None, objects=AGGREGATORS, doc="""
+        How datashader reduces the rows landing in one pixel, e.g. 'mean' to
+        shade by an average rather than a row count. Only meaningful with
+        datashade or rasterize; all but 'count' and 'any' reduce a value
+        column, which is named with `color`.""")
+
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
+
+    color_key = param.Dict(default=None, doc="""
+        Mapping of the values in `by` to explicit colors, e.g.
+        {'Irish': '#e41a1c', 'Italian': '#377eb8'}. Only meaningful with
+        datashade; without it datashader picks a categorical palette.""")
+
+    datashade = param.Boolean(default=False, doc="""
+        Aggregate the data server-side with datashader and send an image
+        instead of one glyph per row. Combined with `by` this blends the
+        categories present in each pixel, rather than overplotting them.""")
+
+    dynspread = param.Boolean(default=False, doc="""
+        Grow isolated points so sparse regions stay visible after
+        datashading. Has no effect unless datashade is enabled.""")
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
@@ -990,17 +1021,78 @@ class hvPlotBaseView(View):
                 import hvplot.dask  # type: ignore  # noqa: F401, PLC0415
             except Exception:
                 pass
-        if 'by' in params and isinstance(params['by'], str):
-            params['by'] = [params['by']]
-        if 'groupby' in params and isinstance(params['groupby'], str):
-            params['groupby'] = [params['groupby']]
+        for key in ('by', 'groupby'):
+            if key in params:
+                params[key] = self._as_column_list(params[key])
         if params.get("geo") and params.get("kind") in (None, "scatter"):
             params["kind"] = "points"
         super().__init__(**params)
 
+    @staticmethod
+    def _as_column_list(value):
+        """Accept a bare column name wherever a list of them is expected."""
+        return [value] if isinstance(value, str) else value
+
+    @classmethod
+    def _validate_by(cls, value, spec, context):
+        # Spec validation runs before __init__, so without this a spec saying
+        # `by: family` is rejected by the ListSelector before the coercion
+        # above ever gets to see it.
+        return cls._as_column_list(value)
+
+    @classmethod
+    def _validate_groupby(cls, value, spec, context):
+        return cls._as_column_list(value)
+
     @classproperty
     def _valid_keys_(cls):
         return None
+
+    def _complete_color_key(self, df):
+        """Fill in a partial ``color_key`` from the categorical palette.
+
+        Not named ``_resolve_color_key``: from_spec treats ``_resolve_<param>``
+        as a spec resolver and would call this with the raw spec value.
+
+        Datashader needs a color for every category present, but naming the few
+        that matter and leaving the rest is the natural way to ask for one, so
+        the remainder are filled in rather than raising.
+        """
+        if self.color_key is None or not self.by or not isinstance(df, pd.DataFrame):
+            return self.color_key
+        column = df[self.by[0]]
+        categories = list(
+            column.cat.categories if isinstance(column.dtype, pd.CategoricalDtype)
+            else pd.unique(column)
+        )
+        missing = [c for c in categories if c not in self.color_key]
+        if not missing:
+            return self.color_key
+        # glasbey_hv carries 256 distinct hues; a Category palette repeats
+        # after 10 or 20 and would hand two categories the same color.
+        chosen = set(self.color_key.values())
+        spare = [c for c in process_cmap('glasbey_hv', categorical=True) if c not in chosen]
+        return dict(self.color_key, **dict(zip(missing, spare, strict=False)))
+
+    def _check_aggregator(self, plot_kwargs) -> None:
+        """Refuse an aggregator that has nothing to reduce.
+
+        Left to hvPlot this surfaces from inside the datashader operation as
+        "Could not determine dimension to apply 'aggregate' operation to",
+        which says nothing about the spec that caused it.
+        """
+        if self.aggregator not in VALUE_AGGREGATORS:
+            return
+        if not (self.datashade or plot_kwargs.get('rasterize')):
+            raise ValueError(
+                f"aggregator={self.aggregator!r} only applies when the data is "
+                "aggregated server-side; set datashade or rasterize."
+            )
+        if not (plot_kwargs.get('c') or plot_kwargs.get('color')):
+            raise ValueError(
+                f"aggregator={self.aggregator!r} reduces a value column, so one "
+                "must be named with color; use 'count' or 'any' to reduce rows."
+            )
 
     def get_data(self):
         # Every hvPlot kind can reach datashader, through rasterize/datashade
@@ -1023,7 +1115,7 @@ class hvPlotBaseView(View):
         n = len(df)
         if n <= MAX_RENDER_ROWS or self.kind in REDUCING_KINDS:
             return
-        if self.kwargs.get('rasterize') or self.kwargs.get('datashade'):
+        if self.datashade or self.kwargs.get('rasterize'):
             return
         raise ValueError(
             f"Cannot render {n:,} rows as kind={self.kind!r}: each row becomes a "
@@ -1050,11 +1142,22 @@ class hvPlotUIView(hvPlotBaseView):
             explorer_cls = hvPlotExplorer
         if data is None:
             data = self.get_data()
+        # The explorer keeps colormapping and datashading on nested controls, so
+        # a param is only forwarded if one of them claims it; anything else is
+        # rejected by hvPlotExplorer.__init__.
+        controls = (explorer_cls.param, Geographic.param, Colormapping.param, Operations.param)
         params = {
             k: v for k, v in self.param.values().items()
-            if (k in explorer_cls.param or k in Geographic.param)
+            if any(k in control for control in controls)
             and v is not None and k != 'name'
         }
+        # Only completed once a control has claimed it above: hvPlot gained the
+        # color_key control after this was written, and forcing the keyword in
+        # regardless makes hvPlotExplorer.__init__ reject it outright on an
+        # older hvPlot rather than simply coloring from the default palette.
+        if 'color_key' in params:
+            params['color_key'] = self._complete_color_key(data)
+        self._check_aggregator(self.kwargs)
         return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
@@ -1194,6 +1297,17 @@ class hvPlotView(hvPlotBaseView):
             processed['stream'] = self._data_stream
         if self.z is not None:
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
+        # Params are stripped out of kwargs by View.__init__, so anything hvPlot
+        # needs has to be put back explicitly.
+        if self.datashade:
+            processed['datashade'] = True
+        if self.dynspread:
+            processed['dynspread'] = True
+        if self.color_key is not None:
+            processed['color_key'] = self._complete_color_key(df)
+        if self.aggregator is not None:
+            self._check_aggregator(processed)
+            processed['aggregator'] = self.aggregator
 
         kind = self.kind
         plot_source = df
