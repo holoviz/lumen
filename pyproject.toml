@@ -29,10 +29,14 @@ dependencies = [
     "bokeh",
     "chardet",
     "duckdb >=1.2.0",
+    "griffe",
     "holoviews >=1.17.0",
     "hvplot",
+    "instructor >=1.14.3",
     "jinja2 >3.0",
+    "markitdown",
     "narwhals >=2",
+    "nbformat",
     "numpy",
     "packaging",
     "pandas",
@@ -42,7 +46,13 @@ dependencies = [
     "panel-splitjs >=0.4.0",
     "param >=2.2.1",
     "pyarrow",
+    "pydantic >=2.8.0",
+    "pydantic-extra-types",
+    "semchunk",
     "sqlglot[c]",
+    "tabulate",
+    "tiktoken",
+    "vl-convert-python",
 ]
 
 [project.urls]
@@ -53,22 +63,10 @@ HoloViz = "https://holoviz.org/"
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars']
 dev = [
-    'lumen[tests,sql,ai,intake,xarray,geo]',
+    'lumen[tests,sql,intake,xarray,geo]',
     'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
-ai = [
-    'instructor >=1.14.3',
-    'griffe',
-    'markitdown',
-    'nbformat',
-    'pydantic >=2.8.0',
-    'pydantic-extra-types',
-    'semchunk',
-    'tabulate',
-    'tiktoken',
-    'vl-convert-python',
-]
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-openrouter = ['lumen[ai-openai]']
