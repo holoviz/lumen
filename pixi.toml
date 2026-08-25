@@ -19,7 +19,6 @@ lint = ["py312", "lint"]
 
 [dependencies]
 bokeh = "*"
-chardet = "*"
 duckdb = ">=1.2.0"
 griffe = "*"
 holoviews = ">=1.17.0"
@@ -84,6 +83,7 @@ xarray-sql = ">=0.3.1"
 [feature.test-core.dependencies]
 pyarrow = "*"
 dask-core = "*"
+chardet = "*"
 intake = "<2"
 sqlalchemy = "*"
 psutil = "*"
