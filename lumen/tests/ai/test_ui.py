@@ -1273,6 +1273,7 @@ class TestResolveData:
 
     def test_resolve_data_db_file_sqlite(self, sqlite_db_path):
         """Test resolving a .db file that is actually SQLite."""
+        pytest.importorskip("sqlalchemy")
         result = UI._resolve_data(str(sqlite_db_path))
         assert len(result) == 1
         source = result[0]
@@ -1280,6 +1281,7 @@ class TestResolveData:
 
     def test_resolve_data_sqlite_connection_string(self, sqlite_db_path):
         """Test resolving a SQLite connection string."""
+        pytest.importorskip("sqlalchemy")
         result = UI._resolve_data(f'sqlite:///{sqlite_db_path}')
         assert len(result) == 1
         source = result[0]
