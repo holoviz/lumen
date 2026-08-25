@@ -10,8 +10,8 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "graphic-walker", "xarray", "docx"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "graphic-walker", "xarray", "docx"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "docx"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "docx"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -19,8 +19,12 @@ lint = ["py312", "lint"]
 
 [dependencies]
 bokeh = "*"
+chardet = "*"
+duckdb = ">=1.2.0"
 holoviews = ">=1.17.0"
 panel-material-ui = ">=0.14.0"
+panel-graphic-walker = ">=0.6.4"
+panel-splitjs = ">=0.4.0"
 hvplot = "*"
 jinja2 = ">3.0"
 narwhals = ">=2"
@@ -30,6 +34,7 @@ pandas = "*"
 panel = ">=1.7.5"
 param = ">=2.2.1"
 pip = "*"
+pyarrow = "*"
 sqlglot = "*"
 
 [feature.py312.dependencies]
@@ -56,19 +61,14 @@ semchunk = "*"
 tabulate = "*"
 tiktoken = "*"
 vl-convert-python = "*"
-panel-splitjs = ">=0.4.0"
 
 [feature.sql.dependencies]
-duckdb = ">=1.2.0"
 intake = "<2"
 intake-sql = "*"
 sqlalchemy = "*"
 
 [feature.docx.dependencies]
 python-docx = "*"
-
-[feature.graphic-walker.dependencies]
-panel-graphic-walker = ">=0.6.4"
 
 [feature.xarray.dependencies]
 xarray = "*"
