@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from ...views import hvPlotUIView
+from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..translate import param_to_pydantic
@@ -56,12 +57,45 @@ class hvPlotAgent(BaseViewAgent):
             extra_fields={
                 "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
             },
+            # Only this one view is being described. Expanding subclasses is for
+            # callers that want a union over a taxonomy, and here it would walk
+            # every subclass of every base, down into Panel and Bokeh objects
+            # that have no JSON schema and nothing to do with a plot.
+            process_subclasses=False,
         )
         return model[self.view_type.__name__]
+
+    @staticmethod
+    def _drop_conflicting_axes(spec: dict[str, Any]) -> None:
+        """Remove axis assignments that contradict each other.
+
+        The prompt asks for x, y, by and groupby to name distinct columns, and
+        the model does not always oblige. A groupby repeating x or y raises
+        while the plot is built, and one repeating by is worse than that: it
+        pages each category into its own frame, so a datashaded plot renders
+        without complaint and blends nothing.
+        """
+        taken = {spec.get("x"), spec.get("y"), *(spec.get("by") or [])}
+        groupby = [col for col in (spec.get("groupby") or []) if col not in taken]
+        if groupby:
+            spec["groupby"] = groupby
+        else:
+            spec.pop("groupby", None)
+        # z belongs to the gridded kinds, plus heatmap, which takes the same
+        # column as C. Elsewhere hvPlot only warns that it is unused, which is
+        # a warning nobody reads.
+        kind = spec.get("kind")
+        if kind not in GRIDDED_KINDS and kind != "heatmap":
+            spec.pop("z", None)
+        # Reducing a value column needs one named, and the spec has no field for
+        # it, so an aggregator asking for that has nothing to work on.
+        if spec.get("aggregator") in VALUE_AGGREGATORS:
+            spec.pop("aggregator", None)
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]
         spec = {key: val for key, val in spec.items() if val is not None}
+        self._drop_conflicting_axes(spec)
         spec["type"] = "hvplot_ui"
         self.view_type.validate(spec)
         spec.pop("type", None)
@@ -70,6 +104,11 @@ class hvPlotAgent(BaseViewAgent):
         spec["responsive"] = True
         data = await get_data(pipeline)
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
-            spec["rasterize"] = True
-            spec["cnorm"] = "log"
+            if spec.get("by"):
+                # rasterize reduces to a single number per pixel, which throws
+                # away the category; datashade blends the ones sharing a pixel.
+                spec["datashade"] = True
+            else:
+                spec["rasterize"] = True
+                spec["cnorm"] = "log"
         return spec
