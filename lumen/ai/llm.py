@@ -254,6 +254,11 @@ class Llm(param.Parameterized):
         self._base_client = None
         self._instructor_clients: dict[Mode, Any] = {}
 
+        # Resolved model name from the last invoke()/stream() call.
+        # Set after _resolve_routing() so callers can read which model
+        # actually handled the request (issue #2043).
+        self._resolved_model: str | None = None
+
         if self.logfire_tags is not None and not self._supports_logfire:
             raise ValueError(
                 f"LLM {self.__class__.__name__} does not support logfire."
@@ -619,6 +624,15 @@ class Llm(param.Parameterized):
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
         messages, contains_image = self._check_for_image(messages)
         model_spec = await self._resolve_routing(model_spec, messages)
+
+        # Capture the resolved model name so callers can read it via
+        # ``llm._resolved_model`` after invoke() completes (issue #2043).
+        if isinstance(model_spec, dict):
+            self._resolved_model = model_spec.get("model", "unknown")
+        else:
+            config = self.model_kwargs.get(model_spec) or self.model_kwargs.get("default", {})
+            self._resolved_model = config.get("model", str(model_spec))
+
         max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
 
         kwargs = dict(self._client_kwargs)

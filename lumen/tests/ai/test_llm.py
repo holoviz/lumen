@@ -1387,3 +1387,69 @@ def test_model_card_offers_user_supplied_select_models():
     llm = OpenAI(model_kwargs={"default": {"model": "m"}}, select_models=["my-model", "other"])
     card = LLMModelCard(llm=llm, model_type="default", llm_choices=[], description="")
     assert card._get_default_models() == ["m", "my-model", "other"]
+
+
+# ---------------------------------------------------------------------------
+# Resolved model name (issue #2043)
+# ---------------------------------------------------------------------------
+
+async def test_invoke_sets_resolved_model_from_string_spec(monkeypatch):
+    """invoke() stores the model name from the resolved model_kwargs dict."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {"default": {"model": "gpt-test"}, "sql": {"model": "sql-test"}}
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        return "ok"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    await llm.invoke([{"role": "user", "content": "hi"}], model_spec="sql")
+    assert llm._resolved_model == "sql-test"
+
+
+async def test_invoke_sets_resolved_model_from_dict_spec(monkeypatch):
+    """invoke() stores the model name when a dict spec is passed directly."""
+    llm = _make(OpenAI, {})
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        return "ok"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    await llm.invoke(
+        [{"role": "user", "content": "hi"}],
+        model_spec={"model": "inline-model"},
+    )
+    assert llm._resolved_model == "inline-model"
+
+
+async def test_invoke_sets_resolved_model_after_routing(monkeypatch, routing_llm):
+    """invoke() stores the routed model name, not the routing model's name."""
+    llm = routing_llm
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        if kwargs.get("response_model") is not None:
+            return kwargs["response_model"](model_spec="sql")
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    await llm.invoke([{"role": "user", "content": "hi"}], model_spec="edit")
+    assert llm._resolved_model == "sql-model"
+
+
+async def test_stream_sets_resolved_model(monkeypatch):
+    """stream() calls invoke() internally, which sets _resolved_model."""
+    llm = _make(OpenAI, {})
+    llm.model_kwargs = {"default": {"model": "gpt-stream"}}
+
+    async def fake_run_client(model_spec, messages, **kwargs):
+        if kwargs.get("stream"):
+            async def gen():
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(delta=SimpleNamespace(content="ok", tool_calls=None))]
+                )
+            return gen()
+        return "done"
+
+    monkeypatch.setattr(llm, "run_client", fake_run_client)
+    chunks = [c async for c in llm.stream([{"role": "user", "content": "hi"}])]
+    assert chunks[-1] == "ok"
+    assert llm._resolved_model == "gpt-stream"
