@@ -46,6 +46,7 @@ from lumen.ai.ui import UI, Exploration, ExplorerUI
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
+
 try:
     from lumen.sources.sqlalchemy import SQLAlchemySource
 except ImportError:
