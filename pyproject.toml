@@ -61,7 +61,7 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars', 'sqlalchemy']
 dev = [
     'lumen[tests,sql,intake,xarray,geo]',
     'panel>=1.9.0rc0',
