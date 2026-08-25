@@ -209,16 +209,8 @@ class LumenEditor(Viewer):
             pipeline=pipeline, pagination='remote',
             page_size=10, min_height=200, sizing_mode="stretch_both",
         )
-        controls = Row(
-            height=36, align='end', sizing_mode='stretch_width',
-            css_classes=['full-data-controls'],
-            styles={
-                'justify-content': 'flex-end',
-                'align-items': 'center',
-            },
-        )
         layout = Column(
-            table, controls,
+            table,
             css_classes=['full-data-table-container'],
         )
         for sql_limit in pipeline.sql_transforms:
@@ -232,6 +224,15 @@ class LumenEditor(Viewer):
             if limited:
                 limited_limit = sql_limit.limit
 
+                controls = Row(
+                    height=36, align='end', sizing_mode='stretch_width',
+                    css_classes=['full-data-controls'],
+                    styles={
+                        'justify-content': 'flex-end',
+                        'align-items': 'center',
+                    },
+                )
+
                 def unlimit(e):
                     sql_limit.limit = None if e.new else limited_limit
 
@@ -241,6 +242,7 @@ class LumenEditor(Viewer):
                 )
                 full_data.param.watch(unlimit, 'value')
                 controls.append(full_data)
+                layout.append(controls)
         return layout
 
     async def render_context(self):

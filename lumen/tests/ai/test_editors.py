@@ -260,6 +260,15 @@ async def test_render_pipeline_places_full_data_control_below_table(limited_sql_
     assert len(editor.component.data) == 3
 
 
+@pytest.mark.asyncio
+async def test_render_pipeline_omits_empty_full_data_row(sql_pipeline_editor):
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+
+    assert layout.css_classes == ['full-data-table-container']
+    assert len(layout.objects) == 1
+    assert layout.objects[0]._pane.page_size == 10
+
+
 @pytest.fixture
 def xarray_pipeline_editor(monkeypatch):
     """SQLEditor over an xarray source so coordinate dimensions are exercised."""
