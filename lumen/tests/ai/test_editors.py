@@ -224,7 +224,7 @@ def limited_sql_pipeline_editor(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_render_pipeline_places_full_data_control_in_table_footer(limited_sql_pipeline_editor):
+async def test_render_pipeline_places_full_data_control_below_table(limited_sql_pipeline_editor):
     editor = limited_sql_pipeline_editor
     assert len(editor.component.data) == 3
 
