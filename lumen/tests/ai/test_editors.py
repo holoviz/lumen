@@ -241,7 +241,7 @@ async def test_render_pipeline_places_full_data_control_below_table(limited_sql_
         'justify-content': 'flex-end',
         'align-items': 'center',
     }
-    assert not table._pane.stylesheets
+    assert table._pane.stylesheets == [editors_module._PAGINATED_TABLE_STYLES]
     assert not controls.stylesheets
     full_data = controls.objects[0]
     assert full_data.label == "Full data"

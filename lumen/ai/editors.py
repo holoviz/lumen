@@ -47,6 +47,20 @@ if TYPE_CHECKING:
     from .report import Task
 
 
+_PAGINATED_TABLE_STYLES = """
+/* Tabulator hides page numbers when its footer overflows horizontally. */
+.tabulator .tabulator-footer .tabulator-paginator {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+}
+.tabulator .tabulator-footer .tabulator-pages {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+}
+"""
+
+
 class LumenEditor(Viewer):
 
     component = param.ClassSelector(class_=Component)
@@ -208,6 +222,7 @@ class LumenEditor(Viewer):
         table = Table(
             pipeline=pipeline, pagination='remote',
             page_size=10, min_height=200, sizing_mode="stretch_both",
+            stylesheets=[_PAGINATED_TABLE_STYLES],
         )
         layout = Column(
             table,
