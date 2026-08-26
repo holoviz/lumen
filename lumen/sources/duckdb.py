@@ -11,6 +11,7 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
+import pyarrow as pa
 import sqlglot
 
 from ..config import config
@@ -543,9 +544,12 @@ class DuckDBSource(BaseSQLSource):
             if backend == 'polars':
                 return rel.pl()
             if backend == 'pyarrow':
-                # Not rel.arrow(), which hands back a RecordBatchReader rather
-                # than a Table, and Pipeline.data rejects it.
-                return rel.fetch_arrow_table()
+                # Through pa.table because arrow() returns a Table up to
+                # duckdb 1.3 and a RecordBatchReader from 1.4, and
+                # Pipeline.data rejects the reader. Not fetch_arrow_table,
+                # which 1.5 deprecates and the suite turns that into an
+                # error, nor to_arrow_table, which 1.4 does not have.
+                return pa.table(rel.arrow())
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(

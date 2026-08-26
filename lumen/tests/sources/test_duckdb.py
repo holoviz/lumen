@@ -1413,6 +1413,18 @@ def _backend_source():
     )
 
 
+def test_native_fetch_builds_an_arrow_table_not_a_reader():
+    """arrow() answers with a Table up to duckdb 1.3 and a RecordBatchReader
+    from 1.4, and Pipeline.data takes only the Table."""
+    pa = pytest.importorskip("pyarrow")
+
+    source = _backend_source()
+    source.dataframe_backend = 'pyarrow'
+    fetched = source.fetch("SELECT * FROM t")
+    assert isinstance(fetched, pa.Table)
+    assert fetched.num_rows == 20
+
+
 @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
 def test_native_fetch_matches_pandas(backend):
     """A frame DuckDB builds natively must hold what the pandas one holds."""
