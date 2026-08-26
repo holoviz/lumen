@@ -755,27 +755,28 @@ def _select_relevant_columns(
     return selected, len(selected) < len(columns)
 
 
-# The types numpy cannot hold, and what to describe them as instead.
-_SUMMARY_DTYPES = {'decimal': 'float64', 'date': 'datetime64[us]'}
+# The types numpy cannot hold, and what to read them as instead.
+_OBJECT_DTYPE_CASTS = {'decimal': 'float64', 'date': 'datetime64[us]'}
 
 
-def _summary_pandas(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_object_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Return the profiling sample with columns numpy is able to describe.
+    Return df with columns numpy is able to describe.
 
-    numpy has no decimal and no date, so both sit in an object column, and the
-    summary below reads an object column as categorical: a money column loses
-    its mean and range and comes out as an enum of decimal.Decimal, which
-    yaml.safe_load cannot even read back.
+    numpy has no decimal and no date, so both sit in an object column, which
+    anything reading dtypes takes for text: the summary reads it as
+    categorical, so a money column loses its mean and range and comes out as
+    an enum of decimal.Decimal that yaml.safe_load cannot even read back, and
+    the exploration preview reports it as str.
 
     Inferred from the values rather than the source dtype, because pandas
     produces such a column for a DECIMAL result of its own, so this is not
     only about the frame having arrived from another library.
     """
     casts = {
-        col: _SUMMARY_DTYPES[kind]
+        col: _OBJECT_DTYPE_CASTS[kind]
         for col in df.columns
-        if (kind := pd.api.types.infer_dtype(df[col])) in _SUMMARY_DTYPES
+        if (kind := pd.api.types.infer_dtype(df[col])) in _OBJECT_DTYPE_CASTS
     }
     return df.astype(casts) if casts else df
 
@@ -823,13 +824,13 @@ def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int,
             narwhals_df = narwhals_df.sample(n=PROFILE_SAMPLE_ROWS)
         # as_pandas rather than to_pandas: it keeps an integer column holding a
         # null an integer, instead of widening an id to 3.0 in the sample rows.
-        return _summary_pandas(as_pandas(narwhals_df)), shape, sampled
+        return normalize_object_dtypes(as_pandas(narwhals_df)), shape, sampled
 
     shape = df.shape
     sampled = shape[0] > PROFILE_SAMPLE_ROWS
     if sampled:
         df = df.sample(PROFILE_SAMPLE_ROWS)
-    return _summary_pandas(df), shape, sampled
+    return normalize_object_dtypes(df), shape, sampled
 
 
 def describe_data_sync(

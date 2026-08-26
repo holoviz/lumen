@@ -1198,9 +1198,10 @@ class BaseSQLSource(Source):
         Executes a SQL query and returns the result in `dataframe_backend`.
 
         The data path, as against `execute`, which is the pandas path the
-        schema and metadata queries read with `.iloc` and pandas dtypes. Only
-        `get` fetches whole tables, so this is the only place a large result
-        is worth building in the engine's own library rather than converting.
+        schema and metadata queries read with `.iloc` and pandas dtypes. This
+        is where a whole table or an ad hoc result comes back, so it is where
+        a large frame is worth building in the engine's own library rather
+        than converting one.
 
         Sources whose engine can build the requested frame directly override
         this. The default converts, which costs a copy but is correct for

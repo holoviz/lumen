@@ -8,6 +8,7 @@ pandas caller gets back exactly what it got before.
 import datetime as dt
 
 from decimal import Decimal
+from unittest.mock import patch
 
 import pandas as pd
 import param
@@ -817,3 +818,136 @@ def test_describe_data_summarises_a_dask_frame():
     summary = yaml.safe_load(describe_data_sync(dd.from_pandas(frame, npartitions=4)))
     assert summary["summary"]["data_shape"] == [rows, 2]
     assert summary["stats"]["i"]["count"] == PROFILE_SAMPLE_ROWS
+
+
+def _exploration_source(**params):
+    """A DuckDB table with the column types the preview has to normalise."""
+    from lumen.sources.duckdb import DuckDBSource
+
+    return DuckDBSource(
+        uri=":memory:", tables={"t": "SELECT * FROM t"},
+        initializers=[
+            "CREATE TABLE t AS SELECT i::BIGINT AS n, "
+            "('c' || (i % 3)::VARCHAR) AS g, "
+            "(DATE '2020-01-01' + INTERVAL (i) DAY)::DATE AS d, "
+            "(i * 1.5)::DECIMAL(10,2) AS amt FROM range(8) tbl(i)"
+        ],
+        **params,
+    )
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_exploration_preview_reads_the_source_frame_unconverted(backend):
+    """The exploration tool previews the source's own frame, not a pandas copy.
+
+    Asserted on the frame format_exploration_result is handed, because that is
+    the only place the conversion would have happened; asserting on the
+    rendered text would pass whether or not one occurred.
+    """
+    pytest.importorskip("duckdb")
+    pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents import sql as sql_module
+
+    source = _exploration_source(dataframe_backend=backend)
+    seen = []
+    original = sql_module.format_exploration_result
+
+    def spy(df):
+        seen.append(df)
+        return original(df)
+
+    with patch.object(sql_module, "format_exploration_result", spy):
+        await sql_module.execute_exploration_sql(
+            "t", "SELECT * FROM t", sources={("t", "t"): source}
+        )
+
+    assert seen, "format_exploration_result was never reached"
+    assert as_narwhals(seen[0]).implementation.name.lower() == backend
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_exploration_preview_renders_the_same_rows_on_any_backend(backend):
+    """A decimal and a date have to read as numbers and dates, not as str.
+
+    Which of the two arrives in an object column varies by library, since
+    pandas converts a DECIMAL to float itself while the others keep it, so
+    the dtype line is the part most likely to drift between backends.
+    """
+    pytest.importorskip("duckdb")
+    pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents.sql import execute_exploration_sql
+
+    async def preview(**params):
+        source = _exploration_source(**params)
+        return await execute_exploration_sql(
+            "t", "SELECT * FROM t", sources={("t", "t"): source}
+        )
+
+    expected = await preview()
+    result = await preview(dataframe_backend=backend)
+
+    def rendered_rows(text):
+        return [line for line in text.splitlines() if line.startswith("|")]
+
+    def dtypes(text):
+        line = next(line for line in text.splitlines() if line.startswith("Columns"))
+        return dict(
+            part.split(": ") for part in line.split(" — ", 1)[1].split(", ")
+        )
+
+    assert rendered_rows(result) == rendered_rows(expected)
+    assert "8 rows x 4 columns" in result
+    # The time unit differs (polars reads a DATE as ms, pandas as us), so the
+    # assertion is that it is a datetime at all rather than the exact dtype.
+    for reported in (dtypes(expected), dtypes(result)):
+        assert reported["amt"] == "float64"
+        assert reported["d"].startswith("datetime64")
+        assert reported["n"] == "int64"
+
+
+@pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
+async def test_exploration_preview_handles_an_empty_result(backend):
+    """No rows must still report the columns, on any backend."""
+    pytest.importorskip("duckdb")
+    if backend is not None:
+        pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents.sql import execute_exploration_sql
+
+    source = _exploration_source(dataframe_backend=backend)
+    result = await execute_exploration_sql(
+        "t", "SELECT * FROM t WHERE n > 99", sources={("t", "t"): source}
+    )
+    assert "0 rows x 4 columns" in result
+    assert "The query returned no rows." in result
+
+
+def test_exploration_preview_converts_only_the_rendered_cells():
+    """The preview must not pull the whole frame through pandas.
+
+    A column of an extension type pandas cannot hold is the assertion: it
+    survives conversion of the five previewed rows and would raise if the
+    whole frame were converted.
+    """
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents.sql import (
+        EXPLORATION_PREVIEW_COLS, EXPLORATION_PREVIEW_ROWS,
+        format_exploration_result,
+    )
+
+    rows = 5000
+    frame = pl.DataFrame({
+        f"c{i}": pl.Series(range(rows), dtype=pl.Int64)
+        for i in range(EXPLORATION_PREVIEW_COLS + 5)
+    })
+    result = format_exploration_result(frame)
+    assert f"{rows} rows x {EXPLORATION_PREVIEW_COLS + 5} columns" in result
+    assert f"first {EXPLORATION_PREVIEW_COLS} columns" in result
+    # The column past the cap must not appear anywhere in the preview.
+    assert f"c{EXPLORATION_PREVIEW_COLS}" not in result
+    assert len([line for line in result.splitlines() if line.startswith("|")]) == (
+        EXPLORATION_PREVIEW_ROWS + 2  # header and the markdown rule
+    )

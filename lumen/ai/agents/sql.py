@@ -1,5 +1,6 @@
 import typing as t
 
+import narwhals.stable.v2 as nw
 import pandas as pd
 import param
 import sqlglot
@@ -14,6 +15,7 @@ from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, Source
 from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
+from ...util import as_narwhals, as_pandas, is_lazyframe
 from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..data_quality import lint_data
@@ -24,10 +26,13 @@ from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
     PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_frame, get_pipeline,
-    log_debug, parse_table_slug, retry_llm_output, stream_details,
-    truncate_to_tokens,
+    log_debug, normalize_object_dtypes, parse_table_slug, retry_llm_output,
+    stream_details, truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
+
+if t.TYPE_CHECKING:
+    from narwhals.stable.v2.typing import Frame, IntoFrame
 
 
 def make_source_table_model(sources: list[tuple[str, str]]):
@@ -125,7 +130,7 @@ SCHEMA_MAX_TOKENS = 3000
 SOURCE_PROFILE_MAX_TABLES = 3
 
 
-def format_exploration_result(df: pd.DataFrame) -> str:
+def format_exploration_result(df: "IntoFrame | Frame") -> str:
     """
     Render an exploration query result as a compact preview for the LLM.
 
@@ -133,11 +138,25 @@ def format_exploration_result(df: pd.DataFrame) -> str:
     ``SELECT COUNT(*)`` to learn how many rows matched, then column dtypes and a
     few example rows. Markdown without the index: alignment padding and row
     numbers are pure token cost here, carrying no information about the data.
+
+    Only the handful of cells actually rendered is converted to pandas, so a
+    polars or pyarrow result reaches the model without the whole frame being
+    copied. The dtypes reported are the preview's for that reason, which is
+    also what keeps a pandas caller's output exactly as it was.
     """
-    n_rows, n_cols = df.shape
+    frame = as_narwhals(df)
+    if is_lazyframe(frame):
+        frame = frame.collect()
+    n_rows, n_cols = frame.shape
     parts = [f"{n_rows} rows x {n_cols} columns"]
 
-    preview = df.iloc[:, :EXPLORATION_PREVIEW_COLS]
+    # Normalised because which columns land on object varies by library:
+    # pandas converts a DECIMAL to float itself, polars and pyarrow keep it,
+    # and an object column is reported as str by the dtype line below.
+    names = frame.columns[:EXPLORATION_PREVIEW_COLS]
+    preview = normalize_object_dtypes(as_pandas(
+        frame.select(*[nw.col(name) for name in names]).head(EXPLORATION_PREVIEW_ROWS)
+    ))
     if n_cols > EXPLORATION_PREVIEW_COLS:
         parts[0] += f" (showing the first {EXPLORATION_PREVIEW_COLS} columns)"
 
@@ -150,10 +169,7 @@ def format_exploration_result(df: pd.DataFrame) -> str:
     if n_rows:
         shown = min(n_rows, EXPLORATION_PREVIEW_ROWS)
         label = "all rows" if shown == n_rows else f"first {shown} of {n_rows} rows"
-        parts.append(
-            f"Sample ({label}):\n"
-            + preview.head(EXPLORATION_PREVIEW_ROWS).to_markdown(index=False)
-        )
+        parts.append(f"Sample ({label}):\n" + preview.to_markdown(index=False))
     else:
         parts.append("The query returned no rows.")
 
@@ -218,7 +234,7 @@ async def execute_exploration_sql(
         return f"SQL parse/clean error: {e}"
 
     try:
-        df = base.execute(sql_clean)
+        df = base.fetch(sql_clean)
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 
