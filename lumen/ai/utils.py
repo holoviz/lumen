@@ -1867,14 +1867,9 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of the DataFrame with sanitized column names
+        The DataFrame with sanitized column names, leaving the caller's alone
     """
-    df = df.copy()
-    df.columns = [
-        re.sub(r'[^\w]', '', col.replace(' ', '_'))
-        for col in df.columns
-    ]
-    return df
+    return df.rename(columns=lambda col: re.sub(r'[^\w]', '', col.replace(' ', '_')))
 
 
 def result_to_dataframe(result) -> pd.DataFrame | None:
