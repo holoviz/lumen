@@ -349,3 +349,52 @@ def test_filter_never_crashes_on_odd_values(constructor, value):
         assert len(as_pandas(
             Filter.apply_to(constructor(data), conditions=[(column, value)])
         )) == expected
+
+
+# Every source dtype an Astype spec is likely to meet, against every target it
+# is likely to ask for. Enumerating the pairs rather than picking the ones that
+# looked risky is what found three divergences the hand-written cases missed:
+# a null cast to an integer, a datetime cast to anything but int64, and a
+# category taking its order of appearance.
+ASTYPE_SOURCES = {
+    'int': [3, 1, 2, 1],
+    'float': [3.5, 1.0, 2.5, 1.0],
+    'float_null': [3.0, None, 2.0, 1.0],
+    'str_num': ['3', '1', '2', '1'],
+    'str_txt': ['b', 'a', 'c', 'a'],
+    'str_null': ['b', None, 'c', 'a'],
+    'bool': [True, False, True, True],
+    'datetime': [dt.datetime(2021, 12, 31), dt.datetime(2020, 1, 1),
+                 dt.datetime(2020, 6, 5), dt.datetime(2020, 1, 1)],
+}
+
+ASTYPE_TARGETS = [
+    'int64', 'int32', 'uint8', 'float64', 'float32', 'str', 'bool',
+    'datetime64[ns]', 'category', 'Int64', 'object', 'complex128',
+]
+
+
+def _cast_outcome(frame, dtype):
+    """What Astype does to the column, or the error it raises trying."""
+    try:
+        column = as_pandas(Astype.apply_to(frame, dtypes={'c': dtype}))['c']
+    except Exception as e:
+        return ('raised', type(e).__name__)
+    categories = (
+        list(column.cat.categories) if str(column.dtype) == 'category' else None
+    )
+    return ([str(v) for v in column.tolist()], str(column.dtype), categories)
+
+
+@pytest.mark.parametrize("source", list(ASTYPE_SOURCES))
+@pytest.mark.parametrize("dtype", ASTYPE_TARGETS)
+def test_astype_never_disagrees_with_the_pandas_path(constructor, source, dtype):
+    """Whatever the narwhals path answers, the pandas path must answer too.
+
+    The reference is the same frame handed to the pandas path rather than a
+    pandas-native frame, because a null column reaches pandas as a nullable
+    dtype and would otherwise look like a difference this transform caused.
+    """
+    frame = constructor({'c': ASTYPE_SOURCES[source]})
+    reference = as_pandas(frame).copy()
+    assert _cast_outcome(frame, dtype) == _cast_outcome(reference, dtype)
