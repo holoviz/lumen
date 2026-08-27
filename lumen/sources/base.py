@@ -44,8 +44,8 @@ from ..transforms.sql import (
     SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
 from ..util import (
-    as_narwhals, collect_lazy, get_dataframe_schema, is_lazyframe, is_narwhals,
-    is_ref, merge_schemas,
+    DATAFRAME_BACKENDS, as_narwhals, collect_lazy, get_dataframe_schema,
+    is_lazyframe, is_narwhals, is_ref, merge_schemas, to_backend,
 )
 from ..validation import ValidationError, match_suggestion_message
 
@@ -1025,6 +1025,12 @@ class BaseSQLSource(Source):
 
     dialect = None
 
+    dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
+        The dataframe library table data is returned as. Leave unset to get
+        pandas, which is what every source has always produced. Only the data
+        `fetch` reads is affected; the schema and metadata queries stay on
+        pandas whatever this is set to.""")
+
     excluded_tables = param.List(default=[], doc="""
         List of table names that should be excluded from the results. Supports:
         - Fully qualified name: 'DATABASE.SCHEMA.TABLE'
@@ -1187,6 +1193,35 @@ class BaseSQLSource(Source):
         """
         return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
+    def fetch(self, sql_query: str, params: list | dict | None = None) -> DataFrame:
+        """
+        Executes a SQL query and returns the result in `dataframe_backend`.
+
+        The data path, as against `execute`, which is the pandas path the
+        schema and metadata queries read with `.iloc` and pandas dtypes. This
+        is where a whole table or an ad hoc result comes back, so it is where
+        a large frame is worth building in the engine's own library rather
+        than converting one.
+
+        Sources whose engine can build the requested frame directly override
+        this. The default converts, which costs a copy but is correct for
+        every source, and is free at the default because `to_backend` returns
+        the frame untouched when no backend is asked for.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query
+
+        Returns
+        -------
+        DataFrame
+            The result, in whichever library `dataframe_backend` names.
+        """
+        return to_backend(self.execute(sql_query, params), self.dataframe_backend)
+
     async def get_async(self, table: str, **query) -> DataFrame:
         """
         Return a table asynchronously; optionally filtered by the given query.
@@ -1210,7 +1245,10 @@ class BaseSQLSource(Source):
             sql_filter = SQLFilter(conditions=conditions)
             sql_expr = sql_filter.apply(sql_expr)
 
-        return await self.execute_async(sql_expr)
+        # Through execute_async rather than fetch, because a source with a
+        # genuinely async driver overrides that one and threading fetch
+        # instead would step around it.
+        return to_backend(await self.execute_async(sql_expr), self.dataframe_backend)
 
     @cached_schema
     def get_schema(
