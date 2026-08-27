@@ -4,6 +4,7 @@ Each test here stands for one step of that failure: the schema offered the
 model a value its own view rejects, the recovery path raised instead of
 recovering, and the one field the agent adds to the schema reached the view.
 """
+import pandas as pd
 import param
 import pytest
 
@@ -14,8 +15,6 @@ from lumen.ai.translate import param_to_pydantic
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.views.base import hvPlotUIView
-
-import pandas as pd
 
 
 @pytest.fixture
