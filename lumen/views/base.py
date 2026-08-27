@@ -64,6 +64,7 @@ from ..util import (
     try_import_xarray, widen_nullable,
 )
 from ..validation import ValidationError
+from ._hvplot_docs import hvplot_param_docs
 
 if TYPE_CHECKING:
     from bokeh.document import Document  # type: ignore
@@ -109,8 +110,69 @@ AGGREGATORS = [None, "any", "count", "max", "mean", "min", "sum"]
 # told which column via `color`; without it datashader cannot pick a dimension.
 VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
 
-# The controls hvPlot's own explorer groups its styling options under.
+# The controls hvPlot's own explorer groups its styling options under. They
+# already declare each option's type, default and bounds, so those are copied
+# rather than restated; only the description is usually missing, and hvPlot
+# documents that on its converter instead.
 _STYLE_CONTROLS = (Axes, Labels, Style, Colormapping)
+
+# Back-reference to the explorer, not an option.
+_CONTROL_INTERNALS = ("name", "explorer")
+
+# responsive, width and height default differently on the explorer than in
+# hvPlot itself, so generating them would silently restyle every existing
+# dashboard. All three are already set, by the plot agent and by get_panel.
+_SIZING_PARAMS = ("responsive", "width", "height")
+
+# Options the explorer offers on its advanced panels, for someone already
+# looking at a plot. Nothing in a prompt asks for them, so they would only
+# spend prompt and give the LLM more to get wrong.
+_EXPLORER_ONLY_PARAMS = ("shared_axes", "rescale_discrete_levels", "symmetric")
+
+# hvPlot offers 712 colormaps and a Selector becomes an enum in the plot
+# agent's schema, which would cost more prompt than the rest of the view put
+# together. These are the ones worth naming; hvPlot stays the authority on
+# whether a name is real.
+_PREFERRED_CMAPS = (
+    "viridis", "plasma", "inferno", "magma", "cividis", "coolwarm", "RdBu_r",
+    "Blues", "Reds", "Greens", "fire", "kbc_r", "rainbow", "bmy", "gray",
+)
+
+# alpha is the one styling option hvPlot documents in neither place.
+_MISSING_DOCS = {"alpha": "Opacity of the plotted glyphs, from 0 to 1."}
+
+
+def _declare_hvplot_style_params(view_type: type[View]) -> tuple[str, ...]:
+    """Declare hvPlot's styling options on a view, and name the ones declared.
+
+    An undeclared keyword already reaches hvPlot through kwargs; declaring one
+    is what puts it in the schema the plot agent hands the LLM, which is
+    otherwise limited to the axes and cannot style a plot at all.
+    """
+    docs = hvplot_param_docs()
+    skip = set(view_type.param).union(
+        _CONTROL_INTERNALS, _SIZING_PARAMS, _EXPLORER_ONLY_PARAMS
+    )
+    declared = []
+    for control in _STYLE_CONTROLS:
+        for name, parameter in control.param.objects().items():
+            if name in skip:
+                continue
+            parameter = copy.deepcopy(parameter)
+            parameter.doc = parameter.doc or docs.get(name) or _MISSING_DOCS.get(name)
+            if not parameter.doc:
+                continue
+            if name == "cmap":
+                parameter.objects = [c for c in _PREFERRED_CMAPS if c in parameter.objects]
+            if isinstance(parameter, param.Selector):
+                # The objects are there to steer the LLM, not to narrow what a
+                # spec may say: hvPlot reads a dict cmap as a color key and a
+                # False legend as no legend, and both predate these params.
+                parameter.check_on_set = False
+            view_type.param.add_parameter(name, parameter)
+            skip.add(name)
+            declared.append(name)
+    return tuple(declared)
 
 
 class View(MultiTypeComponent, Viewer):
@@ -1134,6 +1196,9 @@ class hvPlotBaseView(View):
         return self.pipeline.get_dataset() if self.pipeline is not None else None
 
 
+HVPLOT_STYLE_PARAMS = _declare_hvplot_style_params(hvPlotBaseView)
+
+
 class hvPlotUIView(hvPlotBaseView):
     """
     `hvPlotUIView` displays provides a component for exploring datasets interactively.
@@ -1304,7 +1369,13 @@ class hvPlotView(hvPlotBaseView):
         if self.z is not None:
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
-        # needs has to be put back explicitly.
+        # needs has to be put back explicitly. The styling params pass straight
+        # through; the ones below carry a Lumen meaning hvPlot does not share.
+        values = self.param.values()
+        processed.update({
+            name: values[name] for name in HVPLOT_STYLE_PARAMS
+            if values[name] != self.param[name].default
+        })
         if self.datashade:
             processed['datashade'] = True
         if self.dynspread:

@@ -1,0 +1,145 @@
+import json
+
+import pandas as pd
+import pytest
+
+from hvplot.ui import hvDataFrameExplorer
+
+from lumen.ai.agents.hvplot import hvPlotAgent
+from lumen.pipeline import Pipeline
+from lumen.sources.base import InMemorySource
+from lumen.views.base import (
+    HVPLOT_STYLE_PARAMS, hvPlotBaseView, hvPlotUIView, hvPlotView,
+)
+
+from .test_hvplot_datashade import record_hvplot_call
+
+
+@pytest.fixture
+def df():
+    return pd.DataFrame({"x": [0.0, 1.0, 2.0], "y": [1.0, 2.0, 3.0]})
+
+
+@pytest.fixture
+def pipeline(df):
+    return Pipeline(source=InMemorySource(tables={"points": df}), table="points")
+
+
+# ---- The params exist and carry usable metadata ----
+
+def test_style_params_are_declared():
+    for name in HVPLOT_STYLE_PARAMS:
+        assert name in hvPlotBaseView.param, name
+
+
+def test_every_style_param_documents_itself():
+    """A param's doc is what the agent's model turns into the LLM description."""
+    for name in HVPLOT_STYLE_PARAMS:
+        assert hvPlotBaseView.param[name].doc, name
+
+
+def test_style_params_do_not_shadow_the_lumen_params():
+    """The hand-written params carry Lumen semantics the generated ones must not
+    overwrite -- x/y/by/groupby/z bind to the table schema, kind and aggregator
+    to Lumen's own object lists."""
+    for name in ("kind", "x", "y", "by", "groupby", "z", "geo", "datashade",
+                 "dynspread", "aggregator", "color_key", "title"):
+        assert name not in HVPLOT_STYLE_PARAMS, name
+
+
+def test_style_params_are_accepted_by_the_explorer(df):
+    """A generated spec renders as hvplot_ui, so a param the explorer rejects
+    would raise rather than style anything."""
+    hvDataFrameExplorer(df, x="x", y="y", kind="line", **{
+        name: hvPlotBaseView.param[name].default for name in HVPLOT_STYLE_PARAMS
+    })
+
+
+# ---- Trap A: hvPlotUIView drops params no control claims ----
+
+def test_ui_view_forwards_style_params(pipeline, df):
+    view = hvPlotUIView(
+        pipeline=pipeline, kind="line", x="x", y="y",
+        logy=True, xlabel="Across", ylabel="Up", cmap="viridis",
+    )
+
+    _, kwargs = view._get_args(hvDataFrameExplorer, df)
+
+    assert kwargs["logy"] is True
+    assert kwargs["xlabel"] == "Across"
+    assert kwargs["ylabel"] == "Up"
+    assert kwargs["cmap"] == "viridis"
+
+
+# ---- Trap B: hvPlotView strips params out of kwargs ----
+
+def test_hvplot_view_forwards_style_params(pipeline, df):
+    view = hvPlotView(
+        pipeline=pipeline, kind="line", x="x", y="y",
+        logy=True, xlabel="Across", cmap="viridis", rot=45,
+    )
+
+    recorded = record_hvplot_call(view, df)
+
+    assert recorded["logy"] is True
+    assert recorded["xlabel"] == "Across"
+    assert recorded["cmap"] == "viridis"
+    assert recorded["rot"] == 45
+
+
+def test_hvplot_view_omits_unset_style_params(pipeline, df):
+    """An unstyled plot must not start carrying every styling keyword."""
+    view = hvPlotView(pipeline=pipeline, kind="line", x="x", y="y")
+
+    recorded = record_hvplot_call(view, df)
+
+    assert not set(recorded) & set(HVPLOT_STYLE_PARAMS)
+
+
+def test_style_params_round_trip_through_the_spec(pipeline):
+    view = hvPlotView(pipeline=pipeline, kind="line", x="x", y="y", logy=True, rot=45)
+
+    spec = view.to_spec()
+
+    assert spec["logy"] is True
+    assert spec["rot"] == 45
+
+
+# ---- What the LLM is handed ----
+
+def test_style_params_reach_the_agent_schema():
+    schema = {"lon": {"type": "number"}, "lat": {"type": "number"}}
+
+    properties = hvPlotAgent()._get_model("main", schema).model_json_schema()["properties"]
+
+    assert set(HVPLOT_STYLE_PARAMS) <= set(properties)
+    for name in HVPLOT_STYLE_PARAMS:
+        assert properties[name].get("description"), name
+
+
+def test_the_colormap_enum_stays_short():
+    """hvPlot offers 712 colormaps and every one would be spent as prompt."""
+    assert len(hvPlotBaseView.param.cmap.objects) <= 20
+
+
+def test_the_schema_stays_affordable():
+    """The whole point of an allowlist is that it does not grow by accident.
+
+    Raise these numbers deliberately, having looked at what was added.
+    """
+    schema = {"lon": {"type": "number"}, "lat": {"type": "number"},
+              "family": {"type": "string"}, "pop": {"type": "number"}}
+
+    rendered = json.dumps(hvPlotAgent()._get_model("main", schema).model_json_schema())
+
+    assert len(rendered) <= 7000
+
+
+def test_a_dict_colormap_is_still_accepted(pipeline, df):
+    """Specs predating color_key passed the categorical mapping as cmap, and
+    hvPlot still reads a dict cmap as one. The enum steers the LLM; it must not
+    narrow what a spec may say."""
+    color_key = {"Irish": "#e41a1c", "Italian": "#377eb8"}
+    view = hvPlotView(pipeline=pipeline, kind="line", x="x", y="y", cmap=color_key)
+
+    assert record_hvplot_call(view, df)["cmap"] == color_key
