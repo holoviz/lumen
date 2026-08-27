@@ -34,8 +34,8 @@ from holoviews.selection import link_selections  # type: ignore
 from holoviews.streams import Pipe  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
 from hvplot.ui import (  # type: ignore
-    Colormapping, Geographic, Operations, hvDataFrameExplorer, hvGridExplorer,
-    hvPlotExplorer,
+    Axes, Colormapping, Geographic, Labels, Operations, Style,
+    hvDataFrameExplorer, hvGridExplorer, hvPlotExplorer,
 )
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
@@ -108,6 +108,9 @@ AGGREGATORS = [None, "any", "count", "max", "mean", "min", "sum"]
 # These reduce a value column rather than counting rows, so hvPlot needs to be
 # told which column via `color`; without it datashader cannot pick a dimension.
 VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
+
+# The controls hvPlot's own explorer groups its styling options under.
+_STYLE_CONTROLS = (Axes, Labels, Style, Colormapping)
 
 
 class View(MultiTypeComponent, Viewer):
@@ -1143,10 +1146,12 @@ class hvPlotUIView(hvPlotBaseView):
             explorer_cls = hvPlotExplorer
         if data is None:
             data = self.get_data()
-        # The explorer keeps colormapping and datashading on nested controls, so
-        # a param is only forwarded if one of them claims it; anything else is
-        # rejected by hvPlotExplorer.__init__.
-        controls = (explorer_cls.param, Geographic.param, Colormapping.param, Operations.param)
+        # The explorer keeps styling, colormapping and datashading on nested
+        # controls, so a param is only forwarded if one of them claims it;
+        # anything else is rejected by hvPlotExplorer.__init__.
+        controls = (explorer_cls.param, Geographic.param, Operations.param) + tuple(
+            control.param for control in _STYLE_CONTROLS
+        )
         params = {
             k: v for k, v in self.param.values().items()
             if any(k in control for control in controls)
