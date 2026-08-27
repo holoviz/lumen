@@ -8,6 +8,7 @@ pandas caller gets back exactly what it got before.
 import datetime as dt
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pandas as pd
 import param
@@ -203,7 +204,23 @@ def test_history_matches_pandas(constructor):
         assert got["i"].tolist() == expected["i"].tolist()
 
 
-def test_history_adds_date_column(constructor):
+def test_history_adds_date_column(constructor, monkeypatch):
+    """The stamp is taken once per call and shared by that call's rows.
+
+    The clock is fixed because Windows only advances it every 15 ms or so,
+    which is long enough for two calls to land on the same instant and read
+    as one stamp per frame rather than one per call.
+    """
+    from lumen.transforms import base
+
+    ticks = iter([dt.datetime(2020, 1, 1), dt.datetime(2020, 1, 2)])
+
+    class FixedClock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(ticks)
+
+    monkeypatch.setattr(base, "dt", SimpleNamespace(datetime=FixedClock, date=dt.date))
     frame = constructor({"i": [0, 1]})
     transform = HistoryTransform(length=2, date_column="ts")
     accumulate(transform, frame)
@@ -211,8 +228,7 @@ def test_history_adds_date_column(constructor):
     assert type(result) is type(frame)
     stamps = as_pandas(result)["ts"]
     assert stamps.dtype.kind == "M"
-    # One timestamp per call rather than per row, so two calls give two values.
-    assert stamps.nunique() == 2
+    assert stamps.tolist() == [dt.datetime(2020, 1, 1)] * 2 + [dt.datetime(2020, 1, 2)] * 2
 
 
 def test_history_buffer_survives_a_failed_concat():
