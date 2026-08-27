@@ -15,8 +15,9 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
-        LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCodeCLI,
+        CodexCLI, Google, Groq, LiteLLM, LlamaCpp, Llm, Message, MistralAI,
+        Ollama, OpenAI, WebLLM,
     )
     from lumen.ai.tools import FunctionTool
 
@@ -162,6 +163,64 @@ def test_get_available_llm_respects_modified_provider_env_vars(monkeypatch):
     monkeypatch.setitem(lmai.llm.PROVIDER_ENV_VARS, "openai", "MY_CUSTOM_OPENAI_KEY")
     monkeypatch.setenv("MY_CUSTOM_OPENAI_KEY", "custom-value")
     assert lmai.llm.get_available_llm() is OpenAI
+
+
+def test_cli_providers_are_registered():
+    """CLI-backed subscription providers can be selected explicitly by the command line."""
+    assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCLI"
+    assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCodeCLI"
+
+
+def test_codex_cli_command_defaults_to_read_only():
+    llm = CodexCLI(working_dir="/tmp/project")
+
+    command = llm._build_command("gpt-test", "Hello")
+
+    assert command == [
+        "codex", "exec", "--json", "--sandbox", "read-only",
+        "--skip-git-repo-check", "--ephemeral", "--cd", "/tmp/project",
+        "--model", "gpt-test", "Hello",
+    ]
+
+
+def test_claude_code_command_defaults_to_plan_mode():
+    llm = ClaudeCodeCLI()
+
+    command = llm._build_command("sonnet", "Hello")
+
+    assert command == [
+        "claude", "--print", "--output-format", "json", "--max-turns", "1",
+        "--permission-mode", "plan", "--model", "sonnet", "Hello",
+    ]
+
+
+def test_cli_output_decoders():
+    codex = CodexCLI()
+    codex_output = (
+        '{"type":"thread.started","thread_id":"abc"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"Ready"}}'
+    )
+    assert codex._decode_output(codex_output) == "Ready"
+
+    claude = ClaudeCodeCLI()
+    assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
+
+
+async def test_cli_provider_validates_structured_output(monkeypatch):
+    class Reply(BaseModel):
+        ready: bool
+
+    async def fake_run_command(command):
+        return ('{"result": "{\\"ready\\": true}", "is_error": false}', "")
+
+    llm = ClaudeCodeCLI()
+    monkeypatch.setattr(llm, "_run_command", fake_run_command)
+
+    result = await llm.run_client(
+        "default", [{"role": "user", "content": "Ready?"}], response_model=Reply
+    )
+
+    assert result == Reply(ready=True)
 
 
 async def test_azure_open_ai_get_model_kwargs():

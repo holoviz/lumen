@@ -116,6 +116,39 @@ For installation and API key setup instructions, see the [Installation guide](..
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Reasoning:** `nemotron-3-nano:30b`
 
+### Experimental subscription CLI providers
+
+Lumen can also use a **locally authenticated** Codex CLI or Claude Code CLI.
+This is useful for local development when you already sign in to one of those
+tools with a subscription. Lumen does not read, save, or pass an API key for
+these providers—the respective CLI performs its own authentication.
+
+``` bash title="Codex CLI"
+# First sign in outside Lumen, then launch Lumen.
+codex login
+lumen-ai serve penguins.csv --provider codex-cli
+```
+
+``` bash title="Claude Code CLI"
+# First sign in outside Lumen, then launch Lumen.
+claude login
+lumen-ai serve penguins.csv --provider claude-code
+```
+
+Use `--model` if you want to select a model supported by your logged-in CLI:
+
+``` bash
+lumen-ai serve penguins.csv --provider codex-cli --model gpt-5.3-codex
+lumen-ai serve penguins.csv --provider claude-code --model sonnet
+```
+
+!!! warning "Local development only"
+    The server process launches a command-line agent for every LLM request. Do
+    not expose this configuration as a public or multi-user Lumen deployment.
+    Codex runs with its `read-only` sandbox and Claude Code uses `plan` mode by
+    default. The providers collect a completed response rather than streaming
+    tokens, and do not yet expose Lumen function tools to the coding CLIs.
+
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
 
