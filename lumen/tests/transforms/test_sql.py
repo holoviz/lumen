@@ -1113,7 +1113,7 @@ class TestSQLSelectFrom:
         )
         # Quoted identifiers should be preserved
         assert '"Smoking Status"' in result
-        # Should NOT have double-quoted identifiers
+        # Should NOT have double-quoted identifiers  
         assert '""Smoking Status""' not in result
         # Should preserve the OR condition
         assert "'Current'" in result
@@ -1130,7 +1130,7 @@ class TestSQLSelectFrom:
         )
         # All quoted identifiers should be preserved correctly
         assert '"Pack Years"' in result
-        assert '"Stage at Dx"' in result
+        assert '"Stage at Dx"' in result  
         assert '"Tissue Type"' in result
         # No double-quoting
         assert '""Pack Years""' not in result
@@ -1235,12 +1235,12 @@ class TestSQLRemoveSourceSeparator:
 
 class TestSQLFilterBase:
     """Test the shared base class functionality."""
-
+    
     def test_build_filter_conditions_comprehensive(self):
         """Test the shared _build_filter_conditions method comprehensively."""
         # Create a simple SQLFilter instance to test the base class method
         filter_instance = SQLFilter()
-
+        
         # Test all supported condition types
         conditions = [
             ("col1", None),
@@ -1254,16 +1254,16 @@ class TestSQLFilterBase:
             ("col9", [None, "value"]),
             ("col10", [(dt.date(2023, 1, 1), dt.date(2023, 1, 31)), (dt.date(2023, 6, 1), dt.date(2023, 6, 30))])
         ]
-
+        
         filters = filter_instance._build_filter_conditions(conditions)
-
+        
         # Should return a list of sqlglot expressions
         assert isinstance(filters, list)
         assert len(filters) == 10  # All conditions should be processed
-
+        
         # Convert to SQL strings to verify content
         filter_sqls = [f.sql() for f in filters]
-
+        
         # Verify each condition type
         assert any('"col1" IS NULL' in sql for sql in filter_sqls)
         assert any('"col2" = 42' in sql for sql in filter_sqls)
@@ -1274,23 +1274,23 @@ class TestSQLFilterBase:
         assert any("BETWEEN '1' AND '10'" in sql for sql in filter_sqls)
         assert any("IN ('a', 'b', 'c')" in sql for sql in filter_sqls)
         assert any("IS NULL OR" in sql and "IN ('value')" in sql for sql in filter_sqls)
-
+        
     def test_unsupported_condition_handling(self):
         """Test that unsupported condition types are handled gracefully."""
         filter_instance = SQLFilter()
-
+        
         # Mix valid and invalid conditions
         conditions = [
             ("valid_col", "valid_value"),
             ("invalid_col", {"complex": "object"}),  # Unsupported type
             ("another_valid", 123)
         ]
-
+        
         filters = filter_instance._build_filter_conditions(conditions)
-
+        
         # Should only process the valid conditions
         assert len(filters) == 2
-
+        
         filter_sqls = [f.sql() for f in filters]
         assert any('"valid_col" = \'valid_value\'' in sql for sql in filter_sqls)
         assert any('"another_valid" = 123' in sql for sql in filter_sqls)

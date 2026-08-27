@@ -25,7 +25,7 @@ class TestSourceCatalogAssociationTracking:
         )
         context["sources"] = [source]
         context["visible_slugs"] = {"population_db::population"}
-
+        
         # Add metadata file
         readme_content = "# Population Data"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme_content):
@@ -36,19 +36,19 @@ class TestSourceCatalogAssociationTracking:
                 file_type="metadata"
             )
             upload_controls._add_metadata_file(card)
-
+        
         # Wait for async upsert to complete
         await asyncio.sleep(0.1)
-
+        
         # Simulate user associating document with table via SourceCatalog
         if source.metadata is None:
             source.metadata = {}
         source.metadata["population"] = {"docs": ["readme.md"]}
-
+        
         # Verify association is in Source.metadata
         assert "docs" in source.metadata["population"]
         assert "readme.md" in source.metadata["population"]["docs"]
-
+        
         # Verify vector store metadata is unchanged (no tables field)
         docs = source_catalog.vector_store.filter_by({"filename": "readme.md"})
         assert len(docs) == 1
@@ -68,7 +68,7 @@ class TestSourceCatalogAssociationTracking:
             }
         )
         context["sources"] = [source]
-
+        
         # Add shared documentation
         shared_content = "# Sports Database Overview"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=shared_content):
@@ -79,20 +79,20 @@ class TestSourceCatalogAssociationTracking:
                 file_type="metadata"
             )
             upload_controls._add_metadata_file(card)
-
+        
         # Wait for async upsert to complete
         await asyncio.sleep(0.1)
-
+        
         # Associate with both tables
         source.metadata = {
             "athletes": {"docs": ["overview.md"]},
             "events": {"docs": ["overview.md"]}
         }
-
+        
         # Verify associations
         assert "overview.md" in source.metadata["athletes"]["docs"]
         assert "overview.md" in source.metadata["events"]["docs"]
-
+        
         # Vector store still has only one document
         docs = source_catalog.vector_store.filter_by({"filename": "overview.md"})
         assert len(docs) == 1
@@ -108,7 +108,7 @@ class TestSourceCatalogAssociationTracking:
             tables={"users": "SELECT 1"}
         )
         context["sources"] = [source]
-
+        
         # Add document and associate
         doc_content = "# Analytics Documentation"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=doc_content):
@@ -119,18 +119,18 @@ class TestSourceCatalogAssociationTracking:
                 file_type="metadata"
             )
             upload_controls._add_metadata_file(card)
-
+        
         # Wait for async upsert to complete
         await asyncio.sleep(0.1)
-
+        
         source.metadata = {"users": {"docs": ["analytics.md"]}}
-
+        
         # Remove association
         source.metadata["users"]["docs"].remove("analytics.md")
-
+        
         # Verify removed from Source.metadata
         assert "analytics.md" not in source.metadata["users"]["docs"]
-
+        
         # Document still exists in vector store (orphaned but queryable)
         docs = source_catalog.vector_store.filter_by({"filename": "analytics.md"})
         assert len(docs) == 1
@@ -152,14 +152,14 @@ class TestDocumentQueryFiltering:
             }
         )
         context["sources"] = [source]
-
+        
         # Add documents
         doc1_content = "# Documentation for Table A"
         doc2_content = "# Documentation for Table B"
-
+        
         with patch.object(upload_controls, '_extract_metadata_content') as mock_extract:
             mock_extract.side_effect = [doc1_content, doc2_content]
-
+            
             for content, name in [(doc1_content, "doc_a"), (doc2_content, "doc_b")]:
                 card = UploadedFileRow(
                     file_obj=io.BytesIO(content.encode()),
@@ -168,20 +168,20 @@ class TestDocumentQueryFiltering:
                     file_type="metadata"
                 )
                 upload_controls._add_metadata_file(card)
-
+        
         # Wait for async upserts to complete
         await asyncio.sleep(0.2)
-
+        
         # Associate documents with specific tables
         source.metadata = {
             "table_a": {"docs": ["doc_a.md"]},
             "table_b": {"docs": ["doc_b.md"]}
         }
-
+        
         # Query all documents
         all_docs = await source_catalog.vector_store.query("Documentation", top_k=10, filters={"type": "document"})
         assert len(all_docs) == 2
-
+        
         # Filter by association to table_a
         table_a_docs = [
             doc for doc in all_docs
@@ -189,7 +189,7 @@ class TestDocumentQueryFiltering:
         ]
         assert len(table_a_docs) == 1
         assert table_a_docs[0]["metadata"]["filename"] == "doc_a.md"
-
+        
         # Filter by association to table_b
         table_b_docs = [
             doc for doc in all_docs
@@ -209,8 +209,8 @@ class TestSourceCatalogDocumentToggling:
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
         ]
-
-        # Setup: Create sources with tables
+        
+        # Setup: Create sources with tables  
         source1 = DuckDBSource(
             uri=":memory:",
             name="db1",
@@ -222,17 +222,17 @@ class TestSourceCatalogDocumentToggling:
             tables={"table_c": "SELECT 1"}
         )
         context["sources"] = [source1, source2]
-
+        
         # Sync to build trees
         source_catalog.sync()
-
+        
         # Simulate checking in global tree
         mock_event = Mock()
         mock_event.new = [(0,)]  # First item checked
-
+        
         with patch.object(source_catalog, '_sync_sources_tree_only'):
             source_catalog._on_docs_active_change(mock_event)
-
+        
         # Verify doc was associated with ALL tables
         assert source1.metadata["table_a"]["docs"] == ["readme.md"]
         assert source1.metadata["table_b"]["docs"] == ["readme.md"]
@@ -251,21 +251,21 @@ class TestSourceCatalogDocumentToggling:
             "table_b": {"docs": ["readme.md"]}
         }
         context["sources"] = [source]
-
+        
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
         ]
-
+        
         # Sync to build trees
         source_catalog.sync()
-
+        
         # Simulate unchecking in global tree
         mock_event = Mock()
         mock_event.new = []  # No active items
-
+        
         with patch.object(source_catalog, '_sync_sources_tree_only'):
             source_catalog._on_docs_active_change(mock_event)
-
+        
         # Verify doc was removed from ALL tables
         assert "readme.md" not in source.metadata["table_a"]["docs"]
         assert "readme.md" not in source.metadata["table_b"]["docs"]
@@ -283,22 +283,22 @@ class TestSourceCatalogDocumentToggling:
             "table_b": {"docs": ["readme.md"]}
         }
         context["sources"] = [source]
-
+        
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
         ]
-
+        
         # Sync to build trees
         source_catalog.sync()
-
+        
         # Simulate unchecking doc under table_a only
         # Path: (0, 0, 0) = source 0, table 0, metadata 0
         # Active paths should NOT include (0, 0, 0)
         mock_event = Mock()
         mock_event.new = [(0,), (0, 0), (0, 1), (0, 1, 0)]  # table_a and its doc unchecked, but table_b checked
-
+        
         source_catalog._on_sources_active_change(mock_event)
-
+        
         # Verify: removed from table_a, but still in table_b
         assert "readme.md" not in source.metadata["table_a"]["docs"]
         assert "readme.md" in source.metadata["table_b"]["docs"]
@@ -312,26 +312,26 @@ class TestSourceCatalogDocumentToggling:
             tables={"table_a": "SELECT 1", "table_b": "SELECT 1"}
         )
         context["sources"] = [source]
-
+        
         source_catalog._available_metadata = [
             {"filename": "global.md", "display_name": "global", "content": "# Global"},
             {"filename": "specific.md", "display_name": "specific", "content": "# Specific"}
         ]
-
+        
         # global.md associated with all tables, specific.md only with table_a
         source.metadata = {
             "table_a": {"docs": ["global.md", "specific.md"]},
             "table_b": {"docs": ["global.md"]}
         }
-
+        
         # Sync to build trees
         source_catalog.sync()
-
+        
         # Verify global.md shows as checked in global tree (associated with ALL tables)
         active_paths = source_catalog._compute_docs_active_paths()
         global_idx = 0  # global.md is first
         assert (global_idx,) in active_paths
-
+        
         # specific.md should NOT show as checked (only associated with table_a)
         specific_idx = 1
         assert (specific_idx,) not in active_paths
@@ -346,17 +346,17 @@ class TestSourceCatalogDocumentToggling:
         )
         source.metadata = {"table_a": {"docs": ["readme.md"]}}
         context["sources"] = [source]
-
+        
         source_catalog._available_metadata = [
             {"filename": "readme.md", "display_name": "readme", "content": "# Test"}
         ]
-
+        
         # First sync
         source_catalog.sync()
-
+        
         # Associations should be preserved
         assert source.metadata["table_a"]["docs"] == ["readme.md"]
-
+        
         # Add another source
         source2 = DuckDBSource(
             uri=":memory:",
@@ -364,9 +364,9 @@ class TestSourceCatalogDocumentToggling:
             tables={"table_b": "SELECT 1"}
         )
         context["sources"].append(source2)
-
+        
         # Second sync
         source_catalog.sync()
-
+        
         # Original associations should still be preserved
         assert source.metadata["table_a"]["docs"] == ["readme.md"]

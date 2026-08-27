@@ -20,17 +20,17 @@ class TestDocumentListAgentIntegration:
                 DocumentChunk(filename="schema.md", text="chunk 3", similarity=0.7),
             ]
         )
-
+        
         context = {"metaset": metaset}
-
+        
         # Test applies
         applies = await DocumentListAgent.applies(context)
         assert applies is True  # More than 1 unique document
-
+        
         # Test _get_items
         agent = DocumentListAgent()
         items = agent._get_items(context)
-
+        
         # Should return unique, sorted filenames
         assert items == {"Documents": ["readme.md", "schema.md"]}
 
@@ -39,7 +39,7 @@ class TestDocumentListAgentIntegration:
         # Metaset without docs
         metaset = Metaset(query="test", catalog={}, docs=None)
         context = {"metaset": metaset}
-
+        
         applies = await DocumentListAgent.applies(context)
         assert applies is False
 
@@ -52,6 +52,6 @@ class TestDocumentListAgentIntegration:
             docs=[DocumentChunk(filename="readme.md", text="chunk", similarity=0.9)]
         )
         context = {"metaset": metaset}
-
+        
         applies = await DocumentListAgent.applies(context)
         assert applies is True  # Single doc still has docs worth listing

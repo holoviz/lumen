@@ -2,7 +2,7 @@ from typing import Annotated, TypedDict
 
 import pytest
 
-from typing import NotRequired
+from typing_extensions import NotRequired
 
 try:
     import lumen.ai  # noqa
