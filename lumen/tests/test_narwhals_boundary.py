@@ -8,6 +8,7 @@ pandas caller gets back exactly what it got before.
 import datetime as dt
 
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -19,8 +20,8 @@ from lumen.filters.base import ConstantFilter
 from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
 from lumen.sources.base import DerivedSource, InMemorySource, Source
 from lumen.transforms.base import (
-    Aggregate, Columns, DropNA, Filter as FilterTransform, Iloc, Melt, Query,
-    Rename, Sample, Sort,
+    Aggregate, Columns, DropNA, Filter as FilterTransform, HistoryTransform,
+    Iloc, Melt, Query, Rename, Sample, Sort,
 )
 from lumen.util import (
     _NULLABLE_DTYPES, as_narwhals, as_pandas, get_dataframe_schema,
@@ -171,6 +172,94 @@ def test_columns_matches_across_backends(constructor):
     frame = constructor({"i": [0, 1], "s": ["a", "b"]})
     selected = Columns.apply_to(frame, columns=["s"])
     assert as_narwhals(selected).collect_schema().names() == ["s"]
+
+
+# HistoryTransform is the one transform that keeps state, so it cannot go in
+# the parity matrix: apply_to builds a fresh instance per call and would only
+# ever exercise the first entry, which is the one path with no concat in it.
+
+
+def accumulate(transform, frame):
+    """Run one step the way a Pipeline runs it, coercing before applying."""
+    return transform.apply(transform._coerce(frame))
+
+
+def test_history_accumulates_and_preserves_backend(constructor):
+    frame = constructor({"i": [0, 1]})
+    transform = HistoryTransform(length=2)
+    results = [accumulate(transform, frame) for _ in range(4)]
+    assert [rows(result) for result in results] == [2, 4, 4, 4]
+    # The row counts above come out the same whether or not the narwhals path
+    # ran, because _coerce would have converted first. The type is what says
+    # the frame reached the end as the library it started as.
+    assert [type(result) for result in results] == [type(frame)] * 4
+
+
+def test_history_matches_pandas(constructor):
+    """The accumulated frame is the one pandas would have built, every step."""
+    frames = [{"i": [0, 1]}, {"i": [2]}, {"i": [3, 4]}]
+    reference, result = HistoryTransform(length=2), HistoryTransform(length=2)
+    for data in frames:
+        expected = accumulate(reference, pd.DataFrame(data))
+        got = as_pandas(accumulate(result, constructor(data)))
+        assert got["i"].tolist() == expected["i"].tolist()
+
+
+def test_history_adds_date_column(constructor, monkeypatch):
+    """The stamp is taken once per call and shared by that call's rows.
+
+    The clock is fixed because Windows only advances it every 15 ms or so,
+    which is long enough for two calls to land on the same instant and read
+    as one stamp per frame rather than one per call.
+    """
+    from lumen.transforms import base
+
+    ticks = iter([dt.datetime(2020, 1, 1), dt.datetime(2020, 1, 2)])
+
+    class FixedClock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(ticks)
+
+    monkeypatch.setattr(base, "dt", SimpleNamespace(datetime=FixedClock, date=dt.date))
+    frame = constructor({"i": [0, 1]})
+    transform = HistoryTransform(length=2, date_column="ts")
+    accumulate(transform, frame)
+    result = accumulate(transform, frame)
+    assert type(result) is type(frame)
+    stamps = as_pandas(result)["ts"]
+    assert stamps.dtype.kind == "M"
+    assert stamps.tolist() == [dt.datetime(2020, 1, 1)] * 2 + [dt.datetime(2020, 1, 2)] * 2
+
+
+def test_history_buffer_survives_a_failed_concat():
+    """A concat that raises must not leave its frame in the buffer.
+
+    _try_narwhals runs the pandas branch on any failure, so a buffer committed
+    before the concat succeeded would accumulate the same frame twice.
+    """
+    pl = pytest.importorskip("polars")
+    transform = HistoryTransform(length=5)
+    accumulate(transform, pl.DataFrame({"v": [1.0]}))
+    # Int64 against Float64 is a polars SchemaError, so narwhals gives up.
+    result = as_pandas(accumulate(transform, pl.DataFrame({"v": [2]})))
+    assert result["v"].tolist() == [1.0, 2.0]
+    assert len(transform._buffer) == 2
+    # and the history keeps accumulating rather than restarting
+    assert rows(accumulate(transform, pl.DataFrame({"v": [3.0]}))) == 3
+
+
+def test_history_announces_the_conversion_once(caplog):
+    """A converted history must not re-announce itself on every render."""
+    pl = pytest.importorskip("polars")
+    transform = HistoryTransform(length=10)
+    with caplog.at_level("WARNING"):
+        accumulate(transform, pl.DataFrame({"v": [1.0]}))
+        accumulate(transform, pl.DataFrame({"v": [2]}))
+        assert caplog.text.count("converted to pandas") == 1
+        accumulate(transform, pl.DataFrame({"v": [3.0]}))
+        accumulate(transform, pl.DataFrame({"v": [4.0]}))
+        assert caplog.text.count("converted to pandas") == 1
 
 
 def test_iloc_matches_across_backends(constructor):
