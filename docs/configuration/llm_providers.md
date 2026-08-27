@@ -116,30 +116,43 @@ For installation and API key setup instructions, see the [Installation guide](..
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Reasoning:** `nemotron-3-nano:30b`
 
-### Experimental subscription CLI providers
+### Locally authenticated coding CLI providers
 
-Lumen can also use a **locally authenticated** Codex CLI or Claude Code CLI.
-This is useful for local development when you already sign in to one of those
-tools with a subscription. Lumen does not read, save, or pass an API key for
-these providers—the respective CLI performs its own authentication.
+Use a locally authenticated Codex CLI or Claude Code CLI as Lumen's LLM
+provider. This lets an individual user run Lumen with an existing CLI
+subscription, without supplying an API key to Lumen.
+
+Before starting Lumen, install the relevant CLI, make sure its executable is
+on your `PATH`, and sign in to it once:
+
+``` bash
+codex login
+# or
+claude login
+```
+
+Start Lumen without loading any data:
 
 ``` bash title="Codex CLI"
-# First sign in outside Lumen, then launch Lumen.
-codex login
-lumen-ai serve penguins.csv --provider codex-cli
+lumen-ai serve --provider codex-cli
 ```
 
 ``` bash title="Claude Code CLI"
-# First sign in outside Lumen, then launch Lumen.
-claude login
-lumen-ai serve penguins.csv --provider claude-code
+lumen-ai serve --provider claude-code
 ```
 
-Use `--model` if you want to select a model supported by your logged-in CLI:
+The CLI's configured default model is used unless you select one explicitly:
 
 ``` bash
-lumen-ai serve penguins.csv --provider codex-cli --model gpt-5.3-codex
-lumen-ai serve penguins.csv --provider claude-code --model sonnet
+lumen-ai serve --provider codex-cli --model gpt-5.3-codex
+lumen-ai serve --provider claude-code --model sonnet
+```
+
+To start with a dataset, add its path before the provider arguments:
+
+``` bash
+lumen-ai serve penguins.csv --provider codex-cli
+lumen-ai serve penguins.csv --provider claude-code
 ```
 
 !!! warning "Local development only"
