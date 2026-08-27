@@ -691,6 +691,36 @@ class Columns(Transform):
         return table[self.columns]
 
 
+def _narwhals_dtype(dtype):
+    """Return the narwhals dtype to cast to, or refuse the cast.
+
+    narwhals has no public parser for a dtype name and every
+    native_to_narwhals_dtype is private to a backend, so the spec is resolved
+    through an empty pandas column. That reuses pandas' own parser and
+    narwhals' own mapping rather than restating either as a table here, and it
+    takes whatever a spec can carry: a string, a builtin, a numpy dtype or an
+    extension dtype instance.
+
+    Only a numeric target is allowed through, because a shared dtype name is
+    not a shared conversion and the disagreements are silent. pyarrow renders
+    1.0 as '1' where pandas renders '1.0', both spell a boolean 'true' where
+    pandas spells it 'True', polars reads an integer as a date rather than as
+    a count of nanoseconds, and a category takes its order of appearance where
+    pandas sorts it, which decides how it later sorts and groups. None of
+    those raise, so nothing downstream could catch them.
+    """
+    resolved = nw.from_native(pd.Series([], dtype=dtype), series_only=True).dtype
+    if not resolved.is_numeric():
+        raise NotImplementedError(f'{dtype!r} does not cast alike on every backend')
+    if pd.api.types.pandas_dtype(
+        nw.Schema({'c': resolved}).to_pandas()['c']
+    ) != pd.api.types.pandas_dtype(dtype):
+        # Int64 and int64 are one narwhals dtype, so a nullable spec would come
+        # back as the numpy dtype rather than the one that was asked for.
+        raise NotImplementedError(f'{dtype!r} has no distinct narwhals dtype')
+    return resolved
+
+
 class Astype(Transform):
     """
     `Astype` transforms the type of one or more columns.
@@ -700,7 +730,26 @@ class Astype(Transform):
 
     transform_type: ClassVar[str] = 'as_type'
 
+    # A cast a backend refuses raises when the frame is collected, which
+    # happens in Pipeline.data, outside the try that would have sent the data
+    # to pandas. Collecting here puts the failure back inside that try.
+    _lazy: ClassVar[bool] = False
+
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        def build(frame):
+            # Columns not in the frame are skipped, because the pandas path
+            # skips them rather than raising.
+            known = set(frame.collect_schema().names())
+            return frame.with_columns(*[
+                nw.col(col).cast(_narwhals_dtype(dtype))
+                for col, dtype in self.dtypes.items() if col in known
+            ])
+
+        result, table = self._try_narwhals(table, build)
+        if result is not None:
+            return result
         table = table.copy()
         for col, dtype in self.dtypes.items():
             if col in table.columns:

@@ -14,7 +14,8 @@ import pandas as pd
 import pytest
 
 from lumen.transforms.base import (
-    Aggregate, Columns, DropNA, Filter, Iloc, Melt, Rename, Sample, Sort,
+    Aggregate, Astype, Columns, DropNA, Filter, Iloc, Melt, Rename, Sample,
+    Sort,
 )
 from lumen.util import as_pandas
 
@@ -96,6 +97,22 @@ CASES = [
     (DropNA, {'how': 'all'}, 'nullable'),
     (Sort, {'by': []}, 'nullable'),
     (Aggregate, {'by': ['g'], 'with_index': False, 'method': 'median'}, 'nullable'),
+    (Astype, {'dtypes': {'i': 'float64'}}, 'plain'),
+    (Astype, {'dtypes': {'v': 'int64'}}, 'plain'),
+    (Astype, {'dtypes': {'i': 'uint8'}}, 'plain'),
+    (Astype, {'dtypes': {'v': 'float32'}}, 'plain'),
+    (Astype, {'dtypes': {'absent': 'int64'}}, 'plain'),
+    (Astype, {'dtypes': {'i': 'float64'}}, 'nulls'),
+    # Targets narwhals spells differently, so each converts rather than
+    # answering differently: a boolean is 'true' to polars and 'True' to
+    # pandas, an integer is a date to polars and a count of nanoseconds to
+    # pandas, and a category takes its order of appearance where pandas sorts
+    # it. Int64 and int64 are one narwhals dtype, so a nullable spec cannot
+    # come back as the dtype that was asked for.
+    (Astype, {'dtypes': {'i': 'Int64'}}, 'plain'),
+    (Astype, {'dtypes': {'g': 'category'}}, 'plain'),
+    (Astype, {'dtypes': {'v': 'str'}}, 'plain'),
+    (Astype, {'dtypes': {'i': 'datetime64[ns]'}}, 'plain'),
 ]
 
 # The subset of CASES above that converts to pandas on a frame holding a
@@ -150,14 +167,32 @@ def test_transform_matches_pandas(constructor, transform, kwargs, frame_name):
     pd.testing.assert_frame_equal(result, reference, check_dtype=False)
 
 
-# Specs that deliberately fall back: pandas-only options, or aggregations whose
-# narwhals meaning differs from the pandas one. Each is still checked for the
-# same answer above; this list only records that the fallback is intentional.
+# Specs that deliberately fall back: pandas-only options, aggregations whose
+# narwhals meaning differs from the pandas one, or a cast target narwhals
+# spells differently. Each is still checked for the same answer above; this
+# list only records that the fallback is intentional.
 FALLS_BACK = {
     ('Aggregate', 'nunique'), ('Aggregate', 'prod'), ('Aggregate', 'median'),
     ('Aggregate', 'first'), ('Aggregate', 'count'),
     ('DropNA', 'all'), ('Melt', '[]'), ('Sort', 'noby'),
+    ('Astype', 'Int64'), ('Astype', 'str'), ('Astype', 'datetime64[ns]'),
+    ('Astype', 'category'),
 }
+
+
+def _marker(transform, kwargs):
+    """The part of a spec that decides whether the narwhals path is taken.
+
+    Astype decides on the dtype it is asked for rather than on an option, so
+    the value has to be reachable here and not just the parameter name.
+    """
+    if transform is Astype:
+        return ','.join(sorted(str(d) for d in kwargs['dtypes'].values()))
+    return (
+        kwargs.get('method') or ('[]' if kwargs.get('value_vars') == [] else None)
+        or ('all' if kwargs.get('how') == 'all' else None)
+        or ('noby' if kwargs.get('by') == [] else None)
+    )
 
 
 @pytest.mark.parametrize("transform, kwargs, frame_name", [
@@ -165,13 +200,7 @@ FALLS_BACK = {
     for t, k, f in CASES
 ])
 def test_native_path_is_actually_taken(constructor, caplog, transform, kwargs, frame_name):
-    marker = (
-        transform.__name__,
-        kwargs.get('method') or ('[]' if kwargs.get('value_vars') == [] else None)
-        or ('all' if kwargs.get('how') == 'all' else None)
-        or ('noby' if kwargs.get('by') == [] else None)
-    )
-    if marker in FALLS_BACK:
+    if (transform.__name__, _marker(transform, kwargs)) in FALLS_BACK:
         pytest.skip('documented fallback')
     with caplog.at_level('WARNING'):
         transform.apply_to(constructor(FRAMES[frame_name]), **kwargs)
@@ -194,21 +223,48 @@ def test_row_order_matches_pandas(constructor, transform, kwargs, frame_name):
         [_missing_to_none(r) for r in reference.values.tolist()]
 
 
+# The fallbacks above, plus every Astype case: the requested dtype is the whole
+# contract of that transform, so a case of it that only compared values would
+# be checking the one thing it cannot get wrong.
+DTYPE_EXACT = NULLABLE_FALLBACKS + [c for c in CASES if c[0] is Astype]
+
+
 @pytest.mark.parametrize("transform, kwargs, frame_name", [
     pytest.param(t, k, f, id=f"{t.__name__}-{f}-{sorted(k.items())}")
-    for t, k, f in NULLABLE_FALLBACKS
+    for t, k, f in DTYPE_EXACT
 ])
-def test_fallback_dtypes_match_pandas(constructor, transform, kwargs, frame_name):
+def test_dtypes_match_pandas(constructor, transform, kwargs, frame_name):
     """The comparison above passes check_dtype=False; this is the dtype half.
 
     A configuration that converts must come back with the dtypes the pandas
     path produces, or two adjacent configurations of one transform disagree on
-    the schema and an id renders as 3.0.
+    the schema and an id renders as 3.0. Compared as pandas dtypes rather than
+    as a narwhals schema because narwhals calls both Int64 and int64 Int64,
+    which is exactly the difference this has to see.
     """
     data = FRAMES[frame_name]
     reference = as_pandas(transform.apply_to(pd.DataFrame(data), **kwargs))
     result = as_pandas(transform.apply_to(constructor(data), **kwargs))
     assert result.dtypes.astype(str).to_dict() == reference.dtypes.astype(str).to_dict()
+
+
+@pytest.mark.parametrize("transform, kwargs, frame_name", [
+    pytest.param(t, k, f, id=f"{t.__name__}-{f}-{sorted(k.items())}")
+    for t, k, f in CASES if t is Astype
+])
+def test_astype_keeps_its_backend(constructor, transform, kwargs, frame_name):
+    """Comparing dtypes alone would pass without the port at all.
+
+    The pandas fallback produces the same dtypes as the pandas path by
+    definition, so the only assertion that can tell a native cast from a
+    converted one is the type of the frame that comes back.
+    """
+    frame = constructor(FRAMES[frame_name])
+    result = transform.apply_to(frame, **kwargs)
+    if (transform.__name__, _marker(transform, kwargs)) in FALLS_BACK:
+        assert isinstance(result, pd.DataFrame)
+    else:
+        assert type(result) is type(frame)
 
 
 def test_schema_matches_pandas_over_dtypes(constructor):
