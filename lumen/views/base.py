@@ -169,6 +169,12 @@ def _declare_hvplot_style_params(view_type: type[View]) -> tuple[str, ...]:
                 # spec may say: hvPlot reads a dict cmap as a color key and a
                 # False legend as no legend, and both predate these params.
                 parameter.check_on_set = False
+            # Structured output makes the LLM answer with every field, so an
+            # option keeping the explorer's default would be restated on every
+            # spec and forwarded as if it had been asked for. None is the one
+            # value that means untouched, leaving the default to hvPlot.
+            parameter.default = None
+            parameter.allow_None = True
             view_type.param.add_parameter(name, parameter)
             skip.add(name)
             declared.append(name)

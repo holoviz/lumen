@@ -58,12 +58,26 @@ def test_style_params_do_not_shadow_the_lumen_params():
         assert name not in HVPLOT_STYLE_PARAMS, name
 
 
+def test_style_params_start_unset():
+    """Structured output answers with every field, so an option holding the
+    explorer's default would be restated on every spec and forwarded as though
+    the request had asked for it."""
+    for name in HVPLOT_STYLE_PARAMS:
+        assert hvPlotBaseView.param[name].default is None, name
+
+
 def test_style_params_are_accepted_by_the_explorer(df):
     """A generated spec renders as hvplot_ui, so a param the explorer rejects
     would raise rather than style anything."""
-    hvDataFrameExplorer(df, x="x", y="y", kind="line", **{
-        name: hvPlotBaseView.param[name].default for name in HVPLOT_STYLE_PARAMS
-    })
+    values = {
+        "alpha": 0.5, "clabel": "c", "clim": (0, 1), "cmap": "viridis",
+        "cnorm": "log", "color": "red", "colorbar": True, "fontscale": 1.2,
+        "legend": "top_left", "logx": True, "logy": True, "rot": 45,
+        "xlabel": "x", "xlim": (0, 1), "ylabel": "y", "ylim": (0, 1),
+    }
+    assert set(values) == set(HVPLOT_STYLE_PARAMS), "a generated param has no test value"
+
+    hvDataFrameExplorer(df, x="x", y="y", kind="line", **values)
 
 
 # ---- Trap A: hvPlotUIView drops params no control claims ----
