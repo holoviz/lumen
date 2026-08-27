@@ -69,7 +69,7 @@ Current context contains keys: {{ ", ".join(memory) }}
 {% if 'sql' in previous_keys %}(From previous plan) {% endif %}SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-{% if 'data' in previous_keys %}(From previous plan) {% endif %}Data Overview:
+Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
 {% if memory.get('view') %}

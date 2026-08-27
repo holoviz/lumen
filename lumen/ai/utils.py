@@ -755,6 +755,32 @@ def _select_relevant_columns(
     return selected, len(selected) < len(columns)
 
 
+# The types numpy cannot hold, and what to read them as instead.
+_OBJECT_DTYPE_CASTS = {'decimal': 'float64', 'date': 'datetime64[us]'}
+
+
+def normalize_object_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Return df with columns numpy is able to describe.
+
+    numpy has no decimal and no date, so both sit in an object column, which
+    anything reading dtypes takes for text: the summary reads it as
+    categorical, so a money column loses its mean and range and comes out as
+    an enum of decimal.Decimal that yaml.safe_load cannot even read back, and
+    the exploration preview reports it as str.
+
+    Inferred from the values rather than the source dtype, because pandas
+    produces such a column for a DECIMAL result of its own, so this is not
+    only about the frame having arrived from another library.
+    """
+    casts = {
+        col: _OBJECT_DTYPE_CASTS[kind]
+        for col in df.columns
+        if (kind := pd.api.types.infer_dtype(df[col])) in _OBJECT_DTYPE_CASTS
+    }
+    return df.astype(casts) if casts else df
+
+
 def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int, int], bool]:
     """
     Return df as pandas, row-sampled for profiling, along with its true shape.
@@ -793,14 +819,18 @@ def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int,
         narwhals_df = narwhals_df.collect()
     if is_narwhals(narwhals_df):
         shape = narwhals_df.shape
-        if shape[0] <= PROFILE_SAMPLE_ROWS:
-            return narwhals_df.to_pandas(), shape, False
-        return narwhals_df.sample(n=PROFILE_SAMPLE_ROWS).to_pandas(), shape, True
+        sampled = shape[0] > PROFILE_SAMPLE_ROWS
+        if sampled:
+            narwhals_df = narwhals_df.sample(n=PROFILE_SAMPLE_ROWS)
+        # as_pandas rather than to_pandas: it keeps an integer column holding a
+        # null an integer, instead of widening an id to 3.0 in the sample rows.
+        return normalize_object_dtypes(as_pandas(narwhals_df)), shape, sampled
 
     shape = df.shape
-    if shape[0] <= PROFILE_SAMPLE_ROWS:
-        return df, shape, False
-    return df.sample(PROFILE_SAMPLE_ROWS), shape, True
+    sampled = shape[0] > PROFILE_SAMPLE_ROWS
+    if sampled:
+        df = df.sample(PROFILE_SAMPLE_ROWS)
+    return normalize_object_dtypes(df), shape, sampled
 
 
 def describe_data_sync(
@@ -1837,14 +1867,9 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of the DataFrame with sanitized column names
+        The DataFrame with sanitized column names, leaving the caller's alone
     """
-    df = df.copy()
-    df.columns = [
-        re.sub(r'[^\w]', '', col.replace(' ', '_'))
-        for col in df.columns
-    ]
-    return df
+    return df.rename(columns=lambda col: re.sub(r'[^\w]', '', col.replace(' ', '_')))
 
 
 def result_to_dataframe(result) -> pd.DataFrame | None:
@@ -1869,7 +1894,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
         src = result.sources[0]
         table = result.table
         try:
-            return src.get(table)
+            # Declared pd.DataFrame, and callers concat it and read .empty.
+            return as_pandas(src.get(table))
         except Exception:
             return None
 
