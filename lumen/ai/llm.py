@@ -23,7 +23,7 @@ from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
-from pydantic import BaseModel, ValidationError, create_model
+from pydantic import BaseModel, create_model
 
 from .interceptor import Interceptor
 from .services import (
@@ -1234,19 +1234,19 @@ class Llm(param.Parameterized):
 
 
 class _CLILlm(Llm):
-    """Base class for local, subscription-authenticated coding CLIs.
+    """Base class for locally authenticated coding CLIs.
 
-    These providers deliberately invoke an already authenticated local CLI instead
-    of handling credentials. They are intended for local development only: output
-    is collected after the command completes and native Lumen function tools are
-    not forwarded to the CLI.
+    These providers invoke an already authenticated local CLI instead of handling
+    credentials. They are intended for local development only: output is collected
+    after the command completes and native Lumen function tools are not forwarded
+    to the CLI.
     """
 
     executable = param.String(default="", constant=True, doc="Path or name of the CLI executable.")
 
     working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
-        Directory passed to the CLI, if supported. By default, the CLI inherits
-        the directory from which Lumen was launched.""")
+        Working directory for CLI subprocesses. By default, the CLI inherits the
+        directory from which Lumen was launched.""")
 
     _supports_stream = False
     _supports_model_stream = False
@@ -1254,6 +1254,12 @@ class _CLILlm(Llm):
 
     def _create_base_client(self, **kwargs) -> Any:
         raise NotImplementedError("CLI-backed providers do not create an SDK client.")
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        messages, contains_image = super()._check_for_image(messages)
+        if contains_image:
+            raise ValueError(f"{self.display_name} does not support image inputs.")
+        return messages, False
 
     @staticmethod
     def _content_to_text(content: str | Image | list[dict[str, Any]]) -> str:
@@ -1279,20 +1285,18 @@ class _CLILlm(Llm):
         for message in messages:
             role = message.get("role", "user").upper()
             content = self._content_to_text(message.get("content", ""))
-            if not content and message.get("tool_calls"):
-                content = json.dumps(message["tool_calls"], default=str, ensure_ascii=False)
+            tool_calls = message.get("tool_calls")
+            if not content and tool_calls:
+                content = json.dumps(tool_calls, default=str, ensure_ascii=False)
             rendered.append(f"[{role}]\n{content}")
         return "\n\n".join(rendered)
 
     @staticmethod
-    def _json_from_output(output: str) -> str:
-        """Extract one JSON object from plain output or a Markdown code fence."""
+    def _extract_json(output: str) -> Any:
+        """Extract the first JSON value from a CLI response."""
         output = output.strip()
-        if output.startswith("```") and output.endswith("```"):
-            output = output.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         try:
-            json.loads(output)
-            return output
+            return json.loads(output)
         except json.JSONDecodeError:
             pass
 
@@ -1301,10 +1305,10 @@ class _CLILlm(Llm):
             if character not in "[{":
                 continue
             try:
-                _, end = decoder.raw_decode(output[index:])
+                value, _ = decoder.raw_decode(output[index:])
             except json.JSONDecodeError:
                 continue
-            return output[index:index + end]
+            return value
         raise ValueError("The CLI did not return valid JSON for Lumen's structured response.")
 
     def _structured_prompt(self, prompt: str, response_model: type[BaseModel]) -> str:
@@ -1316,12 +1320,16 @@ class _CLILlm(Llm):
             f"JSON Schema:\n{schema}"
         )
 
-    async def _run_command(self, command: list[str]) -> tuple[str, str]:
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=self.working_dir,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -1330,7 +1338,13 @@ class _CLILlm(Llm):
             ) from exc
 
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(prompt.encode("utf-8")), timeout=self.timeout
+            )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
         except TimeoutError as exc:
             process.kill()
             await process.wait()
@@ -1342,16 +1356,43 @@ class _CLILlm(Llm):
         stderr_text = stderr.decode("utf-8", errors="replace")
         if process.returncode:
             detail = stderr_text.strip() or stdout_text.strip() or "no error output"
+            detail = truncate_string(detail, max_length=4000)
             raise RuntimeError(
                 f"{self.display_name} exited with status {process.returncode}: {detail}"
             )
-        return stdout_text, stderr_text
+        return stdout_text
 
-    def _build_command(self, model: str | None, prompt: str) -> list[str]:
+    def _build_command(self, model: str | None) -> list[str]:
         raise NotImplementedError
 
     def _decode_output(self, output: str) -> str:
-        return output.strip()
+        raise NotImplementedError
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = 16,
+        **kwargs,
+    ) -> BaseModel | str:
+        if tool_instances:
+            log_debug(
+                "CLI providers do not support native Lumen tools; continuing without them.",
+                prefix="[LLM tools]",
+            )
+        kwargs.pop("tools", None)
+        return await super()._run_tool_loop(
+            messages,
+            structured_model,
+            {},
+            {},
+            model_spec=model_spec,
+            max_tool_rounds=max_tool_rounds,
+            **kwargs,
+        )
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         self._log_messages(messages)
@@ -1361,15 +1402,15 @@ class _CLILlm(Llm):
         if response_model is not None:
             prompt = self._structured_prompt(prompt, response_model)
 
-        command = self._build_command(model, prompt)
-        log_debug(f"CLI command: \033[96m{' '.join(command[:-1])} <prompt>\033[0m")
-        stdout, _ = await self._run_command(command)
+        command = self._build_command(model)
+        log_debug(f"CLI command: \033[96m{' '.join(command)} <stdin>\033[0m")
+        stdout = await self._run_command(command, prompt)
         output = self._decode_output(stdout)
 
         if response_model is not None:
             try:
-                result = response_model.model_validate_json(self._json_from_output(output))
-            except (ValueError, ValidationError) as exc:
+                result = response_model.model_validate(self._extract_json(output))
+            except ValueError as exc:
                 raise ValueError(
                     f"{self.display_name} returned an invalid structured response: {exc}"
                 ) from exc
@@ -1380,9 +1421,9 @@ class _CLILlm(Llm):
 
 
 class CodexCLI(_CLILlm):
-    """Use the locally authenticated Codex CLI as an experimental Lumen provider."""
+    """Use the locally authenticated Codex CLI as a Lumen provider."""
 
-    display_name = param.String(default="Codex CLI (experimental)", constant=True)
+    display_name = param.String(default="Codex CLI", constant=True)
 
     executable = param.String(default="codex", constant=True)
 
@@ -1395,19 +1436,17 @@ class CodexCLI(_CLILlm):
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
 
-    def _build_command(self, model: str | None, prompt: str) -> list[str]:
+    def _build_command(self, model: str | None) -> list[str]:
         command = [
             self.executable, "exec", "--json", "--sandbox", self.sandbox,
             "--skip-git-repo-check", "--ephemeral",
         ]
-        if self.working_dir:
-            command.extend(["--cd", self.working_dir])
         if model:
             command.extend(["--model", model])
-        return [*command, prompt]
+        return [*command, "-"]
 
     def _decode_output(self, output: str) -> str:
-        messages = []
+        final_message = None
         for line in output.splitlines():
             try:
                 event = json.loads(line)
@@ -1417,20 +1456,22 @@ class CodexCLI(_CLILlm):
             if isinstance(item, dict) and item.get("type") == "agent_message":
                 text = item.get("text") or item.get("content")
                 if text:
-                    messages.append(str(text))
-        return "\n".join(messages).strip() or output.strip()
+                    final_message = str(text)
+        if final_message is None:
+            raise ValueError("Codex CLI did not return a final agent message.")
+        return final_message.strip()
 
 
 class ClaudeCodeCLI(_CLILlm):
-    """Use the locally authenticated Claude Code CLI as an experimental Lumen provider."""
+    """Use the locally authenticated Claude Code CLI as a Lumen provider."""
 
-    display_name = param.String(default="Claude Code CLI (experimental)", constant=True)
+    display_name = param.String(default="Claude Code CLI", constant=True)
 
     executable = param.String(default="claude", constant=True)
 
     permission_mode = param.Selector(
         default="plan",
-        objects=["plan", "default", "acceptEdits", "bypassPermissions"],
+        objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
         constant=True,
         doc="Claude Code permission mode. The non-writing plan mode is the default.",
     )
@@ -1439,26 +1480,28 @@ class ClaudeCodeCLI(_CLILlm):
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
 
-    def _build_command(self, model: str | None, prompt: str) -> list[str]:
+    def _build_command(self, model: str | None) -> list[str]:
         command = [
             self.executable, "--print", "--output-format", "json",
-            "--max-turns", str(self.max_turns), "--permission-mode", self.permission_mode,
+            "--no-session-persistence", "--max-turns", str(self.max_turns),
+            "--permission-mode", self.permission_mode,
         ]
         if model:
             command.extend(["--model", model])
-        return [*command, prompt]
+        return command
 
     def _decode_output(self, output: str) -> str:
         try:
             response = json.loads(output)
-        except json.JSONDecodeError:
-            return output.strip()
-        if isinstance(response, dict):
-            if response.get("is_error"):
-                raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
-            if "result" in response:
-                return str(response["result"]).strip()
-        return output.strip()
+        except json.JSONDecodeError as exc:
+            raise ValueError("Claude Code CLI returned invalid JSON.") from exc
+        if not isinstance(response, dict):
+            raise ValueError("Claude Code CLI returned an unexpected JSON response.")
+        if response.get("is_error"):
+            raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
+        if "result" not in response:
+            raise ValueError("Claude Code CLI response did not include a result.")
+        return str(response["result"]).strip()
 
 
 class LlamaCpp(Llm, LlamaCppMixin):

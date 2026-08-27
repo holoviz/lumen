@@ -116,7 +116,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Reasoning:** `nemotron-3-nano:30b`
 
-### Locally authenticated coding CLI providers
+### Codex CLI and Claude Code
 
 Use a locally authenticated Codex CLI or Claude Code CLI as Lumen's LLM
 provider. This lets an individual user run Lumen with an existing CLI
@@ -125,10 +125,12 @@ subscription, without supplying an API key to Lumen.
 Before starting Lumen, install the relevant CLI, make sure its executable is
 on your `PATH`, and sign in to it once:
 
-``` bash
+``` bash title="Codex CLI"
 codex login
-# or
-claude login
+```
+
+``` bash title="Claude Code"
+claude auth login
 ```
 
 Start Lumen without loading any data:
@@ -141,12 +143,15 @@ lumen-ai serve --provider codex-cli
 lumen-ai serve --provider claude-code
 ```
 
-The CLI's configured default model is used unless you select one explicitly:
+The CLI's configured default model is used unless you select one explicitly.
+For example, Claude Code provides a stable `sonnet` alias:
 
 ``` bash
-lumen-ai serve --provider codex-cli --model gpt-5.3-codex
 lumen-ai serve --provider claude-code --model sonnet
 ```
+
+The same `--model` option accepts model identifiers available to the
+authenticated Codex CLI account.
 
 To start with a dataset, add its path before the provider arguments:
 
