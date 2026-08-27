@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 DOWNLOAD_FORMATS = ['csv', 'xlsx', 'json', 'parquet']
 
+# deck.gl serialises every row into the browser as JSON; beyond a few hundred
 # thousand it reliably OOMs the tab, so DeckGLView rejects larger frames.
 DECKGL_MAX_ROWS = 250_000
 

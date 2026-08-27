@@ -67,7 +67,6 @@ GRIDDED_MAX_CELLS = 10_000_000
 # scalar-field kinds that map cleanly from x/y/z columns.
 GRIDDED_KINDS = ("contour", "contourf", "image", "quadmesh")
 
-# deck.gl serialises every row into the browser as JSON; beyond a few hundred
 # hvPlot draws one glyph per row for non-reducing kinds; past this many rows a
 # browser tab can exhaust its memory (a gridded xarray source expands to millions
 # of long-form rows), so hvPlotView/hvPlotUIView refuse to render such a frame.
@@ -114,6 +113,37 @@ _DIRECTIVE = re.compile(r'\.\.\s+\w+::')
 _SENTENCE = re.compile(r'(?<!\be\.g)(?<!\bi\.e)(?<!\betc)\.(?:\s|$)')
 
 _MAX_DESCRIPTION = 200
+
+# The controls hvPlot's own explorer groups its styling options under. They
+# already declare each option's type, default and bounds, so those are copied
+# rather than restated; only the description is usually missing, and hvPlot
+# documents that on its converter instead.
+_STYLE_CONTROLS = (Axes, Labels, Style, Colormapping)
+
+# Back-reference to the explorer, not an option.
+_SKIP_INTERNALS = ("name", "explorer")
+
+# responsive, width and height default differently on the explorer than in
+# hvPlot itself, so generating them would silently restyle every existing
+# dashboard. All three are already set, by the plot agent and by get_panel.
+_SKIP_SIZING = ("responsive", "width", "height")
+
+# Options the explorer offers on its advanced panels, for someone already
+# looking at a plot. Nothing in a prompt asks for them, so they would only
+# spend prompt and give the LLM more to get wrong.
+_SKIP_EXPLORER_ONLY = ("shared_axes", "rescale_discrete_levels", "symmetric")
+
+# hvPlot offers 712 colormaps and a Selector becomes an enum in the plot
+# agent's schema, which would cost more prompt than the rest of the view put
+# together. These are the ones worth naming; hvPlot stays the authority on
+# whether a name is real.
+_PREFERRED_CMAPS = (
+    "viridis", "plasma", "inferno", "magma", "cividis", "coolwarm", "RdBu_r",
+    "Blues", "Reds", "Greens", "fire", "kbc_r", "rainbow", "bmy", "gray",
+)
+
+# alpha is the one styling option hvPlot documents in neither place.
+_MISSING_DOCS = {"alpha": "Opacity of the plotted glyphs, from 0 to 1."}
 
 
 def _as_parameters(doc: str) -> str:
@@ -175,38 +205,6 @@ def hvplot_param_docs() -> dict[str, str]:
         for name in rest:
             docs.setdefault(name, summary)
     return docs
-
-
-# The controls hvPlot's own explorer groups its styling options under. They
-# already declare each option's type, default and bounds, so those are copied
-# rather than restated; only the description is usually missing, and hvPlot
-# documents that on its converter instead.
-_STYLE_CONTROLS = (Axes, Labels, Style, Colormapping)
-
-# Back-reference to the explorer, not an option.
-_SKIP_INTERNALS = ("name", "explorer")
-
-# responsive, width and height default differently on the explorer than in
-# hvPlot itself, so generating them would silently restyle every existing
-# dashboard. All three are already set, by the plot agent and by get_panel.
-_SKIP_SIZING = ("responsive", "width", "height")
-
-# Options the explorer offers on its advanced panels, for someone already
-# looking at a plot. Nothing in a prompt asks for them, so they would only
-# spend prompt and give the LLM more to get wrong.
-_SKIP_EXPLORER_ONLY = ("shared_axes", "rescale_discrete_levels", "symmetric")
-
-# hvPlot offers 712 colormaps and a Selector becomes an enum in the plot
-# agent's schema, which would cost more prompt than the rest of the view put
-# together. These are the ones worth naming; hvPlot stays the authority on
-# whether a name is real.
-_PREFERRED_CMAPS = (
-    "viridis", "plasma", "inferno", "magma", "cividis", "coolwarm", "RdBu_r",
-    "Blues", "Reds", "Greens", "fire", "kbc_r", "rainbow", "bmy", "gray",
-)
-
-# alpha is the one styling option hvPlot documents in neither place.
-_MISSING_DOCS = {"alpha": "Opacity of the plotted glyphs, from 0 to 1."}
 
 
 def _as_llm_param(parameter: param.Parameter, doc: str) -> param.Parameter:
