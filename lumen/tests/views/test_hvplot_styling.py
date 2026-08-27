@@ -28,7 +28,17 @@ def pipeline(df):
 
 # ---- The params exist and carry usable metadata ----
 
+# What hvPlot >=0.11.3 documents well enough to declare. Anything missing
+# means hvPlot moved its docs and the views quietly lost an option.
+EXPECTED = {
+    "alpha", "clabel", "clim", "cmap", "cnorm", "color", "colorbar",
+    "fontscale", "legend", "logx", "logy", "rot", "xlabel", "xlim",
+    "ylabel", "ylim",
+}
+
+
 def test_style_params_are_declared():
+    assert set(HVPLOT_STYLE_PARAMS) == EXPECTED
     for name in HVPLOT_STYLE_PARAMS:
         assert name in hvPlotBaseView.param, name
 
