@@ -771,14 +771,20 @@ class Astype(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
-            names = frame.collect_schema().names()
+            schema = frame.collect_schema()
             casts = []
             for col, dtype in self.dtypes.items():
                 # Columns not in the frame are skipped, because the pandas
                 # path skips them rather than raising.
-                if col not in names:
+                if col not in schema.names():
                     continue
                 target = _narwhals_dtype(dtype)
+                if schema[col].is_temporal() and target != nw.Int64:
+                    # int64 is the only target pandas lets a datetime out to,
+                    # as a count of its own unit. It refuses every other
+                    # width and every float, where polars hands back the
+                    # epoch rather than raising.
+                    raise NotImplementedError(f'{col!r} holds a datetime')
                 if target.is_integer() and frame[col].is_null().any():
                     # numpy has no missing integer, so pandas refuses the
                     # whole cast. Every other backend writes a null instead,

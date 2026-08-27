@@ -248,6 +248,28 @@ def test_dtypes_match_pandas(constructor, transform, kwargs, frame_name):
     assert result.dtypes.astype(str).to_dict() == reference.dtypes.astype(str).to_dict()
 
 
+@pytest.mark.parametrize("dtype", ['uint64', 'int32', 'float64', 'float32'])
+def test_astype_refuses_a_datetime_like_pandas(constructor, dtype):
+    """int64 is the only numeric target pandas lets a datetime out to.
+
+    polars hands back the epoch as a number for the rest instead of raising,
+    so a spec pandas rejects would come back holding microseconds.
+    """
+    data = {'d': [dt.datetime(2021, 12, 31), dt.datetime(2020, 1, 1)]}
+    with pytest.raises(Exception) as expected:
+        Astype.apply_to(pd.DataFrame(data), dtypes={'d': dtype})
+    with pytest.raises(type(expected.value)):
+        Astype.apply_to(constructor(data), dtypes={'d': dtype})
+
+
+def test_astype_still_casts_a_datetime_to_int64(constructor):
+    """The one temporal cast pandas allows must not be refused with the rest."""
+    data = {'d': [dt.datetime(2021, 12, 31), dt.datetime(2020, 1, 1)]}
+    reference = as_pandas(Astype.apply_to(pd.DataFrame(data), dtypes={'d': 'int64'}))
+    result = as_pandas(Astype.apply_to(constructor(data), dtypes={'d': 'int64'}))
+    assert result['d'].tolist() == reference['d'].tolist()
+
+
 @pytest.mark.parametrize("frame_name, column", [
     ('nulls', 'v'), ('nan', 'v'), ('nullable', 'i'),
 ])
