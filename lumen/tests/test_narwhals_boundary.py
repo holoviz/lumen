@@ -184,6 +184,19 @@ def accumulate(transform, frame):
     return transform.apply(transform._coerce(frame))
 
 
+# Constructing one is deprecated. That warning has its own test; the rest of
+# these are about what the transform does while it is still here.
+deprecated_history = pytest.mark.filterwarnings(
+    "ignore:HistoryTransform is deprecated"
+)
+
+
+def test_history_warns_that_it_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="HistoryTransform is deprecated"):
+        HistoryTransform()
+
+
+@deprecated_history
 def test_history_accumulates_and_preserves_backend(constructor):
     frame = constructor({"i": [0, 1]})
     transform = HistoryTransform(length=2)
@@ -195,6 +208,7 @@ def test_history_accumulates_and_preserves_backend(constructor):
     assert [type(result) for result in results] == [type(frame)] * 4
 
 
+@deprecated_history
 def test_history_matches_pandas(constructor):
     """The accumulated frame is the one pandas would have built, every step."""
     frames = [{"i": [0, 1]}, {"i": [2]}, {"i": [3, 4]}]
@@ -205,6 +219,7 @@ def test_history_matches_pandas(constructor):
         assert got["i"].tolist() == expected["i"].tolist()
 
 
+@deprecated_history
 def test_history_adds_date_column(constructor, monkeypatch):
     """The stamp is taken once per call and shared by that call's rows.
 
@@ -232,6 +247,7 @@ def test_history_adds_date_column(constructor, monkeypatch):
     assert stamps.tolist() == [dt.datetime(2020, 1, 1)] * 2 + [dt.datetime(2020, 1, 2)] * 2
 
 
+@deprecated_history
 def test_history_buffer_survives_a_failed_concat():
     """A concat that raises must not leave its frame in the buffer.
 
@@ -249,6 +265,7 @@ def test_history_buffer_survives_a_failed_concat():
     assert rows(accumulate(transform, pl.DataFrame({"v": [3.0]}))) == 3
 
 
+@deprecated_history
 def test_history_announces_the_conversion_once(caplog):
     """A converted history must not re-announce itself on every render."""
     pl = pytest.importorskip("polars")
