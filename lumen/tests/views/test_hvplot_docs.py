@@ -1,7 +1,7 @@
 import pytest
 
-from lumen.views import _hvplot_docs
-from lumen.views._hvplot_docs import hvplot_param_docs
+from lumen.views import hvplot as views_hvplot
+from lumen.views.hvplot import hvplot_param_docs
 
 
 def test_parses_the_converter_docstring():
@@ -56,7 +56,7 @@ def test_descriptions_are_prose_not_directives():
 def test_an_unparseable_docstring_raises(monkeypatch):
     """A silent empty mapping would degrade the prompt with nothing failing."""
     hvplot_param_docs.cache_clear()
-    monkeypatch.setattr(_hvplot_docs.HoloViewsConverter, '__doc__', 'Nothing to parse here.')
+    monkeypatch.setattr(views_hvplot.HoloViewsConverter, '__doc__', 'Nothing to parse here.')
     with pytest.raises(RuntimeError, match='hvPlot'):
         hvplot_param_docs()
     hvplot_param_docs.cache_clear()
