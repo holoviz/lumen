@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import math
+import warnings
 
 from collections.abc import Callable
 from functools import reduce
@@ -506,6 +507,10 @@ class HistoryTransform(Transform):
     _narwhals: ClassVar[bool] = True
 
     def __init__(self, **params):
+        warnings.warn(
+            "HistoryTransform is deprecated and will be removed in a future "
+            "release.", DeprecationWarning, stacklevel=2
+        )
         super().__init__(**params)
         self._buffer = []
 
