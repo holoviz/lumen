@@ -1204,6 +1204,10 @@ class hvPlotBaseView(View):
 
 HVPLOT_STYLE_PARAMS = _declare_hvplot_style_params(hvPlotBaseView)
 
+# Declared params hvPlot takes verbatim, so hvPlotView can forward them without
+# knowing what any of them mean.
+HVPLOT_PASSTHROUGH_PARAMS = HVPLOT_STYLE_PARAMS + ("datashade", "dynspread")
+
 
 class hvPlotUIView(hvPlotBaseView):
     """
@@ -1377,17 +1381,13 @@ class hvPlotView(hvPlotBaseView):
         if self.z is not None:
             processed['C' if self.kind == 'heatmap' else 'z'] = self.z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
-        # needs has to be put back explicitly. The styling params pass straight
-        # through; the ones below carry a Lumen meaning hvPlot does not share.
+        # needs has to be put back explicitly. These pass straight through; the
+        # ones below carry a Lumen meaning hvPlot does not share.
         values = self.param.values()
         processed.update({
-            name: values[name] for name in HVPLOT_STYLE_PARAMS
+            name: values[name] for name in HVPLOT_PASSTHROUGH_PARAMS
             if values[name] != self.param[name].default
         })
-        if self.datashade:
-            processed['datashade'] = True
-        if self.dynspread:
-            processed['dynspread'] = True
         if self.color_key is not None:
             processed['color_key'] = self._complete_color_key(df)
         if self.aggregator is not None:
