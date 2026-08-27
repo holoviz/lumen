@@ -12,7 +12,7 @@ import jinja2
 import pytest
 
 try:
-    import lumen.ai  # noqa
+    import lumen.ai
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 

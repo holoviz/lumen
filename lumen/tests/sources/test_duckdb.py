@@ -390,10 +390,10 @@ def test_create_sql_expr_source_preserves_original_sql(sample_csv_files):
     """Test that create_sql_expr_source preserves original SQL expressions, not generic SELECT * FROM."""
     files = sample_csv_files
     original_cwd = os.getcwd()
-    
+
     try:
         os.chdir(files['dir'])
-        
+
         # Create initial source with CSV files
         source = DuckDBSource(
             uri=':memory:',
@@ -402,35 +402,35 @@ def test_create_sql_expr_source_preserves_original_sql(sample_csv_files):
                 'orders': 'orders.csv'
             }
         )
-        
+
         # Create a new source with SQL expressions
         new_tables = {
             'filtered_customers': 'SELECT * FROM customers WHERE id > 1',
             'order_summary': 'SELECT customer_id, COUNT(*) as order_count, SUM(total) as total_amount FROM orders GROUP BY customer_id'
         }
-        
+
         new_source = source.create_sql_expr_source(new_tables)
-        
+
         # Check that the new source has the tables
         tables = new_source.get_tables()
         assert 'filtered_customers' in tables
         assert 'order_summary' in tables
-        
+
         # Most importantly: check that the stored SQL expressions are the original ones,
         # not generic "SELECT * FROM table_name"
         assert new_source.tables['filtered_customers'] == 'SELECT * FROM customers WHERE id > 1'
         assert new_source.tables['order_summary'] == 'SELECT customer_id, COUNT(*) as order_count, SUM(total) as total_amount FROM orders GROUP BY customer_id'
-        
+
         # Verify the SQL expressions actually work
         filtered_result = new_source.get('filtered_customers')
         assert len(filtered_result) == 2  # Only customers with id > 1 (Bob and Charlie)
         assert all(filtered_result['id'] > 1)
-        
+
         summary_result = new_source.get('order_summary')
         assert len(summary_result) == 2  # 2 unique customer_ids
         assert 'order_count' in summary_result.columns
         assert 'total_amount' in summary_result.columns
-        
+
     finally:
         os.chdir(original_cwd)
 
@@ -803,10 +803,10 @@ def test_detour_roundtrip(sample_csv_files):
     """
     files = sample_csv_files
     original_cwd = os.getcwd()
-    
+
     try:
         os.chdir(files['dir'])
-        
+
         # Create source with file-based tables
         source = DuckDBSource(
             uri=':memory:',
@@ -816,7 +816,7 @@ def test_detour_roundtrip(sample_csv_files):
             }
         )
         df = source.get("customers")
-        
+
         # Create a derived source with a new SQL expression
         new_source = source.create_sql_expr_source(
             tables={"limited_customers": 'SELECT * FROM customers LIMIT 1'}
@@ -827,7 +827,7 @@ def test_detour_roundtrip(sample_csv_files):
 
         # Serialize and deserialize
         spec = new_source.to_spec()
-        
+
         read_source = DuckDBSource.from_spec(spec)
         read_df = read_source.get("limited_customers")
         assert len(read_df) == 1
@@ -999,7 +999,7 @@ def test_table_params_edge_cases(sample_csv_files):
     )
     # First load the test table
     source2._connection.from_df(df).to_view('test')
-    
+
     # Now try to query with mismatched params
     with pytest.raises(Exception):  # DuckDB will raise an error about bind parameter count
         source2.get('bad')
@@ -1047,17 +1047,17 @@ def test_table_params_serialization(sample_csv_files):
 
         # Serialize to spec
         spec = original.to_spec()
-        
+
         # For ephemeral in-memory sources with CSV files, we need to stay in the same directory
         # or use absolute paths for the restored source to find the files
         spec['tables'] = {
             'customers': files['customers'],
             'filtered': 'SELECT * FROM customers WHERE id = ?'
         }
-        
+
         restored = DuckDBSource.from_spec(spec)
         restored_result = restored.get('filtered')
-        
+
         pd.testing.assert_frame_equal(original_result, restored_result)
         assert len(restored_result) == 1
         assert restored_result.iloc[0]['id'] == 2
@@ -1247,27 +1247,27 @@ def test_create_sql_expr_source_with_list_tables():
     })
     for col in df.select_dtypes(include=['string']).columns:
         df[col] = df[col].astype(object)
-    
+
     # Use from_df which creates dict-based tables, then manually convert to list
     source = DuckDBSource.from_df({'test_table': df})
     # Simulate a list-based source (though unusual in practice)
     source.tables = ['test_table']  # Override with list
-    
+
     # Verify it's a list
     assert isinstance(source.tables, list)
-    
+
     # Create new source with SQL expressions
     new_tables = {
         'filtered': 'SELECT * FROM test_table WHERE A > 2'
     }
-    
+
     new_source = source.create_sql_expr_source(new_tables)
-    
+
     # Should only have the new table (list-based tables don't get preserved)
     assert 'filtered' in new_source.get_tables()
     assert isinstance(new_source.tables, dict)
     assert 'filtered' in new_source.tables
-    
+
     # The new table should work
     result = new_source.get('filtered')
     assert len(result) == 2  # A values 3 and 4

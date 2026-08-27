@@ -21,7 +21,7 @@ class TestDocumentVectorStoreIntegration:
         # Create a metadata file
         readme_content = "# Population Data\n\nRetrieved from UN on 2024-07-11"
         readme_file = io.BytesIO(readme_content.encode())
-        
+
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme_content):
             card = UploadedFileRow(
                 file_obj=readme_file,
@@ -29,14 +29,14 @@ class TestDocumentVectorStoreIntegration:
                 extension="md",
                 file_type="metadata"
             )
-            
+
             # Process the metadata file
             result = upload_controls._add_metadata_file(card)
             assert result == 1
-            
+
             # Wait for async upsert to complete
             await asyncio.sleep(0.1)
-            
+
             # Verify it was added to vector store WITHOUT tables field
             docs = source_catalog.vector_store.filter_by({"filename": "readme.md"})
             assert len(docs) == 1
@@ -50,7 +50,7 @@ class TestDocumentVectorStoreIntegration:
         # Add document
         general_content = "# General Guidelines\n\nApplies to all data"
         general_file = io.BytesIO(general_content.encode())
-        
+
         with patch.object(upload_controls, '_extract_metadata_content', return_value=general_content):
             card = UploadedFileRow(
                 file_obj=general_file,
@@ -59,14 +59,14 @@ class TestDocumentVectorStoreIntegration:
                 file_type="metadata"
             )
             upload_controls._add_metadata_file(card)
-        
+
         # Wait for async upsert to complete
         await asyncio.sleep(0.1)
-        
+
         # Verify it's in vector store
         docs = source_catalog.vector_store.filter_by({"filename": "general.md"})
         assert len(docs) == 1
-        
+
         # Should still be queryable via semantic search
         results = await source_catalog.vector_store.query("General Guidelines")
         assert len(results) > 0
@@ -76,10 +76,10 @@ class TestDocumentVectorStoreIntegration:
         """Test that multiple documents are stored as separate entries."""
         readme_content = "# Population README"
         schema_content = "# Schema Documentation"
-        
+
         with patch.object(upload_controls, '_extract_metadata_content') as mock_extract:
             mock_extract.side_effect = [readme_content, schema_content]
-            
+
             readme_card = UploadedFileRow(
                 file_obj=io.BytesIO(readme_content.encode()),
                 filename="readme",
@@ -92,17 +92,17 @@ class TestDocumentVectorStoreIntegration:
                 extension="md",
                 file_type="metadata"
             )
-            
+
             upload_controls._add_metadata_file(readme_card)
             upload_controls._add_metadata_file(schema_card)
-        
+
         # Wait for async upserts to complete
         await asyncio.sleep(0.2)
-        
+
         # Both documents should exist independently
         all_docs = source_catalog.vector_store.filter_by({"type": "document"})
         assert len(all_docs) == 2
-        
+
         filenames = {doc["metadata"]["filename"] for doc in all_docs}
         assert filenames == {"readme.md", "schema.md"}
 
@@ -120,14 +120,14 @@ class TestUploadControlsMetadataProcessing:
             extension="md"
         )
         assert md_file.file_type == "metadata"
-        
+
         txt_file = UploadedFileRow(
             file_obj=io.BytesIO(b"content"),
             filename="notes",
             extension="txt"
         )
         assert txt_file.file_type == "metadata"
-        
+
         # Test filename pattern detection
         readme_file = UploadedFileRow(
             file_obj=io.BytesIO(b"content"),
@@ -135,14 +135,14 @@ class TestUploadControlsMetadataProcessing:
             extension="txt"
         )
         assert readme_file.file_type == "metadata"
-        
+
         schema_file = UploadedFileRow(
             file_obj=io.BytesIO(b"content"),
             filename="schema_info",
             extension="json"
         )
         assert schema_file.file_type == "metadata"
-        
+
         # Data file should not be auto-detected as metadata
         csv_file = UploadedFileRow(
             file_obj=io.BytesIO(b"content"),
@@ -156,47 +156,47 @@ class TestUploadControlsMetadataProcessing:
         # Setup files
         csv_content = b"country,population\nUSA,331000000"
         readme_content = "# Population Data"
-        
+
         files = {
             "population.csv": csv_content,
             "readme.md": readme_content.encode()
         }
-        
+
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme_content):
             upload_controls._generate_file_cards(files)
-            
+
             # Verify file classification
             assert len(upload_controls._file_cards) == 2
-            
+
             csv_card = next(c for c in upload_controls._file_cards if c.extension == "csv")
             md_card = next(c for c in upload_controls._file_cards if c.extension == "md")
-            
+
             assert csv_card.file_type == "data"
             assert md_card.file_type == "metadata"
-            
+
             # Process files
             n_tables, n_docs, n_metadata = upload_controls._process_files()
-            
+
             # Wait for async upserts to complete
             await asyncio.sleep(0.1)
-            
+
             # Sync outputs to context
             if "sources" in upload_controls.outputs:
                 context["sources"].extend(upload_controls.outputs["sources"])
-            
+
             # Should have 1 table and 1 metadata file
             assert n_tables == 1
             assert n_metadata == 1
-            
+
             # Verify source was created
             assert len(context["sources"]) == 1
             source = context["sources"][0]
             assert "population" in source.get_tables()
-            
+
             # Verify metadata was stored
             assert len(source_catalog._available_metadata) == 1
             assert source_catalog._available_metadata[0]["filename"] == "readme.md"
-            
+
             # Verify document is in vector store
             docs = source_catalog.vector_store.filter_by({"filename": "readme.md"})
             assert len(docs) == 1
@@ -215,11 +215,11 @@ class TestUploadControlsMetadataProcessing:
             )
             result1 = upload_controls._add_metadata_file(card1)
             assert result1 == 1
-        
+
         # Verify first file was added
         assert len(source_catalog._available_metadata) == 1
         assert source_catalog._available_metadata[0]["filename"] == "readme.md"
-        
+
         # Add second readme.md (duplicate)
         readme2_content = "# Second README"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme2_content):
@@ -231,12 +231,12 @@ class TestUploadControlsMetadataProcessing:
             )
             result2 = upload_controls._add_metadata_file(card2)
             assert result2 == 1
-        
+
         # Verify second file was renamed
         assert len(source_catalog._available_metadata) == 2
         assert source_catalog._available_metadata[0]["filename"] == "readme.md"
         assert source_catalog._available_metadata[1]["filename"] == "readme_1.md"
-        
+
         # Add third readme.md (another duplicate)
         readme3_content = "# Third README"
         with patch.object(upload_controls, '_extract_metadata_content', return_value=readme3_content):
@@ -248,7 +248,7 @@ class TestUploadControlsMetadataProcessing:
             )
             result3 = upload_controls._add_metadata_file(card3)
             assert result3 == 1
-        
+
         # Verify third file was renamed with counter 2
         assert len(source_catalog._available_metadata) == 3
         assert source_catalog._available_metadata[2]["filename"] == "readme_2.md"

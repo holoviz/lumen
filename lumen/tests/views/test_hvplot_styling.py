@@ -5,7 +5,7 @@ from hvplot.ui import hvDataFrameExplorer
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views.base import (
+from lumen.views.hvplot import (
     HVPLOT_STYLE_PARAMS, hvPlotBaseView, hvPlotUIView, hvPlotView,
 )
 

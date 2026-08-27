@@ -7,7 +7,7 @@ import json
 
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.config import PROMPTS_DIR
-from lumen.views.base import HVPLOT_STYLE_PARAMS
+from lumen.views.hvplot import HVPLOT_STYLE_PARAMS
 
 
 def test_style_params_reach_the_agent_schema():

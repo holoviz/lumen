@@ -12,7 +12,7 @@ except ModuleNotFoundError:
 
 from panel.layout import Column, Row
 from panel.pane import Markdown
-from typing_extensions import NotRequired
+from typing import NotRequired
 
 from lumen.ai.actor import ContextModel
 from lumen.ai.report import (

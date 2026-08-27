@@ -627,9 +627,9 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
     async def test_api_key_not_stored_in_metadata(self, tmp_path):
         """Verifies that api_key parameter is not included in stored embeddings metadata."""
         import json
-        
+
         db_path = str(tmp_path / "test_duckdb.db")
-        
+
         embeddings = OpenAIEmbeddings(api_key="sk-test-secret-key-12345")
         store = DuckDBVectorStore(uri=db_path, embeddings=embeddings)
         store._setup_database(1)
@@ -818,16 +818,16 @@ class TestDocumentUploadFlow:
                 "type": "document",
             },
         }
-        
+
         ids = await store.upsert([doc_entry])
-        
+
         # Should have created multiple chunks (readme is ~4000 chars, chunk_size=512 tokens)
         assert len(ids) > 1, f"Expected multiple chunks, got {len(ids)} chunk(s). Document length: {len(SAMPLE_README)} chars"
-        
+
         # All chunks should have the same metadata
         all_docs = store.filter_by({"filename": "readme.md"})
         assert len(all_docs) == len(ids), "All chunks should have filename metadata"
-        
+
         for doc in all_docs:
             assert doc["metadata"]["type"] == "document"
             assert doc["metadata"]["filename"] == "readme.md"
@@ -844,18 +844,18 @@ class TestDocumentUploadFlow:
                 "type": "document",
             },
         }
-        
+
         await store.upsert([doc_entry])
-        
+
         # Query for specific content
         results = await store.query(
             "How to cite this data",
             top_k=3,
             filters={"type": "document", "filename": "readme.md"}
         )
-        
+
         assert len(results) > 0, "Should find at least one result"
-        
+
         # Each result should be a chunk, not the whole document
         for result in results:
             chunk_text = result["text"]
@@ -875,30 +875,30 @@ class TestDocumentUploadFlow:
                 "type": "document",
             },
         }
-        
+
         await store.upsert([doc_entry])
-        
+
         # Query for CSV structure
         csv_results = await store.query(
             "CSV structure Entity Code columns",
             top_k=1,
             filters={"type": "document"}
         )
-        
+
         # Query for citation
         citation_results = await store.query(
             "How to cite UN World Population Prospects",
             top_k=1,
             filters={"type": "document"}
         )
-        
+
         assert len(csv_results) > 0, "Should find CSV structure chunk"
         assert len(citation_results) > 0, "Should find citation chunk"
-        
+
         # The chunks should be different (different parts of the document)
         csv_chunk = csv_results[0]["text"]
         citation_chunk = citation_results[0]["text"]
-        
+
         # They might overlap somewhat, but shouldn't be identical
         assert csv_chunk != citation_chunk, "Different queries should return different chunks"
 
@@ -914,17 +914,17 @@ class TestDocumentUploadFlow:
                 "type": "document",
             },
         }
-        
+
         # Create store with small chunk size
         small_store = NumpyVectorStore(embeddings=NumpyEmbeddings(), chunk_size=256)
         ids_small = await small_store.upsert([doc_entry])
         small_chunk_count = len(ids_small)
-        
+
         # Create store with larger chunk size
         large_store = NumpyVectorStore(embeddings=NumpyEmbeddings(), chunk_size=2048)
         ids_large = await large_store.upsert([doc_entry])
         large_chunk_count = len(ids_large)
-        
+
         assert small_chunk_count > large_chunk_count, (
             f"Smaller chunk_size ({small_chunk_count} chunks) should create more chunks "
             f"than larger chunk_size ({large_chunk_count} chunks)"
@@ -942,15 +942,15 @@ class TestDocumentUploadFlow:
                 "type": "document",
             },
         }
-        
+
         # First upsert
         ids1 = await store.upsert([doc_entry])
         count_after_first = len(store)
-        
+
         # Second upsert (same content)
         ids2 = await store.upsert([doc_entry])
         count_after_second = len(store)
-        
+
         assert count_after_first == count_after_second, (
             f"Second upsert should not create duplicates. "
             f"First: {count_after_first}, Second: {count_after_second}"

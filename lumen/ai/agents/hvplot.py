@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
 from ...views import hvPlotUIView
-from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
+from ...views.hvplot import GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..translate import param_to_pydantic
