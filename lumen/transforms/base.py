@@ -766,13 +766,21 @@ class Astype(Transform):
 
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
-            # Columns not in the frame are skipped, because the pandas path
-            # skips them rather than raising.
-            known = set(frame.collect_schema().names())
-            return frame.with_columns(*[
-                nw.col(col).cast(_narwhals_dtype(dtype))
-                for col, dtype in self.dtypes.items() if col in known
-            ])
+            names = frame.collect_schema().names()
+            casts = []
+            for col, dtype in self.dtypes.items():
+                # Columns not in the frame are skipped, because the pandas
+                # path skips them rather than raising.
+                if col not in names:
+                    continue
+                target = _narwhals_dtype(dtype)
+                if target.is_integer() and frame[col].is_null().any():
+                    # numpy has no missing integer, so pandas refuses the
+                    # whole cast. Every other backend writes a null instead,
+                    # which would answer where pandas raises.
+                    raise NotImplementedError(f'{col!r} holds a missing value')
+                casts.append(nw.col(col).cast(target))
+            return frame.with_columns(*casts)
 
         result, table = self._try_narwhals(table, build)
         if result is not None:

@@ -248,6 +248,24 @@ def test_dtypes_match_pandas(constructor, transform, kwargs, frame_name):
     assert result.dtypes.astype(str).to_dict() == reference.dtypes.astype(str).to_dict()
 
 
+@pytest.mark.parametrize("frame_name, column", [
+    ('nulls', 'v'), ('nan', 'v'), ('nullable', 'i'),
+])
+def test_astype_refuses_a_missing_value_like_pandas(constructor, frame_name, column):
+    """Where pandas refuses a cast, no backend may quietly answer instead.
+
+    numpy has no missing integer, so pandas rejects the whole column. polars
+    and pyarrow write a null, which reads as a successful cast and leaves the
+    frame holding values pandas would never have produced.
+    """
+    data = FRAMES[frame_name]
+    spec = {'dtypes': {column: 'int64'}}
+    with pytest.raises(Exception) as expected:
+        Astype.apply_to(pd.DataFrame(data), **spec)
+    with pytest.raises(type(expected.value)):
+        Astype.apply_to(constructor(data), **spec)
+
+
 @pytest.mark.parametrize("transform, kwargs, frame_name", [
     pytest.param(t, k, f, id=f"{t.__name__}-{f}-{sorted(k.items())}")
     for t, k, f in CASES if t is Astype
