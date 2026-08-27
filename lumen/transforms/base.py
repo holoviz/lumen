@@ -540,9 +540,14 @@ class HistoryTransform(Transform):
             self._buffer[:] = buffer
             return result
 
-        result, table = self._try_narwhals(table, build)
-        if result is not None:
-            return result
+        # One converted entry means the whole history is pandas, and narwhals
+        # cannot concatenate across libraries. Retrying would fail and warn on
+        # every call after the first, which for a dashboard is once a render.
+        if not any(isinstance(entry, pd.DataFrame) for entry in self._buffer):
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        table = as_pandas(table)
         if self.date_column:
             table = table.copy()
             table[self.date_column] = dt.datetime.now()

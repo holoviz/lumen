@@ -232,6 +232,19 @@ def test_history_buffer_survives_a_failed_concat():
     assert rows(accumulate(transform, pl.DataFrame({"v": [3.0]}))) == 3
 
 
+def test_history_announces_the_conversion_once(caplog):
+    """A converted history must not re-announce itself on every render."""
+    pl = pytest.importorskip("polars")
+    transform = HistoryTransform(length=10)
+    with caplog.at_level("WARNING"):
+        accumulate(transform, pl.DataFrame({"v": [1.0]}))
+        accumulate(transform, pl.DataFrame({"v": [2]}))
+        assert caplog.text.count("converted to pandas") == 1
+        accumulate(transform, pl.DataFrame({"v": [3.0]}))
+        accumulate(transform, pl.DataFrame({"v": [4.0]}))
+        assert caplog.text.count("converted to pandas") == 1
+
+
 def test_iloc_matches_across_backends(constructor):
     frame = constructor({"i": [0, 1, 2, 3]})
     assert as_pandas(Iloc.apply_to(frame, start=1, end=3))["i"].tolist() == [1, 2]
