@@ -117,17 +117,17 @@ VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
 _STYLE_CONTROLS = (Axes, Labels, Style, Colormapping)
 
 # Back-reference to the explorer, not an option.
-_CONTROL_INTERNALS = ("name", "explorer")
+_SKIP_INTERNALS = ("name", "explorer")
 
 # responsive, width and height default differently on the explorer than in
 # hvPlot itself, so generating them would silently restyle every existing
 # dashboard. All three are already set, by the plot agent and by get_panel.
-_SIZING_PARAMS = ("responsive", "width", "height")
+_SKIP_SIZING = ("responsive", "width", "height")
 
 # Options the explorer offers on its advanced panels, for someone already
 # looking at a plot. Nothing in a prompt asks for them, so they would only
 # spend prompt and give the LLM more to get wrong.
-_EXPLORER_ONLY_PARAMS = ("shared_axes", "rescale_discrete_levels", "symmetric")
+_SKIP_EXPLORER_ONLY = ("shared_axes", "rescale_discrete_levels", "symmetric")
 
 # hvPlot offers 712 colormaps and a Selector becomes an enum in the plot
 # agent's schema, which would cost more prompt than the rest of the view put
@@ -142,6 +142,24 @@ _PREFERRED_CMAPS = (
 _MISSING_DOCS = {"alpha": "Opacity of the plotted glyphs, from 0 to 1."}
 
 
+def _as_llm_param(parameter: param.Parameter, doc: str) -> param.Parameter:
+    """Copy one of the explorer's options into a param the plot agent can offer."""
+    parameter = copy.deepcopy(parameter)
+    parameter.doc = doc
+    if isinstance(parameter, param.Selector):
+        # The objects are there to steer the LLM, not to narrow what a spec may
+        # say: hvPlot reads a dict cmap as a color key and a False legend as no
+        # legend, and both predate these params.
+        parameter.check_on_set = False
+    # Structured output makes the LLM answer with every field, so an option
+    # keeping the explorer's default would be restated on every spec and
+    # forwarded as if it had been asked for. None is the one value that means
+    # untouched, leaving the default to hvPlot.
+    parameter.default = None
+    parameter.allow_None = True
+    return parameter
+
+
 def _declare_hvplot_style_params(view_type: type[View]) -> tuple[str, ...]:
     """Declare hvPlot's styling options on a view, and name the ones declared.
 
@@ -151,33 +169,21 @@ def _declare_hvplot_style_params(view_type: type[View]) -> tuple[str, ...]:
     """
     docs = hvplot_param_docs()
     skip = set(view_type.param).union(
-        _CONTROL_INTERNALS, _SIZING_PARAMS, _EXPLORER_ONLY_PARAMS
+        _SKIP_INTERNALS, _SKIP_SIZING, _SKIP_EXPLORER_ONLY
     )
     declared = []
     for control in _STYLE_CONTROLS:
         for name, parameter in control.param.objects().items():
             if name in skip:
                 continue
-            parameter = copy.deepcopy(parameter)
-            parameter.doc = parameter.doc or docs.get(name) or _MISSING_DOCS.get(name)
-            if not parameter.doc:
+            doc = parameter.doc or docs.get(name) or _MISSING_DOCS.get(name)
+            if not doc:
                 continue
-            if name == "cmap":
-                parameter.objects = [c for c in _PREFERRED_CMAPS if c in parameter.objects]
-            if isinstance(parameter, param.Selector):
-                # The objects are there to steer the LLM, not to narrow what a
-                # spec may say: hvPlot reads a dict cmap as a color key and a
-                # False legend as no legend, and both predate these params.
-                parameter.check_on_set = False
-            # Structured output makes the LLM answer with every field, so an
-            # option keeping the explorer's default would be restated on every
-            # spec and forwarded as if it had been asked for. None is the one
-            # value that means untouched, leaving the default to hvPlot.
-            parameter.default = None
-            parameter.allow_None = True
-            view_type.param.add_parameter(name, parameter)
+            view_type.param.add_parameter(name, _as_llm_param(parameter, doc))
             skip.add(name)
             declared.append(name)
+    cmap = view_type.param.cmap
+    cmap.objects = [c for c in _PREFERRED_CMAPS if c in cmap.objects]
     return tuple(declared)
 
 

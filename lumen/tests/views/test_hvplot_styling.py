@@ -15,6 +15,16 @@ from lumen.views.base import (
 
 from .test_hvplot_datashade import record_hvplot_call
 
+# Every option hvPlot >=0.11.3 documents well enough to declare, against a value
+# the explorer accepts for it. Doubles as the expected set: anything missing
+# means hvPlot moved its docs and the views quietly lost an option.
+STYLE_VALUES = {
+    "alpha": 0.5, "clabel": "c", "clim": (0, 1), "cmap": "viridis",
+    "cnorm": "log", "color": "red", "colorbar": True, "fontscale": 1.2,
+    "legend": "top_left", "logx": True, "logy": True, "rot": 45,
+    "xlabel": "x", "xlim": (0, 1), "ylabel": "y", "ylim": (0, 1),
+}
+
 
 @pytest.fixture
 def df():
@@ -28,17 +38,10 @@ def pipeline(df):
 
 # ---- The params exist and carry usable metadata ----
 
-# What hvPlot >=0.11.3 documents well enough to declare. Anything missing
-# means hvPlot moved its docs and the views quietly lost an option.
-EXPECTED = {
-    "alpha", "clabel", "clim", "cmap", "cnorm", "color", "colorbar",
-    "fontscale", "legend", "logx", "logy", "rot", "xlabel", "xlim",
-    "ylabel", "ylim",
-}
-
-
 def test_style_params_are_declared():
-    assert set(HVPLOT_STYLE_PARAMS) == EXPECTED
+    """Nothing raises on an hvPlot that documents fewer options, so the set is
+    asserted rather than left to shrink quietly."""
+    assert set(HVPLOT_STYLE_PARAMS) == set(STYLE_VALUES)
     for name in HVPLOT_STYLE_PARAMS:
         assert name in hvPlotBaseView.param, name
 
@@ -69,15 +72,7 @@ def test_style_params_start_unset():
 def test_style_params_are_accepted_by_the_explorer(df):
     """A generated spec renders as hvplot_ui, so a param the explorer rejects
     would raise rather than style anything."""
-    values = {
-        "alpha": 0.5, "clabel": "c", "clim": (0, 1), "cmap": "viridis",
-        "cnorm": "log", "color": "red", "colorbar": True, "fontscale": 1.2,
-        "legend": "top_left", "logx": True, "logy": True, "rot": 45,
-        "xlabel": "x", "xlim": (0, 1), "ylabel": "y", "ylim": (0, 1),
-    }
-    assert set(values) == set(HVPLOT_STYLE_PARAMS), "a generated param has no test value"
-
-    hvDataFrameExplorer(df, x="x", y="y", kind="line", **values)
+    hvDataFrameExplorer(df, x="x", y="y", kind="line", **STYLE_VALUES)
 
 
 # ---- Trap A: hvPlotUIView drops params no control claims ----

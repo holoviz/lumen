@@ -35,7 +35,7 @@ _DIRECTIVE = re.compile(r'\.\.\s+\w+::')
 # A sentence break, minus the abbreviations hvPlot's prose actually uses.
 _SENTENCE = re.compile(r'(?<!\be\.g)(?<!\bi\.e)(?<!\betc)\.(?:\s|$)')
 
-MAX_DESCRIPTION = 200
+_MAX_DESCRIPTION = 200
 
 
 def _as_parameters(doc: str) -> str:
@@ -51,7 +51,7 @@ def _as_parameters(doc: str) -> str:
             continue
         retitled.append(lines[index])
         index += 1
-    return '\n'.join(retitled + lines[-1:])
+    return '\n'.join(retitled + lines[index:])
 
 
 def _summarize(description: str) -> str:
@@ -61,18 +61,9 @@ def _summarize(description: str) -> str:
     description = _LITERAL.sub(r'\1', description)
     description = ' '.join(description.split())
     sentence = _SENTENCE.split(description)[0].strip(' ,;')
-    if len(sentence) >= MAX_DESCRIPTION:
-        sentence = sentence[:MAX_DESCRIPTION - 1].rsplit(' ', 1)[0]
+    if len(sentence) >= _MAX_DESCRIPTION:
+        sentence = sentence[:_MAX_DESCRIPTION - 1].rsplit(' ', 1)[0]
     return f'{sentence}.' if sentence else ''
-
-
-def _grouped_names(doc: str) -> dict[str, list[str]]:
-    """Map the surviving name of each grouped entry to the names griffe dropped."""
-    groups = {}
-    for match in _GROUPED_OPTION.finditer(doc):
-        first, *rest = match.group(1).split('/')
-        groups[first] = rest
-    return groups
 
 
 @cache
@@ -99,7 +90,10 @@ def hvplot_param_docs() -> dict[str, str]:
             'Could not read any option descriptions from hvPlot. Its converter '
             'docstring is laid out differently than expected.'
         )
-    for first, rest in _grouped_names(doc).items():
+    for match in _GROUPED_OPTION.finditer(doc):
+        first, *rest = match.group(1).split('/')
+        if not (summary := docs.get(first)):
+            continue
         for name in rest:
-            docs.setdefault(name, docs.get(first, ''))
+            docs.setdefault(name, summary)
     return docs

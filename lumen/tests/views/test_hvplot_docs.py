@@ -40,6 +40,12 @@ def test_descriptions_are_one_short_line():
         assert description == description.strip(), name
 
 
+def test_no_option_is_mapped_to_an_empty_description():
+    """A grouped entry whose first name has no description must not alias an
+    empty one onto its siblings."""
+    assert all(hvplot_param_docs().values())
+
+
 def test_descriptions_are_prose_not_directives():
     """A docstring full of reStructuredText markup is noise to the model."""
     docs = hvplot_param_docs()
