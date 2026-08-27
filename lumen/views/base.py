@@ -1217,10 +1217,12 @@ class hvPlotUIView(hvPlotBaseView):
         controls = (explorer_cls.param, Geographic.param, Operations.param) + tuple(
             control.param for control in _STYLE_CONTROLS
         )
+        # title is left out because every View renders its own above the panel,
+        # and the Labels control would draw it a second time inside the plot.
         params = {
             k: v for k, v in self.param.values().items()
             if any(k in control for control in controls)
-            and v is not None and k != 'name'
+            and v is not None and k not in ('name', 'title')
         }
         # Only completed once a control has claimed it above: hvPlot gained the
         # color_key control after this was written, and forcing the keyword in

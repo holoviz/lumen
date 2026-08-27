@@ -6,6 +6,7 @@ import pytest
 from hvplot.ui import hvDataFrameExplorer
 
 from lumen.ai.agents.hvplot import hvPlotAgent
+from lumen.ai.config import PROMPTS_DIR
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.views.base import (
@@ -143,3 +144,21 @@ def test_a_dict_colormap_is_still_accepted(pipeline, df):
     view = hvPlotView(pipeline=pipeline, kind="line", x="x", y="y", cmap=color_key)
 
     assert record_hvplot_call(view, df)["cmap"] == color_key
+
+
+def test_prompt_asks_for_styling_only_when_requested():
+    """The options are worth having only if the model leaves them alone by
+    default, so the prompt has to say so."""
+    prompt = (PROMPTS_DIR / "hvPlotAgent" / "main.jinja2").read_text()
+
+    assert "only when the request asks" in prompt
+
+
+def test_the_view_title_is_not_drawn_twice(pipeline, df):
+    """Every View renders its own title above the panel, and the explorer's
+    Labels control would draw the same string inside the plot."""
+    view = hvPlotUIView(pipeline=pipeline, kind="line", x="x", y="y", title="Cities")
+
+    _, kwargs = view._get_args(hvDataFrameExplorer, df)
+
+    assert "title" not in kwargs
