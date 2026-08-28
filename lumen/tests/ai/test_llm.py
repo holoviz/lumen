@@ -223,7 +223,7 @@ async def test_cli_provider_validates_structured_output(monkeypatch):
     assert result == Reply(ready=True)
 
 
-async def test_cli_provider_sends_prompt_over_stdin(monkeypatch):
+async def test_cli_provider_sends_prompt_over_stdin(monkeypatch, tmp_path):
     captured = {}
 
     class Process:
@@ -239,7 +239,7 @@ async def test_cli_provider_sends_prompt_over_stdin(monkeypatch):
         return Process()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
-    llm = ClaudeCodeCLI(working_dir="/tmp")
+    llm = ClaudeCodeCLI(working_dir=str(tmp_path))
 
     output = await llm._run_command(["claude", "--print"], "Private prompt")
 
@@ -247,7 +247,7 @@ async def test_cli_provider_sends_prompt_over_stdin(monkeypatch):
     assert captured["stdin"] == b"Private prompt"
     assert captured["command"] == ("claude", "--print")
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
-    assert captured["kwargs"]["cwd"] == "/tmp"
+    assert captured["kwargs"]["cwd"] == str(tmp_path)
 
 
 async def test_cli_provider_skips_unsupported_tool_loop(monkeypatch):
