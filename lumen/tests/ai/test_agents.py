@@ -118,6 +118,51 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_sql_agent_summarises_the_source_frame_unconverted(llm, test_messages, backend):
+    """The summary is built from the source's own frame, not a pandas copy.
+
+    Asserted on the frame describe_data is handed, because that is the only
+    place the conversion would have happened; asserting on the summary text
+    would pass whether or not one occurred.
+    """
+    pytest.importorskip(backend)
+    import narwhals.stable.v2 as nw
+
+    from lumen.ai.agents import sql as sql_module
+
+    source = DuckDBSource(
+        tables={"nums": "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(n, g)"},
+        dataframe_backend=backend,
+    )
+    agent = SQLAgent(llm=llm)
+    context = {
+        "source": source,
+        "sources": [source],
+        "metaset": await get_metaset([source], ["nums"]),
+    }
+    SQLQueryWithTables = make_sql_model([(source.name, "nums")])
+    llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT n, g FROM nums", table_slug="nums_all", tables=["nums"]
+        ),
+    ])
+
+    seen = []
+    original = sql_module.describe_data
+
+    async def spy(df, *args, **kwargs):
+        seen.append(df)
+        return await original(df, *args, **kwargs)
+
+    with patch.object(sql_module, "describe_data", spy):
+        out, _ = await agent.respond(test_messages, context)
+
+    assert len(out) == 1
+    assert seen, "describe_data was never reached"
+    assert nw.from_native(seen[0]).implementation.name.lower() == backend
+
+
 @pytest.fixture
 def dirty_source():
     """A table lint_data has something to say about: a duplicated row, padded

@@ -275,6 +275,28 @@ class TestSQLExecution:
         assert "lon" in df.columns
         assert "time" in df.columns
 
+    @pytest.mark.parametrize("backend", [None, "pandas", "polars", "pyarrow"])
+    def test_fetch_backends(self, synthetic_dataset, backend):
+        """DataFusion is arrow native, so fetch skips the to_pandas in execute."""
+        if backend not in (None, "pandas"):
+            pytest.importorskip(backend)
+        import narwhals.stable.v2 as nw
+
+        from lumen.util import as_pandas
+
+        source = XArraySQLSource(_dataset=synthetic_dataset, dataframe_backend=backend)
+        query = "SELECT lat, lon, temperature FROM temperature ORDER BY lat, lon LIMIT 5"
+        fetched = source.fetch(query)
+
+        if backend in (None, "pandas"):
+            assert isinstance(fetched, pd.DataFrame)
+        else:
+            assert nw.from_native(fetched).implementation.name.lower() == backend
+        # execute stays pandas whatever the backend, so the schema and
+        # metadata queries keep reading it the way they always have.
+        assert isinstance(source.execute(query), pd.DataFrame)
+        pd.testing.assert_frame_equal(as_pandas(fetched), source.execute(query))
+
     def test_select_columns(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = source.execute("SELECT lat, lon, temperature FROM temperature LIMIT 3")

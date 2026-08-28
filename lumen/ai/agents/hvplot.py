@@ -37,7 +37,13 @@ class hvPlotAgent(BaseViewAgent):
 
     view_type = hvPlotUIView
 
-    def _get_model(self, prompt_name: str, schema: dict[str, Any]) -> type[BaseModel]:
+    def _get_model(self, prompt_name: str, schema: dict[str, Any] | None = None) -> type[BaseModel]:
+        # Only the main prompt describes the view. Every other prompt, revise
+        # among them, carries its own response model and is passed no schema,
+        # and revise is what runs when a spec fails to render.
+        if schema is None:
+            return super()._get_model(prompt_name)
+
         # Find parameters
         excluded = self.view_type._internal_params + [
             "controls",
@@ -95,6 +101,9 @@ class hvPlotAgent(BaseViewAgent):
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]
         spec = {key: val for key, val in spec.items() if val is not None}
+        # Asked for to make the model reason about the plot, not to be plotted;
+        # hvPlotExplorer rejects any keyword none of its controls claims.
+        spec.pop("chain_of_thought", None)
         self._drop_conflicting_axes(spec)
         spec["type"] = "hvplot_ui"
         self.view_type.validate(spec)

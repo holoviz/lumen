@@ -23,8 +23,9 @@ from lumen.ai.utils import (
     apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
     count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
     fuse_messages, get_schema, mutate_user_message, parse_huggingface_url,
-    render_template, report_error, retry_llm_output, serialize_image_content,
-    set_content_text, slug_to_table_name, truncate_to_tokens,
+    render_template, report_error, retry_llm_output, sanitize_column_names,
+    serialize_image_content, set_content_text, slug_to_table_name,
+    truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -936,3 +937,27 @@ class TestTruncateToTokens:
     def test_custom_marker(self):
         text = "\n".join(f"row {i}" for i in range(500))
         assert "elided, showing" in truncate_to_tokens(text, 60, marker="elided")
+
+
+@pytest.mark.parametrize("columns, expected", [
+    (["a b", "c!d"], ["a_b", "cd"]),
+    (["ok", "fine_2"], ["ok", "fine_2"]),
+    (["total ($)", "50% off"], ["total_", "50_off"]),
+    # Two names that sanitize to one keep both columns, as they always have.
+    (["a b", "a_b"], ["a_b", "a_b"]),
+])
+def test_sanitize_column_names(columns, expected):
+    df = pd.DataFrame([list(range(len(columns)))], columns=columns)
+    sanitized = sanitize_column_names(df)
+    assert list(sanitized.columns) == expected
+    assert sanitized.values.tolist() == df.values.tolist()
+
+
+def test_sanitize_column_names_leaves_the_caller_alone():
+    """The DeckGL agent renames a frame it does not own, so writing to the
+    result must not reach back into the pipeline's cached data."""
+    df = pd.DataFrame({"a b": [1, 2]})
+    sanitized = sanitize_column_names(df)
+    sanitized.iloc[0, 0] = 99
+    assert list(df.columns) == ["a b"]
+    assert df.iloc[0, 0] == 1

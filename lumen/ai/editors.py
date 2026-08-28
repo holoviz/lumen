@@ -33,6 +33,7 @@ from ..config import dump_yaml, load_yaml
 from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
+from ..util import as_pandas
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
@@ -716,7 +717,8 @@ class SQLEditor(LumenEditor):
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
-        data = self.component.data
+        # to_csv, to_json and to_markdown are all pandas only.
+        data = as_pandas(self.component.data)
         if fmt == 'sql':
             return StringIO(self.spec)
         sio = StringIO()
