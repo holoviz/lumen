@@ -32,6 +32,7 @@ markitdown = "!=0.1.1"
 narwhals = ">=2"
 nbformat = "*"
 numpy = "*"
+openai = "*"
 packaging = "*"
 pandas = "*"
 panel = ">=1.7.5"
@@ -59,7 +60,6 @@ python = "3.13.*"
 COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
-openai = "*"
 
 [feature.sql.dependencies]
 intake = "<2"

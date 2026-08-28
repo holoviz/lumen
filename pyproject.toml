@@ -37,6 +37,7 @@ dependencies = [
     "narwhals >=2",
     "nbformat",
     "numpy",
+    "openai",
     "packaging",
     "pandas",
     "panel >=1.7.5",
@@ -67,7 +68,7 @@ dev = [
 ]
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
-ai-openai = ['openai']
+ai-openai = []
 ai-openrouter = ['lumen[ai-openai]']
 ai-mistralai = ['mistralai']
 ai-bedrock = ['boto3>=1.42.23']
