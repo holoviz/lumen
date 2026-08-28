@@ -52,6 +52,8 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 **Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on categorical axis. In a layered spec where layers bind different fields to that axis, `"-x"` cannot resolve and silently falls back to alphabetical — use an explicit sort field instead, and repeat it identically on every layer sharing that axis or the merge drops it:
 - Encoding sort takes a single OBJECT: `sort: {op: sum, field: sales, order: descending}`. A list of objects is read as an array of literal category values, matches nothing, and leaves the axis alphabetical. The list form (`sort: [{field: ..., order: ...}]`) belongs to `window` transforms only — the two are not interchangeable.
 
+**Sort time axis**: set `sort: "ascending"` on temporal/`x` encoding of every time-series line — SQL results arrive in arbitrary row order, and a line over unsorted points zigzags back across the axis.
+
 **Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
 - A categorical `scale.range` MUST be paired with an explicit `scale.domain`. Alone, the range binds to the domain in alphabetical order, so meaningful colors land on the wrong categories: green/orange/red intended for Low/Medium/High sorts to High/Low/Medium, painting High green and Medium red.
 
@@ -165,12 +167,12 @@ transform:
 layer:
   - mark: {type: line, point: true}
     encoding:
-      x: {field: year, type: quantitative, axis: {format: 'd'}}
+      x: {field: year, type: quantitative, sort: "ascending", axis: {format: 'd'}}
       y: {field: avg_capacity, type: quantitative}
   - transform: [{filter: datum.year === datum.minYear || datum.year === datum.maxYear}]
     mark: {type: text, align: left, dx: 5, dy: -5}
     encoding:
-      x: {field: year, type: quantitative}
+      x: {field: year, type: quantitative, sort: "ascending"}
       y: {field: avg_capacity, type: quantitative}
       text: {field: avg_capacity, type: quantitative}
       color: {value: black}
