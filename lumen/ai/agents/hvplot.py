@@ -105,7 +105,7 @@ class hvPlotAgent(BaseViewAgent):
             spec.pop("aggregator", None)
 
     @staticmethod
-    def _drop_unknown_columns(spec: dict[str, Any], columns) -> None:
+    def _drop_unknown_columns(spec: dict[str, Any], columns: set[str]) -> None:
         """Drop axes naming a column the query did not produce.
 
         The model is offered the columns of the table it was given, but it can

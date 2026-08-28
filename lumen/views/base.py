@@ -112,6 +112,14 @@ VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
 # Kinds that draw one bar per x value, so the axis has to be categorical.
 BAR_KINDS = ("bar", "barh")
 
+# HoloViews defaults a bokeh plot to the WebGL backend, which draws the glyphs
+# on an offscreen GL canvas and blits the result onto the 2D one carrying the
+# axes. Inside the chat UI that blit does not land, so a plot arrives with its
+# axes, its gridlines and none of its data. Drawing straight to 2D costs
+# nothing here: a frame past MAX_RENDER_ROWS is refused, and one past 20k is
+# datashaded into an image server-side long before WebGL would earn its keep.
+CANVAS_BACKEND = {"plot.output_backend": "canvas"}
+
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -1342,6 +1350,7 @@ class hvPlotView(hvPlotBaseView):
         plot = plot_source.hvplot(
             kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
         )
+        plot = plot.opts(backend_opts=CANVAS_BACKEND)
         if self.operations:
             for operation in self.operations:
                 plot = operation(plot)

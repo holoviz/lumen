@@ -52,7 +52,18 @@ class RecordingFrame(pd.DataFrame):
 
     def hvplot(self, **kwargs):
         self.recorded.update(kwargs)
-        return object()
+        return RecordedPlot()
+
+
+class RecordedPlot:
+    """Stands in for the HoloViews element hvPlot returns.
+
+    The view goes on to set options on it, so a bare object is not enough of a
+    double.
+    """
+
+    def opts(self, *args, **kwargs):
+        return self
 
 
 def record_hvplot_call(view, df):
