@@ -255,6 +255,19 @@ class XArraySQLSource(BaseSQLSource):
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
+    def fetch(self, sql_query, params=None):
+        """Fetch query results in `dataframe_backend`, built by DataFusion.
+
+        DataFusion is arrow native, so the to_pandas in execute is a
+        conversion this can skip entirely when another library was asked for.
+        """
+        result = self._ctx.sql(sql_query)
+        if self.dataframe_backend == 'polars':
+            return result.to_polars()
+        if self.dataframe_backend == 'pyarrow':
+            return result.to_arrow_table()
+        return result.to_pandas()
+
     def _build_sql(self, table, **query) -> str:
         """Build the SQL for a table query, applying filters and any
         sql_transforms. Shared by ``get`` and ``to_dataset``."""
@@ -273,7 +286,7 @@ class XArraySQLSource(BaseSQLSource):
 
     @cached
     def get(self, table, **query):
-        return self.execute(self._build_sql(table, **query))
+        return self.fetch(self._build_sql(table, **query))
 
     def to_dataset(self, table, **query):
         """Return the query result as a gridded ``xr.Dataset``.

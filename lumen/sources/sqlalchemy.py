@@ -369,7 +369,7 @@ class SQLAlchemySource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
 
         params = self.table_params.get(table, None)
-        df = self.execute(sql_expr, params)
+        df = self.fetch(sql_expr, params)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df

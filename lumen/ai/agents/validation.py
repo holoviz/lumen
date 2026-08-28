@@ -96,7 +96,7 @@ class ValidationAgent(Agent):
         previous_keys = set()
         if plan is not None:
             produced = {k for task in plan for k in task.out_context}
-            for key in ("chat", "sql", "data", "view", "listing"):
+            for key in ("chat", "sql", "view", "listing"):
                 if key in context and key not in produced:
                     previous_keys.add(key)
         ctx["previous_keys"] = previous_keys
