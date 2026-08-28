@@ -109,6 +109,9 @@ AGGREGATORS = [None, "any", "count", "max", "mean", "min", "sum"]
 # told which column via `color`; without it datashader cannot pick a dimension.
 VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
 
+# Kinds that draw one bar per x value, so the axis has to be categorical.
+BAR_KINDS = ("bar", "barh")
+
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -1102,6 +1105,19 @@ class hvPlotBaseView(View):
         # tables and downloads keep the nullable columns.
         return widen_nullable(super().get_data())
 
+    @staticmethod
+    def _as_categorical(df, column):
+        """Label a bar chart's x values so hvPlot gives the axis factors.
+
+        hvPlot sizes a bar from the smallest gap between neighbouring x values.
+        A continuous column aggregated per distinct value leaves gaps far
+        smaller than the axis span, and every bar comes out a fraction of a
+        pixel wide, so the plot looks empty. Bars are categorical anyway.
+        """
+        if isinstance(df[column].dtype, pd.CategoricalDtype) or df[column].dtype == object:
+            return df
+        return df.assign(**{column: df[column].astype(str)})
+
     def _check_render_size(self, df) -> None:
         """Refuse to render more per-row glyphs than a browser tab can hold.
 
@@ -1320,6 +1336,8 @@ class hvPlotView(hvPlotBaseView):
             processed['geo'] = self.geo
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
+        elif kind in BAR_KINDS and self.x in plot_source.columns:
+            plot_source = self._as_categorical(plot_source, self.x)
 
         plot = plot_source.hvplot(
             kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
