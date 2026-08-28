@@ -1311,6 +1311,22 @@ class hvPlotView(hvPlotBaseView):
 
     def get_plot(self, df):
         self._check_render_size(df)
+        # A spec can name a column the frame does not carry, e.g. when the query
+        # meant to create it failed. hvPlot only finds out while drawing, where
+        # it raises a bare KeyError and nothing renders at all, so an axis with
+        # nothing behind it is dropped and hvPlot infers one instead. A gridded
+        # source arrives as an xarray Dataset whose axes are dims rather than
+        # columns, and _gridded_plot_source already checks those.
+        known = set(df.columns) if isinstance(df, pd.DataFrame) else None
+
+        def keep(name):
+            return known is None or name in known
+
+        x = self.x if keep(self.x) else None
+        y = self.y if keep(self.y) else None
+        z = self.z if keep(self.z) else None
+        by = [column for column in self.by or [] if keep(column)]
+        groupby = [column for column in self.groupby or [] if keep(column)]
         processed = {}
         for k, v in self.kwargs.items():
             if k in self._ignore_kwargs:
@@ -1320,8 +1336,8 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
-        if self.z is not None:
-            processed['C' if self.kind == 'heatmap' else 'z'] = self.z
+        if z is not None:
+            processed['C' if self.kind == 'heatmap' else 'z'] = z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
         # needs has to be put back explicitly.
         if self.datashade:
@@ -1344,11 +1360,11 @@ class hvPlotView(hvPlotBaseView):
             processed['geo'] = self.geo
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
-        elif kind in BAR_KINDS and self.x in plot_source.columns:
-            plot_source = self._as_categorical(plot_source, self.x)
+        elif kind in BAR_KINDS and x is not None:
+            plot_source = self._as_categorical(plot_source, x)
 
         plot = plot_source.hvplot(
-            kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
+            kind=kind, x=x, y=y, by=by or None, groupby=groupby or None, **processed
         )
         plot = plot.opts(backend_opts=CANVAS_BACKEND)
         if self.operations:
