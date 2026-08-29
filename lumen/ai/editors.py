@@ -48,6 +48,27 @@ if TYPE_CHECKING:
     from .report import Task
 
 
+_PAGINATED_TABLE_STYLES = """
+.tabulator-footer {
+  display: flex;
+  text-align: left;
+  padding: 0px;
+}
+/* Tabulator drops its page-number group when the footer overflows
+   horizontally, so let the paginator wrap to keep the pages reachable.
+   The Panel theme stylesheet loads later and would otherwise win. */
+.tabulator .tabulator-footer .tabulator-paginator {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+}
+.tabulator .tabulator-footer .tabulator-pages {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+}
+"""
+
+
 class LumenEditor(Viewer):
 
     component = param.ClassSelector(class_=Component)
@@ -207,36 +228,32 @@ class LumenEditor(Viewer):
 
     async def _render_pipeline(self, pipeline):
         table = Table(
-            pipeline=pipeline, pagination='remote',
-            min_height=200, sizing_mode="stretch_both", stylesheets=[
-            """
-            .tabulator-footer {
-            display: flex;
-            text-align: left;
-            padding: 0px;
-            }
-            """
-            ]
+            pipeline=pipeline, pagination='remote', min_height=200,
+            sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
         )
-        controls = Row(
-            styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
-        )
+        layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
                 break
         else:
-            sql_limit = None
-        if sql_limit:
-            limited = len(pipeline.data) == sql_limit.limit
-            if limited:
-                def unlimit(e):
-                    sql_limit.limit = None if e.new else 1_000_000
-                full_data = Checkbox(
-                    label='Full data', width=100, visible=limited
-                )
-                full_data.param.watch(unlimit, 'value')
-                controls.insert(0, full_data)
-        return Column(controls, table)
+            return layout
+        if len(pipeline.data) != sql_limit.limit:
+            return layout
+
+        # Restore the limit this query actually ran with, so unchecking cannot
+        # silently widen a query that was limited more tightly than the default.
+        limit = sql_limit.limit
+
+        def unlimit(e):
+            sql_limit.limit = None if e.new else limit
+
+        full_data = Checkbox(label='Full data', height=36, margin=0)
+        full_data.param.watch(unlimit, 'value')
+        layout.append(Row(
+            full_data, height=36, sizing_mode='stretch_width',
+            styles={'justify-content': 'flex-end', 'align-items': 'center'},
+        ))
+        return layout
 
     async def render_context(self):
         view = self.component
