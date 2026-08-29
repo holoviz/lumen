@@ -11,6 +11,7 @@ except ModuleNotFoundError:
 import vl_convert
 
 from lumen.ai.agents.vega_lite import VegaLiteAgent
+from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.utils import category_palette, normalize_vegalite_spec
 from lumen.config import dump_yaml
@@ -253,3 +254,79 @@ class TestGeoshapeGeometryValidation:
             },
         }
         VegaLiteEditor.validate_spec(spec)
+
+
+class TestMultiSeriesLineSplit:
+    """A line over several series needs a split channel or every series lands on
+    one polyline, which zigzags back across a perfectly correct time axis.
+
+    Vega-Lite splits the path by wrapping the mark in a group whose
+    ``from.facet.groupby`` names the split field, so the compiled output says
+    plainly whether the chart draws one line or several.
+    """
+
+    ROWS = [
+        {"time": time, "band": band, "temp": temp}
+        for time in ("2020-01-01", "2020-04-01", "2020-07-01")
+        for band, temp in (("tropics", 28), ("midlat", 12), ("arctic", -15))
+    ]
+
+    @classmethod
+    def _line_spec(cls, **encoding):
+        return {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"values": cls.ROWS},
+            "mark": "line",
+            "encoding": {
+                "x": {"field": "time", "type": "temporal"},
+                "y": {"field": "temp", "type": "quantitative"},
+                **encoding,
+            },
+        }
+
+    @classmethod
+    def _split_field(cls, **encoding):
+        """The field the compiled chart splits its path on, None if it draws one."""
+        mark = vl_convert.vegalite_to_vega(cls._line_spec(**encoding))["marks"][0]
+        return ((mark.get("from") or {}).get("facet") or {}).get("groupby")
+
+    def test_a_line_with_no_split_channel_draws_a_single_path(self):
+        assert self._split_field() is None
+
+    def test_color_and_detail_each_split_the_path(self):
+        band = {"field": "band", "type": "nominal"}
+        assert self._split_field(color=band) == ["band"]
+        assert self._split_field(detail=band) == ["band"]
+
+    def test_shape_and_a_constant_color_leave_the_path_joined(self):
+        """Neither reaches the path, so a chart that names a series through them
+        still draws one polyline. A check that trusted the presence of a channel
+        rather than the compiled output would call both of these split.
+        """
+        assert self._split_field(shape={"field": "band", "type": "nominal"}) is None
+        assert self._split_field(color={"value": "#d62728"}) is None
+
+    def test_sorting_the_x_encoding_leaves_the_path_untouched(self):
+        """A path mark already sorts by x, so an explicit sort on a continuous
+        axis cannot be what joins or separates the series.
+        """
+        plain = vl_convert.vegalite_to_vega(self._line_spec())
+        sorted_x = vl_convert.vegalite_to_vega(
+            self._line_spec(x={"field": "time", "type": "temporal", "sort": "ascending"})
+        )
+
+        assert [mark.get("sort") for mark in plain["marks"]] == [{"field": "x"}]
+        assert sorted_x == plain
+
+    def test_the_altair_template_states_the_split_rule_and_shows_it(self):
+        """main.jinja2 carries this rule; main_altair.jinja2 is a separate
+        template that inherits none of it, so it needs its own copy and its own
+        worked example.
+        """
+        # ponytail: reads the template as text, which holds while the rule and
+        # the example both sit outside every conditional block.
+        altair = (PROMPTS_DIR / "VegaLiteAgent" / "main_altair.jinja2").read_text()
+        time_series = altair.split("Time series:")[1].split("```")[1]
+
+        assert "split on it with `color`" in altair
+        assert "mark_line" in time_series and "color=" in time_series
