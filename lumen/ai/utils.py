@@ -46,7 +46,10 @@ from ..pipeline import Pipeline
 from ..sources.base import Source
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import as_pandas, log, try_import_xarray
+from ..util import (
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, log, try_import,
+    try_import_xarray,
+)
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
@@ -623,16 +626,27 @@ async def get_pipeline(**kwargs):
     return await asyncio.to_thread(get_pipeline_sync)
 
 
+async def get_frame(pipeline):
+    """
+    Return pipeline.data off the main thread, in whichever dataframe
+    library the source produced it.
+
+    For consumers that accept any of them; everything written against pandas
+    calls get_data instead.
+    """
+    def get_frame_sync():
+        return pipeline.data
+    return await asyncio.to_thread(get_frame_sync)
+
+
 async def get_data(pipeline):
     """
-    A wrapper be able to use asyncio.to_thread and not
-    block the main thread when calling pipeline.data
+    Return pipeline.data as pandas, off the main thread.
+
+    result_to_dataframe, the LLM code sandbox and the plotting agents are
+    all written against pandas.
     """
-    def get_data_sync():
-        # result_to_dataframe and the LLM code sandbox are written against
-        # pandas. describe_data converts for itself, and so do the views.
-        return as_pandas(pipeline.data)
-    return await asyncio.to_thread(get_data_sync)
+    return as_pandas(await get_frame(pipeline))
 
 
 def _score_column_relevance(series: pd.Series, n_rows: int) -> float:
@@ -741,6 +755,84 @@ def _select_relevant_columns(
     return selected, len(selected) < len(columns)
 
 
+# The types numpy cannot hold, and what to read them as instead.
+_OBJECT_DTYPE_CASTS = {'decimal': 'float64', 'date': 'datetime64[us]'}
+
+
+def normalize_object_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Return df with columns numpy is able to describe.
+
+    numpy has no decimal and no date, so both sit in an object column, which
+    anything reading dtypes takes for text: the summary reads it as
+    categorical, so a money column loses its mean and range and comes out as
+    an enum of decimal.Decimal that yaml.safe_load cannot even read back, and
+    the exploration preview reports it as str.
+
+    Inferred from the values rather than the source dtype, because pandas
+    produces such a column for a DECIMAL result of its own, so this is not
+    only about the frame having arrived from another library.
+    """
+    casts = {
+        col: _OBJECT_DTYPE_CASTS[kind]
+        for col in df.columns
+        if (kind := pd.api.types.infer_dtype(df[col])) in _OBJECT_DTYPE_CASTS
+    }
+    return df.astype(casts) if casts else df
+
+
+def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int, int], bool]:
+    """
+    Return df as pandas, row-sampled for profiling, along with its true shape.
+
+    Sampling before the pandas conversion is the point of this function. The
+    summary reads PROFILE_SAMPLE_ROWS rows at most, and converting first pays
+    for the whole frame to get them: on a 2M x 15 polars frame the conversion
+    alone costs 0.38s and allocates ~700MB.
+
+    The shape returned is the frame's own rather than the sample's, so the
+    summary still reports the real row count.
+
+    Parameters
+    ----------
+    df : IntoFrame | Frame
+        The frame to profile, in pandas, dask or any library narwhals
+        supports.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, tuple[int, int], bool]
+        The (possibly sampled) pandas frame, the original frame's shape, and
+        whether the frame was sampled.
+    """
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        # A dask frame reports its shape as a Delayed, which none of the
+        # branches below can act on. Sampling partitions would have to compute
+        # the row count anyway, so compute the frame and profile the result.
+        df = df.compute()
+
+    narwhals_df = df if isinstance(df, pd.DataFrame) else as_narwhals(df)
+    if is_lazyframe(narwhals_df):
+        # Collect in the frame's own library rather than through pandas; the
+        # sample below is what keeps the conversion small.
+        narwhals_df = narwhals_df.collect()
+    if is_narwhals(narwhals_df):
+        shape = narwhals_df.shape
+        sampled = shape[0] > PROFILE_SAMPLE_ROWS
+        if sampled:
+            narwhals_df = narwhals_df.sample(n=PROFILE_SAMPLE_ROWS)
+        # as_pandas rather than to_pandas: it keeps an integer column holding a
+        # null an integer, instead of widening an id to 3.0 in the sample rows.
+        return normalize_object_dtypes(as_pandas(narwhals_df)), shape, sampled
+
+    shape = df.shape
+    sampled = shape[0] > PROFILE_SAMPLE_ROWS
+    if sampled:
+        df = df.sample(PROFILE_SAMPLE_ROWS)
+    return normalize_object_dtypes(df), shape, sampled
+
+
 def describe_data_sync(
     df: IntoFrame | Frame,
     enum_limit: int = 3,
@@ -779,11 +871,8 @@ def describe_data_sync(
     str
         YAML-formatted summary of the DataFrame
     """
-    # Accept any frame narwhals understands. The summary itself is pandas-only
-    # for now, so converting here keeps it to one place to change later.
-    df = as_pandas(df)
-    size = df.size
-    shape = df.shape
+    df, shape, is_sampled = _sample_for_summary(df)
+    size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
         records = df.to_dict(orient='records')
@@ -792,11 +881,6 @@ def describe_data_sync(
     if size < 100:
         header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return header + df.to_markdown(index=False)
-
-    is_sampled = False
-    if shape[0] > PROFILE_SAMPLE_ROWS:
-        is_sampled = True
-        df = df.sample(PROFILE_SAMPLE_ROWS)
 
     df = df.sort_index()
 
@@ -1278,7 +1362,9 @@ def _get_token_encoder():
     if "encoder" in _TOKEN_ENCODER_CACHE:
         return _TOKEN_ENCODER_CACHE["encoder"]
     try:
-        import tiktoken
+        # Deferred so a missing tiktoken degrades to the character estimate
+        # rather than breaking the import.
+        import tiktoken  # noqa: PLC0415
 
         encoder = tiktoken.get_encoding(TOKEN_ENCODING)
     except Exception as e:
@@ -1781,14 +1867,9 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of the DataFrame with sanitized column names
+        The DataFrame with sanitized column names, leaving the caller's alone
     """
-    df = df.copy()
-    df.columns = [
-        re.sub(r'[^\w]', '', col.replace(' ', '_'))
-        for col in df.columns
-    ]
-    return df
+    return df.rename(columns=lambda col: re.sub(r'[^\w]', '', col.replace(' ', '_')))
 
 
 def result_to_dataframe(result) -> pd.DataFrame | None:
@@ -1804,15 +1885,17 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     if isinstance(result, Source):
         return None
 
-    # SourceResult from controls — extract the DataFrame from the first source
-    from .controls.ingest.result import SourceResult
+    # SourceResult from controls — extract the DataFrame from the first source.
+    # Deferred: the controls package reaches .editors, which imports this module.
+    from .controls.ingest.result import SourceResult  # noqa: PLC0415
     if isinstance(result, SourceResult):
         if not result.sources or not result.table:
             return None
         src = result.sources[0]
         table = result.table
         try:
-            return src.get(table)
+            # Declared pd.DataFrame, and callers concat it and read .empty.
+            return as_pandas(src.get(table))
         except Exception:
             return None
 
@@ -2031,7 +2114,7 @@ def normalize_vegalite_spec(
     """
     if editor_type is None:
         # Imported lazily to avoid an editors -> utils import cycle.
-        from .editors import VegaLiteEditor
+        from .editors import VegaLiteEditor  # noqa: PLC0415
         editor_type = VegaLiteEditor
 
     # Remove wrapper properties that aren't part of Vega-Lite spec

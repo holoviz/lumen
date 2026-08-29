@@ -11,15 +11,19 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
+import pyarrow as pa
 import sqlglot
 
 from ..config import config
+from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..transforms import Filter
 from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
-from ..util import detect_file_encoding, normalize_table_name, try_import
+from ..util import (
+    as_pandas, detect_file_encoding, normalize_table_name, try_import,
+)
 from .base import BaseSQLSource, Source, cached
 
 if TYPE_CHECKING:
@@ -179,12 +183,15 @@ class DuckDBSource(BaseSQLSource):
             else:
                 df = mirror.data
                 def update(e, table=table):
-                    df = e.new
+                    # from_df and select_dtypes are pandas only, and a mirrored
+                    # Pipeline hands over whichever library its source produced.
+                    df = as_pandas(e.new)
                     for col in df.select_dtypes(include=['string']).columns:
                         df[col] = df[col].astype(object)
                     self._connection.from_df(df).to_view(table)
                     self._set_cache(df, table)
                 mirror.param.watch(update, 'data')
+            df = as_pandas(df)
             try:
                 for col in df.select_dtypes(include=['string']).columns:
                     df[col] = df[col].astype(object)
@@ -311,7 +318,6 @@ class DuckDBSource(BaseSQLSource):
         if 'mirrors' not in spec:
             return spec
 
-        from ..pipeline import Pipeline
         mirrors = {}
         for table, mirror in spec['mirrors'].items():
             if isinstance(mirror, pd.DataFrame):
@@ -391,7 +397,6 @@ class DuckDBSource(BaseSQLSource):
                 source = cls.from_spec(src_spec)
                 resolved_mirrors[table] = (source, src_table)
             elif mirror.get('type') == 'pipeline':
-                from ..pipeline import Pipeline
                 resolved_mirrors[table] = Pipeline.from_spec(mirror)
             else:
                 resolved_mirrors[table] = Serializer.deserialize(mirror)
@@ -516,13 +521,18 @@ class DuckDBSource(BaseSQLSource):
 
     def _fetch_df(
         self, cursor, sql_expr: str, params: list | dict | None = None,
-        date_as_object: bool = False
+        date_as_object: bool = False, backend: str | None = None
     ):
         """Fetch a query result, safely handling native GEOMETRY columns.
 
         DuckDB cannot convert a native GEOMETRY column to NumPy, so re-select
         any geometry columns as WKB via ST_AsWKB before fetching, then rebuild
         a GeoDataFrame when geopandas is available (WKB bytes otherwise).
+
+        A geometry result ignores `backend` and stays pandas: geometry only
+        survives as a GeoDataFrame, and narwhals has no geometry dtype, so any
+        other library would hold the column as opaque bytes, drop it from the
+        schema, and render a blank map with nothing raising.
         """
         rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
@@ -531,6 +541,15 @@ class DuckDBSource(BaseSQLSource):
         }
         geom_cols = list(geom_crs)
         if not geom_cols:
+            if backend == 'polars':
+                return rel.pl()
+            if backend == 'pyarrow':
+                # Through pa.table because arrow() returns a Table up to
+                # duckdb 1.3 and a RecordBatchReader from 1.4, and
+                # Pipeline.data rejects the reader. Not fetch_arrow_table,
+                # which 1.5 deprecates and the suite turns that into an
+                # error, nor to_arrow_table, which 1.4 does not have.
+                return pa.table(rel.arrow())
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(
@@ -552,6 +571,23 @@ class DuckDBSource(BaseSQLSource):
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
             return self._fetch_df(cursor, sql_query, params)
+
+    def fetch(self, sql_query: str, params: list | dict | None = None):
+        """Fetch query results in `dataframe_backend`, built by DuckDB itself.
+
+        Not the inherited fetch, which reads through execute. Two reasons: the
+        data path asks for date_as_object so a DATE stays a date rather than
+        becoming a timestamp, and DuckDB can materialise polars and arrow
+        directly. Building the frame in the asked-for library rather than
+        converting a pandas one is most of the point of the parameter: on a
+        5M row table fetching arrow rather than pandas is an order of
+        magnitude quicker and allocates less than half the memory.
+        """
+        with self._connection.cursor() as cursor:
+            return self._fetch_df(
+                cursor, sql_query, params, date_as_object=True,
+                backend=self.dataframe_backend,
+            )
 
     def get_tables(self):
         if isinstance(self.tables, dict | list):
@@ -584,10 +620,7 @@ class DuckDBSource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
 
         # Apply stored SQL parameters if available for this table
-        with self._connection.cursor() as cursor:
-            df = self._fetch_df(
-                cursor, sql_expr, self.table_params.get(table), date_as_object=True
-            )
+        df = self.fetch(sql_expr, self.table_params.get(table))
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df

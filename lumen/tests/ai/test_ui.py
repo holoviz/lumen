@@ -1952,3 +1952,37 @@ def test_resolve_data_geojson_startup(tmp_path):
     # this verifies loading without needing the GEOMETRY fetch fix from #1903
     wkt = source.execute("SELECT ST_AsText(geometry) AS wkt FROM counties LIMIT 1")
     assert wkt["wkt"].iloc[0].startswith("POLYGON")
+
+
+# ---------------------------------------------------------------------------
+# Resolved model footer label (issue #2043)
+# ---------------------------------------------------------------------------
+
+def test_ensure_model_label_adds_label(explorer_ui):
+    """_ensure_model_label appends model name to timestamp_format when
+    the LLM has a resolved model name."""
+    ui = explorer_ui
+    ui.llm._resolved_model = "gpt-test"
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    assert "(used gpt-test)" in message.timestamp_format
+    assert message.timestamp_format.startswith('%H:%M')
+
+
+def test_ensure_model_label_no_duplicate(explorer_ui):
+    """_ensure_model_label does not add a second label if one already exists."""
+    ui = explorer_ui
+    ui.llm._resolved_model = "gpt-test"
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    ui._ensure_model_label(message)
+    assert message.timestamp_format.count("(used gpt-test)") == 1
+
+
+def test_ensure_model_label_skips_when_no_model(explorer_ui):
+    """_ensure_model_label is a no-op when _resolved_model is None."""
+    ui = explorer_ui
+    ui.llm._resolved_model = None
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    assert message.timestamp_format == '%H:%M'

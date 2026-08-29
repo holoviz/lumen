@@ -5,7 +5,8 @@ import pandas as pd
 import param  # type: ignore
 
 from lumen.transforms.base import (
-    Count, DropNA, Eval, Filter, Sum, Transform, project_lnglat,
+    Aggregate, Columns, Count, DropNA, Eval, Filter, SetIndex, Sort, Sum,
+    Transform, project_lnglat,
 )
 
 
@@ -110,3 +111,24 @@ def test_filter_invalid_condition_warns(caplog):
         "Condition {'unexpected': True} on 'A' column not understood. "
         "Filter query will not be applied."
     ) in caplog.text
+
+
+def test_requires_columns_defaults_to_unknown():
+    """The default has to be the safe answer, since a subclass may read anything."""
+    assert Transform().requires_columns() is None
+    assert DropNA().requires_columns() is None
+
+
+def test_requires_columns_reports_declared_columns():
+    assert Sort(by=['a', 'b']).requires_columns() == {'a', 'b'}
+    assert Columns(columns=['a']).requires_columns() == {'a'}
+    assert SetIndex(keys='a').requires_columns() == {'a'}
+    assert SetIndex(keys=['a', 'b']).requires_columns() == {'a', 'b'}
+    assert Aggregate(by=['a'], columns=['b']).requires_columns() == {'a', 'b'}
+
+
+def test_requires_columns_is_unknown_for_open_ended_parameters():
+    """A parameter that means "all the rest" has to report None, not a subset."""
+    assert Aggregate(by=['a']).requires_columns() is None
+    assert SetIndex().requires_columns() is None
+    assert Sort().requires_columns() == set()

@@ -21,8 +21,10 @@ import numpy as np
 import pandas as pd
 import panel as pn
 import param
+import pyarrow as pa
 import yaml
 
+from hvplot.utilities import hvplot_extension  # type: ignore
 from jinja2 import DebugUndefined, Environment, Undefined
 from packaging.version import Version
 from pandas.core.dtypes.dtypes import CategoricalDtype
@@ -109,6 +111,90 @@ def collect_lazy(df):
 
 DATAFRAME_BACKENDS = ['pandas', 'polars', 'pyarrow']
 
+# The pandas dtype that holds each arrow integer and boolean type without
+# widening it, because numpy has no missing value for either. Arrow has no
+# other integer type, so every column _to_pandas reroutes has an entry here.
+_NULLABLE_DTYPES = {
+    pa.int8(): pd.Int8Dtype(), pa.int16(): pd.Int16Dtype(),
+    pa.int32(): pd.Int32Dtype(), pa.int64(): pd.Int64Dtype(),
+    pa.uint8(): pd.UInt8Dtype(), pa.uint16(): pd.UInt16Dtype(),
+    pa.uint32(): pd.UInt32Dtype(), pa.uint64(): pd.UInt64Dtype(),
+    pa.bool_(): pd.BooleanDtype(),
+}
+
+
+def _cast_unsigned_dictionaries(narwhals_df):
+    """Return the frame with any unsigned dictionary index cast to int32.
+
+    pyarrow before 23 refuses to convert an unsigned dictionary index to
+    pandas, and polars writes uint32 indices for a Categorical, so a
+    pyarrow-backed frame carrying one cannot reach pandas at all. int32 is
+    the index pyarrow 23 produces for the same column, so the cast leaves the
+    resulting categorical identical and is dead weight once the floor moves.
+    """
+    table = narwhals_df.to_native()
+    if not isinstance(table, pa.Table):
+        return narwhals_df
+
+    def signed(field):
+        if not (pa.types.is_dictionary(field.type) and
+                pa.types.is_unsigned_integer(field.type.index_type)):
+            return field
+        return field.with_type(
+            pa.dictionary(pa.int32(), field.type.value_type, field.type.ordered)
+        )
+
+    fields = [signed(field) for field in table.schema]
+    if fields == list(table.schema):
+        return narwhals_df
+    return nw.from_native(table.cast(pa.schema(fields)))
+
+
+def _to_pandas(narwhals_df):
+    """Convert to pandas without widening an integer or boolean column.
+
+    Every backend but pandas holds nulls in the column's own type, and
+    ``to_pandas`` lands those on numpy, which has no missing value for an
+    integer or a boolean. An id comes back as 3.0 and, past 2**53, as a
+    different number entirely. The columns that would widen come across
+    through arrow as the pandas nullable dtype instead.
+
+    Only those columns are rerouted. Sending the whole frame through arrow
+    would be shorter and would break more: pyarrow cannot convert the
+    dictionary indices behind a polars categorical, which polars itself
+    converts fine.
+    """
+    narwhals_df = _cast_unsigned_dictionaries(narwhals_df)
+    df = narwhals_df.to_pandas()
+    for name, dtype in narwhals_df.collect_schema().items():
+        widened = df[name].dtype.kind in 'fO'
+        if widened and (dtype.is_integer() or isinstance(dtype, nw.Boolean)):
+            df[name] = narwhals_df[name].to_arrow().to_pandas(
+                types_mapper=_NULLABLE_DTYPES.get
+            )
+    return df
+
+
+def widen_nullable(df):
+    """Return df with the nullable dtypes _to_pandas keeps widened to numpy.
+
+    datashader reads the dtype of every plotted column and raises on a pandas
+    extension dtype, so a rasterized plot cannot take the nullable columns.
+    numpy widens them exactly the way ``to_pandas`` used to: an integer holding
+    a null becomes float64, a boolean becomes object, and a column with no
+    nulls keeps its type.
+    """
+    widened = [c for c in df.columns if df[c].dtype in _NULLABLE_DTYPES.values()]
+    if not widened:
+        return df
+    # Copied rather than assigned in place because the caller hands out a
+    # cached frame, and item assignment takes a column named anything, which
+    # DataFrame.assign does not.
+    df = df.copy()
+    for name in widened:
+        df[name] = np.asarray(df[name])
+    return df
+
 
 def to_backend(df, backend):
     """Return df as a frame of the named dataframe library.
@@ -127,7 +213,7 @@ def to_backend(df, backend):
     if narwhals_df.implementation.name.lower() == backend:
         return df
     if backend == 'pandas':
-        return narwhals_df.to_pandas()
+        return _to_pandas(narwhals_df)
     if backend == 'polars':
         return narwhals_df.to_polars()
     return narwhals_df.to_arrow()
@@ -148,7 +234,7 @@ def as_pandas(df):
         return df
     if is_lazyframe(narwhals_df):
         narwhals_df = narwhals_df.collect()
-    return narwhals_df.to_pandas()
+    return _to_pandas(narwhals_df)
 
 
 def _narwhals_dataframe_schema(df, columns=None):
@@ -259,7 +345,7 @@ def get_dataframe_schema(df, columns=None):
             return _narwhals_dataframe_schema(narwhals_df, columns)
 
     if 'dask.dataframe' in sys.modules:
-        import dask.dataframe as dd
+        import dask.dataframe as dd  # noqa: PLC0415
         is_dask = isinstance(df, dd.DataFrame)
     else:
         is_dask = False
@@ -541,7 +627,8 @@ def catch_and_notify(message=None):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                from .state import state as session_state
+                # Deferred: .state imports extract_refs from this module.
+                from .state import state as session_state  # noqa: PLC0415
                 if session_state.config and session_state.config.on_error:
                     state.execute(partial(state.config.on_error, e))
                 if pn.config.notifications:
@@ -641,9 +728,10 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
     except UnicodeDecodeError:
         pass
 
-    # Use chardet if available, otherwise fallback
+    # Use chardet if available, otherwise fallback; the core install does not
+    # pull it in, only the ai extra does.
     try:
-        import chardet
+        import chardet  # noqa: PLC0415
         result = chardet.detect(data)
         encoding = result.get('encoding', 'latin-1')
         # Clean up common names
@@ -656,7 +744,6 @@ def detect_file_encoding(file_obj: Path | str | io.BytesIO | io.StringIO | bytes
 
 def _set_backend_opts(element, cur_opts, compat_opts):
     """Utility to make it possible to serialize hvPlot generated plots"""
-    from hvplot.utilities import hvplot_extension
     element = element.opts(**cur_opts, backend='bokeh')
     if hvplot_extension.compatibility and compat_opts:
         element = element.opts(**compat_opts, backend=hvplot_extension.compatibility)

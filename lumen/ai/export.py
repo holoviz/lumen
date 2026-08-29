@@ -15,6 +15,7 @@ from panel.viewable import Viewable
 
 from ..config import config
 from ..pipeline import Pipeline
+from ..util import as_pandas
 from ..views import View
 from .editors import LumenEditor
 
@@ -162,6 +163,7 @@ def docx_add_markdown(doc, text: str):
 
 def docx_add_table(doc, df, max_rows: int = 50):
     """Render a DataFrame as a native Word table (header + capped rows)."""
+    df = as_pandas(df)  # iterrows is pandas only
     table = doc.add_table(rows=1, cols=len(df.columns))
     table.style = 'Table Grid'
     for cell, col in zip(table.rows[0].cells, df.columns, strict=False):
@@ -176,7 +178,7 @@ def docx_add_table(doc, df, max_rows: int = 50):
 
 def docx_add_chart(doc, editor) -> bool:
     """Embed a chart editor as a PNG image; return True if one was added."""
-    from docx.shared import Inches
+    from docx.shared import Inches  # noqa: PLC0415
 
     if 'png' not in editor.export_formats:
         return False

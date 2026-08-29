@@ -376,7 +376,7 @@ class SnowflakeSource(BaseSQLSource):
             sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
-        return self.execute(sql_expr, self.table_params.get(table, []))
+        return self.fetch(sql_expr, self.table_params.get(table, []))
 
     async def get_async(self, table, **query):
         """
@@ -468,7 +468,7 @@ class SnowflakeSource(BaseSQLSource):
         def subset_table_slugs(df: pd.DataFrame) -> pd.DataFrame:
             df["TABLE_SLUG"] = df[
                 ["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]
-            ].agg(lambda x: ".".join(x), axis=1).str.upper()
+            ].agg(".".join, axis=1).str.upper()
             df = df[df["TABLE_SLUG"].isin(table_slugs)]
             df = df.drop(
                 columns=["TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME"]

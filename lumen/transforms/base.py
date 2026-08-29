@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import math
+import warnings
 
 from collections.abc import Callable
 from functools import reduce
@@ -53,6 +54,35 @@ def _is_missing(value):
     path emits None, and either can arrive back here as a filter value.
     """
     return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def _narwhals_dtype(dtype):
+    """Return the narwhals dtype to cast to, or refuse the cast.
+
+    narwhals has no public parser for a dtype name and every
+    native_to_narwhals_dtype is private to a backend, so the spec is resolved
+    through an empty pandas column. That reuses pandas' own parser and
+    narwhals' own mapping instead of restating either as a table here, and it
+    takes whatever a spec can carry: a string, a builtin, a numpy dtype or an
+    extension dtype instance.
+
+    Only a numeric target is allowed through, because a shared dtype name is
+    not a shared conversion and the disagreements are silent. pyarrow renders
+    1.0 as '1' where pandas renders '1.0', both spell a boolean 'true' where
+    pandas spells it 'True', polars reads an integer as a date rather than a
+    count of nanoseconds, and a category takes its order of appearance where
+    pandas sorts it, which decides how it later sorts and groups. None of
+    those raise, so nothing downstream could catch them.
+    """
+    asked = pd.api.types.pandas_dtype(dtype)
+    resolved = nw.from_native(pd.Series([], dtype=dtype), series_only=True).dtype
+    if not resolved.is_numeric():
+        raise NotImplementedError(f'{dtype!r} does not cast alike on every backend')
+    if pd.api.types.pandas_dtype(nw.Schema({'c': resolved}).to_pandas()['c']) != asked:
+        # Int64 and int64 are one narwhals dtype, so a nullable spec would come
+        # back as the numpy dtype rather than the one that was asked for.
+        raise NotImplementedError(f'{dtype!r} has no distinct narwhals dtype')
+    return resolved
 
 
 class Transform(MultiTypeComponent):
@@ -276,6 +306,19 @@ class Transform(MultiTypeComponent):
         """
         return table
 
+    def requires_columns(self) -> set[str] | None:
+        """
+        Return the columns this transform reads, or None if it may read any.
+
+        A Pipeline uses this to narrow the query it sends to a SQL source to
+        the columns something actually needs. None is the safe answer and the
+        default: it means the query cannot be narrowed, because a projection
+        might drop a column this transform reads. Only override it where
+        every column the transform touches is named by its parameters, and
+        return None for the parameter values that mean "all the rest".
+        """
+        return None
+
     @property
     def control_panel(self) -> Viewable:
         return pn.Param(
@@ -452,11 +495,22 @@ class HistoryTransform(Transform):
     length = param.Integer(default=10, bounds=(1, None), doc="""
         Accumulates a history of data.""")
 
-    transform_type = 'history'
+    transform_type: ClassVar[str] = 'history'
 
-    _field_params = ['date_column']
+    _field_params: ClassVar[list[str]] = ['date_column']
+
+    # A buffered lazy frame is a query rather than a snapshot: collecting it
+    # later returns whatever the source holds then, so a history of ten
+    # entries would record the present ten times over.
+    _lazy: ClassVar[bool] = False
+
+    _narwhals: ClassVar[bool] = True
 
     def __init__(self, **params):
+        warnings.warn(
+            "HistoryTransform is deprecated and will be removed in a future "
+            "release.", DeprecationWarning, stacklevel=2
+        )
         super().__init__(**params)
         self._buffer = []
 
@@ -476,12 +530,38 @@ class HistoryTransform(Transform):
         DataFrame
             A DataFrame containing the buffered history of the data.
         """
+        def build(frame):
+            if self.date_column:
+                frame = frame.with_columns(
+                    nw.lit(dt.datetime.now()).alias(self.date_column)
+                )
+            buffer = [*self._buffer, frame][-self.length:]
+            # Column names drift as a source changes shape, and only diagonal
+            # unions them the way pd.concat does.
+            result = nw.concat(buffer, how='diagonal') if len(buffer) > 1 else buffer[0]
+            # Recorded only once the concat has succeeded: _try_narwhals runs
+            # the pandas branch below on any failure, and a buffer already
+            # holding this frame would accumulate it a second time.
+            self._buffer[:] = buffer
+            return result
+
+        # One converted entry means the whole history is pandas, and narwhals
+        # cannot concatenate across libraries. Retrying would fail and warn on
+        # every call after the first, which for a dashboard is once a render.
+        if not any(isinstance(entry, pd.DataFrame) for entry in self._buffer):
+            result, table = self._try_narwhals(table, build)
+            if result is not None:
+                return result
+        table = as_pandas(table)
         if self.date_column:
             table = table.copy()
             table[self.date_column] = dt.datetime.now()
-        self._buffer.append(table)
-        self._buffer[:] = self._buffer[-self.length:]
-        return pd.concat(self._buffer)
+        # A buffer filled by an earlier narwhals call cannot go through
+        # pd.concat, so it converts alongside the frame that displaced it.
+        buffer = [*(as_pandas(entry) for entry in self._buffer), table][-self.length:]
+        result = pd.concat(buffer)
+        self._buffer[:] = buffer
+        return result
 
 
 class Aggregate(Transform):
@@ -513,6 +593,12 @@ class Aggregate(Transform):
     _field_params: ClassVar[list[str]] = ['by', 'columns']
 
     _narwhals: ClassVar[bool] = True
+
+    def requires_columns(self) -> set[str] | None:
+        if not self.columns:
+            # Without an explicit selection every numeric column is aggregated.
+            return None
+        return set(self.by or []) | set(self.columns)
 
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
@@ -588,6 +674,9 @@ class Sort(Transform):
 
     _narwhals: ClassVar[bool] = True
 
+    def requires_columns(self) -> set[str] | None:
+        return set(self.by or [])
+
     def apply(self, table: DataFrame) -> DataFrame:
         def build(frame):
             if not self.by:
@@ -659,6 +748,9 @@ class Columns(Transform):
 
     _narwhals: ClassVar[bool] = True
 
+    def requires_columns(self) -> set[str] | None:
+        return set(self.columns or [])
+
     def apply(self, table: DataFrame) -> DataFrame:
         result, table = self._try_narwhals(table, lambda f: f.select(self.columns))
         if result is not None:
@@ -675,7 +767,40 @@ class Astype(Transform):
 
     transform_type: ClassVar[str] = 'as_type'
 
+    # A cast a backend refuses raises when the frame is collected, which
+    # happens in Pipeline.data, outside the try that would have sent the data
+    # to pandas. Collecting here puts the failure back inside that try.
+    _lazy: ClassVar[bool] = False
+
+    _narwhals: ClassVar[bool] = True
+
     def apply(self, table: DataFrame) -> DataFrame:
+        def build(frame):
+            schema = frame.collect_schema()
+            casts = []
+            for col, dtype in self.dtypes.items():
+                # Columns not in the frame are skipped, because the pandas
+                # path skips them rather than raising.
+                if col not in schema.names():
+                    continue
+                target = _narwhals_dtype(dtype)
+                if schema[col].is_temporal() and target != nw.Int64:
+                    # int64 is the only target pandas lets a datetime out to,
+                    # as a count of its own unit. It refuses every other
+                    # width and every float, where polars hands back the
+                    # epoch rather than raising.
+                    raise NotImplementedError(f'{col!r} holds a datetime')
+                if target.is_integer() and frame[col].is_null().any():
+                    # numpy has no missing integer, so pandas refuses the
+                    # whole cast. Every other backend writes a null instead,
+                    # which would answer where pandas raises.
+                    raise NotImplementedError(f'{col!r} holds a missing value')
+                casts.append(nw.col(col).cast(target))
+            return frame.with_columns(*casts)
+
+        result, table = self._try_narwhals(table, build)
+        if result is not None:
+            return result
         table = table.copy()
         for col, dtype in self.dtypes.items():
             if col in table.columns:
@@ -926,7 +1051,7 @@ class Melt(Transform):
         if isinstance(table, pd.DataFrame):
             melt = pd.melt
         else:
-            import dask.dataframe as dd
+            import dask.dataframe as dd  # noqa: PLC0415
             melt = dd.melt
         return melt(
             table, id_vars=self.id_vars, value_vars=self.value_vars,
@@ -960,6 +1085,11 @@ class SetIndex(Transform):
     transform_type: ClassVar[str] = 'set_index'
 
     _field_params: ClassVar[list[str]] = ['keys']
+
+    def requires_columns(self) -> set[str] | None:
+        if self.keys is None:
+            return None
+        return {self.keys} if isinstance(self.keys, str) else set(self.keys)
 
     def apply(self, table: DataFrame) -> DataFrame:
         return table.set_index(

@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import os
 import tempfile
+import traceback
 
 from contextlib import contextmanager
 from functools import partial
@@ -600,7 +601,9 @@ class UI(Viewer):
                     continue
                 elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
                     try:
-                        from ..sources.sqlalchemy import SQLAlchemySource
+                        from ..sources.sqlalchemy import (  # noqa: PLC0415
+                            SQLAlchemySource,
+                        )
                     except ImportError as e:
                         raise ImportError(
                             "SQLAlchemy is required for database connection strings. "
@@ -626,7 +629,9 @@ class UI(Viewer):
                         sources.append(source)
                     else:
                         try:
-                            from ..sources.sqlalchemy import SQLAlchemySource
+                            from ..sources.sqlalchemy import (  # noqa: PLC0415
+                                SQLAlchemySource,
+                            )
                         except ImportError as e:
                             raise ImportError(
                                 "SQLAlchemy is required to read .db files. "
@@ -745,7 +750,6 @@ class UI(Viewer):
             self._chat_input.disabled = False
             self.interface.disabled = False
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
@@ -1674,6 +1678,24 @@ class UI(Viewer):
         if hasattr(self, '_coordinator'):
             await self._coordinator.sync(self.context)
 
+    def _ensure_model_label(self, message) -> None:
+        """Embed the resolved model name into *message.timestamp_format*.
+
+        Reads the resolved model name from ``self.llm._resolved_model``
+        (set by ``Llm.invoke()`` after routing).  The model name is
+        appended to the existing timestamp format string so the rendered
+        footer reads e.g. ``09:23 AM (used gpt-5.6-luna)``.
+        """
+        if not getattr(self, "llm", None):
+            return
+        model_name = getattr(self.llm, "_resolved_model", None)
+        if not model_name:
+            return
+        fmt = message.timestamp_format or "%H:%M"
+        if f"(used {model_name})" in fmt:
+            return
+        message.timestamp_format = f"{fmt} (used {model_name})"
+
     def _add_suggestions_to_footer(
         self,
         suggestions: list[str],
@@ -1778,8 +1800,9 @@ class UI(Viewer):
 
         if len(self.interface):
             message = self.interface.objects[-1]
+            self._ensure_model_label(message)
             if inplace:
-                footer_objects = message.footer_objects or []
+                footer_objects = list(message.footer_objects or [])
                 prev_suggestions = [obj for obj in footer_objects if obj.name == "Suggestions"]
                 if prev_suggestions:
                     prev_suggestions[0][:] = list(suggestion_buttons)
@@ -2831,6 +2854,10 @@ class ExplorerUI(UI):
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
+            if self.interface.objects:
+                last_message = self.interface.objects[-1]
+                self._ensure_model_label(last_message)
+
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
             return
@@ -2838,7 +2865,7 @@ class ExplorerUI(UI):
         # On error we have to sync the conversation, unwatch the plan,
         # and remove the exploration if it was newly create
         last_message = self.interface.objects[-1]
-        footer_objects = last_message.footer_objects or []
+        self._ensure_model_label(last_message)
         buttons = []
         if is_new:
             replan_button = Button(
@@ -2850,13 +2877,13 @@ class ExplorerUI(UI):
                 description="Rerun with the same plan and context"
             )
             buttons = [rerun_button, replan_button]
-        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in footer_objects):
+        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in last_message.footer_objects or []):
             retry_button = Button(
                 label="Retry", icon="replay", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
                 description="Try re-running failed steps"
             )
             buttons = [retry_button]
-        last_message.footer_objects = footer_objects + buttons
+        last_message.footer_objects = list(last_message.footer_objects or []) + buttons
         if exploration.parent:
             exploration.parent.conversation = exploration.conversation
 

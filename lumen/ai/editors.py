@@ -11,6 +11,7 @@ from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
 import param
+import vl_convert as vlc
 
 from panel.config import config
 from panel.layout import Column, Row
@@ -39,7 +40,7 @@ from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_data
+from .utils import describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
@@ -234,8 +235,7 @@ class LumenEditor(Viewer):
         else:
             sql_limit = None
         if sql_limit:
-            data = as_pandas(pipeline.data)
-            limited = len(data) == sql_limit.limit
+            limited = len(pipeline.data) == sql_limit.limit
             if limited:
                 limited_limit = sql_limit.limit
 
@@ -266,7 +266,7 @@ class LumenEditor(Viewer):
             # If output is a view we provide the full View specification
             return {"view": self._spec_dict}
         elif isinstance(view, Pipeline):
-            data = await get_data(view)
+            data = await get_frame(view)
             return {
                 "pipeline": view,
                 "table": view.table,
@@ -420,7 +420,6 @@ class VegaLiteEditor(LumenEditor):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            import vl_convert as vlc
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)
@@ -740,7 +739,8 @@ class SQLEditor(LumenEditor):
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
-        data = self.component.data
+        # to_csv, to_json and to_markdown are all pandas only.
+        data = as_pandas(self.component.data)
         if fmt == 'sql':
             return StringIO(self.spec)
         sio = StringIO()

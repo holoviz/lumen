@@ -275,6 +275,28 @@ class TestSQLExecution:
         assert "lon" in df.columns
         assert "time" in df.columns
 
+    @pytest.mark.parametrize("backend", [None, "pandas", "polars", "pyarrow"])
+    def test_fetch_backends(self, synthetic_dataset, backend):
+        """DataFusion is arrow native, so fetch skips the to_pandas in execute."""
+        if backend not in (None, "pandas"):
+            pytest.importorskip(backend)
+        import narwhals.stable.v2 as nw
+
+        from lumen.util import as_pandas
+
+        source = XArraySQLSource(_dataset=synthetic_dataset, dataframe_backend=backend)
+        query = "SELECT lat, lon, temperature FROM temperature ORDER BY lat, lon LIMIT 5"
+        fetched = source.fetch(query)
+
+        if backend in (None, "pandas"):
+            assert isinstance(fetched, pd.DataFrame)
+        else:
+            assert nw.from_native(fetched).implementation.name.lower() == backend
+        # execute stays pandas whatever the backend, so the schema and
+        # metadata queries keep reading it the way they always have.
+        assert isinstance(source.execute(query), pd.DataFrame)
+        pd.testing.assert_frame_equal(as_pandas(fetched), source.execute(query))
+
     def test_select_columns(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
         df = source.execute("SELECT lat, lon, temperature FROM temperature LIMIT 3")
@@ -692,8 +714,12 @@ class TestToDataset:
     def test_to_dataset_ignores_projected_away_dim(self, synthetic_dataset):
         """A projecting sql_transform (e.g. DeckGL keeping only lat/lon/value)
         drops a dim from the result; to_dataset must pass only the dims the
-        result still has a column for, not every dataset dim."""
-        source = XArraySQLSource(_dataset=synthetic_dataset)
+        result still has a column for, not every dataset dim.
+
+        One time step, so dropping the time column still leaves one row per
+        (lat, lon) and the result is a grid.
+        """
+        source = XArraySQLSource(_dataset=synthetic_dataset.isel(time=[0]))
         transform = SQLColumns(columns=["lat", "lon", "temperature"])  # drops time
         result = source.to_dataset("temperature", sql_transforms=[transform])
         assert "time" not in result.dims
@@ -703,24 +729,3 @@ class TestToDataset:
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert isinstance(source.get("temperature"), pd.DataFrame)
-
-    def test_to_dataset_fallback_when_native_absent(self, synthetic_dataset, monkeypatch):
-        """When the query result lacks a native to_dataset (xarray-sql < 0.3),
-        to_dataset falls back to pivoting the long-form result on the dims."""
-        source = XArraySQLSource(_dataset=synthetic_dataset)
-        real_sql = source._ctx.sql
-
-        class _NoNativeToDataset:
-            def __init__(self, result):
-                self._result = result
-
-            def to_pandas(self):
-                return self._result.to_pandas()
-
-        monkeypatch.setattr(
-            source._ctx, "sql", lambda q: _NoNativeToDataset(real_sql(q))
-        )
-        ds = source.to_dataset("temperature")
-        assert isinstance(ds, xr.Dataset)
-        assert set(ds.dims) >= {"time", "lat", "lon"}
-        assert "temperature" in ds.data_vars

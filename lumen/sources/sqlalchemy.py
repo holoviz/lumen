@@ -140,7 +140,9 @@ class SQLAlchemySource(BaseSQLSource):
             )
 
             if self._driver_is_async:
-                from sqlalchemy.ext.asyncio import create_async_engine
+                from sqlalchemy.ext.asyncio import (  # noqa: PLC0415
+                    create_async_engine,
+                )
                 self._engine = create_async_engine(self._url, **engine_kwargs)
             else:
                 self._engine = create_engine(self._url, **engine_kwargs)
@@ -367,7 +369,7 @@ class SQLAlchemySource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
 
         params = self.table_params.get(table, None)
-        df = self.execute(sql_expr, params)
+        df = self.fetch(sql_expr, params)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df

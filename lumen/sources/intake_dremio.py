@@ -70,7 +70,9 @@ class IntakeDremioSource(IntakeBaseDremioSource):
     source_type = 'intake_dremio'
 
     def __init__(self, **params):
-        from intake_dremio.dremio_cat import DremioCatalog  # type: ignore
+        from intake_dremio.dremio_cat import (  # type: ignore  # noqa: PLC0415
+            DremioCatalog,
+        )
         super().__init__(**params)
         self.cat = DremioCatalog(
             self.uri, cert=self.cert, tls=self.tls, username=self.username,
@@ -96,7 +98,7 @@ class IntakeDremioSQLSource(IntakeBaseDremioSource):
     source_type = 'intake_dremio_sql'
 
     def __init__(self, **params):
-        from intake_dremio.intake_dremio import DremioSource
+        from intake_dremio.intake_dremio import DremioSource  # noqa: PLC0415
         super().__init__(**params)
         self.cat = {
             table: DremioSource(
