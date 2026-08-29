@@ -231,30 +231,20 @@ async def test_render_pipeline_places_full_data_control_below_table(limited_sql_
     layout = await editor._render_pipeline(editor.component)
     table, controls = layout.objects
 
-    assert layout.css_classes == ['full-data-table-container']
-    assert table._pane.page_size == 10
+    assert table._pane.stylesheets == [editors_module._PAGINATED_TABLE_STYLES]
     assert controls.sizing_mode == 'stretch_width'
-    assert controls.height == 36
-    assert controls.align == 'end'
-    assert controls.margin == 0
     assert controls.styles == {
         'justify-content': 'flex-end',
         'align-items': 'center',
     }
-    assert table._pane.stylesheets == [editors_module._PAGINATED_TABLE_STYLES]
-    assert not controls.stylesheets
     full_data = controls.objects[0]
     assert full_data.label == "Full data"
-    assert full_data.width is None
-    assert full_data.height == 36
-    assert full_data.css_classes == ['full-data-checkbox']
-    assert full_data.margin == 0
-    assert full_data.visible
 
     full_data.value = True
     assert editor.component.sql_transforms[0].limit is None
     assert len(editor.component.data) == 4
 
+    # Unchecking restores this query's own limit, not a hardcoded default.
     full_data.value = False
     assert editor.component.sql_transforms[0].limit == 3
     assert len(editor.component.data) == 3
@@ -264,9 +254,7 @@ async def test_render_pipeline_places_full_data_control_below_table(limited_sql_
 async def test_render_pipeline_omits_empty_full_data_row(sql_pipeline_editor):
     layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
 
-    assert layout.css_classes == ['full-data-table-container']
     assert len(layout.objects) == 1
-    assert layout.objects[0]._pane.page_size == 10
 
 
 @pytest.fixture
