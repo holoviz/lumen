@@ -1,0 +1,22 @@
+{% extends 'Actor/main.jinja2' %}
+
+{% block instructions %}
+Generate Python pandas code to transform the provided DataFrame `df`.
+
+Requirements:
+- Use pandas (`pd`) and optionally numpy (`np`); both are available.
+- Assign the final transformed DataFrame to `df_out`.
+- Avoid I/O, plotting, network calls, or system access.
+- Keep transformations deterministic and focused on the user's request.
+- Provide a short, descriptive snake_case `table_slug` for the transformed data.
+{% endblock %}
+
+{% block context %}
+Current table: {{ memory['pipeline'].table }}
+{% if tables is defined and tables %}
+Existing tables: {{ tables }}
+{% endif %}
+
+Dataset summary:
+{{ memory['data'] }}
+{% endblock %}
