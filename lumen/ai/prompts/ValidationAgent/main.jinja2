@@ -2,7 +2,7 @@
 
 {%- block instructions %}
 ## Instructions
-{% if memory.get('sql') %}
+{% if memory.get('sql') and 'sql' not in previous_keys %}
 Analyze if SQL query matches user's request by checking:
 1. What user asked for
 2. What SQL actually does (read carefully)
@@ -14,10 +14,10 @@ VALID = SQL implements user's intent correctly
 - Accept reasonable interpretations; do not over-interpret `limit` (100,000 default)
 - When data fetched from external source, table already scoped to fetched parameters. `SELECT *` or unfiltered query against such table valid if data overview shows requested rows present.
 {% endif %}
-{% if memory.get('view') %}
+{% if memory.get('view') and 'view' not in previous_keys %}
 Analyze if generated view and responses match user's request.
 {% endif %}
-{% if memory.get('listing') %}
+{% if memory.get('listing') and 'listing' not in previous_keys %}
 Listing of items displayed to user. VALID if matches what they asked to see.
 {% endif %}
 Analyze if assistant's response addresses user's request given available context.
