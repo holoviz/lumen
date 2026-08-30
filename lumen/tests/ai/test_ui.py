@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import io
 import sqlite3
@@ -165,6 +166,19 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     # Check Interface contents
     assert len(ui.interface) == 2
     assert len(ui.interface[1].footer_objects) == 2 # Rerun buttons
+
+async def test_sync_sources_survives_partial_init(explorer_ui):
+    """_sync_sources can run before _render_page has set up _exploration/_cta,
+    e.g. when __init__ aborted partway through _configure_context (#1780)."""
+    ui = explorer_ui
+    ui._exploration = None
+    ui._cta = None
+
+    await ui._sync_sources(global_context=ui.context)
+
+    assert ui._exploration is None
+    assert ui._cta is None
+
 
 async def test_sync_sources_keeps_source_and_sources_in_sync(explorer_ui):
     ui = explorer_ui
@@ -1404,6 +1418,60 @@ class TestCLIPathValidation:
             # Should be rejected: is a directory but not .zarr
             assert path.is_dir()
             assert not str(dir_path).endswith('.zarr')
+
+
+class TestLumenAIServeYamlRouting:
+    """A YAML dashboard spec (`lumen serve app.yaml`) needs no LLM provider
+    and must be handled by the base Serve command, not routed into the
+    AIHandler machinery that only understands data files (#1780)."""
+
+    def _build_args(self, *files):
+        from lumen.command.ai import LumenAIServe
+
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        LumenAIServe(sub.add_parser("serve"))
+        return parser.parse_args(["serve", *files])
+
+    def test_yaml_files_skip_aihandler_routing(self):
+        import bokeh.command.subcommands.serve as bokeh_serve
+
+        from panel.command import Serve
+
+        from lumen.command.ai import LumenAIServe
+
+        args = self._build_args("app.yaml")
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True) as base_invoke:
+                result = LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            assert result is True
+            assert base_invoke.called
+            # The AIHandler route must never have been installed for a pure
+            # yaml spec, since it is what feeds the path into
+            # UI._resolve_data() and raises "Could not determine how to load".
+            assert bokeh_serve.build_single_handler_applications is original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_data_files_still_use_aihandler_routing(self):
+        import bokeh.command.subcommands.serve as bokeh_serve
+
+        from panel.command import Serve
+
+        from lumen.command.ai import LumenAIServe
+
+        args = self._build_args("data.csv")
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.command.ai.get_available_llm", return_value=MagicMock()):
+                    LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            # A real data file must still go through the AIHandler-backed
+            # build_single_handler_applications override.
+            assert bokeh_serve.build_single_handler_applications is not original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
 
 
 @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")

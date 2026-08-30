@@ -94,6 +94,11 @@ class LumenAIServe(Serve):
 
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
+        paths = args.files or []
+        if paths and all(Path(path).suffix in ('.yml', '.yaml') for path in paths):
+            # A YAML dashboard spec needs no LLM provider; let Serve.invoke route it.
+            return super().invoke(args)
+
         provider = args.provider
         llm_model_url = args.llm_model_url
         provider_cls = None
