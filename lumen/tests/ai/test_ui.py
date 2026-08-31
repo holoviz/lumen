@@ -1954,6 +1954,28 @@ def test_resolve_data_geojson_startup(tmp_path):
     assert wkt["wkt"].iloc[0].startswith("POLYGON")
 
 
+def test_resolve_data_geojson_startup_keeps_crs(tmp_path):
+    """The CRS read_geo_file captures must reach the source, so the fetched
+    geometry comes back geographic instead of CRS-less (gh-1904)."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    gdf = gpd.GeoDataFrame(
+        {"county": ["A"]},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1)])],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "counties.geojson"
+    gdf.to_file(path, driver="GeoJSON")
+
+    (source,) = UI._resolve_data([str(path)])
+
+    assert source.geometry_crs == "EPSG:4326"
+    result = source.get("counties")
+    assert result.crs is not None
+    assert result.crs.to_epsg() == 4326
+
+
 # ---------------------------------------------------------------------------
 # Resolved model footer label (issue #2043)
 # ---------------------------------------------------------------------------

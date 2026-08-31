@@ -1571,6 +1571,56 @@ def test_duckdb_geometry_crs_propagates_to_derived_source():
     assert derived.get('geo').crs.to_epsg() == 4326
 
 
+def _geo_frame():
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    return gpd.GeoDataFrame(
+        {'name': ['a', 'b']},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(2, 0), (3, 0), (3, 1)]),
+        ],
+        crs='EPSG:4326',
+    )
+
+
+def _skip_if_spatial_unavailable(e: Exception):
+    # pragma: no cover - needs network on first install
+    if 'spatial' in str(e).lower():
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    raise e
+
+
+def test_duckdb_from_df_geodataframe_keeps_crs():
+    """A GeoDataFrame handed to from_df lands as a native GEOMETRY table and
+    keeps its CRS through the WKB roundtrip (gh-1904). DuckDB's pandas scanner
+    rejects the geometry dtype outright, so this previously raised."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert source.geometry_crs == 'EPSG:4326'
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_geodataframe_mirror_keeps_crs():
+    """A GeoDataFrame mirror lands as a native GEOMETRY table and keeps its
+    CRS (gh-1904)."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource(
+            uri=':memory:', mirrors={'geo': gdf}, tables={'geo': 'SELECT * FROM geo'}
+        )
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert result.crs.to_epsg() == 4326
+
+
 def test_duckdb_get_schema_geometry_no_distinct():
     """get_schema on a geometry table returns a geospatial marker and does not
     run DISTINCT/min-max on the geometry column."""

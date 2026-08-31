@@ -22,7 +22,8 @@ from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
 from ..util import (
-    as_pandas, detect_file_encoding, normalize_table_name, try_import,
+    as_pandas, detect_file_encoding, geometry_columns, normalize_table_name,
+    try_import,
 )
 from .base import BaseSQLSource, Source, cached
 
@@ -188,20 +189,54 @@ class DuckDBSource(BaseSQLSource):
                     df = as_pandas(e.new)
                     for col in df.select_dtypes(include=['string']).columns:
                         df[col] = df[col].astype(object)
-                    self._connection.from_df(df).to_view(table)
+                    self._ingest_table(table, df)
                     self._set_cache(df, table)
                 mirror.param.watch(update, 'data')
             df = as_pandas(df)
             try:
                 for col in df.select_dtypes(include=['string']).columns:
                     df[col] = df[col].astype(object)
-                self._connection.from_df(df).to_view(table)
+                self._ingest_table(table, df)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
 
     @property
     def connection(self):
         return self._connection
+
+    def _ingest_table(self, name: str, df: pd.DataFrame):
+        """Expose a DataFrame on the connection under `name`.
+
+        A frame without geometry columns is exposed as a view directly.
+        DuckDB's pandas scanner does not understand the geometry dtype, so
+        geometry columns pass through WKB and ST_GeomFromWKB into a native
+        GEOMETRY table instead. WKB carries no CRS, so it is captured on
+        `geometry_crs` for `_fetch_df` to reapply after fetching (gh-1904).
+        """
+        geom_cols = geometry_columns(df)
+        if not geom_cols:
+            self._connection.from_df(df).to_view(name)
+            return
+        gpd = try_import("geopandas")
+        wkb, crs = pd.DataFrame(df).copy(), None
+        for col in geom_cols:
+            series = gpd.GeoSeries(df[col])
+            crs = crs or series.crs
+            wkb[col] = series.to_wkb()
+        selected = ', '.join(
+            f'ST_GeomFromWKB("{c}") AS "{c}"' if c in geom_cols else f'"{c}"'
+            for c in df.columns
+        )
+        self._connection.execute('INSTALL spatial;\nLOAD spatial;')
+        self._connection.register(f'{name}__wkb', wkb)
+        # Materialized as a real table: a view over the registered frame would
+        # be invisible to the cursors queries run on.
+        self._connection.execute(
+            f'CREATE OR REPLACE TABLE "{name}" AS SELECT {selected} FROM "{name}__wkb"'
+        )
+        self._connection.unregister(f'{name}__wkb')
+        if crs is not None and not self.geometry_crs:
+            self.geometry_crs = str(crs)
 
     def _run_initializer(self, init: str) -> None:
         try:
@@ -355,7 +390,7 @@ class DuckDBSource(BaseSQLSource):
             # DuckDB occasionally has issues with the new pandas string dtype
             for col in df.select_dtypes(include=['string']).columns:
                 df[col] = df[col].astype(object)
-            source._connection.from_df(df).to_view(name)
+            source._ingest_table(name, df)
             table_defs[name] = source.sql_expr.format(table=name)
         source.tables = table_defs
         return source
