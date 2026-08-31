@@ -27,19 +27,17 @@ classifiers = [
 ]
 dependencies = [
     "bokeh",
-    "chardet",
     "duckdb >=1.2.0",
-    "lxml",
     "griffe",
     "holoviews >=1.17.0",
     "hvplot",
     "instructor >=1.14.3",
-    "intake <2",
     "jinja2 >3.0",
     "markitdown",
     "narwhals >=2",
     "nbformat",
     "numpy",
+    "openai",
     "packaging",
     "pandas",
     "panel >=1.7.5",
@@ -63,14 +61,14 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars', 'pyarrow']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'chardet', 'lxml', 'polars', 'sqlalchemy']
 dev = [
-    'lumen[tests,sql,ai-openai,xarray,geo]',
+    'lumen[tests,sql,intake,xarray,geo]',
     'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
-ai-openai = ['openai']
+ai-openai = []
 ai-openrouter = ['lumen[ai-openai]']
 ai-mistralai = ['mistralai']
 ai-bedrock = ['boto3>=1.42.23']
@@ -82,6 +80,7 @@ ai-litellm = ['litellm']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
+intake = ['intake <2']
 xarray = ['xarray', 'xarray-sql >=0.3.1', 'netCDF4', 'zarr']
 xarray-grib = ['lumen[xarray]', 'cfgrib', 'eccodes']
 geo = ['geopandas', 'geoviews']
