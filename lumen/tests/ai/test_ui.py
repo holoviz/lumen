@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import bokeh.command.subcommands.serve as bokeh_serve
 import duckdb
 import numpy as np
 import pytest
@@ -26,6 +27,7 @@ try:
 except ImportError:
     HAS_XARRAY = False
 
+from panel.command import Serve
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
 from panel.util import edit_readonly
@@ -44,6 +46,7 @@ from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
+from lumen.command.ai import LumenAIServe
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -1426,20 +1429,12 @@ class TestLumenAIServeYamlRouting:
     AIHandler machinery that only understands data files (#1780)."""
 
     def _build_args(self, *files):
-        from lumen.command.ai import LumenAIServe
-
         parser = argparse.ArgumentParser()
         sub = parser.add_subparsers()
         LumenAIServe(sub.add_parser("serve"))
         return parser.parse_args(["serve", *files])
 
     def test_yaml_files_skip_aihandler_routing(self):
-        import bokeh.command.subcommands.serve as bokeh_serve
-
-        from panel.command import Serve
-
-        from lumen.command.ai import LumenAIServe
-
         args = self._build_args("app.yaml")
         original = bokeh_serve.build_single_handler_applications
         try:
@@ -1455,12 +1450,6 @@ class TestLumenAIServeYamlRouting:
             bokeh_serve.build_single_handler_applications = original
 
     def test_data_files_still_use_aihandler_routing(self):
-        import bokeh.command.subcommands.serve as bokeh_serve
-
-        from panel.command import Serve
-
-        from lumen.command.ai import LumenAIServe
-
         args = self._build_args("data.csv")
         original = bokeh_serve.build_single_handler_applications
         try:
@@ -1470,6 +1459,41 @@ class TestLumenAIServeYamlRouting:
             # A real data file must still go through the AIHandler-backed
             # build_single_handler_applications override.
             assert bokeh_serve.build_single_handler_applications is not original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_uppercase_yaml_suffix_skips_aihandler_routing(self):
+        """A case-differing suffix (Windows/macOS default filesystems are
+        case-insensitive) must route the same as a lowercase one, not fall
+        through to the AIHandler branch (#1780)."""
+        args = self._build_args("app.YAML")
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True) as base_invoke:
+                result = LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            assert result is True
+            assert base_invoke.called
+            assert bokeh_serve.build_single_handler_applications is original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_yaml_route_resets_stale_aihandler_override(self):
+        """A prior in-process invoke() call for a data file leaves the
+        AIHandler-backed closure installed; a later yaml-only invoke() call
+        must restore the original before delegating, not reuse it (#1780)."""
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            data_args = self._build_args("data.csv")
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.command.ai.get_available_llm", return_value=MagicMock()):
+                    LumenAIServe(argparse.ArgumentParser()).invoke(data_args)
+            stale_closure = bokeh_serve.build_single_handler_applications
+            assert stale_closure is not original
+
+            yaml_args = self._build_args("app.yaml")
+            with patch.object(Serve, "invoke", return_value=True):
+                LumenAIServe(argparse.ArgumentParser()).invoke(yaml_args)
+            assert bokeh_serve.build_single_handler_applications is original
         finally:
             bokeh_serve.build_single_handler_applications = original
 

@@ -62,8 +62,11 @@ class YamlHandler(CodeHandler):
             super().modify_document(doc)
 
 
+YAML_SUFFIXES = ('.yml', '.yaml')
+
+
 def build_single_handler_application(path, argv):
-    if not os.path.isfile(path) or not path.endswith(('.yml', '.yaml')):
+    if not os.path.isfile(path) or not path.lower().endswith(YAML_SUFFIXES):
         return _build_application(path, argv)
 
     handler = YamlHandler(filename=path)
