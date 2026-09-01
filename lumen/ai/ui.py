@@ -695,8 +695,8 @@ class UI(Viewer):
 
         source = DuckDBSource(
             initializers=result.source_params.get('initializers', []),
-            # WKB carries no CRS, so reapply the one read_geo_file captured
-            # from the file after the roundtrip (gh-1904)
+            # WKB carries no CRS, so re apply the one read_geo_file captured
+            # from the file after the roundtrip
             geometry_crs=result.source_params.get('geometry_crs'),
             tables={},
             uri=':memory:',
