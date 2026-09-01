@@ -25,6 +25,7 @@ Analyze if assistant's response addresses user's request given available context
 {% endif %}
 VALID = response uses available context to answer; do not penalize missing data never loaded or available.
 Clarifying question IS valid response when user's request ambiguous or when assistant lacks sufficient context to act directly.
+{% endif %}
 {%- if memory.get('clarifications') %}
 Clarifications collected from user during planning. User's answers refine or override original request. Validate against CLARIFIED intent, not original ambiguous request.
 {%- endif %}
@@ -33,7 +34,7 @@ Items labeled "(From previous plan)" leftover context from earlier plan. May pro
 
 {%- block examples %}
 ## Examples (illustrative — `data`, `sales`, `region` etc. placeholders, not real tables/columns)
-{% if memory.get('sql') -%}
+{% if memory.get('sql') and 'sql' not in previous_keys -%}
 User: "by region?"
 SQL: SELECT region, SUM(sales) FROM data GROUP BY region
 VALID - has GROUP BY region
@@ -54,10 +55,12 @@ User: "total by state"
 SQL: SELECT state, SUM(amount) FROM data GROUP BY state
 VALID - groups by state with SUM
 {% endif %}
+{% if 'chat' not in previous_keys -%}
 User: "Summarize survey results" → Response with field breakdowns and patterns → VALID
 User: "What are top selling products?" → Generic discussion, no rankings → INVALID
 User: "Show me data" → Response listing available columns and asking what to explore → VALID (clarifying question when request ambiguous)
-{% if memory.get('view') -%}
+{% endif %}
+{% if memory.get('view') and 'view' not in previous_keys -%}
 User: "bar chart of sales by region" → bar mark with region on x, sales on y → VALID
 User: "line chart over time" → bar chart with no time axis → INVALID
 {% endif %}
