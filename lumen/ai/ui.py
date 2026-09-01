@@ -1619,7 +1619,7 @@ class UI(Viewer):
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
-        if hasattr(self, '_cta'):
+        if self._cta is not None:
             self._cta.object = self._get_status_text()
 
         if hasattr(self, '_input_tabs'):
@@ -2322,6 +2322,8 @@ class ExplorerUI(UI):
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
         """Propagate source keys into the active exploration's context."""
+        if self._exploration is None:
+            return
         exploration = self._exploration.get('view')
         if exploration is None or exploration is self._home:
             return
