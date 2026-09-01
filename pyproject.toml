@@ -42,7 +42,7 @@ dependencies = [
     "numpy",
     "packaging",
     "pandas",
-    "panel >=1.7.5",
+    "panel >=1.9.0",
     "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
