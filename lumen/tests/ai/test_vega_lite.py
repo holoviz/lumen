@@ -11,6 +11,7 @@ except ModuleNotFoundError:
 import vl_convert
 
 from lumen.ai.agents.vega_lite import VegaLiteAgent
+from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.utils import category_palette, normalize_vegalite_spec
 from lumen.config import dump_yaml
@@ -77,6 +78,15 @@ def test_normalize_vegalite_spec_adds_geographic_interactivity():
     assert spec["projection"]["type"] == "mercator"
     assert "scale" in {p.get("name") for p in spec["params"]}
     assert "layer" in spec
+
+
+def test_main_prompt_guards_ungrouped_multi_series_lines():
+    """A categorical column left un-aggregated and un-split joins its rows into
+    one zigzagging line, so the split-or-aggregate guidance must survive as a
+    pair rather than collapse to neither escape hatch."""
+    text = (PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2").read_text()
+    assert "zigzag" in text
+    assert "aggregate" in text.lower()
 
 
 CATEGORICAL_SPEC = {
