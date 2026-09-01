@@ -1552,7 +1552,7 @@ def test_duckdb_geometry_crs_none_by_default():
 
 
 def test_duckdb_geometry_crs_preserved():
-    """geometry_crs is reapplied when rebuilding the GeoDataFrame (gh-1904)."""
+    """geometry_crs is reapplied when rebuilding the GeoDataFrame."""
     source, gpd = _spatial_source()
     source.geometry_crs = 'EPSG:4326'
     result = source.get('geo')
@@ -1561,7 +1561,7 @@ def test_duckdb_geometry_crs_preserved():
 
 
 def test_duckdb_geometry_crs_propagates_to_derived_source():
-    """A source created via create_sql_expr_source keeps geometry_crs (gh-1904)."""
+    """A source created via create_sql_expr_source keeps geometry_crs."""
     source, gpd = _spatial_source()
     source.geometry_crs = 'EPSG:4326'
     derived = source.create_sql_expr_source(
@@ -1569,6 +1569,99 @@ def test_duckdb_geometry_crs_propagates_to_derived_source():
     )
     assert derived.geometry_crs == 'EPSG:4326'
     assert derived.get('geo').crs.to_epsg() == 4326
+
+
+def _geo_frame():
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    return gpd.GeoDataFrame(
+        {'name': ['a', 'b']},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(2, 0), (3, 0), (3, 1)]),
+        ],
+        crs='EPSG:4326',
+    )
+
+
+def _skip_if_spatial_unavailable(e: Exception):
+    # pragma: no cover - needs network on first install
+    if 'spatial' in str(e).lower():
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    raise e
+
+
+def test_duckdb_from_df_geodataframe_keeps_crs():
+    """A GeoDataFrame handed to from_df lands as a native GEOMETRY table and
+    keeps its CRS through the WKB roundtrip. DuckDB's pandas scanner rejects
+    the geometry dtype outright, so this previously raised."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    # the CRS travels on the GEOMETRY('EPSG:4326') column type, not the
+    # source-wide fallback param
+    assert source.geometry_crs is None
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_from_df_geodataframes_keep_distinct_crs():
+    """Each ingested table records its own CRS on the column type, so two
+    tables with different CRS do not share one source-wide label."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(
+            tables={'wgs': gdf, 'mercator': gdf.to_crs('EPSG:3857')}
+        )
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    assert source.get('wgs').crs.to_epsg() == 4326
+    assert source.get('mercator').crs.to_epsg() == 3857
+
+
+def test_duckdb_ingest_flips_between_geometry_and_plain():
+    """Re-ingesting under the same name may flip between the view a plain
+    frame gets and the table a geometry frame needs (e.g. a mirrored Pipeline
+    update gaining or losing geometry); neither direction may raise."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    source._ingest_table('geo', pd.DataFrame({'name': ['a']}))  # table -> view
+    assert list(source.execute('SELECT * FROM geo').columns) == ['name']
+    source._ingest_table('geo', gdf)  # view -> table
+    assert source.execute('SELECT * FROM geo').crs.to_epsg() == 4326
+
+
+def test_duckdb_geometry_ingest_quotes_identifiers():
+    """Identifiers with embedded quotes survive the ingest SQL."""
+    gdf = _geo_frame().rename(columns={'name': 'na"me'})
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert 'na"me' in result.columns
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_geodataframe_mirror_keeps_crs():
+    """A GeoDataFrame mirror lands as a native GEOMETRY table and keeps its
+    CRS."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource(
+            uri=':memory:', mirrors={'geo': gdf}, tables={'geo': 'SELECT * FROM geo'}
+        )
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert result.crs.to_epsg() == 4326
 
 
 def test_duckdb_get_schema_geometry_no_distinct():
