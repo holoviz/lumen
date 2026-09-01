@@ -217,7 +217,7 @@ class DuckDBSource(BaseSQLSource):
         geometry columns pass through WKB and ST_GeomFromWKB into a native
         GEOMETRY table instead. WKB carries no CRS, so each column's CRS is
         recorded on its GEOMETRY('<crs>') column type for `_fetch_df` to
-        reapply after fetching (gh-1904).
+        reapply after fetching.
         """
         geom_cols = geometry_columns(df)
         if not geom_cols:

@@ -1552,7 +1552,7 @@ def test_duckdb_geometry_crs_none_by_default():
 
 
 def test_duckdb_geometry_crs_preserved():
-    """geometry_crs is reapplied when rebuilding the GeoDataFrame (gh-1904)."""
+    """geometry_crs is reapplied when rebuilding the GeoDataFrame."""
     source, gpd = _spatial_source()
     source.geometry_crs = 'EPSG:4326'
     result = source.get('geo')
@@ -1561,7 +1561,7 @@ def test_duckdb_geometry_crs_preserved():
 
 
 def test_duckdb_geometry_crs_propagates_to_derived_source():
-    """A source created via create_sql_expr_source keeps geometry_crs (gh-1904)."""
+    """A source created via create_sql_expr_source keeps geometry_crs."""
     source, gpd = _spatial_source()
     source.geometry_crs = 'EPSG:4326'
     derived = source.create_sql_expr_source(
@@ -1593,8 +1593,8 @@ def _skip_if_spatial_unavailable(e: Exception):
 
 def test_duckdb_from_df_geodataframe_keeps_crs():
     """A GeoDataFrame handed to from_df lands as a native GEOMETRY table and
-    keeps its CRS through the WKB roundtrip (gh-1904). DuckDB's pandas scanner
-    rejects the geometry dtype outright, so this previously raised."""
+    keeps its CRS through the WKB roundtrip. DuckDB's pandas scanner rejects
+    the geometry dtype outright, so this previously raised."""
     gdf = _geo_frame()
     try:
         source = DuckDBSource.from_df(tables={'geo': gdf})
@@ -1651,7 +1651,7 @@ def test_duckdb_geometry_ingest_quotes_identifiers():
 
 def test_duckdb_geodataframe_mirror_keeps_crs():
     """A GeoDataFrame mirror lands as a native GEOMETRY table and keeps its
-    CRS (gh-1904)."""
+    CRS."""
     gdf = _geo_frame()
     try:
         source = DuckDBSource(

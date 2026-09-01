@@ -1956,7 +1956,7 @@ def test_resolve_data_geojson_startup(tmp_path):
 
 def test_resolve_data_geojson_startup_keeps_crs(tmp_path):
     """The CRS read_geo_file captures must reach the source, so the fetched
-    geometry comes back geographic instead of CRS-less (gh-1904)."""
+    geometry comes back geographic instead of CRS-less."""
     gpd = pytest.importorskip("geopandas")
     from shapely.geometry import Polygon
 
