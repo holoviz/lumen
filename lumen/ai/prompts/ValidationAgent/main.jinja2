@@ -20,7 +20,9 @@ Analyze if generated view and responses match user's request.
 {% if memory.get('listing') and 'listing' not in previous_keys %}
 Listing of items displayed to user. VALID if matches what they asked to see.
 {% endif %}
+{% if 'chat' not in previous_keys %}
 Analyze if assistant's response addresses user's request given available context.
+{% endif %}
 VALID = response uses available context to answer; do not penalize missing data never loaded or available.
 Clarifying question IS valid response when user's request ambiguous or when assistant lacks sufficient context to act directly.
 {%- if memory.get('clarifications') %}
