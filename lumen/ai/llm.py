@@ -1476,7 +1476,12 @@ class ClaudeCodeCLI(_CLILlm):
         doc="Claude Code permission mode. The non-writing plan mode is the default.",
     )
 
-    max_turns = param.Integer(default=1, bounds=(1, None), constant=True, doc="Maximum Claude Code turns per Lumen request.")
+    max_turns = param.Integer(
+        default=3,
+        bounds=(1, None),
+        constant=True,
+        doc="Maximum Claude Code turns per Lumen request, including internal tool calls.",
+    )
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
 

@@ -189,7 +189,7 @@ def test_claude_code_command_defaults_to_plan_mode():
 
     assert command == [
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
-        "--max-turns", "1", "--permission-mode", "plan", "--model", "sonnet",
+        "--max-turns", "3", "--permission-mode", "plan", "--model", "sonnet",
     ]
 
 

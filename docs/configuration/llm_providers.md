@@ -164,8 +164,10 @@ lumen-ai serve penguins.csv --provider claude-code
     The server process launches a command-line agent for every LLM request. Do
     not expose this configuration as a public or multi-user Lumen deployment.
     Codex runs with its `read-only` sandbox and Claude Code uses `plan` mode by
-    default. The providers collect a completed response rather than streaming
-    tokens, and do not yet expose Lumen function tools to the coding CLIs.
+    default. Claude Code can use up to three turns per Lumen request so it can
+    complete internal tool calls. The providers collect a completed response
+    rather than streaming tokens, and do not yet expose Lumen function tools to
+    the coding CLIs.
 
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
