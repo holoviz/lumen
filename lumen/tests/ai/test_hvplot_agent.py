@@ -97,3 +97,16 @@ def test_a_value_outside_the_choices_does_not_break_the_model():
     model = param_to_pydantic(type(instance), base_model=BaseModel)[type(instance).__name__]
 
     assert set(model.model_json_schema()["properties"]["cmap"]["enum"]) == {"viridis", "fire"}
+
+
+async def test_an_axis_naming_a_missing_column_is_dropped(pipeline):
+    """The model can answer with a column it expected its query to create, and
+    hvPlot only finds out while drawing, where it raises a bare KeyError."""
+    spec = {"kind": "bar", "x": "elevation_band", "y": "y", "by": ["nope"], "groupby": ["x"]}
+
+    extracted = await hvPlotAgent()._extract_spec({"pipeline": pipeline}, spec)
+
+    assert "x" not in extracted
+    assert extracted["y"] == "y"
+    assert "by" not in extracted
+    assert extracted["groupby"] == ["x"]
