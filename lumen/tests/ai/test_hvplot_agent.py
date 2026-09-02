@@ -14,7 +14,7 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.translate import param_to_pydantic
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views.base import hvPlotUIView
+from lumen.views.hvplot import hvPlotUIView
 
 
 @pytest.fixture

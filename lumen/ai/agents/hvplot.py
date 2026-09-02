@@ -5,8 +5,8 @@ import param
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from ...views import hvPlotUIView
-from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
+from ...views import hvPlotView
+from ...views.hvplot import GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..translate import param_to_pydantic
@@ -35,7 +35,7 @@ class hvPlotAgent(BaseViewAgent):
         }
     )
 
-    view_type = hvPlotUIView
+    view_type = hvPlotView
 
     def _get_model(self, prompt_name: str, schema: dict[str, Any] | None = None) -> type[BaseModel]:
         # Only the main prompt describes the view. Every other prompt, revise
@@ -54,6 +54,12 @@ class hvPlotAgent(BaseViewAgent):
             "download",
             "field",
             "selection_group",
+            # Runtime state and HoloViews-level escape hatches: nothing a plot
+            # request asks for, and nothing the model could fill sensibly.
+            "operations",
+            "opts",
+            "selection_expr",
+            "streaming",
         ]
         model = param_to_pydantic(
             self.view_type,
@@ -105,7 +111,7 @@ class hvPlotAgent(BaseViewAgent):
         # hvPlotExplorer rejects any keyword none of its controls claims.
         spec.pop("chain_of_thought", None)
         self._drop_conflicting_axes(spec)
-        spec["type"] = "hvplot_ui"
+        spec["type"] = "hvplot"
         self.view_type.validate(spec)
         spec.pop("type", None)
 

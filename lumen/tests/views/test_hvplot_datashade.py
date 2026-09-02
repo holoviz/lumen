@@ -5,8 +5,8 @@ from hvplot.ui import Colormapping
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views import base as views_base
-from lumen.views.base import hvPlotBaseView, hvPlotUIView, hvPlotView
+from lumen.views import hvplot as views_hvplot
+from lumen.views.hvplot import hvPlotBaseView, hvPlotUIView, hvPlotView
 
 from ..utils import requires_datashader
 
@@ -228,7 +228,7 @@ def test_hvplot_ui_view_builds_explorer(categorical_pipeline):
 def test_render_cap_exempts_datashade_param(categorical_pipeline, monkeypatch):
     """The cap reads the param now; reading only kwargs would reject every
     datashaded plot, which is exactly the large-frame case datashade is for."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 2)
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 2)
     view = hvPlotView(
         pipeline=categorical_pipeline, kind="points", x="x", y="y", datashade=True
     )
@@ -239,7 +239,7 @@ def test_render_cap_exempts_datashade_param(categorical_pipeline, monkeypatch):
 
 def test_render_cap_still_exempts_rasterize_kwarg(categorical_pipeline, monkeypatch):
     """rasterize stays a plain kwarg and must keep its exemption."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 2)
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 2)
     view = hvPlotView(
         pipeline=categorical_pipeline, kind="points", x="x", y="y", rasterize=True
     )
@@ -249,7 +249,7 @@ def test_render_cap_still_exempts_rasterize_kwarg(categorical_pipeline, monkeypa
 
 
 def test_render_cap_still_raises_without_aggregation(categorical_pipeline, monkeypatch):
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 2)
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 2)
     view = hvPlotView(pipeline=categorical_pipeline, kind="points", x="x", y="y")
     over_cap = pd.DataFrame({"x": range(10), "y": range(10)})
 

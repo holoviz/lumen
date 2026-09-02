@@ -19,9 +19,10 @@ lint = ["py312", "lint"]
 
 [dependencies]
 bokeh = "*"
+griffe = "*"
 holoviews = ">=1.17.0"
 panel-material-ui = ">=0.14.0"
-hvplot = "*"
+hvplot = ">=0.11.3"
 intake = "<2"
 jinja2 = ">3.0"
 lxml = "*"
@@ -49,7 +50,6 @@ COVERAGE_CORE = "sysmon"
 [feature.ai.dependencies]
 chardet = "*"
 duckdb = ">=1.2.0"
-griffe = "*"
 instructor = ">=1.14.3"
 markitdown = "!=0.1.1"
 nbformat = "*"

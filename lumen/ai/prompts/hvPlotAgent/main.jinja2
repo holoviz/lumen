@@ -12,6 +12,10 @@ aggregates per pixel and blends the categories sharing one, instead of drawing p
 Add `dynspread=True` when the points are sparse enough to disappear. Set `color_key` to an explicit
 {category: hex} mapping only when the user names colors or asks for a specific palette; otherwise leave it
 unset and a categorical palette is chosen. Do not set `datashade` for a plot with no `by`.
+
+Set a styling option (axis scale, axis limits, labels, legend, color, colormap, opacity, font
+size) only when the request asks for what it controls. hvPlot picks the rest from the data, so
+an option set without being asked for makes the plot worse rather than more finished.
 {%- if gridded is defined and gridded %}
 
 For gridded xarray data (dimensions {{ gridded.dims | join(', ') }}, variables {{ gridded.data_vars | join(', ') }}), pick framing request calls for:
