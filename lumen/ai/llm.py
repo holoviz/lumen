@@ -1233,7 +1233,7 @@ class Llm(param.Parameterized):
         return result
 
 
-class _CLILlm(Llm):
+class LlmCli(Llm):
     """Base class for locally authenticated coding CLIs.
 
     These providers invoke an already authenticated local CLI instead of handling
@@ -1420,7 +1420,7 @@ class _CLILlm(Llm):
         return result
 
 
-class CodexCLI(_CLILlm):
+class CodexCLI(LlmCli):
     """Use the locally authenticated Codex CLI as a Lumen provider."""
 
     display_name = param.String(default="Codex CLI", constant=True)
@@ -1462,7 +1462,7 @@ class CodexCLI(_CLILlm):
         return final_message.strip()
 
 
-class ClaudeCodeCLI(_CLILlm):
+class ClaudeCodeCLI(LlmCli):
     """Use the locally authenticated Claude Code CLI as a Lumen provider."""
 
     display_name = param.String(default="Claude Code CLI", constant=True)

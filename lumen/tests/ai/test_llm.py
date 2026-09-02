@@ -16,8 +16,8 @@ try:
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCodeCLI,
-        CodexCLI, Google, Groq, LiteLLM, LlamaCpp, Llm, Message, MistralAI,
-        Ollama, OpenAI, WebLLM,
+        CodexCLI, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
+        MistralAI, Ollama, OpenAI, WebLLM,
     )
     from lumen.ai.tools import FunctionTool
 
@@ -169,6 +169,8 @@ def test_cli_providers_are_registered():
     """CLI-backed subscription providers can be selected explicitly by the command line."""
     assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCLI"
     assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCodeCLI"
+    assert issubclass(CodexCLI, LlmCli)
+    assert issubclass(ClaudeCodeCLI, LlmCli)
 
 
 def test_codex_cli_command_defaults_to_read_only():
