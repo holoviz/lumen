@@ -1,5 +1,3 @@
-import re
-
 from typing import Any, NotRequired
 
 import param
@@ -50,6 +48,33 @@ class ValidationOutputs(ContextModel):
     validation_result: str
 
 
+def get_plan_required_keys(plan):
+    """
+    Check which context keys are required by the tasks in the plan.
+
+    Iterates over each task's ``input_schema`` annotations and checks
+    whether any task declares ``sql``, ``view``, ``chat``, or ``listing``
+    as an input dependency.
+
+    Parameters
+    ----------
+    plan : list[ActorTask]
+        The list of tasks produced by the planner.
+
+    Returns
+    -------
+    dict[str, bool]
+        A dictionary mapping each context key to ``True`` if any task
+        in the plan requires it, ``False`` otherwise.
+    """
+    context_keys = {"sql", "view", "chat", "listing"}
+    all_input_keys = set()
+    for task in plan:
+        annotations = set(task.input_schema.__annotations__.keys())
+        all_input_keys |= annotations
+    return {key: key in all_input_keys for key in context_keys}
+
+
 class ValidationAgent(Agent):
     """
     ValidationAgent focuses solely on validating whether the executed plan
@@ -94,39 +119,15 @@ class ValidationAgent(Agent):
         """
         ctx = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
 
-        # Extract the latest user query
-        user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
-        query_text = content_to_text(user_messages[0].get("content", "")).lower() if user_messages else ""
-        query_words = set(re.findall(r'\b\w+\b', query_text))
-
-        # Define category-specific continuation keywords
-        general_keywords = {"it", "this", "that", "these", "those", "also", "and", "now", "previous"}
-        sql_keywords = {"filter", "sort", "limit", "top", "include", "group"}
-        view_keywords = {"color", "label", "chart", "plot", "axis", "instead", "make"}
-        chat_keywords = {"elaborate", "translate", "explain", "why", "point"}
-
-        # Determine which categories are requested to be kept
-        keep_sql = bool(query_words.intersection(sql_keywords | general_keywords))
-        keep_view = bool(query_words.intersection(view_keywords | general_keywords))
-        keep_chat = bool(query_words.intersection(chat_keywords | general_keywords))
-        keep_listing = bool(query_words.intersection(general_keywords))
-
         plan = context.get("plan")
         previous_keys = set()
         if plan is not None:
+            required_keys = get_plan_required_keys(plan)
             produced = {k for task in plan for k in task.out_context}
             for key in ("chat", "sql", "view", "listing"):
                 if key in context and key not in produced:
-                    # Check if we should KEEP this key (i.e., NOT mark as stale)
-                    if key == "sql" and keep_sql:
+                    if required_keys.get(key, False):
                         continue
-                    if key == "view" and keep_view:
-                        continue
-                    if key == "chat" and keep_chat:
-                        continue
-                    if key == "listing" and keep_listing:
-                        continue
-
                     previous_keys.add(key)
         ctx["previous_keys"] = previous_keys
         return ctx
