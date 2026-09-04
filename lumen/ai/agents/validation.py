@@ -48,32 +48,6 @@ class ValidationOutputs(ContextModel):
     validation_result: str
 
 
-def get_plan_required_keys(plan):
-    """
-    Check which context keys are required by the tasks in the plan.
-
-    Iterates over each task's ``input_schema`` annotations and checks
-    whether any task declares ``sql``, ``view``, ``chat``, or ``listing``
-    as an input dependency.
-
-    Parameters
-    ----------
-    plan : list[ActorTask]
-        The list of tasks produced by the planner.
-
-    Returns
-    -------
-    dict[str, bool]
-        A dictionary mapping each context key to ``True`` if any task
-        in the plan requires it, ``False`` otherwise.
-    """
-    context_keys = {"sql", "view", "chat", "listing"}
-    all_input_keys = set()
-    for task in plan:
-        all_input_keys |= input_dependency_keys(task.input_schema)
-    return {key: key in all_input_keys for key in context_keys}
-
-
 class ValidationAgent(Agent):
     """
     ValidationAgent focuses solely on validating whether the executed plan
@@ -121,13 +95,14 @@ class ValidationAgent(Agent):
         plan = context.get("plan")
         previous_keys = set()
         if plan is not None:
-            required_keys = get_plan_required_keys(
-                task for task in plan if task.actor is not self
-            )
+            required_keys = set()
+            for task in plan:
+                if task.actor is not self:
+                    required_keys |= input_dependency_keys(task.input_schema)
             produced = {k for task in plan for k in task.out_context}
             for key in ("chat", "sql", "view", "listing"):
                 if key in context and key not in produced:
-                    if required_keys.get(key, False):
+                    if key in required_keys:
                         continue
                     previous_keys.add(key)
         ctx["previous_keys"] = previous_keys
