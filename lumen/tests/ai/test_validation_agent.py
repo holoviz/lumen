@@ -9,7 +9,9 @@ import pytest
 try:
     from lumen.ai.agents.chat import ChatAgent
     from lumen.ai.agents.sql import SQLAgent
-    from lumen.ai.agents.validation import ValidationAgent, get_plan_required_keys
+    from lumen.ai.agents.validation import (
+        ValidationAgent, get_plan_required_keys,
+    )
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.coordinator.base import Plan
     from lumen.ai.report import ActorTask
