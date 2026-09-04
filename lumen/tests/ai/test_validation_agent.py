@@ -4,7 +4,12 @@ import jinja2
 import pytest
 
 try:
+    from lumen.ai.agents.chat import ChatAgent
+    from lumen.ai.agents.sql import SQLAgent
+    from lumen.ai.agents.validation import ValidationAgent
     from lumen.ai.config import PROMPTS_DIR
+    from lumen.ai.coordinator.base import Plan
+    from lumen.ai.report import ActorTask
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
@@ -60,3 +65,28 @@ def test_validation_agent_previous_keys_gating(jinja_env):
     assert "SQL: SELECT region, SUM(sales)" not in rendered
     assert "User: \"Summarize survey results\"" not in rendered
     assert "User: \"bar chart of sales by region\"" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "out_context", "expected_previous_keys"),
+    [
+        pytest.param(ChatAgent, {}, {"sql"}, id="stale_sql"),
+        pytest.param(SQLAgent, {}, set(), id="reused_sql"),
+        pytest.param(ChatAgent, {"sql": "SELECT current"}, set(), id="current_sql"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_validation_agent_uses_prior_plan_dependencies(
+    agent_type, out_context, expected_previous_keys,
+):
+    validation_agent = ValidationAgent()
+    plan = Plan(
+        ActorTask(agent_type(), out_context=out_context),
+        ActorTask(validation_agent),
+    )
+
+    prompt_context = await validation_agent._gather_prompt_context(
+        "main", [], {"plan": plan, "sql": "SELECT current"},
+    )
+
+    assert prompt_context["previous_keys"] == expected_previous_keys
