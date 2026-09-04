@@ -68,21 +68,25 @@ def test_validation_agent_previous_keys_gating(jinja_env):
 
 
 @pytest.mark.parametrize(
-    ("agent_type", "expected_previous_keys"),
+    ("agent_type", "out_context", "expected_previous_keys"),
     [
-        pytest.param(ChatAgent, {"sql"}, id="stale_sql"),
-        pytest.param(SQLAgent, set(), id="reused_sql"),
+        pytest.param(ChatAgent, {}, {"sql"}, id="stale_sql"),
+        pytest.param(SQLAgent, {}, set(), id="reused_sql"),
+        pytest.param(ChatAgent, {"sql": "SELECT current"}, set(), id="current_sql"),
     ],
 )
 @pytest.mark.asyncio
 async def test_validation_agent_uses_prior_plan_dependencies(
-    agent_type, expected_previous_keys,
+    agent_type, out_context, expected_previous_keys,
 ):
     validation_agent = ValidationAgent()
-    plan = Plan(ActorTask(agent_type()), ActorTask(validation_agent))
+    plan = Plan(
+        ActorTask(agent_type(), out_context=out_context),
+        ActorTask(validation_agent),
+    )
 
     prompt_context = await validation_agent._gather_prompt_context(
-        "main", [], {"plan": plan, "sql": "SELECT old"},
+        "main", [], {"plan": plan, "sql": "SELECT current"},
     )
 
     assert prompt_context["previous_keys"] == expected_previous_keys
