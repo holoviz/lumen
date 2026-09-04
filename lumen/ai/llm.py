@@ -74,6 +74,8 @@ LLM_PROVIDERS = {
     'litellm': 'LiteLLM',
     'openrouter': 'OpenRouter',
     'kilo': 'Kilo',
+    'codex-cli': 'CodexCLI',
+    'claude-code': 'ClaudeCodeCLI',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
@@ -1229,6 +1231,282 @@ class Llm(param.Parameterized):
                 result = result.output
         log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
+
+
+class LlmCli(Llm):
+    """Base class for locally authenticated coding CLIs.
+
+    These providers invoke an already authenticated local CLI instead of handling
+    credentials. They are intended for local development only: output is collected
+    after the command completes and native Lumen function tools are not forwarded
+    to the CLI.
+    """
+
+    executable = param.String(default="", constant=True, doc="Path or name of the CLI executable.")
+
+    working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
+        Working directory for CLI subprocesses. By default, the CLI inherits the
+        directory from which Lumen was launched.""")
+
+    _supports_stream = False
+    _supports_model_stream = False
+    _supports_vision = False
+
+    def _create_base_client(self, **kwargs) -> Any:
+        raise NotImplementedError("CLI-backed providers do not create an SDK client.")
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        messages, contains_image = super()._check_for_image(messages)
+        if contains_image:
+            raise ValueError(f"{self.display_name} does not support image inputs.")
+        return messages, False
+
+    @staticmethod
+    def _content_to_text(content: str | Image | list[dict[str, Any]]) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text", "")))
+                    else:
+                        parts.append(json.dumps(item, default=str, ensure_ascii=False))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
+        return str(content)
+
+    def _messages_to_prompt(self, messages: list[Message]) -> str:
+        rendered = []
+        for message in messages:
+            role = message.get("role", "user").upper()
+            content = self._content_to_text(message.get("content", ""))
+            tool_calls = message.get("tool_calls")
+            if not content and tool_calls:
+                content = json.dumps(tool_calls, default=str, ensure_ascii=False)
+            rendered.append(f"[{role}]\n{content}")
+        return "\n\n".join(rendered)
+
+    @staticmethod
+    def _extract_json(output: str) -> Any:
+        """Extract the first JSON value from a CLI response."""
+        output = output.strip()
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(output):
+            if character not in "[{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(output[index:])
+            except json.JSONDecodeError:
+                continue
+            return value
+        raise ValueError("The CLI did not return valid JSON for Lumen's structured response.")
+
+    def _structured_prompt(self, prompt: str, response_model: type[BaseModel]) -> str:
+        schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+        return (
+            f"{prompt}\n\n"
+            "Return only one JSON value matching this JSON Schema. Do not use Markdown, "
+            "explain the answer, or call tools.\n"
+            f"JSON Schema:\n{schema}"
+        )
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.working_dir,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(prompt.encode("utf-8")), timeout=self.timeout
+            )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(
+                f"{self.display_name} did not finish within {self.timeout:g} seconds."
+            ) from exc
+
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        if process.returncode:
+            detail = stderr_text.strip() or stdout_text.strip() or "no error output"
+            detail = truncate_string(detail, max_length=4000)
+            raise RuntimeError(
+                f"{self.display_name} exited with status {process.returncode}: {detail}"
+            )
+        return stdout_text
+
+    def _build_command(self, model: str | None) -> list[str]:
+        raise NotImplementedError
+
+    def _decode_output(self, output: str) -> str:
+        raise NotImplementedError
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = 16,
+        **kwargs,
+    ) -> BaseModel | str:
+        if tool_instances:
+            log_debug(
+                "CLI providers do not support native Lumen tools; continuing without them.",
+                prefix="[LLM tools]",
+            )
+        kwargs.pop("tools", None)
+        return await super()._run_tool_loop(
+            messages,
+            structured_model,
+            {},
+            {},
+            model_spec=model_spec,
+            max_tool_rounds=max_tool_rounds,
+            **kwargs,
+        )
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        model = self._get_model_kwargs(model_spec).get("model")
+        prompt = self._messages_to_prompt(messages)
+        if response_model is not None:
+            prompt = self._structured_prompt(prompt, response_model)
+
+        command = self._build_command(model)
+        log_debug(f"CLI command: \033[96m{' '.join(command)} <stdin>\033[0m")
+        stdout = await self._run_command(command, prompt)
+        output = self._decode_output(stdout)
+
+        if response_model is not None:
+            try:
+                result = response_model.model_validate(self._extract_json(output))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{self.display_name} returned an invalid structured response: {exc}"
+                ) from exc
+        else:
+            result = output
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
+        return result
+
+
+class CodexCLI(LlmCli):
+    """Use the locally authenticated Codex CLI as a Lumen provider."""
+
+    display_name = param.String(default="Codex CLI", constant=True)
+
+    executable = param.String(default="codex", constant=True)
+
+    sandbox = param.Selector(
+        default="read-only",
+        objects=["read-only", "workspace-write", "danger-full-access"],
+        constant=True,
+        doc="Codex sandbox policy. The safe read-only policy is the default.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "exec", "--json", "--sandbox", self.sandbox,
+            "--skip-git-repo-check", "--ephemeral",
+        ]
+        if model:
+            command.extend(["--model", model])
+        return [*command, "-"]
+
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item = event.get("item") if isinstance(event, dict) else None
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or item.get("content")
+                if text:
+                    final_message = str(text)
+        if final_message is None:
+            raise ValueError("Codex CLI did not return a final agent message.")
+        return final_message.strip()
+
+
+class ClaudeCodeCLI(LlmCli):
+    """Use the locally authenticated Claude Code CLI as a Lumen provider."""
+
+    display_name = param.String(default="Claude Code CLI", constant=True)
+
+    executable = param.String(default="claude", constant=True)
+
+    permission_mode = param.Selector(
+        default="plan",
+        objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
+        constant=True,
+        doc="Claude Code permission mode. The non-writing plan mode is the default.",
+    )
+
+    max_turns = param.Integer(
+        default=3,
+        bounds=(1, None),
+        constant=True,
+        doc="Maximum Claude Code turns per Lumen request, including internal tool calls.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "--print", "--output-format", "json",
+            "--no-session-persistence", "--max-turns", str(self.max_turns),
+            "--permission-mode", self.permission_mode,
+        ]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    def _decode_output(self, output: str) -> str:
+        try:
+            response = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Claude Code CLI returned invalid JSON.") from exc
+        if not isinstance(response, dict):
+            raise ValueError("Claude Code CLI returned an unexpected JSON response.")
+        if response.get("is_error"):
+            raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
+        if "result" not in response:
+            raise ValueError("Claude Code CLI response did not include a result.")
+        return str(response["result"]).strip()
 
 
 class LlamaCpp(Llm, LlamaCppMixin):

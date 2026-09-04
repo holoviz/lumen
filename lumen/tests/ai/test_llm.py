@@ -1,7 +1,7 @@
 """Test suite for LLM implementations."""
 
+import asyncio
 import base64
-import os
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -15,8 +15,9 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, Google, Groq,
-        LiteLLM, LlamaCpp, Llm, Message, MistralAI, Ollama, OpenAI, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCodeCLI,
+        CodexCLI, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
+        MistralAI, Ollama, OpenAI, WebLLM,
     )
     from lumen.ai.tools import FunctionTool
 
@@ -162,6 +163,117 @@ def test_get_available_llm_respects_modified_provider_env_vars(monkeypatch):
     monkeypatch.setitem(lmai.llm.PROVIDER_ENV_VARS, "openai", "MY_CUSTOM_OPENAI_KEY")
     monkeypatch.setenv("MY_CUSTOM_OPENAI_KEY", "custom-value")
     assert lmai.llm.get_available_llm() is OpenAI
+
+
+def test_cli_providers_are_registered():
+    """CLI-backed subscription providers can be selected explicitly by the command line."""
+    assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCLI"
+    assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCodeCLI"
+    assert issubclass(CodexCLI, LlmCli)
+    assert issubclass(ClaudeCodeCLI, LlmCli)
+
+
+def test_codex_cli_command_defaults_to_read_only():
+    llm = CodexCLI()
+
+    command = llm._build_command("gpt-test")
+
+    assert command == [
+        "codex", "exec", "--json", "--sandbox", "read-only",
+        "--skip-git-repo-check", "--ephemeral", "--model", "gpt-test", "-",
+    ]
+
+
+def test_claude_code_command_defaults_to_plan_mode():
+    llm = ClaudeCodeCLI()
+
+    command = llm._build_command("sonnet")
+
+    assert command == [
+        "claude", "--print", "--output-format", "json", "--no-session-persistence",
+        "--max-turns", "3", "--permission-mode", "plan", "--model", "sonnet",
+    ]
+
+
+def test_cli_output_decoders():
+    codex = CodexCLI()
+    codex_output = (
+        '{"type":"thread.started","thread_id":"abc"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"First"}}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"Ready"}}'
+    )
+    assert codex._decode_output(codex_output) == "Ready"
+
+    claude = ClaudeCodeCLI()
+    assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
+
+
+async def test_cli_provider_validates_structured_output(monkeypatch):
+    class Reply(BaseModel):
+        ready: bool
+
+    async def fake_run_command(command, prompt):
+        return '{"result": "{\\"ready\\": true}", "is_error": false}'
+
+    llm = ClaudeCodeCLI()
+    monkeypatch.setattr(llm, "_run_command", fake_run_command)
+
+    result = await llm.run_client(
+        "default", [{"role": "user", "content": "Ready?"}], response_model=Reply
+    )
+
+    assert result == Reply(ready=True)
+
+
+async def test_cli_provider_sends_prompt_over_stdin(monkeypatch, tmp_path):
+    captured = {}
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, data):
+            captured["stdin"] = data
+            return b'{"result":"Ready","is_error":false}', b""
+
+    async def create_subprocess(*command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
+    llm = ClaudeCodeCLI(working_dir=str(tmp_path))
+
+    output = await llm._run_command(["claude", "--print"], "Private prompt")
+
+    assert output == '{"result":"Ready","is_error":false}'
+    assert captured["stdin"] == b"Private prompt"
+    assert captured["command"] == ("claude", "--print")
+    assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
+    assert captured["kwargs"]["cwd"] == str(tmp_path)
+
+
+async def test_cli_provider_skips_unsupported_tool_loop(monkeypatch):
+    class Reply(BaseModel):
+        ready: bool
+
+    calls = []
+
+    async def run_client(model_spec, messages, **kwargs):
+        calls.append(kwargs)
+        return Reply(ready=True)
+
+    llm = ClaudeCodeCLI()
+    monkeypatch.setattr(llm, "run_client", run_client)
+
+    result = await llm._run_tool_loop(
+        [{"role": "user", "content": "Ready?"}],
+        Reply,
+        {"unsupported": object()},
+        {},
+    )
+
+    assert result == Reply(ready=True)
+    assert len(calls) == 1
 
 
 async def test_azure_open_ai_get_model_kwargs():
