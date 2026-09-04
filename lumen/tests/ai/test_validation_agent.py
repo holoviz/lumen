@@ -1,10 +1,18 @@
+import asyncio
 import datetime
+
+from typing import Any, NotRequired, TypedDict
 
 import jinja2
 import pytest
 
 try:
+    from lumen.ai.agents.chat import ChatAgent
+    from lumen.ai.agents.sql import SQLAgent
+    from lumen.ai.agents.validation import ValidationAgent, get_plan_required_keys
     from lumen.ai.config import PROMPTS_DIR
+    from lumen.ai.coordinator.base import Plan
+    from lumen.ai.report import ActorTask
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
@@ -60,15 +68,6 @@ def test_validation_agent_previous_keys_gating(jinja_env):
     assert "SQL: SELECT region, SUM(sales)" not in rendered
     assert "User: \"Summarize survey results\"" not in rendered
     assert "User: \"bar chart of sales by region\"" not in rendered
-
-
-# ---------------------------------------------------------------------------
-# Regression tests for plan-provenance based stale context tagging
-# ---------------------------------------------------------------------------
-
-from typing import Any, NotRequired, TypedDict
-
-from lumen.ai.agents.validation import get_plan_required_keys
 
 
 class _SQLInputs(TypedDict):
@@ -202,3 +201,23 @@ def test_previous_keys_provenance(plan_tasks, context_keys_present, expected_pre
             previous_keys.add(key)
 
     assert previous_keys == expected_previous_keys
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "expected_previous_keys"),
+    [
+        pytest.param(ChatAgent, {"sql"}, id="stale_sql"),
+        pytest.param(SQLAgent, set(), id="reused_sql"),
+    ],
+)
+def test_validation_agent_uses_prior_plan_dependencies(
+    agent_type, expected_previous_keys,
+):
+    validation_agent = ValidationAgent()
+    plan = Plan(ActorTask(agent_type()), ActorTask(validation_agent))
+
+    prompt_context = asyncio.run(validation_agent._gather_prompt_context(
+        "main", [], {"plan": plan, "sql": "SELECT old"},
+    ))
+
+    assert prompt_context["previous_keys"] == expected_previous_keys

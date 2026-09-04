@@ -6,7 +6,7 @@ from panel_material_ui import Button
 from pydantic import Field
 
 from ..config import PROMPTS_DIR
-from ..context import ContextModel, TContext
+from ..context import ContextModel, TContext, input_dependency_keys
 from ..llm import Message
 from ..models import BaseModel
 from ..utils import content_to_text, log_debug
@@ -70,8 +70,7 @@ def get_plan_required_keys(plan):
     context_keys = {"sql", "view", "chat", "listing"}
     all_input_keys = set()
     for task in plan:
-        annotations = set(task.input_schema.__annotations__.keys())
-        all_input_keys |= annotations
+        all_input_keys |= input_dependency_keys(task.input_schema)
     return {key: key in all_input_keys for key in context_keys}
 
 
@@ -122,7 +121,9 @@ class ValidationAgent(Agent):
         plan = context.get("plan")
         previous_keys = set()
         if plan is not None:
-            required_keys = get_plan_required_keys(plan)
+            required_keys = get_plan_required_keys(
+                task for task in plan if task.actor is not self
+            )
             produced = {k for task in plan for k in task.out_context}
             for key in ("chat", "sql", "view", "listing"):
                 if key in context and key not in produced:
