@@ -1003,6 +1003,15 @@ class hvPlotBaseView(View):
 
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
+    widget_type = param.String(default=None, doc="""
+        Whether to display the ``groupby`` widgets as a scrubber/player or as
+        static widgets. If not set, defers to hvPlot's default.""")
+
+    widget_location = param.ClassSelector(default=None, class_=(str, list, tuple), doc="""
+        The location of the ``groupby`` widgets relative to the plot, e.g.
+        'bottom', 'left' or ('left', 'top'). If not set, defers to hvPlot's
+        default.""")
+
     z = param.Selector(doc="""
         Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
         Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
@@ -1309,6 +1318,10 @@ class hvPlotView(hvPlotBaseView):
         if self.aggregator is not None:
             self._check_aggregator(processed)
             processed['aggregator'] = self.aggregator
+        if self.widget_type is not None:
+            processed['widget_type'] = self.widget_type
+        if self.widget_location is not None:
+            processed['widget_location'] = self.widget_location
 
         kind = self.kind
         plot_source = df

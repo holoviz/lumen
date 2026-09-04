@@ -122,6 +122,40 @@ def test_hvplot_view_omits_unset_datashade(categorical_pipeline, categorical_df)
     assert "color_key" not in recorded
 
 
+def test_widget_params_declared():
+    """The AI agent's schema is derived from these params, so they must exist."""
+    for name in ("widget_type", "widget_location"):
+        assert name in hvPlotBaseView.param
+
+
+def test_hvplot_view_forwards_widget_params(categorical_pipeline, categorical_df):
+    view = hvPlotView(
+        pipeline=categorical_pipeline,
+        kind="scatter",
+        x="x",
+        y="y",
+        groupby="ancestry",
+        widget_type="scrubber",
+        widget_location="bottom",
+    )
+
+    recorded = record_hvplot_call(view, categorical_df)
+
+    assert recorded["groupby"] == ["ancestry"]
+    assert recorded["widget_type"] == "scrubber"
+    assert recorded["widget_location"] == "bottom"
+
+
+def test_hvplot_view_omits_unset_widget_params(categorical_pipeline, categorical_df):
+    """Unset widget params must not appear, keeping existing plots unchanged."""
+    view = hvPlotView(pipeline=categorical_pipeline, kind="scatter", x="x", y="y")
+
+    recorded = record_hvplot_call(view, categorical_df)
+
+    assert "widget_type" not in recorded
+    assert "widget_location" not in recorded
+
+
 def test_hvplot_view_keeps_dict_cmap_kwarg(categorical_pipeline, categorical_df):
     """Specs predating color_key passed the mapping as cmap; hvPlot still maps a
     dict cmap onto color_key, so those must keep working."""
