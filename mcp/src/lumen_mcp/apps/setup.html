@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enable Lumen keyed mode</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, -apple-system, sans-serif; margin: 0; padding: 20px; }
+  .card { max-width: 380px; margin: 0 auto; }
+  h1 { font-size: 1.1rem; margin: 0 0 4px; }
+  p.sub { color: #666; margin: 0 0 16px; }
+  label { display: block; font-weight: 600; margin: 12px 0 4px; }
+  input, select { width: 100%; padding: 8px; border: 1px solid #bbb; border-radius: 6px; box-sizing: border-box; }
+  button { margin-top: 16px; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: #1f9d6b; color: #fff; font-weight: 600; cursor: pointer; }
+  .status { margin-top: 12px; font-size: 13px; min-height: 18px; }
+  .note { margin-top: 16px; font-size: 12px; color: #888; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Enable Lumen keyed mode</h1>
+  <p class="sub">Lumen's own agents will write and run the SQL and build charts for you.</p>
+
+  <label for="provider">Provider</label>
+  <select id="provider">
+    <option value="openai">OpenAI</option>
+    <option value="anthropic">Anthropic</option>
+  </select>
+
+  <label for="model">Model (optional)</label>
+  <input id="model" placeholder="gpt-4o / claude-sonnet-4-5">
+
+  <label for="key">API key</label>
+  <input id="key" type="password" placeholder="sk-...">
+
+  <button id="submit">Enable keyed mode</button>
+  <div class="status" id="status"></div>
+  <p class="note">Entered here, not typed into the chat. Rotate the key afterward to be safe.</p>
+</div>
+<script>
+  const byId = (id) => document.getElementById(id);
+
+  // MCP Apps bridge: try the known client APIs, fall back to postMessage to the host.
+  async function callTool(name, args) {
+    if (window.mcpApp && window.mcpApp.callServerTool) return window.mcpApp.callServerTool({ name, arguments: args });
+    if (window.app && window.app.callServerTool) return window.app.callServerTool({ name, arguments: args });
+    window.parent.postMessage({ type: "tool", name, arguments: args }, "*");
+    return { queued: true };
+  }
+
+  byId("submit").addEventListener("click", async () => {
+    const key = byId("key").value.trim();
+    if (!key) { byId("status").textContent = "Enter an API key."; return; }
+    byId("status").textContent = "Enabling...";
+    try {
+      await callTool("set_llm_key", {
+        api_key: key,
+        provider: byId("provider").value,
+        model: byId("model").value.trim() || null,
+      });
+      byId("key").value = "";
+      byId("status").textContent = "Keyed mode requested. lumen_ask can now run Lumen's agents.";
+    } catch (err) {
+      byId("status").textContent = "Failed: " + (err && err.message ? err.message : String(err));
+    }
+  });
+</script>
+</body>
+</html>
