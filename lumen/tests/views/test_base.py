@@ -7,12 +7,15 @@ import pandas as pd
 import panel as pn
 import pytest
 
+from lumen.filters.base import ConstantFilter, ParamFilter
 from lumen.panel import DownloadButton
 from lumen.panes.mosaic import Mosaic
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource, InMemorySource
 from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
+from lumen.transforms.base import Columns
+from lumen.transforms.sql import SQLLimit
 from lumen.variables.base import Variables
 from lumen.views.base import (
     DeckGLView, MosaicView, Panel, Table, VegaLiteView, View, hvOverlayView,
@@ -759,3 +762,99 @@ def test_mosaic_view_reports_an_empty_pipeline():
 
     with pytest.raises(ValueError, match='empty result'):
         MosaicView(pipeline=pipeline, spec=spec).get_panel()
+
+
+def _mosaic_charted_rows(view, columns):
+    """The rows the chart will actually query, whichever data path was taken."""
+    pane = view.get_panel()
+    name = pane.spec['plot'][0]['data']['from']
+    cols = ', '.join(columns)
+    return pane.connection.query(f'SELECT {cols} FROM "{name}" ORDER BY v').fetchall()
+
+
+def _mosaic_pandas_rows(pipeline, columns):
+    return list(pipeline.data[list(columns)].itertuples(index=False, name=None))
+
+
+MOSAIC_DOT_SPEC = {'plot': [{'mark': 'dot', 'data': {'from': 't'}, 'x': 'cat', 'y': 'v'}]}
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason='duckdb not installed')
+def test_mosaic_view_queries_lumen_duckdb_instead_of_copying():
+    """A DuckDB-backed pipeline is served from its own connection, so the frame
+    is never materialized in Python -- the point of Mosaic on large tables."""
+    df = pd.DataFrame({'cat': list('aabbcc'), 'v': [1, 2, 3, 4, 5, 6]})
+    source = DuckDBSource(uri=':memory:', mirrors={'t': df})
+    pipeline = Pipeline(source=source, table='t')
+    view = MosaicView(pipeline=pipeline, spec=MOSAIC_DOT_SPEC)
+
+    assert view._sql_query() is not None
+    assert _mosaic_charted_rows(view, ('cat', 'v')) == _mosaic_pandas_rows(pipeline, ('cat', 'v'))
+    # The temp view must not disturb the table the rest of Lumen reads.
+    assert source.connection.query('SELECT count(*) FROM t').fetchone()[0] == 6
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason='duckdb not installed')
+def test_mosaic_view_pushdown_applies_filters_and_sql_transforms():
+    """Pushing down must reproduce the pipeline's filters and SQL transforms.
+    Charting the raw table instead would silently show unfiltered data."""
+    df = pd.DataFrame({'cat': list('aabbcc'), 'v': [1, 2, 3, 4, 5, 6]})
+
+    filtered = Pipeline(
+        source=DuckDBSource(uri=':memory:', mirrors={'t': df}), table='t',
+        filters=[ConstantFilter(field='cat', value='b')],
+    )
+    view = MosaicView(pipeline=filtered, spec=MOSAIC_DOT_SPEC)
+    assert _mosaic_charted_rows(view, ('cat', 'v')) == [('b', 3), ('b', 4)]
+    assert _mosaic_charted_rows(view, ('cat', 'v')) == _mosaic_pandas_rows(filtered, ('cat', 'v'))
+
+    limited = Pipeline(
+        source=DuckDBSource(uri=':memory:', mirrors={'t': df}), table='t',
+        sql_transforms=[SQLLimit(limit=2)],
+    )
+    view = MosaicView(pipeline=limited, spec=MOSAIC_DOT_SPEC)
+    assert _mosaic_charted_rows(view, ('cat', 'v')) == _mosaic_pandas_rows(limited, ('cat', 'v'))
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason='duckdb not installed')
+def test_mosaic_view_falls_back_when_work_happens_outside_sql():
+    """Anything Lumen computes in pandas after the query is absent from the
+    pushdown SQL, so those pipelines must send the computed frame instead."""
+    df = pd.DataFrame({'cat': list('aabbcc'), 'v': [1, 2, 3, 4, 5, 6]})
+
+    # A Python transform runs after the SQL.
+    transformed = Pipeline(
+        source=DuckDBSource(uri=':memory:', mirrors={'t': df}), table='t',
+        transforms=[Columns(columns=['cat', 'v'])],
+    )
+    assert MosaicView(pipeline=transformed, spec=MOSAIC_DOT_SPEC)._sql_query() is None
+
+    # A ParamFilter is applied in pandas.
+    param_filtered = Pipeline(
+        source=DuckDBSource(uri=':memory:', mirrors={'t': df}), table='t',
+        filters=[ParamFilter(field='cat')],
+    )
+    assert MosaicView(pipeline=param_filtered, spec=MOSAIC_DOT_SPEC)._sql_query() is None
+
+    # A chained pipeline filters the parent's frame in pandas.
+    chained = Pipeline(
+        source=DuckDBSource(uri=':memory:', mirrors={'t': df}), table='t',
+    ).chain(filters=[ConstantFilter(field='cat', value='b')])
+    assert MosaicView(pipeline=chained, spec=MOSAIC_DOT_SPEC)._sql_query() is None
+    # ...and still charts the right rows via the copy path.
+    view = MosaicView(pipeline=chained, spec=MOSAIC_DOT_SPEC)
+    assert _mosaic_charted_rows(view, ('cat', 'v')) == _mosaic_pandas_rows(chained, ('cat', 'v'))
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason='duckdb not installed')
+def test_mosaic_view_reports_an_empty_pipeline_on_the_pushdown_path():
+    """The empty-result error must fire on both data paths, so the agent's
+    retry loop behaves the same however the pipeline is backed."""
+    df = pd.DataFrame({'cat': list('aabb'), 'v': [1, 2, 3, 4]})
+    pipeline = Pipeline(
+        source=DuckDBSource(uri=':memory:', mirrors={'t': df}), table='t',
+        filters=[ConstantFilter(field='cat', value='nope')],
+    )
+
+    with pytest.raises(ValueError, match='empty result'):
+        MosaicView(pipeline=pipeline, spec=MOSAIC_DOT_SPEC).get_panel()
