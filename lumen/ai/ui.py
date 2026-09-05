@@ -43,7 +43,7 @@ from ..util import log, normalize_table_name, try_import_xarray
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
-    ValidationAgent,
+    ValidationAgent, VegaLiteAgent,
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
@@ -412,7 +412,8 @@ class UI(Viewer):
 
     default_agents = param.List(default=[
         TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
-        SQLAgent, SourceAgent, MosaicAgent, ValidationAgent, DeckGLAgent
+        SQLAgent, SourceAgent, VegaLiteAgent, MosaicAgent, ValidationAgent,
+        DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""

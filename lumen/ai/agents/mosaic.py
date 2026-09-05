@@ -2,8 +2,8 @@
 Mosaic Agent for generating interactive Mosaic/vgplot visualizations.
 
 Generates declarative ``mosaic-spec`` specifications (YAML) that are rendered by
-`MosaicView` via the ``mosaic_widget`` anywidget. Mosaic references tables by
-name and pushes computation down to DuckDB, making it well suited to large,
+`MosaicView` through the `Mosaic` pane. Mosaic references tables by name and
+pushes computation down to DuckDB, making it well suited to large,
 cross-filtered and linked interactive views.
 """
 from __future__ import annotations
@@ -58,15 +58,15 @@ class MosaicAgent(BaseViewAgent):
     """Agent for generating interactive Mosaic/vgplot visualizations.
 
     Generates declarative mosaic-specs which `MosaicView` renders through the
-    ``mosaic_widget`` anywidget, with computation pushed down to DuckDB.
+    `Mosaic` pane, with computation pushed down to DuckDB.
     """
 
     conditions = param.List(
         default=[
-            "Use as the default charting agent for any visualization request",
-            "Use for interactive, cross-filtered or linked visualizations (brushing, selections, inputs)",
-            "Use for large datasets where computation should be pushed down to DuckDB",
-            "Use when the user requests Mosaic, vgplot, or interactive dashboards",
+            "Use for cross-filtered or linked views, where brushing one plot filters the others",
+            "Use for several coordinated plots that share a selection, rather than a single standalone chart",
+            "Use for datasets too large to embed in a chart spec, since only query results reach the browser",
+            "Use when the user requests Mosaic or vgplot by name",
         ]
     )
 
@@ -90,8 +90,6 @@ class MosaicAgent(BaseViewAgent):
     user = param.String(default="Mosaic")
 
     view_type = MosaicView
-
-    _extensions = ("ipywidgets",)
 
     _editor_type = MosaicEditor
 

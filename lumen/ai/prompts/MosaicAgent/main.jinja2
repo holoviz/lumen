@@ -7,9 +7,9 @@ Generate a complete, effective Mosaic (vgplot) visualization as a declarative
 Mosaic is closer to Observable Plot with a SQL data layer than to Vega-Lite:
 marks reference DuckDB tables by name and encodings can be SQL aggregates.
 
-## REQUIRED TOP-LEVEL STRUCTURE (follow EXACTLY)
+## Required Top-Level Structure
 
-A single plot MUST use the key `plot:` whose value is a LIST. Each mark is a
+A single plot MUST use the key `plot:` whose value is a list. Each mark is a
 mapping with a `mark:` key naming the mark type, and its channels as siblings:
 
 ```yaml
@@ -25,33 +25,33 @@ height: 300
 Plot attributes (`width`, `height`, `xLabel`, `yLabel`, ...) are siblings of
 `plot:`, at the top level.
 
-## COMMON MISTAKES — NEVER DO THESE
+## Common Mistakes
 
-- ❌ `marks:` — the key is `plot:`, never `marks:`.
-- ❌ `- dot:` / `- regressionY:` (mark name as the key). Marks are ALWAYS
+- Not `marks:` — the key is `plot:`.
+- Not `- dot:` / `- regressionY:` (the mark name as the key). A mark is always
   `- mark: dot`, `- mark: regressionY`, with channels as siblings.
-- ❌ `intervals:` or a top-level `brush:` — selections go under `params:`
+- Not `intervals:` or a top-level `brush:` — selections go under `params:`
   (e.g. `params: {brush: {select: intervalX}}`) and are applied on the plot via
   a `- select: intervalX` entry and `filterBy: $brush` on marks.
-- ❌ `selection: $brush` inside a mark — use `filterBy: $brush` on the mark's
+- Not `selection: $brush` inside a mark — use `filterBy: $brush` on the mark's
   `data`, and declare the interactor as a separate `- select: intervalX` entry.
 
-## ESSENTIAL RULES
+## Essential Rules
 
-- Use ONLY column names that appear in the dataset shown above. NEVER invent or
+- Use only column names that appear in the dataset shown above; NEVER invent or
   assume columns (e.g. do not use `brand`, `category`, `value` unless they are
-  actually present). Use the EXACT column names, including capitalization.
-- Reference the data on EVERY mark with `data: {from: {{ memory['table'] }}}`.
-- Do NOT add a top-level `data:` block declaring files or URLs — the table is
+  actually present). Match their capitalization exactly.
+- Reference the data on every mark with `data: {from: {{ memory['table'] }}}`.
+- Do not add a top-level `data:` block declaring files or URLs — the table is
   provided automatically. Just reference it by name.
 - Compose several plots with `vconcat:` / `hconcat:`; space with `vspace:` /
-  `hspace:`. Focus on ONE primary relationship per plot.
-- Prefer a SIMPLE single-mark plot unless interactivity is explicitly requested.
+  `hspace:`. Focus on one primary relationship per plot.
+- Prefer a simple single-mark plot unless interactivity is explicitly requested.
 - Do not use scientific notation in axis ticks (`yTickFormat: s` for SI units).
 
-## MARKS
+## Marks
 
-Use vgplot mark names (NOT Vega-Lite names):
+Use vgplot mark names, not Vega-Lite names:
 - `lineY` — line chart (x ordered, y value)
 - `barY` / `barX` — vertical / horizontal bars for categorical data
 - `rectY` — histogram bars (pair with `x: {bin: col}`)
@@ -60,7 +60,7 @@ Use vgplot mark names (NOT Vega-Lite names):
 - `text` — labels/annotations
 - `errorbarX` / `regressionY` — statistical marks
 
-## ENCODINGS
+## Encodings
 
 Channels are `x`, `y`, `fill`, `stroke`, `r`, `fx`, `fy`. Values are either a
 bare column name or a SQL transform object:
@@ -69,13 +69,13 @@ bare column name or a SQL transform object:
 - Static appearance: `fill: steelblue`, `stroke: black`, `r: 3`
 - Sorting/limiting a categorical axis: `sort: {y: -x, limit: 10}`
 
-## PLOT ATTRIBUTES
+## Plot Attributes
 
 Set these as keys on the plot (siblings of `plot:`), not inside marks:
 `xLabel`, `yLabel`, `xDomain`, `yDomain`, `width`, `height`, `marginLeft`,
 `colorScheme`, `yTickFormat`.
 
-## INTERACTIVITY (Mosaic's strength — use when it adds value)
+## Interactivity (Mosaic's Strength, Use When It Adds Value)
 
 Declare a selection in `params:` and reference it with `$name`:
 - `params: {brush: {select: crossfilter}}` then `select: intervalX` / `as: $brush`
@@ -88,7 +88,7 @@ should stay simple.
 {% endblock %}
 
 {% block examples %}
-## EXAMPLES
+## Examples (illustrative — the column names below are placeholders, not real data)
 {% if doc_examples is defined and doc_examples %}
 {% for example in doc_examples %}
 {{ example }}
@@ -147,7 +147,7 @@ plot:
 ```
 
 Scatter plot with a regression line and interactive selection (note: the
-regression is a SECOND `- mark:` entry, and the selection is a SEPARATE
+regression is a second `- mark:` entry, and the selection is a separate
 `- select:` entry — never a `selection:` field inside a mark, never `marks:`):
 ```yaml
 plot:

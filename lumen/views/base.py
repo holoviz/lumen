@@ -54,6 +54,7 @@ from ..config import _INDICATORS
 from ..downloads import Download
 from ..filters.base import Filter, ParamFilter
 from ..panel import HtmlPdfDownloadButton
+from ..panes.mosaic import Mosaic
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms.base import Transform
@@ -1786,9 +1787,9 @@ class MosaicView(View):
     declarative ``mosaic-spec`` specification.
 
     Unlike `VegaLiteView`, which embeds the data inline, Mosaic references
-    tables by name and pushes computation down to DuckDB, rendering in the
-    browser via the `mosaic_widget` anywidget. This lets it scale to far
-    larger, cross-filtered and linked views.
+    tables by name and pushes computation down to DuckDB, sending only query
+    results to the browser. This lets it scale to far larger, cross-filtered
+    and linked views.
 
     See https://idl.uw.edu/mosaic/ for the specification format.
     """
@@ -1798,8 +1799,6 @@ class MosaicView(View):
         the pipeline table via ``data: {from: <table>}``.""")
 
     view_type = 'mosaic'
-
-    _extension = 'ipywidgets'
 
     @classmethod
     def _rebind_table(cls, obj: Any, table: str) -> None:
@@ -1820,21 +1819,13 @@ class MosaicView(View):
             for item in obj:
                 cls._rebind_table(item, table)
 
-    def _get_widget(self):
-        try:
-            from mosaic_widget import MosaicWidget
-        except ImportError as e:
-            raise ImportError(
-                "MosaicView requires the `mosaic_widget` package. Install it "
-                "with `pip install mosaic-widget` or `pip install 'lumen[ai-mosaic]'`."
-            ) from e
-
+    def _get_widget(self) -> Mosaic:
         # Register the pipeline's already filtered/transformed data as a DuckDB
-        # table named after the pipeline table; the spec's marks reference it via
-        # `data: {from: <table>}`. Passing a DataFrame keeps the view correct for
-        # any Source type. For a DuckDB-backed pipeline the data could instead be
-        # served from the existing connection (con=) to avoid materializing large
-        # tables — a future scaling optimization.
+        # table named after the pipeline table; the spec's marks reference it
+        # via `data: {from: <table>}`. Registering a frame keeps the view
+        # correct for any Source type. For a DuckDB-backed pipeline the data
+        # could instead be served from the existing connection (Mosaic(con=...))
+        # to avoid materializing large tables -- a future scaling optimization.
         df = self.get_data()
         if df is None or len(df) == 0:
             raise ValueError(
@@ -1847,10 +1838,10 @@ class MosaicView(View):
         # Rewrite every `from:` in the spec to the registered table name so the
         # binding cannot break on an LLM-invented or drifted table name.
         self._rebind_table(spec, table)
-        return MosaicWidget(spec, data={table: df})
+        return Mosaic(spec, data={table: df}, **self.kwargs)
 
-    def get_panel(self) -> pn.pane.IPyWidget:
-        return pn.pane.IPyWidget(self._get_widget(), **self.kwargs)
+    def get_panel(self) -> Mosaic:
+        return self._get_widget()
 
 
 class DeckGLView(View):

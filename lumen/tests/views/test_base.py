@@ -8,13 +8,15 @@ import panel as pn
 import pytest
 
 from lumen.panel import DownloadButton
+from lumen.panes.mosaic import Mosaic
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource, InMemorySource
 from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, MosaicView, Panel, Table, VegaLiteView, View, hvOverlayView,
+    hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -703,3 +705,57 @@ def test_deckgl_geojson_layer_with_its_own_data_is_left_alone(set_root):
     params = DeckGLView(pipeline=pipeline, spec=spec)._get_params()
 
     assert params["object"]["layers"][0]["data"] == "https://example.com/x.json"
+
+
+def test_mosaic_view_renders_a_native_panel_pane():
+    """The view renders through Lumen's own Panel component, not an ipywidgets
+    bridge, and registers the pipeline data under the pipeline's table name."""
+    df = pd.DataFrame({'x': [1, 2, 3], 'y': [4.0, 5.0, 6.0]})
+    pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
+    spec = {'plot': [{'mark': 'dot', 'data': {'from': 'points'}, 'x': 'x', 'y': 'y'}]}
+
+    pane = MosaicView(pipeline=pipeline, spec=spec).get_panel()
+
+    assert isinstance(pane, Mosaic)
+    assert pane.connection.query('SELECT count(*) FROM points').fetchone()[0] == 3
+
+
+def test_mosaic_view_rebinds_every_from_reference_to_the_pipeline_table():
+    """A view is backed by exactly one pipeline table, so a spec naming any
+    other table is rewritten rather than left to fail silently in the browser."""
+    df = pd.DataFrame({'x': [1, 2], 'y': [3.0, 4.0]})
+    pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
+    spec = {'plot': [
+        {'mark': 'dot', 'data': {'from': 'some_other_table', 'filterBy': '$brush'},
+         'x': 'x', 'y': 'y'},
+    ]}
+
+    pane = MosaicView(pipeline=pipeline, spec=spec).get_panel()
+
+    mark = pane.spec['plot'][0]
+    assert mark['data']['from'] == 'points'
+    assert mark['data']['filterBy'] == '$brush'  # non-`from` keys untouched
+
+
+def test_mosaic_view_does_not_mutate_the_spec_it_was_given():
+    """Rebinding works on a copy; the view's own spec stays as authored so the
+    editor round-trips what the user wrote."""
+    df = pd.DataFrame({'x': [1], 'y': [2.0]})
+    pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
+    spec = {'plot': [{'mark': 'dot', 'data': {'from': 'elsewhere'}, 'x': 'x', 'y': 'y'}]}
+
+    view = MosaicView(pipeline=pipeline, spec=spec)
+    view.get_panel()
+
+    assert view.spec['plot'][0]['data']['from'] == 'elsewhere'
+
+
+def test_mosaic_view_reports_an_empty_pipeline():
+    """An empty result would draw a blank chart with no explanation, so it is
+    raised where the retry loop can see it."""
+    df = pd.DataFrame({'x': [], 'y': []})
+    pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
+    spec = {'plot': [{'mark': 'dot', 'data': {'from': 'points'}, 'x': 'x', 'y': 'y'}]}
+
+    with pytest.raises(ValueError, match='empty result'):
+        MosaicView(pipeline=pipeline, spec=spec).get_panel()
