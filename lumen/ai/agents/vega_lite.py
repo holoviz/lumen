@@ -4,6 +4,7 @@ from collections import Counter
 from functools import partial
 from typing import Any
 
+import pandas as pd
 import param
 import requests
 
@@ -126,6 +127,18 @@ class AltairSpec(BaseModel):
     )
 
 
+class PointExplanations(BaseModel):
+    """LLM-generated natural language explanations for each data point in a chart."""
+
+    explanations: list[str] = Field(
+        description=(
+            "One short human-readable explanation per data row, in the same order as the input rows. "
+            "Each string should describe what makes that specific data point notable or interesting "
+            "in the context of the chart being shown."
+        )
+    )
+
+
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -146,6 +159,7 @@ class VegaLiteAgent(BaseCodeAgent):
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
+            "ai_explanation": {"response_model": PointExplanations, "template": PROMPTS_DIR / "VegaLiteAgent" / "ai_explanation.jinja2"},
         }
     )
 
@@ -918,8 +932,52 @@ class VegaLiteAgent(BaseCodeAgent):
                 out.spec = dump_yaml(normalized["spec"])
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
+    async def _generate_ai_explanations(
+        self,
+        pipeline: Pipeline,
+        messages: list[Message],
+        context: TContext,
+    ) -> None:
+        """
+        Generate LLM-powered natural language explanations for each data row
+        and inject them as a new 'ai_explanation' column into the pipeline data.
+
+        After this method runs, pipeline.data is updated with the new column.
+        The pipeline's param watcher automatically triggers a UI re-render so
+        the tooltip picks up the new field without any additional code.
+        """
+        # 1. Get current pipeline data as pandas DataFrame
+        df = pipeline.data
+        if not isinstance(df, pd.DataFrame):
+            try:
+                df = df.to_pandas()
+            except AttributeError:
+                df = pd.DataFrame(df)
+
+        # 2. Build prompt variables
+        data_csv = df.to_csv(index=False)
+        user_query = self._last_user_query(messages)
+
+        # 3. Invoke LLM using the ai_explanation prompt template (same pattern as
+        #    _stream_prompt / _invoke_prompt used elsewhere in this agent).
+        #    response_model is picked up automatically from the prompts dict entry.
+        result = await self._invoke_prompt(
+            "ai_explanation",
+            messages,
+            context,
+            user_query=user_query,
+            data_csv=data_csv,
+        )
+
+        # 4. Inject explanations as a new column into the DataFrame
+        df["ai_explanation"] = result.explanations
+
+        # 5. Update pipeline.data — the param watcher will auto-trigger UI re-render
+        pipeline.data = df
+
     @staticmethod
     def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
+
         """A plot for the "All" overview that tracks an editor's component.
 
         Binding to the editor's ``component`` means the overview re-renders when
@@ -1003,6 +1061,9 @@ class VegaLiteAgent(BaseCodeAgent):
         if not self.code_execution_enabled:
             for editor in editors:
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
+
+            # Step 5: Background LLM-driven row explanations (adds ai_explanation column)
+            state.execute(partial(self._generate_ai_explanations, pipeline, messages, context))
 
         out_context = await editors[-1].render_context()
         return outs, out_context
