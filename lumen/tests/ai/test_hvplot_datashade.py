@@ -15,7 +15,10 @@ from lumen.views.base import hvPlotBaseView
 
 async def extract(spec, n_rows):
     """Run _extract_spec against a frame of the given size."""
-    data = pd.DataFrame({"x": range(n_rows), "y": range(n_rows), "c": ["a"] * n_rows})
+    data = pd.DataFrame({
+        "x": range(n_rows), "y": range(n_rows),
+        "c": ["a"] * n_rows, "other": ["b"] * n_rows,
+    })
     with patch("lumen.ai.agents.hvplot.get_data", return_value=data):
         return await hvPlotAgent()._extract_spec(
             {"pipeline": SimpleNamespace(table="t")}, dict(spec)
