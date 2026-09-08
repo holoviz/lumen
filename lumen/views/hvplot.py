@@ -45,6 +45,8 @@ from .base import View
 # name hvplot to the library imported above, shadowing this module.
 __all__ = [
     "AGGREGATORS",
+    "BAR_KINDS",
+    "CANVAS_BACKEND",
     "GRIDDED_KINDS",
     "GRIDDED_MAX_CELLS",
     "HVPLOT_KINDS",
@@ -93,6 +95,17 @@ AGGREGATORS = [None, "any", "count", "max", "mean", "min", "sum"]
 # These reduce a value column rather than counting rows, so hvPlot needs to be
 # told which column via `color`; without it datashader cannot pick a dimension.
 VALUE_AGGREGATORS = ("max", "mean", "min", "sum")
+
+# Kinds that draw one bar per x value, so the axis has to be categorical.
+BAR_KINDS = ("bar", "barh")
+
+# HoloViews defaults a bokeh plot to the WebGL backend, which draws the glyphs
+# on an offscreen GL canvas and blits the result onto the 2D one carrying the
+# axes. Inside the chat UI that blit does not land, so a plot arrives with its
+# axes, its gridlines and none of its data. Drawing straight to 2D costs
+# nothing here: a frame past MAX_RENDER_ROWS is refused, and one past 20k is
+# datashaded into an image server-side long before WebGL would earn its keep.
+CANVAS_BACKEND = {"plot.output_backend": "canvas"}
 
 # hvPlot groups its options under headings of its own ("Data Options",
 # "Geographic Options", ...). griffe's numpy parser only treats a section as
@@ -386,6 +399,19 @@ class hvPlotBaseView(View):
         # tables and downloads keep the nullable columns.
         return widen_nullable(super().get_data())
 
+    @staticmethod
+    def _as_categorical(df, column):
+        """Label a bar chart's x values so hvPlot gives the axis factors.
+
+        hvPlot sizes a bar from the smallest gap between neighbouring x values.
+        A continuous column aggregated per distinct value leaves gaps far
+        smaller than the axis span, and every bar comes out a fraction of a
+        pixel wide, so the plot looks empty. Bars are categorical anyway.
+        """
+        if isinstance(df[column].dtype, pd.CategoricalDtype) or df[column].dtype == object:
+            return df
+        return df.assign(**{column: df[column].astype(str)})
+
     def _check_render_size(self, df) -> None:
         """Refuse to render more per-row glyphs than a browser tab can hold.
 
@@ -582,6 +608,22 @@ class hvPlotView(hvPlotBaseView):
 
     def get_plot(self, df):
         self._check_render_size(df)
+        # A spec can name a column the frame does not carry, e.g. when the query
+        # meant to create it failed. hvPlot only finds out while drawing, where
+        # it raises a bare KeyError and nothing renders at all, so an axis with
+        # nothing behind it is dropped and hvPlot infers one instead. A gridded
+        # source arrives as an xarray Dataset whose axes are dims rather than
+        # columns, and _gridded_plot_source already checks those.
+        known = set(df.columns) if isinstance(df, pd.DataFrame) else None
+
+        def keep(name):
+            return known is None or name in known
+
+        x = self.x if keep(self.x) else None
+        y = self.y if keep(self.y) else None
+        z = self.z if keep(self.z) else None
+        by = [column for column in self.by or [] if keep(column)]
+        groupby = [column for column in self.groupby or [] if keep(column)]
         processed = {}
         for k, v in self.kwargs.items():
             if k in self._ignore_kwargs:
@@ -591,8 +633,8 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
-        if self.z is not None:
-            processed['C' if self.kind == 'heatmap' else 'z'] = self.z
+        if z is not None:
+            processed['C' if self.kind == 'heatmap' else 'z'] = z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
         # needs has to be put back explicitly. These pass straight through; the
         # ones below carry a Lumen meaning hvPlot does not share.
@@ -617,10 +659,13 @@ class hvPlotView(hvPlotBaseView):
             processed['geo'] = self.geo
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
+        elif kind in BAR_KINDS and x is not None:
+            plot_source = self._as_categorical(plot_source, x)
 
         plot = plot_source.hvplot(
-            kind=kind, x=self.x, y=self.y, by=self.by, groupby=self.groupby, **processed
+            kind=kind, x=x, y=y, by=by or None, groupby=groupby or None, **processed
         )
+        plot = plot.opts(backend_opts=CANVAS_BACKEND)
         if self.operations:
             for operation in self.operations:
                 plot = operation(plot)
