@@ -15,8 +15,8 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCodeCLI,
-        CodexCLI, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
+        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
+        CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
         MistralAI, Ollama, OpenAI, WebLLM,
     )
     from lumen.ai.tools import FunctionTool
@@ -167,14 +167,14 @@ def test_get_available_llm_respects_modified_provider_env_vars(monkeypatch):
 
 def test_cli_providers_are_registered():
     """CLI-backed subscription providers can be selected explicitly by the command line."""
-    assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCLI"
-    assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCodeCLI"
-    assert issubclass(CodexCLI, LlmCli)
-    assert issubclass(ClaudeCodeCLI, LlmCli)
+    assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCli"
+    assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCode"
+    assert issubclass(CodexCli, LlmCli)
+    assert issubclass(ClaudeCode, LlmCli)
 
 
 def test_codex_cli_command_defaults_to_read_only():
-    llm = CodexCLI()
+    llm = CodexCli()
 
     command = llm._build_command("gpt-test")
 
@@ -185,7 +185,7 @@ def test_codex_cli_command_defaults_to_read_only():
 
 
 def test_claude_code_command_defaults_to_plan_mode():
-    llm = ClaudeCodeCLI()
+    llm = ClaudeCode()
 
     command = llm._build_command("sonnet")
 
@@ -196,7 +196,7 @@ def test_claude_code_command_defaults_to_plan_mode():
 
 
 def test_cli_output_decoders():
-    codex = CodexCLI()
+    codex = CodexCli()
     codex_output = (
         '{"type":"thread.started","thread_id":"abc"}\n'
         '{"type":"item.completed","item":{"type":"agent_message","text":"First"}}\n'
@@ -204,7 +204,7 @@ def test_cli_output_decoders():
     )
     assert codex._decode_output(codex_output) == "Ready"
 
-    claude = ClaudeCodeCLI()
+    claude = ClaudeCode()
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
 
 
@@ -215,7 +215,7 @@ async def test_cli_provider_validates_structured_output(monkeypatch):
     async def fake_run_command(command, prompt):
         return '{"result": "{\\"ready\\": true}", "is_error": false}'
 
-    llm = ClaudeCodeCLI()
+    llm = ClaudeCode()
     monkeypatch.setattr(llm, "_run_command", fake_run_command)
 
     result = await llm.run_client(
@@ -241,7 +241,7 @@ async def test_cli_provider_sends_prompt_over_stdin(monkeypatch, tmp_path):
         return Process()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
-    llm = ClaudeCodeCLI(working_dir=str(tmp_path))
+    llm = ClaudeCode(working_dir=str(tmp_path))
 
     output = await llm._run_command(["claude", "--print"], "Private prompt")
 
@@ -262,7 +262,7 @@ async def test_cli_provider_skips_unsupported_tool_loop(monkeypatch):
         calls.append(kwargs)
         return Reply(ready=True)
 
-    llm = ClaudeCodeCLI()
+    llm = ClaudeCode()
     monkeypatch.setattr(llm, "run_client", run_client)
 
     result = await llm._run_tool_loop(

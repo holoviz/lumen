@@ -74,8 +74,8 @@ LLM_PROVIDERS = {
     'litellm': 'LiteLLM',
     'openrouter': 'OpenRouter',
     'kilo': 'Kilo',
-    'codex-cli': 'CodexCLI',
-    'claude-code': 'ClaudeCodeCLI',
+    'codex-cli': 'CodexCli',
+    'claude-code': 'ClaudeCode',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
@@ -1237,9 +1237,15 @@ class LlmCli(Llm):
     """Base class for locally authenticated coding CLIs.
 
     These providers invoke an already authenticated local CLI instead of handling
-    credentials. They are intended for local development only: output is collected
-    after the command completes and native Lumen function tools are not forwarded
-    to the CLI.
+    credentials. Lumen renders its messages as a text prompt and sends it over
+    standard input. Each subclass parses the CLI-specific response format to
+    obtain the final text response. For structured responses, Lumen appends the
+    Pydantic JSON Schema to the prompt, extracts the returned JSON value, and
+    validates it against the response model.
+
+    They are intended for local development only: output is collected after the
+    command completes and native Lumen function tools are not forwarded to the
+    CLI.
     """
 
     executable = param.String(default="", constant=True, doc="Path or name of the CLI executable.")
@@ -1420,7 +1426,7 @@ class LlmCli(Llm):
         return result
 
 
-class CodexCLI(LlmCli):
+class CodexCli(LlmCli):
     """Use the locally authenticated Codex CLI as a Lumen provider."""
 
     display_name = param.String(default="Codex CLI", constant=True)
@@ -1462,7 +1468,7 @@ class CodexCLI(LlmCli):
         return final_message.strip()
 
 
-class ClaudeCodeCLI(LlmCli):
+class ClaudeCode(LlmCli):
     """Use the locally authenticated Claude Code CLI as a Lumen provider."""
 
     display_name = param.String(default="Claude Code CLI", constant=True)
