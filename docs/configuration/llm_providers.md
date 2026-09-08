@@ -116,6 +116,59 @@ For installation and API key setup instructions, see the [Installation guide](..
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Reasoning:** `nemotron-3-nano:30b`
 
+### Codex CLI and Claude Code
+
+Use a locally authenticated Codex CLI or Claude Code CLI as Lumen's LLM
+provider. This lets an individual user run Lumen with an existing CLI
+subscription, without supplying an API key to Lumen.
+
+Before starting Lumen, install the relevant CLI, make sure its executable is
+on your `PATH`, and sign in to it once:
+
+``` bash title="Codex CLI"
+codex login
+```
+
+``` bash title="Claude Code"
+claude auth login
+```
+
+Start Lumen without loading any data:
+
+``` bash title="Codex CLI"
+lumen-ai serve --provider codex-cli
+```
+
+``` bash title="Claude Code CLI"
+lumen-ai serve --provider claude-code
+```
+
+The CLI's configured default model is used unless you select one explicitly.
+For example, Claude Code provides a stable `sonnet` alias:
+
+``` bash
+lumen-ai serve --provider claude-code --model sonnet
+```
+
+The same `--model` option accepts model identifiers available to the
+authenticated Codex CLI account.
+
+To start with a dataset, add its path before the provider arguments:
+
+``` bash
+lumen-ai serve penguins.csv --provider codex-cli
+lumen-ai serve penguins.csv --provider claude-code
+```
+
+!!! warning "Local development only"
+    The server process launches a command-line agent for every LLM request. Do
+    not expose this configuration as a public or multi-user Lumen deployment.
+    Codex runs with its `read-only` sandbox and Claude Code uses `plan` mode by
+    default. Claude Code can use up to three turns per Lumen request so it can
+    complete internal tool calls. The providers collect a completed response
+    rather than streaming tokens, and do not yet expose Lumen function tools to
+    the coding CLIs.
+
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
 

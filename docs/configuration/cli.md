@@ -113,6 +113,8 @@ If not specified, Lumen auto-detects from environment variables.
 - `ollama` - Local models
 - `llama-cpp` - Local models
 - `litellm` - Multi-provider
+- `codex-cli` - Locally authenticated Codex CLI
+- `claude-code` - Locally authenticated Claude Code CLI
 
 ### Set API key
 
