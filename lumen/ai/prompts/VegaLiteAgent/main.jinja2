@@ -49,7 +49,7 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 ## Tooltips
 
-Every chart MUST include a `tooltip` encoding array. This array must always contain the following exact field definition to display the AI-generated explanation:
+Every chart is required to include a `tooltip` encoding array. This array must always contain the following exact field definition to display the AI-generated explanation:
 `- {field: "ai_explanation", type: "nominal", title: "AI Insight"}`
 
 You should also include other relevant data fields (like the x and y axes values) in the tooltip array, but `ai_explanation` must always be present.
