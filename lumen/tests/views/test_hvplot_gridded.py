@@ -9,8 +9,8 @@ from hvplot import hvPlotTabular
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views import base as views_base
-from lumen.views.base import GRIDDED_KINDS, hvPlotUIView, hvPlotView
+from lumen.views import hvplot as views_hvplot
+from lumen.views.hvplot import GRIDDED_KINDS, hvPlotUIView, hvPlotView
 
 # ---- Fixtures ----
 
@@ -216,7 +216,7 @@ def test_hvplot_gridded_size_guard_raises(gridded_pipeline, monkeypatch):
         y="lat",
         z="air",
     )
-    monkeypatch.setattr(views_base, "GRIDDED_MAX_CELLS", 4)  # fixture is 3 lats x 4 lons = 12 cells
+    monkeypatch.setattr(views_hvplot, "GRIDDED_MAX_CELLS", 4)  # fixture is 3 lats x 4 lons = 12 cells
     with pytest.raises(ValueError, match="exceeding the 4 safety cap"):
         view.get_plot(view.get_data())
 
@@ -235,7 +235,7 @@ def test_hvplot_gridded_skips_pivot_if_xarray_unavailable(gridded_pipeline, monk
         y="lat",
         z="air",
     )
-    monkeypatch.setattr(views_base, "try_import_xarray", lambda: None)
+    monkeypatch.setattr(views_hvplot, "try_import_xarray", lambda: None)
     result = view._to_gridded(view.get_data())
     assert isinstance(result, pd.DataFrame), "expected df fallback when xarray unavailable"
 
@@ -287,7 +287,7 @@ def test_hvplot_render_cap_raises_for_per_row_kind(gridded_pipeline, monkeypatch
     of shipping every row to the browser, which can exhaust its memory. A large
     gridded xarray source expands to millions of long-form rows, so this is easy
     to hit."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)  # gridded_df has 12 rows
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 5)  # gridded_df has 12 rows
     view = hvPlotView(pipeline=gridded_pipeline, kind="scatter", x="lon", y="air")
     with pytest.raises(ValueError, match="12 rows"):
         view.get_plot(view.get_data())
@@ -296,7 +296,7 @@ def test_hvplot_render_cap_raises_for_per_row_kind(gridded_pipeline, monkeypatch
 def test_hvplot_render_cap_exempts_gridded_kind(gridded_pipeline, monkeypatch):
     """Gridded kinds pivot to a compact grid, so their render size is bounded
     regardless of row count and they skip the cap."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 5)
     view = hvPlotView(pipeline=gridded_pipeline, kind="image", x="lon", y="lat", z="air")
     over_cap = pd.DataFrame({"lon": range(20), "lat": range(20), "air": range(20)})
     view._check_render_size(over_cap)  # gridded kind -> exempt -> must not raise
@@ -304,7 +304,7 @@ def test_hvplot_render_cap_exempts_gridded_kind(gridded_pipeline, monkeypatch):
 
 def test_hvplot_render_cap_exempts_rasterize(gridded_pipeline, monkeypatch):
     """rasterize/datashade aggregate server-side, so large frames are allowed."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 5)
     view = hvPlotView(
         pipeline=gridded_pipeline, kind="scatter", x="lon", y="air", rasterize=True
     )
@@ -314,7 +314,7 @@ def test_hvplot_render_cap_exempts_rasterize(gridded_pipeline, monkeypatch):
 
 def test_hvplot_render_cap_allows_small_frame(gridded_pipeline, monkeypatch):
     """Frames at or under the cap render normally."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 100)  # 12 rows is under
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 100)  # 12 rows is under
     view = hvPlotView(pipeline=gridded_pipeline, kind="scatter", x="lon", y="air")
     assert view.get_plot(view.get_data()) is not None
 
@@ -322,7 +322,7 @@ def test_hvplot_render_cap_allows_small_frame(gridded_pipeline, monkeypatch):
 def test_hvplot_ui_render_cap_raises(gridded_pipeline, monkeypatch):
     """The AI explorer view (hvPlotUIView) enforces the same cap, since it is the
     view the hvPlot agent emits and it does not pivot or aggregate raw rows."""
-    monkeypatch.setattr(views_base, "MAX_RENDER_ROWS", 5)
+    monkeypatch.setattr(views_hvplot, "MAX_RENDER_ROWS", 5)
     view = hvPlotUIView(pipeline=gridded_pipeline, kind="scatter", x="lon", y="air")
     with pytest.raises(ValueError, match="12 rows"):
         view.get_panel()

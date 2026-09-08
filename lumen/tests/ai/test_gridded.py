@@ -21,7 +21,7 @@ from lumen.sources.base import InMemorySource
 from lumen.sources.xarray_sql import XArraySQLSource
 from lumen.transforms.base import Columns
 from lumen.util import try_import_xarray
-from lumen.views.base import hvPlotUIView, hvPlotView
+from lumen.views.hvplot import hvPlotUIView, hvPlotView
 
 pytestmark = pytest.mark.skipif(
     try_import_xarray() is None, reason="xarray not installed"

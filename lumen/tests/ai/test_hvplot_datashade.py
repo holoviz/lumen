@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.translate import param_to_pydantic
-from lumen.views.base import hvPlotBaseView
+from lumen.views.hvplot import hvPlotBaseView
 
 
 async def extract(spec, n_rows):

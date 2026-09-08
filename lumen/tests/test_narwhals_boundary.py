@@ -27,7 +27,8 @@ from lumen.util import (
     _NULLABLE_DTYPES, as_narwhals, as_pandas, get_dataframe_schema,
     is_lazyframe,
 )
-from lumen.views.base import Table, hvPlotView
+from lumen.views.base import Table
+from lumen.views.hvplot import hvPlotView
 
 
 class ParamHolder(param.Parameterized):
