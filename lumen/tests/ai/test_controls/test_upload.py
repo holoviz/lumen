@@ -370,7 +370,7 @@ class TestUploadControlsUX:
 @requires_geopandas
 def test_read_geo_file_captures_crs():
     """read_geo_file surfaces the source CRS in source_params so DuckDBSource
-    can reapply it after the WKB roundtrip (gh-1904)."""
+    can reapply it after the WKB roundtrip."""
     gdf = gpd.GeoDataFrame(
         {"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])], crs="EPSG:4326"
     )

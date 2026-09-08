@@ -52,7 +52,18 @@ class RecordingFrame(pd.DataFrame):
 
     def hvplot(self, **kwargs):
         self.recorded.update(kwargs)
-        return object()
+        return RecordedPlot()
+
+
+class RecordedPlot:
+    """Stands in for the HoloViews element hvPlot returns.
+
+    The view goes on to set options on it, so a bare object is not enough of a
+    double.
+    """
+
+    def opts(self, *args, **kwargs):
+        return self
 
 
 def record_hvplot_call(view, df):
@@ -416,3 +427,19 @@ def test_aggregator_reaches_the_explorer(categorical_pipeline):
     _args, kwargs = view._get_args()
 
     assert kwargs["aggregator"] == "count"
+
+
+def test_an_axis_the_frame_does_not_carry_is_dropped(categorical_pipeline, categorical_df):
+    """A spec can name a column the query never created, and hvPlot only finds
+    out while drawing, where it raises a bare KeyError."""
+    view = hvPlotView(
+        pipeline=categorical_pipeline, kind="scatter", x="nope", y="y",
+        by=["ancestry", "missing"], groupby=["gone"],
+    )
+
+    recorded = record_hvplot_call(view, categorical_df)
+
+    assert recorded["x"] is None
+    assert recorded["y"] == "y"
+    assert recorded["by"] == ["ancestry"]
+    assert recorded["groupby"] is None

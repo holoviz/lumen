@@ -26,8 +26,16 @@ except ImportError as e:
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.llm import LLM_PROVIDERS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
+from . import YAML_SUFFIXES
 
 CMD_DIR = THIS_DIR / ".." / "command"
+
+# Captured before any invoke() call can monkeypatch it, so the yaml-routing
+# branch below can restore it even after a prior in-process invoke() call
+# left the AIHandler-backed override installed.
+_ORIGINAL_BUILD_SINGLE_HANDLER_APPLICATIONS = (
+    bokeh.command.subcommands.serve.build_single_handler_applications
+)
 
 
 class LumenAIServe(Serve):
@@ -94,6 +102,16 @@ class LumenAIServe(Serve):
 
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
+        paths = args.files or []
+        if paths and all(Path(path).suffix.lower() in YAML_SUFFIXES for path in paths):
+            # A YAML dashboard spec needs no LLM provider; let Serve.invoke route it.
+            # Restore the original builder in case a prior invoke() call in this
+            # same process left the AIHandler-backed closure installed below (#1780).
+            bokeh.command.subcommands.serve.build_single_handler_applications = (
+                _ORIGINAL_BUILD_SINGLE_HANDLER_APPLICATIONS
+            )
+            return super().invoke(args)
+
         provider = args.provider
         llm_model_url = args.llm_model_url
         provider_cls = None

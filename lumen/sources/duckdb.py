@@ -22,7 +22,8 @@ from ..transforms.sql import (
     SQLCount, SQLFilter, SQLLimit, SQLSelectFrom,
 )
 from ..util import (
-    as_pandas, detect_file_encoding, normalize_table_name, try_import,
+    as_pandas, detect_file_encoding, geometry_columns, normalize_table_name,
+    try_import,
 )
 from .base import BaseSQLSource, Source, cached
 
@@ -31,6 +32,11 @@ if TYPE_CHECKING:
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
+
+
+def _quote_ident(ident: str) -> str:
+    """Quote a SQL identifier, escaping embedded double quotes."""
+    return '"{}"'.format(ident.replace('"', '""'))
 
 
 class DuckDBSource(BaseSQLSource):
@@ -76,8 +82,8 @@ class DuckDBSource(BaseSQLSource):
     geometry_crs = param.String(default=None, allow_None=True, doc="""
         CRS to reapply to geometry columns after the WKB roundtrip through
         DuckDB, used as a fallback when the column type carries no CRS of its
-        own. Populated from the source data at ingest; may also be set
-        explicitly for a known dataset.""")
+        own. May be set explicitly for a known dataset; an ingested frame
+        instead records its CRS on the GEOMETRY column type itself.""")
 
     read_only = param.Boolean(default=None, doc="""
         Whether to open the DuckDB database in read-only mode.""")
@@ -188,20 +194,78 @@ class DuckDBSource(BaseSQLSource):
                     df = as_pandas(e.new)
                     for col in df.select_dtypes(include=['string']).columns:
                         df[col] = df[col].astype(object)
-                    self._connection.from_df(df).to_view(table)
+                    self._ingest_table(table, df)
                     self._set_cache(df, table)
                 mirror.param.watch(update, 'data')
             df = as_pandas(df)
             try:
                 for col in df.select_dtypes(include=['string']).columns:
                     df[col] = df[col].astype(object)
-                self._connection.from_df(df).to_view(table)
+                self._ingest_table(table, df)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
 
     @property
     def connection(self):
         return self._connection
+
+    def _ingest_table(self, name: str, df: pd.DataFrame):
+        """Expose a DataFrame on the connection under `name`.
+
+        A frame without geometry columns is exposed as a view directly.
+        DuckDB's pandas scanner does not understand the geometry dtype, so
+        geometry columns pass through WKB and ST_GeomFromWKB into a native
+        GEOMETRY table instead. WKB carries no CRS, so each column's CRS is
+        recorded on its GEOMETRY('<crs>') column type for `_fetch_df` to
+        reapply after fetching.
+        """
+        geom_cols = geometry_columns(df)
+        if not geom_cols:
+            self._drop_relation('TABLE', name)
+            self._connection.from_df(df).to_view(name)
+            return
+        gpd = try_import("geopandas")
+        wkb, crs = pd.DataFrame(df).copy(), {}
+        for col in geom_cols:
+            series = gpd.GeoSeries(df[col])
+            crs[col] = series.crs
+            wkb[col] = series.to_wkb()
+
+        def geom_expr(col: str) -> str:
+            expr = f'ST_GeomFromWKB({_quote_ident(col)})'
+            if crs[col] is not None:
+                expr += "::GEOMETRY('{}')".format(str(crs[col]).replace("'", "''"))
+            return f'{expr} AS {_quote_ident(col)}'
+
+        selected = ', '.join(
+            geom_expr(c) if c in geom_cols else _quote_ident(c)
+            for c in df.columns
+        )
+        self._connection.execute('INSTALL spatial;\nLOAD spatial;')
+        self._connection.register(f'{name}__wkb', wkb)
+        try:
+            self._drop_relation('VIEW', name)
+            # Materialized as a real table: a view over the registered frame
+            # would be invisible to the cursors queries run on.
+            self._connection.execute(
+                f'CREATE OR REPLACE TABLE {_quote_ident(name)} AS '
+                f'SELECT {selected} FROM {_quote_ident(name + "__wkb")}'
+            )
+        finally:
+            self._connection.unregister(f'{name}__wkb')
+
+    def _drop_relation(self, kind: str, name: str):
+        """Drop a leftover `kind` under `name` so a re-ingest can flip between
+        view (plain frame) and table (geometry frame), e.g. a mirrored
+        Pipeline whose update gains or loses geometry columns: CREATE OR
+        REPLACE only replaces a relation of its own kind. A type mismatch on
+        the drop raises CatalogException instead of honoring IF EXISTS, but
+        then the name holds the kind CREATE OR REPLACE replaces anyway.
+        """
+        try:
+            self._connection.execute(f'DROP {kind} IF EXISTS {_quote_ident(name)}')
+        except duckdb.CatalogException:
+            pass
 
     def _run_initializer(self, init: str) -> None:
         try:
@@ -355,7 +419,7 @@ class DuckDBSource(BaseSQLSource):
             # DuckDB occasionally has issues with the new pandas string dtype
             for col in df.select_dtypes(include=['string']).columns:
                 df[col] = df[col].astype(object)
-            source._connection.from_df(df).to_view(name)
+            source._ingest_table(name, df)
             table_defs[name] = source.sql_expr.format(table=name)
         source.tables = table_defs
         return source
@@ -553,8 +617,8 @@ class DuckDBSource(BaseSQLSource):
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(
-            f'ST_AsWKB("{d[0]}"::GEOMETRY) AS "{d[0]}"'
-            if d[0] in geom_cols else f'"{d[0]}"'
+            f'ST_AsWKB({_quote_ident(d[0])}::GEOMETRY) AS {_quote_ident(d[0])}'
+            if d[0] in geom_cols else _quote_ident(d[0])
             for d in rel.description
         )
         wrapped = f'SELECT {selected} FROM ({sql_expr})'
