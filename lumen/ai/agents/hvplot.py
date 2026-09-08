@@ -5,7 +5,7 @@ import param
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from ...views import hvPlotUIView
+from ...views import hvPlotView
 from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
@@ -35,7 +35,7 @@ class hvPlotAgent(BaseViewAgent):
         }
     )
 
-    view_type = hvPlotUIView
+    view_type = hvPlotView
 
     def _get_model(self, prompt_name: str, schema: dict[str, Any] | None = None) -> type[BaseModel]:
         # Only the main prompt describes the view. Every other prompt, revise
@@ -54,6 +54,12 @@ class hvPlotAgent(BaseViewAgent):
             "download",
             "field",
             "selection_group",
+            # Runtime state and HoloViews-level escape hatches: nothing a plot
+            # request asks for, and nothing the model could fill sensibly.
+            "operations",
+            "opts",
+            "selection_expr",
+            "streaming",
         ]
         model = param_to_pydantic(
             self.view_type,
@@ -98,6 +104,25 @@ class hvPlotAgent(BaseViewAgent):
         if spec.get("aggregator") in VALUE_AGGREGATORS:
             spec.pop("aggregator", None)
 
+    @staticmethod
+    def _drop_unknown_columns(spec: dict[str, Any], columns: set[str]) -> None:
+        """Drop axes naming a column the query did not produce.
+
+        The model is offered the columns of the table it was given, but it can
+        still answer with one it expected the query to create. hvPlot only
+        finds out while drawing, where it raises a bare KeyError and the whole
+        chart is lost; dropping the axis leaves hvPlot to infer one instead.
+        """
+        for field in ("x", "y", "z"):
+            if spec.get(field) is not None and spec[field] not in columns:
+                spec.pop(field)
+        for field in ("by", "groupby"):
+            known = [column for column in spec.get(field) or [] if column in columns]
+            if known:
+                spec[field] = known
+            else:
+                spec.pop(field, None)
+
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]
         spec = {key: val for key, val in spec.items() if val is not None}
@@ -105,13 +130,14 @@ class hvPlotAgent(BaseViewAgent):
         # hvPlotExplorer rejects any keyword none of its controls claims.
         spec.pop("chain_of_thought", None)
         self._drop_conflicting_axes(spec)
-        spec["type"] = "hvplot_ui"
+        spec["type"] = "hvplot"
         self.view_type.validate(spec)
         spec.pop("type", None)
 
         # Add defaults
         spec["responsive"] = True
         data = await get_data(pipeline)
+        self._drop_unknown_columns(spec, set(data.columns))
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             if spec.get("by"):
                 # rasterize reduces to a single number per pixel, which throws

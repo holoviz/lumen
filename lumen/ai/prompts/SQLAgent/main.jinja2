@@ -15,7 +15,7 @@ Write SQL query for user's data transformation request, focusing on intent over 
 
 ## Query Patterns
 - Exclude NULLs unless specified, or unless the question is about missing data, completeness or data quality — then count and report them instead of filtering them out
-- Clean data: `TRIM("column") != ''`, filter -9999, empty strings, split text columns
+- Clean data: `TRIM("column") != ''` on text columns only, never on a numeric or date one; filter -9999, empty strings, split text columns
 - Headers: Use OFFSET 1 for header/metadata rows
 - Mixed units: Use CASE to normalize before aggregating
 - Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
