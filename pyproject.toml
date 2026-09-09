@@ -42,7 +42,7 @@ dependencies = [
     "numpy",
     "packaging",
     "pandas",
-    "panel >=1.9.0,<=1.9.3",
+    "panel >=1.9.0",
     "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
@@ -66,7 +66,7 @@ HoloViz = "https://holoviz.org/"
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars', 'pyarrow']
 dev = [
     'lumen[tests,sql,ai-openai,xarray,geo]',
-    'panel>=1.9.0rc0,<=1.9.3',
+    'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
