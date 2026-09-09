@@ -7,9 +7,10 @@ import pandas as pd
 import panel as pn
 import pytest
 
+from panel_mosaic import Mosaic
+
 from lumen.filters.base import ConstantFilter, ParamFilter
 from lumen.panel import DownloadButton
-from lumen.panes.mosaic import Mosaic
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource, InMemorySource
 from lumen.state import state
@@ -710,9 +711,8 @@ def test_deckgl_geojson_layer_with_its_own_data_is_left_alone(set_root):
     assert params["object"]["layers"][0]["data"] == "https://example.com/x.json"
 
 
-def test_mosaic_view_renders_a_native_panel_pane():
-    """The view renders through Lumen's own Panel component, not an ipywidgets
-    bridge, and registers the pipeline data under the pipeline's table name."""
+def test_mosaic_view_renders_panel_mosaic_component():
+    """The view uses panel-mosaic and registers data under the table name."""
     df = pd.DataFrame({'x': [1, 2, 3], 'y': [4.0, 5.0, 6.0]})
     pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
     spec = {'plot': [{'mark': 'dot', 'data': {'from': 'points'}, 'x': 'x', 'y': 'y'}]}

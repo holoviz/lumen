@@ -47,6 +47,7 @@ from panel.param import Param
 from panel.util import classproperty
 from panel.viewable import Child, Viewable, Viewer
 from panel_material_ui import FileDownload
+from panel_mosaic import Mosaic
 from param.parameterized import bothmethod
 
 from ..base import MultiTypeComponent
@@ -54,7 +55,6 @@ from ..config import _INDICATORS
 from ..downloads import Download
 from ..filters.base import Filter, ParamFilter
 from ..panel import HtmlPdfDownloadButton
-from ..panes.mosaic import Mosaic
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms.base import Transform
