@@ -18,7 +18,7 @@ build = ["py312", "build"]
 lint = ["py312", "lint"]
 
 [dependencies]
-bokeh = "*"
+bokeh = ">=3.9.0"
 holoviews = ">=1.17.0"
 panel-material-ui = ">=0.14.0"
 hvplot = "*"

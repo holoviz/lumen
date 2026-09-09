@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "bokeh",
+    "bokeh >=3.9.0",
     "chardet",
     "duckdb >=1.2.0",
     "lxml",
