@@ -46,7 +46,7 @@ dependencies = [
     "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
-    "param >=2.2.1",
+    "param >=2.2.1,<2.5.0",
     "pyarrow",
     "pydantic >=2.8.0",
     "pydantic-extra-types",

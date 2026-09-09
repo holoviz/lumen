@@ -30,7 +30,7 @@ numpy = "*"
 packaging = "*"
 pandas = "*"
 panel = ">=1.9.0"
-param = ">=2.2.1"
+param = ">=2.2.1,!=2.5.0a0"
 pip = "*"
 sqlglot = "*"
 
