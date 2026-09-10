@@ -521,6 +521,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 doc=doc,
                 doc_pages=doc_pages,
                 gridded=gridded,
+                code_execution_enabled=self.code_execution_enabled,
                 **errors_context,
             )
             async for output in response:
