@@ -1107,7 +1107,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 4: enhancements (LLM-driven creative decisions), per editable chart
         if not self.code_execution_enabled:
-            for editor, (spec, _) in zip(editors, charts):
+            for editor, (spec, _) in zip(editors, charts, strict=False):
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
                 # Step 5: Background LLM-driven row explanations, per chart.
                 # Skip aggregate specs (mean/sum bar charts etc.): adding a raw
