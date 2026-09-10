@@ -1162,8 +1162,8 @@ class hvPlotUIView(hvPlotBaseView):
         return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
-        layout = self.get_panel()
-        explorer = layout[0] if isinstance(layout, pn.Column) else layout
+        explorer = self.get_panel()
+        layout = self._fit_explorer(explorer)
         def ui(*events):
             gridded = self._source_dataset()
             explorer._data = gridded if gridded is not None else self.get_data()
@@ -1186,10 +1186,10 @@ class hvPlotUIView(hvPlotBaseView):
             # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
             import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
             args, kwargs = self._get_args(hvGridExplorer, gridded)
-            return self._fit_explorer(hvGridExplorer(*args, **kwargs))
+            return hvGridExplorer(*args, **kwargs)
         args, kwargs = self._get_args()
         self._check_render_size(args[0])
-        return self._fit_explorer(hvDataFrameExplorer(*args, **kwargs))
+        return hvDataFrameExplorer(*args, **kwargs)
 
 
 class hvPlotView(hvPlotBaseView):
