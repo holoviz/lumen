@@ -4,7 +4,7 @@ from collections import Counter
 from functools import partial
 from typing import Any
 
-import pandas as pd
+
 import param
 import requests
 
@@ -1094,14 +1094,11 @@ class VegaLiteAgent(BaseCodeAgent):
         if not self.code_execution_enabled:
             for editor in editors:
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
-
-            # Step 5: Background LLM-driven row explanations (adds ai_explanation column).
-            # Use the pipeline that the first editor's chart actually renders from — for
-            # gridded data this is a chained pipeline returned by subset_gridded_to_2d,
-            # not the raw `pipeline`. Modifying the wrong pipeline would leave the
-            # ai_explanation column detached from the chart that is actually shown.
-            rendered_pipeline = editors[0].component.pipeline
-            state.execute(partial(self._generate_ai_explanations, rendered_pipeline, messages, context))
+                # Step 5: Background LLM-driven row explanations, per chart.
+                # Each editor has its own pipeline (gridded charts get a chained
+                # pipeline from subset_gridded_to_2d). Run once per editor so
+                # every chart gets its own ai_explanation column — not just chart 1.
+                state.execute(partial(self._generate_ai_explanations, editor.component.pipeline, messages, context))
 
         out_context = await editors[-1].render_context()
         return outs, out_context
