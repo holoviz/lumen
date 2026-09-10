@@ -970,8 +970,20 @@ class VegaLiteAgent(BaseCodeAgent):
             data_csv=data_csv,
         )
 
-        # 4. Inject explanations as a new column into the DataFrame
-        df["ai_explanation"] = result.explanations
+        # 4. Inject explanations as a new column into the DataFrame.
+        # Guard against LLM returning a different number of items than rows —
+        # pandas raises ValueError on length mismatch, which would silently
+        # swallow inside this fire-and-forget task with no visible error.
+        explanations = result.explanations
+        n_rows = len(df)
+        if len(explanations) != n_rows:
+            log_debug(
+                f"ai_explanation: LLM returned {len(explanations)} items for "
+                f"{n_rows} rows — truncating/padding to match."
+            )
+            # Truncate if too many, pad with empty string if too few
+            explanations = (explanations + [""] * n_rows)[:n_rows]
+        df["ai_explanation"] = explanations
 
         # 5. Update pipeline.data — the param watcher will auto-trigger UI re-render
         pipeline.data = df
