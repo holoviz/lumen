@@ -30,7 +30,7 @@ from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    category_palette, get_data, get_gridded_metadata, get_schema,
+    PROFILE_SAMPLE_ROWS, category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
     retry_llm_output, subset_gridded_to_2d,
 )
@@ -955,8 +955,19 @@ class VegaLiteAgent(BaseCodeAgent):
             except AttributeError:
                 df = pd.DataFrame(df)
 
-        # 2. Build prompt variables
-        data_csv = df.to_csv(index=False)
+        # 2. Build prompt variables — cap rows to avoid blowing the context window.
+        # We use PROFILE_SAMPLE_ROWS (same cap as the rest of the file) but take
+        # the HEAD (not a random sample) so explanations stay row-aligned: the
+        # LLM gets rows 0..N-1 and must return exactly that many explanations.
+        n_rows = len(df)
+        is_capped = n_rows > PROFILE_SAMPLE_ROWS
+        df_for_llm = df.head(PROFILE_SAMPLE_ROWS) if is_capped else df
+        if is_capped:
+            log_debug(
+                f"ai_explanation: DataFrame has {n_rows} rows — "
+                f"capping prompt to first {PROFILE_SAMPLE_ROWS} rows."
+            )
+        data_csv = df_for_llm.to_csv(index=False)
         user_query = self._last_user_query(messages)
 
         # 3. Invoke LLM using the ai_explanation prompt template (same pattern as
@@ -974,15 +985,22 @@ class VegaLiteAgent(BaseCodeAgent):
         # Guard against LLM returning a different number of items than rows —
         # pandas raises ValueError on length mismatch, which would silently
         # swallow inside this fire-and-forget task with no visible error.
+        # Note: LLM was given df_for_llm (capped) so we align against that length,
+        # then pad the remaining rows with empty string for the full df.
         explanations = result.explanations
-        n_rows = len(df)
-        if len(explanations) != n_rows:
+        capped_rows = len(df_for_llm)
+        if len(explanations) != capped_rows:
             log_debug(
                 f"ai_explanation: LLM returned {len(explanations)} items for "
-                f"{n_rows} rows — truncating/padding to match."
+                f"{capped_rows} capped rows — truncating/padding to match."
             )
             # Truncate if too many, pad with empty string if too few
-            explanations = (explanations + [""] * n_rows)[:n_rows]
+            explanations = (explanations + [""] * capped_rows)[:capped_rows]
+
+        # Pad remaining rows (beyond cap) with empty string
+        if is_capped:
+            explanations = explanations + [""] * (n_rows - capped_rows)
+
         df["ai_explanation"] = explanations
 
         # 5. Update pipeline.data — the param watcher will auto-trigger UI re-render
