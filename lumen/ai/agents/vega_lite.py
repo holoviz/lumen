@@ -1008,6 +1008,22 @@ class VegaLiteAgent(BaseCodeAgent):
         return True
 
     @staticmethod
+    def _spec_has_aggregation(spec: dict) -> bool:
+        """
+        Return True if any encoding channel in the Vega-Lite spec uses an
+        aggregate function (e.g. mean, sum, count).
+
+        Adding a raw per-row field (ai_explanation) to a tooltip alongside
+        aggregated encodings causes Vega-Lite to group by that field too,
+        which silently splits a single bar into one bar per row.
+        """
+        encoding = spec.get("spec", spec).get("encoding", {})
+        return any(
+            isinstance(channel, dict) and "aggregate" in channel
+            for channel in encoding.values()
+        )
+
+    @staticmethod
     def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
 
         """A plot for the "All" overview that tracks an editor's component.
@@ -1091,13 +1107,18 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 4: enhancements (LLM-driven creative decisions), per editable chart
         if not self.code_execution_enabled:
-            for editor in editors:
+            for editor, (spec, _) in zip(editors, charts):
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
                 # Step 5: Background LLM-driven row explanations, per chart.
-                # Each editor has its own pipeline (gridded charts get a chained
-                # pipeline from subset_gridded_to_2d). Run once per editor so
-                # every chart gets its own ai_explanation column — not just chart 1.
-                state.execute(partial(self._generate_ai_explanations, editor.component.pipeline, messages, context))
+                # Skip aggregate specs (mean/sum bar charts etc.): adding a raw
+                # per-row field to a tooltip alongside aggregated encodings makes
+                # Vega-Lite group by that field too, silently splitting one bar
+                # into many.
+                if not self._spec_has_aggregation(spec):
+                    state.execute(partial(
+                        self._generate_ai_explanations,
+                        editor.component.pipeline, messages, context,
+                    ))
 
         out_context = await editors[-1].render_context()
         return outs, out_context
