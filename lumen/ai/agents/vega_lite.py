@@ -939,7 +939,7 @@ class VegaLiteAgent(BaseCodeAgent):
         pipeline: Pipeline,
         messages: list[Message],
         context: TContext,
-    ) -> None:
+    ) -> bool:
         """
         Generate LLM-powered natural language explanations for each data row
         and inject them as a new 'ai_explanation' column into the pipeline data.
@@ -1006,6 +1006,9 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # 5. Update pipeline.data — the param watcher will auto-trigger UI re-render
         pipeline.data = df
+        # Signal success to @retry_llm_output — falsy return (None) would
+        # be treated as failure and trigger unnecessary retries.
+        return True
 
     @staticmethod
     def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
