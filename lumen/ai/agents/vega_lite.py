@@ -1062,8 +1062,13 @@ class VegaLiteAgent(BaseCodeAgent):
             for editor in editors:
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
 
-            # Step 5: Background LLM-driven row explanations (adds ai_explanation column)
-            state.execute(partial(self._generate_ai_explanations, pipeline, messages, context))
+            # Step 5: Background LLM-driven row explanations (adds ai_explanation column).
+            # Use the pipeline that the first editor's chart actually renders from — for
+            # gridded data this is a chained pipeline returned by subset_gridded_to_2d,
+            # not the raw `pipeline`. Modifying the wrong pipeline would leave the
+            # ai_explanation column detached from the chart that is actually shown.
+            rendered_pipeline = editors[0].component.pipeline
+            state.execute(partial(self._generate_ai_explanations, rendered_pipeline, messages, context))
 
         out_context = await editors[-1].render_context()
         return outs, out_context
