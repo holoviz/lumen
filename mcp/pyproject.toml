@@ -1,0 +1,36 @@
+[project]
+name = "lumen-mcp"
+version = "0.0.1"
+description = "Drive Lumen's data to SQL to chart to report loop from any MCP client."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "ghostiee-11", email = "aman0611kumar@gmail.com" }]
+dependencies = [
+    "fastmcp>=3",
+    "lumen[ai]",
+    "duckdb",
+    "panel",
+    "pandas",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+# Keyed mode: lets Lumen's own agents run server-side (Phase 2).
+keyed = ["anthropic", "instructor"]
+dev = ["pytest"]
+
+[project.scripts]
+lumen-mcp = "lumen_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lumen_mcp"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "examples"]
+testpaths = ["tests"]
+addopts = "-q"
