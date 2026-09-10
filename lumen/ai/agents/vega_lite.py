@@ -4,7 +4,6 @@ from collections import Counter
 from functools import partial
 from typing import Any
 
-
 import param
 import requests
 
@@ -30,9 +29,9 @@ from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    category_palette, get_data, get_gridded_metadata, get_schema,
-    has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
-    PROFILE_SAMPLE_ROWS, retry_llm_output, subset_gridded_to_2d,
+    PROFILE_SAMPLE_ROWS, category_palette, get_data, get_gridded_metadata,
+    get_schema, has_categorical_color, load_json, log_debug,
+    normalize_vegalite_spec, retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
