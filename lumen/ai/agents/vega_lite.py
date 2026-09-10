@@ -948,13 +948,11 @@ class VegaLiteAgent(BaseCodeAgent):
         The pipeline's param watcher automatically triggers a UI re-render so
         the tooltip picks up the new field without any additional code.
         """
-        # 1. Get current pipeline data as pandas DataFrame
-        df = pipeline.data
-        if not isinstance(df, pd.DataFrame):
-            try:
-                df = df.to_pandas()
-            except AttributeError:
-                df = pd.DataFrame(df)
+        # 1. Get current pipeline data as pandas DataFrame.
+        # get_data handles lazy frames (narwhals/polars) correctly and runs
+        # off-thread — pd.DataFrame(lazyframe) would raise. Same pattern
+        # used elsewhere in this file (e.g. _generate_altair_spec).
+        df = await get_data(pipeline)
 
         # 2. Build prompt variables — cap rows to avoid blowing the context window.
         # We use PROFILE_SAMPLE_ROWS (same cap as the rest of the file) but take
