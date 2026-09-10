@@ -933,6 +933,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 out.spec = dump_yaml(normalized["spec"])
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
+    @retry_llm_output()
     async def _generate_ai_explanations(
         self,
         pipeline: Pipeline,
