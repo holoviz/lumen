@@ -10,7 +10,7 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [pypi-dependencies]
-panel-mosaic-viz = { git = "https://github.com/panel-extensions/panel-mosaic.git", tag = "0.1.0" }
+panel-mosaic-viz = ">=0.1.2"
 
 [environments]
 test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "docx"]
