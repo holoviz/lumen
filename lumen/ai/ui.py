@@ -5,6 +5,7 @@ import atexit
 import os
 import tempfile
 import traceback
+import uuid
 
 from contextlib import contextmanager
 from functools import partial
@@ -13,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import panel as pn
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
@@ -448,6 +450,16 @@ class UI(Viewer):
     logs_db_path = param.String(default=None, constant=True, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
+    reconnect = param.Selector(default=True, objects=[True, False, "prompt"], doc="""
+    Whether to automatically re-connect to the server if the connection drops.""")
+
+    session_ttl = param.Integer(default=86400, doc="""
+    Seconds to keep persisted explorations before cleaning them up.""")
+
+    persist_session = param.Boolean(default=False, doc="""
+    Whether to persist explorations so they survive a page reload.
+    Requires logs_db_path to be set.""")
+
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
 
@@ -778,10 +790,26 @@ class UI(Viewer):
         Configure the Panel session state.
         """
         log_debug("New Session: \033[92mStarted\033[0m", show_sep="above")
-        self._session_id = id(self)
+        self._session_id = self._resolve_session_id()
+        if state.curdoc and state.curdoc.session_context:
+            pn.config.reconnect = self.reconnect
+            pn.config.notifications = True
         state.onload(self._initialize_new_llm)
         if state.curdoc and state.curdoc.session_context:
             state.on_session_destroyed(self._destroy)
+
+    def _resolve_session_id(self) -> str:
+        args = state.session_args or {}
+        sid = args.get("session_id")
+        if sid:
+            return sid[0].decode() if isinstance(sid[0], bytes) else str(sid[0])
+        sid = uuid.uuid4().hex
+        def _set_query():
+            if state.location:
+                state.location.update_query(session_id=sid)
+
+        state.onload(_set_query)
+        return sid
 
     def _configure_logs(self, interface):
         if not self.logs_db_path:
@@ -1536,12 +1564,18 @@ class UI(Viewer):
         self._idle.clear()
         with edit_readonly(self._page):
             self._page.busy = True
+        server = bool(state.curdoc and state.curdoc.session_context)
         try:
+            if server:
+                state.block_expiration()
             yield
         finally:
+            if server:
+                state.unblock_expiration()
             self._idle.set()
             with edit_readonly(self._page):
                 self._page.busy = old_busy
+
 
     def _update_help_getting_started(self):
         """Update the Getting Started help text based on whether data sources are connected."""
@@ -1867,7 +1901,6 @@ class UI(Viewer):
         server = bool(state.curdoc and state.curdoc.session_context)
         return self._create_view(server=server).servable(title, **kwargs)
 
-
 class ChatUI(UI):
     """
     ChatUI provides a high-level entrypoint to start chatting with your data
@@ -1893,7 +1926,6 @@ class ChatUI(UI):
     provider_choices = param.Dict(default={}, doc="""
         Available LLM providers to show in the configuration dialog.""")
 
-
 class Exploration(param.Parameterized):
 
     context = param.Dict(allow_refs=True)
@@ -1911,9 +1943,42 @@ class Exploration(param.Parameterized):
     view = Child()
 
     initialized = param.Boolean(default=False)
+    exploration_id = param.String(default="")
 
     def __panel__(self):
         return self.view
+
+    def to_spec(self) -> dict:
+        ctx = self.context or {}
+        return {
+            "title": self.title,
+            "subtitle": self.subtitle,
+            "sources": [src.to_spec() for src in ctx.get("sources", [])],
+            "visible_slugs": sorted(ctx.get("visible_slugs", [])),
+            "views": [v.to_spec() for v in (self.plan.views if self.plan else [])],
+            "conversation": [msg.serialize() for msg in self.conversation],
+            "exploration_id": self.exploration_id,
+        }
+
+    @classmethod
+    def from_spec(cls, spec: dict, view=None) -> Exploration:
+        sources = [Source.from_spec(s) for s in spec.get("sources", [])]
+        context = {"sources": sources, "visible_slugs": set(spec.get("visible_slugs", []))}
+        if sources:
+            context["source"] = sources[-1]
+        conversation = [
+            ChatMessage(object=msg) for msg in spec.get("conversation", [])
+        ]
+        return cls(
+            context=context,
+            conversation=conversation,
+            title=spec["title"],
+            subtitle=spec.get("subtitle", ""),
+            plan=None,
+            initialized=True,
+            exploration_id=spec.get("exploration_id", ""),
+            view=view,
+        )
 
 
 class ExplorerUI(UI):
@@ -2354,6 +2419,86 @@ class ExplorerUI(UI):
         super()._configure_session()
         self._idle = asyncio.Event()
         self._idle.set()
+        if self.persist_session and self._logs:
+            self._logs.delete_stale(self.session_ttl)
+            state.onload(self._restore_session)
+
+    def _restore_session(self):
+        if not (self.persist_session and self._logs):
+            return
+        try:
+            self._restore_explorations()
+        except Exception:
+            traceback.print_exc()
+
+    def _restore_explorations(self):
+        """
+        Called via state.onload once the page has loaded. Loads any
+        previously saved explorations for this session from the
+        persistence store and rebuilds them in the UI.
+        """
+        if not (self.persist_session and self._logs):
+            return
+
+        rows = self._logs.load_session(self._session_id)
+        if not rows:
+            return  # nothing saved for this session yet
+
+        id_to_item = {}  # maps saved exploration_id -> rebuilt view_item dict
+        last_item = None
+        last_conversation = None
+
+        with hold():
+            for row in rows:
+                spec = row["spec"]
+
+                # Rebuild the live Exploration object from its saved spec
+                exploration = Exploration.from_spec(spec)
+
+                # Rebuild its visual container the same way _add_exploration does
+                tabs = Tabs(dynamic=True, sizing_mode="stretch_both")
+                exploration.view = MultiSplit(tabs, sizing_mode="stretch_both")
+
+                # Resolve parent linkage: top-level explorations attach to Home,
+                # nested ones attach to their previously-restored parent item
+                parent_id = row["parent_id"]
+                if parent_id and parent_id in id_to_item:
+                    parent_item = id_to_item[parent_id]
+                else:
+                    parent_item = self._explorations.items[0]  # Home
+
+                # Build the same view_item shape used elsewhere (see _add_exploration)
+                view_item = {
+                    "label": row["title"],
+                    "view": exploration,
+                    "icon": None,
+                    "actions": [
+                        {"action": "export_notebook", "label": "Export Notebook", "icon": "download"},
+                        {"action": "remove", "label": "Remove", "icon": "delete"},
+                    ],
+                    "parent": parent_item,
+                    "items": [],
+                }
+
+                id_to_item[row["exploration_id"]] = view_item
+
+                if parent_item is self._explorations.items[0]:
+                    # top-level: add directly to the explorations list
+                    self._explorations.items = [*self._explorations.items, view_item]
+                else:
+                    # nested: add under its parent's own items
+                    self._explorations.update_item(
+                        parent_item, items=[*parent_item["items"], view_item]
+                    )
+
+                last_item = view_item
+                last_conversation = exploration.conversation
+
+            if last_item is not None:
+                # Show the most recently active exploration on restore
+                self._explorations.value = self._exploration = last_item
+                if last_conversation:
+                    self.interface.objects = last_conversation
 
     def _sync_active(self, event: param.parameterized.Event):
         if event.new is not self._exploration:
@@ -2362,6 +2507,26 @@ class ExplorerUI(UI):
     def _toggle_report_mode(self, active: bool):
         """Toggle between regular and report mode."""
         self._update_main_view(force_report_mode=active)
+
+    def _persist_state(self):
+        if not (self.persist_session and self._logs):
+            return
+
+        def walk(items, parent_id, position=0):
+            for i, item in enumerate(items, start=position):
+                exp = item["view"]
+                self._logs.upsert_exploration(
+                    session_id=self._session_id,
+                    exploration_id=exp.exploration_id,
+                    parent_id=parent_id,
+                    position=i,
+                    title=exp.title,
+                    subtitle=exp.subtitle,
+                    spec=exp.to_spec(),
+                )
+                walk(item.get("items", []), exp.exploration_id)
+
+        walk(self._explorations.items[1:], None)
 
     def _cleanup_exploration(self, item):
         """Clean up an exploration and its children, remove from tree,
@@ -2392,6 +2557,11 @@ class ExplorerUI(UI):
             )
             self._explorations.value = self._exploration = parent
             self._last_synced = parent['view']
+        if self.persist_session and self._logs:
+            for child in item.get('items', []):
+                self._logs.delete_exploration(child['view'].exploration_id)
+            self._logs.delete_exploration(exploration.exploration_id)
+        self._persist_state()
 
     async def _delete_exploration(self, item):
         await self._idle.wait()
@@ -2404,6 +2574,9 @@ class ExplorerUI(UI):
                 self._explorations.update_item(parent, items=[it for it in parent["items"] if it is not item])
                 self._explorations.value = parent
             self.interface.objects = []
+            if self.persist_session and self._logs:
+               self._logs.delete_exploration(item["view"].exploration_id)
+            self._persist_state()
 
     async def _export_exploration(self, item):
         """Export a single exploration as a Jupyter notebook."""
@@ -2425,6 +2598,9 @@ class ExplorerUI(UI):
         """
         Cleanup on session destroy
         """
+        self._persist_state()
+        if self.persist_session:
+            return
         for c in self._explorations.items[1:]:
             c['view'].context.clear()
 
@@ -2458,6 +2634,7 @@ class ExplorerUI(UI):
             self._update_main_view()
             self.interface._chat_log.scroll_to_latest()
         self._last_synced = exploration
+        self._persist_state()
 
     def _set_conversation(self, conversation: list[Any]):
         feed = self.interface._chat_log
@@ -2522,6 +2699,7 @@ class ExplorerUI(UI):
         exploration = Exploration(
             context=plan.param.out_context,
             conversation=conversation,
+            exploration_id=uuid.uuid4().hex,
             initialized=initialized,
             parent=parent if plan.is_followup else self._home,
             plan=plan,
@@ -2558,6 +2736,7 @@ class ExplorerUI(UI):
             self._output[1:] = [output]
             await self._update_conversation()
         self._last_synced = exploration
+        self._persist_state()
         return exploration
 
     def _render_pop_out(self, exploration: Exploration, view: Column, title: str):
