@@ -946,6 +946,13 @@ class VegaLiteAgent(BaseCodeAgent):
         After this method runs, pipeline.data is updated with the new column.
         The pipeline's param watcher automatically triggers a UI re-render so
         the tooltip picks up the new field without any additional code.
+
+        Note: this mutates the pipeline's own data, so the ai_explanation
+        column is visible to anything else reading this pipeline afterward
+        (schema introspection, exports, another chart on the same table),
+        not just this chart's tooltip. respond() dedupes so only one call
+        runs per shared pipeline, but the column itself still leaks beyond
+        this one chart by design of the re-render mechanism.
         """
         # 1. Get current pipeline data as pandas DataFrame.
         # get_data handles lazy frames (narwhals/polars) correctly and runs
@@ -1007,17 +1014,24 @@ class VegaLiteAgent(BaseCodeAgent):
         # be treated as failure and trigger unnecessary retries.
         return True
 
-    @staticmethod
-    def _spec_has_aggregation(spec: dict) -> bool:
+    @classmethod
+    def _spec_has_aggregation(cls, spec: dict) -> bool:
         """
         Return True if any encoding channel in the Vega-Lite spec uses an
         aggregate function (e.g. mean, sum, count).
 
         Adding a raw per-row field (ai_explanation) to a tooltip alongside
         aggregated encodings causes Vega-Lite to group by that field too,
-        which silently splits a single bar into one bar per row.
+        which silently splits a single bar into one bar per row. Composition
+        containers are walked, mirroring _spec_has_tooltips, so a layered or
+        concatenated spec with an aggregated layer is still caught.
         """
-        encoding = spec.get("spec", spec).get("encoding", {})
+        spec = spec.get("spec", spec)
+        for key in ("layer", "concat", "hconcat", "vconcat"):
+            views = spec.get(key)
+            if isinstance(views, list):
+                return any(cls._spec_has_aggregation(v) for v in views)
+        encoding = spec.get("encoding", {})
         return any(
             isinstance(channel, dict) and "aggregate" in channel
             for channel in encoding.values()
@@ -1025,7 +1039,6 @@ class VegaLiteAgent(BaseCodeAgent):
 
     @staticmethod
     def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
-
         """A plot for the "All" overview that tracks an editor's component.
 
         Binding to the editor's ``component`` means the overview re-renders when
@@ -1107,17 +1120,28 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 4: enhancements (LLM-driven creative decisions), per editable chart
         if not self.code_execution_enabled:
-            for editor, (spec, _) in zip(editors, charts, strict=False):
+            # editors is built one-to-one from charts (Step 2 above), so the
+            # lengths always match; strict=True surfaces it loudly if that
+            # invariant ever breaks instead of silently dropping entries.
+            explained_pipelines: set[int] = set()
+            for editor, (spec, _) in zip(editors, charts, strict=True):
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
                 # Step 5: Background LLM-driven row explanations, per chart.
                 # Skip aggregate specs (mean/sum bar charts etc.): adding a raw
                 # per-row field to a tooltip alongside aggregated encodings makes
                 # Vega-Lite group by that field too, silently splitting one bar
                 # into many.
-                if not self._spec_has_aggregation(spec):
+                pipeline = editor.component.pipeline
+                # subset_gridded_to_2d returns the same pipeline instance for
+                # every non-gridded chart, so two charts on one table would
+                # otherwise spawn concurrent tasks that read-modify-write the
+                # same pipeline.data, racing on the last write and paying for
+                # the same LLM call twice.
+                if not self._spec_has_aggregation(spec) and id(pipeline) not in explained_pipelines:
+                    explained_pipelines.add(id(pipeline))
                     state.execute(partial(
                         self._generate_ai_explanations,
-                        editor.component.pipeline, messages, context,
+                        pipeline, messages, context,
                     ))
 
         out_context = await editors[-1].render_context()
