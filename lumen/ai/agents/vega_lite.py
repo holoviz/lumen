@@ -935,30 +935,27 @@ class VegaLiteAgent(BaseCodeAgent):
     @retry_llm_output()
     async def _generate_ai_explanations(
         self,
-        pipeline: Pipeline,
+        view: VegaLiteView,
         messages: list[Message],
         context: TContext,
     ) -> bool:
         """
         Generate LLM-powered natural language explanations for each data row
-        and inject them as a new 'ai_explanation' column into the pipeline data.
+        and store them on the view's own _ai_explanations param, keyed to the
+        row order of the data at generation time.
 
-        After this method runs, pipeline.data is updated with the new column.
-        The pipeline's param watcher automatically triggers a UI re-render so
-        the tooltip picks up the new field without any additional code.
-
-        Note: this mutates the pipeline's own data, so the ai_explanation
-        column is visible to anything else reading this pipeline afterward
-        (schema introspection, exports, another chart on the same table),
-        not just this chart's tooltip. respond() dedupes so only one call
-        runs per shared pipeline, but the column itself still leaks beyond
-        this one chart by design of the re-render mechanism.
+        Stored on the view rather than written into pipeline.data: the
+        pipeline can be shared by other charts and agents on the same table,
+        and a column that only exists to serve this one chart's tooltip
+        should not leak into their view of the data. Setting the param
+        triggers the same update()/rerender path pipeline.data changes would
+        have (see View._internal_params / view.update in views/base.py).
         """
         # 1. Get current pipeline data as pandas DataFrame.
         # get_data handles lazy frames (narwhals/polars) correctly and runs
         # off-thread — pd.DataFrame(lazyframe) would raise. Same pattern
         # used elsewhere in this file (e.g. _generate_altair_spec).
-        df = await get_data(pipeline)
+        df = await get_data(view.pipeline)
 
         # 2. Build prompt variables — cap rows to avoid blowing the context window.
         # We use PROFILE_SAMPLE_ROWS (same cap as the rest of the file) but take
@@ -1006,10 +1003,11 @@ class VegaLiteAgent(BaseCodeAgent):
         if is_capped:
             explanations = explanations + [""] * (n_rows - capped_rows)
 
-        df["ai_explanation"] = explanations
-
-        # 5. Update pipeline.data — the param watcher will auto-trigger UI re-render
-        pipeline.data = df
+        # 5. Store on the view. View.__init__ already watches every param but
+        # rerender/selection_expr/name and calls update() on change, so
+        # assigning this triggers the same update/rerender path pipeline.data
+        # would have, with no separate call needed.
+        view._ai_explanations = explanations
         # Signal success to @retry_llm_output — falsy return (None) would
         # be treated as failure and trigger unnecessary retries.
         return True
@@ -1123,25 +1121,20 @@ class VegaLiteAgent(BaseCodeAgent):
             # editors is built one-to-one from charts (Step 2 above), so the
             # lengths always match; strict=True surfaces it loudly if that
             # invariant ever breaks instead of silently dropping entries.
-            explained_pipelines: set[int] = set()
             for editor, (spec, _) in zip(editors, charts, strict=True):
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
                 # Step 5: Background LLM-driven row explanations, per chart.
                 # Skip aggregate specs (mean/sum bar charts etc.): adding a raw
                 # per-row field to a tooltip alongside aggregated encodings makes
                 # Vega-Lite group by that field too, silently splitting one bar
-                # into many.
-                pipeline = editor.component.pipeline
-                # subset_gridded_to_2d returns the same pipeline instance for
-                # every non-gridded chart, so two charts on one table would
-                # otherwise spawn concurrent tasks that read-modify-write the
-                # same pipeline.data, racing on the last write and paying for
-                # the same LLM call twice.
-                if not self._spec_has_aggregation(spec) and id(pipeline) not in explained_pipelines:
-                    explained_pipelines.add(id(pipeline))
+                # into many. Explanations are stored per-view (see
+                # VegaLiteView._ai_explanations), so charts sharing a pipeline
+                # each get their own independent background task with no
+                # shared state to race on.
+                if not self._spec_has_aggregation(spec):
                     state.execute(partial(
                         self._generate_ai_explanations,
-                        pipeline, messages, context,
+                        editor.component, messages, context,
                     ))
 
         out_context = await editors[-1].render_context()
