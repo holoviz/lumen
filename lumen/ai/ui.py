@@ -33,6 +33,7 @@ from panel_material_ui import (
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from lumen.ai.agents.deck_gl import DeckGLAgent
+from lumen.ai.agents.mosaic import MosaicAgent
 
 from ..pipeline import Pipeline
 from ..sources import Source
@@ -411,7 +412,8 @@ class UI(Viewer):
 
     default_agents = param.List(default=[
         TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
-        SQLAgent, SourceAgent, VegaLiteAgent, ValidationAgent, DeckGLAgent
+        SQLAgent, SourceAgent, VegaLiteAgent, MosaicAgent, ValidationAgent,
+        DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
     demo_inputs = param.List(default=DEMO_MESSAGES, doc="""

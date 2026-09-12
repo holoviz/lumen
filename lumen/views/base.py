@@ -47,6 +47,7 @@ from panel.param import Param
 from panel.util import classproperty
 from panel.viewable import Child, Viewable, Viewer
 from panel_material_ui import FileDownload
+from panel_mosaic import Mosaic
 from param.parameterized import bothmethod
 
 from ..base import MultiTypeComponent
@@ -57,7 +58,7 @@ from ..panel import HtmlPdfDownloadButton
 from ..pipeline import Pipeline
 from ..state import state
 from ..transforms.base import Transform
-from ..transforms.sql import SQLLimit, SQLTransform
+from ..transforms.sql import SQLFilter, SQLLimit, SQLTransform
 from ..util import (
     VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
     geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
@@ -1778,6 +1779,138 @@ class VegaLiteView(View):
     def get_panel(self) -> pn.pane.Vega:
         spec = self._normalize_params(self._get_params())
         return pn.pane.Vega(**spec)
+
+
+class MosaicView(View):
+    """
+    `MosaicView` renders interactive Mosaic/vgplot visualizations from a
+    declarative ``mosaic-spec`` specification.
+
+    Unlike `VegaLiteView`, which embeds the data inline, Mosaic references
+    tables by name and pushes computation down to DuckDB, sending only query
+    results to the browser. This lets it scale to far larger, cross-filtered
+    and linked views.
+
+    See https://idl.uw.edu/mosaic/ for the specification format.
+    """
+
+    spec = param.Dict(doc="""
+        The declarative mosaic-spec (plot/marks/params/layout). Marks reference
+        the pipeline table via ``data: {from: <table>}``.""")
+
+    view_type = 'mosaic'
+
+    # Appended to the pipeline table to name the temp view the pushdown path
+    # builds, keeping it clear of the base table it selects from.
+    _VIEW_SUFFIX = '__lumen_mosaic'
+
+    @classmethod
+    def _rebind_table(cls, obj: Any, table: str) -> None:
+        """Point every ``from:`` reference in the spec at ``table`` in place.
+
+        A Lumen view is backed by exactly one pipeline table, so all dataset
+        references must resolve to it. This makes the binding robust to whatever
+        name the LLM (or a hand edit) wrote in the spec: we register the data
+        under ``table`` and rewrite the spec to match, instead of trusting the
+        two to agree — a mismatch renders nothing and errors only in the browser.
+        """
+        if isinstance(obj, dict):
+            if "from" in obj and isinstance(obj["from"], str):
+                obj["from"] = table
+            for value in obj.values():
+                cls._rebind_table(value, table)
+        elif isinstance(obj, list):
+            for item in obj:
+                cls._rebind_table(item, table)
+
+    def _sql_query(self) -> tuple[Any, str] | None:
+        """Return a DuckDB cursor and the name of a view over this pipeline's data.
+
+        When the pipeline is backed by DuckDB and its result is expressible
+        entirely in SQL, Mosaic can query that database directly instead of
+        being handed a copy of the frame -- which is the whole point of Mosaic,
+        since it means only aggregates cross the wire no matter how large the
+        table is.
+
+        Returns None whenever Lumen computes any part of the result in pandas
+        *after* the query: Python transforms, a ParamFilter, a chained
+        pipeline, or a source that applies its filters outside SQL. That work
+        is absent from the SQL below, so pushing it down would silently chart
+        unfiltered data -- worse than the copy it saves. Those cases fall back
+        to sending the computed frame.
+        """
+        try:
+            from ..sources.duckdb import (  # noqa: PLC0415
+                DuckDBSource, _quote_ident,
+            )
+        except ImportError:
+            # duckdb is a core dependency but the minimal test-core env omits it.
+            return None
+
+        pipeline, source = self.pipeline, self.pipeline.source
+        if not isinstance(source, DuckDBSource):
+            return None
+        if pipeline.pipeline is not None or pipeline.transforms:
+            return None
+        if any(isinstance(filt, ParamFilter) for filt in pipeline.filters):
+            return None
+        if not source.filter_in_sql or source.table_params.get(pipeline.table):
+            return None
+
+        # Mirrors DuckDBSource.get: the filter conditions and the declared SQL
+        # transforms, applied in that order. The pushdown projection it may add
+        # is deliberately skipped -- it narrows columns to what the *frame*
+        # consumer needs, and the spec may reference others.
+        sql_expr = source.get_sql_expr(pipeline.table)
+        conditions = list(pipeline._filter_query().items())
+        for transform in [SQLFilter(conditions=conditions), *pipeline.sql_transforms]:
+            sql_expr = transform.apply(sql_expr)
+
+        # A cursor is a separate session on the same database, so the temp view
+        # below is private to this chart and cannot collide with another view's
+        # or mutate the schema the rest of Lumen sees.
+        #
+        # The view is deliberately *not* named after the table: a temp view
+        # shadows the base table of the same name, so `VIEW "t" AS SELECT * FROM
+        # "t"` binds to itself and DuckDB rejects it as infinite recursion.
+        cursor = source.connection.cursor()
+        view = f'{pipeline.table}{self._VIEW_SUFFIX}'
+        cursor.execute(
+            f'CREATE OR REPLACE TEMP VIEW {_quote_ident(view)} AS {sql_expr}'
+        )
+        if not cursor.execute(f'SELECT 1 FROM {_quote_ident(view)} LIMIT 1').fetchone():
+            raise ValueError(self._empty_error())
+        return cursor, view
+
+    def _empty_error(self) -> str:
+        return (
+            f"MosaicView has no data to render: pipeline table "
+            f"{self.pipeline.table!r} produced an empty result. Ensure the "
+            "data query ran successfully before generating the chart."
+        )
+
+    def _get_widget(self) -> Mosaic:
+        spec = copy.deepcopy(self.spec)
+
+        # Preferred: let Mosaic query Lumen's own DuckDB, so the frame is never
+        # materialized in Python. Falls back to registering the computed frame,
+        # which keeps the view correct for every other Source type.
+        if (query := self._sql_query()) is not None:
+            cursor, view = query
+            # Bind the spec to the view, not the base table, so the marks read
+            # the pipeline's filtered and transformed rows rather than raw ones.
+            self._rebind_table(spec, view)
+            return Mosaic(spec, con=cursor, **self.kwargs)
+
+        df = self.get_data()
+        if df is None or len(df) == 0:
+            raise ValueError(self._empty_error())
+        table = self.pipeline.table
+        self._rebind_table(spec, table)
+        return Mosaic(spec, data={table: df}, **self.kwargs)
+
+    def get_panel(self) -> Mosaic:
+        return self._get_widget()
 
 
 class DeckGLView(View):

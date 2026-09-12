@@ -9,6 +9,9 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 [activation.env]
 PYTHONIOENCODING = "utf-8"
 
+[pypi-dependencies]
+panel-mosaic-viz = ">=0.1.2"
+
 [environments]
 test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "docx"]
 test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "docx"]
