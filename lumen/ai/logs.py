@@ -163,6 +163,13 @@ class ChatLogs(param.Parameterized):
 
     def delete_exploration(self, exploration_id):
         self.cursor.execute(
+            "SELECT exploration_id FROM explorations WHERE parent_id = ?",
+            (exploration_id,),
+        )
+        child_ids = [row[0] for row in self.cursor.fetchall()]
+        for child_id in child_ids:
+            self.delete_exploration(child_id)
+        self.cursor.execute(
             "DELETE FROM explorations WHERE exploration_id = ?",
             (exploration_id,),
         )
