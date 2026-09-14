@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import atexit
 import os
+import re
 import tempfile
 import traceback
 import uuid
@@ -36,11 +37,15 @@ from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
+from ..config import load_yaml
 from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import log, normalize_table_name, try_import_xarray
+from ..util import (
+    log, normalize_table_name, resolve_module_reference, try_import_xarray,
+)
+from ..views.base import Panel, View
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -1923,6 +1928,18 @@ class ChatUI(UI):
     provider_choices = param.Dict(default={}, doc="""
         Available LLM providers to show in the configuration dialog.""")
 
+_REDACT_KEYS = {"password", "token", "api_key", "secret", "access_key", "private_key"}
+
+def _redact_source_spec(spec: dict) -> dict:
+    spec = dict(spec)
+    for key in list(spec):
+        if key.lower() in _REDACT_KEYS:
+            spec[key] = "***REDACTED***"
+        elif key == "uri" and isinstance(spec[key], str) and "://" in spec[key]:
+            # strip user:password@ out of connection-string style URIs
+            spec[key] = re.sub(r"://[^@/]+@", "://***REDACTED***@", spec[key])
+    return spec
+
 class Exploration(param.Parameterized):
 
     context = param.Dict(allow_refs=True)
@@ -1947,13 +1964,24 @@ class Exploration(param.Parameterized):
 
     def to_spec(self) -> dict:
         ctx = self.context or {}
+
+        views = []
+        for v in (self.plan.views if self.plan else []):
+            yaml_spec, spec_dict = LumenEditor._serialize_component(
+                v.component, spec_dict=v.component.to_spec(ctx)
+            )
+            views.append({
+                "component_type": f"{type(v.component).__module__}.{type(v.component).__name__}",
+                "yaml_spec": yaml_spec,
+                "spec_dict": spec_dict,
+            })
         return {
             "title": self.title,
             "subtitle": self.subtitle,
-            "sources": [src.to_spec() for src in ctx.get("sources", [])],
+            "sources": [_redact_source_spec(src.to_spec()) for src in ctx.get("sources", [])],
             "visible_slugs": sorted(ctx.get("visible_slugs", [])),
-            "views": [v.to_spec() for v in (self.plan.views if self.plan else [])],
-            "conversation": [msg.serialize() for msg in self.conversation],
+            "views": views,
+            "conversation": [{"user": msg.user, "object": msg.object} for msg in self.conversation],
             "exploration_id": self.exploration_id,
         }
 
@@ -1963,15 +1991,24 @@ class Exploration(param.Parameterized):
         context = {"sources": sources, "visible_slugs": set(spec.get("visible_slugs", []))}
         if sources:
             context["source"] = sources[-1]
-        conversation = [
-            ChatMessage(object=msg) for msg in spec.get("conversation", [])
-        ]
+
+        views = []
+        for view_spec in spec.get("views", []):
+            component_cls = resolve_module_reference(view_spec["component_type"], View)
+            raw_spec = load_yaml(view_spec["yaml_spec"])
+            if issubclass(component_cls, Panel):
+                raw_spec = {"type": "panel", "object": raw_spec}
+            component = component_cls.from_spec(raw_spec)
+            views.append(LumenEditor(component=component, title=spec["title"]))
+
+        plan = Plan(views=views) if views else None
+        conversation = [ChatMessage(object=msg["object"], user=msg["user"])for msg in spec.get("conversation", [])]
         return cls(
             context=context,
             conversation=conversation,
             title=spec["title"],
             subtitle=spec.get("subtitle", ""),
-            plan=None,
+            plan=plan,
             initialized=True,
             exploration_id=spec.get("exploration_id", ""),
             view=view,
