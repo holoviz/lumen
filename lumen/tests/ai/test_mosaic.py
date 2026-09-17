@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 
 try:
@@ -183,6 +186,68 @@ async def test_extract_spec_rejects_empty_spec(llm):
     agent = MosaicAgent(llm=llm)
     with pytest.raises(ValueError):
         await agent._extract_spec({}, {"yaml_spec": dump_yaml({})})
+
+
+async def test_generate_spec_revises_invalid_interaction_before_full_retry(llm):
+    """A bad binding is revised and revalidated without surfacing its traceback."""
+    agent = MosaicAgent(llm=llm)
+    invalid = {
+        "params": {"category_filter": {"select": "intersect"}},
+        "vconcat": [
+            {
+                "input": "menu",
+                "from": "t",
+                "column": "category",
+                "as": "category_filter",
+            },
+            {"plot": [{
+                "mark": "dot",
+                "data": {"from": "t", "filterBy": "category_filter"},
+                "x": "x",
+                "y": "y",
+            }]},
+        ],
+    }
+    corrected = {
+        "params": {"category_filter": {"select": "intersect"}},
+        "vconcat": [
+            {
+                "input": "menu",
+                "from": "t",
+                "column": "category",
+                "as": "$category_filter",
+            },
+            {"plot": [{
+                "mark": "dot",
+                "data": {"from": "t", "filterBy": "$category_filter"},
+                "x": "x",
+                "y": "y",
+            }]},
+        ],
+    }
+    feedback = []
+
+    async def fake_stream_prompt(*args, **kwargs):
+        yield SimpleNamespace(chain_of_thought="", yaml_spec=dump_yaml(invalid))
+
+    async def fake_revise(instruction, *args, **kwargs):
+        feedback.append(instruction)
+        return dump_yaml(corrected)
+
+    pipeline = SimpleNamespace(table="t")
+    context = {"pipeline": pipeline}
+    with patch.object(agent, "_stream_prompt", side_effect=fake_stream_prompt), \
+         patch.object(agent, "revise", side_effect=fake_revise):
+        result = await agent._generate_yaml_spec(
+            [{"role": "user", "content": "filter by category"}],
+            context,
+            pipeline,
+            "Mosaic view",
+        )
+
+    assert len(feedback) == 1
+    assert "beginning with `$`" in feedback[0]
+    assert result["spec"] == corrected
 
 
 def test_rebind_table_rewrites_every_from_reference():

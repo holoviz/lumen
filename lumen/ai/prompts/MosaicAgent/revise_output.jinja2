@@ -17,4 +17,10 @@ You are editing a Mosaic (vgplot) `mosaic-spec` in YAML.
   on the plot, siblings of `plot:`, not inside marks.
 - For interactivity, declare selections in `params:` and reference them with
   `$name` via `filterBy`, `select`, and inputs.
+- Every reactive input binding and filter must retain the `$` prefix:
+  `as: $filter` and `filterBy: $filter`, never `as: filter` or
+  `filterBy: filter`.
+- A filtering slider uses `select: interval`, `as: $filter`, `from: <table>`,
+  and `column: <numeric column>`. A filtering menu uses `as: $filter`,
+  `from: <table>`, and `column: <categorical column>`.
 {% endblock %}

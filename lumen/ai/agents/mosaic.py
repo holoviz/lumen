@@ -125,7 +125,27 @@ class MosaicAgent(BaseViewAgent):
             step.success_title = "Mosaic specification created"
 
         self._last_output = {"yaml_spec": output.yaml_spec}
-        return await self._extract_spec(context, {"yaml_spec": output.yaml_spec})
+        spec = {"yaml_spec": output.yaml_spec}
+        for attempt in range(3):
+            try:
+                return await self._extract_spec(context, spec)
+            except Exception as error:
+                if attempt == 2:
+                    raise
+                with self._add_step(
+                    title="Correcting Mosaic specification",
+                    steps_layout=self._steps_layout,
+                ) as retry_step:
+                    revised = await self.revise(
+                        str(error),
+                        messages,
+                        context,
+                        spec=spec["yaml_spec"],
+                        language="yaml",
+                    )
+                    retry_step.stream(f"\n```yaml\n{revised}\n```")
+                    spec = {"yaml_spec": revised}
+                    self._last_output = spec
 
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]) -> dict[str, Any]:
         """Parse and validate a Mosaic spec, returning view parameters."""
