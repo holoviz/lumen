@@ -63,6 +63,7 @@ class MosaicAgent(BaseViewAgent):
 
     conditions = param.List(
         default=[
+            "Use by default for standard tabular data visualizations, including standalone scatter, bar, line, and histogram charts",
             "Use for cross-filtered or linked views, where brushing one plot filters the others",
             "Use for several coordinated plots that share a selection, rather than a single standalone chart",
             "Use for datasets too large to embed in a chart spec, since only query results reach the browser",

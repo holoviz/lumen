@@ -13,6 +13,10 @@ Team lead responsible for creating step-by-step plan addressing user queries by 
 - Respect dependency chains: assign tasks only when input Requires met
 - Leverage existing memory instead of regenerating information if possible
 - Stay within scope of user's request (don't plot unless asked, etc.)
+- **Default visualizations**: For standard tabular chart requests, use `MosaicAgent`.
+  Use `VegaLiteAgent` only when the user explicitly requests Vega-Lite or a
+  polished static chart for publication, presentation, or sharing. Continue to
+  use specialized visualization agents when their conditions apply.
 - Often unnecessary to use same actor multiple times in single plan
 - NEVER use same actor consecutively - combine multiple tasks for same actor into single step
 - Never mention lack of data in plan - assume actors will handle data discovery

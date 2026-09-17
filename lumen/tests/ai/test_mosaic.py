@@ -12,7 +12,10 @@ except ModuleNotFoundError:
     )
 
 from lumen.ai.agents.mosaic import MosaicAgent
+from lumen.ai.agents.vega_lite import VegaLiteAgent
+from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.editors import MosaicEditor
+from lumen.ai.ui import ExplorerUI
 from lumen.config import dump_yaml
 from lumen.views.base import MosaicView
 
@@ -23,6 +26,16 @@ SIMPLE_SPEC = {
     "width": 680,
     "height": 240,
 }
+
+
+def test_mosaic_is_the_default_tabular_chart_agent():
+    """Planner guidance makes Mosaic the default for ordinary tabular charts."""
+    assert any("default for standard tabular" in condition.lower() for condition in MosaicAgent.conditions)
+    assert all("default" not in condition.lower() for condition in VegaLiteAgent.conditions)
+
+    planner_template = (PROMPTS_DIR / "Planner" / "main.jinja2").read_text()
+    assert "For standard tabular chart requests, use `MosaicAgent`" in planner_template
+    assert ExplorerUI.default_agents.index(MosaicAgent) < ExplorerUI.default_agents.index(VegaLiteAgent)
 
 
 def test_editor_validate_accepts_plot_containers():

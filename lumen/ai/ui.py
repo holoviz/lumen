@@ -412,7 +412,7 @@ class UI(Viewer):
 
     default_agents = param.List(default=[
         TableListAgent, ChatAgent, DocumentListAgent, DocumentSummarizerAgent,
-        SQLAgent, SourceAgent, VegaLiteAgent, MosaicAgent, ValidationAgent,
+        SQLAgent, SourceAgent, MosaicAgent, VegaLiteAgent, ValidationAgent,
         DeckGLAgent
     ], doc="""List of default agents which will always be added.""")
 
