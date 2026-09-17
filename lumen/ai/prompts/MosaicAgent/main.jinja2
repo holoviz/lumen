@@ -31,10 +31,13 @@ Plot attributes (`width`, `height`, `xLabel`, `yLabel`, ...) are siblings of
 - Not `- dot:` / `- regressionY:` (the mark name as the key). A mark is always
   `- mark: dot`, `- mark: regressionY`, with channels as siblings.
 - Not `intervals:` or a top-level `brush:` — selections go under `params:`
-  (e.g. `params: {brush: {select: intervalX}}`) and are applied on the plot via
-  a `- select: intervalX` entry and `filterBy: $brush` on marks.
+  (e.g. `params: {brush: {select: intersect}}`). `intervalX`, `intervalY`, and
+  `intervalXY` are plot interactors: apply one with a separate `- select:`
+  entry inside the plot, using `as: $brush`.
 - Not `selection: $brush` inside a mark — use `filterBy: $brush` on the mark's
   `data`, and declare the interactor as a separate `- select: intervalX` entry.
+- Not `mark: table` — a linked Mosaic table is a separate `input: table`
+  layout component with `from:` and `filterBy:`.
 
 ## Essential Rules
 
@@ -77,11 +80,19 @@ Set these as keys on the plot (siblings of `plot:`), not inside marks:
 
 ## Interactivity (Mosaic's Strength, Use When It Adds Value)
 
-Declare a selection in `params:` and reference it with `$name`:
-- `params: {brush: {select: crossfilter}}` then `select: intervalX` / `as: $brush`
-  as an entry in the plot's list, and `data: {from: {{ memory['table'] }}, filterBy: $brush}`
-  on marks to cross-filter linked plots.
-- Inputs: `input: menu` / `input: slider` bound `as: $param`, `from: {{ memory['table'] }}`.
+Declare a selection mode in `params:` and reference it with `$name`. The
+selection mode is one of `intersect`, `crossfilter`, `single`, or `union`.
+`intervalX`, `intervalY`, and `intervalXY` are interactors used within a plot.
+`value` is a separate non-selection parameter mode.
+
+- For one brush that filters other views, use `params: {brush: {select: intersect}}`.
+  Put `- select: intervalXY` / `as: $brush` in the source plot. Put
+  `data: {from: {{ memory['table'] }}, filterBy: $brush}` on every target mark.
+- Use `crossfilter` only when two or more views should each contribute a brush
+  and filter one another.
+- Inputs are layout components: `input: menu`, `input: slider`, and
+  `input: table`. A linked table uses `from: {{ memory['table'] }}` and
+  `filterBy: $brush`, not `mark: table`.
 
 Only add interactivity when the request calls for exploration; a simple chart
 should stay simple.
@@ -150,6 +161,8 @@ Scatter plot with a regression line and interactive selection (note: the
 regression is a second `- mark:` entry, and the selection is a separate
 `- select:` entry — never a `selection:` field inside a mark, never `marks:`):
 ```yaml
+params:
+  query: {select: intersect}
 plot:
 - mark: dot
   data: {from: {{ memory['table'] }}}
@@ -167,30 +180,43 @@ plot:
   as: $query
 ```
 
-Two linked histograms cross-filtered by a shared brush:
+Linked scatter, histogram, and table. Drag on the scatter plot: the histogram
+and table update to only the selected rows.
 ```yaml
 params:
-  brush: {select: crossfilter}
-vconcat:
+  brush: {select: intersect}
+hconcat:
 - plot:
-  - mark: rectY
-    data: {from: {{ memory['table'] }}, filterBy: $brush}
-    x: {bin: delay}
-    y: {count: }
-    fill: steelblue
-  - select: intervalX
+  - mark: dot
+    data: {from: {{ memory['table'] }}}
+    x: x_value
+    y: y_value
+    fill: category
+    r: 3
+    opacity: 0.7
+  - select: intervalXY
     as: $brush
-  xLabel: Arrival Delay (min)
-  height: 200
-- plot:
-  - mark: rectY
-    data: {from: {{ memory['table'] }}, filterBy: $brush}
-    x: {bin: distance}
-    y: {count: }
-    fill: steelblue
-  - select: intervalX
-    as: $brush
-  xLabel: Distance (mi)
-  height: 200
+  xLabel: X value
+  yLabel: Y value
+  width: 480
+  height: 320
+- vconcat:
+  - plot:
+    - mark: rectY
+      data: {from: {{ memory['table'] }}, filterBy: $brush}
+      x: {bin: measure}
+      y: {count: }
+      fill: steelblue
+      insetLeft: 1
+      insetRight: 1
+    xLabel: Measure
+    yLabel: Selected rows
+    width: 400
+    height: 160
+  - input: table
+    from: {{ memory['table'] }}
+    filterBy: $brush
+    height: 180
+    width: 400
 ```
 {% endblock %}

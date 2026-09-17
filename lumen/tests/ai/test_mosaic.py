@@ -51,6 +51,47 @@ def test_editor_validate_rejects_common_llm_mistakes():
         MosaicEditor.validate_spec({"intervals": {"brush": {"type": "brush"}}})
 
 
+def test_editor_validate_rejects_invalid_interaction_grammar():
+    """Selection modes and table components use distinct Mosaic grammar."""
+    with pytest.raises(ValueError, match="intervalXY"):
+        MosaicEditor.validate_spec({
+            "params": {"brush": {"select": "intervalXY"}},
+            "plot": [{"mark": "dot", "data": {"from": "t"}, "x": "a", "y": "b"}],
+        })
+    with pytest.raises(ValueError, match="input: table"):
+        MosaicEditor.validate_spec({
+            "plot": [{"mark": "table", "data": {"from": "t"}}],
+        })
+
+
+def test_editor_validate_accepts_linked_interactive_spec():
+    """A brush may link a scatter plot, histogram, and data table."""
+    MosaicEditor.validate_spec({
+        "params": {"brush": {"select": "intersect"}},
+        "hconcat": [
+            {"plot": [
+                {"mark": "dot", "data": {"from": "t"}, "x": "x", "y": "y"},
+                {"select": "intervalXY", "as": "$brush"},
+            ]},
+            {"vconcat": [
+                {"plot": [{
+                    "mark": "rectY", "data": {"from": "t", "filterBy": "$brush"},
+                    "x": {"bin": "value"}, "y": {"count": None},
+                }]},
+                {"input": "table", "from": "t", "filterBy": "$brush"},
+            ]},
+        ],
+    })
+
+
+def test_editor_validate_accepts_value_parameter():
+    """A regular reactive parameter is not a linked selection."""
+    MosaicEditor.validate_spec({
+        "params": {"point_size": {"select": "value", "value": 3}},
+        "plot": [{"mark": "dot", "data": {"from": "t"}, "x": "x", "y": "y"}],
+    })
+
+
 def test_editor_validate_unwraps_nested_spec_key():
     """`validate_spec` accepts either the bare spec or a {'spec': ...} wrapper."""
     MosaicEditor.validate_spec({"spec": SIMPLE_SPEC})
@@ -89,7 +130,7 @@ def test_rebind_table_rewrites_every_from_reference():
     """All `from:` references are pointed at the given table, so an LLM-invented
     or drifted table name in the spec cannot break the data binding."""
     spec = {
-        "params": {"brush": {"select": "intervalX"}},
+        "params": {"brush": {"select": "intersect"}},
         "vconcat": [
             {"input": "menu", "from": "wrong_a", "column": "x"},
             {"plot": [

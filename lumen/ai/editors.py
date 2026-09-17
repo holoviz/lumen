@@ -558,6 +558,49 @@ class MosaicEditor(LumenEditor):
 
     # Top-level keys that introduce a renderable plot/layout container.
     _containers = frozenset({"plot", "vconcat", "hconcat"})
+    # Selection modes are declared in top-level ``params``. Interval names
+    # such as ``intervalX`` belong to a plot interactor, not here.
+    _selection_modes = frozenset({"crossfilter", "intersect", "single", "union", "value"})
+
+    @classmethod
+    def _validate_interactions(cls, spec: dict[str, Any]) -> None:
+        """Catch common Mosaic selection and table-specification mistakes.
+
+        Mosaic's JavaScript parser remains the authority for the full grammar,
+        but these errors are both easy for an LLM to make and actionable enough
+        to correct during Lumen's retry loop.
+        """
+        params = spec.get("params", {})
+        if not isinstance(params, dict):
+            raise ValueError("Mosaic `params:` must be a mapping of parameter names to definitions.")
+
+        for name, definition in params.items():
+            if not isinstance(definition, dict) or "select" not in definition:
+                continue
+            selection_mode = definition["select"]
+            if selection_mode not in cls._selection_modes:
+                choices = ", ".join(sorted(cls._selection_modes))
+                raise ValueError(
+                    f"Mosaic selection `{name}` has invalid mode {selection_mode!r}. "
+                    f"Use one of {choices} under `params:`; put `intervalX`, "
+                    "`intervalY`, or `intervalXY` in a separate `- select:` "
+                    "entry inside a plot."
+                )
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                if value.get("mark") == "table":
+                    raise ValueError(
+                        "Mosaic tables use `input: table` as a layout component, "
+                        "not `mark: table` inside a plot."
+                    )
+                for item in value.values():
+                    visit(item)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(spec)
 
     @classmethod
     def validate_spec(cls, spec: dict[str, Any]) -> dict[str, Any]:
@@ -583,6 +626,7 @@ class MosaicEditor(LumenEditor):
                 f"{', '.join(sorted(cls._containers))}. A single chart uses "
                 "`plot:` as a list of marks, e.g. `- mark: dot`."
             )
+        cls._validate_interactions(spec)
         return super().validate_spec(spec)
 
     def export(self, fmt: str) -> StringIO | BytesIO:
