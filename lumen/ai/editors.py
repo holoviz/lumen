@@ -594,6 +594,21 @@ class MosaicEditor(LumenEditor):
                         "Mosaic tables use `input: table` as a layout component, "
                         "not `mark: table` inside a plot."
                     )
+                if "input" in value and "as" in value:
+                    binding = value["as"]
+                    if not isinstance(binding, str) or not binding.startswith("$"):
+                        raise ValueError(
+                            f"Mosaic `{value['input']}` input binding `as:` must be "
+                            "a parameter reference beginning with `$`, for example "
+                            "`as: $filter`. A plain name causes a browser rendering error."
+                        )
+                if "filterBy" in value:
+                    selection = value["filterBy"]
+                    if not isinstance(selection, str) or not selection.startswith("$"):
+                        raise ValueError(
+                            "Mosaic `filterBy:` must be a selection reference beginning "
+                            "with `$`, for example `filterBy: $filter`."
+                        )
                 for item in value.values():
                     visit(item)
             elif isinstance(value, list):

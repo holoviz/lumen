@@ -93,6 +93,24 @@ selection mode is one of `intersect`, `crossfilter`, `single`, or `union`.
 - Inputs are layout components: `input: menu`, `input: slider`, and
   `input: table`. A linked table uses `from: {{ memory['table'] }}` and
   `filterBy: $brush`, not `mark: table`.
+- Every reactive input binding must include the `$` reference prefix:
+  `as: $filter`, never `as: filter`. Likewise, use `filterBy: $filter`, never
+  `filterBy: filter`. Omitting `$` passes a plain string to Mosaic and causes a
+  browser error such as `addEventListener is not a function`.
+- For a categorical dropdown that filters data, declare a selection such as
+  `params: {filter: {select: intersect}}`, then use an `input: menu` with
+  `from: <table>`, `column: <categorical column>`, and `as: $filter`. Apply
+  `filterBy: $filter` to every target mark or table. Prefer deriving options
+  from `from` and `column` instead of manually inventing `options`.
+- A plain slider changes only a numeric parameter; it does **not** filter rows.
+  To make a slider filter a plot or table, declare a selection in `params:`,
+  set the slider's `select: interval`, and use that selection with `filterBy:`.
+  For example, `params: {range: {select: intersect}}`, then an
+  `input: slider` with `select: interval`, `as: $range`, `from: <table>`, and
+  `column: <numeric column>`. Target views must use
+  `data: {from: <table>, filterBy: $range}`. A Mosaic interval slider filters
+  from the column minimum to the selected value; do not describe it as a
+  two-handle range slider.
 
 Only add interactivity when the request calls for exploration; a simple chart
 should stay simple.
@@ -218,5 +236,56 @@ hconcat:
     filterBy: $brush
     height: 180
     width: 400
+```
+
+Linked slider. Moving the slider filters both the histogram and table to rows
+whose numeric value is between the column minimum and the chosen maximum.
+```yaml
+params:
+  range: {select: intersect}
+vconcat:
+- input: slider
+  label: Maximum value
+  select: interval
+  as: $range
+  from: {{ memory['table'] }}
+  column: measure
+  step: 1
+- hconcat:
+  - plot:
+    - mark: rectY
+      data: {from: {{ memory['table'] }}, filterBy: $range}
+      x: {bin: measure}
+      y: {count: }
+      fill: steelblue
+    xLabel: Measure
+    yLabel: Selected rows
+  - input: table
+    from: {{ memory['table'] }}
+    filterBy: $range
+    height: 240
+```
+
+Linked categorical dropdown. Choosing a category filters the plot and table.
+```yaml
+params:
+  category_filter: {select: intersect}
+vconcat:
+- input: menu
+  label: Category
+  from: {{ memory['table'] }}
+  column: category
+  as: $category_filter
+- hconcat:
+  - plot:
+    - mark: dot
+      data: {from: {{ memory['table'] }}, filterBy: $category_filter}
+      x: x_value
+      y: y_value
+      fill: category
+  - input: table
+    from: {{ memory['table'] }}
+    filterBy: $category_filter
+    height: 240
 ```
 {% endblock %}

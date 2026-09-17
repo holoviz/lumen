@@ -62,6 +62,20 @@ def test_editor_validate_rejects_invalid_interaction_grammar():
         MosaicEditor.validate_spec({
             "plot": [{"mark": "table", "data": {"from": "t"}}],
         })
+    with pytest.raises(ValueError, match=r"as:.*\$"):
+        MosaicEditor.validate_spec({
+            "vconcat": [
+                {"input": "menu", "from": "t", "column": "category", "as": "filter"},
+                {"plot": [{"mark": "dot", "data": {"from": "t"}, "x": "x", "y": "y"}]},
+            ],
+        })
+    with pytest.raises(ValueError, match=r"filterBy:.*\$"):
+        MosaicEditor.validate_spec({
+            "plot": [{
+                "mark": "dot", "data": {"from": "t", "filterBy": "filter"},
+                "x": "x", "y": "y",
+            }],
+        })
 
 
 def test_editor_validate_accepts_linked_interactive_spec():
@@ -80,6 +94,51 @@ def test_editor_validate_accepts_linked_interactive_spec():
                 }]},
                 {"input": "table", "from": "t", "filterBy": "$brush"},
             ]},
+        ],
+    })
+
+
+def test_editor_validate_accepts_linked_slider_spec():
+    """An interval slider can create a selection that filters linked views."""
+    MosaicEditor.validate_spec({
+        "params": {"range": {"select": "intersect"}},
+        "vconcat": [
+            {
+                "input": "slider",
+                "select": "interval",
+                "as": "$range",
+                "from": "t",
+                "column": "value",
+            },
+            {"plot": [{
+                "mark": "rectY",
+                "data": {"from": "t", "filterBy": "$range"},
+                "x": {"bin": "value"},
+                "y": {"count": None},
+            }]},
+            {"input": "table", "from": "t", "filterBy": "$range"},
+        ],
+    })
+
+
+def test_editor_validate_accepts_linked_menu_spec():
+    """A menu may create a categorical selection that filters linked views."""
+    MosaicEditor.validate_spec({
+        "params": {"category_filter": {"select": "intersect"}},
+        "vconcat": [
+            {
+                "input": "menu",
+                "from": "t",
+                "column": "category",
+                "as": "$category_filter",
+            },
+            {"plot": [{
+                "mark": "dot",
+                "data": {"from": "t", "filterBy": "$category_filter"},
+                "x": "x",
+                "y": "y",
+            }]},
+            {"input": "table", "from": "t", "filterBy": "$category_filter"},
         ],
     })
 
