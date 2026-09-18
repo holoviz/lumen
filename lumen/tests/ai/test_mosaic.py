@@ -1,7 +1,12 @@
+import asyncio
+
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pandas as pd
 import pytest
+
+from panel.chat import ChatFeed
 
 try:
     import lumen.ai  # noqa
@@ -17,6 +22,8 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.editors import MosaicEditor
 from lumen.ai.ui import ExplorerUI
 from lumen.config import dump_yaml
+from lumen.pipeline import Pipeline
+from lumen.sources.base import InMemorySource
 from lumen.views.base import MosaicView
 
 SIMPLE_SPEC = {
@@ -283,3 +290,59 @@ def test_rebind_table_rewrites_every_from_reference():
     assert plot[0]["data"]["from"] == "real_table"
     assert plot[0]["data"]["filterBy"] == "$brush"  # non-`from` keys untouched
     assert plot[1]["data"]["from"] == "real_table"
+
+
+def test_editor_automatically_retries_browser_render_errors():
+    """Browser errors enter the normal revision path, with a bounded retry count."""
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"table": pd.DataFrame({"date": [1], "close": [2.0]})}),
+        table="table",
+    )
+    view = MosaicView(pipeline=pipeline, spec=SIMPLE_SPEC)
+    editor = MosaicEditor(component=view)
+    retry = SimpleNamespace(instruction="")
+    editor._auto_retry_control = retry
+
+    view.error = "Unknown mark"
+    assert "Unknown mark" in retry.instruction
+    assert "1/2" in retry.instruction
+
+    view.error = "Bad channel"
+    assert "Bad channel" in retry.instruction
+    assert "2/2" in retry.instruction
+
+    view.error = "Third failure"
+    assert "Third failure" not in retry.instruction
+
+    view.ready = True
+    assert editor._auto_retry_attempts == 0
+
+
+async def test_editor_browser_error_runs_agent_revision(llm):
+    """The render-error watcher executes a real asynchronous revision cycle."""
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"table": pd.DataFrame({"date": [1], "close": [2.0]})}),
+        table="table",
+    )
+    view = MosaicView(pipeline=pipeline, spec=SIMPLE_SPEC)
+    editor = MosaicEditor(component=view)
+    agent = MosaicAgent(llm=llm)
+    revised_spec = dict(SIMPLE_SPEC, width=720)
+    feedback = []
+
+    async def fake_revise(instruction, *_args, **_kwargs):
+        feedback.append(instruction)
+        return dump_yaml(revised_spec)
+
+    task = SimpleNamespace(actor=agent, history=[], out_context={})
+    with patch.object(agent, "revise", side_effect=fake_revise):
+        editor.render_controls(task, ChatFeed())
+        view.error = "Unknown Mosaic mark"
+        for _ in range(20):
+            if feedback and "width: 720" in editor.spec:
+                break
+            await asyncio.sleep(0.01)
+
+    assert len(feedback) == 1
+    assert "Unknown Mosaic mark" in feedback[0]
+    assert "width: 720" in editor.spec

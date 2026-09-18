@@ -1798,11 +1798,40 @@ class MosaicView(View):
         The declarative mosaic-spec (plot/marks/params/layout). Marks reference
         the pipeline table via ``data: {from: <table>}``.""")
 
+    ready = param.Boolean(default=False, doc="""
+        Whether the Mosaic specification rendered successfully in the browser.""")
+
+    error = param.String(default="", doc="""
+        The latest Mosaic browser parsing, rendering, or query error.""")
+
     view_type = 'mosaic'
+
+    _internal_params = View._internal_params + ['ready', 'error']
 
     # Appended to the pipeline table to name the temp view the pushdown path
     # builds, keeping it clear of the base table it selects from.
     _VIEW_SUFFIX = '__lumen_mosaic'
+
+    def __init__(self, **params):
+        self._mosaic_widget = None
+        self._mosaic_status_watchers = []
+        super().__init__(**params)
+
+    def _set_widget(self, widget: Mosaic) -> Mosaic:
+        """Mirror the browser render status exposed by panel-mosaic."""
+        if self._mosaic_widget is not None:
+            for watcher in self._mosaic_status_watchers:
+                self._mosaic_widget.param.unwatch(watcher)
+
+        self._mosaic_widget = widget
+        self._mosaic_status_watchers = [
+            widget.param.watch(self._sync_widget_status, ['ready', 'error'])
+        ]
+        self.param.update(ready=widget.ready, error=widget.error)
+        return widget
+
+    def _sync_widget_status(self, *events: param.parameterized.Event) -> None:
+        self.param.update(**{event.name: event.new for event in events})
 
     @classmethod
     def _rebind_table(cls, obj: Any, table: str) -> None:
@@ -1900,14 +1929,14 @@ class MosaicView(View):
             # Bind the spec to the view, not the base table, so the marks read
             # the pipeline's filtered and transformed rows rather than raw ones.
             self._rebind_table(spec, view)
-            return Mosaic(spec, con=cursor, **self.kwargs)
+            return self._set_widget(Mosaic(spec, con=cursor, **self.kwargs))
 
         df = self.get_data()
         if df is None or len(df) == 0:
             raise ValueError(self._empty_error())
         table = self.pipeline.table
         self._rebind_table(spec, table)
-        return Mosaic(spec, data={table: df}, **self.kwargs)
+        return self._set_widget(Mosaic(spec, data={table: df}, **self.kwargs))
 
     def get_panel(self) -> Mosaic:
         return self._get_widget()

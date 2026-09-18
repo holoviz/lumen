@@ -34,7 +34,9 @@ from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..util import as_pandas
-from ..views.base import Panel, Table, View
+from ..views.base import (
+    MosaicView, Panel, Table, View,
+)
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
@@ -107,9 +109,11 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # ParamMethod may evaluate ``render`` immediately, so the render cache
+        # must exist before constructing it.
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
     def _code_editor(self) -> CodeEditor:
         """A CodeEditor two-way bound to this editor's spec."""
@@ -538,6 +542,59 @@ class MosaicEditor(LumenEditor):
 
     _controls = [RetryControls, ExplainControls, CopyControls]
     _label = "Chart"
+
+    _auto_retry_limit = 2
+
+    def __init__(self, **params):
+        self._auto_retry_attempts = 0
+        self._auto_retry_control = None
+        self._mosaic_component = None
+        self._mosaic_status_watchers = []
+        super().__init__(**params)
+        self.param.watch(self._watch_mosaic_component, 'component')
+        self._watch_mosaic_component()
+
+    def _watch_mosaic_component(self, *_events) -> None:
+        if self._mosaic_component is not None:
+            for watcher in self._mosaic_status_watchers:
+                self._mosaic_component.param.unwatch(watcher)
+
+        self._mosaic_component = self.component
+        self._mosaic_status_watchers = []
+        if not isinstance(self.component, MosaicView):
+            return
+        self._mosaic_status_watchers = [
+            self.component.param.watch(self._handle_render_error, 'error'),
+            self.component.param.watch(self._handle_render_ready, 'ready'),
+        ]
+
+    def _handle_render_error(self, event) -> None:
+        error = event.new.strip()
+        if (
+            not error or self._auto_retry_control is None
+            or self._auto_retry_attempts >= self._auto_retry_limit
+        ):
+            return
+        self._auto_retry_attempts += 1
+        self._auto_retry_control.instruction = (
+            f"Mosaic browser rendering failed: {error}. Correct the complete "
+            f"Mosaic specification. Automatic retry "
+            f"{self._auto_retry_attempts}/{self._auto_retry_limit}."
+        )
+
+    def _handle_render_ready(self, event) -> None:
+        if event.new:
+            self._auto_retry_attempts = 0
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        # Browser rendering happens after the agent has returned its output.
+        # Reuse the normal revision path so a browser-side Mosaic error can be
+        # corrected with the same task history and context as a manual retry.
+        self._auto_retry_control = RetryControls(
+            interface=interface, task=task, view=self
+        )
+        return controls
 
     @classmethod
     def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:

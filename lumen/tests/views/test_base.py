@@ -717,10 +717,33 @@ def test_mosaic_view_renders_panel_mosaic_component():
     pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
     spec = {'plot': [{'mark': 'dot', 'data': {'from': 'points'}, 'x': 'x', 'y': 'y'}]}
 
-    pane = MosaicView(pipeline=pipeline, spec=spec).get_panel()
+    view = MosaicView(pipeline=pipeline, spec=spec)
+    pane = view.get_panel()
 
     assert isinstance(pane, Mosaic)
     assert pane.connection.query('SELECT count(*) FROM points').fetchone()[0] == 3
+    assert view.ready is False
+    assert view.error == ''
+
+    pane.param.update(ready=True, error='')
+    assert view.ready is True
+
+    pane.param.update(ready=False, error='Invalid Mosaic specification')
+    assert view.ready is False
+    assert view.error == 'Invalid Mosaic specification'
+
+
+def test_mosaic_view_render_status_is_not_serialized():
+    """Browser status is runtime state, not part of the persisted view spec."""
+    df = pd.DataFrame({'x': [1], 'y': [2.0]})
+    pipeline = Pipeline(source=InMemorySource(tables={'points': df}), table='points')
+    spec = {'plot': [{'mark': 'dot', 'data': {'from': 'points'}, 'x': 'x', 'y': 'y'}]}
+    view = MosaicView(pipeline=pipeline, spec=spec, ready=True, error='old error')
+
+    serialized = view.to_spec()
+
+    assert 'ready' not in serialized
+    assert 'error' not in serialized
 
 
 def test_mosaic_view_rebinds_every_from_reference_to_the_pipeline_table():
