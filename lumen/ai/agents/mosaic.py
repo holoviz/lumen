@@ -169,6 +169,7 @@ class MosaicAgent(BaseViewAgent):
             "spec": mosaic_spec,
             "sizing_mode": "stretch_both",
             "min_height": 400,
+            "responsive": True,
         }
 
     async def respond(

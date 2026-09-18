@@ -187,6 +187,7 @@ async def test_extract_spec_parses_yaml_and_sets_sizing(llm):
     assert result["spec"]["plot"][0]["mark"] == "lineY"
     assert result["sizing_mode"] == "stretch_both"
     assert result["min_height"] == 400
+    assert result["responsive"] is True
 
 
 async def test_extract_spec_drops_top_level_data_block(llm):
