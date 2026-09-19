@@ -1,14 +1,239 @@
-# Architecture and Internal Dataflow Guide
+# Lumen Architecture and Developer Guide
 
-This document outlines the internal architecture of **Lumen**, the relationships between its primary core classes (`Source`, `Pipeline`, `Filter`, `View`), and the reactive lifecycle that drives component updates and UI re-rendering.
+This document describes the internal architecture of **Lumen**, detailing how the **Lumen AI** layer (`lumen/ai/`) coordinates with the underlying **Core Lumen** dataflow engine (`lumen/`).
 
 ---
 
-## 1. High-Level Architecture Overview
+## 1. Overview: AI Layer on Top of Core Layer
 
-Lumen transforms raw data into interactive dashboards through a modular, declarative pipeline powered by [Param](https://param.holoviz.org/) and [Panel](https://panel.holoviz.org/).
+Modern Lumen provides an AI-assisted analytics experience built on top of a reactive, declarative data engine. Rather than requiring users or developers to manually author YAML specifications, Lumen AI translates natural-language requests into structured task plans and dynamically instantiates Core Lumen primitives.
 
-The four core building blocks form a unidirectional dependency chain:
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                 LUMEN AI LAYER                                  │
+│                                                                                 │
+│  ExplorerUI ──> Coordinator / Planner ──> Plan ──> Actors (Agents / Tools)      │
+│                                                      │       ▲                  │
+│                                                      ▼       │                  │
+│                                                 LLM / VectorStore               │
+└──────────────────────────────────────┬──────────────────────────────────────────┘
+                                       │ Dynamically produces
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                                CORE LUMEN LAYER                                 │
+│                                                                                 │
+│         Source        ───>        Pipeline        ───>        View              │
+│      (Data Intake)           (Filters & Transforms)      (hvPlot, Cards, etc.)  │
+│                                       ▲                                         │
+│                                       │                                         │
+│                                    Filter                                       │
+│                               (User UI Controls)                                │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### How the Two Layers Connect
+- **Lumen AI** acts as the *composer*: it manages user prompts, chat history, semantic search over dataset schemas, and coordinates specialized agents.
+- **Core Lumen** acts as the *execution engine*: when agents run (e.g., `SourceAgent`, `SQLAgent`, `hvPlotAgent`), they produce live Core Lumen objects: `Source`, `Pipeline`, and `View` instances.
+- **Explorations & Editors**: agents return their results as `LumenEditor` components (e.g., `SQLEditor`, `VegaLiteEditor`), which give users an interactive visualization alongside its live, editable specification. `ExplorerUI` mounts these editors into an `Exploration` container rendered as interactive `Tabs`.
+
+---
+
+## 2. Lumen AI: ExplorerUI $\to$ Coordinator/Planner $\to$ Plan $\to$ Actors $\to$ LLM/VectorStore
+
+The execution flow of Lumen AI proceeds through five major architectural components:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User / Browser
+    participant UI as ExplorerUI (ui.py)
+    participant Planner as Planner (coordinator/planner.py)
+    participant Plan as Plan (coordinator/base.py)
+    participant Actor as Agent / Tool (agents/ / tools/)
+    participant LLM as LLM / VectorStore (llm.py / vector_store.py)
+
+    User->>UI: Submits prompt ("Plot sales by region")
+    UI->>Planner: _chat_invoke() -> coordinator.respond(messages, context)
+
+    rect rgb(240, 245, 255)
+        Note over Planner,LLM: Planning Phase
+        Planner->>Planner: _pre_plan() runs follow-up & clarification checks
+        Planner->>Actor: Execute planner tools (default: MetadataLookup)
+        Actor-->>Planner: Returns metaset and schema context
+        Planner->>LLM: Prompt LLM with dynamic plan schema (RawPlan)
+        LLM-->>Planner: Returns task checklist & selected agents
+        Planner->>Planner: _resolve_plan() orders tasks by dependencies & merges consecutive actor steps
+        Planner->>Planner: plan.validate() (static check; on ContextError the planner retries)
+    end
+
+    Planner-->>UI: Returns configured Plan
+    UI->>UI: Attach watcher: partial(self._add_views, exploration) on plan "views"
+    UI->>Plan: _execute_plan() -> await plan.execute()
+
+    rect rgb(245, 255, 245)
+        Note over Plan,Actor: Execution Phase (Sequential Ordered List)
+        loop For each task in Plan (ordered list)
+            Plan->>Actor: execute(subcontext)
+            Actor->>LLM: Invoke prompt or run SQL/Python code
+            LLM-->>Actor: Result (code / spec / schema)
+            Actor-->>Plan: (outputs, task_context)
+            Note over Plan: Check declared output keys & merge task_context into global Context
+            Plan-->>UI: outputs (LumenEditors) accumulate in plan.views -> triggers _add_views
+        end
+    end
+
+    UI->>User: Display rendered exploration tabs & visualizations
+```
+
+### 2.1 UI: `ExplorerUI` (`lumen/ai/ui.py`)
+`ChatUI` is a thin subclass of the base `UI` with no exploration or plan-execution logic of its own; full conversational data exploration is driven by **`ExplorerUI`**, which is also the entry point used throughout the Lumen docs.
+- **Responsibilities**:
+  - Manages the split-pane UI: chat feed, table navigation, Graphic Walker data exploration, and exploration tabs.
+  - Maintains `Exploration` state, linking exploration trees and tracking the active context.
+  - Sets `context["prev_plan"] = exploration.plan` on follow-up queries (when not on the home exploration).
+  - In `_chat_invoke()`, calls `await self._coordinator.respond(messages, context)` to obtain a `Plan`, then `await self._execute_plan(plan)`.
+  - Handles plan execution (`_execute_plan`), replanning (`_replan`), and reruns.
+- **Mounting views**:
+  - `_execute_plan()` attaches a watcher to the plan's `"views"` parameter:
+    ```python
+    watcher = plan.param.watch(partial(self._add_views, exploration), "views")
+    ```
+  - `_add_views` does **not** wrap anything. It iterates over the new items, **skips any item that is not already a `LumenEditor`**, renders each editor via `_render_view`, and appends it to the exploration's `Tabs`.
+  - The watcher is attached only on the rerun, new-exploration and replan paths. When a plan is merged into an existing exploration's plan, no `_add_views` watcher is attached in that branch.
+
+### 2.2 Coordinators: `Planner` and `DependencyResolver` (`lumen/ai/coordinator/`)
+- **`Coordinator` (`coordinator/base.py`)**:
+  - Base viewer class managing agent/tool registries, vector lookup tools, and prompt rendering. Its `_pre_plan` also filters agents and tools with `applies(context)`.
+- **`Planner` (`coordinator/planner.py`)**:
+  - The default coordinator (`UI.coordinator` defaults to `Planner`).
+  - **`_pre_plan`**: checks whether the turn is a follow-up (`_check_follow_up_question`), checks whether clarification is needed (`_check_clarification_needed`), and runs the planner tools (default: `MetadataLookup`; `SourceLookup` is added automatically when a `SourceAgent` is present).
+  - **`_make_plan`**: filters agents via `await agent.applies(context)`, drops agents whose required inputs cannot be provided, generates a Pydantic response model via `make_plan_model(agents, tools)`, and asks the LLM to output a `RawPlan`. `ValidationAgent` is excluded from the candidates here.
+  - **`_resolve_plan`**: orders steps according to dependencies and merges consecutive steps that share the same actor.
+  - After resolving, the planner calls `plan.validate()`; if that raises `ContextError`, it feeds the error back and retries planning.
+- **`DependencyResolver` (`coordinator/dependency.py`)**:
+  - An alternative coordinator. It asks the LLM to choose a **primary agent** (`_choose_agent`), then loops: while the current agent has requirements missing from the context, it finds agents whose `provides` covers them and adds them as earlier tasks, repeating until every requirement is satisfied.
+
+### 2.3 Plan (`lumen/ai/coordinator/base.py` & `lumen/ai/report.py`)
+- **`Plan`**: Subclass of `Section` (which inherits from `TaskGroup` $\to$ `Task`).
+- **Ordered Sequential Execution**: `Plan` is an ordered list of tasks, not an arbitrary runtime DAG. Tasks execute sequentially in order via `_run_task()`.
+- **Views**: `plan.views` is not populated from a context key. Each `ActorTask` stores the `outputs` returned by `actor.respond()` (via `_add_outputs`), and `TaskGroup._init_views` reactively concatenates the tasks' views into `plan.views`.
+- **UI Progress**: Emits live progress and checklist updates via Panel `ChatStep`.
+- **Runtime Error Handling**:
+  - If a task raises `MissingContextError`, `_handle_task_execution_error` invokes `_find_context_provider` and `_retry_from_provider` to re-run the responsible upstream actor with corrective feedback.
+  - After each task, `_run_task` verifies that every key in `task.output_schema.__required_keys__` is present in the returned `task_context`.
+
+### 2.4 Actors: Agents and Tools (`lumen/ai/actor.py`, `lumen/ai/agents/`, `lumen/ai/tools/`)
+- **`Actor` (`lumen/ai/actor.py`)**: Base class inheriting from `LLMUser`. Implements `respond()`. `ContextProvider` adds `purpose`, `conditions`, `not_with`, `input_schema` and `output_schema`.
+- **Agents (`lumen/ai/agents/`)**:
+  - **`SourceAgent`**: Ingests data sources (DuckDB, SQL, Parquet, CSV) and instantiates a `Source`.
+  - **`TableListAgent`**: Browses available tables for a source; requires `source` input.
+  - **`SQLAgent`**: Writes and validates SQL queries; produces a `Pipeline`, table, SQL query string, and data.
+  - **`hvPlotAgent`**: Generates interactive visualizations using hvPlot and HoloViews.
+  - **`VegaLiteAgent` / `DeckGLAgent`**: Generate Vega-Lite specs or geospatial Deck.gl layers.
+  - **`AnalysisAgent`**: Runs predefined, user-supplied `Analysis` classes for reliable, repeatable analytical workflows (not loaded by default; enabled when `analyses` are passed to `ExplorerUI`).
+  - **`ChatAgent`**: Handles general conversational replies or queries that do not require data operations.
+  - **`ValidationAgent`**: A quality gate that checks whether the executed plan fully answered the user's original query and suggests next steps if not. It is appended as a final step when `validation_enabled` is on (the UI exposes this as the "Validation Step" switch) and is not offered as a regular planning candidate.
+- **Tools (`lumen/ai/tools/`)**:
+  - **`MetadataLookup`**: The default planner tool. Builds a vector store over table metadata and returns the relevant tables, producing the `metaset`.
+  - **`SourceLookup`**: Semantic lookup over available sources.
+  - **`VectorLookupTool`**: Base class for the vector-search tools above (`MetadataLookup`, `SourceLookup`, `DbtslLookup`).
+  - **`make_clarification_llm_tool(...)`**: A factory (in `clarification_llm_tool.py`) that creates the LLM tool the planner uses to ask the user for clarification when a request is ambiguous.
+  - **`MCPTool`**: Integrates external tools using the Model Context Protocol.
+
+### 2.5 LLM & VectorStore Integrations (`lumen/ai/llm.py`, `lumen/ai/vector_store.py`)
+- **Supported LLM Providers** (all subclasses of `Llm`): `OpenAI`, `AzureOpenAI`, `Anthropic`, `AnthropicBedrock`, `Bedrock`, `Google`, `MistralAI`, `AzureMistralAI`, `Ollama`, `Groq`, `LlamaCpp`, `OpenRouter`, `LiteLLM`, `AINavigator`, `AICatalyst`, among others (e.g. `MLX`, `WebLLM`).
+- **Supported Vector Stores**: `NumpyVectorStore` (in-memory), `DuckDBVectorStore` (DuckDB-backed, persistent), and `ChromaDBVectorStore` (requires the `chromadb` package).
+
+---
+
+## 3. Context Model and Step-to-Step Data Handoff
+
+The **Context** (`TContext = Mapping[str, Any]`, defined in `lumen/ai/context.py`) is the shared state passed across tasks. Agents communicate by reading dependencies from, and writing outputs to, the context.
+
+### 3.1 Standard Context Keys
+
+| Context Key | Type | Description |
+| :--- | :--- | :--- |
+| `"sources"` | `list[Source]` | All instantiated Lumen `Source` objects available in the session. |
+| `"source"` | `Source` | The active `Source` selected for the current exploration. |
+| `"metaset"` | `Metaset` | Catalog and schema metadata produced by `MetadataLookup`. |
+| `"table"` | `str` | The active table name driving the visualization. |
+| `"sql"` | `str` | The generated SQL query string produced by `SQLAgent`. |
+| `"data"` | `Any` | Materialized or lazy dataframe query result. |
+| `"pipeline"` | `Pipeline` | The active Core Lumen `Pipeline` containing filters and transforms. |
+| `"view"` | `Any` | The view produced by a view agent, available to downstream actors. |
+| `"visible_slugs"` | `set[str]` | Set of table/source slugs currently active and visible in the UI. |
+| `"plan"` | `Plan` | The executing `Plan` instance (injected automatically in `Plan.execute`). |
+| `"prev_plan"` | `Plan` | The previous exploration plan (set by `ExplorerUI` for follow-ups). |
+| `"__error__"` | `str` | Stored error message if a task encounters an unrecoverable failure. |
+
+> **Note**: `plan.views` (what `ExplorerUI` renders) is separate from the `"view"` context key. `plan.views` is built from the **outputs** that each actor returns from `respond()`, i.e. the first element of the `(outputs, task_context)` tuple, not from the context dictionary.
+
+### 3.2 Schema Contracts: `ContextModel`
+Every `Actor` declares typing contracts by subclassing `ContextModel` (a `TypedDict` subclass in `lumen/ai/context.py`).
+
+For example, `SQLAgent` defines:
+```python
+# lumen/ai/agents/sql.py
+class SQLInputs(ContextModel):
+    source: Source
+    sources: Annotated[list[Source], ("accumulate", "source")]
+    metaset: Metaset
+    data: NotRequired[Any]
+    sql: NotRequired[str]
+    visible_slugs: NotRequired[set[str]]
+
+class SQLOutputs(ContextModel):
+    data: Any
+    table: str
+    sql: str
+    pipeline: Pipeline
+```
+
+View agents (such as `hvPlotAgent`, `VegaLiteAgent`, `DeckGLAgent`) subclass `BaseViewAgent`, which declares:
+```python
+# lumen/ai/agents/base_view.py
+class ViewInputs(ContextModel):
+    data: Any
+    pipeline: Pipeline
+    table: str
+    metaset: NotRequired[Metaset]
+
+class ViewOutputs(ContextModel):
+    view: Any
+```
+
+### 3.3 The Real Handoff Chain
+The standard end-to-end dataflow chain operates as follows:
+
+```
+┌────────────────────┐      Provides: {"metaset"}      ┌────────────────────┐      Provides: {"pipeline", "data", "table", "sql"}      ┌────────────────────┐
+│   MetadataLookup   │ ──────────────────────────────> │      SQLAgent      │ ───────────────────────────────────────────────────────> │    hvPlotAgent     │
+│   (Planner Tool)   │                                 │                    │                                                          │   (View Agent)     │
+└────────────────────┘                                 └────────────────────┘                                                          └────────────────────┘
+Requires: {sources}                                    Requires: {source, sources, metaset}                                            Requires: {pipeline, data, table}
+                                                                                                                                       Provides: {"view"}
+```
+
+1. **Pre-planning / Metadata**: `MetadataLookup` inspects catalog schemas and populates `"metaset"`.
+2. **Data & Pipeline Generation**: `SQLAgent` consumes `"source"`, `"sources"` and `"metaset"`, writes a SQL query, and provides `"pipeline"`, `"data"`, `"table"`, and `"sql"`.
+3. **Visualization Generation**: `hvPlotAgent` consumes `"pipeline"`, `"data"`, and `"table"`, and provides `"view"`. It also returns its `LumenEditor` as an output.
+4. **UI Presentation**: the returned outputs flow into `plan.views`, and `ExplorerUI`'s watcher (`partial(self._add_views, exploration)`) mounts each `LumenEditor` into the `Tabs` layout.
+
+### 3.4 Static vs. Runtime Validation
+Lumen enforces contract safety at two separate stages:
+- **Static Validation (`validate_task_inputs`)**:
+  - Called during plan construction from `ExecutableTask.validate()` (the `Planner` calls `plan.validate()` after `_resolve_plan`).
+  - Statically analyzes whether each task's `input_schema` is satisfied by the current context or promised by upstream task output schemas. Raises `ContextError` if types are incompatible or dependencies are missing; the planner catches this and retries.
+- **Runtime Validation**:
+  - `validate_task_inputs` is not rerun before each task. Instead, tasks raise `MissingContextError` if an expected value is absent at runtime.
+  - Upon task completion, `Plan._run_task()` verifies that the task returned all keys listed in `task.output_schema.__required_keys__`.
+
+---
+
+## 4. The Core Layer (Dataflow Engine)
+
+Once Lumen AI generates components, they operate according to **Core Lumen's** reactive architecture (`Source` $\to$ `Pipeline` $\to$ `Filter` $\to$ `View`).
 
 ```
 +---------------+        +------------------+        +-----------------+
@@ -23,210 +248,72 @@ The four core building blocks form a unidirectional dependency chain:
                          +------------------+
 ```
 
-### Component Roles & Responsibilities
+### 4.1 Component Roles
+- **`Source` (`lumen/sources/base.py`)**: Ingests raw data (DuckDB, SQL, Parquet). Exposes `get(table, **query)` and `get_schema(table)`.
+- **`Pipeline` (`lumen/pipeline.py`)**: Central coordinator (`class Pipeline(Viewer, Component)`). Holds collections of `filters` and `transforms`. Contains the reactive parameter `data = DataFrame(...)`.
+  - **Pipeline Chaining**: a `Pipeline` can consume another pipeline through its `pipeline` parameter. The constructor still requires `source` and `table` as keyword arguments, so pass them explicitly:
+    ```python
+    downstream = Pipeline(pipeline=upstream, source=upstream.source, table=upstream.table)
+    ```
+    (In a YAML/dict spec, a `pipeline:` key fills these in automatically.) A chained pipeline computes its data from `upstream.data` instead of calling `source.get()`, and it watches the upstream pipeline's `data` and `_stale`.
+- **`Filter` (`lumen/filters/base.py`)**: Interactive UI widgets (sliders, selectors). Exposes `value = param.Parameter(...)`. The `widget` attribute exists on widget-based filters (`BaseWidgetFilter` and its subclasses).
+- **`View` (`lumen/views/base.py`)**: Renders visual representations. In `View.__init__`, it watches both the pipeline data and its own parameters:
+  ```python
+  pipeline.param.watch(self.update, 'data')
+  self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'name')])
+  ```
+  - `hvPlotView` overrides `update()`. It ignores events caused by its own `ParamFilter`/selection, and when `streaming` is enabled it pushes fresh data through its data stream (`self._data_stream.send(self.get_data())`). Otherwise it falls back to `_update_panel()` and, if needed, `rerender`.
 
-| Component | Source File | Role | Key Methods & Attributes |
-| :--- | :--- | :--- | :--- |
-| **`Source`** | `lumen/sources/base.py` | Connects to external data systems (CSV, Parquet, SQL, REST APIs, memory) and fetches raw data tables and schemas. | `get(table, **query)`<br>`get_schema(table)`<br>`_reload_params` |
-| **`Pipeline`** | `lumen/pipeline.py` | Orchestrates queries, applies filters and transforms, maintains state, and exposes reactive data streams. | `data` (param.DataFrame)<br>`_init_callbacks()`<br>`_update_data()`<br>`_compute_data()` |
-| **`Filter`** | `lumen/filters/base.py` | Provides filtering constraints (often bound to UI widgets) that restrict rows or values queryable by the pipeline. | `value` (param.Parameter)<br>`field`<br>`panel` / `widget` |
-| **`View`** | `lumen/views/base.py` | Visualizes the pipeline data as charts, indicators, or tables (hvPlot, HoloViews, Bokeh, Vega, etc.). | `pipeline`<br>`update()`<br>`_update_panel()`<br>`get_panel()` |
-
----
-
-## 2. Component Class Relationships
-
-```mermaid
-classDiagram
-    class MultiTypeComponent {
-        +from_spec()
-        +to_spec()
-    }
-
-    class Source {
-        +get(table, **query) DataFrame
-        +get_schema(table) dict
-        +_reload_params list
-    }
-
-    class Pipeline {
-        +Source source
-        +List~Filter~ filters
-        +List~Transform~ transforms
-        +DataFrame data
-        +Boolean auto_update
-        +_init_callbacks()
-        +_compute_data()
-        +_update_data()
-    }
-
-    class Filter {
-        +String field
-        +Parameter value
-        +Boolean sync_with_url
-    }
-
-    class View {
-        +Pipeline pipeline
-        +update()
-        +_update_panel()
-        +get_panel() Viewable
-        +panel Viewable
-    }
-
-    MultiTypeComponent <|-- Source
-    MultiTypeComponent <|-- Pipeline
-    MultiTypeComponent <|-- Filter
-    MultiTypeComponent <|-- View
-
-    Source "1" <-- "1" Pipeline : pulls data from
-    Pipeline "1" *-- "many" Filter : filters applied in
-    Pipeline "1" <-- "many" View : observed by
-```
-
-1. **Source $\rightarrow$ Pipeline**: A `Pipeline` is instantiated with a target `source` and `table`. The pipeline queries the source schema on initialization and registers watchers on `source._reload_params`.
-2. **Filter $\rightarrow$ Pipeline**: Filters are declared on or attached to a `Pipeline`. The pipeline binds callbacks to each filter's `value` parameter.
-3. **Pipeline $\rightarrow$ View**: A `View` consumes a `Pipeline`. During `View.__init__`, the view registers an observer on `pipeline.param.data`. When `Pipeline.data` changes, `View.update()` is called automatically.
-
----
-
-## 3. The Reactive Update Flow
-
-The most critical workflow in Lumen is how a user interaction or parameter modification propagates through the system to re-render the view:
+### 4.2 The Reactive Update Flow
+When a user interacts with a filter control in the UI, the update travels through this exact chain:
 
 $$\text{Filter.value changes} \longrightarrow \text{Pipeline._init_callbacks triggers } \texttt{\_update\_data} \longrightarrow \text{Pipeline.data updates} \longrightarrow \text{View.update} \longrightarrow \text{Re-render}$$
 
-### Detailed Sequence Diagram
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as User / UI Widget
-    participant Filter as Filter (filters/base.py)
-    participant Pipeline as Pipeline (pipeline.py)
-    participant Source as Source (sources/base.py)
-    participant View as View (views/base.py)
-
-    User->>Filter: Change widget value (sets Filter.value)
-    Note over Filter,Pipeline: Param triggers registered watcher: filt.param.watch(_update_data, ['value'])
-    Filter->>Pipeline: _update_data(events)
-    
-    rect rgb(240, 245, 255)
-        Note over Pipeline: Check guards (not loading, auto_update is True)
-        Pipeline->>Pipeline: _sync_refs()
-        Pipeline->>Pipeline: _compute_data()
-        Pipeline->>Source: source.get(table, **query)
-        Source-->>Pipeline: Returns raw/filtered DataFrame
-        Pipeline->>Pipeline: Apply in-memory Transforms (Transform.apply)
-        Pipeline->>Pipeline: Set self.data = new_data
-    end
-
-    Note over Pipeline,View: Param triggers watcher: pipeline.param.watch(self.update, 'data')
-    Pipeline->>View: update(events)
-    
-    rect rgb(245, 255, 245)
-        View->>View: Clear internal cache (self._cache = None)
-        View->>View: _update_panel()
-        alt Streamable / In-place Param update
-            View->>View: Update panel params without rebuilding DOM
-        else Needs Re-render
-            View->>View: self.param.trigger('rerender')
-            View->>User: Fresh visual display rendered
-        end
-    end
-```
-
-### Deep-Dive: Code Step-by-Step
-
-#### Step 1: Filter value changes
-A user interacts with a widget, or code updates `filter.value`:
-```python
-# lumen/filters/base.py
-class Filter(MultiTypeComponent):
-    value = param.Parameter(doc="The current filter value.")
-```
-
-#### Step 2: Pipeline callback triggered
-In `Pipeline.__init__`, `_init_callbacks()` connects filters and triggers to `_update_data`:
-```python
-# lumen/pipeline.py
-def _init_callbacks(self):
-    self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
-    self.param.watch(self._sync_source, 'source')
-    self._source_watcher = self.source.param.watch(self._update_data, self.source._reload_params)
-    for filt in self.filters:
-        filt.param.watch(self._update_data, ['value'])
-    for transform in self.transforms + self.sql_transforms:
-        transform.param.watch(self._update_data, list(transform.param))
-```
-
-#### Step 3: Pipeline recomputes data and assigns `self.data`
-In `Pipeline._update_data`:
-```python
-# lumen/pipeline.py
-@catch_and_notify
-def _update_data(self, *events: param.parameterized.Event, force: bool = False):
-    if self._update_widget is None or self._update_widget.loading:
-        return
-    if not force and not self.auto_update and not self.update:
-        self._stale = True
-        return
-
-    self._update_widget.loading = True
-    try:
-        for f in self.filters + self.transforms + self.sql_transforms:
-            f._sync_refs()
-
-        new_data = self._compute_data()  # Queries Source and applies transforms
-        self.data = new_data            # Assigns DataFrame param, firing Param events!
-        self._stale = False
-    finally:
-        self._update_widget.loading = False
-```
-
-#### Step 4: View receives the change and updates
-During `View.__init__`, the view registers an observer on `pipeline.param.data`:
-```python
-# lumen/views/base.py
-class View(MultiTypeComponent, Viewer):
-    def __init__(self, **params):
-        ...
-        if pipeline is not None:
-            pipeline.param.watch(self.update, 'data')
-            if self.loading_indicator:
-                pipeline._update_widget.param.watch(self._update_loading, 'loading')
-```
-
-When `self.data` changes, `View.update()` runs:
-```python
-# lumen/views/base.py
-def update(self, *events: param.parameterized.Event, invalidate_cache: bool = True):
-    if invalidate_cache:
-        self._cache = None
-    stale = self._update_panel()
-    self._initialized = True
-    if stale:
-        self.param.trigger('rerender')
-```
+1. **`Filter.value` changes**: the user moves a slider or selects a dropdown value.
+2. **`Pipeline._init_callbacks`**: the pipeline registered `filt.param.watch(self._update_data, ['value'])`.
+3. **`Pipeline._update_data`**: checks `auto_update`, sets `loading = True`, calls `_compute_data()` (querying `source.get()` and applying in-memory transforms), then assigns `self.data = new_data`.
+4. **`View.update`**: the observer registered on `pipeline.param.data` fires.
+5. **Re-render / In-place Patch**: `View.update()` clears the internal cache (`self._cache = None`) and calls `self._update_panel()`. If the view cannot update parameters in place or stream new rows, it triggers `self.param.trigger('rerender')`.
 
 ---
 
-## 4. Debugging Guide: "Why Didn't My View Update?"
+## 5. Contributor Debugging Guide
 
-When troubleshooting an unresponsive view or missing data updates, trace through this checklist of entry points in sequence:
+### 5.1 Debugging the AI Layer
 
-| Checkpoint | What to inspect | Common Cause | Code Location |
-| :--- | :--- | :--- | :--- |
-| **1. Filter Watcher** | Did `filter.value` trigger? | Filter was added after pipeline initialization without `pipeline.add_filter()`. | `lumen/filters/base.py:Filter.value`<br>`lumen/pipeline.py:add_filter` |
-| **2. Pipeline Gate** | Did `_update_data` exit early? | `pipeline.auto_update` is `False`, or pipeline is stuck in `loading=True`. | `lumen/pipeline.py:Pipeline._update_data` (line ~430) |
-| **3. Source Retrieval** | Did `source.get()` return new data? | Source-level caching (`clear_cache`), or query conditions did not match. | `lumen/sources/base.py:Source.get`<br>`lumen/pipeline.py:_compute_data` |
-| **4. In-place Mutation** | Was `self.data` assigned a new object? | Mutating `df` in-place (`df['x'] = ...`) may not fire Param change events if object identity is identical. Always assign a fresh copy. | `lumen/pipeline.py:Pipeline._update_data` |
-| **5. View Registration** | Is `View.update` subscribed? | View was initialized without passing `pipeline`, or pipeline instance was reassigned without re-binding. | `lumen/views/base.py:View.__init__` (line ~216) |
-| **6. Panel DOM Rerender** | Did `_update_panel()` trigger rerender? | `_update_panel()` returned `False` assuming in-place streaming or param update succeeded when a full rerender was required. | `lumen/views/base.py:View._update_panel`<br>`lumen/views/base.py:View.update` |
+#### "Why did the planner pick the wrong agent?"
+- **Check `agent.applies(context)`**:
+  - File: `lumen/ai/agents/base.py` (a classmethod, overridable per agent).
+  - In `Planner._make_plan()` (and the base `Coordinator._pre_plan()`), candidates are filtered out before LLM prompting if `await agent.applies(context)` returns `False`.
+- **Check Unmet Dependencies**:
+  - The planner computes `set(agent.input_schema.__required_keys__) - all_provides`. If any required input key cannot be provided by the context or by other actors, the agent is deemed unsatisfiable and excluded.
+- **Inspect the `_make_plan` Prompt and Chain-of-Thought**:
+  - File: `lumen/ai/coordinator/planner.py`
+  - Set a breakpoint in `_make_plan()` to inspect `system` and the streamed `raw_plan.chain_of_thought`.
 
-### Key Breakpoints for Debugging
-1. **`lumen/pipeline.py:Pipeline._update_data`**: Set a breakpoint at the top of this method to see if the trigger event arrived from the filter.
-2. **`lumen/pipeline.py:Pipeline._compute_data`**: Set a breakpoint here to verify what query was passed to `self.source.get()`.
-3. **`lumen/views/base.py:View.update`**: Set a breakpoint here to ensure the pipeline successfully notified the view.
-4. **`lumen/views/base.py:View._update_panel`**: Set a breakpoint to check whether the view updated its existing Panel pane or triggered a complete re-render.
-    
+#### "Why did planning retry or fail before anything ran?"
+- After `_resolve_plan`, the planner calls `plan.validate()`. A `ContextError` (missing dependency or incompatible types between steps) is streamed to the user and triggers another planning attempt. Inspect the `ContextError` text to see which task's `input_schema` was not satisfied.
+
+#### "Why did this step fail during execution?"
+- **Missing Context at Runtime**:
+  - If a task raises `MissingContextError`, inspect `Plan._handle_task_execution_error` and `Plan._find_context_provider`.
+- **Unprovided Output Contract**:
+  - If an actor completes without returning all keys required by its `output_schema`, execution raises a `RuntimeError` ending in `"failed to provide declared context"` (from `Plan._run_task` or `ActorTask._execute`); the chat step title lists the missing keys. Check the context dictionary returned by `agent.respond()`.
+- **Code Execution Error**:
+  - For code-generating agents (`SQLAgent`, `BaseCodeAgent`), check `lumen/ai/code_executor.py` or the SQL validation logs.
+
+#### "Why did newly generated views not show up in the UI?"
+- **Outputs, not context**: verify that the agent's `respond()` returned a `LumenEditor` in its `outputs` list. `ExplorerUI._add_views` silently skips anything that is not a `LumenEditor`, and putting a `"view"` in the context does not add it to `plan.views`.
+- **Watcher**: in `ExplorerUI._execute_plan()`, check which branch ran. The watcher `plan.param.watch(partial(self._add_views, exploration), "views")` is attached for reruns, new explorations and replans, but not when the plan is merged into an existing exploration's plan.
+
+### 5.2 Debugging the Core Layer
+
+#### "Why didn't my view update when a filter changed?"
+
+Follow this checklist:
+1. **Filter Watcher**: check `Filter.value`. Was the filter appended to `pipeline.filters` after initialization without calling `pipeline.add_filter()`?
+2. **Pipeline Gate**: set a breakpoint at `lumen/pipeline.py:Pipeline._update_data`. Is `self.auto_update` set to `False`? Is `self._update_widget.loading` stuck on `True`?
+3. **Source Fetch**: in `Pipeline._compute_data()`, does `source.get()` return cached data? (Verify via `source.clear_cache()`.) For a chained pipeline, check whether the upstream pipeline's `data` actually changed.
+4. **Data Assignment (User Transforms)**: in-place DataFrame mutations in custom transforms (e.g. `df['x'] = ...`) may not trigger Param change events if the dataframe object identity does not change. Always return fresh copies.
+5. **View Watcher**: set a breakpoint in `lumen/views/base.py:View.update`. Ensure `pipeline.param.watch(self.update, 'data')` fired. Remember that changing the view's own parameters also calls `update()`.
+6. **Panel Rendering**: in `View._update_panel()`, verify whether an in-place param update or stream succeeded, or whether `self.param.trigger('rerender')` was required. For `hvPlotView`, also check the `streaming` flag and the own-event filter in its `update()` override.
