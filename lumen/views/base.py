@@ -1628,6 +1628,15 @@ class VegaLiteView(View):
 
     _extension = 'vega'
 
+    # Per-row AI-generated tooltip text (VegaLiteAgent's _generate_ai_explanations).
+    # Kept on the view rather than written into pipeline.data: the pipeline can be
+    # shared by other charts and agents on the same table, and a column that only
+    # exists to serve one chart's tooltip should not leak into their view of the
+    # data, into exports, or into this view's own to_spec().
+    _ai_explanations = param.List(default=[])
+
+    _internal_params: ClassVar[list[str]] = [*View._internal_params, '_ai_explanations']
+
     @classmethod
     def _declares_own_data(cls, node: Any) -> bool:
         """Whether the spec supplies its own data (a url or inline values) anywhere.
@@ -1743,6 +1752,23 @@ class VegaLiteView(View):
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
+        if self._ai_explanations:
+            # get_data() returns the same cached frame object on every call
+            # after the first (View._cache), which is also pipeline.data
+            # itself -- writing a column into df without copying here would
+            # mutate that shared frame, exactly the pipeline-wide leak this
+            # per-view param exists to avoid.
+            df = df.copy()
+            # The pipeline may have re-queried (filters, a new turn) since the
+            # explanations were generated, so the row count here is not
+            # guaranteed to match; pad/truncate rather than raise so a stale
+            # explanation set degrades to blank cells instead of breaking the
+            # chart.
+            explanations = self._ai_explanations
+            n_rows = len(df)
+            if len(explanations) != n_rows:
+                explanations = (explanations + [""] * n_rows)[:n_rows]
+            df["ai_explanation"] = explanations
         spec_data = self.spec.get('data', {})
         spec = dict(self.spec)
 

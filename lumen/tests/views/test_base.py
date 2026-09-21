@@ -14,7 +14,7 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -464,6 +464,82 @@ def test_vega_datasets_are_not_accumulated_across_renders(set_root):
     view.get_panel()
 
     assert set(view.spec["datasets"]) == {"populations"}
+
+
+def _scatter_spec():
+    return {
+        "mark": "point",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "B", "type": "quantitative"},
+        },
+    }
+
+
+def test_vega_ai_explanations_stay_local_to_the_view(set_root):
+    """_ai_explanations backs VegaLiteAgent's per-row tooltip feature. It must
+    not leak into pipeline.data (shared by any other chart or agent on this
+    table), into a second view on the same pipeline, or into to_spec()."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    n_rows = len(pipeline.data)
+
+    view1 = VegaLiteView(spec=_scatter_spec(), pipeline=pipeline)
+    view2 = VegaLiteView(spec=_scatter_spec(), pipeline=pipeline)
+
+    # Force get_data()'s cache to populate on both views first, the same way
+    # an initial render would, since the leak this guards against only shows
+    # up on a *cached* read (get_data() only copies on the first call).
+    view1.get_data()
+    view2.get_data()
+
+    view1._ai_explanations = [f"row {i}" for i in range(n_rows)]
+
+    final_spec = view1.get_panel().object
+    assert "ai_explanation" in final_spec["data"]["values"].columns
+
+    assert "ai_explanation" not in view2.get_panel().object["data"]["values"].columns
+    assert "ai_explanation" not in pipeline.data.columns
+    assert "_ai_explanations" not in view1.to_spec()
+
+
+def test_vega_ai_explanations_pad_to_current_row_count(set_root):
+    """The pipeline may have re-queried since explanations were generated
+    (a filter, a new turn), so a stale, wrong-length list must degrade to
+    blank cells rather than raising."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    n_rows = len(pipeline.data)
+
+    view = VegaLiteView(spec=_scatter_spec(), pipeline=pipeline)
+    view._ai_explanations = ["only one explanation"]
+
+    final_spec = view.get_panel().object
+    values = final_spec["data"]["values"]
+    assert len(values) == n_rows
+    assert values["ai_explanation"].iloc[0] == "only one explanation"
+    assert (values["ai_explanation"].iloc[1:] == "").all()
+
+
+def test_vega_ai_explanations_assignment_triggers_rerender(set_root):
+    """View.__init__ watches every param but rerender/selection_expr/name and
+    calls update() on change, so setting _ai_explanations alone must trigger
+    a rerender -- the same path pipeline.data changing used to take -- with
+    no separate update() call needed from the agent."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    view = VegaLiteView(spec=_scatter_spec(), pipeline=pipeline)
+
+    fired = []
+    view.param.watch(fired.append, 'rerender')
+
+    view._ai_explanations = ["x"]
+
+    # View.update() firing more than once per param change is a pre-existing
+    # quirk shared by every param on this class (confirmed with an unrelated
+    # param like title) -- the invariant this feature actually needs is that
+    # a rerender happens at all, not an exact count.
+    assert len(fired) >= 1
 
 
 def test_vega_layered_choropleth_registers_the_named_dataset(set_root):

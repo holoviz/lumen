@@ -89,6 +89,35 @@ def test_main_prompt_guards_ungrouped_multi_series_lines():
     assert "aggregate" in text.lower()
 
 
+NON_AGGREGATED_ENCODING = {
+    "x": {"field": "a", "type": "nominal"},
+    "y": {"field": "v", "type": "quantitative"},
+}
+AGGREGATED_ENCODING = {
+    "x": {"field": "a", "type": "nominal"},
+    "y": {"aggregate": "mean", "field": "v", "type": "quantitative"},
+}
+
+
+@pytest.mark.parametrize(("spec", "expected"), [
+    ({"encoding": NON_AGGREGATED_ENCODING}, False),
+    ({"encoding": AGGREGATED_ENCODING}, True),
+    ({"spec": {"encoding": AGGREGATED_ENCODING}}, True),
+    ({"layer": [{"encoding": NON_AGGREGATED_ENCODING}, {"encoding": AGGREGATED_ENCODING}]}, True),
+    ({"layer": [{"encoding": NON_AGGREGATED_ENCODING}, {"mark": "rule"}]}, False),
+    ({"concat": [{"encoding": AGGREGATED_ENCODING}]}, True),
+    ({"hconcat": [{"encoding": NON_AGGREGATED_ENCODING}]}, False),
+    ({"vconcat": [{"encoding": NON_AGGREGATED_ENCODING}, {"encoding": AGGREGATED_ENCODING}]}, True),
+])
+def test_spec_has_aggregation_recurses_into_composite_specs(spec, expected):
+    """A raw per-row field (ai_explanation) added to a tooltip alongside an
+    aggregated encoding makes Vega-Lite group by it too, silently splitting a
+    bar into one per row. That failure mode is not limited to top-level specs:
+    an annotate_plot trend line, or any concat/facet, nests the aggregate
+    inside a composition container, so the check has to walk those too."""
+    assert VegaLiteAgent._spec_has_aggregation(spec) is expected
+
+
 CATEGORICAL_SPEC = {
     "mark": "bar",
     "encoding": {
