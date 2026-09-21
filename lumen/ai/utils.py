@@ -23,7 +23,6 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
-import colorcet as cc
 import numpy as np
 import pandas as pd
 import param
@@ -37,7 +36,6 @@ from jinja2 import (
 )
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
-from markupsafe import escape
 from panel_material_ui import Details
 
 from ..config import dump_yaml
@@ -235,6 +233,8 @@ def json_to_yaml(data):
 def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
+        from markupsafe import escape
+
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
             f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
@@ -2077,6 +2077,8 @@ def category_palette(ncolors: int = 20) -> list[str]:
     colorcet.glasbey_category10 gives float RGB tuples that cannot be
     serialized into a spec.
     """
+    import colorcet as cc
+
     return cc.b_glasbey_category10[:ncolors]
 
 
