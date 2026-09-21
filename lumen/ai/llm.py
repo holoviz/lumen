@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
 import os
 import traceback
@@ -993,7 +994,7 @@ class Llm(param.Parameterized):
                 if isinstance(tool, MCPTool):
                     result = await tool.execute(**arguments)
                 elif isinstance(tool, FunctionTool):
-                    if asyncio.iscoroutinefunction(tool.function):
+                    if inspect.iscoroutinefunction(tool.function):
                         result = await tool.function(**arguments)
                     else:
                         # Synchronous function, run in thread
