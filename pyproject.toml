@@ -145,7 +145,6 @@ exclude = ["tests"]
 
 [tool.ruff.lint]
 select = [
-    "PLC0415", # import should be at the top-level of a file
     "B",   # flake8-bugbear (includes T20 for print detection)
     "E",
     "F",
@@ -171,6 +170,7 @@ ignore = [
     "E731", # Do not assign a lambda expression, use a def
     "E741", # Ambiguous variable name
     "F405", # From star imports
+    "PLC0415", # import should be at the top-level of a file
     "PLE0604", # Invalid object in `__all__`, must contain only strings
     "PLE0605", # Invalid format for `__all__`
     "PLR091", # Too many arguments/branches/statements
