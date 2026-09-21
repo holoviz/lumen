@@ -99,7 +99,7 @@ class TableExplorer(Viewer):
             return
 
         # Deferred: .editors imports the controls package, which imports this module.
-        from ..editors import SQLEditor  # noqa: PLC0415
+        from ..editors import SQLEditor
 
         source = self.source_map[self.table_slug]
         if SOURCE_TABLE_SEPARATOR in self.table_slug:

@@ -93,7 +93,7 @@ class DbtslMixin(ServiceMixin):
         """
         Create and return a dbt Semantic Layer client instance.
         """
-        from dbtsl.asyncio import AsyncSemanticLayerClient  # noqa: PLC0415
+        from dbtsl.asyncio import AsyncSemanticLayerClient
 
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return AsyncSemanticLayerClient(**kwargs)
@@ -132,7 +132,7 @@ class LlamaCppMixin(ServiceMixin):
         if 'model_path' in kwargs:
             return kwargs['model_path']
         elif 'repo_id' in kwargs and 'filename' in kwargs:
-            from huggingface_hub import hf_hub_download  # noqa: PLC0415
+            from huggingface_hub import hf_hub_download
             return hf_hub_download(
                 repo_id=kwargs['repo_id'],
                 filename=kwargs['filename'],
@@ -177,7 +177,7 @@ class LlamaCppMixin(ServiceMixin):
         """
         Create and return a Llama instance with the configured parameters.
         """
-        from llama_cpp import Llama  # noqa: PLC0415
+        from llama_cpp import Llama
 
         kwargs = self._instantiate_client_kwargs(model_kwargs=model_kwargs, **extra_kwargs)
         return Llama(**kwargs)
@@ -218,7 +218,7 @@ class LlamaCppMixin(ServiceMixin):
         if not huggingface_models:
             return
 
-        from huggingface_hub import hf_hub_download  # noqa: PLC0415
+        from huggingface_hub import hf_hub_download
         print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
         for kwargs in model_kwargs_dict.values():
             repo_id = kwargs.get('repo_id')
@@ -269,7 +269,7 @@ class AnthropicMixin(APIKeyServiceMixin):
     api_key_env_var: str = PROVIDER_ENV_VARS['anthropic']
 
     def _instantiate_client(self, async_client=True, **extra_kwargs):
-        from anthropic import Anthropic, AsyncAnthropic  # noqa: PLC0415
+        from anthropic import Anthropic, AsyncAnthropic
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return AsyncAnthropic(**kwargs) if async_client else Anthropic(**kwargs)
 
@@ -283,7 +283,7 @@ class GenAIMixin(APIKeyServiceMixin):
     api_key_env_var: str = PROVIDER_ENV_VARS['google']
 
     def _instantiate_client(self, **extra_kwargs):
-        from google import genai  # noqa: PLC0415
+        from google import genai
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return genai.Client(**kwargs)
 
@@ -297,7 +297,7 @@ class MistralAIMixin(APIKeyServiceMixin):
     api_key_env_var: str = PROVIDER_ENV_VARS['mistral']
 
     def _instantiate_client(self, **extra_kwargs):
-        from mistralai import Mistral  # noqa: PLC0415
+        from mistralai import Mistral
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return Mistral(**kwargs)
 
@@ -322,7 +322,7 @@ class AzureMistralAIMixin(MistralAIMixin):
         """
         Create and return an Azure Mistral client instance.
         """
-        from mistralai_azure import MistralAzure  # noqa: PLC0415
+        from mistralai_azure import MistralAzure
         kwargs = self._instantiate_client_kwargs(**extra_kwargs)
         return MistralAzure(azure_endpoint=self.endpoint, **kwargs)
 
