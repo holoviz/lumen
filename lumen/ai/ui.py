@@ -603,9 +603,7 @@ class UI(Viewer):
                     continue
                 elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
                     try:
-                        from ..sources.sqlalchemy import (  # noqa: PLC0415
-                            SQLAlchemySource,
-                        )
+                        from ..sources.sqlalchemy import SQLAlchemySource
                     except ImportError as e:
                         raise ImportError(
                             "SQLAlchemy is required for database connection strings. "
@@ -631,9 +629,7 @@ class UI(Viewer):
                         sources.append(source)
                     else:
                         try:
-                            from ..sources.sqlalchemy import (  # noqa: PLC0415
-                                SQLAlchemySource,
-                            )
+                            from ..sources.sqlalchemy import SQLAlchemySource
                         except ImportError as e:
                             raise ImportError(
                                 "SQLAlchemy is required to read .db files. "
