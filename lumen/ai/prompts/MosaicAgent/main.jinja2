@@ -52,6 +52,23 @@ Plot attributes (`width`, `height`, `xLabel`, `yLabel`, ...) are siblings of
 - Prefer a simple single-mark plot unless interactivity is explicitly requested.
 - Do not use scientific notation in axis ticks (`yTickFormat: s` for SI units).
 
+## Visual Quality and Readability
+
+- Produce a polished chart, not only a technically valid one. Use clear,
+  human-readable axis labels, adequate margins, and concise titles where useful.
+- Use `colorScheme: tableau10` for categorical color unless the data calls for
+  a sequential or diverging palette. Avoid arbitrary harsh colors.
+- Use subtle horizontal grid lines (`yGrid: true`) for quantitative charts and
+  enough left/bottom margin that labels never clip.
+- Add useful tooltips for marks when they help identify values. For scatter
+  plots, use a visible point radius and moderate opacity so overlapping points
+  remain readable.
+- For a histogram split by a category, prefer one shared plot colored by that
+  category with moderate opacity. Use `fx`/`fy` facets only when the user asks
+  for separate panels or when overlapping distributions would be misleading.
+- Avoid layouts with tiny labels, overly narrow bars, excessive empty space, or
+  more panels than the available area can display clearly.
+
 ## Marks
 
 Use vgplot mark names, not Vega-Lite names:

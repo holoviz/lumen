@@ -98,6 +98,23 @@ class MosaicAgent(BaseViewAgent):
         self._last_output = None
         super().__init__(**params)
 
+    @classmethod
+    def _apply_visual_defaults(cls, value: Any) -> None:
+        """Add readable defaults to every plot without overriding its design."""
+        if isinstance(value, dict):
+            if isinstance(value.get("plot"), list):
+                value.setdefault("colorScheme", "tableau10")
+                value.setdefault("marginLeft", 60)
+                value.setdefault("marginRight", 30)
+                value.setdefault("marginTop", 30)
+                value.setdefault("marginBottom", 50)
+                value.setdefault("yGrid", True)
+            for child in value.values():
+                cls._apply_visual_defaults(child)
+        elif isinstance(value, list):
+            for child in value:
+                cls._apply_visual_defaults(child)
+
     @retry_llm_output()
     async def _generate_yaml_spec(
         self,
@@ -161,6 +178,7 @@ class MosaicAgent(BaseViewAgent):
         # `data: {from: <table>}`.
         if isinstance(mosaic_spec, dict):
             mosaic_spec.pop("data", None)
+            self._apply_visual_defaults(mosaic_spec)
 
         log_debug(f"{self.name} generated Mosaic spec:\n{mosaic_spec!r}")
         self._editor_type.validate_spec(mosaic_spec)

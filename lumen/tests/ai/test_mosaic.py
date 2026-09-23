@@ -185,9 +185,46 @@ async def test_extract_spec_parses_yaml_and_sets_sizing(llm):
     result = await agent._extract_spec({}, {"yaml_spec": dump_yaml(SIMPLE_SPEC)})
 
     assert result["spec"]["plot"][0]["mark"] == "lineY"
+    assert result["spec"]["colorScheme"] == "tableau10"
+    assert result["spec"]["marginLeft"] == 60
+    assert result["spec"]["marginRight"] == 30
+    assert result["spec"]["marginTop"] == 30
+    assert result["spec"]["marginBottom"] == 50
+    assert result["spec"]["yGrid"] is True
     assert result["sizing_mode"] == "stretch_both"
     assert result["min_height"] == 400
     assert result["responsive"] is True
+
+
+async def test_extract_spec_preserves_explicit_visual_choices(llm):
+    """Agent defaults never replace visual choices made in the specification."""
+    agent = MosaicAgent(llm=llm)
+    spec = dict(
+        SIMPLE_SPEC,
+        colorScheme="accent",
+        marginLeft=90,
+        yGrid=False,
+    )
+
+    result = await agent._extract_spec({}, {"yaml_spec": dump_yaml(spec)})
+
+    assert result["spec"]["colorScheme"] == "accent"
+    assert result["spec"]["marginLeft"] == 90
+    assert result["spec"]["yGrid"] is False
+
+
+def test_mosaic_editor_stretches_rendered_view():
+    """The reactive Mosaic host fills the Explorer output split vertically."""
+    pipeline = Pipeline(
+        source=InMemorySource(
+            tables={"table": pd.DataFrame({"date": [1], "close": [2.0]})}
+        ),
+        table="table",
+    )
+    view = MosaicView(pipeline=pipeline, spec=SIMPLE_SPEC)
+    editor = MosaicEditor(component=view)
+
+    assert editor.view.sizing_mode == "stretch_both"
 
 
 async def test_extract_spec_drops_top_level_data_block(llm):
@@ -268,7 +305,11 @@ async def test_generate_spec_revises_invalid_interaction_before_full_retry(llm):
 
     assert len(feedback) == 1
     assert "beginning with `$`" in feedback[0]
-    assert result["spec"] == corrected
+    assert result["spec"]["params"] == corrected["params"]
+    assert result["spec"]["vconcat"][0] == corrected["vconcat"][0]
+    revised_plot = result["spec"]["vconcat"][1]
+    assert revised_plot["plot"] == corrected["vconcat"][1]["plot"]
+    assert revised_plot["colorScheme"] == "tableau10"
 
 
 def test_rebind_table_rewrites_every_from_reference():

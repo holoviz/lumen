@@ -551,6 +551,13 @@ class MosaicEditor(LumenEditor):
         self._mosaic_component = None
         self._mosaic_status_watchers = []
         super().__init__(**params)
+        # Mosaic can resize its plots to the space Panel assigns it, but the
+        # base editor's reactive view only stretches horizontally. Inside the
+        # Explorer's vertical split that leaves the reactive host at the
+        # specification's original height and turns the rest of the output
+        # pane into blank space. Give the host the full split-pane height so
+        # panel-mosaic's responsive layout can measure and fill it.
+        self.view.sizing_mode = "stretch_both"
         self.param.watch(self._watch_mosaic_component, 'component')
         self._watch_mosaic_component()
 
