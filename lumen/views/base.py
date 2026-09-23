@@ -1869,9 +1869,7 @@ class MosaicView(View):
         to sending the computed frame.
         """
         try:
-            from ..sources.duckdb import (  # noqa: PLC0415
-                DuckDBSource, _quote_ident,
-            )
+            from ..sources.duckdb import DuckDBSource, _quote_ident
         except ImportError:
             # duckdb is a core dependency but the minimal test-core env omits it.
             return None
