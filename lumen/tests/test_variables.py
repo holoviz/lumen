@@ -81,7 +81,7 @@ def test_add_variable_widget_parameter():
 
     w.value = 6
 
-    assert var.value == 3
+    assert var.value == w.value_throttled
 
 def test_env_variable():
     var = Variable.from_spec({'type': 'env', 'key': 'LUMEN_VAR', 'default': 'B'})
