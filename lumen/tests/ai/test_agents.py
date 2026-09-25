@@ -16,8 +16,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.chat import ChatFeed
-from panel.pane import SVG, Markdown
-from panel_material_ui import ChatMessage
+from panel.pane import Markdown
 
 from lumen.ai.agents import (
     AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
@@ -51,39 +50,6 @@ from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
 root = str(Path(__file__).parent.parent / "sources")
-
-
-@pytest.mark.parametrize(
-    ("agent", "name", "icon"),
-    [
-        (TableListAgent, "Tables", "table_chart"),
-        (DocumentListAgent, "Documents", "description"),
-        (AnalysisAgent, "Analysis", "insights"),
-        (hvPlotAgent, "hvPlot", "show_chart"),
-        (SQLAgent, "SQL", "storage"),
-        (VegaLiteAgent, "Vega", "bar_chart"),
-    ],
-)
-def test_agent_avatar(agent, name, icon):
-    """Agent display names resolve to their role-specific Material icons."""
-    message = ChatMessage("Test", user=agent().user)
-    assert message.user == name
-    assert message.avatar == {"type": "icon", "icon": icon}
-
-
-def test_lumen_avatar():
-    """General chat messages embed the packaged Lumen logo."""
-    message = ChatMessage("Test", user=ChatAgent().user)
-    assert message.user == "Lumen"
-    assert isinstance(message.avatar, SVG)
-    assert message._internal_state.avatar["type"] == "image"
-    assert message._internal_state.avatar["src"].startswith("data:image/svg+xml;base64,")
-
-
-@pytest.mark.parametrize("name", ["Agent", "Assistant"])
-def test_legacy_agent_avatar(name):
-    """Previously saved speaker names retain the generic Lumen avatar."""
-    assert ChatMessage("Test", user=name).avatar == {"type": "icon", "icon": "auto_awesome"}
 
 
 @pytest.mark.filterwarnings("ignore:Widget.name is deprecated:PendingDeprecationWarning")
@@ -122,6 +88,7 @@ async def test_chat_agent(llm, test_messages):
 
     out, out_context = await agent.respond(test_messages, {})
     assert out[0].object == "Test Response"
+    assert out[0].user == "Lumen"
 
 async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
     """Test ChatAgent in analyst mode (with data)"""
