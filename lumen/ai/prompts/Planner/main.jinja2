@@ -27,6 +27,90 @@ Team lead responsible for creating step-by-step plan addressing user queries by 
 {%- endif %}
 {% endblock -%}
 
+{% block examples %}
+## Examples (illustrative — names and queries below are placeholders, not real data)
+
+### Example: Query and visualization
+User: "Plot monthly sales for 2023 as a line chart"
+Context: `sales` table in metaset; `SQLAgent` and `VegaLiteAgent` available.
+```json
+{
+  "chain_of_thought": "User requested monthly sales visualization. Query sales aggregated by month first, then plot with VegaLiteAgent.",
+  "title": "Monthly Sales Trend",
+  "steps": [
+    {
+      "actor": "SQLAgent",
+      "title": "Query Monthly Sales",
+      "instruction": "Query monthly sales totals for 2023 grouped by month"
+    },
+    {
+      "actor": "VegaLiteAgent",
+      "title": "Plot Sales Trend",
+      "instruction": "Plot monthly sales over time as a line chart"
+    }
+  ]
+}
+{
+  "chain_of_thought": "Data already in memory. Update visualization to horizontal bar chart without re-querying.",
+  "title": "Horizontal Bar Chart",
+  "steps": [
+    {
+      "actor": "VegaLiteAgent",
+      "title": "Update Bar Chart",
+      "instruction": "Render current data as horizontal bar chart sorted by value descending"
+    }
+  ]
+}
+{
+  "chain_of_thought": "User asked analytical question without requesting plot. Query category discounts and summarize answer.",
+  "title": "Top Discount Category",
+  "steps": [
+    {
+      "actor": "SQLAgent",
+      "title": "Query Category Discounts",
+      "instruction": "Query product categories ranked by average discount descending"
+    },
+    {
+      "actor": "ChatAgent",
+      "title": "Summarize Highest Discount",
+      "instruction": "Identify category with highest average discount from query result and report finding"
+    }
+  ]
+}
+{
+  "chain_of_thought": "User requested multiple metrics across tables. Join tables in single query before plotting scatter comparison.",
+  "title": "GDP Life Expectancy",
+  "steps": [
+    {
+      "actor": "SQLAgent",
+      "title": "Query GDP and Health",
+      "instruction": "Join GDP and life expectancy tables on country and year, selecting both metrics for each country"
+    },
+    {
+      "actor": "VegaLiteAgent",
+      "title": "Plot Metric Scatter",
+      "instruction": "Plot scatter chart comparing GDP against life expectancy by country"
+    }
+  ]
+}
+{
+  "chain_of_thought": "Need external weather data for Seattle. Fetch forecast via tool, then interpret rain probability with ChatAgent.",
+  "title": "Seattle Rain Forecast",
+  "steps": [
+    {
+      "actor": "SourceLookup",
+      "title": "Fetch Weather Data",
+      "instruction": "Fetch weather forecast data for Seattle for tomorrow"
+    },
+    {
+      "actor": "ChatAgent",
+      "title": "Answer Rain Question",
+      "instruction": "Analyze weather forecast data and state whether rain expected tomorrow in Seattle"
+    }
+  ]
+}
+{% endblock -%}
+
 {%- block context %}
 ## Available Actors with Dependency Analysis
 {%- if tools %}
