@@ -85,7 +85,7 @@ class DependencyResolver(Coordinator):
             agent = next(iter(agents.values()))
         else:
             agent = None
-            with self._add_step(title="Selecting primary agent...", user="Assistant") as step:
+            with self._add_step(title="Selecting primary agent...", user="Lumen") as step:
                 try:
                     output = await self._choose_agent(messages, context, self.agents, primary=True)
                 except Exception as e:
@@ -108,7 +108,7 @@ class DependencyResolver(Coordinator):
         subagent = agent
         tasks = []
         while unmet_dependencies := tuple(r for r in await subagent.requirements(messages) if r not in context):
-            with self._add_step(title="Resolving dependencies...", user="Assistant") as step:
+            with self._add_step(title="Resolving dependencies...", user="Lumen") as step:
                 step.stream(f"Found {len(unmet_dependencies)} unmet dependencies: {', '.join(unmet_dependencies)}")
                 log_debug(f"\033[91m### Unmet dependencies: {unmet_dependencies}\033[0m")
                 subagents = [agent for agent in self.agents if any(ur in agent.provides for ur in unmet_dependencies)]

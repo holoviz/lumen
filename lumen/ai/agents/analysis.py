@@ -60,6 +60,8 @@ class AnalysisAgent(BaseLumenAgent):
 
     purpose = param.String(default="Perform custom analyses that are reliable and repeatable.")
 
+    user = param.String(default="Analysis")
+
     prompts = param.Dict(
         default={
             "main": {

@@ -553,7 +553,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context = {"agent_tool_contexts": [], **context}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
-                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Assistant") as step:
+                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
                     if "repo" in default_kwargs and "model_file" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
