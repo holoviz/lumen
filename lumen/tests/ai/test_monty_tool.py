@@ -1,10 +1,14 @@
+from importlib.util import find_spec
+
 import pytest
 
 pydantic_monty = pytest.importorskip("pydantic_monty")
 
+from lumen.ai.actor import _expand_llm_tool_entries
 from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.schemas import Metaset
 from lumen.ai.tools import make_monty_llm_tool
+from lumen.ai.tools.base import FunctionTool
 
 
 async def test_monty_tool_runs_code_and_captures_print():
@@ -41,3 +45,15 @@ async def test_chat_prompt_with_metaset_without_visible_slugs():
         {"metaset": Metaset(query="calculation", catalog={})},
     )
     assert "No Data Loaded" not in prompt
+
+
+def test_monty_tool_factory_registers_when_installed():
+    assert find_spec("pydantic_monty") is not None
+    tools = _expand_llm_tool_entries([make_monty_llm_tool], {})
+    assert len(tools) == 1
+    assert isinstance(tools[0], FunctionTool)
+
+
+def test_monty_tool_factory_skips_when_not_installed(monkeypatch):
+    monkeypatch.setattr("lumen.ai.tools.monty.find_spec", lambda _: None)
+    assert _expand_llm_tool_entries([make_monty_llm_tool], {}) == []

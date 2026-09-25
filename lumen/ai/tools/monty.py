@@ -1,7 +1,12 @@
+from importlib.util import find_spec
+
 from .base import FunctionTool
 
 
-def make_monty_llm_tool() -> FunctionTool:
+def make_monty_llm_tool() -> FunctionTool | None:
+    if find_spec("pydantic_monty") is None:
+        return None
+
     async def run_python(code: str) -> str:
         """
         Run a short Python snippet in an isolated Monty sandbox.
