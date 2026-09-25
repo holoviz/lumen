@@ -84,6 +84,7 @@ ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-openrouter = ['lumen[ai-openai]']
 ai-mistralai = ['mistralai']
+ai-monty = ['pydantic-monty>=1.0.0']
 ai-bedrock = ['boto3>=1.42.23']
 ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
