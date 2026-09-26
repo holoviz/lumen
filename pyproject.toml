@@ -18,6 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
@@ -32,14 +33,18 @@ dependencies = [
     "lxml",
     "griffe <2",
     "holoviews >=1.17.0",
+    "httpx",
     "hvplot",
     "instructor >=1.14.3",
     "intake <2",
     "jinja2 >3.0",
+    "jsonschema",
+    "markdown-it-py",
     "markitdown",
     "narwhals >=2",
     "nbformat",
     "numpy",
+    "openai",
     "packaging",
     "pandas",
     "panel >=1.9.0",
@@ -47,13 +52,19 @@ dependencies = [
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
     "param >=2.2.1,<2.5.0",
+    "pillow",
+    "platformdirs",
     "pyarrow",
     "pydantic >=2.8.0",
     "pydantic-extra-types",
+    "pyyaml",
+    "requests",
     "semchunk",
     "sqlglot[c]",
     "tabulate",
     "tiktoken",
+    "tornado",
+    "tqdm",
     "vl-convert-python",
 ]
 
@@ -145,7 +156,6 @@ exclude = ["tests"]
 
 [tool.ruff.lint]
 select = [
-    "PLC0415", # import should be at the top-level of a file
     "B",   # flake8-bugbear (includes T20 for print detection)
     "E",
     "F",
@@ -171,6 +181,7 @@ ignore = [
     "E731", # Do not assign a lambda expression, use a def
     "E741", # Ambiguous variable name
     "F405", # From star imports
+    "PLC0415", # import should be at the top-level of a file
     "PLE0604", # Invalid object in `__all__`, must contain only strings
     "PLE0605", # Invalid format for `__all__`
     "PLR091", # Too many arguments/branches/statements

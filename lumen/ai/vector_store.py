@@ -586,9 +586,7 @@ class VectorStore(LLMUser):
         """
         # Deferred for the same reason as get_markitdown: markitdown reaches
         # pandas through its xlsx converter and costs ~2s to import.
-        from markitdown import (  # noqa: PLC0415
-            FileConversionException, StreamInfo,
-        )
+        from markitdown import FileConversionException, StreamInfo
 
         if metadata is None:
             metadata = {}
@@ -1732,7 +1730,7 @@ class ChromaDBVectorStore(VectorStore):
 
     def __init__(self, **params):
         super().__init__(**params)
-        import chromadb  # noqa: PLC0415
+        import chromadb
 
         if self.uri is None:
             self._client = chromadb.Client()

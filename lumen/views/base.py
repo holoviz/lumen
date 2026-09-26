@@ -1030,7 +1030,7 @@ class hvPlotBaseView(View):
         if 'dask' in sys.modules:
             try:
                 # Deferred: registers hvPlot's dask accessor, and dask is optional.
-                import hvplot.dask  # type: ignore  # noqa: F401, PLC0415
+                import hvplot.dask  # type: ignore  # noqa: F401
             except Exception:
                 pass
         for key in ('by', 'groupby'):
@@ -1201,7 +1201,7 @@ class hvPlotUIView(hvPlotBaseView):
         gridded = self._source_dataset()
         if gridded is not None:
             # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
-            import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
+            import hvplot.xarray  # type: ignore  # noqa: F401
             args, kwargs = self._get_args(hvGridExplorer, gridded)
             return hvGridExplorer(*args, **kwargs)
         args, kwargs = self._get_args()
@@ -1284,7 +1284,7 @@ class hvPlotView(hvPlotBaseView):
         # Reached only when xarray is available (an xarray object passed
         # through, or a pivotable DataFrame). Register hvPlot's xarray accessor
         # so .hvplot works on the returned xarray object.
-        import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
+        import hvplot.xarray  # type: ignore  # noqa: F401
         if not isinstance(df, pd.DataFrame):
             return df
         return df.set_index(self._gridded_index())[self.z].to_xarray()
@@ -1296,7 +1296,7 @@ class hvPlotView(hvPlotBaseView):
         gridded = self._source_dataset()
         if gridded is not None:
             # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
-            import hvplot.xarray  # type: ignore  # noqa: F401, PLC0415
+            import hvplot.xarray  # type: ignore  # noqa: F401
             return gridded
         if isinstance(df, pd.DataFrame):
             blocker = self._gridded_pivot_blocker(df)
@@ -1888,7 +1888,7 @@ class AltairView(View):
     _panel_type = pn.pane.Vega
 
     def _transform_encoding(self, encoding: str, value: Any) -> Any:
-        import altair as alt  # type: ignore  # noqa: PLC0415
+        import altair as alt  # type: ignore
         if isinstance(value, dict):
             value = dict(value)
             for kw, val in value.items():
@@ -1904,7 +1904,7 @@ class AltairView(View):
         return value
 
     def _get_params(self) -> dict[str, Any]:
-        import altair as alt  # noqa: PLC0415
+        import altair as alt
         df = self.get_data()
         chart = alt.Chart(df, **self.chart)
         mark = getattr(chart, f'mark_{self.marker}')(**self.mark)
@@ -1939,7 +1939,7 @@ class YdataProfilingView(View):
         return dict(df=df, **self.kwargs)
 
     def get_panel(self) -> pn.pane.HTML:
-        from ydata_profiling import ProfileReport  # noqa: PLC0415
+        from ydata_profiling import ProfileReport
         report_html = ProfileReport(**self._get_params()).html
 
         escaped_html = html.escape(report_html)
@@ -1987,7 +1987,7 @@ class GraphicWalker(View):
         try:
             # Deferred so the view class still resolves without panel_gwalker,
             # which the core install does not pull in.
-            from panel_gwalker import GraphicWalker  # noqa: PLC0415
+            from panel_gwalker import GraphicWalker
         except Exception:
             GraphicWalker = None
         return GraphicWalker
