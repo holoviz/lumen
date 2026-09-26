@@ -165,7 +165,8 @@ class LLMConfigDialog(Viewer):
 
         # Temperature slider
         self._temperature_slider = FloatSlider(
-            label="Temperature", value=self._original_temp, start=0.0, end=2.0, step=0.1, sizing_mode="stretch_width", margin=(5, 0)
+            label="Temperature", value=self._original_temp if self._original_temp is not None else 0.7,
+            start=0.0, end=2.0, step=0.1, sizing_mode="stretch_width", margin=(5, 0)
         )
 
         # Model type cards

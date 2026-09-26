@@ -886,7 +886,7 @@ class SQLAgent(BaseLumenAgent):
         SQLEditor
             Output object from successful execution
         """
-        with self._add_step(title=step_title, steps_layout=self._steps_layout) as step:
+        with self._add_step(title=step_title, steps_layout=self._steps_layout, context_exception="raise") as step:
             # Generate SQL using common prompt pattern
             dialects = set(src.dialect for src in sources.values())
             dialect = "duckdb" if len(dialects) > 1 else next(iter(dialects))
