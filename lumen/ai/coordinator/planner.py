@@ -410,7 +410,7 @@ class Planner(Coordinator):
         context: TContext,
         previous_actors: list[str],
         is_followup: bool = False
-    ) -> tuple[Plan, set[str], list[str]]:
+    ) -> tuple[Plan, list[str]]:
         table_provided = False
         tasks = []
         provided = set(context)
@@ -532,7 +532,8 @@ class Planner(Coordinator):
             context=context,
             coordinator=self,
             steps_layout=self.steps_layout,
-            is_followup=is_followup
+            is_followup=is_followup,
+            planner_actors=actors,
         )
         return plan, actors
 
@@ -590,6 +591,7 @@ class Planner(Coordinator):
                 plan, previous_actors = await self._resolve_plan(
                     raw_plan, agents, tools, messages, context, previous_actors, is_followup=is_followup
                 )
+                plan.follow_up_type = follow_up_type
                 try:
                     plan.validate()
                 except ContextError as e:

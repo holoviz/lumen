@@ -1901,7 +1901,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, [], **final_kwargs)
+            output = await self.run_client(model_spec, [] if response_id else messages, **final_kwargs)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
