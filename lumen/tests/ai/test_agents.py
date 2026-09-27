@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from lumen.ai.schemas import DocumentChunk
 
@@ -27,8 +28,9 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.document_list import DocumentListAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
-    EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
-    make_sql_model, sql_contains_aggregates,
+    EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, VALIDATION_MAX_ROWS,
+    SQLCleanup, execute_exploration_sql, format_exploration_result,
+    make_load_table_schemas_tool, make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
@@ -50,6 +52,70 @@ from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
 root = str(Path(__file__).parent.parent / "sources")
+
+
+@pytest.mark.parametrize("input_slug", ["src ⦙ orders", "src/orders", "src.orders", "orders"])
+async def test_load_table_schemas_resolves_aliases(input_slug):
+    slug = f"src{SOURCE_TABLE_SEPARATOR}orders"
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, [Column("order_id")])},
+        schemas={slug: {"__len__": 12, "order_id": {"type": "integer"}}},
+    )
+
+    result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function([input_slug]))
+
+    assert result == {slug: {"row_count": 12, "schema": {"order_id": {"type": "integer"}}}}
+
+
+async def test_load_table_schemas_preserves_dots_in_source_name():
+    slug = f"src.prod{SOURCE_TABLE_SEPARATOR}orders"
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, [Column("order_id")])},
+        schemas={slug: {"order_id": {"type": "integer"}}},
+    )
+
+    for alias in ("src.prod/orders", "src.prod.orders"):
+        result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function([alias]))
+        assert slug in result
+
+
+async def test_load_table_schemas_rejects_ambiguous_bare_name():
+    slugs = [f"{source}{SOURCE_TABLE_SEPARATOR}orders" for source in ("src_a", "src_b")]
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
+        schemas={},
+    )
+    metaset.get_schema = AsyncMock()
+
+    result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function(["orders"]))
+
+    assert "Ambiguous" in result["orders"]["error"]
+    assert all(slug in result["orders"]["error"] for slug in slugs)
+    metaset.get_schema.assert_not_awaited()
+
+
+async def test_load_table_schemas_budget_applies_to_each_table():
+    slugs = [f"src{SOURCE_TABLE_SEPARATOR}table_{i}" for i in range(4)]
+    schemas = {
+        slug: {"__len__": 100, **{f"column_{j}": {"type": "varchar"} for j in range(90)}}
+        for slug in slugs
+    }
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
+        schemas=schemas,
+    )
+
+    result = await make_load_table_schemas_tool(metaset).function(slugs)
+
+    assert count_tokens(result) > 3000
+    for slug in slugs:
+        assert slug in result
+        assert f"{slug}:\n  row_count: 100\n  schema:\n    column_0:" in result
+    assert count_tokens(result) < 4500
 
 
 @pytest.mark.filterwarnings("ignore:Widget.name is deprecated:PendingDeprecationWarning")
@@ -133,6 +199,78 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
         "FROM test_sql"
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
+
+
+def test_sql_agent_same_source_selection_keeps_all_join_tables():
+    source = DuckDBSource(tables={"customers": "SELECT 1", "orders": "SELECT 2"})
+    agent = SQLAgent()
+    selected = [SimpleNamespace(source="src", table=table) for table in ("customers", "orders")]
+    resolved, tables = agent._merge_sources({("src", table.table): source for table in selected}, selected)
+
+    assert resolved is source
+    assert tables == ["customers", "orders"]
+
+
+def test_sql_agent_rejects_invalid_source_table_pair():
+    source = DuckDBSource(tables={"customers": "SELECT 1"})
+    selected = [SimpleNamespace(source="other", table="customers")]
+    with pytest.raises(ValueError, match="Unknown source/table pair"):
+        SQLAgent()._merge_sources({("src", "customers"): source}, selected)
+
+
+async def test_sql_agent_rejects_empty_single_source_tables(llm, test_messages):
+    source = DuckDBSource(tables={"customers": "SELECT 1 AS id"})
+    model = make_sql_model([(source.name, "customers")])
+    empty = model(query="SELECT id FROM customers", table_slug="result", tables=[])
+    valid = model(query="SELECT id FROM customers", table_slug="result", tables=["customers"])
+    llm.set_responses([empty, valid])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["customers"])}
+
+    out, _ = await SQLAgent(llm=llm).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert out[0].component.data["id"].tolist() == [1]
+
+
+async def test_sql_agent_validation_fetch_is_bounded(llm, test_messages):
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm, clean_data=False)
+    model = make_sql_model([(source.name, "numbers")])
+    llm.set_responses([model(query="SELECT i FROM numbers", table_slug="numbers_result", tables=["numbers"])])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["numbers"])}
+    original = source.execute_async
+    validated = []
+
+    async def capture(query):
+        result = await original(query)
+        validated.append((query, len(result)))
+        return result
+
+    with patch.object(source, "execute_async", capture):
+        out, _ = await agent.respond(test_messages, context)
+
+    assert len(validated) == 1
+    assert "LIMIT" in validated[0][0].upper()
+    assert validated[0][1] == VALIDATION_MAX_ROWS
+    assert len(out[0].component.data) == 6000
+
+
+async def test_sql_exploration_caps_fetched_rows():
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(5000) AS t(i)"})
+    with patch.object(source, "fetch", wraps=source.fetch) as fetch:
+        result = await execute_exploration_sql(source.name, "SELECT i FROM numbers", sources={(source.name, "numbers"): source})
+    assert f"at least {EXPLORATION_MAX_ROWS} rows" in result
+    assert "LIMIT" in fetch.call_args.args[0].upper()
+
+
+@pytest.mark.parametrize("query", ["SELECT 1; DROP TABLE numbers", "DELETE FROM numbers", "WITH x AS (DELETE FROM numbers) SELECT * FROM x", "SELECT * INTO temp FROM numbers", 'SELECT "unterminated FROM numbers'])
+async def test_sql_exploration_rejects_non_read_only(query):
+    source = DuckDBSource(tables={"numbers": "SELECT 1 AS i"})
+    with patch.object(source, "fetch", wraps=source.fetch) as fetch:
+        result = await execute_exploration_sql(source.name, query, sources={(source.name, "numbers"): source})
+    assert "error" in result.lower() or "read-only" in result.lower()
+    fetch.assert_not_called()
+
 
 @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
 async def test_sql_agent_summarises_the_source_frame_unconverted(llm, test_messages, backend):
@@ -1027,6 +1165,32 @@ async def test_sqlagent_prompt_surfaces_active_filters(llm):
     assert "Active exploration filters" in prompt
     assert "game_year between 2000 and 2016" in prompt
     assert "game_season in ('Summer')" in prompt
+
+
+async def test_sqlagent_prompt_preserves_requested_results(llm):
+    agent = SQLAgent(llm=llm)
+    prompt = await agent._render_prompt(
+        "main", [{"role": "user", "content": "List the results"}], {},
+        dialect="duckdb", is_final_step=True, step_number=1, current_step="",
+        sql_query_history={}, current_iteration=1, sql_plan_context=None,
+        errors=None, discovery_context=None, source_names=["src"], active_filters=None,
+    )
+    assert "Return only the requested columns and rows" in prompt
+    assert "Apply every restriction in the question" in prompt
+    assert "leading zeros in text substrings" in prompt
+    assert "Reference catalog table names directly in SQL" in prompt
+    assert "Use OFFSET 1" not in prompt
+    assert "read_csv(" not in prompt
+
+
+async def test_sqlagent_cleanup_prompt_keeps_requested_values(llm):
+    agent = SQLAgent(llm=llm)
+    prompt = await agent._render_prompt(
+        "clean_data", [{"role": "user", "content": "List display names"}], {},
+        sql="SELECT DisplayName FROM users", findings=["Untrimmed text"], dialect="sqlite",
+    )
+    assert "Preserve values in requested output fields exactly as stored" in prompt
+    assert "unless the user" in prompt
 
 
 async def test_view_retry_keeps_context_and_passes_spec_by_keyword(llm):

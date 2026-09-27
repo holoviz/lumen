@@ -2,23 +2,21 @@
 
 {%- block instructions %}
 ## Instructions
-Write SQL query for user's data transformation request, focusing on intent over literal interpretation.
+Write a SQL query that returns the requested result, using the question and database evidence to resolve ambiguity.
 
 ## Primary Rules
-1. Reuse materialized data - Check "Current Knowledge" first before writing CTEs
-2. Column quotes - Use double quotes: `"column_name"`
-3. String quotes - Single quotes: `'string_value'`
-4. No CREATE statements - System handles materialization
-5. No random LIMIT clauses unless requested — pagination automatically handled
-6. Progressive approach - Each step builds on previous
-7. Do not rename columns unless explicitly instructed
+1. Return only the requested columns and rows, in the requested order. Measures used to sort or filter need not be selected: "who has the least consumption" returns the customer, not consumption; "peak month" returns the month, not the full date or sum.
+2. Apply every restriction in the question (including status, place, time and category) to the relevant rows. For ratios, check whether each restriction applies to both sides.
+3. Preserve exact stored values and types, including whitespace and leading zeros in text substrings, unless asked to transform them. Use database evidence for exact filters, join keys and units; inspect ambiguous values before choosing a predicate.
+4. Reuse materialized data from "Current Knowledge" when relevant, but follow the scope of the current question.
+5. Double-quote column identifiers and single-quote string values. Do not rename columns unless requested.
+6. No CREATE statements or unsolicited LIMIT clauses; the system handles materialization and pagination.
 
 ## Query Patterns
-- Exclude NULLs unless specified, or unless the question is about missing data, completeness or data quality — then count and report them instead of filtering them out
-- Clean data: `TRIM("column") != ''` on text columns only, never on a numeric or date one; filter -9999, empty strings, split text columns
-- Headers: Use OFFSET 1 for header/metadata rows
-- Mixed units: Use CASE to normalize before aggregating
-- Temporal data: Check MIN/MAX dates before joining, ensure overlap validation
+- Do not exclude NULLs, blank strings, sentinel-looking numbers or a first row without evidence that they are invalid for this question.
+- Normalize units or dates only when required by the question or database evidence.
+- For joins, check keys and row multiplicity before aggregating; do not add DISTINCT unless the requested metric requires it.
+- If asked to rank every row, return the requested fields and a rank computed with RANK() OVER (...), not merely rows sorted by the metric. For singular top-N requests, return only N rows unless ties are explicitly requested.
 - No inline comments in SQL code
 - Use CTEs only when necessary
 
@@ -48,13 +46,11 @@ Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
 
 ## DuckDB Essentials
-- Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
-- Reference just table in SQL query: `source {{ source_table_sep }} table`
+- Reference catalog table names directly in SQL, quoting identifiers when needed; put source identity in the structured `tables` field, not in SQL table names.
 - Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
 - Date selection: CAST(col as DATE) == '2023-06-01'
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
 - Safe conversions: Use `TRY_CAST` for type conversions
-- Use materialized tables when available
 {% endif %}
 {%- if dialect == 'snowflake' %}
 - No quotes around database/schema/table names
@@ -84,8 +80,8 @@ User interactively subset current data with these filters. Add equivalent WHERE 
 {% if errors is defined and errors %}
 ## Quick Fixes
 - Mixed units: Use CASE to normalize units before aggregating
-- Cast errors: Use `TRY_CAST`, check for headers with OFFSET 1  
-- Table names: Use exact `read_parquet('file.parq')`
+- Cast errors: Use `TRY_CAST` only where the input requires conversion; skip header rows only when confirmed by inspection.
+- Table names: Use the catalog table name in SQL, quoted if necessary.
 - String quotes: Single quotes only `'text_value'`
 {%- endif -%}
 {% endblock -%}

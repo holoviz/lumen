@@ -13,6 +13,16 @@ from lumen.ai.evals.harness import (
 from lumen.ai.schemas import DocumentChunk
 from lumen.sources.duckdb import DuckDBSource
 
+SUITE_INSTRUCTIONS = {
+    "local": ("", ""),
+    "bird": (
+        "Return SQL that selects exactly the requested columns and rows. Do not add explanatory fields, "
+        "component counts, or other columns unless the question asks for them. The user-facing answer "
+        "may still explain the result.",
+        "exact-result-v1",
+    ),
+}
+
 
 def source(inputs: Inputs) -> DuckDBSource:
     fixture = inputs.fixture
@@ -125,6 +135,11 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
 # BIRD Mini-Dev (CC BY-SA 4.0), https://huggingface.co/datasets/birdsql/bird_mini_dev
 # Source revision: f65faf4ae3b638c1fa6df1d3370c8d92c8366301
 QUESTION_IDS = (1361, 1378, 1352, 1340, 1375, 1457)
+BIRD_STRATIFIED_IDS = {
+    "all_pass": (39, 377, 544, 1476, 1039, 112, 862, 1340, 739, 1162, 232),
+    "mixed": (48, 405, 547, 1472, 1032, 98, 859, 1351, 723, 1198, 195),
+    "all_fail": (17, 340, 532, 1480, 1028, 94, 847, 1322, 726, 1149, 197),
+}
 REVISION = "f65faf4ae3b638c1fa6df1d3370c8d92c8366301"
 QUESTION_URL = (
     f"https://huggingface.co/datasets/birdsql/bird_mini_dev/resolve/{REVISION}/"
@@ -136,6 +151,8 @@ def bird_dataset(questions: Path, databases: Path, question_ids: tuple[int, ...]
     records = json.loads(questions.read_text(encoding="utf-8"))
     if not isinstance(records, list):
         raise ValueError("Expected the Mini-Dev SQLite JSON array")
+    if not question_ids:
+        question_ids = tuple(item["question_id"] for item in records)
     by_id = {item["question_id"]: item for item in records}
     missing = set(question_ids) - by_id.keys()
     if missing:
@@ -146,7 +163,8 @@ def bird_dataset(questions: Path, databases: Path, question_ids: tuple[int, ...]
     for question_id in question_ids:
         item = by_id[question_id]
         db = database_path(databases, item["db_id"])
-        execute_read_only(db, item["SQL"])
+        if len(question_ids) < len(records):
+            execute_read_only(db, item["SQL"])
         question = item["question"]
         if item["evidence"]:
             question += f"\nDatabase evidence: {item['evidence']}"

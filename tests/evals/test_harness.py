@@ -1,5 +1,7 @@
 import json
+import multiprocessing
 import sqlite3
+import time
 
 import httpx
 import pytest
@@ -14,7 +16,7 @@ from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.evals.bird import bird_source, database_path, execute_read_only
 from lumen.ai.evals.harness import (
     CheckResult, Expected, Inputs, MeteredOpenAI, Output, Turn, _snapshot,
-    evaluate, run_case,
+    case_fingerprint, evaluate, run_case,
 )
 from lumen.ai.report import ActorTask
 from lumen.pipeline import Pipeline
@@ -22,7 +24,87 @@ from lumen.sources.duckdb import DuckDBSource
 from lumen.tests.ai.conftest import MockLLM
 from lumen.views import VegaLiteView
 
-from .cases import DATASET, bird_dataset, source
+from .bird_runner import simulated_bird_case_process
+from .cases import (
+    BIRD_STRATIFIED_IDS, DATASET, SUITE_INSTRUCTIONS, bird_dataset, source,
+)
+
+
+def test_suite_instructions_apply_to_system_prompt_and_fingerprint():
+    instructions, version = SUITE_INSTRUCTIONS["bird"]
+    llm = MeteredOpenAI(suite_instructions=instructions, model_kwargs={"default": {"model": "gpt-6-luna"}})
+    messages, _ = llm._add_system_message([{"role": "user", "content": "Count sales"}], "SQL agent rules", {})
+    assert instructions in messages[0]["content"]
+    assert messages[0]["content"].startswith("SQL agent rules")
+    case = Case(name="test", inputs=Inputs(["Count sales"]))
+    baseline = case_fingerprint([case])
+    revised = case_fingerprint([case], instructions=instructions, instruction_version=version)
+    assert revised != baseline
+    assert revised != case_fingerprint([case], instructions=instructions + " More rules", instruction_version=version)
+    assert revised != case_fingerprint([case], instructions=instructions, instruction_version=version + "-no-sql-cleanup-v1")
+
+
+def test_bird_stratified_cases_cover_all_databases():
+    from pathlib import Path
+
+    questions = Path(__file__).parent / "results" / "bird-mini-dev-sqlite.json"
+    databases = Path(__file__).parent / "results"
+    if not questions.exists() or not databases.exists():
+        pytest.skip("BIRD Mini-Dev fixtures not installed")
+    ids = tuple(question_id for group in BIRD_STRATIFIED_IDS.values() for question_id in group)
+    dataset = bird_dataset(questions, databases, ids)
+    assert len(ids) == len(set(ids)) == len(dataset.cases) == 33
+    assert len({case.inputs.fixture for case in dataset.cases}) == 11
+
+
+def test_parallel_bird_runner_checkpoints_in_order_and_times_out(tmp_path):
+    from tests.evals.__main__ import run_all_bird
+
+    cases = [Case(name=f"case_{index}", inputs=Inputs([str(index)])) for index in range(1, 4)]
+    dataset = Dataset(name="bird_test", cases=cases)
+    questions = tmp_path / "questions.json"
+    questions.write_text("[]")
+    output = tmp_path / "result.json"
+    started = time.monotonic()
+    summary = run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", False, 2,
+                           worker=simulated_bird_case_process, case_timeout=3)
+    saved = json.loads(output.read_text())
+    assert time.monotonic() - started < 7
+    assert [case["name"] for case in saved["cases"]] == [case.name for case in cases]
+    assert saved["cases"][1]["assertions"] == {}
+    assert "wall-clock limit" in saved["cases"][1]["error"]
+    assert summary["completed"] == 3
+    assert summary["unscorable"] == 1
+    assert run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", True, 2,
+                        worker=simulated_bird_case_process, case_timeout=3) == summary
+
+
+def _nested_bird_score(path, sender):
+    try:
+        sender.send(execute_read_only(path, "SELECT 1"))
+    finally:
+        sender.close()
+
+
+def test_bird_scorer_spawns_inside_case_worker(tmp_path):
+    path = tmp_path / "bird.sqlite"
+    with sqlite3.connect(path):
+        pass
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(target=_nested_bird_score, args=(path, sender))
+    worker.start()
+    sender.close()
+    try:
+        assert receiver.poll(20)
+        assert receiver.recv() == {(1,)}
+    finally:
+        receiver.close()
+        worker.join(timeout=5)
+        if worker.is_alive():
+            worker.terminate()
+            worker.join()
+    assert worker.exitcode == 0
 
 
 @pytest.mark.asyncio

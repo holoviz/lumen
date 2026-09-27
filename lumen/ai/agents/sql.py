@@ -122,6 +122,8 @@ class SQLCleanup(BaseModel):
 EXPLORATION_PREVIEW_ROWS = 5
 EXPLORATION_PREVIEW_COLS = 25
 EXPLORATION_MAX_TOKENS = 1200
+EXPLORATION_MAX_ROWS = 1000
+VALIDATION_MAX_ROWS = PROFILE_SAMPLE_ROWS
 # Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
 # chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
 SCHEMA_MAX_TOKENS = 3000
@@ -130,14 +132,23 @@ SCHEMA_MAX_TOKENS = 3000
 SOURCE_PROFILE_MAX_TABLES = 3
 
 
-def format_exploration_result(df: "IntoFrame | Frame") -> str:
+def validate_read_only_sql(sql_query: str, dialect: str) -> None:
+    statements = sqlglot.parse(sql_query, read=None if dialect == "any" else dialect)
+    if len(statements) != 1 or not isinstance(statements[0], sqlglot.exp.Query) or any(
+        statements[0].find(kind) for kind in (
+            sqlglot.exp.Insert, sqlglot.exp.Update, sqlglot.exp.Delete,
+            sqlglot.exp.Create, sqlglot.exp.Drop, sqlglot.exp.Command, sqlglot.exp.Into,
+        )
+    ):
+        raise ValueError("Only one read-only SELECT query is allowed.")
+
+
+def format_exploration_result(df: "IntoFrame | Frame", *, capped: bool = False) -> str:
     """
     Render an exploration query result as a compact preview for the LLM.
 
-    Reports the full shape first so the model never needs a follow-up
-    ``SELECT COUNT(*)`` to learn how many rows matched, then column dtypes and a
-    few example rows. Markdown without the index: alignment padding and row
-    numbers are pure token cost here, carrying no information about the data.
+    Reports the fetched row count (or a lower bound if capped), column dtypes,
+    and a few example rows. Markdown omits index and alignment padding.
 
     Only the handful of cells actually rendered is converted to pandas, so a
     polars or pyarrow result reaches the model without the whole frame being
@@ -148,7 +159,7 @@ def format_exploration_result(df: "IntoFrame | Frame") -> str:
     if is_lazyframe(frame):
         frame = frame.collect()
     n_rows, n_cols = frame.shape
-    parts = [f"{n_rows} rows x {n_cols} columns"]
+    parts = [f"{'at least ' if capped else ''}{n_rows} rows x {n_cols} columns"]
 
     # Normalised because which columns land on object varies by library:
     # pandas converts a DECIMAL to float itself, polars and pyarrow keep it,
@@ -223,22 +234,20 @@ async def execute_exploration_sql(
             f"tables: {tables}"
         )
 
-    raw = sql_query.strip()
-    leader = raw.lstrip().upper()
-    if not leader.startswith(("SELECT", "WITH")):
-        return "Only read-only SELECT or WITH queries are allowed for exploration."
-
     try:
-        sql_clean = clean_sql(raw, base.dialect, prettify=False)
-    except Exception as e:
+        sql_clean = clean_sql(sql_query.strip(), base.dialect, prettify=False)
+        validate_read_only_sql(sql_clean, base.dialect)
+        limited = SQLLimit(limit=EXPLORATION_MAX_ROWS + 1, write=base.dialect).apply(sql_clean)
+    except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
         return f"SQL parse/clean error: {e}"
 
     try:
-        df = base.fetch(sql_clean)
+        df = base.fetch(limited)
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 
-    return format_exploration_result(df)
+    capped = len(df) > EXPLORATION_MAX_ROWS
+    return format_exploration_result(df.head(EXPLORATION_MAX_ROWS) if capped else df, capped=capped)
 
 
 def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource]) -> FunctionTool:
@@ -259,9 +268,9 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
         run_exploration_sql,
         purpose=(
             "Run exploratory read-only SQL (SELECT/WITH) on a datasource by name. "
-            f"Returns the result's full row and column counts, column dtypes and up to "
-            f"{EXPLORATION_PREVIEW_ROWS} example rows — so the reported row count is the "
-            "true total and needs no separate COUNT(*) query. "
+            f"Returns up to {EXPLORATION_MAX_ROWS} rows (reporting 'at least' when capped), "
+            f"column dtypes and {EXPLORATION_PREVIEW_ROWS} example rows. "
+            "Use COUNT(*) only if an exact count is needed. "
             "This gathers information for the final SQL query; it does not produce the "
             "result the user sees, so stop exploring once you know the columns, types and "
             "value formats you need."
@@ -314,16 +323,29 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
         """
         Return YAML combining catalog column metadata (pre-computed) with SQL-engine schema
         (types, enums, row counts) when available. Call for every table you intend to use in SQL.
-        Use full slugs as shown by browse_data_catalog (e.g. source/table).
+        Accept catalog slugs, source/table, source.table, or an unambiguous table name.
         """
         if not table_slugs:
             return "No table_slugs provided."
         result: dict[str, t.Any] = {}
-        for raw in table_slugs:
-            slug = metaset._resolve_table_slug(raw) or raw
+        for raw in table_slugs[:8]:
+            if raw in metaset.catalog:
+                slug = raw
+            else:
+                matches = sorted(
+                    slug for slug in metaset.catalog
+                    if (slug.split(SOURCE_TABLE_SEPARATOR, 1)[-1] == raw
+                        or slug.replace(SOURCE_TABLE_SEPARATOR, "/") == raw
+                        or slug.replace(SOURCE_TABLE_SEPARATOR, ".") == raw)
+                )
+                if len(matches) > 1:
+                    result[raw] = {"error": f"Ambiguous table {raw!r}. Use one of: {matches}"}
+                    continue
+                slug = matches[0] if matches else raw
             entry = metaset.catalog.get(slug)
             if not entry:
-                result[raw] = {"error": f"Unknown table slug {raw!r} (not in catalog)."}
+                options = sorted(metaset.catalog)[:10]
+                result[raw] = {"error": f"Unknown table {raw!r}. Catalog slugs include: {options}."}
                 continue
             block: dict[str, t.Any] = {}
             live = await metaset.get_schema(slug)
@@ -353,8 +375,18 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
             else:
                 block["note"] = "No catalog columns and no live schema could be loaded for this table."
             result[slug] = block
-        text = yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        return truncate_to_tokens(text, SCHEMA_MAX_TOKENS)
+        parts = [
+            truncate_to_tokens(
+                yaml.dump({slug: block}, default_flow_style=False, allow_unicode=True, sort_keys=False),
+                SCHEMA_MAX_TOKENS // 3,
+            )
+            for slug, block in result.items()
+        ]
+        if len(table_slugs) > 8:
+            parts.append(f"Only the first 8 tables were processed; request the remaining {len(table_slugs) - 8} separately.")
+        if len(parts) > 3:
+            parts.append("Each table is capped independently; request fewer tables for more detail.")
+        return "\n".join(parts)
 
     load_table_schemas.__doc__ = (load_table_schemas.__doc__ or "").strip()
     return FunctionTool(
@@ -505,7 +537,7 @@ class SQLOutputs(ContextModel):
 class SQLAgent(BaseLumenAgent):
 
     clean_data = param.Boolean(default=True, doc="""
-        Profile every query result and, when it contains data-quality problems,
+        Profile a bounded sample of each query result and, when it contains data-quality problems,
         spend one extra LLM call rewriting the query to clean them up.
         Profiling is deterministic and reuses the frame validation already
         fetched, so a clean result costs nothing; set to False to always take
@@ -572,14 +604,18 @@ class SQLAgent(BaseLumenAgent):
         step: ChatStep,
         max_retries: int = 2,
         discovery_context: str | None = None,
+        tools: list[FunctionTool] | None = None,
     ) -> tuple[str, pd.DataFrame | None]:
         """Validate and potentially fix SQL query.
 
-        Returns the validated SQL alongside the frame the validating execution
-        already produced, so callers can profile the result without paying for a
-        second query. The frame is None only when every attempt failed.
+        Returns the validated SQL alongside a bounded frame for profiling.
+        The frame is None only when every attempt failed.
         """
-        # Clean SQL
+        # Reject non-query statements before clean_sql can discard trailing statements.
+        try:
+            validate_read_only_sql(sql_query, source.dialect)
+        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+            pass
         try:
             sql_query = clean_sql(sql_query, source.dialect, prettify=True)
         except Exception as e:
@@ -588,8 +624,22 @@ class SQLAgent(BaseLumenAgent):
         # Validate with retries
         for i in range(max_retries):
             try:
+                validate_read_only_sql(sql_query, source.dialect)
+            except ValueError:
+                raise
+            except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
+                if i == max_retries - 1:
+                    raise
+                retry_result = await self.revise(
+                    f"{type(e).__name__}: {e}", messages, context, spec=sql_query,
+                    language=f"sql.{source.dialect}", discovery_context=discovery_context, tools=tools,
+                )
+                sql_query = clean_sql(retry_result, source.dialect, prettify=True)
+                continue
+            try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                result = source.execute(sql_query)
+                validated = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(sql_query)
+                result = await source.execute_async(validated)
                 step.stream("\n\n✅ SQL validation successful")
                 return sql_query, result
             except Exception as e:
@@ -605,7 +655,7 @@ class SQLAgent(BaseLumenAgent):
 
                 retry_result = await self.revise(
                     feedback, messages, context, spec=sql_query, language=f"sql.{source.dialect}",
-                    discovery_context=discovery_context
+                    discovery_context=discovery_context, tools=tools,
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
         return sql_query, None
@@ -669,6 +719,7 @@ class SQLAgent(BaseLumenAgent):
                 "clean_data", messages, context, sql=sql_query,
                 findings=findings, dialect=source.dialect,
             )
+            validate_read_only_sql(cleanup.query, source.dialect)
             cleaned = clean_sql(cleanup.query, source.dialect, prettify=True)
         except Exception as e:
             # Deliberately swallowed rather than raised: _render_execute_query is
@@ -812,9 +863,13 @@ class SQLAgent(BaseLumenAgent):
     def _merge_sources(
         self, sources: dict[tuple[str, str], BaseSQLSource], tables: list[tuple[str, str]]
     ) -> tuple[BaseSQLSource, list[str]]:
+        if not tables:
+            raise ValueError("Select at least one source table for the SQL query.")
+        for table in tables:
+            if (table.source, table.table) not in sources:
+                raise ValueError(f"Unknown source/table pair: {table.source!r}/{table.table!r}")
         if len(set(m.source for m in tables)) == 1:
-            m = tables[0]
-            return sources[(m.source, m.table)], [m.table]
+            return sources[(tables[0].source, tables[0].table)], list(dict.fromkeys(m.table for m in tables))
         mirrors = {}
         for m in tables:
             if not any(m.table.rstrip(")").rstrip("'").rstrip('"').endswith(ext)
@@ -822,6 +877,8 @@ class SQLAgent(BaseLumenAgent):
                 renamed_table = m.table.replace(".", "_")
             else:
                 renamed_table = m.table
+            if renamed_table in mirrors and mirrors[renamed_table] != (sources[(m.source, m.table)], m.table):
+                raise ValueError(f"Ambiguous mirrored table name {renamed_table!r}; select a single source for that name.")
             mirrors[renamed_table] = (sources[(m.source, m.table)], m.table)
         return DuckDBSource(uri=":memory:", mirrors=mirrors), list(mirrors)
 
@@ -930,6 +987,11 @@ class SQLAgent(BaseLumenAgent):
                 # Single source - use tables from LLM output (list of table names)
                 source = next(iter(sources.values()))
                 tables = output.tables
+                if not tables:
+                    raise ValueError("Select at least one table for the SQL query.")
+                for table in tables:
+                    if (source.name, table) not in sources:
+                        raise ValueError(f"Unknown source/table pair: {source.name!r}/{table!r}")
             else:
                 # Multiple sources - need to merge (output.tables contains SourceTable objects)
                 source, tables = self._merge_sources(sources, output.tables)
@@ -938,11 +1000,10 @@ class SQLAgent(BaseLumenAgent):
 
             validated_sql, preview = await self._validate_sql(
                 context, sql_query, expr_slug, source, messages,
-                step, discovery_context=discovery_context
+                step, discovery_context=discovery_context, tools=tool_list,
             )
 
-            # Profile the frame validation already fetched, so the user sees what
-            # is wrong with the result even when no rewrite follows.
+            # Profile the bounded validation sample without loading the full result.
             findings: list[str] = []
             actionable: list[str] = []
             if preview is not None:

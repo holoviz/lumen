@@ -1,7 +1,9 @@
 """Opt-in execution-accuracy evaluation on BIRD Mini-Dev SQLite databases."""
 
 import json
+import multiprocessing
 import sqlite3
+import time
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,20 +41,17 @@ def database_path(root: Path, db_id: str) -> Path:
     raise FileNotFoundError(f"BIRD database {db_id!r} not found under {root}; extract Mini-Dev dev_databases first")
 
 
-def execute_read_only(path: Path, sql: str) -> set[tuple]:
+def _execute_sql(path: Path, sql: str, timeout: float) -> set[tuple]:
     """Match Mini-Dev EX set semantics without modifying the database."""
     if not path.is_file():
         raise FileNotFoundError(path)
     uri = f"file:{quote(str(path.resolve()))}?mode=ro"
     with sqlite3.connect(uri, uri=True, timeout=5) as connection:
         connection.execute("PRAGMA query_only=ON")
-        steps = 0
-
         def progress():
-            nonlocal steps
-            steps += 1
-            return steps > 50_000
+            return time.monotonic() >= deadline
 
+        deadline = time.monotonic() + timeout
         connection.set_progress_handler(progress, 1000)
         cursor = connection.execute(sql)
         if cursor.description is None:
@@ -60,6 +59,36 @@ def execute_read_only(path: Path, sql: str) -> set[tuple]:
         rows = set(cursor.fetchall())
         connection.set_progress_handler(None, 0)
         return rows
+
+
+def _score_query(path: Path, sql: str, timeout: float, output):
+    try:
+        output.send((True, _execute_sql(path, sql, timeout)))
+    except Exception as exc:
+        output.send((False, (type(exc).__name__, str(exc))))
+    finally:
+        output.close()
+
+
+def execute_read_only(path: Path, sql: str, timeout: float = 30) -> set[tuple]:
+    """Run untrusted SQL with a wall-clock deadline in a terminable process."""
+    receiver, sender = multiprocessing.Pipe(duplex=False)
+    process = multiprocessing.get_context("spawn").Process(target=_score_query, args=(path, sql, timeout, sender))
+    process.start()
+    sender.close()
+    try:
+        if not receiver.poll(timeout):
+            raise TimeoutError(f"BIRD SQL exceeded {timeout:g}s")
+        valid, result = receiver.recv()
+        if not valid:
+            name, message = result
+            raise sqlite3.OperationalError(f"{name}: {message}")
+        return result
+    finally:
+        receiver.close()
+        if process.is_alive():
+            process.terminate()
+        process.join()
 
 
 def bird_source(path: Path) -> SQLAlchemySource:
@@ -84,6 +113,6 @@ class BirdExecution(Evaluator[Inputs, Output, Expected]):
         reference = execute_read_only(path, gold)
         try:
             predicted = execute_read_only(path, sql)
-        except (sqlite3.Error, ValueError, InterruptedError):
+        except (sqlite3.Error, ValueError, TimeoutError):
             return {"execution_accuracy": False}
         return {"execution_accuracy": predicted == reference}
