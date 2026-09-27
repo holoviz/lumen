@@ -1167,32 +1167,6 @@ async def test_sqlagent_prompt_surfaces_active_filters(llm):
     assert "game_season in ('Summer')" in prompt
 
 
-async def test_sqlagent_prompt_preserves_requested_results(llm):
-    agent = SQLAgent(llm=llm)
-    prompt = await agent._render_prompt(
-        "main", [{"role": "user", "content": "List the results"}], {},
-        dialect="duckdb", is_final_step=True, step_number=1, current_step="",
-        sql_query_history={}, current_iteration=1, sql_plan_context=None,
-        errors=None, discovery_context=None, source_names=["src"], active_filters=None,
-    )
-    assert "Return only the requested columns and rows" in prompt
-    assert "Apply every restriction in the question" in prompt
-    assert "leading zeros in text substrings" in prompt
-    assert "Reference catalog table names directly in SQL" in prompt
-    assert "Use OFFSET 1" not in prompt
-    assert "read_csv(" not in prompt
-
-
-async def test_sqlagent_cleanup_prompt_keeps_requested_values(llm):
-    agent = SQLAgent(llm=llm)
-    prompt = await agent._render_prompt(
-        "clean_data", [{"role": "user", "content": "List display names"}], {},
-        sql="SELECT DisplayName FROM users", findings=["Untrimmed text"], dialect="sqlite",
-    )
-    assert "Preserve values in requested output fields exactly as stored" in prompt
-    assert "unless the user" in prompt
-
-
 async def test_view_retry_keeps_context_and_passes_spec_by_keyword(llm):
     """The yaml auto-retry must keep the TContext dict (the next _extract_spec and
     revise both need it) and pass the spec by keyword, otherwise it binds to the

@@ -25,9 +25,6 @@ listed below. Rewrite the query so the result is clean, or return it unchanged.
 ## Rules
 - Keep the user's intent. Do not change which columns are selected, the grouping, the
   ordering, or any filter the user asked for.
-- Preserve values in requested output fields exactly as stored. Padded text or duplicate
-  rows in a listing are not grounds to TRIM, filter, or add DISTINCT unless the user
-  explicitly requests cleaned or unique results.
 - Never drop rows to make a number look better. Filtering is for values that are not
   real data: placeholders, blanks, unparseable text. A value is not suspect for being
   large.
