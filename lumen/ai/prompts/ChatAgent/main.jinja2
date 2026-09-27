@@ -132,7 +132,7 @@ External source actions configured:
 {%- endfor %}
 {%- endif -%}
 
-{%- if memory.get('metaset') and memory['visible_slugs'] %}
+{%- if memory.get('metaset') and memory.get('visible_slugs') %}
 {%- set visible_list = render_visible_slugs() %}
 {%- if visible_list | trim %}
 ## Loaded Data Sources
