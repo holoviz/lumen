@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import inspect
 import json
 import os
@@ -30,6 +31,9 @@ from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
+)
+from .usage import (
+    UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
 )
 from .utils import (
     format_exception, format_msg_content, log_debug, truncate_string,
@@ -184,6 +188,11 @@ class Llm(param.Parameterized):
                   "description": "Best for editing tables and visualizations",
                   "routing": {"model": "nemotron-switchyard"}}}""")
 
+    usage_pricing = param.Dict(default={}, doc="""USD per million tokens by model:
+        {"model-name": {"input": 1.0, "cached": 0.1, "cache_write": 1.25,
+                        "output": 4.0}}.
+        Unknown models retain token counts but have no estimated cost.""")
+
     spec_descriptions = param.Dict(default=SPEC_DESCRIPTIONS, doc="""
         Mapping of spec key to human-readable description, used as a
         fallback in the routing prompt when ``model_kwargs`` entries
@@ -256,6 +265,7 @@ class Llm(param.Parameterized):
         # Instance-level client caches
         self._base_client = None
         self._instructor_clients: dict[Mode, Any] = {}
+        self.usage = UsageCollector()
 
         # Resolved model name from the last invoke()/stream() call.
         # Set after _resolve_routing() so callers can read which model
@@ -323,6 +333,10 @@ class Llm(param.Parameterized):
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
+
+    def capture_usage(self):
+        """Capture provider usage for this LLM in the current async context."""
+        return capture_usage(self)
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         """Wrap the base client with instructor. Override for non-standard wrapping."""
@@ -1711,6 +1725,10 @@ class OpenAI(Llm, OpenAIMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(async_client=True, **kwargs)
+        if self.api == "responses":
+            meter_method(self, client.responses, "create", "openai")
+        else:
+            meter_method(self, client.chat.completions, "create", "openai")
         if self.logfire_tags:
             self._logfire.instrument_openai(client)
         return client
@@ -2009,7 +2027,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return {**instance_kwargs, **model_kwargs}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(async_client=True, **kwargs)
+        client = self._instantiate_client(async_client=True, **kwargs)
+        meter_method(self, client.chat.completions, "create", "openai")
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         if self.interceptor:
@@ -2065,7 +2085,10 @@ class MistralAI(Llm, MistralAIMixin):
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
@@ -2116,7 +2139,10 @@ class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     ], constant=True, doc="Available models for selection dropdowns")
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
 
 class Anthropic(Llm, AnthropicMixin):
@@ -2164,6 +2190,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
+        meter_method(self, client.messages, "create", "anthropic")
         if self.logfire_tags:
             self._logfire.instrument_anthropic(client)
         return client
@@ -2420,13 +2447,15 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
 
     def _create_base_client(self, **kwargs) -> Any:
         from anthropic.lib.bedrock import AsyncAnthropicBedrock
-        return AsyncAnthropicBedrock(
+        client = AsyncAnthropicBedrock(
             aws_access_key=self.aws_access_key_id,
             aws_secret_key=self.api_key,
             aws_session_token=self.aws_session_token,
             aws_region=self.region_name,
             **kwargs
         )
+        meter_method(self, client.messages, "create", "anthropic")
+        return client
 
 
 class Bedrock(Llm, BedrockMixin):
@@ -2568,14 +2597,21 @@ class Bedrock(Llm, BedrockMixin):
 
         if stream:
             resp = await asyncio.to_thread(self._base_client.converse_stream, **call_kwargs)
-            return self._wrap_stream(resp)
+            return self._wrap_stream(resp, model, contextvars.copy_context())
         else:
             resp = await asyncio.to_thread(self._base_client.converse, **call_kwargs)
+            usage = parse_usage(resp, "bedrock", model, self.usage_pricing)
+            if usage is not None:
+                record_usage(self, self.usage, usage)
             return resp["output"]["message"]["content"][0]["text"]
 
-    async def _wrap_stream(self, response):
+    async def _wrap_stream(self, response, model, context):
         """Wrap synchronous Bedrock stream as async generator."""
         for chunk in response["stream"]:
+            if "metadata" in chunk:
+                usage = parse_usage(chunk, "bedrock", model, self.usage_pricing)
+                if usage is not None:
+                    context.run(record_usage, self, self.usage, usage)
             yield chunk
 
     @classmethod
@@ -2644,7 +2680,10 @@ class Google(Llm, GenAIMixin):
     def _create_base_client(self, **kwargs) -> Any:
         if self.logfire_tags:
             self._logfire.instrument_google_genai()
-        return self._instantiate_client()
+        client = self._instantiate_client()
+        meter_method(self, client.aio.models, "generate_content", "google")
+        meter_method(self, client.aio.models, "generate_content_stream", "google", stream_method=True)
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_genai(base_client, mode=mode, use_async=True)
@@ -3439,6 +3478,7 @@ class LiteLLM(Llm):
             if self.fallback_models:
                 router_kwargs['fallbacks'] = self.fallback_models
             self._router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+            meter_method(self, self._router, "acompletion", "openai")
         return self._router
 
     @property

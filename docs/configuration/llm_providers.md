@@ -52,6 +52,38 @@ ui.servable()
 
 Agent names map to model types: `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, etc.
 
+## Track token usage and cost
+
+LLM instances collect provider-reported token usage in `llm.usage`. Configure `usage_pricing` with USD rates per million tokens to estimate cost for each model; prices are not bundled with Lumen and must be kept current for your provider and account.
+
+``` py title="Track usage for one request"
+import asyncio
+
+from lumen.ai.llm import OpenAI
+
+
+async def main():
+    llm = OpenAI(
+        model_kwargs={"default": {"model": "gpt-4o-mini"}},
+        usage_pricing={
+            "gpt-4o-mini": {"input": 0.15, "cached": 0.075, "output": 0.60},
+        },
+    )
+    with llm.capture_usage() as request_usage:
+        await llm.invoke([{"role": "user", "content": "Say hello."}])
+
+    print(request_usage.input_tokens, request_usage.output_tokens)
+    print(request_usage.cached_tokens, request_usage.cost_usd)
+    print(llm.usage.cost_usd)  # Total across calls made with this LLM instance
+
+
+asyncio.run(main())
+```
+
+Set `OPENAI_API_KEY` before running this example. The `usage_pricing` keys must match the model names returned by the provider, including any provider prefix. Each model needs `input` and `output` rates; `cached` defaults to the input rate when omitted. For Anthropic, `cache_write` can price cache creation separately and also defaults to the input rate. Cached reads and writes are included in `input_tokens`; `cached_tokens` counts reads only. Inspect `request_usage.records` or `llm.usage.records` for individual responses and their model, token counts, and cost.
+
+`llm.usage` aggregates the lifetime of that LLM instance. `llm.capture_usage()` creates a scoped collector for calls within the context, including calls from child async tasks; use separate contexts to attribute concurrent requests. A scope includes all provider calls made within it, such as tool rounds and structured-output retries. Consume a streaming response fully to receive its final usage report. If a provider does not return usage, no record is added. If a model has no pricing entry, its tokens are recorded but `cost_usd` is `None` for that record and for any collector containing it.
+
 ## Configure temperature
 
 Lower temperature = more deterministic. Higher = more creative.
