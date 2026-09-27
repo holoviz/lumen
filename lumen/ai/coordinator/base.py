@@ -38,6 +38,7 @@ from ..tools import (
 )
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
+from ..tools.monty import make_monty_llm_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
     mutate_user_message, normalized_name, truncate_to_tokens, wrap_logfire,
@@ -293,7 +294,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     )
 
     llm_tools = param.List(
-        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
+        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools, make_monty_llm_tool],
         doc="""
         List of tools for the Planner to make available to the LLM. The tools are also
         made available to the agents.""",
