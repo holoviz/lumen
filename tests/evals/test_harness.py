@@ -3,6 +3,8 @@ import multiprocessing
 import sqlite3
 import time
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -15,10 +17,12 @@ from lumen.ai.coordinator import Plan
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.evals.bird import bird_source, database_path, execute_read_only
 from lumen.ai.evals.harness import (
-    CheckResult, Expected, Inputs, MeteredOpenAI, Output, Turn, _snapshot,
+    CheckResult, EvalOpenAI, Expected, Inputs, Output, Turn, _snapshot,
     case_fingerprint, evaluate, run_case,
 )
 from lumen.ai.report import ActorTask
+from lumen.ai.tool_trace import ToolCall
+from lumen.ai.usage import Usage as LlmUsage, record_usage
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.tests.ai.conftest import MockLLM
@@ -32,7 +36,7 @@ from .cases import (
 
 def test_suite_instructions_apply_to_system_prompt_and_fingerprint():
     instructions, version = SUITE_INSTRUCTIONS["bird"]
-    llm = MeteredOpenAI(suite_instructions=instructions, model_kwargs={"default": {"model": "gpt-6-luna"}})
+    llm = EvalOpenAI(suite_instructions=instructions, model_kwargs={"default": {"model": "gpt-6-luna"}})
     messages, _ = llm._add_system_message([{"role": "user", "content": "Count sales"}], "SQL agent rules", {})
     assert instructions in messages[0]["content"]
     assert messages[0]["content"].startswith("SQL agent rules")
@@ -45,8 +49,6 @@ def test_suite_instructions_apply_to_system_prompt_and_fingerprint():
 
 
 def test_bird_stratified_cases_cover_all_databases():
-    from pathlib import Path
-
     questions = Path(__file__).parent / "results" / "bird-mini-dev-sqlite.json"
     databases = Path(__file__).parent / "results"
     if not questions.exists() or not databases.exists():
@@ -55,6 +57,89 @@ def test_bird_stratified_cases_cover_all_databases():
     dataset = bird_dataset(questions, databases, ids)
     assert len(ids) == len(set(ids)) == len(dataset.cases) == 33
     assert len({case.inputs.fixture for case in dataset.cases}) == 11
+
+
+def test_local_file_commerce_fixture_uses_read_functions():
+    fixture = source(Inputs([], fixture="file_commerce"))
+    assert "read_csv(" in fixture.tables["orders_csv"]
+    assert "read_json_auto(" in fixture.tables["refunds_json"]
+    assert fixture.get("orders_csv").shape[0] == 5
+    assert fixture.get("refunds_json").shape[0] == 2
+
+
+def test_local_read_function_fixture_exposes_expressions():
+    fixture = source(Inputs([], fixture="read_functions"))
+    assert "READ_CSV(" in fixture.get_sql_expr("orders_csv")
+    assert "READ_JSON_AUTO(" in fixture.get_sql_expr("refunds_json")
+    assert len(fixture.get("orders_csv")) == 5
+    assert len(fixture.get("refunds_json")) == 2
+
+
+@pytest.mark.parametrize("name", [
+    "commerce_select_orders", "file_orders_csv", "file_refunds_json",
+    "file_join_paid_orders", "file_join_refunds", "read_csv_function",
+    "join_read_functions",
+])
+def test_local_sql_cases_check_rows_and_tables(name):
+    case = next(case for case in DATASET.cases if case.name == name)
+    fixture = source(case.inputs)
+    expected = case.metadata
+    assert expected.sql_contains
+    assert sorted(fixture.execute({
+        "commerce_select_orders": "SELECT COUNT(*) AS paid_count FROM orders WHERE status = 'paid'",
+        "file_orders_csv": "SELECT order_id, amount FROM orders_csv WHERE status = 'paid' ORDER BY order_id",
+        "file_refunds_json": "SELECT order_id, refund_amount FROM refunds_json ORDER BY order_id",
+        "file_join_paid_orders": "SELECT c.customer, COALESCE(SUM(o.amount), 0) AS paid_total FROM customers c LEFT JOIN orders_csv o ON c.customer_id = o.customer_id AND o.status = 'paid' GROUP BY c.customer ORDER BY c.customer",
+        "file_join_refunds": "SELECT o.order_id, r.refund_amount FROM orders_csv o JOIN refunds_json r ON o.order_id = r.order_id WHERE o.status = 'paid' ORDER BY o.order_id",
+        "read_csv_function": "SELECT COUNT(*) AS paid_count FROM read_csv('tests/evals/fixtures/orders.csv') WHERE status = 'paid'",
+        "join_read_functions": "SELECT o.order_id, r.refund_amount FROM read_csv('tests/evals/fixtures/orders.csv') o JOIN read_json_auto('tests/evals/fixtures/refunds.json') r ON o.order_id = r.order_id WHERE o.status = 'paid'",
+    }[name]).values.tolist(), key=str) == sorted(expected.rows, key=str)
+
+
+@pytest.mark.asyncio
+async def test_file_join_eval_checks_query_table_choice():
+    case = next(case for case in DATASET.cases if case.name == "file_join_refunds")
+    llm = MockLLM()
+    query = make_sql_model([("file_commerce", table) for table in ("orders_csv", "refunds_json")])
+    llm.set_responses([query(
+        query="SELECT o.order_id, r.refund_amount FROM orders_csv o JOIN refunds_json r ON o.order_id = r.order_id WHERE o.status = 'paid'",
+        table_slug="paid_refunds", tables=["orders_csv", "refunds_json"],
+    )])
+
+    result = await run_case(case.inputs, llm, source(case.inputs))
+    assert result.turns[0].status == "success"
+    report = await Dataset(name="file_join", cases=[case], evaluators=[CheckResult()]).evaluate(lambda inputs: result)
+    assert all(assertion.value for assertion in report.cases[0].assertions.values())
+
+    result.turns[0].sql = "SELECT o.order_id, r.refund_amount FROM orders_csv o JOIN other_refunds r ON o.order_id = r.order_id"
+    report = await Dataset(name="wrong_join", cases=[case], evaluators=[CheckResult()]).evaluate(lambda inputs: result)
+    assert report.cases[0].assertions["sql_contains"].value is False
+
+
+@pytest.mark.parametrize("name", ["read_csv_function", "join_read_functions"])
+@pytest.mark.asyncio
+async def test_read_function_eval_accepts_valid_sql(name):
+    case = next(case for case in DATASET.cases if case.name == name)
+    fixture = source(case.inputs)
+    files = (Path(__file__).parent / "fixtures").resolve()
+    orders = f"read_csv('{files / 'orders.csv'}')"
+    refunds = f"read_json_auto('{files / 'refunds.json'}')"
+    if name == "read_csv_function":
+        sql = f"SELECT COUNT(*) AS paid_count FROM {orders} WHERE status = 'paid'"
+        tables = ["orders_csv"]
+    else:
+        sql = (f"SELECT o.order_id, r.refund_amount FROM {orders} o JOIN {refunds} r "
+               "ON o.order_id = r.order_id WHERE o.status = 'paid'")
+        tables = ["orders_csv", "refunds_json"]
+    llm = MockLLM()
+    model = make_sql_model([(fixture.name, table) for table in fixture.get_tables()])
+    llm.set_responses([model(query=sql, table_slug="read_result", tables=tables)])
+
+    result = await run_case(case.inputs, llm, fixture)
+    report = await Dataset(name="read_functions", cases=[case], evaluators=[CheckResult()]).evaluate(lambda inputs: result)
+
+    assert result.turns[0].status == "success"
+    assert all(assertion.value for assertion in report.cases[0].assertions.values())
 
 
 def test_parallel_bird_runner_checkpoints_in_order_and_times_out(tmp_path):
@@ -275,22 +360,25 @@ def test_commerce_fixture_produces_expected_totals():
 
 
 @pytest.mark.asyncio
-async def test_metered_client_records_completed_tool_calls(monkeypatch):
+async def test_eval_client_records_completed_tool_calls():
     """Only tool calls that produced a tool result count toward an eval."""
-    llm = MeteredOpenAI(api="chat_completions", model_kwargs={"default": {"model": "qwen/qwen3.8-flash"}})
+    llm = EvalOpenAI(api="chat_completions", model_kwargs={"default": {"model": "qwen/qwen3.8-flash"}})
     from lumen.ai.tools.base import FunctionTool
 
     def lookup() -> str:
         return "found rows"
 
     called = FunctionTool(lookup)
-    messages = await llm._run_tool_calls(
-        {"lookup": called}, [{"id": "1", "function": {"name": "lookup", "arguments": "{}"}}], {}, []
-    )
+    with llm.trace() as traces:
+        messages = await llm._run_tool_calls(
+            {"lookup": called}, [{"id": "1", "function": {"name": "lookup", "arguments": "{}"}}], {}, [],
+        )
     assert messages[0]["content"] == "found rows"
-    assert [trace.name for trace in llm.tool_calls] == ["lookup"]
-    assert llm.tool_calls[0].arguments == {}
-    assert llm.tool_calls[0].result == "found rows"
+    tool_traces = [trace for trace in traces if isinstance(trace, ToolCall)]
+    assert [trace.name for trace in tool_traces] == ["lookup"]
+    assert tool_traces[0].arguments == {}
+    assert tool_traces[0].result == "found rows"
+    assert not hasattr(llm, "tool_calls")
 
 
 @pytest.mark.asyncio
@@ -304,7 +392,7 @@ async def test_direct_table_list_captures_listing():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [False, True])
-async def test_metered_client_retries_rate_limit_before_output(monkeypatch, stream):
+async def test_eval_client_retries_rate_limit_before_output(monkeypatch, stream):
     """A pre-output 429 retries without recording duplicate token usage."""
     from types import SimpleNamespace
 
@@ -326,15 +414,32 @@ async def test_metered_client_retries_rate_limit_before_output(monkeypatch, stre
         return chunks()
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    monkeypatch.setattr("lumen.ai.llm.OpenAI._create_base_client", lambda self, **kwargs: client)
-    llm = MeteredOpenAI(api="chat_completions", model_kwargs={"default": {"model": "qwen/qwen3.8-flash"}})
+    monkeypatch.setattr("lumen.ai.llm.OpenAI._instantiate_client", lambda self, **kwargs: client)
+    llm = EvalOpenAI(api="chat_completions", model_kwargs={"default": {"model": "qwen/qwen3.8-flash"}})
     wrapped = llm._create_base_client().chat.completions.create
-    response = await wrapped(stream=stream)
-    if stream:
-        assert len([chunk async for chunk in response]) == 1
+    with llm.capture_usage() as scope:
+        response = await wrapped(model="qwen/qwen3.8-flash", stream=stream)
+        if stream:
+            assert len([chunk async for chunk in response]) == 1
     assert len(calls) == 2
-    assert len(llm.usage) == 1
-    assert llm.usage[0].input_tokens == 10
+    assert len(scope.records) == 1
+    assert llm.usage.records[0].input_tokens == 10
+
+
+@pytest.mark.asyncio
+async def test_run_case_scopes_usage_to_each_turn(monkeypatch):
+    llm = MockLLM()
+
+    async def respond(self, messages, context):
+        record_usage(llm, llm.usage, LlmUsage("test", 10, 2, 3, 0.0001))
+
+    monkeypatch.setattr("lumen.ai.coordinator.planner.Planner.respond", respond)
+    result = await run_case(Inputs(["First", "Second"]), llm, source(Inputs([])))
+
+    assert [turn.usage.input_tokens for turn in result.turns] == [10, 10]
+    assert [turn.usage.cached_tokens for turn in result.turns] == [3, 3]
+    assert result.usage.input_tokens == 20
+    assert result.usage.cost_usd == pytest.approx(0.0002)
 
 
 

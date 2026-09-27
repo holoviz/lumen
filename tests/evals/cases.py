@@ -33,6 +33,19 @@ def source(inputs: Inputs) -> DuckDBSource:
             "customers": "SELECT * FROM (VALUES (1, 'Ada', 'east'), (2, 'Bo', 'west'), (3, 'Cy', 'east'), (4, 'Dee', 'north')) AS t(customer_id, customer, region)",
             "orders": "SELECT * FROM (VALUES (101, 1, 30, 'paid'), (102, 1, 20, 'paid'), (103, 2, 40, 'paid'), (104, 2, 10, 'cancelled'), (105, 3, 15, 'paid')) AS t(order_id, customer_id, amount, status)",
         }
+    elif fixture == "file_commerce":
+        files = Path(__file__).parent / "fixtures"
+        tables = {
+            "customers": "SELECT * FROM (VALUES (1, 'Ada'), (2, 'Bo'), (3, 'Cy'), (4, 'Dee')) AS t(customer_id, customer)",
+            "orders_csv": f"SELECT * FROM read_csv('{files / 'orders.csv'}')",
+            "refunds_json": f"SELECT * FROM read_json_auto('{files / 'refunds.json'}')",
+        }
+    elif fixture == "read_functions":
+        files = Path(__file__).parent / "fixtures"
+        tables = {
+            "orders_csv": f"read_csv('{files / 'orders.csv'}')",
+            "refunds_json": f"read_json_auto('{files / 'refunds.json'}')",
+        }
     elif fixture == "documents":
         tables = {"document_index": "SELECT 1 AS indexed"}
     else:
@@ -83,7 +96,35 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     Case(name="commerce_cte_rank", inputs=Inputs([
         "Use a WITH CTE to sum paid order amounts per region across customers and orders. Return the region with the highest paid total and its total_amount."
     ], fixture="commerce", agents=("SQLAgent",)),
-         metadata=Expected(actors=["SQLAgent"], rows=[["east", 65]], sql_contains=["with", "join"])),
+          metadata=Expected(actors=["SQLAgent"], rows=[["east", 65]], sql_contains=["with", "join"])),
+    Case(name="commerce_select_orders", inputs=Inputs([
+        "Count paid orders, not customers. Return the count as paid_count."
+    ], fixture="commerce", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[[4]], sql_contains=["orders"])),
+    Case(name="file_orders_csv", inputs=Inputs([
+        "List order_id and amount for paid orders from orders_csv, ordered by order_id."
+    ], fixture="file_commerce", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[[101, 30], [102, 20], [103, 40], [105, 15]], sql_contains=["orders_csv"])),
+    Case(name="file_refunds_json", inputs=Inputs([
+        "List order_id and refund_amount from refunds_json, ordered by order_id."
+    ], fixture="file_commerce", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[[101, 5], [103, 10]], sql_contains=["refunds_json"])),
+    Case(name="file_join_paid_orders", inputs=Inputs([
+        "Join customers with orders_csv to return each customer and their total paid amount as paid_total, including customers without paid orders. Order by customer."
+    ], fixture="file_commerce", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[["Ada", 50], ["Bo", 40], ["Cy", 15], ["Dee", 0]], sql_contains=["customers", "orders_csv", "join"])),
+    Case(name="file_join_refunds", inputs=Inputs([
+        "Join orders_csv with refunds_json to list the order_id and refund_amount of paid orders that have a refund, ordered by order_id."
+    ], fixture="file_commerce", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[[101, 5], [103, 10]], sql_contains=["orders_csv", "refunds_json", "join"])),
+    Case(name="read_csv_function", inputs=Inputs([
+        "The orders_csv source uses a DuckDB read_csv() table expression. Count paid orders and return paid_count."
+    ], fixture="read_functions", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[[4]], sql_contains=["read_csv("])),
+    Case(name="join_read_functions", inputs=Inputs([
+        "The orders_csv and refunds_json sources use DuckDB read_csv() and read_json_auto() table expressions. Join them by order_id and return order_id and refund_amount for paid orders that have a refund."
+    ], fixture="read_functions", agents=("SQLAgent",)),
+          metadata=Expected(actors=["SQLAgent"], rows=[[101, 5], [103, 10]], sql_contains=["read_csv(", "read_json_auto(", "join"])),
     Case(name="commerce_explore", inputs=Inputs([
         "Before writing the final query, call run_exploration_sql to inspect the orders status values. Then return the count of paid orders as paid_count."
     ], fixture="commerce", agents=("SQLAgent",)),

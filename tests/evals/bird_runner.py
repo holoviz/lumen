@@ -7,12 +7,12 @@ import time
 from pydantic_evals import Dataset
 
 from lumen.ai.evals.bird import BirdExecution, bird_source, database_path
-from lumen.ai.evals.harness import CheckResult, MeteredOpenAI, evaluate
+from lumen.ai.evals.harness import CheckResult, EvalOpenAI, evaluate
 
 
 def run_bird_case(args):
     index, case, databases, model, provider, key, output, instructions, instruction_version, disable_sql_cleanup = args
-    llm = MeteredOpenAI(
+    llm = EvalOpenAI(
         suite_instructions=instructions,
         api="chat_completions" if provider == "openrouter" else "responses",
         temperature=None, api_key=key,

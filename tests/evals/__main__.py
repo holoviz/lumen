@@ -14,7 +14,7 @@ from multiprocessing.connection import wait
 from pathlib import Path
 
 from lumen.ai.evals.bird import bird_source, database_path, download_questions
-from lumen.ai.evals.harness import MeteredOpenAI, case_fingerprint, evaluate
+from lumen.ai.evals.harness import EvalOpenAI, case_fingerprint, evaluate
 
 from .bird_runner import run_bird_case_process
 from .cases import (
@@ -87,7 +87,7 @@ def main():
     if not key:
         parser.error(f"A {args.provider} API key is required for live evaluations")
 
-    llm = MeteredOpenAI(
+    llm = EvalOpenAI(
         suite_instructions=instructions,
         api="chat_completions" if args.provider == "openrouter" else "responses",
         temperature=None, api_key=key,

@@ -26,6 +26,7 @@ from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.llm import OpenAI
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
+from lumen.ai.tool_trace import ToolCall
 from lumen.ai.ui import ExplorerUI
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.pipeline import Pipeline
@@ -64,81 +65,27 @@ class Usage:
         return 100 * self.cached_tokens / self.input_tokens if self.input_tokens else None
 
 
-@dataclass
-class ToolTrace:
-    name: str
-    arguments: dict[str, Any]
-    result: str
-
-
-class MeteredOpenAI(OpenAI):
-    """Capture provider usage for every response, including streamed responses."""
+class EvalOpenAI(OpenAI):
+    """Add evaluation instructions and rate-limit retries."""
 
     def __init__(self, suite_instructions: str = "", **params):
+        params.setdefault("usage_pricing", PRICING_PER_MILLION)
         super().__init__(**params)
         self.suite_instructions = suite_instructions
-        self.usage: list[Usage] = []
-        self.tool_calls: list[ToolTrace] = []
 
     def _add_system_message(self, messages, system, input_kwargs):
         if self.suite_instructions:
             system = f"{system}\n\n## Evaluation suite instructions\n{self.suite_instructions}"
         return super()._add_system_message(messages, system, input_kwargs)
 
-    async def _run_tool_calls(self, tool_instances, tool_calls, tool_contexts, messages):
-        calls = [(name, dict(arguments), call_id) for name, arguments, call_id in map(self._parse_tool_call, tool_calls)]
-        results = await super()._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
-        calls_by_id = {call_id: (name, arguments) for name, arguments, call_id in calls}
-        for msg in results:
-            name, arguments = calls_by_id.get(msg.get("tool_call_id"), (msg["name"], {}))
-            self.tool_calls.append(ToolTrace(name, arguments, str(msg["content"])[:MAX_TOOL_RESULT_LENGTH]))
-        return results
-
-    def _record_usage(self, response):
-        usage = getattr(response, "usage", None)
-        if usage is None:
-            return
-        model = getattr(response, "model", None) or self._resolved_model
-        prices = PRICING_PER_MILLION.get(model) or PRICING_PER_MILLION.get(self.model_kwargs["default"]["model"])
-        input_tokens = getattr(usage, "input_tokens", None)
-        if input_tokens is None:
-            input_tokens = usage.prompt_tokens
-        output_tokens = getattr(usage, "output_tokens", None)
-        if output_tokens is None:
-            output_tokens = usage.completion_tokens
-        details = getattr(usage, "input_tokens_details", None) or getattr(usage, "prompt_tokens_details", None)
-        cached_tokens = getattr(details, "cached_tokens", 0) or 0
-        cost = None if prices is None else ((input_tokens - cached_tokens) * prices["input"] + cached_tokens * prices["cached"] + output_tokens * prices["output"]) / 1_000_000
-        self.usage.append(Usage(input_tokens, output_tokens, cached_tokens, cost))
-
     def _create_base_client(self, **kwargs):
         client = super()._create_base_client(**kwargs)
-        if self.api == "responses":
-            create = client.responses.create
-
-            async def metered_create(**params):
-                response = await create(**params)
-                if not params.get("stream"):
-                    self._record_usage(response)
-                    return response
-
-                async def events():
-                    async for event in response:
-                        if event.type == "response.completed":
-                            self._record_usage(event.response)
-                        yield event
-
-                return events()
-
-            client.responses.create = metered_create
-        else:
+        if self.api != "responses":
             create = client.chat.completions.create
 
-            async def metered_create(*args, **params):
+            async def eval_create(*args, **params):
                 if self.model_kwargs["default"]["model"].startswith("qwen/qwen3.8-"):
                     params["extra_body"] = {**params.get("extra_body", {}), "reasoning": {"enabled": False}}
-                if params.get("stream"):
-                    params["stream_options"] = {"include_usage": True}
 
                 async def wait_for_retry(exc, attempt):
                     retry_after = exc.response.headers.get("retry-after") if exc.response else None
@@ -151,9 +98,7 @@ class MeteredOpenAI(OpenAI):
                 if not params.get("stream"):
                     for attempt in range(5):
                         try:
-                            response = await create(*args, **params)
-                            self._record_usage(response)
-                            return response
+                            return await create(*args, **params)
                         except RateLimitError as exc:
                             if attempt == 4:
                                 raise
@@ -166,7 +111,6 @@ class MeteredOpenAI(OpenAI):
                             response = await create(*args, **params)
                             async for chunk in response:
                                 yielded = True
-                                self._record_usage(chunk)
                                 yield chunk
                             return
                         except RateLimitError as exc:
@@ -176,7 +120,7 @@ class MeteredOpenAI(OpenAI):
 
                 return events()
 
-            client.chat.completions.create = metered_create
+            client.chat.completions.create = eval_create
         return client
 
 
@@ -205,7 +149,7 @@ class Turn:
     listing: str | None = None
     chart_marks: list[str] | None = None
     chart_encodings: list[dict[str, dict[str, Any]]] | None = None
-    tool_calls: list[ToolTrace] | None = None
+    tool_calls: list[ToolCall] | None = None
     task_errors: list[str] | None = None
     planner_actors: list[str] | None = None
     follow_up_type: str | None = None
@@ -366,46 +310,42 @@ async def run_case(inputs: Inputs, llm: Any, source: Any, documents: list[Any] |
         pipeline = Pipeline(source=query_source, table="result")
         context.update(pipeline=pipeline, data=pipeline.data, table="result")
     turns = []
-    usage = getattr(llm, "usage", None)
-    if not isinstance(usage, list):
-        usage = []
     for prompt in inputs.prompts:
         before = len(interface.objects)
-        usage_start = len(usage)
-        tools_start = len(getattr(llm, "tool_calls", []))
         previous_plan = None if inputs.agents else ui._exploration["view"].plan
         previous_tasks = tuple(previous_plan) if previous_plan is not None else ()
         plan = None
         interface.send(prompt, user="User", respond=False)
-        try:
-            if inputs.agents:
-                plan = _direct_plan(inputs, llm, context, interface, prompt)
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", message="Widget.name is deprecated", category=PendingDeprecationWarning)
-                    await asyncio.wait_for(plan.execute(), timeout=120)
-                context.update(plan.out_context)
-            else:
-                await asyncio.wait_for(ui._chat_invoke(prompt, "User", interface), timeout=120)
-                plan = ui._exploration["view"].plan
-            if plan is previous_plan and (plan is None or all(task in previous_tasks for task in plan)):
-                plan = None
-            turn = _snapshot(prompt, plan, interface.objects[before:], previous_tasks if plan is previous_plan else ())
-        except TimeoutError:
-            turn = Turn(prompt, "timeout", None, [], [], None, None, None, None, [])
-        except Exception as exc:
-            error = _error_message(exc)
-            if plan is not None:
+        with llm.capture_usage() as scope, llm.trace() as tool_calls:
+            try:
+                if inputs.agents:
+                    plan = _direct_plan(inputs, llm, context, interface, prompt)
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings("ignore", message="Widget.name is deprecated", category=PendingDeprecationWarning)
+                        await asyncio.wait_for(plan.execute(), timeout=120)
+                    context.update(plan.out_context)
+                else:
+                    await asyncio.wait_for(ui._chat_invoke(prompt, "User", interface), timeout=120)
+                    plan = ui._exploration["view"].plan
+                if plan is previous_plan and (plan is None or all(task in previous_tasks for task in plan)):
+                    plan = None
                 turn = _snapshot(prompt, plan, interface.objects[before:], previous_tasks if plan is previous_plan else ())
-                turn.status = "error"
-                turn.task_errors = [*(turn.task_errors or []), error]
-            else:
-                turn = Turn(prompt, "error", error, [], [], None, None, None, None, [], task_errors=[error])
-        finally:
-            calls = usage[usage_start:]
-            turn.tool_calls = list(getattr(llm, "tool_calls", [])[tools_start:])
-            if calls:
-                costs = [call.cost_usd for call in calls]
-                turn.usage = Usage(sum(call.input_tokens for call in calls), sum(call.output_tokens for call in calls), sum(call.cached_tokens for call in calls), sum(costs) if all(cost is not None for cost in costs) else None)
+            except TimeoutError:
+                turn = Turn(prompt, "timeout", None, [], [], None, None, None, None, [])
+            except Exception as exc:
+                error = _error_message(exc)
+                if plan is not None:
+                    turn = _snapshot(prompt, plan, interface.objects[before:], previous_tasks if plan is previous_plan else ())
+                    turn.status = "error"
+                    turn.task_errors = [*(turn.task_errors or []), error]
+                else:
+                    turn = Turn(prompt, "error", error, [], [], None, None, None, None, [], task_errors=[error])
+            finally:
+                calls = scope.records
+                turn.tool_calls = [ToolCall(call.name, call.arguments, call.result[:MAX_TOOL_RESULT_LENGTH]) for call in tool_calls if isinstance(call, ToolCall)]
+                if calls:
+                    costs = [call.cost_usd for call in calls]
+                    turn.usage = Usage(sum(call.input_tokens for call in calls), sum(call.output_tokens for call in calls), sum(call.cached_tokens for call in calls), sum(costs) if all(cost is not None for cost in costs) else None)
         turns.append(turn)
         if turn.status in ("error", "timeout"):
             break
