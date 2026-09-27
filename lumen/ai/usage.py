@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any
@@ -23,6 +24,13 @@ class UsageCollector:
     def __init__(self):
         self._records: list[Usage] = []
         self._lock = Lock()
+
+    def __deepcopy__(self, memo):
+        # Param copies the default LLM when initializing an ExplorerUI.
+        copied = type(self)()
+        memo[id(self)] = copied
+        copied._records = deepcopy(self.records, memo)
+        return copied
 
     @property
     def records(self) -> list[Usage]:

@@ -1,5 +1,6 @@
 import asyncio
 
+from copy import deepcopy
 from types import SimpleNamespace as Obj
 
 import pytest
@@ -34,6 +35,26 @@ def test_unknown_model_does_not_infer_price():
     usage = parse_usage(Obj(model="other", usage=Obj(prompt_tokens=2, completion_tokens=3)), "openai", "m", PRICING)
     assert usage.model == "other"
     assert usage.cost_usd is None
+
+
+def test_llm_usage_survives_param_deepcopy():
+    llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+    llm.usage.add(parse_usage(Obj(model="m", usage=Obj(prompt_tokens=2, completion_tokens=3)), "openai", "m", {}))
+
+    copied = deepcopy(llm)
+
+    assert copied.usage.records == llm.usage.records
+    assert copied.usage is not llm.usage
+    copied.usage.add(parse_usage(Obj(model="m", usage=Obj(prompt_tokens=5, completion_tokens=7)), "openai", "m", {}))
+    assert (llm.usage.input_tokens, copied.usage.input_tokens) == (2, 7)
+
+
+def test_default_llm_can_be_copied_by_param():
+    from lumen.ai.ui import UI
+
+    original = UI.param["llm"].default
+    copied = deepcopy(original)
+    assert copied.usage is not original.usage
 
 
 async def test_concurrent_streams_keep_usage_in_request_scope():
