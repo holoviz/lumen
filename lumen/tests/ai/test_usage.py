@@ -6,7 +6,11 @@ from types import SimpleNamespace as Obj
 import pytest
 
 from lumen.ai.llm import OpenAI
-from lumen.ai.usage import meter_method, parse_usage
+from lumen.ai.tool_trace import ModelCall, ToolCall
+from lumen.ai.tools.base import FunctionTool
+from lumen.ai.usage import (
+    Usage, meter_method, parse_usage, record_usage,
+)
 
 PRICING = {"m": {"input": 2, "cached": 0.2, "cache_write": 3, "output": 10}}
 
@@ -151,3 +155,119 @@ async def test_openai_sdk_client_records_usage_through_invoke(monkeypatch):
     assert result.choices[0].message.content == "done"
     assert (scope.input_tokens, scope.output_tokens) == (8, 4)
     assert scope.cost_usd == pytest.approx((8 * 2 + 4 * 10) / 1e6)
+
+
+async def test_trace_only_captures_calls_inside_scope():
+    llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+
+    def uppercase(value: str) -> str:
+        return value.upper()
+
+    tool = FunctionTool(uppercase)
+    calls = [{"id": "1", "function": {"name": "uppercase", "arguments": '{"value": "first"}'}}]
+
+    await llm._run_tool_calls({"uppercase": tool}, calls, {}, [])
+    with llm.trace() as traces:
+        await llm._run_tool_calls({"uppercase": tool}, calls, {}, [])
+    await llm._run_tool_calls({"uppercase": tool}, calls, {}, [])
+
+    assert [(call.name, call.arguments, call.result) for call in traces if isinstance(call, ToolCall)] == [
+        ("uppercase", {"value": "first"}, "FIRST"),
+    ]
+    assert not hasattr(llm, "tool_calls")
+
+
+async def test_nested_trace_scopes_isolate_llms_and_child_tasks():
+    first = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+    second = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+
+    async def lookup(value):
+        await asyncio.sleep(0)
+        return value
+
+    tool = FunctionTool(lookup)
+
+    async def execute(llm, value):
+        calls = [{"id": value, "function": {"name": "lookup", "arguments": f'{{"value": "{value}"}}'}}]
+        await llm._run_tool_calls({"lookup": tool}, calls, {}, [])
+
+    with first.trace() as outer, first.trace() as inner, second.trace() as unrelated:
+        await asyncio.gather(execute(first, "one"), execute(first, "two"), execute(second, "other"))
+
+    assert {call.result for call in outer if isinstance(call, ToolCall)} == {"one", "two"}
+    assert {call.result for call in inner if isinstance(call, ToolCall)} == {"one", "two"}
+    assert [call.result for call in unrelated if isinstance(call, ToolCall)] == ["other"]
+
+
+async def test_trace_records_model_round_trip_and_failure(monkeypatch):
+    llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+
+    async def run_client(model_spec, messages, **kwargs):
+        record_usage(llm, llm.usage, Usage("m", 5, 2, 0, 0.001))
+        if messages[0]["content"] == "fail":
+            raise ValueError("provider failed")
+        return Obj(choices=[Obj(message=Obj(content="done"))])
+
+    monkeypatch.setattr(llm, "run_client", run_client)
+    with llm.trace() as events:
+        await llm.invoke([{"role": "user", "content": "hello"}])
+        with pytest.raises(ValueError, match="provider failed"):
+            await llm.invoke([{"role": "user", "content": "fail"}])
+
+    model_calls = [event for event in events if isinstance(event, ModelCall)]
+    assert len(model_calls) == 2
+    assert model_calls[0].model == "m"
+    assert model_calls[0].messages[0]["content"] == "hello"
+    assert model_calls[0].response.choices[0].message.content == "done"
+    assert model_calls[0].duration >= 0
+    assert model_calls[0].usage[0].input_tokens == 5
+    assert model_calls[1].error == "ValueError('provider failed')"
+    assert model_calls[1].usage[0].output_tokens == 2
+
+
+async def test_trace_includes_structured_tool_round_trips(monkeypatch):
+    from pydantic import BaseModel
+
+    class Answer(BaseModel):
+        value: str
+
+    llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+
+    def lookup(value: str) -> str:
+        return value.upper()
+
+    async def run_client(model_spec, messages, **kwargs):
+        if kwargs.get("response_model"):
+            return Answer(value="done")
+        if messages[-1]["role"] == "tool":
+            return Obj(choices=[Obj(message=Obj(content="done", tool_calls=None))])
+        return Obj(choices=[Obj(message=Obj(content=None, tool_calls=[{
+            "id": "1", "function": {"name": "lookup", "arguments": '{"value": "one"}'},
+        }]))])
+
+    monkeypatch.setattr(llm, "run_client", run_client)
+    with llm.trace() as events:
+        result = await llm.invoke([{"role": "user", "content": "hello"}], tools=[FunctionTool(lookup)], response_model=Answer)
+
+    assert result.value == "done"
+    assert [type(event) for event in events] == [ModelCall, ToolCall, ModelCall, ModelCall]
+    assert events[1].result == "ONE"
+
+
+async def test_trace_stream_records_final_response(monkeypatch):
+    llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
+
+    async def run_client(model_spec, messages, **kwargs):
+        async def chunks():
+            yield Obj(choices=[Obj(delta=Obj(content="first"))])
+            yield Obj(choices=[Obj(delta=Obj(content="done"))])
+        return chunks()
+
+    monkeypatch.setattr(llm, "run_client", run_client)
+    with llm.trace() as events:
+        async for _ in llm.stream([{"role": "user", "content": "hello"}]):
+            pass
+
+    calls = [event for event in events if isinstance(event, ModelCall)]
+    assert len(calls) == 1
+    assert calls[0].response.choices[0].delta.content == "done"
