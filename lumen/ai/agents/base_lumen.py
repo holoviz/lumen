@@ -104,6 +104,11 @@ class BaseLumenAgent(Agent):
             **kwargs
         )
         new_spec_raw = apply_changes(lines, result.edits)
+        # SQL is not YAML: a round trip truncates at '#' (e.g. '80651 Route #271').
+        if language and language.startswith("sql"):
+            if view is not None:
+                view.validate_spec(new_spec_raw)
+            return new_spec_raw
         spec = load_yaml(new_spec_raw)
         if view is not None:
             view.validate_spec(spec)
