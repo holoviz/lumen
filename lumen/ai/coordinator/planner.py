@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import traceback
 
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import (
+    TYPE_CHECKING, Any, Literal, get_args, get_origin,
+)
 
 import param
 
 from panel.io.state import state
 from panel_material_ui import ChatStep
 from pydantic import (
-    BaseModel, Field, create_model, model_validator,
+    BaseModel, Field, ValidationError, create_model, field_validator,
+    model_validator,
 )
 from pydantic.fields import FieldInfo
 
@@ -46,10 +50,10 @@ class RawStep(BaseModel):
         if not, do not randomly add arbitrary numbers or details.
         Do include any clarifications.
 
-        - ❌ Too low: implementation details (SQL syntax, chart specs)
-        - ❌ Too high: vague ("handle this", "process data")
-        - ❌ No leaking: mentioning downstream purpose ("for plotting", "for the chart")
-        - ✅ Just right: what THIS actor should do, nothing about why
+        - Too low (avoid): implementation details (SQL syntax, chart specs)
+        - Too high (avoid): vague ("handle this", "process data")
+        - Leaking (avoid): mentioning downstream purpose ("for plotting", "for the chart")
+        - Just right: what THIS actor should do, nothing about why
         """,
         examples=[
             "Query top 5 countries by sales # only if user requested the top 5, otherwise just query all countries",
@@ -90,6 +94,97 @@ class RawPlan(BaseModel):
         - Do not include downstream objectives in upstream instructions.
         """
     )
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _coerce_string_steps(cls, steps: Any) -> Any:
+        # Some models (e.g. Gemini) return steps as prose like
+        # "Use SQLAgent to ..." instead of objects.
+        if not isinstance(steps, list):
+            return steps
+        step_types = [
+            arg for arg in get_args(cls.model_fields["steps"].annotation)
+            if isinstance(arg, type) and issubclass(arg, BaseModel)
+        ]
+        actors = _literal_values(step_types[0].model_fields["actor"].annotation) if step_types else ()
+        return [_coerce_string_step(step, actors) if isinstance(step, str) else step for step in steps]
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs) -> dict[str, Any]:
+        # Weaker models follow a flat schema more reliably than $ref indirection.
+        return inline_schema_defs(super().model_json_schema(*args, **kwargs))
+
+
+EMPTY_COMPLETION = "No tool calls or function call found"
+
+
+def plan_retry_feedback(error: BaseException) -> str | None:
+    """
+    System prompt addition for retrying a failed plan generation, or None
+    when the failure is not one a second attempt can fix.
+    """
+    chain = [error, error.__cause__, error.__context__]
+    if any(EMPTY_COMPLETION in str(e) for e in chain if e is not None):
+        return ""
+    validation = next((e for e in chain if isinstance(e, ValidationError)), None)
+    if validation is None and "validation error for" in str(error):
+        # instructor's retry exception carries the pydantic message, not the error
+        validation = error
+    if validation is None:
+        return None
+    return (
+        f"\n\nYour previous plan was rejected:\n{str(validation)[:2000]}\n"
+        "Return every step as an object with `actor` and `instruction` fields."
+    )
+
+
+def _literal_values(annotation: Any) -> tuple[str, ...]:
+    """Literal choices in ``annotation``, looking through Optional/Union (as Partial models add)."""
+    if get_origin(annotation) is Literal:
+        return get_args(annotation)
+    return tuple(value for arg in get_args(annotation) for value in _literal_values(arg))
+
+
+def _coerce_string_step(step: str, actors: tuple[str, ...]) -> dict[str, str] | str:
+    """
+    Turn a step written as a string, e.g. ``"SQLAgent: ..."`` or
+    ``"`SQLAgent` to ..."``, into a step dict naming the earliest mentioned
+    actor. Strings naming no known actor are returned unchanged, so they
+    still fail validation.
+    """
+    found = [(match.start(), actor) for actor in actors if (match := re.search(rf"\b{re.escape(actor)}\b", step))]
+    if not found:
+        return step
+    _, actor = min(found)
+    prefix = re.match(rf"^\s*`?{re.escape(actor)}`?\s*:\s*", step)
+    instruction = step[prefix.end():] if prefix else step
+    return {"actor": actor, "instruction": instruction.strip() or step.strip()}
+
+
+def inline_schema_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Replace local ``$ref`` pointers with their ``$defs`` definitions. Recursive definitions stay referenced."""
+    defs = schema.get("$defs", {})
+    unresolved = False
+
+    def resolve(node: Any, seen: frozenset[str]) -> Any:
+        nonlocal unresolved
+        if isinstance(node, list):
+            return [resolve(item, seen) for item in node]
+        if not isinstance(node, dict):
+            return node
+        name = node.get("$ref", "").removeprefix("#/$defs/")
+        if name in defs:
+            if name in seen:
+                unresolved = True
+                return node
+            siblings = {k: v for k, v in node.items() if k != "$ref"}
+            return resolve({**defs[name], **siblings}, seen | {name})
+        return {k: resolve(v, seen) for k, v in node.items() if k != "$defs"}
+
+    inlined = resolve(schema, frozenset())
+    if unresolved:
+        inlined["$defs"] = defs
+    return inlined
 
 
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
@@ -384,22 +479,33 @@ class Planner(Coordinator):
             previous_plans=previous_plans,
             follow_up_type=follow_up_type,
         )
-        async for raw_plan in self.llm.stream(
-            messages=messages,
-            system=system,
-            model_spec=model_spec,
-            response_model=plan_model,
-            max_retries=3,
-            tools=llm_tools,
-        ):
-            if raw_plan.chain_of_thought:
-                step.stream(raw_plan.chain_of_thought, replace=True)
-            partial_todos = self._render_partial_todos(raw_plan)
-            if partial_todos and self.steps_layout is not None:
-                self._todos_title.object = "📋 Building checklist..."
-                self.steps_layout.header[1].object = partial_todos
-
-        return raw_plan
+        # Streamed structured output bypasses instructor's retries, so an empty
+        # completion or an invalid plan gets one more attempt here.
+        feedback = ""
+        for attempt in range(2):
+            try:
+                raw_plan = None
+                async for raw_plan in self.llm.stream(
+                    messages=messages,
+                    system=system + feedback,
+                    model_spec=model_spec,
+                    response_model=plan_model,
+                    max_retries=3,
+                    tools=llm_tools,
+                ):
+                    if raw_plan.chain_of_thought:
+                        step.stream(raw_plan.chain_of_thought, replace=True)
+                    partial_todos = self._render_partial_todos(raw_plan)
+                    if partial_todos and self.steps_layout is not None:
+                        self._todos_title.object = "📋 Building checklist..."
+                        self.steps_layout.header[1].object = partial_todos
+                return raw_plan
+            except Exception as e:
+                retry_feedback = plan_retry_feedback(e)
+                if attempt or retry_feedback is None:
+                    raise
+                log_debug(f"Retrying plan generation after: {e}")
+                feedback = retry_feedback
 
     async def _resolve_plan(
         self,

@@ -97,6 +97,13 @@ class MissingContextError(Exception):
     """Raise to indicate missing context for a query."""
 
 
+class DeterministicError(Exception):
+    """
+    Raised for failures that regenerating the LLM output cannot fix,
+    e.g. a cataloged table the engine cannot resolve.
+    """
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
@@ -125,6 +132,7 @@ VECTOR_STORE_ASSETS_URL = "https://assets.holoviz.org/lumen/vector_store/"
 
 UNRECOVERABLE_ERRORS = (
     ImportError,
+    DeterministicError,
     LlmSetupError,
     RecursionError,
     MissingContextError,
