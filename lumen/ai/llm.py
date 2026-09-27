@@ -364,15 +364,17 @@ class Llm(param.Parameterized):
         async def traced_stream():
             last = None
             error = None
-            try:
-                async for chunk in result:
-                    last = chunk
-                    yield chunk
-            except Exception as exc:
-                error = repr(exc)
-                raise
-            finally:
-                record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, usage.records))
+            with self.capture_usage() as stream_usage:
+                try:
+                    async for chunk in result:
+                        last = chunk
+                        yield chunk
+                except Exception as exc:
+                    error = repr(exc)
+                    raise
+                finally:
+                    records = usage.records if usage.records else stream_usage.records
+                    record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, records))
 
         return traced_stream()
 

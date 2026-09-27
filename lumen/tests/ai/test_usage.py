@@ -260,6 +260,7 @@ async def test_trace_stream_records_final_response(monkeypatch):
     async def run_client(model_spec, messages, **kwargs):
         async def chunks():
             yield Obj(choices=[Obj(delta=Obj(content="first"))])
+            record_usage(llm, llm.usage, Usage("m", 7, 3, 0, 0.001))
             yield Obj(choices=[Obj(delta=Obj(content="done"))])
         return chunks()
 
@@ -271,3 +272,4 @@ async def test_trace_stream_records_final_response(monkeypatch):
     calls = [event for event in events if isinstance(event, ModelCall)]
     assert len(calls) == 1
     assert calls[0].response.choices[0].delta.content == "done"
+    assert calls[0].usage[0].input_tokens == 7
