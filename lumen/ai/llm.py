@@ -6,6 +6,7 @@ import contextvars
 import inspect
 import json
 import os
+import time
 import traceback
 
 from collections.abc import Callable
@@ -31,6 +32,9 @@ from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
+)
+from .tool_trace import (
+    ModelCall, ToolCall, capture_trace, is_tracing, record_trace,
 )
 from .usage import (
     UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
@@ -337,6 +341,40 @@ class Llm(param.Parameterized):
     def capture_usage(self):
         """Capture provider usage for this LLM in the current async context."""
         return capture_usage(self)
+
+    def trace(self):
+        """Capture model round trips and tool calls in the current async context."""
+        return capture_trace(self)
+
+    async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        if not is_tracing(self):
+            return await self.run_client(model_spec, messages, **kwargs)
+        started = time.perf_counter()
+        model = model_spec.get("model", "unknown") if isinstance(model_spec, dict) else self.model_kwargs.get(model_spec, {}).get("model", str(model_spec))
+        try:
+            with self.capture_usage() as usage:
+                result = await self.run_client(model_spec, messages, **kwargs)
+        except Exception as exc:
+            record_trace(self, ModelCall(model, messages, None, time.perf_counter() - started, repr(exc), usage.records))
+            raise
+        if not kwargs.get("stream") or not hasattr(result, "__aiter__"):
+            record_trace(self, ModelCall(model, messages, result, time.perf_counter() - started, usage=usage.records))
+            return result
+
+        async def traced_stream():
+            last = None
+            error = None
+            try:
+                async for chunk in result:
+                    last = chunk
+                    yield chunk
+            except Exception as exc:
+                error = repr(exc)
+                raise
+            finally:
+                record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, usage.records))
+
+        return traced_stream()
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         """Wrap the base client with instructor. Override for non-standard wrapping."""
@@ -706,7 +744,7 @@ class Llm(param.Parameterized):
             # Return the provider stream and let stream() inspect chunks for tool calls.
             kwargs.pop("response_model", None)
             messages = self._normalize_multimodal_messages(messages)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         stream = False
         if structured_model is not None and not tool_instances:
@@ -721,7 +759,7 @@ class Llm(param.Parameterized):
             # cannot handle instructor Image objects in list content.
             messages = self._normalize_multimodal_messages(messages)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
         if not tool_instances:
             return output
 
@@ -737,13 +775,13 @@ class Llm(param.Parameterized):
             if not tool_messages:
                 break
             messages_curr = messages_curr + [tool_calls_message] + tool_messages
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
-            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
     @classmethod
@@ -1032,6 +1070,7 @@ class Llm(param.Parameterized):
                     show_sep="above",
                 )
                 raise
+            record_trace(self, ToolCall(name, dict(arguments), formatted))
             return Message(
                 role="tool",
                 content=formatted,
@@ -1873,7 +1912,7 @@ class OpenAI(Llm, OpenAIMixin):
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
@@ -1889,7 +1928,7 @@ class OpenAI(Llm, OpenAIMixin):
         else:
             kwargs.pop("response_model", None)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
         if not tool_instances and not has_inbuilt:
             return output
 
@@ -1909,7 +1948,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 next_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
+            output = await self._traced_run_client(model_spec, tool_outputs, **next_kwargs)
 
         if structured_model:
             final_kwargs = dict(kwargs)
@@ -1919,7 +1958,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, [], **final_kwargs)
+            output = await self._traced_run_client(model_spec, [] if response_id else messages, **final_kwargs)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
