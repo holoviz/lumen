@@ -50,6 +50,12 @@ Context: `sales` table in metaset; `SQLAgent` and `VegaLiteAgent` available.
     }
   ]
 }
+```
+
+### Example: Refine existing visualization
+User: "Show that as a horizontal bar chart instead"
+Context: Query result from previous step already in memory; only `VegaLiteAgent` needed to re-render.
+```json
 {
   "chain_of_thought": "Data already in memory. Update visualization to horizontal bar chart without re-querying.",
   "title": "Horizontal Bar Chart",
@@ -61,6 +67,12 @@ Context: `sales` table in metaset; `SQLAgent` and `VegaLiteAgent` available.
     }
   ]
 }
+```
+
+### Example: Analytical question without plot
+User: "Which product category has the highest average discount?"
+Context: `products` table in metaset; `SQLAgent` and `ChatAgent` available.
+```json
 {
   "chain_of_thought": "User asked analytical question without requesting plot. Query category discounts and summarize answer.",
   "title": "Top Discount Category",
@@ -77,38 +89,56 @@ Context: `sales` table in metaset; `SQLAgent` and `VegaLiteAgent` available.
     }
   ]
 }
+```
+
+### Example: Multi-metric join
+User: "Compare revenue and units sold by product"
+Context: `sales` and `inventory` tables in metaset; `SQLAgent` and `VegaLiteAgent` available.
+```json
 {
   "chain_of_thought": "User requested multiple metrics across tables. Join tables in single query before plotting scatter comparison.",
-  "title": "GDP Life Expectancy",
+  "title": "Revenue And Units Sold",
   "steps": [
     {
       "actor": "SQLAgent",
-      "title": "Query GDP and Health",
-      "instruction": "Join GDP and life expectancy tables on country and year, selecting both metrics for each country"
+      "title": "Query Revenue And Units",
+      "instruction": "Join sales and inventory tables on product_id and date, selecting revenue and units_sold for each product"
     },
     {
       "actor": "VegaLiteAgent",
       "title": "Plot Metric Scatter",
-      "instruction": "Plot scatter chart comparing GDP against life expectancy by country"
+      "instruction": "Plot scatter chart comparing revenue against units sold by product"
     }
   ]
 }
+```
+
+### Example: External data with dependency ordering
+User: "Will it rain in Seattle tomorrow?"
+Context: No local weather table; `SourceLookup`, `SourceAgent`, and `ChatAgent` available.
+```json
 {
-  "chain_of_thought": "Need external weather data for Seattle. Fetch forecast via tool, then interpret rain probability with ChatAgent.",
+  "chain_of_thought": "No weather source registered yet. Use SourceLookup to find a matching source action, SourceAgent to fetch and register the forecast, then interpret rain probability with ChatAgent.",
   "title": "Seattle Rain Forecast",
   "steps": [
     {
       "actor": "SourceLookup",
+      "title": "Find Weather Source",
+      "instruction": "Find an external source action for fetching Seattle weather forecast data"
+    },
+    {
+      "actor": "SourceAgent",
       "title": "Fetch Weather Data",
-      "instruction": "Fetch weather forecast data for Seattle for tomorrow"
+      "instruction": "Fetch weather forecast data for Seattle for tomorrow using the discovered source action"
     },
     {
       "actor": "ChatAgent",
       "title": "Answer Rain Question",
-      "instruction": "Analyze weather forecast data and state whether rain expected tomorrow in Seattle"
+      "instruction": "Analyze weather forecast data and state whether rain is expected tomorrow in Seattle"
     }
   ]
 }
+```
 {% endblock -%}
 
 {%- block context %}
