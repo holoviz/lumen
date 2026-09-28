@@ -2500,6 +2500,8 @@ class ExplorerUI(UI):
                 # Rebuild its visual container the same way _add_exploration does
                 tabs = Tabs(dynamic=True, sizing_mode="stretch_both")
                 exploration.view = MultiSplit(tabs, sizing_mode="stretch_both")
+                if exploration.plan and exploration.plan.views:
+                    self._add_views(exploration, items=exploration.plan.views)
 
                 # Resolve parent linkage: top-level explorations attach to Home,
                 # nested ones attach to their previously-restored parent item
