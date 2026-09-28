@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import json
 import os
 import re
 import tempfile
@@ -2464,6 +2465,7 @@ class ExplorerUI(UI):
         super()._configure_session()
         self._idle = asyncio.Event()
         self._idle.set()
+        self._persisted_specs: dict[str, str] = {}
         if self.persist_session and self._logs:
             self._logs.delete_stale(self.session_ttl)
             state.onload(self._restore_session)
@@ -2562,16 +2564,20 @@ class ExplorerUI(UI):
         def walk(items, parent_id, position=0):
             for i, item in enumerate(items, start=position):
                 exp = item["view"]
-                self._logs.upsert_exploration(
-                    session_id=self._session_id,
-                    exploration_id=exp.exploration_id,
-                    parent_id=parent_id,
-                    position=i,
-                    title=exp.title,
-                    subtitle=exp.subtitle,
-                    spec=exp.to_spec(),
-                    user=state.user,
-                )
+                spec = exp.to_spec()
+                fingerprint = json.dumps((parent_id, i, spec), default=str, sort_keys=True)
+                if self._persisted_specs.get(exp.exploration_id) != fingerprint:
+                    self._logs.upsert_exploration(
+                        session_id=self._session_id,
+                        exploration_id=exp.exploration_id,
+                        parent_id=parent_id,
+                        position=i,
+                        title=exp.title,
+                        subtitle=exp.subtitle,
+                        spec=spec,
+                        user=state.user,
+                    )
+                    self._persisted_specs[exp.exploration_id] = fingerprint
                 walk(item.get("items", []), exp.exploration_id)
 
         walk(self._explorations.items[1:], None)
