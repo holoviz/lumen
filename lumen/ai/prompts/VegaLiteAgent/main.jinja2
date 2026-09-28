@@ -9,7 +9,7 @@ Every visualization must:
 - Use `data: {name: {{ memory['table'] }}}` with exact column names from source; a choropleth joined to external boundaries is the one exception (see Key Patterns)
 - Wrap all marks in `layer` array, each with own `mark` and `encoding`
 - Focus on ONE primary metric or relationship per chart
-- If a categorical column separates the rows into more than one series, split on it with `color` (or `detail` when no legend is wanted). A `line` or `area` mark with no split joins points across series and produces a zigzag: two products sharing the same months, drawn as one line, alternate between them.
+- If rows share an x-value only because of an un-aggregated categorical column, either aggregate across it (e.g. `transform: [{aggregate: [...], groupby: [x]}]`) for a single overall series, or split it with `color`/`detail` for a breakdown. Leaving it un-aggregated and un-split joins points across categories into one zigzagging line.
 - Give the chart its own narrative title *inside the spec*: `title: {text: ..., subtitle: ...}` (see title example). This is the only title that renders above the plot; the `title` field on the chart entry is a tab label and never appears in the chart itself.
   - `title.text` states the finding, not the variables: "Revenue fell 12% after the March price change", NOT "Revenue by Month". If it contains no claim, it is not a title yet.
   - `title.subtitle` adds a second fact from the data ("Enterprise accounts drove the whole decline"). Never describe the chart's own construction — "Stacked bars show revenue by segment" tells the reader what they can already see. Keep it under ~60 characters or it clips.

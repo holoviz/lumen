@@ -6,7 +6,7 @@ from panel_material_ui import Button
 from pydantic import Field
 
 from ..config import PROMPTS_DIR
-from ..context import ContextModel, TContext
+from ..context import ContextModel, TContext, input_dependency_keys
 from ..llm import Message
 from ..models import BaseModel
 from ..utils import content_to_text, log_debug
@@ -95,9 +95,15 @@ class ValidationAgent(Agent):
         plan = context.get("plan")
         previous_keys = set()
         if plan is not None:
+            required_keys = set()
+            for task in plan:
+                if task.actor is not self:
+                    required_keys |= input_dependency_keys(task.input_schema)
             produced = {k for task in plan for k in task.out_context}
             for key in ("chat", "sql", "view", "listing"):
                 if key in context and key not in produced:
+                    if key in required_keys:
+                        continue
                     previous_keys.add(key)
         ctx["previous_keys"] = previous_keys
         return ctx

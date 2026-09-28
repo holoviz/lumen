@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 
 from collections.abc import Callable
 from typing import Any, Literal, NotRequired
@@ -58,6 +59,8 @@ class AnalysisAgent(BaseLumenAgent):
     )
 
     purpose = param.String(default="Perform custom analyses that are reliable and repeatable.")
+
+    user = param.String(default="Analysis")
 
     prompts = param.Dict(
         default={
@@ -123,7 +126,7 @@ class AnalysisAgent(BaseLumenAgent):
 
             if analysis.autorun:
                 try:
-                    if asyncio.iscoroutinefunction(analysis_callable.__call__):
+                    if inspect.iscoroutinefunction(analysis_callable.__call__):
                         view = await analysis_callable(pipeline, context)
                     else:
                         view = await asyncio.to_thread(analysis_callable, pipeline, context)

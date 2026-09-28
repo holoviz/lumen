@@ -62,7 +62,7 @@ class DownloadSourceControls(FileSourceControls):
     def __init__(self, **params):
         super().__init__(**params)
         try:
-            import kagglehub  # noqa: PLC0415
+            import kagglehub
             self._kagglehub = kagglehub
         except ModuleNotFoundError:
             self._kagglehub = None

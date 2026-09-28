@@ -709,7 +709,7 @@ class Pipeline(Viewer, Component):
             try:
                 # Deferred: .sources.duckdb needs duckdb, which the core
                 # install does not pull in.
-                from .sources.duckdb import DuckDBSource  # noqa: PLC0415
+                from .sources.duckdb import DuckDBSource
             except Exception as e:
                 raise RuntimeError(
                     'Cannot chain SQL transforms on a Pipeline without '

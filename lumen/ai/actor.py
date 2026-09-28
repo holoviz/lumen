@@ -28,7 +28,7 @@ def _expand_llm_tool_entries(entries: list[Any] | None, context: TContext) -> li
     ``f(context)`` or no-arg ``f()`` to a tool or list of tools.
     """
     # Deferred: .tools.base imports Actor from this module.
-    from .tools.base import FunctionTool  # noqa: PLC0415
+    from .tools.base import FunctionTool
 
     if not entries:
         return []

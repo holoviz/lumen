@@ -52,6 +52,38 @@ ui.servable()
 
 Agent names map to model types: `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, etc.
 
+## Track token usage and cost
+
+LLM instances collect provider-reported token usage in `llm.usage`. Configure `usage_pricing` with USD rates per million tokens to estimate cost for each model; prices are not bundled with Lumen and must be kept current for your provider and account.
+
+``` py title="Track usage for one request"
+import asyncio
+
+from lumen.ai.llm import OpenAI
+
+
+async def main():
+    llm = OpenAI(
+        model_kwargs={"default": {"model": "gpt-4o-mini"}},
+        usage_pricing={
+            "gpt-4o-mini": {"input": 0.15, "cached": 0.075, "output": 0.60},
+        },
+    )
+    with llm.capture_usage() as request_usage:
+        await llm.invoke([{"role": "user", "content": "Say hello."}])
+
+    print(request_usage.input_tokens, request_usage.output_tokens)
+    print(request_usage.cached_tokens, request_usage.cost_usd)
+    print(llm.usage.cost_usd)  # Total across calls made with this LLM instance
+
+
+asyncio.run(main())
+```
+
+Set `OPENAI_API_KEY` before running this example. The `usage_pricing` keys must match the model names returned by the provider, including any provider prefix. Each model needs `input` and `output` rates; `cached` defaults to the input rate when omitted. For Anthropic, `cache_write` can price cache creation separately and also defaults to the input rate. Cached reads and writes are included in `input_tokens`; `cached_tokens` counts reads only. Inspect `request_usage.records` or `llm.usage.records` for individual responses and their model, token counts, and cost.
+
+`llm.usage` aggregates the lifetime of that LLM instance. `llm.capture_usage()` creates a scoped collector for calls within the context, including calls from child async tasks; use separate contexts to attribute concurrent requests. A scope includes all provider calls made within it, such as tool rounds and structured-output retries. Consume a streaming response fully to receive its final usage report. If a provider does not return usage, no record is added. If a model has no pricing entry, its tokens are recorded but `cost_usd` is `None` for that record and for any collector containing it.
+
 ## Configure temperature
 
 Lower temperature = more deterministic. Higher = more creative.
@@ -115,6 +147,59 @@ For installation and API key setup instructions, see the [Installation guide](..
 - **General purpose:** `qwen3:32b`, `llama3.3:70b`, `qwen3:30b-a3b`, `nemotron-3-nano:30b`
 - **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
 - **Reasoning:** `nemotron-3-nano:30b`
+
+### Codex CLI and Claude Code
+
+Use a locally authenticated Codex CLI or Claude Code CLI as Lumen's LLM
+provider. This lets an individual user run Lumen with an existing CLI
+subscription, without supplying an API key to Lumen.
+
+Before starting Lumen, install the relevant CLI, make sure its executable is
+on your `PATH`, and sign in to it once:
+
+``` bash title="Codex CLI"
+codex login
+```
+
+``` bash title="Claude Code"
+claude auth login
+```
+
+Start Lumen without loading any data:
+
+``` bash title="Codex CLI"
+lumen-ai serve --provider codex-cli
+```
+
+``` bash title="Claude Code CLI"
+lumen-ai serve --provider claude-code
+```
+
+The CLI's configured default model is used unless you select one explicitly.
+For example, Claude Code provides a stable `sonnet` alias:
+
+``` bash
+lumen-ai serve --provider claude-code --model sonnet
+```
+
+The same `--model` option accepts model identifiers available to the
+authenticated Codex CLI account.
+
+To start with a dataset, add its path before the provider arguments:
+
+``` bash
+lumen-ai serve penguins.csv --provider codex-cli
+lumen-ai serve penguins.csv --provider claude-code
+```
+
+!!! warning "Local development only"
+    The server process launches a command-line agent for every LLM request. Do
+    not expose this configuration as a public or multi-user Lumen deployment.
+    Codex runs with its `read-only` sandbox and Claude Code uses `plan` mode by
+    default. Claude Code can use up to three turns per Lumen request so it can
+    complete internal tool calls. The providers collect a completed response
+    rather than streaming tokens, and do not yet expose Lumen function tools to
+    the coding CLIs.
 
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
