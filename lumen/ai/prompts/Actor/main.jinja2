@@ -1,9 +1,8 @@
+{#- Blocks run from most to least stable so providers can cache the longest
+    possible prompt prefix: static instructions, then data context, then
+    per-request tool output, errors and the date. -#}
 {%- block global %}
 Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).
-{%- endblock %}
-
-{%- block datetime %}
-Current date time {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {%- endblock %}
 
 {%- block instructions -%}
@@ -15,18 +14,17 @@ Current date time {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
 {%- block examples -%}
 {%- endblock -%}
 
-{% block tools -%}
+{%- block context -%}
+{%- endblock %}
+
+{%- block tools -%}
 {%- if 'agent_tool_contexts' in memory and actor_name in memory["agent_tool_contexts"] %}
 {#- Agent-specific tool contexts -#}
 {% for key, value in memory["agent_tool_contexts"][actor_name].items() %}
 `{{ key }}`: {{ value }}
 {% endfor %}
-{% else %}
-{% endif -%}
+{%- endif -%}
 {%- endblock -%}
-
-{%- block context -%}
-{%- endblock %}
 
 {%- block errors -%}
 {%- if last_output is defined and last_output %}
@@ -45,3 +43,8 @@ Task expertly address errors so they do not occur again:
 
 {% block footer -%}
 {%- endblock -%}
+
+{%- block datetime %}
+
+Current date: {{ current_datetime.strftime('%b %d, %Y') }}
+{%- endblock %}
