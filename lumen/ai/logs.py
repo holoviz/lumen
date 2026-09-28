@@ -131,12 +131,12 @@ class ChatLogs(param.Parameterized):
                     position,
                     title,
                     subtitle,
-                    json.dumps(spec),
+                    json.dumps(spec, default=str),
                 ),
             )
             self.conn.commit()
-        except Exception:
-            log_debug("Failed to upsert exploration")
+        except Exception as e:
+            log_debug(f"Failed to upsert exploration: {e}")
 
     def load_session(self, session_id):
         self.cursor.execute(

@@ -1989,7 +1989,10 @@ class Exploration(param.Parameterized):
             "sources": [_redact_source_spec(src.to_spec()) for src in ctx.get("sources", [])],
             "visible_slugs": sorted(ctx.get("visible_slugs", [])),
             "views": views,
-            "conversation": [{"user": msg.user, "object": msg.object} for msg in self.conversation],
+            "conversation": [
+                {"user": msg.user, "object": msg.object if isinstance(msg.object, str) else str(msg.object)}
+                for msg in self.conversation
+            ],
             "exploration_id": self.exploration_id,
         }
 
