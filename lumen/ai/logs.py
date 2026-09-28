@@ -144,7 +144,7 @@ class ChatLogs(param.Parameterized):
             SELECT exploration_id, parent_id, position, title, subtitle, spec
             FROM explorations
             WHERE session_id = ?
-            ORDER BY position
+            ORDER BY rowid
             """,
             (session_id,),
         )
