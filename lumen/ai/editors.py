@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import pathlib
 import re
@@ -571,7 +572,7 @@ class AnalysisOutput(LumenEditor):
         return out_context
 
     async def _rerun(self, event):
-        if asyncio.iscoroutinefunction(self.analysis.__call__):
+        if inspect.iscoroutinefunction(self.analysis.__call__):
             view = await self.analysis(self.pipeline, self.context)
         else:
             view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)

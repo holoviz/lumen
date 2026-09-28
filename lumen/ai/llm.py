@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
+import inspect
 import json
 import os
+import time
 import traceback
 
 from collections.abc import Callable
@@ -29,6 +32,12 @@ from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
+)
+from .tool_trace import (
+    ModelCall, ToolCall, capture_trace, is_tracing, record_trace,
+)
+from .usage import (
+    UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
 )
 from .utils import (
     format_exception, format_msg_content, log_debug, truncate_string,
@@ -74,6 +83,8 @@ LLM_PROVIDERS = {
     'litellm': 'LiteLLM',
     'openrouter': 'OpenRouter',
     'kilo': 'Kilo',
+    'codex-cli': 'CodexCli',
+    'claude-code': 'ClaudeCode',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
@@ -181,6 +192,11 @@ class Llm(param.Parameterized):
                   "description": "Best for editing tables and visualizations",
                   "routing": {"model": "nemotron-switchyard"}}}""")
 
+    usage_pricing = param.Dict(default={}, doc="""USD per million tokens by model:
+        {"model-name": {"input": 1.0, "cached": 0.1, "cache_write": 1.25,
+                        "output": 4.0}}.
+        Unknown models retain token counts but have no estimated cost.""")
+
     spec_descriptions = param.Dict(default=SPEC_DESCRIPTIONS, doc="""
         Mapping of spec key to human-readable description, used as a
         fallback in the routing prompt when ``model_kwargs`` entries
@@ -253,6 +269,7 @@ class Llm(param.Parameterized):
         # Instance-level client caches
         self._base_client = None
         self._instructor_clients: dict[Mode, Any] = {}
+        self.usage = UsageCollector()
 
         # Resolved model name from the last invoke()/stream() call.
         # Set after _resolve_routing() so callers can read which model
@@ -280,7 +297,7 @@ class Llm(param.Parameterized):
     @param.depends("logfire_tags", watch=True)
     def _update_logfire_tags(self):
         if self.logfire_tags is not None and self._supports_logfire:
-            import logfire  # noqa: PLC0415
+            import logfire
             logfire.configure(send_to_logfire=True)
             self._logfire = logfire.Logfire(tags=self.logfire_tags)
         else:
@@ -320,6 +337,46 @@ class Llm(param.Parameterized):
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
+
+    def capture_usage(self):
+        """Capture provider usage for this LLM in the current async context."""
+        return capture_usage(self)
+
+    def trace(self):
+        """Capture model round trips and tool calls in the current async context."""
+        return capture_trace(self)
+
+    async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        if not is_tracing(self):
+            return await self.run_client(model_spec, messages, **kwargs)
+        started = time.perf_counter()
+        model = model_spec.get("model", "unknown") if isinstance(model_spec, dict) else self.model_kwargs.get(model_spec, {}).get("model", str(model_spec))
+        try:
+            with self.capture_usage() as usage:
+                result = await self.run_client(model_spec, messages, **kwargs)
+        except Exception as exc:
+            record_trace(self, ModelCall(model, messages, None, time.perf_counter() - started, repr(exc), usage.records))
+            raise
+        if not kwargs.get("stream") or not hasattr(result, "__aiter__"):
+            record_trace(self, ModelCall(model, messages, result, time.perf_counter() - started, usage=usage.records))
+            return result
+
+        async def traced_stream():
+            last = None
+            error = None
+            with self.capture_usage() as stream_usage:
+                try:
+                    async for chunk in result:
+                        last = chunk
+                        yield chunk
+                except Exception as exc:
+                    error = repr(exc)
+                    raise
+                finally:
+                    records = usage.records if usage.records else stream_usage.records
+                    record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, records))
+
+        return traced_stream()
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         """Wrap the base client with instructor. Override for non-standard wrapping."""
@@ -689,7 +746,7 @@ class Llm(param.Parameterized):
             # Return the provider stream and let stream() inspect chunks for tool calls.
             kwargs.pop("response_model", None)
             messages = self._normalize_multimodal_messages(messages)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         stream = False
         if structured_model is not None and not tool_instances:
@@ -704,7 +761,7 @@ class Llm(param.Parameterized):
             # cannot handle instructor Image objects in list content.
             messages = self._normalize_multimodal_messages(messages)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
         if not tool_instances:
             return output
 
@@ -720,13 +777,13 @@ class Llm(param.Parameterized):
             if not tool_messages:
                 break
             messages_curr = messages_curr + [tool_calls_message] + tool_messages
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
-            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
     @classmethod
@@ -780,7 +837,7 @@ class Llm(param.Parameterized):
                 tool_context = None
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
                 # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
-                from .tools import FunctionTool  # noqa: PLC0415
+                from .tools import FunctionTool
                 tool = FunctionTool(tool)
             if hasattr(tool, "_model"):
                 tool_instances[tool.name] = tool  # type: ignore[assignment]
@@ -957,7 +1014,7 @@ class Llm(param.Parameterized):
         messages: list[Message],
     ) -> list[Message]:
         # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
-        from .tools import FunctionTool, MCPTool  # noqa: PLC0415
+        from .tools import FunctionTool, MCPTool
 
         async def run_single_tool_call(call: Any) -> Message | None:
             name, arguments, call_id = self._parse_tool_call(call)
@@ -991,7 +1048,7 @@ class Llm(param.Parameterized):
                 if isinstance(tool, MCPTool):
                     result = await tool.execute(**arguments)
                 elif isinstance(tool, FunctionTool):
-                    if asyncio.iscoroutinefunction(tool.function):
+                    if inspect.iscoroutinefunction(tool.function):
                         result = await tool.function(**arguments)
                     else:
                         # Synchronous function, run in thread
@@ -1015,6 +1072,7 @@ class Llm(param.Parameterized):
                     show_sep="above",
                 )
                 raise
+            record_trace(self, ToolCall(name, dict(arguments), formatted))
             return Message(
                 role="tool",
                 content=formatted,
@@ -1231,6 +1289,288 @@ class Llm(param.Parameterized):
         return result
 
 
+class LlmCli(Llm):
+    """Base class for locally authenticated coding CLIs.
+
+    These providers invoke an already authenticated local CLI instead of handling
+    credentials. Lumen renders its messages as a text prompt and sends it over
+    standard input. Each subclass parses the CLI-specific response format to
+    obtain the final text response. For structured responses, Lumen appends the
+    Pydantic JSON Schema to the prompt, extracts the returned JSON value, and
+    validates it against the response model.
+
+    They are intended for local development only: output is collected after the
+    command completes and native Lumen function tools are not forwarded to the
+    CLI.
+    """
+
+    executable = param.String(default="", constant=True, doc="Path or name of the CLI executable.")
+
+    working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
+        Working directory for CLI subprocesses. By default, the CLI inherits the
+        directory from which Lumen was launched.""")
+
+    _supports_stream = False
+    _supports_model_stream = False
+    _supports_vision = False
+
+    def _create_base_client(self, **kwargs) -> Any:
+        raise NotImplementedError("CLI-backed providers do not create an SDK client.")
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        messages, contains_image = super()._check_for_image(messages)
+        if contains_image:
+            raise ValueError(f"{self.display_name} does not support image inputs.")
+        return messages, False
+
+    @staticmethod
+    def _content_to_text(content: str | Image | list[dict[str, Any]]) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text", "")))
+                    else:
+                        parts.append(json.dumps(item, default=str, ensure_ascii=False))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
+        return str(content)
+
+    def _messages_to_prompt(self, messages: list[Message]) -> str:
+        rendered = []
+        for message in messages:
+            role = message.get("role", "user").upper()
+            content = self._content_to_text(message.get("content", ""))
+            tool_calls = message.get("tool_calls")
+            if not content and tool_calls:
+                content = json.dumps(tool_calls, default=str, ensure_ascii=False)
+            rendered.append(f"[{role}]\n{content}")
+        return "\n\n".join(rendered)
+
+    @staticmethod
+    def _extract_json(output: str) -> Any:
+        """Extract the first JSON value from a CLI response."""
+        output = output.strip()
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(output):
+            if character not in "[{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(output[index:])
+            except json.JSONDecodeError:
+                continue
+            return value
+        raise ValueError("The CLI did not return valid JSON for Lumen's structured response.")
+
+    def _structured_prompt(self, prompt: str, response_model: type[BaseModel]) -> str:
+        schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+        return (
+            f"{prompt}\n\n"
+            "Return only one JSON value matching this JSON Schema. Do not use Markdown, "
+            "explain the answer, or call tools.\n"
+            f"JSON Schema:\n{schema}"
+        )
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.working_dir,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(prompt.encode("utf-8")), timeout=self.timeout
+            )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(
+                f"{self.display_name} did not finish within {self.timeout:g} seconds."
+            ) from exc
+
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        if process.returncode:
+            detail = stderr_text.strip() or stdout_text.strip() or "no error output"
+            detail = truncate_string(detail, max_length=4000)
+            raise RuntimeError(
+                f"{self.display_name} exited with status {process.returncode}: {detail}"
+            )
+        return stdout_text
+
+    def _build_command(self, model: str | None) -> list[str]:
+        raise NotImplementedError
+
+    def _decode_output(self, output: str) -> str:
+        raise NotImplementedError
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = 16,
+        **kwargs,
+    ) -> BaseModel | str:
+        if tool_instances:
+            log_debug(
+                "CLI providers do not support native Lumen tools; continuing without them.",
+                prefix="[LLM tools]",
+            )
+        kwargs.pop("tools", None)
+        return await super()._run_tool_loop(
+            messages,
+            structured_model,
+            {},
+            {},
+            model_spec=model_spec,
+            max_tool_rounds=max_tool_rounds,
+            **kwargs,
+        )
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        model = self._get_model_kwargs(model_spec).get("model")
+        prompt = self._messages_to_prompt(messages)
+        if response_model is not None:
+            prompt = self._structured_prompt(prompt, response_model)
+
+        command = self._build_command(model)
+        log_debug(f"CLI command: \033[96m{' '.join(command)} <stdin>\033[0m")
+        stdout = await self._run_command(command, prompt)
+        output = self._decode_output(stdout)
+
+        if response_model is not None:
+            try:
+                result = response_model.model_validate(self._extract_json(output))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{self.display_name} returned an invalid structured response: {exc}"
+                ) from exc
+        else:
+            result = output
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
+        return result
+
+
+class CodexCli(LlmCli):
+    """Use the locally authenticated Codex CLI as a Lumen provider."""
+
+    display_name = param.String(default="Codex CLI", constant=True)
+
+    executable = param.String(default="codex", constant=True)
+
+    sandbox = param.Selector(
+        default="read-only",
+        objects=["read-only", "workspace-write", "danger-full-access"],
+        constant=True,
+        doc="Codex sandbox policy. The safe read-only policy is the default.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "exec", "--json", "--sandbox", self.sandbox,
+            "--skip-git-repo-check", "--ephemeral",
+        ]
+        if model:
+            command.extend(["--model", model])
+        return [*command, "-"]
+
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item = event.get("item") if isinstance(event, dict) else None
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or item.get("content")
+                if text:
+                    final_message = str(text)
+        if final_message is None:
+            raise ValueError("Codex CLI did not return a final agent message.")
+        return final_message.strip()
+
+
+class ClaudeCode(LlmCli):
+    """Use the locally authenticated Claude Code CLI as a Lumen provider."""
+
+    display_name = param.String(default="Claude Code CLI", constant=True)
+
+    executable = param.String(default="claude", constant=True)
+
+    permission_mode = param.Selector(
+        default="plan",
+        objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
+        constant=True,
+        doc="Claude Code permission mode. The non-writing plan mode is the default.",
+    )
+
+    max_turns = param.Integer(
+        default=3,
+        bounds=(1, None),
+        constant=True,
+        doc="Maximum Claude Code turns per Lumen request, including internal tool calls.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "--print", "--output-format", "json",
+            "--no-session-persistence", "--max-turns", str(self.max_turns),
+            "--permission-mode", self.permission_mode,
+        ]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    def _decode_output(self, output: str) -> str:
+        try:
+            response = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Claude Code CLI returned invalid JSON.") from exc
+        if not isinstance(response, dict):
+            raise ValueError("Claude Code CLI returned an unexpected JSON response.")
+        if response.get("is_error"):
+            raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
+        if "result" not in response:
+            raise ValueError("Claude Code CLI response did not include a result.")
+        return str(response["result"]).strip()
+
+
 class LlamaCpp(Llm, LlamaCppMixin):
     """
     A LLM implementation using Llama.cpp Python wrapper together with huggingface_hub to fetch the models.
@@ -1426,6 +1766,10 @@ class OpenAI(Llm, OpenAIMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(async_client=True, **kwargs)
+        if self.api == "responses":
+            meter_method(self, client.responses, "create", "openai")
+        else:
+            meter_method(self, client.chat.completions, "create", "openai")
         if self.logfire_tags:
             self._logfire.instrument_openai(client)
         return client
@@ -1570,7 +1914,7 @@ class OpenAI(Llm, OpenAIMixin):
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
@@ -1586,7 +1930,7 @@ class OpenAI(Llm, OpenAIMixin):
         else:
             kwargs.pop("response_model", None)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
         if not tool_instances and not has_inbuilt:
             return output
 
@@ -1606,7 +1950,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 next_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
+            output = await self._traced_run_client(model_spec, tool_outputs, **next_kwargs)
 
         if structured_model:
             final_kwargs = dict(kwargs)
@@ -1616,7 +1960,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, [], **final_kwargs)
+            output = await self._traced_run_client(model_spec, [], **final_kwargs)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
@@ -1724,7 +2068,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return {**instance_kwargs, **model_kwargs}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(async_client=True, **kwargs)
+        client = self._instantiate_client(async_client=True, **kwargs)
+        meter_method(self, client.chat.completions, "create", "openai")
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         if self.interceptor:
@@ -1776,11 +2122,14 @@ class MistralAI(Llm, MistralAIMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
-        from mistralai import Mistral  # noqa: PLC0415
+        from mistralai import Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
@@ -1831,7 +2180,10 @@ class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     ], constant=True, doc="Available models for selection dropdowns")
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
 
 class Anthropic(Llm, AnthropicMixin):
@@ -1868,7 +2220,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
-        from anthropic import Anthropic as AnthropicClient  # noqa: PLC0415
+        from anthropic import Anthropic as AnthropicClient
         response = AnthropicClient(api_key=self.api_key, timeout=5).models.list()
         # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
         return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
@@ -1879,6 +2231,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
+        meter_method(self, client.messages, "create", "anthropic")
         if self.logfire_tags:
             self._logfire.instrument_anthropic(client)
         return client
@@ -2134,16 +2487,16 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
     })
 
     def _create_base_client(self, **kwargs) -> Any:
-        from anthropic.lib.bedrock import (  # noqa: PLC0415
-            AsyncAnthropicBedrock,
-        )
-        return AsyncAnthropicBedrock(
+        from anthropic.lib.bedrock import AsyncAnthropicBedrock
+        client = AsyncAnthropicBedrock(
             aws_access_key=self.aws_access_key_id,
             aws_secret_key=self.api_key,
             aws_session_token=self.aws_session_token,
             aws_region=self.region_name,
             **kwargs
         )
+        meter_method(self, client.messages, "create", "anthropic")
+        return client
 
 
 class Bedrock(Llm, BedrockMixin):
@@ -2194,7 +2547,7 @@ class Bedrock(Llm, BedrockMixin):
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
         try:
-            import boto3  # noqa: PLC0415
+            import boto3
         except ImportError as exc:
             raise ImportError(
                 "Please install boto3 to use AWS Bedrock. "
@@ -2285,14 +2638,21 @@ class Bedrock(Llm, BedrockMixin):
 
         if stream:
             resp = await asyncio.to_thread(self._base_client.converse_stream, **call_kwargs)
-            return self._wrap_stream(resp)
+            return self._wrap_stream(resp, model, contextvars.copy_context())
         else:
             resp = await asyncio.to_thread(self._base_client.converse, **call_kwargs)
+            usage = parse_usage(resp, "bedrock", model, self.usage_pricing)
+            if usage is not None:
+                record_usage(self, self.usage, usage)
             return resp["output"]["message"]["content"][0]["text"]
 
-    async def _wrap_stream(self, response):
+    async def _wrap_stream(self, response, model, context):
         """Wrap synchronous Bedrock stream as async generator."""
         for chunk in response["stream"]:
+            if "metadata" in chunk:
+                usage = parse_usage(chunk, "bedrock", model, self.usage_pricing)
+                if usage is not None:
+                    context.run(record_usage, self, self.usage, usage)
             yield chunk
 
     @classmethod
@@ -2346,7 +2706,7 @@ class Google(Llm, GenAIMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Google AI."""
-        from google import genai  # noqa: PLC0415
+        from google import genai
         available = set()
         for m in genai.Client(api_key=self.api_key).models.list():
             available.add(m.name)
@@ -2361,7 +2721,10 @@ class Google(Llm, GenAIMixin):
     def _create_base_client(self, **kwargs) -> Any:
         if self.logfire_tags:
             self._logfire.instrument_google_genai()
-        return self._instantiate_client()
+        client = self._instantiate_client()
+        meter_method(self, client.aio.models, "generate_content", "google")
+        meter_method(self, client.aio.models, "generate_content_stream", "google", stream_method=True)
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_genai(base_client, mode=mode, use_async=True)
@@ -2530,9 +2893,7 @@ class Google(Llm, GenAIMixin):
         if not tool_specs:
             return
 
-        from google.genai.types import (  # noqa: PLC0415
-            FunctionDeclaration, Tool,
-        )
+        from google.genai.types import FunctionDeclaration, Tool
         declarations = []
         for spec in tool_specs:
             if not isinstance(spec, dict) or spec.get("type") != "function":
@@ -2570,7 +2931,7 @@ class Google(Llm, GenAIMixin):
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
-            from google.genai.types import (  # noqa: PLC0415
+            from google.genai.types import (
                 GenerateContentConfig, HttpOptions, ThinkingConfig,
             )
         except ImportError as exc:
@@ -2779,7 +3140,7 @@ class MLX(Llm):
     def _load_mlx_model(self, model_id: str) -> tuple:
         """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
         if model_id not in self._mlx_models:
-            from mlx_lm import load  # noqa: PLC0415
+            from mlx_lm import load
             self._mlx_models[model_id] = load(model_id)
         return self._mlx_models[model_id]
 
@@ -2805,14 +3166,14 @@ class MLX(Llm):
 
     def _make_sampler(self):
         """Create an MLX sampler from the configured temperature."""
-        from mlx_lm.sample_utils import make_sampler  # noqa: PLC0415
+        from mlx_lm.sample_utils import make_sampler
         if self.temperature is None:
             return make_sampler()
         return make_sampler(temp=self.temperature)
 
     def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
         """Synchronous chat completion compatible with instructor's patch(create=...)."""
-        from mlx_lm import generate as mlx_generate  # noqa: PLC0415
+        from mlx_lm import generate as mlx_generate
 
         model_spec = kwargs.pop("model", "default")
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -2858,7 +3219,7 @@ class MLX(Llm):
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """Pre-download model weights from Hugging Face Hub."""
-        from mlx_lm import load  # noqa: PLC0415
+        from mlx_lm import load
         model_kwargs = model_kwargs or {}
         if "default" not in model_kwargs:
             model_kwargs["default"] = cls.model_kwargs["default"]
@@ -3000,7 +3361,7 @@ class WebLLM(Llm):
         return {}
 
     def __init__(self, **params):
-        from panel_web_llm import WebLLM as pnWebLLM  # noqa: PLC0415
+        from panel_web_llm import WebLLM as pnWebLLM
         self._llm = pnWebLLM()
         super().__init__(**params)
 
@@ -3138,9 +3499,9 @@ class LiteLLM(Llm):
         super().__init__(**params)
         self._router = None  # Lazy init
         if self.enable_caching:
-            import litellm  # noqa: PLC0415
+            import litellm
 
-            from litellm import Cache  # noqa: PLC0415
+            from litellm import Cache
             litellm.cache = Cache()
         if self.logfire_tags:
             self._logfire.instrument_litellm()
@@ -3148,7 +3509,7 @@ class LiteLLM(Llm):
     def _get_router(self):
         """Get or create cached LiteLLM Router."""
         if self._router is None:
-            from litellm import Router  # noqa: PLC0415
+            from litellm import Router
             model_list = [
                 {'model_name': key, 'litellm_params': config}
                 for key, config in self.model_kwargs.items()
@@ -3158,6 +3519,7 @@ class LiteLLM(Llm):
             if self.fallback_models:
                 router_kwargs['fallbacks'] = self.fallback_models
             self._router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+            meter_method(self, self._router, "acompletion", "openai")
         return self._router
 
     @property
