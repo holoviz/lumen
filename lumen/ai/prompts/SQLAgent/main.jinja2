@@ -23,13 +23,32 @@ Write SQL query for user's data transformation request, focusing on intent over 
 - Use CTEs only when necessary
 
 ## Data summary vs tools
-**Data summary** below: capped snapshot (top tables by relevance) without embedded documentation. For other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when available and doc text needed.
+**Data summary** below: capped snapshot (top tables by relevance) without embedded documentation. Do not guess column names, types or stored values; use the tools for what the summary lacks.
+{%- if tool_names is defined and tool_names %}
+{%- if 'browse_data_catalog' in tool_names %}
+- **browse_data_catalog**: page through tables the summary does not list.
+{%- endif %}
+{%- if 'load_table_schemas' in tool_names %}
+- **load_table_schemas**: full column details for tables or columns the summary lists without them.
+{%- endif %}
+{%- if 'distinct_values' in tool_names %}
+- **distinct_values**: the exact stored form of a literal before you filter on it.
+{%- endif %}
+{%- if 'run_exploration_sql' in tool_names %}
+- **run_exploration_sql**: anything else you need to inspect, not the final query.
+{%- endif %}
+{%- if 'load_relevant_metaset_docs' in tool_names %}
+- **load_relevant_metaset_docs**: documentation text.
+{%- endif %}
+
+You have {{ tool_rounds }} tool rounds. Submit the final query with **submit_sql** as soon as you know enough; it executes the query and returns any error for you to fix.
+{%- endif %}
 {%- endblock -%}
 
 {%- block context -%}
 {%- if memory.get('metaset') %}
 ## Data summary
-{{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
+{{ memory["metaset"].compact_context(n=prompt_tables if prompt_tables is defined else 12, n_others=prompt_other_tables if prompt_other_tables is defined else 25, include_lineage=True) }}
 {%- endif %}
 
 {%- if memory.get('sql') %}
@@ -81,6 +100,19 @@ User interactively subset current data with these filters. Add equivalent WHERE 
 
 {%- block errors %}
 {{ super() }}
+{%- if previous_attempt is defined and previous_attempt %}
+## Previous attempt
+{%- if previous_attempt.sql %}
+The previous attempt submitted this query, which failed with the error above:
+```sql
+{{ previous_attempt.sql }}
+```
+{%- endif %}
+{%- if previous_attempt.tools %}
+Its tool calls already found the following; reuse these results instead of repeating the calls:
+{{ previous_attempt.tools }}
+{%- endif %}
+{%- endif %}
 {% if errors is defined and errors %}
 ## Quick Fixes
 - Mixed units: Use CASE to normalize units before aggregating

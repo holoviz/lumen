@@ -9,12 +9,69 @@ import yaml
 
 from .config import SOURCE_TABLE_SEPARATOR
 from .utils import (
-    collapse_indexed_columns, get_schema, log_debug, slug_to_table_name,
-    truncate_string,
+    closest_names, collapse_indexed_columns, get_schema, log_debug,
+    slug_to_table_name, truncate_string,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..sources import Source
+
+# Separators models use between a source and a table name.
+_SLUG_DELIMITERS = ("/", ".", SOURCE_TABLE_SEPARATOR.strip())
+
+
+def resolve_table_slug(reference: str, slugs: Iterable[str]) -> str:
+    """
+    Resolve a model-supplied table reference to one of ``slugs``.
+
+    Accepts, case-insensitively and in order of preference: the slug itself,
+    ``<source>/<table>`` or ``<source>.<table>``, the bare table name, and any
+    ``<prefix>/<table>`` whose table part is unambiguous. The last covers
+    references such as ``source/orders`` that name the source generically.
+
+    Raises
+    ------
+    ValueError
+        If nothing matches or a reference matches several tables. The
+        message lists the candidates or the closest names so the model can
+        correct the reference.
+    """
+    slugs = list(dict.fromkeys(slugs))
+    raw = str(reference).strip().strip("`\"'")
+    if raw in slugs:
+        return raw
+    target = raw.lower()
+    parts = [
+        (slug, *(slug.split(SOURCE_TABLE_SEPARATOR, 1) if SOURCE_TABLE_SEPARATOR in slug else (None, slug)))
+        for slug in slugs
+    ]
+    # Every split point, since table names may themselves contain dots.
+    suffixes = {raw[i + 1:].strip().lower() for i, char in enumerate(raw) if char in _SLUG_DELIMITERS}
+    tiers = (
+        [
+            slug for slug, source, table in parts
+            if slug.lower() == target or (source is not None and target in {
+                f"{source}{delim}{table}".lower() for delim in _SLUG_DELIMITERS
+            })
+        ],
+        [slug for slug, _, table in parts if table.lower() == target],
+        [slug for slug, _, table in parts if table.lower() in suffixes],
+    )
+    for matches in tiers:
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            raise ValueError(f"Ambiguous table {reference!r}. Use one of: {sorted(matches)}.")
+
+    tables = sorted({table for _, _, table in parts})
+    close = closest_names(raw.rsplit("/", 1)[-1], tables)
+    message = f"Unknown table {reference!r}."
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    more = f" (and {len(tables) - 30} more)" if len(tables) > 30 else ""
+    raise ValueError(f"{message} Available tables: {', '.join(tables[:30])}{more}.")
 
 
 @dataclass
@@ -338,9 +395,11 @@ class Metaset:
 
         # Add other tables section
         if n_others > 0:
+            # Continue the similarity ranking after the primary page, so
+            # paging with offset neither repeats nor skips tables.
             primary_set = set(primary_slugs)
             other_slugs = [
-                slug for slug in self.catalog.keys()
+                slug for slug in self.get_top_tables(None, offset)
                 if slug not in primary_set and slug in active_slugs
             ][:n_others]
             if other_slugs:

@@ -97,6 +97,15 @@ class MissingContextError(Exception):
     """Raise to indicate missing context for a query."""
 
 
+class RequestBudgetExceededError(Exception):
+    """
+    Raised when a request has spent its LLM-call or wall-time budget.
+
+    Unrecoverable by design: retrying would spend more of the budget it
+    reports as exhausted.
+    """
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
@@ -129,7 +138,8 @@ UNRECOVERABLE_ERRORS = (
     RecursionError,
     MissingContextError,
     asyncio.CancelledError,
-    UserCancelledError
+    UserCancelledError,
+    RequestBudgetExceededError,
 )
 
 PROVIDED_SOURCE_NAME = "ProvidedSource00000"
