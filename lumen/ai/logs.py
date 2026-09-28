@@ -38,6 +38,7 @@ class ChatLogs(param.Parameterized):
             CREATE TABLE IF NOT EXISTS explorations (
                 exploration_id TEXT PRIMARY KEY,
                 session_id TEXT,
+                user TEXT,
                 parent_id TEXT,
                 position INTEGER,
                 title TEXT,
@@ -105,15 +106,17 @@ class ChatLogs(param.Parameterized):
         title,
         subtitle,
         spec,
+        user=None,
     ):
         UPSERT_EXPLORATION_SCHEMA = """
         INSERT INTO explorations (
-            session_id, exploration_id, parent_id, position, title, subtitle, spec, updated
+            session_id, user, exploration_id, parent_id, position, title, subtitle, spec, updated
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT (exploration_id)
         DO UPDATE SET
         session_id = excluded.session_id,
+        user = excluded.user,
         parent_id = excluded.parent_id,
         position = excluded.position,
         title = excluded.title,
@@ -126,6 +129,7 @@ class ChatLogs(param.Parameterized):
                 UPSERT_EXPLORATION_SCHEMA,
                 (
                     session_id,
+                    user,
                     exploration_id,
                     parent_id,
                     position,
@@ -138,15 +142,16 @@ class ChatLogs(param.Parameterized):
         except Exception as e:
             log_debug(f"Failed to upsert exploration: {e}")
 
-    def load_session(self, session_id):
+    def load_session(self, session_id, user=None):
+        # `user IS ?` (not `=`) so anonymous sessions (user IS NULL) still match each other.
         self.cursor.execute(
             """
             SELECT exploration_id, parent_id, position, title, subtitle, spec
             FROM explorations
-            WHERE session_id = ?
+            WHERE session_id = ? AND user IS ?
             ORDER BY rowid
             """,
-            (session_id,),
+            (session_id, user),
         )
         rows = self.cursor.fetchall()
         return [

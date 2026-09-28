@@ -2485,7 +2485,7 @@ class ExplorerUI(UI):
         if not (self.persist_session and self._logs):
             return
 
-        rows = self._logs.load_session(self._session_id)
+        rows = self._logs.load_session(self._session_id, state.user)
         if not rows:
             return  # nothing saved for this session yet
 
@@ -2570,6 +2570,7 @@ class ExplorerUI(UI):
                     title=exp.title,
                     subtitle=exp.subtitle,
                     spec=exp.to_spec(),
+                    user=state.user,
                 )
                 walk(item.get("items", []), exp.exploration_id)
 
