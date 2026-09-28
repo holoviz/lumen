@@ -2628,7 +2628,7 @@ class ExplorerUI(UI):
                 self._explorations.value = parent
             self.interface.objects = []
             if self.persist_session and self._logs:
-               self._logs.delete_exploration(item["view"].exploration_id)
+                self._logs.delete_exploration(item["view"].exploration_id)
             self._persist_state()
 
     async def _export_exploration(self, item):
