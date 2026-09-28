@@ -23,7 +23,6 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
-import colorcet as cc
 import numpy as np
 import pandas as pd
 import param
@@ -37,7 +36,6 @@ from jinja2 import (
 )
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
-from markupsafe import escape
 from panel_material_ui import Details
 
 from ..config import dump_yaml
@@ -235,6 +233,8 @@ def json_to_yaml(data):
 def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
+        from markupsafe import escape
+
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
             f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
@@ -1364,7 +1364,7 @@ def _get_token_encoder():
     try:
         # Deferred so a missing tiktoken degrades to the character estimate
         # rather than breaking the import.
-        import tiktoken  # noqa: PLC0415
+        import tiktoken
 
         encoder = tiktoken.get_encoding(TOKEN_ENCODING)
     except Exception as e:
@@ -1887,7 +1887,7 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
 
     # SourceResult from controls — extract the DataFrame from the first source.
     # Deferred: the controls package reaches .editors, which imports this module.
-    from .controls.ingest.result import SourceResult  # noqa: PLC0415
+    from .controls.ingest.result import SourceResult
     if isinstance(result, SourceResult):
         if not result.sources or not result.table:
             return None
@@ -2077,6 +2077,8 @@ def category_palette(ncolors: int = 20) -> list[str]:
     colorcet.glasbey_category10 gives float RGB tuples that cannot be
     serialized into a spec.
     """
+    import colorcet as cc
+
     return cc.b_glasbey_category10[:ncolors]
 
 
@@ -2114,7 +2116,7 @@ def normalize_vegalite_spec(
     """
     if editor_type is None:
         # Imported lazily to avoid an editors -> utils import cycle.
-        from .editors import VegaLiteEditor  # noqa: PLC0415
+        from .editors import VegaLiteEditor
         editor_type = VegaLiteEditor
 
     # Remove wrapper properties that aren't part of Vega-Lite spec

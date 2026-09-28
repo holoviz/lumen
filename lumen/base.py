@@ -80,7 +80,7 @@ class Component(Parameterized):
 
     def _extract_refs(self, params: dict[str, Any], refs: dict[str, Any]):
         # Deferred: .variables subclasses MultiTypeComponent from this module.
-        from .variables import Variable  # noqa: PLC0415
+        from .variables import Variable
         processed = {}
         for pname, pval in params.items():
             if is_ref(pval):

@@ -619,9 +619,7 @@ class UI(Viewer):
                     continue
                 elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
                     try:
-                        from ..sources.sqlalchemy import (  # noqa: PLC0415
-                            SQLAlchemySource,
-                        )
+                        from ..sources.sqlalchemy import SQLAlchemySource
                     except ImportError as e:
                         raise ImportError(
                             "SQLAlchemy is required for database connection strings. "
@@ -647,9 +645,7 @@ class UI(Viewer):
                         sources.append(source)
                     else:
                         try:
-                            from ..sources.sqlalchemy import (  # noqa: PLC0415
-                                SQLAlchemySource,
-                            )
+                            from ..sources.sqlalchemy import SQLAlchemySource
                         except ImportError as e:
                             raise ImportError(
                                 "SQLAlchemy is required to read .db files. "
@@ -713,6 +709,9 @@ class UI(Viewer):
 
         source = DuckDBSource(
             initializers=result.source_params.get('initializers', []),
+            # WKB carries no CRS, so re apply the one read_geo_file captured
+            # from the file after the roundtrip
+            geometry_crs=result.source_params.get('geometry_crs'),
             tables={},
             uri=':memory:',
         )

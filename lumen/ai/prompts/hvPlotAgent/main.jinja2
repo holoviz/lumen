@@ -4,7 +4,9 @@
 Generate plot user requested. `x`, `y`, `by` and `groupby` fields MUST ALL be unique columns;
 no repeated columns allowed. Do not arbitrarily set `groupby` and `by` fields unless explicitly requested. If
 histogram requested, use `y` instead of `x`. If x categorical or strings, prefer barh over bar, and use `y` for
-values. If column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
+values. A bar chart needs a discrete `x` with few values: never draw one against a continuous column such as a
+price or a measurement, and never against a column the query grouped by without bucketing it first. Pick the
+categorical column the user meant, or use a histogram to show how a continuous column is distributed. If column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
 MultiPolygon, `paths` for LineString or MultiLineString, otherwise `points`.
 
 To color a dense scatter or point cloud by a category, set `by` to that column and `datashade=True`; this

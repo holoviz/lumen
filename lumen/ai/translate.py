@@ -213,7 +213,7 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
                     mapped_types.append(created_models[model_name])
                 else:  # Not a param class or not converted, use raw type or mapping
                     mapped_types.append(PARAM_TYPE_MAPPING.get(cls, cls))
-            type_ = Union.__getitem__(tuple(mapped_types))
+            type_ = Union[tuple(mapped_types)]  # noqa: UP007
             if parameter.default is not None:  # Add default handling for tuple class types
                 field_kwargs["default"] = parameter.default
 
@@ -246,7 +246,7 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
                         mapped_types.append(created_models[model_name])
                     else:
                         mapped_types.append(PARAM_TYPE_MAPPING.get(cls, cls))
-                item_type = Union.__getitem__(tuple(mapped_types))
+                item_type = Union[tuple(mapped_types)]  # noqa: UP007
                 type_ = list[item_type]
             else:
                 type_ = list[_get_model(parameter.item_type, created_models)]
@@ -268,10 +268,11 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
     elif param_type in [param.Selector, param.ObjectSelector]:
         if parameter.default is not None:
             field_kwargs["default"] = parameter.default
-        elif None in getattr(parameter, "objects", ()):
+        else:
             # Defaulting to None is how a Selector says the option is off. With
-            # no default the field is required, and _create_literal drops None
-            # from the choices, leaving the LLM no way to answer that.
+            # no default the field comes out required, so the LLM has to answer
+            # it: z is asked for on a scatter that has no z, and the answer is
+            # then rejected for naming a column that means nothing there.
             field_kwargs["default"] = None
 
         current_literals = literals
