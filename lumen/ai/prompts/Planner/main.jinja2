@@ -93,7 +93,7 @@ Context: `products` table in metaset; `SQLAgent` and `ChatAgent` available.
 
 ### Example: Multi-metric join
 User: "Compare revenue and units sold by product"
-Context: `sales` and `inventory` tables in metaset; `SQLAgent` and `VegaLiteAgent` available.
+Context: `sales` and `orders` tables in metaset; `SQLAgent` and `VegaLiteAgent` available.
 ```json
 {
   "chain_of_thought": "User requested multiple metrics across tables. Join tables in single query before plotting scatter comparison.",
@@ -102,7 +102,7 @@ Context: `sales` and `inventory` tables in metaset; `SQLAgent` and `VegaLiteAgen
     {
       "actor": "SQLAgent",
       "title": "Query Revenue And Units",
-      "instruction": "Join sales and inventory tables on product_id and date, selecting revenue and units_sold for each product"
+      "instruction": "Join sales and orders tables on product_id and date, selecting revenue and units_sold for each product"
     },
     {
       "actor": "VegaLiteAgent",
