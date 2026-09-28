@@ -456,15 +456,15 @@ class UI(Viewer):
     logs_db_path = param.String(default=None, constant=True, doc="""
         The path to the log file that will store the messages exchanged with the LLM.""")
 
+    persist_session = param.Boolean(default=False, doc="""
+    Whether to persist explorations so they survive a page reload.
+    Requires logs_db_path to be set.""")
+
     reconnect = param.Selector(default=True, objects=[True, False, "prompt"], doc="""
     Whether to automatically re-connect to the server if the connection drops.""")
 
     session_ttl = param.Integer(default=86400, doc="""
     Seconds to keep persisted explorations before cleaning them up.""")
-
-    persist_session = param.Boolean(default=False, doc="""
-    Whether to persist explorations so they survive a page reload.
-    Requires logs_db_path to be set.""")
 
     notebook_preamble = param.String(default='', doc="""
         Preamble to add to exported notebook(s).""")
@@ -1965,7 +1965,8 @@ class Exploration(param.Parameterized):
     view = Child()
 
     initialized = param.Boolean(default=False)
-    exploration_id = param.String(default="")
+    exploration_id = param.String(default="", doc="""
+    Stable identifier used to persist and restore this exploration across page reloads.""")
 
     def __panel__(self):
         return self.view
