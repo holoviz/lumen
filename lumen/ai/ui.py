@@ -1929,15 +1929,23 @@ class ChatUI(UI):
         Available LLM providers to show in the configuration dialog.""")
 
 _REDACT_KEYS = {"password", "token", "api_key", "secret", "access_key", "private_key"}
+_REDACT_URI_KEYS = {"uri", "url"}
 
-def _redact_source_spec(spec: dict) -> dict:
-    spec = dict(spec)
-    for key in list(spec):
-        if key.lower() in _REDACT_KEYS:
-            spec[key] = "***REDACTED***"
-        elif key == "uri" and isinstance(spec[key], str) and "://" in spec[key]:
-            # strip user:password@ out of connection-string style URIs
-            spec[key] = re.sub(r"://[^@/]+@", "://***REDACTED***@", spec[key])
+def _redact_source_spec(spec):
+    """Recursively redact credentials, including inside nested dicts like conn_kwargs."""
+    if isinstance(spec, dict):
+        redacted = {}
+        for key, value in spec.items():
+            if key.lower() in _REDACT_KEYS:
+                redacted[key] = "***REDACTED***"
+            elif key.lower() in _REDACT_URI_KEYS and isinstance(value, str) and "://" in value:
+                # strip user:password@ out of connection-string style URIs
+                redacted[key] = re.sub(r"://[^@/]+@", "://***REDACTED***@", value)
+            else:
+                redacted[key] = _redact_source_spec(value)
+        return redacted
+    elif isinstance(spec, list):
+        return [_redact_source_spec(item) for item in spec]
     return spec
 
 class Exploration(param.Parameterized):
