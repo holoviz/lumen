@@ -84,7 +84,7 @@ def test_local_sql_cases_check_rows_and_tables(name):
     case = next(case for case in DATASET.cases if case.name == name)
     fixture = source(case.inputs)
     expected = case.metadata
-    assert expected.sql_contains
+    assert expected.rows
     assert sorted(fixture.execute({
         "commerce_select_orders": "SELECT COUNT(*) AS paid_count FROM orders WHERE status = 'paid'",
         "file_orders_csv": "SELECT order_id, amount FROM orders_csv WHERE status = 'paid' ORDER BY order_id",
@@ -162,6 +162,22 @@ def test_parallel_bird_runner_checkpoints_in_order_and_times_out(tmp_path):
     assert summary["unscorable"] == 1
     assert run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", True, 2,
                         worker=simulated_bird_case_process, case_timeout=3) == summary
+
+
+def test_parallel_bird_runner_reads_result_sent_before_worker_exit(tmp_path, monkeypatch):
+    """A worker that sends and exits while the runner is not waiting still counts."""
+    import tests.evals.__main__ as runner
+
+    # Never report readiness, so every result arrives outside wait().
+    monkeypatch.setattr(runner, "wait", lambda *args, **kwargs: time.sleep(0.2) or [])
+    cases = [Case(name="case_1", inputs=Inputs(["1"]))]
+    questions = tmp_path / "questions.json"
+    questions.write_text("[]")
+    summary = runner.run_all_bird(Dataset(name="bird_test", cases=cases), tmp_path / "result.json", questions,
+                                  tmp_path, "test", "openai", "test-key", False, 1,
+                                  worker=simulated_bird_case_process, case_timeout=5)
+    assert summary["correct"] == 1
+    assert summary["unscorable"] == 0
 
 
 def _nested_bird_score(path, sender):
