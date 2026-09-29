@@ -5,6 +5,9 @@ from . import (  # noqa
 )
 from .analysis import Analysis  # noqa
 from .coordinator import Coordinator, DependencyResolver, Planner  # noqa
+from .decisions import (  # noqa
+    Choice, DecisionModel, DecisionResult, Jev, Noul, Score,
+)
 from .ui import ChatUI, ExplorerUI  # noqa
 from .vector_store import DuckDBVectorStore, NumpyVectorStore  # noqa
 
