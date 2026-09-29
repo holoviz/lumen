@@ -86,6 +86,31 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
+### Use a decision model for bounded planning choices
+
+Optionally let Jev answer three planning decisions before the LLM: classify a follow-up as `direct`, `derived`, or `new`; decide whether clarification is necessary; and decide whether a tool is relevant to the current task. The LLM still generates plans, instructions, queries, and responses. Without a decision model, the planner behaves as before. If a decision is uncertain, invalid, or unavailable, the same LLM prompt handles it instead.
+
+Install the optional SDK with `pip install 'lumen[ai-typesafe]'`, then configure a Jev API key:
+
+``` py title="Use Jev for planning decisions"
+import os
+
+import lumen.ai as lmai
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    decision_model=lmai.Jev(api_key=os.environ['JEV_API_KEY']),
+    decision_thresholds={
+        'planner.follow_up': 0.90,
+        'planner.clarification': 0.90,
+        'coordinator.tool_relevance': 0.95,
+    },
+)
+ui.servable()
+```
+
+Pass the key from your secret manager or environment instead of putting it in source code. An omitted threshold defaults to `0.90`; these numbers are provisional and should be checked against real queries. Jev's `Choice` confidence gates the follow-up classification. Binary (`Noul`) decisions use `2 * abs(probability - 0.5)` so an uncertain "no" falls back as readily as an uncertain "yes". Tool relevance merits particular care: an incorrect rejection may hide data the planner needs. Decision calls do not run for unsupported multimodal requests; those keep the LLM path.
+
 ## How coordinators work
 
 ### Planner creates a complete plan upfront

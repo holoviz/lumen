@@ -25,6 +25,7 @@ from ..config import PROMPTS_DIR
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
+from ..decisions import Choice, Noul
 from ..llm import Message
 from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
@@ -346,10 +347,45 @@ class Planner(Coordinator):
         if "data" not in context:
             return "new"
 
-        # Use the follow_up prompt to classify
-        result = await self._invoke_prompt("follow_up", messages, context)
+        async def fallback():
+            result = await self._invoke_prompt("follow_up", messages, context)
+            return result.follow_up_type
 
-        follow_up_type = result.follow_up_type
+        if self.decision_model is None:
+            follow_up_type = await fallback()
+        else:
+            user_content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+            user_text = user_content if isinstance(user_content, str) else ""
+            if not user_text:
+                follow_up_type = await fallback()
+            else:
+                metaset = context.get("metaset")
+                if (not isinstance(context["data"], str) or not isinstance(context.get("sql") or "", str)
+                    or (metaset is not None and not hasattr(metaset, "table_context"))):
+                    follow_up_type = await fallback()
+                else:
+                    # The same provenance the follow_up prompt reads, so both routes see the same facts.
+                    source = context.get("source")
+                    source_meta = {
+                        table: meta for table, meta in ((getattr(source, "metadata", None) or {}).items())
+                        if isinstance(meta, dict)
+                    }
+                    decision_state = {
+                        "user_request": user_text, "previous_sql": context.get("sql") or "",
+                        "data_summary": context["data"],
+                        "external_api_tables": sorted(t for t, m in source_meta.items() if m.get("source_action")),
+                        "derived_tables": sorted(t for t, m in source_meta.items() if m.get("derived_from")),
+                        "available_tables": metaset.table_context(include_metadata=False) if metaset else "",
+                    }
+                    question = Choice(
+                        instructions="Does the request use data already in memory (direct), filter a previously derived table (derived), or require a fresh query/fetch (new)? A narrow API fetch cannot be expanded without a new fetch.",
+                        criteria={
+                            "direct": "Existing in-memory data answers without querying again.",
+                            "derived": "Filter or subset an existing derived table; no recomputation from raw sources.",
+                            "new": "Requires new computation, data beyond a narrow fetch, or a different topic.",
+                        },
+                    )
+                    follow_up_type = await self._decide_or_fallback("planner.follow_up", decision_state, question, fallback)
         if follow_up_type == "new":
             context.pop("pipeline", None)
 
@@ -362,13 +398,28 @@ class Planner(Coordinator):
         Returns True only if the query is genuinely ambiguous.
         """
         try:
-            result = await self._invoke_prompt("clarification_check", messages, context)
-            log_debug(
-                f"Clarification check: needs_clarification={result.yes} "
-                f"({result.chain_of_thought})",
-                prefix="[clarification]",
+            async def fallback():
+                result = await self._invoke_prompt("clarification_check", messages, context)
+                log_debug(
+                    f"Clarification check: needs_clarification={result.yes} "
+                    f"({result.chain_of_thought})",
+                    prefix="[clarification]",
+                )
+                return result.yes
+
+            if self.decision_model is None:
+                return await fallback()
+            user_content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+            user_text = user_content if isinstance(user_content, str) else ""
+            if not user_text:
+                return await fallback()
+            return await self._decide_or_fallback(
+                "planner.clarification", {"user_request": user_text},
+                Noul(instructions=(
+                    "Does this request need clarification before planning? Answer yes only if multiple interpretations "
+                    "require fundamentally different actions, none is the obvious default, and the data cannot resolve it."
+                )), fallback,
             )
-            return result.yes
         except Exception:
             return False  # On failure, default to not clarifying
 

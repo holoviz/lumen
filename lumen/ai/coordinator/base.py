@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import traceback
 
@@ -30,6 +31,9 @@ from ..agents import (
 )
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
+from ..decisions import (
+    Choice, ChoiceAnswer, DecisionModel, Noul, NoulAnswer,
+)
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
@@ -297,6 +301,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     context = param.Dict(default={})
 
+    decision_model = param.ClassSelector(default=None, class_=DecisionModel, doc="Optional model for closed-choice decisions before LLM fallback.")
+
+    decision_thresholds = param.Dict(default={}, doc="Minimum certainty for each decision site, defaulting to 0.90.")
+
     history = param.Integer(
         default=3,
         doc="""
@@ -362,6 +370,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
             context = {}
         if llm_tools is None:
             llm_tools = []
+
+        thresholds = params.get("decision_thresholds") or {}
+        for site, threshold in thresholds.items():
+            if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not math.isfinite(threshold) or not 0 <= threshold <= 1:
+                raise ValueError(f"Decision threshold for {site!r} must be between 0 and 1.")
 
         if interface is None:
             interface = ChatInterface(
@@ -598,19 +611,66 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return plan
 
     async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message], context: TContext) -> bool:
-        result = await self._invoke_prompt(
-            "tool_relevance",
-            messages,
-            context,
-            tool_name=tool.name,
-            tool_purpose=getattr(tool, "purpose", ""),
-            tool_output=tool_output,
-            actor_name=actor.name,
-            actor_purpose=getattr(actor, "purpose", actor.__doc__),
-            actor_task=actor_task,
+        async def fallback():
+            result = await self._invoke_prompt(
+                "tool_relevance",
+                messages,
+                context,
+                tool_name=tool.name,
+                tool_purpose=getattr(tool, "purpose", ""),
+                tool_output=tool_output,
+                actor_name=actor.name,
+                actor_purpose=getattr(actor, "purpose", actor.__doc__),
+                actor_task=actor_task,
+            )
+            return result.yes
+
+        if self.decision_model is None:
+            return await fallback()
+        user_content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+        user_text = user_content if isinstance(user_content, str) else ""
+        if not user_text:
+            return await fallback()
+        tool_purpose = getattr(tool, "purpose", "")
+        actor_purpose = getattr(actor, "purpose", "")
+        if not isinstance(tool_purpose, str) or not isinstance(actor_purpose, str) or not isinstance(tool_output, str) or not isinstance(actor_task, str):
+            return await fallback()
+        return await self._decide_or_fallback(
+            "coordinator.tool_relevance",
+            {"user_request": user_text, "task": actor_task, "actor": actor.name,
+             "actor_purpose": actor_purpose, "tool": tool.name,
+             "tool_purpose": tool_purpose, "tool_output": tool_output or ""},
+            Noul(instructions="Will this tool help the actor complete its task? Consider its purpose, output, and user request."),
+            fallback,
         )
 
-        return result.yes
+    async def _decide_or_fallback(self, site: str, decision_state: dict, question: Choice | Noul, fallback: Callable):
+        if self.decision_model is None:
+            return await fallback()
+        try:
+            result = await self.decision_model.invoke(decision_state, {site: question})
+            answer = result.answers.get(site)
+            if isinstance(question, Choice) and isinstance(answer, ChoiceAnswer):
+                valid = (answer.choice in question.criteria and set(answer.probabilities) == set(question.criteria)
+                         and all(math.isfinite(p) and 0 <= p <= 1 for p in answer.probabilities.values()))
+                certainty = answer.confidence
+                value = answer.choice
+            elif isinstance(question, Noul) and isinstance(answer, NoulAnswer):
+                valid = True
+                certainty = 2 * abs(answer.noul - 0.5)
+                value = answer.noul > 0.5
+            else:
+                valid, certainty, value = False, 0, None
+            threshold = self.decision_thresholds.get(site, 0.90)
+            if valid and math.isfinite(certainty) and certainty >= threshold - 1e-12:
+                log_debug(f"Decision {site}: accepted ({type(answer).__name__})")
+                return value
+            log_debug(f"Decision {site}: low confidence or invalid answer; falling back")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log_debug(f"Decision {site}: {type(e).__name__}; falling back")
+        return await fallback()
 
     def __panel__(self):
         return self.interface
