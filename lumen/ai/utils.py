@@ -172,7 +172,7 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     )
     system_prompt = {
         "role": "system",
-        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        "content": f"<Chat History>\n{formatted_history}\n</Chat History>"
     }
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 

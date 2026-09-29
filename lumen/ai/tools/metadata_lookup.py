@@ -585,8 +585,10 @@ class MetadataLookup(VectorLookupTool):
                 column_metadata = table_metadata.get("columns", {})
 
                 for col_name, col_info in column_metadata.items():
+                    # tables_metadata is shared across lookups, so it must not be mutated.
+                    col_info = dict(col_info) if isinstance(col_info, dict) else {}
                     col_desc = col_info.pop("description", "")
-                    column_schema = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
+                    column_schema = Column(name=col_name, description=col_desc, metadata=col_info)
                     columns.append(column_schema)
 
             # Read lineage stored directly on the source by SQLAgent.

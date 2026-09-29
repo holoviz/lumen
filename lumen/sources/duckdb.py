@@ -33,6 +33,11 @@ if TYPE_CHECKING:
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
 
+# A table expression that is a single table function call, e.g. read_csv('x.csv')
+TABLE_FUNCTION = re.compile(r"^[A-Za-z_]\w*\s*\(.*\)$", re.DOTALL)
+
+MISSING_TABLE = re.compile(r"Table with name\s(\S+)")
+
 
 def _quote_ident(ident: str) -> str:
     """Quote a SQL identifier, escaping embedded double quotes."""
@@ -163,11 +168,18 @@ class DuckDBSource(BaseSQLSource):
                     processed_tables[table_alias] = sql_expr
                     continue
 
-                # For SQL expressions that define complete queries, create them as views
-                # This includes both READ_* functions and other SELECT statements
-                if sql_expr.strip().upper().startswith('SELECT'):
+                # Expose complete queries and table functions such as
+                # read_csv(...) as views so SQL can reference the table by name.
+                stripped = sql_expr.strip()
+                if stripped.upper().startswith('SELECT'):
+                    view_body = sql_expr
+                elif TABLE_FUNCTION.match(stripped):
+                    view_body = f"SELECT * FROM {stripped}"
+                else:
+                    view_body = None
+                if view_body is not None:
                     quoted_table = f'"{table_alias}"' if not (table_alias.startswith('"') and table_alias.endswith('"')) else table_alias
-                    view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {sql_expr}"
+                    view_sql = f"CREATE OR REPLACE VIEW {quoted_table} AS {view_body}"
                     cursor = self._connection.cursor()
                     try:
                         cursor.execute(view_sql)
@@ -554,34 +566,36 @@ class DuckDBSource(BaseSQLSource):
             elif sql_expr in equivalent_sql_exprs:
                 continue
             table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
-            cursor = self._connection.cursor()
-            try:
-                # Execute with parameters if provided for this table
-                if table in params:
-                    cursor.execute(table_expr, params[table])
-                else:
-                    cursor.execute(table_expr)
-            except duckdb.CatalogException as e:
-                original_e = e
-                pattern = r"Table with name\s(\S+)"
-                match = re.search(pattern, str(e))
-                if match and isinstance(self.tables, dict):
-                    name = match.group(1)
-                    real = self.tables[name] if name in self.tables else self.tables[name.strip('"')]
-                    table_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: real}).apply(table_expr)
-                    try:
-                        cursor.execute(table_expr)
-                    except Exception as e:
-                        raise original_e from e
-                else:
-                    raise e
-            finally:
-                cursor.close()
+            with self._connection.cursor() as cursor:
+                self._execute_resolving_tables(cursor, table_expr, params.get(table))
 
         # Preserve file-based metadata from parent source and merge with
         # any new file-based tables detected during __init__
         source._file_based_tables = {**self._file_based_tables, **source._file_based_tables}
         return source
+
+    def _execute_resolving_tables(self, cursor, sql_expr: str, params: list | dict | None = None):
+        """Execute `sql_expr`, inlining the definition of each table the
+        connection cannot resolve by name, one per CatalogException, so a
+        join across several such tables resolves all of them.
+        """
+        original = None
+        resolved: set[str] = set()
+        while True:
+            try:
+                return cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+            except duckdb.CatalogException as e:
+                original = original or e
+                match = MISSING_TABLE.search(str(e))
+                name = match.group(1) if match else ''
+                tables = self.tables if isinstance(self.tables, dict) else {}
+                key = name if name in tables else name.strip('"')
+                if key not in tables or key in resolved:
+                    if e is original:
+                        raise
+                    raise original from e
+                resolved.add(key)
+                sql_expr = SQLSelectFrom(sql_expr=self.sql_expr, tables={name: self.tables[key]}).apply(sql_expr)
 
     def _fetch_df(
         self, cursor, sql_expr: str, params: list | dict | None = None,
