@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from lumen.ai.schemas import DocumentChunk
 
@@ -30,18 +29,20 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
     EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, VALIDATION_MAX_ROWS,
     SQLCleanup, execute_exploration_sql, format_exploration_result,
-    make_load_table_schemas_tool, make_sql_model, sql_contains_aggregates,
+    format_sql_error, make_load_table_schemas_tool,
+    make_run_exploration_sql_tool, make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
 from lumen.ai.analysis import Analysis
-from lumen.ai.config import RetriesExceededError
+from lumen.ai.config import DeterministicError, RetriesExceededError
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
 from lumen.ai.llm import Llm
+from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
@@ -60,12 +61,12 @@ async def test_load_table_schemas_resolves_aliases(input_slug):
     metaset = Metaset(
         query=None,
         catalog={slug: TableCatalogEntry(slug, 1, [Column("order_id")])},
-        schemas={slug: {"__len__": 12, "order_id": {"type": "integer"}}},
+        schemas={slug: {"__len__": 12, "order_id": {"type": "integer", "inclusiveMinimum": 1, "inclusiveMaximum": 12}}},
     )
 
-    result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function([input_slug]))
+    result = await make_load_table_schemas_tool(metaset).function([input_slug])
 
-    assert result == {slug: {"row_count": 12, "schema": {"order_id": {"type": "integer"}}}}
+    assert result == "orders (12 rows)\n  order_id INTEGER 1..12"
 
 
 async def test_load_table_schemas_preserves_dots_in_source_name():
@@ -77,8 +78,9 @@ async def test_load_table_schemas_preserves_dots_in_source_name():
     )
 
     for alias in ("src.prod/orders", "src.prod.orders"):
-        result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function([alias]))
-        assert slug in result
+        result = await make_load_table_schemas_tool(metaset).function([alias])
+        assert result.startswith("orders")
+        assert "order_id INTEGER" in result
 
 
 async def test_load_table_schemas_rejects_ambiguous_bare_name():
@@ -88,19 +90,20 @@ async def test_load_table_schemas_rejects_ambiguous_bare_name():
         catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
         schemas={},
     )
-    metaset.get_schema = AsyncMock()
+    metaset.ensure_stats = AsyncMock()
 
-    result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function(["orders"]))
+    result = await make_load_table_schemas_tool(metaset).function(["orders"])
 
-    assert "Ambiguous" in result["orders"]["error"]
-    assert all(slug in result["orders"]["error"] for slug in slugs)
-    metaset.get_schema.assert_not_awaited()
+    assert "ambiguous" in result.lower()
+    assert all(slug in result for slug in slugs)
+    metaset.ensure_stats.assert_not_awaited()
 
 
 async def test_load_table_schemas_budget_applies_to_each_table():
     slugs = [f"src{SOURCE_TABLE_SEPARATOR}table_{i}" for i in range(4)]
+    names = [f"field_{a}{b}" for a in "abcdefghij" for b in "klmnopqrs"]
     schemas = {
-        slug: {"__len__": 100, **{f"column_{j}": {"type": "varchar"} for j in range(90)}}
+        slug: {"__len__": 100, **{name: {"type": "string", "enum": [f"{name} value {k}" for k in range(4)]} for name in names}}
         for slug in slugs
     }
     metaset = Metaset(
@@ -112,9 +115,9 @@ async def test_load_table_schemas_budget_applies_to_each_table():
     result = await make_load_table_schemas_tool(metaset).function(slugs)
 
     assert count_tokens(result) > 3000
-    for slug in slugs:
-        assert slug in result
-        assert f"{slug}:\n  row_count: 100\n  schema:\n    column_0:" in result
+    for i in range(4):
+        assert f"table_{i} (100 rows)\n  field_ak VARCHAR {{field_ak value 0" in result
+    assert result.count("truncated") == 4
     assert count_tokens(result) < 4500
 
 
@@ -740,7 +743,7 @@ async def test_analysis_agent(llm, duckdb_source, test_messages):
     class TestAnalysis(Analysis):
 
         def __call__(self, pipeline, context):
-            return f"Test Analysis"
+            return "Test Analysis"
 
     agent = AnalysisAgent(
         analyses=[TestAnalysis.instance(name='foo'), TestAnalysis.instance(name='bar')],
@@ -784,17 +787,17 @@ class TestDocumentListAgentIntegration:
                 DocumentChunk(filename="schema.md", text="chunk 3", similarity=0.7),
             ]
         )
-        
+
         context = {"metaset": metaset}
-        
+
         # Test applies
         applies = await DocumentListAgent.applies(context)
         assert applies is True  # More than 1 unique document
-        
+
         # Test _get_items
         agent = DocumentListAgent()
         items = agent._get_items(context)
-        
+
         # Should return unique, sorted filenames
         assert items == {"Documents": ["readme.md", "schema.md"]}
 
@@ -803,7 +806,7 @@ class TestDocumentListAgentIntegration:
         # Metaset without docs
         metaset = Metaset(query="test", catalog={}, docs=None)
         context = {"metaset": metaset}
-        
+
         applies = await DocumentListAgent.applies(context)
         assert applies is False
 
@@ -1335,3 +1338,65 @@ def test_colliding_slug_does_not_clobber_source_table():
     source.create_sql_expr_source({slug: bad_sql}, materialize=True)
 
     pd.testing.assert_frame_equal(source.get("hosts"), before)
+
+
+async def test_revise_keeps_sql_hash_literals(llm):
+    """Revised SQL used to round-trip through YAML, which truncates at '#'."""
+    agent = SQLAgent(llm=llm)
+    fixed = "SELECT * FROM schools WHERE street = '80651 Route #271'"
+    revision = RetrySpec(chain_of_thought="Fix the street", edits=[ReplaceLine(line_no=1, line=fixed)])
+
+    with patch.object(agent, "_invoke_prompt", AsyncMock(return_value=revision)):
+        result = await agent.revise("fix", [{"role": "user", "content": "fix"}], {}, spec="SELECT 1", language="sql.duckdb")
+
+    assert result == fixed
+
+
+async def test_sql_agent_accepts_empty_result_after_one_retry(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT * FROM (VALUES (1, 'paid')) AS t(id, status)"})
+    model = make_sql_model([(source.name, "orders")])
+    query = model(query="SELECT id FROM orders WHERE status = 'refunded'", table_slug="refunded_orders", tables=["orders"])
+    llm.set_responses([query, query])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+
+    out, _ = await SQLAgent(llm=llm, clean_data=False).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert len(out[0].component.data) == 0
+
+
+async def test_sql_agent_does_not_retry_unresolvable_table(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT 1 AS id"})
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+    source._connection.execute("DROP VIEW orders")
+    model = make_sql_model([(source.name, "orders")])
+    llm.set_responses([model(query="SELECT id FROM orders", table_slug="order_ids", tables=["orders"])] * 3)
+
+    with pytest.raises(DeterministicError, match="orders"):
+        await SQLAgent(llm=llm, clean_data=False).respond(test_messages, context)
+
+    assert llm._index == 1
+
+
+async def test_sql_exploration_error_hides_limit_wrapper():
+    source = DuckDBSource(tables={"t": "SELECT 1 AS a"})
+    result = await execute_exploration_sql(source.name, "SELECT nope FROM t", sources={(source.name, "t"): source})
+
+    assert "subquery" not in result
+    query_line, caret_line = next(
+        (line, following) for line, following in zip(result.splitlines(), result.splitlines()[1:], strict=False)
+        if "SELECT nope FROM t" in line
+    )
+    assert caret_line.index("^") == query_line.index("nope")
+
+
+def test_format_sql_error_strips_ansi_codes():
+    error = ValueError("Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE \x1b[4m(\x1b[0m")
+    assert format_sql_error(error) == "ValueError: Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE ("
+
+
+def test_exploration_tool_doc_quotes_every_name():
+    sources = {("src_b", "orders"): None, ("src_a", "customers"): None}
+    doc = make_run_exploration_sql_tool(sources).function.__doc__
+    assert "one of `src_a`, `src_b`." in doc
+    assert doc.count("`") % 2 == 0

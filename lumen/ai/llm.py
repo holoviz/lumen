@@ -6,6 +6,7 @@ import contextvars
 import inspect
 import json
 import os
+import re
 import time
 import traceback
 
@@ -772,7 +773,9 @@ class Llm(param.Parameterized):
         -------
         The completed response_model.
         """
-        system = system.strip().replace("\n\n", "\n")
+        # Only runs of blank lines left by empty template blocks are squeezed;
+        # single blank lines separate sections the model should see as such.
+        system = re.sub(r"\n{3,}", "\n\n", system.strip())
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
         messages, contains_image = self._check_for_image(messages)
         model_spec = await self._resolve_routing(model_spec, messages)
@@ -2746,6 +2749,13 @@ class Anthropic(Llm, AnthropicMixin):
         cache_control = self._cache_control()
         if cache_control is not None:
             kwargs["cache_control"] = cache_control
+            # Automatic caching only writes at the end of the conversation, so
+            # a new question never reuses the previous one's tools+system
+            # prefix. An explicit breakpoint on the system prompt does.
+            if isinstance(kwargs.get("system"), str) and kwargs["system"]:
+                kwargs["system"] = [
+                    {"type": "text", "text": kwargs["system"], "cache_control": cache_control}
+                ]
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)

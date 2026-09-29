@@ -8,17 +8,15 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-import yaml
 
 try:
     from lumen.ai.agents.sql import (
-        PROMPT_OTHER_TABLES, PROMPT_TABLES, RequestBudget, SQLAgent,
-        _coerce_filter_value, build_distinct_values_sql,
-        catalog_exceeds_prompt, execute_distinct_values,
-        execute_exploration_sql, make_browse_data_catalog_tool,
-        make_load_table_schemas_tool, make_run_exploration_sql_tool,
-        make_sql_model, numeric_cast_edit, referenced_columns,
-        sql_is_scalar_aggregate, summarize_tool_calls,
+        PROMPT_OTHER_TABLES, RequestBudget, SQLAgent, _coerce_filter_value,
+        build_distinct_values_sql, catalog_exceeds_prompt,
+        execute_distinct_values, execute_exploration_sql,
+        make_browse_data_catalog_tool, make_load_table_schemas_tool,
+        make_run_exploration_sql_tool, make_sql_model, numeric_cast_edit,
+        referenced_columns, sql_is_scalar_aggregate, summarize_tool_calls,
     )
     from lumen.ai.config import RequestBudgetExceededError
     from lumen.ai.llm import OpenAI
@@ -143,9 +141,9 @@ async def test_load_table_schemas_filters_columns():
 
     result = await make_load_table_schemas_tool(metaset).function(["Orders"], columns=["ORDER_ID", "missing"])
 
-    parsed = yaml.safe_load(result.split("Columns not found")[0])
-    assert parsed == {slug: {"row_count": 3, "schema": {"order_id": {"description": "Primary key", "type": "integer"}}}}
-    assert "Columns not found in the requested tables: missing." in result
+    assert "order_id INTEGER -- Primary key" in result
+    assert "status" not in result
+    assert result.endswith("Columns not found in the requested tables: missing.")
 
 
 def _catalog(n):
@@ -157,8 +155,9 @@ def _catalog(n):
 
 
 def test_browse_catalog_is_only_offered_for_large_catalogs():
-    assert not catalog_exceeds_prompt(_catalog(PROMPT_TABLES + PROMPT_OTHER_TABLES))
-    assert catalog_exceeds_prompt(_catalog(PROMPT_TABLES + PROMPT_OTHER_TABLES + 1))
+    shown = SQLAgent.schema_tables_shown
+    assert not catalog_exceeds_prompt(_catalog(shown + PROMPT_OTHER_TABLES), shown)
+    assert catalog_exceeds_prompt(_catalog(shown + PROMPT_OTHER_TABLES + 1), shown)
     agent = SQLAgent()
     names = [tool.name for tool in agent._sql_tools({("src", "table_000"): None}, _catalog(3))]
     assert names == ["load_table_schemas", "distinct_values", "run_exploration_sql"]
@@ -221,12 +220,12 @@ def test_referenced_columns():
     assert referenced_columns("SELECT t.* FROM t", "duckdb") is None
 
 
-def test_profile_source_rows_only_lints_referenced_columns():
+async def test_profile_source_rows_only_lints_referenced_columns():
     source = DuckDBSource(tables={
         "t": "SELECT * FROM (VALUES ('a', 1, -9999), ('b', 2, -9999), ('c', 3, 5)) AS t(name, value, unused)"
     })
-    assert SQLAgent._profile_source_rows(source, ["t"], "SELECT name, SUM(value) FROM t GROUP BY name") == []
-    findings = SQLAgent._profile_source_rows(source, ["t"], "SELECT name, SUM(unused) FROM t GROUP BY name")
+    assert await SQLAgent._profile_source_rows(source, ["t"], "SELECT name, SUM(value) FROM t GROUP BY name") == []
+    findings = await SQLAgent._profile_source_rows(source, ["t"], "SELECT name, SUM(unused) FROM t GROUP BY name")
     assert any("-9999" in finding for finding in findings)
 
 

@@ -1,6 +1,9 @@
+import datetime as dt
 import io
+import json
 
 from typing import get_args
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -10,14 +13,19 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor.dsl.partial import Partial
 from panel.pane import Image
 from panel.tests.util import async_wait_until
 from panel_material_ui import (
     Card, ChatMessage, ChatStep, Typography,
 )
+from pydantic import ValidationError
 
-from lumen.ai.agents import ChatAgent, SQLAgent
+from lumen.ai.agents import (
+    ChatAgent, SourceAgent, SQLAgent, ValidationAgent,
+)
 from lumen.ai.agents.sql import make_sql_model
+from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
@@ -28,7 +36,7 @@ from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
-from lumen.ai.utils import content_to_text
+from lumen.ai.utils import content_to_text, render_template
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
 
@@ -145,9 +153,8 @@ async def test_planner_error(llm):
 
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
-    llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Invalid plan", yes=False),
-        lambda: PlanModel(
+    def invalid_plan():
+        return PlanModel(
             chain_of_thought="Just use ChatAgent",
             title="Hello!",
             steps=[
@@ -157,6 +164,12 @@ async def test_planner_error(llm):
                     title="Hello Reply"
                 )
             ])
+
+    # Planning reasks once, so both attempts must fail
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Invalid plan", yes=False),
+        invalid_plan,
+        invalid_plan,
     ])
 
     planner = Planner(llm=llm)
@@ -176,6 +189,74 @@ async def test_planner_error(llm):
     title, todos = steps_layout.header
     assert title.object == "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
     assert todos.object is None
+
+
+@pytest.mark.parametrize("text, instruction", [
+    ("Use SQLAgent to calculate the total.", "Use SQLAgent to calculate the total."),
+    ("SQLAgent: calculate the total", "calculate the total"),
+    ("`SQLAgent`: calculate the total", "calculate the total"),
+    ("`SQLAgent` to calculate the total", "`SQLAgent` to calculate the total"),
+])
+def test_plan_model_coerces_string_steps(text, instruction):
+    PlanModel = make_plan_model(["SQLAgent", "ChatAgent"], [])
+    plan = PlanModel(chain_of_thought="", title="Total", steps=[text])
+    assert plan.steps[0].actor == "SQLAgent"
+    assert plan.steps[0].instruction == instruction
+
+
+def test_plan_model_coerces_string_steps_while_streaming():
+    PlanModel = make_plan_model(["SQLAgent", "ChatAgent"], [])
+    plan = Partial[PlanModel].model_validate({"chain_of_thought": "", "title": "", "steps": ["ChatAgent: summarize"]})
+    assert plan.steps[0].actor == "ChatAgent"
+
+
+def test_plan_model_rejects_string_step_without_actor():
+    PlanModel = make_plan_model(["SQLAgent"], [])
+    with pytest.raises(ValidationError):
+        PlanModel(chain_of_thought="", title="Total", steps=["Calculate the total"])
+
+
+def test_plan_model_schema_has_no_refs():
+    schema = json.dumps(make_plan_model(["SQLAgent"], ["MetadataLookup"]).model_json_schema())
+    assert "$ref" not in schema
+    assert "$defs" not in schema
+    assert '"enum": ["SQLAgent", "MetadataLookup"]' in schema
+
+
+async def test_planner_reasks_after_invalid_plan(llm):
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+
+    def invalid_plan():
+        return PlanModel(chain_of_thought="", title="Hello!", steps=[{"instruction": "Say Hello!"}])
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        invalid_plan,
+        PlanModel(chain_of_thought="", title="Hello!", steps=[StepModel(actor="ChatAgent", instruction="Say Hello!")]),
+    ])
+    with patch.object(llm, "invoke", wraps=llm.invoke) as invoke:
+        plan = await Planner(llm=llm).respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+    assert len(plan) == 1
+    assert "Your previous plan was rejected" in invoke.call_args.kwargs["system"]
+
+
+async def test_planner_retries_empty_completion(llm):
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+
+    def empty_completion():
+        raise RuntimeError("No tool calls or function call found in response (mode: TOOLS)")
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        empty_completion,
+        PlanModel(chain_of_thought="", title="Hello!", steps=[StepModel(actor="ChatAgent", instruction="Say Hello!")]),
+    ])
+    plan = await Planner(llm=llm).respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+    assert len(plan) == 1
 
 
 @pytest.fixture
@@ -743,3 +824,76 @@ async def test_planner_multimodal_user_message(llm):
     assert isinstance(plan, Plan)
     assert plan.title == "Image Q&A"
     assert len(plan) == 1
+
+
+@pytest.mark.parametrize("actions, query, excluded", [
+    (None, "Show totals", False),
+    ({}, "Show totals", True),
+    ({"Fetch URL": {"parameters": {"url": {}}}}, "Show totals", True),
+    ({"Fetch URL": {"parameters": {"url": {}}}}, "Load https://example.com/a.csv", False),
+    ({"Weather": {"parameters": {"city": {}}}}, "Weather in Berlin", False),
+])
+def test_planner_excludes_inapplicable_actors(actions, query, excluded):
+    context = {} if actions is None else {"source_actions": actions}
+    result = Planner._excluded_actors([{"role": "user", "content": query}], context)
+    assert "ValidationAgent" in result
+    assert ("SourceAgent" in result) is excluded
+
+
+def _render_planner(**overrides):
+    context = dict(
+        agents=[ChatAgent()], tools=[], llm_tools=[], memory={}, previous_plans=[],
+        unmet_dependencies=set(), candidates=[], previous_actors=[], follow_up_type="new",
+        current_datetime=dt.datetime(2026, 1, 1),
+    )
+    context.update(overrides)
+    return render_template(PROMPTS_DIR / "Planner" / "main.jinja2", **context)
+
+
+def test_planner_prompt_omits_inapplicable_sections():
+    prompt = _render_planner(memory={"source_actions": {"Fetch URL": {"description": "Fetch.\n\nMore"}}})
+    assert "## Tool Usage" not in prompt
+    assert "## Available documents" not in prompt
+    # Without SourceAgent there is nobody to run the configured actions.
+    assert "Configured external data sources" not in prompt
+
+
+def test_planner_prompt_lists_full_action_summary():
+    description = "Download data from a URL and load it into the database.\nSupports CSV and Parquet files.\n\nParameters\n----------"
+    prompt = _render_planner(
+        agents=[ChatAgent(), SourceAgent()],
+        memory={"source_actions": {"Fetch URL": {"description": description}}},
+    )
+    assert "- Fetch URL: Download data from a URL and load it into the database. Supports CSV and Parquet files.\n" in prompt
+
+
+def test_follow_up_prompt_lists_derived_and_external_tables():
+    source = DuckDBSource(uri=":memory:", metadata={
+        "weather": {"source_action": "Forecast"},
+        "by_day": {"derived_from": [f"src{SOURCE_TABLE_SEPARATOR}weather"], "created_order": 1},
+        "top_day": {"derived_from": [f"src{SOURCE_TABLE_SEPARATOR}by_day"], "created_order": 2},
+    })
+    prompt = render_template(
+        PROMPTS_DIR / "Planner" / "follow_up.jinja2",
+        memory={"source": source, "data": "x"}, current_datetime=dt.datetime(2026, 1, 1),
+    )
+    assert "Note: `weather` loaded from an external API" in prompt
+    assert "Derived tables:\n- top_day (from by_day) ★\n- by_day (from weather)\n" in prompt
+
+
+async def test_planner_history_excludes_validation_messages(llm, monkeypatch):
+    planner = Planner(llm=llm, agents=[ChatAgent(), ValidationAgent()])
+    planner.interface.send("Show totals", user="User", respond=False)
+    planner.interface.stream("**Query Validation: ✗ Incomplete** - missing column", user="Validation")
+    planner.interface.send("Now plot them", user="User", respond=False)
+    captured = {}
+
+    async def pre_plan(messages, context, agents, tools):
+        captured["messages"] = messages
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(planner, "_pre_plan", pre_plan)
+    with pytest.raises(RuntimeError, match="stop"):
+        await planner.respond([{"role": "user", "content": "Now plot them"}], {})
+    assert "Query Validation" not in str(captured["messages"])
+    assert "Show totals" in str(captured["messages"])

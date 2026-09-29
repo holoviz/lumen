@@ -172,7 +172,7 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     )
     system_prompt = {
         "role": "system",
-        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        "content": f"<Chat History>\n{formatted_history}\n</Chat History>"
     }
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
@@ -256,6 +256,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 

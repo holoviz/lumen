@@ -23,13 +23,13 @@ Write SQL query for user's data transformation request, focusing on intent over 
 - Use CTEs only when necessary
 
 ## Data summary vs tools
-**Data summary** below: capped snapshot (top tables by relevance) without embedded documentation. Do not guess column names, types or stored values; use the tools for what the summary lacks.
+**Data summary** below: top tables by relevance, one line per column with SQL type, keys (PK, `-> table.column` for foreign keys), value range or values with row counts, and null share. Do not guess column names, types or stored values; use the tools for what the summary lacks.
 {%- if tool_names is defined and tool_names %}
 {%- if 'browse_data_catalog' in tool_names %}
 - **browse_data_catalog**: page through tables the summary does not list.
 {%- endif %}
 {%- if 'load_table_schemas' in tool_names %}
-- **load_table_schemas**: full column details for tables or columns the summary lists without them.
+- **load_table_schemas**: full column statistics for tables the summary lists with names and types only.
 {%- endif %}
 {%- if 'distinct_values' in tool_names %}
 - **distinct_values**: the exact stored form of a literal before you filter on it.
@@ -43,25 +43,6 @@ Write SQL query for user's data transformation request, focusing on intent over 
 
 You have {{ tool_rounds }} tool rounds. Submit the final query with **submit_sql** as soon as you know enough; it executes the query and returns any error for you to fix.
 {%- endif %}
-{%- endblock -%}
-
-{%- block context -%}
-{%- if memory.get('metaset') %}
-## Data summary
-{{ memory["metaset"].compact_context(n=prompt_tables if prompt_tables is defined else 12, n_others=prompt_other_tables if prompt_other_tables is defined else 25, include_lineage=True) }}
-{%- endif %}
-
-{%- if memory.get('sql') %}
-Previous: `{{ memory['sql'] }}`
-{%- endif %}
-
-{%- if memory.get('data') is not none %}
-Data Summary:
-{{ memory["data"] }}
-{%- if 'rows_capped_at_limit' in memory["data"] %}
-(`rows_capped_at_limit` indicates preview truncated for display; not table's true row count. Do not add LIMIT to match — pagination handled automatically.)
-{%- endif %}
-{%- endif %}
 
 Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
@@ -74,9 +55,28 @@ Use `{{ dialect }}` SQL dialect.
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
 - Safe conversions: Use `TRY_CAST` for type conversions
 - Use materialized tables when available
-{% endif %}
+{%- endif %}
 {%- if dialect == 'snowflake' %}
 - No quotes around database/schema/table names
+{%- endif %}
+{%- endblock -%}
+
+{%- block context -%}
+{%- if memory.get('metaset') %}
+## Data summary
+{{ memory["metaset"].compact_context(n=schema_tables_shown | default(12), n_others=prompt_other_tables | default(25), include_lineage=True, max_tokens=schema_max_tokens | default(none)) }}
+{%- endif %}
+
+{%- if memory.get('sql') %}
+Previous: `{{ memory['sql'] }}`
+{%- endif %}
+
+{%- if memory.get('data') is not none %}
+Data Summary:
+{{ memory["data"] }}
+{%- if 'rows_capped_at_limit' in memory["data"] %}
+(`rows_capped_at_limit` indicates preview truncated for display; not table's true row count. Do not add LIMIT to match — pagination handled automatically.)
+{%- endif %}
 {%- endif %}
 {% if not is_final_step %}
 Step {{ step_number }}: {{ current_step }}

@@ -84,9 +84,10 @@ Conditions:
 Should never be used together with: `{{ agent.not_with | join('`, `') }}`{%- endif %}
 {% endfor %}
 
+{%- set has_llm_tools = llm_tools is defined and llm_tools %}
+{%- if tools or has_llm_tools %}
 ## Tool Usage
-
-Two distinct mechanisms exist for using tools. Planner must treat differently.
+{%- if tools %}
 
 ### Plan tools
 Capabilities invoked as steps within plan. Planner references by
@@ -96,6 +97,8 @@ name; executor runs when step fires.
   complete task.
 - Do not pre-compute, infer, or fabricate plan tool's output in plan
   description — step's purpose: produce that output at execution time.
+{%- endif %}
+{%- if has_llm_tools %}
 
 ### LLM tools
 Tools LLM can call directly inside own generation loop (tool-calling API).
@@ -108,25 +111,24 @@ loop includes them.
   needed tool. Agent will invoke tool during own execution.
 - Do not replicate LLM tool's behavior in plan as sequence of steps.
   If capability exists as tool, tool correct mechanism.
+{%- endif %}
 
-### Underlying principle
-
-Your job: coordinate, not execute. Call tools (of either kind) only when
-act of planning itself depends on their output. Everything else: delegation.
+Your job: coordinate, not execute. Call tools only when the act of planning
+itself depends on their output. Everything else: delegation.
+{%- endif %}
 
 ## Current Data Context
 
-{%- if memory.get('source_actions') %}
+{%- if memory.get('source_actions') and agents | selectattr('__class__.__name__', 'equalto', 'SourceAgent') | list %}
 Configured external data sources:
 {%- for name, info in memory['source_actions'].items() %}
-- {{ name }}: {{ info.get('description', '(no description)')[:120] }}
+- {{ name }}: {{ ' '.join(info.get('description', '(no description)').split('\n\n')[0].split()) }}
 {%- endfor %}
 {%- endif %}
 
 {%- if memory.get('metaset') %}
-{%- set table_list = memory['metaset'].table_list(n=3, n_others=17, show_source=True) %}
-Data sources:
-{{ table_list }}
+Data sources (with columns; derived tables show `derived_from`, ★ marks the latest):
+{{ memory['metaset'].table_context(n=3, n_others=17, include_metadata=False) }}
 
 {%- endif %}
 
@@ -153,11 +155,10 @@ Previously used visualization type `{{ view_type }}`, consider using appropriate
 {%- endif %}
 {%- endif -%}
 
-{%- if memory.get("document_vector_store") %}
+{%- set filenames = (memory.document_vector_store.metadata | selectattr("type", "equalto", "document") | map(attribute="filename") | unique | list) if memory.get("document_vector_store") else [] %}
+{%- if filenames %}
 ## Available documents
 Documents available; agents may query/summarize:
-{%- set document_list = memory.document_vector_store.metadata %}
-{%- set filenames = document_list | selectattr("type", "equalto", "document") | map(attribute="filename") | unique | list %}
 {%- if filenames | length > 20 %}
 {%- for filename in filenames[:20] %}
 - {{ filename }}

@@ -1,12 +1,12 @@
 import asyncio
 import math
+import re
 import typing as t
 
 import narwhals.stable.v2 as nw
 import pandas as pd
 import param
 import sqlglot
-import yaml
 
 from panel.chat import ChatStep
 from pydantic import (
@@ -21,7 +21,8 @@ from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ...util import as_narwhals, as_pandas, is_lazyframe
 from ..config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, RequestBudgetExceededError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError,
+    RequestBudgetExceededError,
 )
 from ..context import ContextModel, TContext
 from ..data_quality import lint_data
@@ -65,8 +66,8 @@ def make_source_table_model(sources: list[tuple[str, str]]):
     resolve = _table_reference_resolver(sources)
 
     class LiteralSourceTable(BaseModel):
-        source: t.Literal[tuple(set(src for src, _ in sources))]
-        table: t.Literal[tuple(set(table for _, table in sources))]
+        source: t.Literal[tuple(sorted(set(src for src, _ in sources)))]
+        table: t.Literal[tuple(sorted(set(table for _, table in sources)))]
 
         @model_validator(mode="before")
         @classmethod
@@ -88,7 +89,8 @@ def make_table_model(sources: list[tuple[str, str]]):
     """
     Create a table model with constrained table choices.
     """
-    available_tables = list(set(table for _, table in sources))
+    # Sorted so the response schema, part of the cached prompt prefix, is stable across runs.
+    available_tables = sorted(set(table for _, table in sources))
     TableLiteral = t.Literal[tuple(available_tables)]  # type: ignore
     return TableLiteral
 
@@ -183,9 +185,8 @@ SCHEMA_MAX_TOKENS = 3000
 # Source tables profiled for one query. Each costs a query, and a join across
 # more inputs than this is not worth the round trips.
 SOURCE_PROFILE_MAX_TABLES = 3
-# Tables the data summary lists with details, and by name only. The catalog
-# browsing tool is only worth offering when the catalog is larger than both.
-PROMPT_TABLES = 12
+# Tables the data summary lists by name only, after the described ones. The
+# catalog browsing tool is only worth offering when the catalog exceeds both.
 PROMPT_OTHER_TABLES = 25
 DISTINCT_VALUES_LIMIT = 50
 MAIN_TOOL_ROUNDS = 6
@@ -239,6 +240,75 @@ class RequestBudget:
             raise RequestBudgetExceededError(
                 f"SQL request used {self.calls} LLM calls, the limit is {self.max_calls}.{self.last_error()}"
             )
+
+
+# Seconds before a query run on the model's behalf is abandoned. The worker
+# thread cannot be killed, but the request stops waiting on it.
+SQL_STATEMENT_TIMEOUT = 60
+
+EMPTY_RESULT_HINT = (
+    "The query returned no rows. If the filters match the question, no rows is a valid "
+    "answer and the same query may be returned unchanged; otherwise verify the filter values."
+)
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+# SQLLimit wraps queries it cannot limit in place, and engine errors quote the wrapper.
+LIMIT_WRAPPER = re.compile(r"SELECT \* FROM \((?P<inner>.*)\) AS subquery LIMIT \d+", re.IGNORECASE)
+LIMIT_WRAPPER_PREFIX = len("SELECT * FROM (")
+MISSING_TABLE_PATTERNS = (
+    re.compile(r"Table with name\s+\"?([^\s\"!]+)\"?\s+does not exist", re.IGNORECASE),
+    re.compile(r"no such table:\s*\"?([^\s\"]+)\"?", re.IGNORECASE),
+    re.compile(r"relation\s+\"([^\"]+)\"\s+does not exist", re.IGNORECASE),
+)
+
+
+def format_sql_error(error: BaseException) -> str:
+    """Render an execution error for the model without ANSI codes or the LIMIT wrapper."""
+    lines = ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}").splitlines()
+    for i, line in enumerate(lines):
+        match = LIMIT_WRAPPER.search(line)
+        if not match:
+            continue
+        lines[i] = line[:match.start()] + match["inner"] + line[match.end():]
+        if i + 1 < len(lines) and lines[i + 1].strip() == "^":
+            caret = lines[i + 1].index("^") - LIMIT_WRAPPER_PREFIX
+            lines[i + 1] = " " * max(caret, match.start()) + "^"
+    return "\n".join(lines)
+
+
+def unresolvable_table(error: BaseException, source: BaseSQLSource) -> str | None:
+    """
+    Name of a table the engine reports missing although ``source`` lists it.
+
+    Rewriting the query cannot fix that, so retrying only burns LLM calls.
+    """
+    message = str(error)
+    for pattern in MISSING_TABLE_PATTERNS:
+        if match := pattern.search(message):
+            name = match.group(1).strip('"')
+            break
+    else:
+        return None
+    try:
+        tables = source.get_tables()
+    except Exception:
+        return None
+    # Only DuckDB resolves identifiers case-insensitively; elsewhere a case
+    # mismatch is something the model can fix.
+    if source.dialect == "duckdb":
+        return next((table for table in tables if table.lower() == name.lower()), None)
+    return name if name in tables else None
+
+
+async def await_query(query: t.Awaitable, timeout: float = SQL_STATEMENT_TIMEOUT):
+    """
+    Await a query, stopping after ``timeout``. Pass blocking source calls
+    through ``asyncio.to_thread`` so the event loop keeps running.
+    """
+    try:
+        return await asyncio.wait_for(query, timeout)
+    except TimeoutError as e:
+        raise TimeoutError(f"The query did not finish within {timeout} seconds.") from e
 
 
 def validate_read_only_sql(sql_query: str, dialect: str) -> None:
@@ -372,12 +442,12 @@ async def execute_exploration_sql(
         validate_read_only_sql(sql_clean, base.dialect)
         limited = SQLLimit(limit=EXPLORATION_MAX_ROWS + 1, write=base.dialect).apply(sql_clean)
     except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
-        return f"SQL parse/clean error: {e}"
+        return f"SQL parse/clean error: {ANSI_ESCAPE.sub('', str(e))}"
 
     try:
-        df = base.fetch(limited)
+        df = await await_query(asyncio.to_thread(base.fetch, limited))
     except Exception as e:
-        return f"{type(e).__name__}: {e}"
+        return format_sql_error(e)
 
     capped = len(df) > EXPLORATION_MAX_ROWS
     return format_exploration_result(df.head(EXPLORATION_MAX_ROWS) if capped else df, capped=capped)
@@ -404,7 +474,7 @@ def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource])
         params_doc = (
             f"{query_doc}\n"
             "source : str | None\n"
-            f"    The source the tables belong to: one of {', '.join(names)}."
+            f"    The source the tables belong to: one of {', '.join(f'`{n}`' for n in names)}."
         )
     else:
         async def run_exploration_sql(sql_query: str) -> str:
@@ -524,9 +594,9 @@ async def execute_distinct_values(
         column = matches[0]
     try:
         sql = build_distinct_values_sql(source.get_sql_expr(table_name), column, source.dialect, like, limit)
-        df = as_pandas(source.execute(sql))
+        df = as_pandas(await await_query(asyncio.to_thread(source.execute, sql)))
     except Exception as e:
-        return f"{type(e).__name__}: {e}"
+        return format_sql_error(e)
     rows = list(df.itertuples(index=False, name=None))
     truncated = len(rows) > limit
     rows = rows[:limit]
@@ -540,9 +610,9 @@ async def execute_distinct_values(
     return "\n".join(lines)
 
 
-def catalog_exceeds_prompt(metaset: Metaset) -> bool:
+def catalog_exceeds_prompt(metaset: Metaset, tables_shown: int) -> bool:
     """Whether some tables are missing from the data summary, so browsing the catalog can find more."""
-    return len(metaset._deduplicated_slugs()) > PROMPT_TABLES + PROMPT_OTHER_TABLES
+    return len(metaset._deduplicated_slugs()) > tables_shown + PROMPT_OTHER_TABLES
 
 
 def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
@@ -587,15 +657,16 @@ def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
     )
 
 
-def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
+def make_load_table_schemas_tool(metaset: Metaset, stats_timeout: float | None = 60) -> FunctionTool:
     """
-    Tool to load and return schema details for specific catalog tables, preferring catalog metadata
-    then source introspection (cached on the metaset), not ad-hoc exploration SQL.
+    Tool returning full column statistics for specific catalog tables, computing
+    them if the prompt only had names and types.
     """
 
     async def load_table_schemas(table_slugs: list[str], columns: list[str] | None = None) -> str:
         """
-        Return column types, value ranges, enums, descriptions and row counts for tables.
+        Return every column of the given tables with SQL type, keys, value ranges,
+        literal values and null fractions, plus catalog descriptions.
 
         Parameters
         ----------
@@ -607,73 +678,36 @@ def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
         if not table_slugs:
             return "No table_slugs provided."
         wanted = {c.strip().strip('"').lower() for c in columns} if columns else None
-        found: set[str] = set()
-        result: dict[str, t.Any] = {}
+        blocks: list[str] = []
+        resolved: list[str] = []
         for raw in table_slugs[:8]:
             try:
-                slug = resolve_table_slug(raw, metaset.catalog)
+                resolved.append(resolve_table_slug(raw, metaset.catalog))
             except ValueError as e:
-                result[raw] = {"error": str(e)}
-                continue
-            entry = metaset.catalog[slug]
-            block: dict[str, t.Any] = {}
-            live = await metaset.get_schema(slug)
-            if live:
-                block["row_count"] = live.get("__len__")
-                schema = {}
-                col_info = {col.name: col for col in entry.columns}
-                for k, v in live.items():
-                    if k == "__len__":
-                        continue
-                    if wanted is not None:
-                        if k.lower() not in wanted:
-                            continue
-                        found.add(k.lower())
-                    # col_info only carries cataloged columns; live keys not
-                    # in the catalog (e.g. xarray dim coordinates absent from
-                    # a STAC datacube extension) get the live schema as-is.
-                    col = col_info.get(k)
-                    if col is not None and col.description:
-                        schema[k] = {"description": col.description, **(v if isinstance(v, dict) else {"value": v})}
-                    else:
-                        schema[k] = v
-                block["schema"] = schema
-            else:
-                entry_columns = [
-                    c for c in entry.columns if wanted is None or c.name.lower() in wanted
-                ]
-                found.update(c.name.lower() for c in entry_columns)
-                if entry_columns and any(c.description for c in entry_columns):
-                    block["columns"] = [
-                        {"name": c.name, "description": c.description}
-                        for c in entry_columns
-                    ]
-                elif entry_columns:
-                    block["catalog_columns"] = [c.name for c in entry_columns]
-                elif not entry.columns:
-                    block["note"] = "No catalog columns and no live schema could be loaded for this table."
-            result[slug] = block
-        parts = [
-            truncate_to_tokens(
-                yaml.dump({slug: block}, default_flow_style=False, allow_unicode=True, sort_keys=False),
-                SCHEMA_MAX_TOKENS // 3,
-            )
-            for slug, block in result.items()
-        ]
+                blocks.append(f"{raw}: error: {e}")
+        resolved = list(dict.fromkeys(resolved))
+        if resolved:
+            await metaset.ensure_stats(resolved, timeout=stats_timeout)
+        found: set[str] = set()
+        for slug in resolved:
+            if wanted is not None:
+                found.update(name.lower() for name in metaset.table_columns(slug) if name.lower() in wanted)
+            detail = metaset.table_detail(slug, columns=wanted)
+            blocks.append(truncate_to_tokens(detail, SCHEMA_MAX_TOKENS // 3))
         if len(table_slugs) > 8:
-            parts.append(f"Only the first 8 tables were processed; request the remaining {len(table_slugs) - 8} separately.")
-        if len(parts) > 3:
-            parts.append("Each table is capped independently; request fewer tables for more detail.")
+            blocks.append(f"Only the first 8 tables were processed; request the remaining {len(table_slugs) - 8} separately.")
+        if len(resolved) > 3:
+            blocks.append("Each table is capped independently; request fewer tables for more detail.")
         if wanted is not None and (missing := sorted(wanted - found)):
-            parts.append(f"Columns not found in the requested tables: {', '.join(missing)}.")
-        return "\n".join(parts)
+            blocks.append(f"Columns not found in the requested tables: {', '.join(missing)}.")
+        return "\n\n".join(blocks)
 
     return FunctionTool(
         load_table_schemas,
         purpose=(
-            "Load the full schema of tables: column types, value ranges, enums, descriptions and "
-            "row counts. Call it only for what the data summary lacks: tables it lists without "
-            "columns, or columns whose details it truncates. Pass `columns` to fetch just those."
+            "Load full column statistics (types, keys, ranges, values, null fractions) for "
+            "chosen tables. Call it only for what the data summary lacks: tables it lists "
+            "with names and types only or not at all. Pass `columns` to fetch just those."
         ),
     )
 
@@ -951,6 +985,20 @@ class SQLAgent(BaseLumenAgent):
         Wall-clock limit in seconds for one SQL request across all attempts.
         None disables the limit.""")
 
+    schema_max_tokens = param.Integer(default=4000, allow_None=True, doc="""
+        Token budget for the data summary in the prompt. Tables beyond it are
+        listed with names and types only, and the model loads the rest with
+        load_table_schemas.""")
+
+    schema_tables_shown = param.Integer(default=25, bounds=(1, None), doc="""
+        Most relevant tables described in the data summary; the rest are
+        listed by name. schema_max_tokens usually binds first.""")
+
+    stats_wait = param.Number(default=10, allow_None=True, doc="""
+        Seconds to wait for column statistics that are still being computed
+        before answering with names and types; profiling continues in the
+        background for later questions. None waits until they are ready.""")
+
     # When an exploration pipeline is already in context, let the LLM narrow it
     # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
     # request may both apply this in-place filter and open a new SQL exploration
@@ -1025,7 +1073,7 @@ class SQLAgent(BaseLumenAgent):
                 if i == max_retries - 1:
                     raise
                 retry_result = await self.revise(
-                    f"{type(e).__name__}: {e}", messages, context, spec=sql_query,
+                    format_sql_error(e), messages, context, spec=sql_query,
                     language=f"sql.{source.dialect}", discovery_context=discovery_context, tools=tools,
                     max_tool_rounds=REVISE_TOOL_ROUNDS,
                 )
@@ -1034,17 +1082,25 @@ class SQLAgent(BaseLumenAgent):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 validated = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(sql_query)
-                result = await source.execute_async(validated)
+                result = await await_query(source.execute_async(validated))
                 step.stream("\n\n✅ SQL validation successful")
                 return sql_query, result
             except Exception as e:
+                feedback = format_sql_error(e)
+                if table := unresolvable_table(e, source):
+                    step.stream(f"\n\n❌ SQL validation failed: {feedback}")
+                    raise DeterministicError(
+                        f"Table {table!r} is listed by source {source.name!r} but the "
+                        f"engine cannot resolve it: {feedback}"
+                    ) from e
                 if i == max_retries - 1:
-                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {e}")
-                    raise e
+                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {feedback}")
+                    # Implicit chaining: retry_llm_output follows __cause__ to the root
+                    # and would feed the raw engine message back to the model.
+                    raise ValueError(feedback)  # noqa: B904
 
                 # Retry with LLM fix
-                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {e}")
-                feedback = f"{type(e).__name__}: {e!s}"
+                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {feedback}")
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
@@ -1056,7 +1112,7 @@ class SQLAgent(BaseLumenAgent):
         return sql_query, None
 
     @staticmethod
-    def _profile_source_rows(
+    async def _profile_source_rows(
         source: BaseSQLSource, tables: list[str], sql_query: str | None = None
     ) -> list[str]:
         """
@@ -1086,7 +1142,7 @@ class SQLAgent(BaseLumenAgent):
                 limited = SQLLimit(
                     limit=PROFILE_SAMPLE_ROWS, write=source.dialect, pretty=False, identify=False
                 ).apply(source.get_sql_expr(table))
-                sample = source.execute(limited)
+                sample = await await_query(asyncio.to_thread(source.execute, limited))
             except Exception as e:
                 # A source that cannot be sampled simply contributes nothing;
                 # the query it feeds has already run successfully.
@@ -1139,7 +1195,7 @@ class SQLAgent(BaseLumenAgent):
             return sql_query
 
         try:
-            cleaned_result = source.execute(cleaned)
+            cleaned_result = await await_query(asyncio.to_thread(source.execute, cleaned))
         except Exception as e:
             step.stream(f"\n\n⚠️ Cleaned query failed, keeping the original: {e}")
             return sql_query
@@ -1196,10 +1252,7 @@ class SQLAgent(BaseLumenAgent):
         # method on failure, and a rejected query left installed as
         # ``context["source"]`` becomes the base every later attempt builds on.
         if not len(df) and raise_if_empty:
-            raise ValueError(
-                f"\nQuery `{sql_query}` returned empty results."
-                "\nUse `run_exploration_sql` to check what values actually exist before filtering."
-            )
+            raise ValueError(f"Query `{sql_query}`: {EMPTY_RESULT_HINT}")
 
         if should_materialize:
             context["source"] = sql_expr_source
@@ -1341,7 +1394,9 @@ class SQLAgent(BaseLumenAgent):
         discovery_context : str, optional
             Optional discovery context to include in prompt
         raise_if_empty : bool, optional
-            Whether to raise error if query returns empty results
+            Whether to raise error if query returns empty results. Only the
+            first empty result raises; no rows is a valid answer once the
+            model has been asked to check its filters.
         output_title : str, optional
             Title to use for the output
         errors : list[str], optional
@@ -1378,7 +1433,7 @@ class SQLAgent(BaseLumenAgent):
     ) -> list[FunctionTool]:
         tools: list[FunctionTool] = []
         if metaset is not None:
-            if catalog_exceeds_prompt(metaset):
+            if catalog_exceeds_prompt(metaset, self.schema_tables_shown):
                 tools.append(make_browse_data_catalog_tool(metaset))
             tools.append(make_load_table_schemas_tool(metaset))
         tools.append(make_distinct_values_tool(sources, metaset))
@@ -1424,7 +1479,16 @@ class SQLAgent(BaseLumenAgent):
                 )
             sql_query = clean_sql(output.query.strip(), source.dialect, prettify=True)
             limited = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(sql_query)
-            preview = await source.execute_async(limited)
+            try:
+                preview = await await_query(source.execute_async(limited))
+            except Exception as e:
+                feedback = format_sql_error(e)
+                if table := unresolvable_table(e, source):
+                    raise DeterministicError(
+                        f"Table {table!r} is listed by source {source.name!r} but the "
+                        f"engine cannot resolve it: {feedback}"
+                    ) from e
+                raise ValueError(feedback) from None
             if not len(preview) and checked.get("empty") != sql_query:
                 # Asked once, since an empty answer is often correct and a model
                 # pushed to find rows tends to loosen the filters the user asked for.
@@ -1452,6 +1516,7 @@ class SQLAgent(BaseLumenAgent):
         errors: list[str] | None = None,
         previous_attempt: dict[str, t.Any] | None = None,
     ) -> SQLEditor:
+        raise_if_empty = raise_if_empty and not any(EMPTY_RESULT_HINT in error for error in errors or [])
         with self._add_step(title=step_title, steps_layout=self._steps_layout, context_exception="raise") as step:
             # Generate SQL using common prompt pattern
             dialects = set(src.dialect for src in sources.values())
@@ -1480,7 +1545,8 @@ class SQLAgent(BaseLumenAgent):
                         source_names=sorted({s for s, _ in sources}),
                         tool_names=[tool.name for tool in tool_list],
                         tool_rounds=MAIN_TOOL_ROUNDS,
-                        prompt_tables=PROMPT_TABLES,
+                        schema_max_tokens=self.schema_max_tokens,
+                        schema_tables_shown=self.schema_tables_shown,
                         prompt_other_tables=PROMPT_OTHER_TABLES,
                         previous_attempt=previous_attempt,
                         tools=tool_list,
@@ -1529,7 +1595,7 @@ class SQLAgent(BaseLumenAgent):
                     actionable = lint_data(preview, actionable_only=True)
 
             if clean and sql_contains_aggregates(validated_sql, source.dialect):
-                source_findings = self._profile_source_rows(source, tables, validated_sql)
+                source_findings = await self._profile_source_rows(source, tables, validated_sql)
                 findings += source_findings
                 actionable += source_findings
 
@@ -1627,6 +1693,7 @@ class SQLAgent(BaseLumenAgent):
                 sources[key] = src
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
+        await metaset.ensure_stats(metaset.get_top_tables(self.schema_tables_shown), timeout=self.stats_wait)
 
         attempts: list[dict[str, t.Any]] = []
         with self.llm.trace() as events:
