@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import time
 import traceback
 
 from collections.abc import Callable
@@ -37,6 +38,7 @@ from ..decisions import (
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
+from ..tool_trace import DecisionCall, record_trace
 from ..tools import (
     MetadataLookup, SourceLookup, Tool, VectorLookupToolUser,
 )
@@ -647,8 +649,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
     async def _decide_or_fallback(self, site: str, decision_state: dict, question: Choice | Noul, fallback: Callable):
         if self.decision_model is None:
             return await fallback()
+        started = time.perf_counter()
+        # Recorded on the LLM's trace so evals see decisions next to the model calls they replace.
+        call = DecisionCall(site, "error")
         try:
             result = await self.decision_model.invoke(decision_state, {site: question})
+            call.usage = dict(result.usage)
             answer = result.answers.get(site)
             if isinstance(question, Choice) and isinstance(answer, ChoiceAnswer):
                 valid = (answer.choice in question.criteria and set(answer.probabilities) == set(question.criteria)
@@ -661,16 +667,22 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 value = answer.noul > 0.5
             else:
                 valid, certainty, value = False, 0, None
+            call.value, call.certainty, call.route = value, certainty, "fallback"
             threshold = self.decision_thresholds.get(site, 0.90)
             if valid and math.isfinite(certainty) and certainty >= threshold - 1e-12:
                 log_debug(f"Decision {site}: accepted ({type(answer).__name__})")
+                call.route = "accepted"
                 return value
             log_debug(f"Decision {site}: low confidence or invalid answer; falling back")
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log_debug(f"Decision {site}: {type(e).__name__}; falling back")
-        return await fallback()
+        finally:
+            call.duration = time.perf_counter() - started
+            record_trace(self.llm, call)
+        call.fallback_value = await fallback()
+        return call.fallback_value
 
     def __panel__(self):
         return self.interface

@@ -118,6 +118,7 @@ test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
 
 [feature.evals.pypi-dependencies]
 pydantic-evals = "*"
+typesafe-sdk = "*"
 
 [feature.test.dependencies]
 dask-core = "*"

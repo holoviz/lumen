@@ -12,6 +12,7 @@ from lumen.ai.decisions import (
     Choice, DecisionResult, Jev, Noul,
 )
 from lumen.ai.models import FollowUpClassification, ThinkingYesNo
+from lumen.ai.tool_trace import DecisionCall
 from lumen.ai.ui import UI
 
 MESSAGES = [{"role": "user", "content": "Show the latest sales"}]
@@ -226,3 +227,21 @@ def test_ui_passes_decision_configuration_to_coordinator(llm, decision_model, mo
 
     assert ui._coordinator.decision_model is model
     assert ui._coordinator.decision_thresholds == {"planner.follow_up": 0.75}
+
+
+@pytest.mark.parametrize(("noul", "route"), [(0.99, "accepted"), (0.6, "fallback")])
+async def test_decisions_are_recorded_on_the_llm_trace(llm, decision_model, noul, route):
+    """Evals see which route answered each decision alongside the LLM calls."""
+    model, invoke = decision_model
+    invoke.return_value = DecisionResult(model="fake", answers={"route": {"type": "noul", "noul": noul}}, usage={"cost": 0.00001})
+    coordinator = Coordinator(llm=llm, agents=[], decision_model=model)
+    fallback = AsyncMock(return_value=False)
+
+    with llm.trace() as events:
+        await coordinator._decide_or_fallback("route", {}, Noul(instructions="Relevant?"), fallback)
+
+    [call] = [event for event in events if isinstance(event, DecisionCall)]
+    assert (call.site, call.route, call.value) == ("route", route, True)
+    assert call.certainty == pytest.approx(2 * abs(noul - 0.5))
+    assert call.usage == {"cost": 0.00001}
+    assert call.fallback_value == (False if route == "fallback" else None)

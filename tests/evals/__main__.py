@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--no-sql-cleanup", action="store_true", help="Disable automatic SQL cleanup in evaluation cases")
     parser.add_argument("--output", type=Path, help="Result file (defaults to a timestamped file in tests/evals/results)")
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted parallel BIRD run using --output")
+    parser.add_argument("--decision-model", choices=["jev"], help="Route planner decisions through a decision model (local suite only)")
     parser.add_argument("--workers", type=int, default=18, help="Concurrent isolated BIRD workers (default: 18)")
     args = parser.parse_args()
     if args.download_bird_questions:
@@ -52,6 +53,8 @@ def main():
         parser.error("--bird-all, --bird-stratified and --bird-ids are mutually exclusive")
     if args.resume and (not (args.bird_all or args.bird_stratified or args.bird_ids) or not args.output):
         parser.error("--resume requires parallel BIRD case selection and --output")
+    if args.decision_model and args.suite != "local":
+        parser.error("--decision-model only applies to the local suite; BIRD cases run SQLAgent without the planner")
     if not 1 <= args.workers <= 64:
         parser.error("--workers must be between 1 and 64")
 
@@ -105,8 +108,12 @@ def main():
         if summary["failed"] or summary["unscorable"]:
             raise SystemExit(1)
         return
+    decision_model = None
+    if args.decision_model == "jev":
+        from lumen.ai.decisions import Jev
+        decision_model = Jev()
     report = asyncio.run(evaluate(llm, dataset, source_factory, output, args.case, documents_factory,
-                                  fixtures, instruction_version=instruction_version))
+                                  fixtures, instruction_version=instruction_version, decision_model=decision_model))
     report.print()
     if report.failures or any(not all(result.value for result in case.assertions.values()) for case in report.cases):
         raise SystemExit(1)

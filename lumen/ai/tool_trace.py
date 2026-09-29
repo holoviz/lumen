@@ -25,7 +25,20 @@ class ModelCall:
     usage: list[Usage] = field(default_factory=list)
 
 
-TraceEvent = ToolCall | ModelCall
+@dataclass
+class DecisionCall:
+    """One decision-model question and which route answered it."""
+
+    site: str
+    route: str  # "accepted", "fallback" or "error"
+    value: Any = None
+    certainty: float | None = None
+    duration: float = 0.0
+    usage: dict[str, Any] = field(default_factory=dict)
+    fallback_value: Any = None
+
+
+TraceEvent = ToolCall | ModelCall | DecisionCall
 
 
 _scopes: ContextVar[tuple[tuple[object, list[TraceEvent]], ...]] = ContextVar(
