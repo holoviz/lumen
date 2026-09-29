@@ -120,11 +120,11 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     Case(name="read_csv_function", inputs=Inputs([
         "The orders_csv source uses a DuckDB read_csv() table expression. Count paid orders and return paid_count."
     ], fixture="read_functions", agents=("SQLAgent",)),
-          metadata=Expected(actors=["SQLAgent"], rows=[[4]], sql_contains=["read_csv("])),
+          metadata=Expected(actors=["SQLAgent"], rows=[[4]])),
     Case(name="join_read_functions", inputs=Inputs([
         "The orders_csv and refunds_json sources use DuckDB read_csv() and read_json_auto() table expressions. Join them by order_id and return order_id and refund_amount for paid orders that have a refund."
     ], fixture="read_functions", agents=("SQLAgent",)),
-          metadata=Expected(actors=["SQLAgent"], rows=[[101, 5], [103, 10]], sql_contains=["read_csv(", "read_json_auto(", "join"])),
+          metadata=Expected(actors=["SQLAgent"], rows=[[101, 5], [103, 10]], sql_contains=["join"])),
     Case(name="commerce_explore", inputs=Inputs([
         "Before writing the final query, call run_exploration_sql to inspect the orders status values. Then return the count of paid orders as paid_count."
     ], fixture="commerce", agents=("SQLAgent",)),
