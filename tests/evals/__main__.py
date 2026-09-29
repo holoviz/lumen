@@ -155,7 +155,9 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
             for index, (process, receiver, started) in list(active.items()):
                 if receiver not in readable and time.monotonic() - started < case_timeout and process.is_alive():
                     continue
-                if receiver in readable:
+                # A worker can send and exit after wait() returned, so check the pipe
+                # itself before recording a missing result.
+                if receiver in readable or receiver.poll():
                     try:
                         result = receiver.recv()
                     except EOFError:
