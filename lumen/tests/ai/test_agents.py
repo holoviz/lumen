@@ -36,6 +36,7 @@ from lumen.ai.agents.vega_lite import (
 )
 from lumen.ai.analysis import Analysis
 from lumen.ai.config import RetriesExceededError
+from lumen.ai.context import schema_fields
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
@@ -1197,3 +1198,11 @@ def test_colliding_slug_does_not_clobber_source_table():
     source.create_sql_expr_source({slug: bad_sql}, materialize=True)
 
     pd.testing.assert_frame_equal(source.get("hosts"), before)
+
+
+@pytest.mark.parametrize("agent_cls", [hvPlotAgent, VegaLiteAgent, DeckGLAgent])
+def test_view_agents_require_view_output(agent_cls):
+    # `view` must be a required key of the output schema, otherwise a view agent
+    # that finishes without producing a view goes undetected (holoviz/lumen#2106)
+    assert "view" in agent_cls.output_schema.__required_keys__
+    assert schema_fields(agent_cls.output_schema)["view"]["required"]
