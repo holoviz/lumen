@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import decimal
 
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,18 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
     DataFrame = pd.DataFrame
+
+
+def _cast_decimal_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cast decimal.Decimal values to float, as Bokeh's ColumnDataSource cannot
+    serialize decimal.Decimal. NUMERIC/DECIMAL columns surface this way
+    through drivers such as psycopg2, pyodbc and cx_Oracle.
+    """
+    for col in df.select_dtypes(include='object', exclude='str').columns:
+        if df[col].apply(lambda v: isinstance(v, decimal.Decimal)).any():
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
 
 
 class SQLAlchemySource(BaseSQLSource):
@@ -278,7 +291,7 @@ class SQLAlchemySource(BaseSQLSource):
         with self._connection as connection:
             result = connection.execute(text(sql_query), params, *args, **kwargs)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            return df
+            return _cast_decimal_columns(df)
 
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
@@ -317,7 +330,7 @@ class SQLAlchemySource(BaseSQLSource):
             result = await connection.execute(text(sql_query), params, *args, **kwargs)
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
-            return df
+            return _cast_decimal_columns(df)
 
     def get_tables(self) -> list[str]:
         """Return the list of available tables."""
