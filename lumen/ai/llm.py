@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
+import inspect
 import json
 import os
+import time
 import traceback
 
 from collections.abc import Callable
@@ -29,6 +32,12 @@ from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
+)
+from .tool_trace import (
+    ModelCall, ToolCall, capture_trace, is_tracing, record_trace,
+)
+from .usage import (
+    UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
 )
 from .utils import (
     format_exception, format_msg_content, log_debug, truncate_string,
@@ -183,6 +192,11 @@ class Llm(param.Parameterized):
                   "description": "Best for editing tables and visualizations",
                   "routing": {"model": "nemotron-switchyard"}}}""")
 
+    usage_pricing = param.Dict(default={}, doc="""USD per million tokens by model:
+        {"model-name": {"input": 1.0, "cached": 0.1, "cache_write": 1.25,
+                        "output": 4.0}}.
+        Unknown models retain token counts but have no estimated cost.""")
+
     spec_descriptions = param.Dict(default=SPEC_DESCRIPTIONS, doc="""
         Mapping of spec key to human-readable description, used as a
         fallback in the routing prompt when ``model_kwargs`` entries
@@ -255,6 +269,7 @@ class Llm(param.Parameterized):
         # Instance-level client caches
         self._base_client = None
         self._instructor_clients: dict[Mode, Any] = {}
+        self.usage = UsageCollector()
 
         # Resolved model name from the last invoke()/stream() call.
         # Set after _resolve_routing() so callers can read which model
@@ -282,7 +297,7 @@ class Llm(param.Parameterized):
     @param.depends("logfire_tags", watch=True)
     def _update_logfire_tags(self):
         if self.logfire_tags is not None and self._supports_logfire:
-            import logfire  # noqa: PLC0415
+            import logfire
             logfire.configure(send_to_logfire=True)
             self._logfire = logfire.Logfire(tags=self.logfire_tags)
         else:
@@ -322,6 +337,46 @@ class Llm(param.Parameterized):
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
+
+    def capture_usage(self):
+        """Capture provider usage for this LLM in the current async context."""
+        return capture_usage(self)
+
+    def trace(self):
+        """Capture model round trips and tool calls in the current async context."""
+        return capture_trace(self)
+
+    async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        if not is_tracing(self):
+            return await self.run_client(model_spec, messages, **kwargs)
+        started = time.perf_counter()
+        model = model_spec.get("model", "unknown") if isinstance(model_spec, dict) else self.model_kwargs.get(model_spec, {}).get("model", str(model_spec))
+        try:
+            with self.capture_usage() as usage:
+                result = await self.run_client(model_spec, messages, **kwargs)
+        except Exception as exc:
+            record_trace(self, ModelCall(model, messages, None, time.perf_counter() - started, repr(exc), usage.records))
+            raise
+        if not kwargs.get("stream") or not hasattr(result, "__aiter__"):
+            record_trace(self, ModelCall(model, messages, result, time.perf_counter() - started, usage=usage.records))
+            return result
+
+        async def traced_stream():
+            last = None
+            error = None
+            with self.capture_usage() as stream_usage:
+                try:
+                    async for chunk in result:
+                        last = chunk
+                        yield chunk
+                except Exception as exc:
+                    error = repr(exc)
+                    raise
+                finally:
+                    records = usage.records if usage.records else stream_usage.records
+                    record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, records))
+
+        return traced_stream()
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         """Wrap the base client with instructor. Override for non-standard wrapping."""
@@ -691,7 +746,7 @@ class Llm(param.Parameterized):
             # Return the provider stream and let stream() inspect chunks for tool calls.
             kwargs.pop("response_model", None)
             messages = self._normalize_multimodal_messages(messages)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         stream = False
         if structured_model is not None and not tool_instances:
@@ -706,7 +761,7 @@ class Llm(param.Parameterized):
             # cannot handle instructor Image objects in list content.
             messages = self._normalize_multimodal_messages(messages)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
         if not tool_instances:
             return output
 
@@ -722,13 +777,13 @@ class Llm(param.Parameterized):
             if not tool_messages:
                 break
             messages_curr = messages_curr + [tool_calls_message] + tool_messages
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
-            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
 
     @classmethod
@@ -782,7 +837,7 @@ class Llm(param.Parameterized):
                 tool_context = None
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
                 # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
-                from .tools import FunctionTool  # noqa: PLC0415
+                from .tools import FunctionTool
                 tool = FunctionTool(tool)
             if hasattr(tool, "_model"):
                 tool_instances[tool.name] = tool  # type: ignore[assignment]
@@ -959,7 +1014,7 @@ class Llm(param.Parameterized):
         messages: list[Message],
     ) -> list[Message]:
         # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
-        from .tools import FunctionTool, MCPTool  # noqa: PLC0415
+        from .tools import FunctionTool, MCPTool
 
         async def run_single_tool_call(call: Any) -> Message | None:
             name, arguments, call_id = self._parse_tool_call(call)
@@ -993,7 +1048,7 @@ class Llm(param.Parameterized):
                 if isinstance(tool, MCPTool):
                     result = await tool.execute(**arguments)
                 elif isinstance(tool, FunctionTool):
-                    if asyncio.iscoroutinefunction(tool.function):
+                    if inspect.iscoroutinefunction(tool.function):
                         result = await tool.function(**arguments)
                     else:
                         # Synchronous function, run in thread
@@ -1017,6 +1072,7 @@ class Llm(param.Parameterized):
                     show_sep="above",
                 )
                 raise
+            record_trace(self, ToolCall(name, dict(arguments), formatted))
             return Message(
                 role="tool",
                 content=formatted,
@@ -1710,6 +1766,10 @@ class OpenAI(Llm, OpenAIMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(async_client=True, **kwargs)
+        if self.api == "responses":
+            meter_method(self, client.responses, "create", "openai")
+        else:
+            meter_method(self, client.chat.completions, "create", "openai")
         if self.logfire_tags:
             self._logfire.instrument_openai(client)
         return client
@@ -1854,7 +1914,7 @@ class OpenAI(Llm, OpenAIMixin):
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
@@ -1870,7 +1930,7 @@ class OpenAI(Llm, OpenAIMixin):
         else:
             kwargs.pop("response_model", None)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
         if not tool_instances and not has_inbuilt:
             return output
 
@@ -1890,7 +1950,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 next_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
+            output = await self._traced_run_client(model_spec, tool_outputs, **next_kwargs)
 
         if structured_model:
             final_kwargs = dict(kwargs)
@@ -1900,7 +1960,7 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, [], **final_kwargs)
+            output = await self._traced_run_client(model_spec, [], **final_kwargs)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
@@ -2008,7 +2068,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return {**instance_kwargs, **model_kwargs}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(async_client=True, **kwargs)
+        client = self._instantiate_client(async_client=True, **kwargs)
+        meter_method(self, client.chat.completions, "create", "openai")
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         if self.interceptor:
@@ -2060,11 +2122,14 @@ class MistralAI(Llm, MistralAIMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
-        from mistralai import Mistral  # noqa: PLC0415
+        from mistralai import Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
@@ -2115,7 +2180,10 @@ class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     ], constant=True, doc="Available models for selection dropdowns")
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
 
 class Anthropic(Llm, AnthropicMixin):
@@ -2152,7 +2220,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
-        from anthropic import Anthropic as AnthropicClient  # noqa: PLC0415
+        from anthropic import Anthropic as AnthropicClient
         response = AnthropicClient(api_key=self.api_key, timeout=5).models.list()
         # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
         return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
@@ -2163,6 +2231,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
+        meter_method(self, client.messages, "create", "anthropic")
         if self.logfire_tags:
             self._logfire.instrument_anthropic(client)
         return client
@@ -2418,16 +2487,16 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
     })
 
     def _create_base_client(self, **kwargs) -> Any:
-        from anthropic.lib.bedrock import (  # noqa: PLC0415
-            AsyncAnthropicBedrock,
-        )
-        return AsyncAnthropicBedrock(
+        from anthropic.lib.bedrock import AsyncAnthropicBedrock
+        client = AsyncAnthropicBedrock(
             aws_access_key=self.aws_access_key_id,
             aws_secret_key=self.api_key,
             aws_session_token=self.aws_session_token,
             aws_region=self.region_name,
             **kwargs
         )
+        meter_method(self, client.messages, "create", "anthropic")
+        return client
 
 
 class Bedrock(Llm, BedrockMixin):
@@ -2478,7 +2547,7 @@ class Bedrock(Llm, BedrockMixin):
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
         try:
-            import boto3  # noqa: PLC0415
+            import boto3
         except ImportError as exc:
             raise ImportError(
                 "Please install boto3 to use AWS Bedrock. "
@@ -2569,14 +2638,21 @@ class Bedrock(Llm, BedrockMixin):
 
         if stream:
             resp = await asyncio.to_thread(self._base_client.converse_stream, **call_kwargs)
-            return self._wrap_stream(resp)
+            return self._wrap_stream(resp, model, contextvars.copy_context())
         else:
             resp = await asyncio.to_thread(self._base_client.converse, **call_kwargs)
+            usage = parse_usage(resp, "bedrock", model, self.usage_pricing)
+            if usage is not None:
+                record_usage(self, self.usage, usage)
             return resp["output"]["message"]["content"][0]["text"]
 
-    async def _wrap_stream(self, response):
+    async def _wrap_stream(self, response, model, context):
         """Wrap synchronous Bedrock stream as async generator."""
         for chunk in response["stream"]:
+            if "metadata" in chunk:
+                usage = parse_usage(chunk, "bedrock", model, self.usage_pricing)
+                if usage is not None:
+                    context.run(record_usage, self, self.usage, usage)
             yield chunk
 
     @classmethod
@@ -2630,7 +2706,7 @@ class Google(Llm, GenAIMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Google AI."""
-        from google import genai  # noqa: PLC0415
+        from google import genai
         available = set()
         for m in genai.Client(api_key=self.api_key).models.list():
             available.add(m.name)
@@ -2645,7 +2721,10 @@ class Google(Llm, GenAIMixin):
     def _create_base_client(self, **kwargs) -> Any:
         if self.logfire_tags:
             self._logfire.instrument_google_genai()
-        return self._instantiate_client()
+        client = self._instantiate_client()
+        meter_method(self, client.aio.models, "generate_content", "google")
+        meter_method(self, client.aio.models, "generate_content_stream", "google", stream_method=True)
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_genai(base_client, mode=mode, use_async=True)
@@ -2814,9 +2893,7 @@ class Google(Llm, GenAIMixin):
         if not tool_specs:
             return
 
-        from google.genai.types import (  # noqa: PLC0415
-            FunctionDeclaration, Tool,
-        )
+        from google.genai.types import FunctionDeclaration, Tool
         declarations = []
         for spec in tool_specs:
             if not isinstance(spec, dict) or spec.get("type") != "function":
@@ -2854,7 +2931,7 @@ class Google(Llm, GenAIMixin):
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Gemini-specific message format conversion."""
         try:
-            from google.genai.types import (  # noqa: PLC0415
+            from google.genai.types import (
                 GenerateContentConfig, HttpOptions, ThinkingConfig,
             )
         except ImportError as exc:
@@ -3063,7 +3140,7 @@ class MLX(Llm):
     def _load_mlx_model(self, model_id: str) -> tuple:
         """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
         if model_id not in self._mlx_models:
-            from mlx_lm import load  # noqa: PLC0415
+            from mlx_lm import load
             self._mlx_models[model_id] = load(model_id)
         return self._mlx_models[model_id]
 
@@ -3089,14 +3166,14 @@ class MLX(Llm):
 
     def _make_sampler(self):
         """Create an MLX sampler from the configured temperature."""
-        from mlx_lm.sample_utils import make_sampler  # noqa: PLC0415
+        from mlx_lm.sample_utils import make_sampler
         if self.temperature is None:
             return make_sampler()
         return make_sampler(temp=self.temperature)
 
     def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
         """Synchronous chat completion compatible with instructor's patch(create=...)."""
-        from mlx_lm import generate as mlx_generate  # noqa: PLC0415
+        from mlx_lm import generate as mlx_generate
 
         model_spec = kwargs.pop("model", "default")
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -3142,7 +3219,7 @@ class MLX(Llm):
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """Pre-download model weights from Hugging Face Hub."""
-        from mlx_lm import load  # noqa: PLC0415
+        from mlx_lm import load
         model_kwargs = model_kwargs or {}
         if "default" not in model_kwargs:
             model_kwargs["default"] = cls.model_kwargs["default"]
@@ -3284,7 +3361,7 @@ class WebLLM(Llm):
         return {}
 
     def __init__(self, **params):
-        from panel_web_llm import WebLLM as pnWebLLM  # noqa: PLC0415
+        from panel_web_llm import WebLLM as pnWebLLM
         self._llm = pnWebLLM()
         super().__init__(**params)
 
@@ -3422,9 +3499,9 @@ class LiteLLM(Llm):
         super().__init__(**params)
         self._router = None  # Lazy init
         if self.enable_caching:
-            import litellm  # noqa: PLC0415
+            import litellm
 
-            from litellm import Cache  # noqa: PLC0415
+            from litellm import Cache
             litellm.cache = Cache()
         if self.logfire_tags:
             self._logfire.instrument_litellm()
@@ -3432,7 +3509,7 @@ class LiteLLM(Llm):
     def _get_router(self):
         """Get or create cached LiteLLM Router."""
         if self._router is None:
-            from litellm import Router  # noqa: PLC0415
+            from litellm import Router
             model_list = [
                 {'model_name': key, 'litellm_params': config}
                 for key, config in self.model_kwargs.items()
@@ -3442,6 +3519,7 @@ class LiteLLM(Llm):
             if self.fallback_models:
                 router_kwargs['fallbacks'] = self.fallback_models
             self._router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+            meter_method(self, self._router, "acompletion", "openai")
         return self._router
 
     @property

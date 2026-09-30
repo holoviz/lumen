@@ -18,6 +18,28 @@ You don't need to configure these. Agents use them when needed.
 
 **DbtslLookup** queries dbt Semantic Layer metrics and is not automatic; pass it via `tools=` to enable it.
 
+### Python calculations with Monty
+
+Install the optional Monty integration alongside an LLM provider, for example:
+
+```bash
+pip install 'lumen[ai-monty,ai-openai]'
+```
+
+When `pydantic-monty` is installed, Lumen automatically makes the `run_python` tool available to the coordinator and its agents. Without it, the tool is omitted. The LLM decides whether to call the tool; requesting Python explicitly helps distinguish a calculation from a question it can answer directly.
+
+``` py title="Monty calculation"
+from lumen.ai import ExplorerUI
+from lumen.ai.agents import ChatAgent
+
+ui = ExplorerUI(default_agents=[ChatAgent])
+ui.servable()
+```
+
+Save this as `app.py` and run `panel serve app.py`, then ask: "Use Python to calculate the sum of squares from 1 to 100." The agent can call `run_python` with `sum(i**2 for i in range(1, 101))` and use the returned `338350` in its answer. The repository also includes `examples/ai/monty.py` as a demo.
+
+Monty runs a **subset of Python**, not CPython. Snippets can import only Monty's bundled standard-library modules, not third-party packages such as pandas or NumPy. They cannot access Lumen's in-memory data, local files, environment variables, the network, or subprocesses. Each tool call starts a fresh session, so variables do not persist between calls; put any needed values in the snippet. The last expression and `print()` output are returned to the agent. Execution is limited to 1 second per snippet, 10 MB of memory, and 64 KiB of captured printed output (with a 3-second request timeout). Use Lumen's data tools instead when an agent needs to query datasets or work with packages unavailable in Monty.
+
 ## Create a simple tool
 
 If you require a custom tool, e.g. either to provide additional context, render some output or perform some action simply provide a function with type annotations and a docstring:

@@ -405,7 +405,7 @@ class TaskGroup(Task):
                 if p not in out_context
             ]
             if unprovided:
-                raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
+                raise RuntimeError(f"{task.__class__.__name__} failed to provide declared context.")
         return outputs, out_context
 
     def _render_tasks(self) -> list[tuple[str, Viewable]]:
@@ -1238,7 +1238,7 @@ class Report(TaskGroup):
                 "Exporting a report to Word requires python-docx; install it with "
                 "`pip install python-docx`."
             )
-        from docx import Document  # noqa: PLC0415
+        from docx import Document
 
         doc = Document()
         pending: list[tuple[int, str]] = []

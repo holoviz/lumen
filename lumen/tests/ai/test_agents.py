@@ -8,7 +8,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lumen.ai.agents.document_list import DocumentListAgent
 from lumen.ai.schemas import DocumentChunk
 
 try:
@@ -16,6 +15,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.chat import ChatFeed
 from panel.pane import Markdown
 
 from lumen.ai.agents import (
@@ -24,16 +24,19 @@ from lumen.ai.agents import (
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.base_lumen import BaseLumenAgent
 from lumen.ai.agents.deck_gl import DeckGLAgent
+from lumen.ai.agents.document_list import DocumentListAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
     EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
     make_sql_model, sql_contains_aggregates,
 )
+from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
 from lumen.ai.analysis import Analysis
 from lumen.ai.config import RetriesExceededError
+from lumen.ai.context import schema_fields
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
@@ -48,6 +51,19 @@ from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
 root = str(Path(__file__).parent.parent / "sources")
+
+
+@pytest.mark.filterwarnings("ignore:Widget.name is deprecated:PendingDeprecationWarning")
+async def test_list_agent_uses_configured_user():
+    """List messages use the agent's display name, including overrides."""
+    interface = ChatFeed()
+    agent = TableListAgent(user="Data catalog", interface=interface)
+    agent._get_items = lambda context: {"Example": ["table"]}
+
+    await agent.respond([], {})
+
+    assert interface.objects[-1].user == "Data catalog"
+
 
 @pytest.fixture
 def duckdb_source():
@@ -73,6 +89,7 @@ async def test_chat_agent(llm, test_messages):
 
     out, out_context = await agent.respond(test_messages, {})
     assert out[0].object == "Test Response"
+    assert out[0].user == "Lumen"
 
 async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
     """Test ChatAgent in analyst mode (with data)"""
@@ -1181,3 +1198,11 @@ def test_colliding_slug_does_not_clobber_source_table():
     source.create_sql_expr_source({slug: bad_sql}, materialize=True)
 
     pd.testing.assert_frame_equal(source.get("hosts"), before)
+
+
+@pytest.mark.parametrize("agent_cls", [hvPlotAgent, VegaLiteAgent, DeckGLAgent])
+def test_view_agents_require_view_output(agent_cls):
+    # `view` must be a required key of the output schema, otherwise a view agent
+    # that finishes without producing a view goes undetected (holoviz/lumen#2106)
+    assert "view" in agent_cls.output_schema.__required_keys__
+    assert schema_fields(agent_cls.output_schema)["view"]["required"]
