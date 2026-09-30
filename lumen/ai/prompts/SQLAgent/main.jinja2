@@ -23,26 +23,7 @@ Write SQL query for user's data transformation request, focusing on intent over 
 - Use CTEs only when necessary
 
 ## Data summary vs tools
-**Data summary** below: capped snapshot (top tables by relevance) without embedded documentation. For other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when available and doc text needed.
-{%- endblock -%}
-
-{%- block context -%}
-{%- if memory.get('metaset') %}
-## Data summary
-{{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
-{%- endif %}
-
-{%- if memory.get('sql') %}
-Previous: `{{ memory['sql'] }}`
-{%- endif %}
-
-{%- if memory.get('data') is not none %}
-Data Summary:
-{{ memory["data"] }}
-{%- if 'rows_capped_at_limit' in memory["data"] %}
-(`rows_capped_at_limit` indicates preview truncated for display; not table's true row count. Do not add LIMIT to match — pagination handled automatically.)
-{%- endif %}
-{%- endif %}
+**Data summary** below: top tables by relevance, one line per column with SQL type, keys (PK, `-> table.column` for foreign keys), value range or values with row counts, and null share. For other tables or tables listed without statistics, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when available and doc text needed.
 
 Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'duckdb' %}
@@ -55,9 +36,28 @@ Use `{{ dialect }}` SQL dialect.
 - Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
 - Safe conversions: Use `TRY_CAST` for type conversions
 - Use materialized tables when available
-{% endif %}
+{%- endif %}
 {%- if dialect == 'snowflake' %}
 - No quotes around database/schema/table names
+{%- endif %}
+{%- endblock -%}
+
+{%- block context -%}
+{%- if memory.get('metaset') %}
+## Data summary
+{{ memory["metaset"].compact_context(n=schema_tables_shown | default(12), n_others=25, include_lineage=True, max_tokens=schema_max_tokens | default(none)) }}
+{%- endif %}
+
+{%- if memory.get('sql') %}
+Previous: `{{ memory['sql'] }}`
+{%- endif %}
+
+{%- if memory.get('data') is not none %}
+Data Summary:
+{{ memory["data"] }}
+{%- if 'rows_capped_at_limit' in memory["data"] %}
+(`rows_capped_at_limit` indicates preview truncated for display; not table's true row count. Do not add LIMIT to match — pagination handled automatically.)
+{%- endif %}
 {%- endif %}
 {% if not is_final_step %}
 Step {{ step_number }}: {{ current_step }}
