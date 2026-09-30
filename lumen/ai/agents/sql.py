@@ -26,6 +26,7 @@ from ..config import (
 )
 from ..context import ContextModel, TContext
 from ..data_quality import lint_data
+from ..decisions import Noul
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message, SubmitTool
 from ..models import RetrySpec
@@ -189,6 +190,8 @@ SOURCE_PROFILE_MAX_TABLES = 3
 # catalog browsing tool is only worth offering when the catalog exceeds both.
 PROMPT_OTHER_TABLES = 25
 DISTINCT_VALUES_LIMIT = 50
+# Wider results are rarely a projection mistake and make the decision request large.
+PROJECTION_MAX_COLUMNS = 12
 MAIN_TOOL_ROUNDS = 6
 REVISE_TOOL_ROUNDS = 3
 SUBMIT_SQL_DESCRIPTION = (
@@ -566,6 +569,11 @@ def build_distinct_values_sql(
     return query.sql(dialect=read)
 
 
+def _latest_user_text(messages: list[Message]) -> str:
+    content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+    return content if isinstance(content, str) else ""
+
+
 def _format_value(value: t.Any) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "NULL"
@@ -710,6 +718,51 @@ def make_load_table_schemas_tool(metaset: Metaset, stats_timeout: float | None =
             "with names and types only or not at all. Pass `columns` to fetch just those."
         ),
     )
+
+
+def drop_projections(sql_query: str, dialect: str, drop: set[int], n_columns: int | None = None) -> str | None:
+    """
+    Remove the output columns at positions ``drop`` from the outermost SELECT.
+
+    Aliases the dropped columns define are inlined into ORDER BY, HAVING and
+    QUALIFY, so ranking by a dropped count still works. Returns None when the
+    rewrite would not preserve the query: set operations, stars, DISTINCT
+    (fewer columns would merge rows), positional references, dropping
+    every column, or a SELECT list that does not match ``n_columns``.
+    """
+    read = None if dialect == "any" else dialect
+    try:
+        tree = sqlglot.parse_one(sql_query, read=read)
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return None
+    if not isinstance(tree, sqlglot.exp.Select) or tree.args.get("distinct"):
+        return None
+    projections = list(tree.expressions)
+    if n_columns is not None and len(projections) != n_columns:
+        return None
+    if not drop or len(drop) >= len(projections) or max(drop) >= len(projections):
+        return None
+    if any(p.find(sqlglot.exp.Star) is not None and not p.find(sqlglot.exp.AggFunc) for p in projections):
+        return None
+    for clause in ("group", "order"):
+        node = tree.args.get(clause)
+        if node is not None and any(
+            isinstance(getattr(e, "this", e), sqlglot.exp.Literal) for e in node.expressions
+        ):
+            return None
+    for i in drop:
+        projection = projections[i]
+        if not isinstance(projection, sqlglot.exp.Alias):
+            continue
+        for clause in ("order", "having", "qualify"):
+            node = tree.args.get(clause)
+            if node is None:
+                continue
+            for column in list(node.find_all(sqlglot.exp.Column)):
+                if not column.table and column.name == projection.alias:
+                    column.replace(projection.this.copy())
+    tree.set("expressions", [p for i, p in enumerate(projections) if i not in drop])
+    return tree.sql(dialect=read)
 
 
 def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
@@ -1159,6 +1212,88 @@ class SQLAgent(BaseLumenAgent):
             )
         return findings
 
+    async def _prune_projection(
+        self,
+        messages: list[Message],
+        sql_query: str,
+        preview: t.Any,
+        source: BaseSQLSource,
+        step: ChatStep,
+    ) -> tuple[str, t.Any]:
+        """
+        Drop result columns the decision model is confident the question did
+        not ask for, e.g. the count a query ranked by. Columns are only ever
+        removed, the rewrite is deterministic, and the query is kept whenever
+        the rewrite does not parse or run.
+        """
+        if self.decision_model is None:
+            return sql_query, preview
+        frame = as_pandas(preview)
+        question = _latest_user_text(messages)
+        if not question or not 1 < len(frame.columns) <= PROJECTION_MAX_COLUMNS:
+            return sql_query, preview
+        columns = [
+            {"name": str(col), "sample_values": [_format_value(v) for v in frame[col].head(3).tolist()]}
+            for col in frame.columns
+        ]
+        questions = {
+            str(i): Noul(
+                instructions=f"Does the question ask for the result column `{col['name']}` in its answer?",
+                criteria={
+                    "true": "The question asks for this value, or names it among the outputs.",
+                    "false": ("The value only helps compute the answer, e.g. a count or total used to "
+                              "rank, sort or filter, and the question does not ask to see it."),
+                },
+            )
+            for i, col in enumerate(columns)
+        }
+        state = {"question": question, "sql": sql_query, "result_columns": columns}
+        outcomes = await self._decide("sql.projection", state, questions)
+        drop = {int(key) for key, outcome in outcomes.items() if outcome.accepted and outcome.value is False}
+        pruned = drop_projections(sql_query, source.dialect, drop, len(frame.columns)) if drop else None
+        if pruned is None:
+            return sql_query, preview
+        try:
+            pruned = clean_sql(pruned, source.dialect, prettify=True)
+            limited = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(pruned)
+            pruned_preview = await await_query(source.execute_async(limited))
+        except Exception as e:
+            log_debug(f"Projection pruning failed, keeping the query: {e}")
+            return sql_query, preview
+        dropped = ", ".join(f"`{columns[i]['name']}`" for i in sorted(drop))
+        step.stream(f"\n\n✂️ Removed result columns the question did not ask for: {dropped}\n```sql\n{pruned}\n```")
+        return pruned, pruned_preview
+
+    async def _gate_cleanup(
+        self, messages: list[Message], sql_query: str, findings: list[str], step: ChatStep
+    ) -> list[str]:
+        """
+        Keep the findings that could change the answer. Cleaning costs an LLM
+        call and was accuracy-neutral overall, so a finding the decision model
+        is confident cannot affect the answer does not trigger it.
+        """
+        if self.decision_model is None:
+            return findings
+        question = _latest_user_text(messages)
+        if not question:
+            return findings
+        questions = {
+            str(i): Noul(
+                instructions=("Could correcting this data-quality finding change the answer the query "
+                              f"returns for the question?\nFinding: {finding}"),
+                criteria={
+                    "true": "The affected values feed the requested result or its filters and would change it.",
+                    "false": "The finding concerns values the answer does not depend on, or cleaning would not change it.",
+                },
+            )
+            for i, finding in enumerate(findings)
+        }
+        outcomes = await self._decide("sql.cleanup_gate", {"question": question, "sql": sql_query}, questions)
+        kept = [f for i, f in enumerate(findings) if not (outcomes[str(i)].accepted and outcomes[str(i)].value is False)]
+        if len(kept) < len(findings):
+            step.stream(f"\n\nSkipped {len(findings) - len(kept)} data-quality finding(s) that cannot change the answer")
+        return kept
+
     async def _clean_data_pass(
         self,
         sql_query: str,
@@ -1579,6 +1714,11 @@ class SQLAgent(BaseLumenAgent):
                     step, discovery_context=discovery_context, tools=tool_list,
                 )
             attempt["sql"] = validated_sql
+            if preview is not None:
+                validated_sql, preview = await self._prune_projection(
+                    messages, validated_sql, preview, source, step
+                )
+                attempt["sql"] = validated_sql
 
             # Profile the bounded validation sample without loading the full result.
             findings: list[str] = []
@@ -1604,6 +1744,8 @@ class SQLAgent(BaseLumenAgent):
                     "\n".join(f"- {finding}" for finding in findings),
                     step, title="Data quality findings", auto=False
                 )
+            if actionable:
+                actionable = await self._gate_cleanup(messages, validated_sql, actionable, step)
             if actionable:
                 validated_sql = await self._clean_data_pass(
                     validated_sql, actionable, 0 if preview is None else len(preview),

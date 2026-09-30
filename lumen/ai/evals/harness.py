@@ -260,7 +260,8 @@ def _snapshot(prompt: str, plan: Any, messages: list[Any], previous_tasks: tuple
     )
 
 
-def _direct_plan(inputs: Inputs, llm: Any, context: dict, interface: ChatInterface, prompt: str) -> Plan:
+def _direct_plan(inputs: Inputs, llm: Any, context: dict, interface: ChatInterface, prompt: str,
+                 decision_model: Any = None, decision_thresholds: dict[str, float] | None = None) -> Plan:
     agents = {
         "SQLAgent": SQLAgent,
         "ChatAgent": ChatAgent,
@@ -274,7 +275,8 @@ def _direct_plan(inputs: Inputs, llm: Any, context: dict, interface: ChatInterfa
     for name in inputs.agents:
         agent_type = agents[name]
         agent = agent_type(llm=llm, **({"n_doc_pages": 0} if name == "VegaLiteAgent" else {}),
-                           **({"clean_data": False} if name == "SQLAgent" and getattr(llm, "disable_sql_cleanup", False) else {}))
+                           **({"clean_data": False} if name == "SQLAgent" and getattr(llm, "disable_sql_cleanup", False) else {}),
+                           decision_model=decision_model, decision_thresholds=decision_thresholds or {})
         tasks.append(ActorTask(agent, title=name))
     return Plan(*tasks, title="Direct agent evaluation", context=context,
                 history=[{"role": "user", "content": prompt}], llm=llm, interface=interface)
@@ -321,7 +323,7 @@ async def run_case(inputs: Inputs, llm: Any, source: Any, documents: list[Any] |
         with llm.capture_usage() as scope, llm.trace() as tool_calls:
             try:
                 if inputs.agents:
-                    plan = _direct_plan(inputs, llm, context, interface, prompt)
+                    plan = _direct_plan(inputs, llm, context, interface, prompt, decision_model, decision_thresholds)
                     with warnings.catch_warnings():
                         warnings.filterwarnings("ignore", message="Widget.name is deprecated", category=PendingDeprecationWarning)
                         await asyncio.wait_for(plan.execute(), timeout=120)

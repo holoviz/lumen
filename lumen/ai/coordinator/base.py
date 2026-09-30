@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-import time
 import traceback
 
 from collections.abc import Callable
@@ -32,13 +31,11 @@ from ..agents import (
 )
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
-from ..decisions import (
-    Choice, ChoiceAnswer, DecisionModel, Noul, NoulAnswer,
-)
+from ..decision_gate import DecisionUser
+from ..decisions import Noul
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
-from ..tool_trace import DecisionCall, record_trace
 from ..tools import (
     MetadataLookup, SourceLookup, Tool, VectorLookupToolUser,
 )
@@ -287,7 +284,7 @@ class Plan(Section):
         return outputs, out_context
 
 
-class Coordinator(Viewer, VectorLookupToolUser):
+class Coordinator(Viewer, VectorLookupToolUser, DecisionUser):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -302,10 +299,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
     )
 
     context = param.Dict(default={})
-
-    decision_model = param.ClassSelector(default=None, class_=DecisionModel, doc="Optional model for closed-choice decisions before LLM fallback.")
-
-    decision_thresholds = param.Dict(default={}, doc="Minimum certainty for each decision site, defaulting to 0.90.")
 
     history = param.Integer(
         default=3,
@@ -412,6 +405,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
+            if agent.decision_model is None and params.get("decision_model") is not None:
+                agent.param.update(decision_model=params["decision_model"], decision_thresholds=thresholds)
 
             for tool in llm_tools:
                 if tool not in agent.llm_tools:
@@ -645,44 +640,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
             Noul(instructions="Will this tool help the actor complete its task? Consider its purpose, output, and user request."),
             fallback,
         )
-
-    async def _decide_or_fallback(self, site: str, decision_state: dict, question: Choice | Noul, fallback: Callable):
-        if self.decision_model is None:
-            return await fallback()
-        started = time.perf_counter()
-        # Recorded on the LLM's trace so evals see decisions next to the model calls they replace.
-        call = DecisionCall(site, "error")
-        try:
-            result = await self.decision_model.invoke(decision_state, {site: question})
-            call.usage = dict(result.usage)
-            answer = result.answers.get(site)
-            if isinstance(question, Choice) and isinstance(answer, ChoiceAnswer):
-                valid = (answer.choice in question.criteria and set(answer.probabilities) == set(question.criteria)
-                         and all(math.isfinite(p) and 0 <= p <= 1 for p in answer.probabilities.values()))
-                certainty = answer.confidence
-                value = answer.choice
-            elif isinstance(question, Noul) and isinstance(answer, NoulAnswer):
-                valid = True
-                certainty = 2 * abs(answer.noul - 0.5)
-                value = answer.noul > 0.5
-            else:
-                valid, certainty, value = False, 0, None
-            call.value, call.certainty, call.route = value, certainty, "fallback"
-            threshold = self.decision_thresholds.get(site, 0.90)
-            if valid and math.isfinite(certainty) and certainty >= threshold - 1e-12:
-                log_debug(f"Decision {site}: accepted ({type(answer).__name__})")
-                call.route = "accepted"
-                return value
-            log_debug(f"Decision {site}: low confidence or invalid answer; falling back")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            log_debug(f"Decision {site}: {type(e).__name__}; falling back")
-        finally:
-            call.duration = time.perf_counter() - started
-            record_trace(self.llm, call)
-        call.fallback_value = await fallback()
-        return call.fallback_value
 
     def __panel__(self):
         return self.interface

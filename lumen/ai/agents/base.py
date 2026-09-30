@@ -13,11 +13,12 @@ from ...dashboard import Config
 from ...state import state
 from ..actor import ContextProvider
 from ..context import TContext
+from ..decision_gate import DecisionUser
 from ..llm import Llm, Message
 from ..tools import ToolUser
 
 
-class Agent(Viewer, ToolUser, ContextProvider):
+class Agent(Viewer, ToolUser, ContextProvider, DecisionUser):
     """
     Agents are actors responsible for taking a user query and
     performing a particular task, either by adding context or
