@@ -1,3 +1,5 @@
+import json
+
 from typing import Any, NotRequired
 
 import param
@@ -124,8 +126,12 @@ class ValidationAgent(Agent):
         if not isinstance(content, str) or not content:
             return None
         state = {"user_request": content}
-        for key in ("sql", "data", "chat", "listing"):
-            if isinstance(value := context.get(key), str) and value:
+        for key in ("sql", "data", "chat", "listing", "view"):
+            value = context.get(key)
+            if key == "view" and value:
+                # A chart request is answered by the spec, not by the SQL or data.
+                value = json.dumps(value, default=str)
+            if isinstance(value, str) and value:
                 state[key] = truncate_string(value, VALIDATION_STATE_MAX_CHARS)
         if len(state) == 1:
             return None

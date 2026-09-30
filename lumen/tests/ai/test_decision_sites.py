@@ -164,3 +164,15 @@ async def test_empty_result_plausible_only_on_confident_yes(llm, jev, noul, plau
 
 async def test_empty_result_is_never_plausible_without_a_model(llm):
     assert await SQLAgent(llm=llm)._empty_result_plausible("Paid orders above 1000?", "SELECT 1") is False
+
+
+async def test_validation_state_includes_the_chart_spec(llm, jev, monkeypatch):
+    model, invoke = jev
+    invoke.return_value = DecisionResult(model="fake", answers={"validation.complete": {"type": "noul", "noul": 0.99}}, usage={})
+    agent = ValidationAgent(llm=llm, decision_model=model)
+    monkeypatch.setattr(agent, "_invoke_prompt", AsyncMock())
+
+    await agent.respond(MESSAGES, {"view": {"mark": "bar", "encoding": {"x": {"field": "region"}}}})
+
+    state, _ = invoke.await_args.args
+    assert '"mark": "bar"' in state["view"]
