@@ -70,6 +70,12 @@ def _score_query(path: Path, sql: str, timeout: float, output):
         output.close()
 
 
+# The spawned scorer re-imports this module, which takes seconds on a loaded
+# machine. The SQL deadline is enforced inside the child, so the parent only
+# needs to outlast it plus that startup.
+SCORER_STARTUP_GRACE = 120
+
+
 def execute_read_only(path: Path, sql: str, timeout: float = 30) -> set[tuple]:
     """Run untrusted SQL with a wall-clock deadline in a terminable process."""
     receiver, sender = multiprocessing.Pipe(duplex=False)
@@ -77,11 +83,13 @@ def execute_read_only(path: Path, sql: str, timeout: float = 30) -> set[tuple]:
     process.start()
     sender.close()
     try:
-        if not receiver.poll(timeout):
+        if not receiver.poll(timeout + SCORER_STARTUP_GRACE):
             raise TimeoutError(f"BIRD SQL exceeded {timeout:g}s")
         valid, result = receiver.recv()
         if not valid:
             name, message = result
+            if name == "OperationalError" and message == "interrupted":
+                raise TimeoutError(f"BIRD SQL exceeded {timeout:g}s")
             raise sqlite3.OperationalError(f"{name}: {message}")
         return result
     finally:
