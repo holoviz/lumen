@@ -42,6 +42,8 @@ def main():
     parser.add_argument("--output", type=Path, help="Result file (defaults to a timestamped file in tests/evals/results)")
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted parallel BIRD run using --output")
     parser.add_argument("--decision-model", choices=["jev"], help="Route planner decisions through a decision model (local suite only)")
+    parser.add_argument("--decision-threshold", action="append", default=[], metavar="SITE=VALUE",
+                        help="Override a decision site's minimum certainty, e.g. planner.clarification=0.6")
     parser.add_argument("--workers", type=int, default=18, help="Concurrent isolated BIRD workers (default: 18)")
     args = parser.parse_args()
     if args.download_bird_questions:
@@ -112,8 +114,13 @@ def main():
     if args.decision_model == "jev":
         from lumen.ai.decisions import Jev
         decision_model = Jev()
+    decision_thresholds = {}
+    for item in args.decision_threshold:
+        site, _, value = item.partition("=")
+        decision_thresholds[site] = float(value)
     report = asyncio.run(evaluate(llm, dataset, source_factory, output, args.case, documents_factory,
-                                  fixtures, instruction_version=instruction_version, decision_model=decision_model))
+                                  fixtures, instruction_version=instruction_version, decision_model=decision_model,
+                                  decision_thresholds=decision_thresholds))
     report.print()
     if report.failures or any(not all(result.value for result in case.assertions.values()) for case in report.cases):
         raise SystemExit(1)

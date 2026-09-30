@@ -289,12 +289,12 @@ def _error_message(exc: Exception) -> str:
 
 
 async def run_case(inputs: Inputs, llm: Any, source: Any, documents: list[Any] | None = None,
-                   decision_model: Any = None) -> Output:
+                   decision_model: Any = None, decision_thresholds: dict[str, float] | None = None) -> Output:
     if inputs.agents:
         context = {"source": source, "sources": [source]}
         interface = ChatInterface()
     else:
-        ui = ExplorerUI(data=source, llm=llm, decision_model=decision_model)
+        ui = ExplorerUI(data=source, llm=llm, decision_model=decision_model, decision_thresholds=decision_thresholds or {})
         context = ui.context
         interface = ui.interface
         source = context["source"]
@@ -454,13 +454,14 @@ def case_fingerprint(cases: list[Case], fixtures: dict[str, Any] | None = None,
 
 async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path | None = None,
                    case_name: str | None = None, documents_factory: Any = None, fixtures: dict[str, Any] | None = None,
-                   instruction_version: str = "", decision_model: Any = None):
+                   instruction_version: str = "", decision_model: Any = None,
+                   decision_thresholds: dict[str, float] | None = None):
 
     async def task(inputs: Inputs) -> Output:
         try:
             return await run_case(inputs, llm, source_factory(inputs),
                                   documents=documents_factory(inputs) if documents_factory else None,
-                                  decision_model=decision_model)
+                                  decision_model=decision_model, decision_thresholds=decision_thresholds)
         except Exception as exc:
             prompt = inputs.prompts[0] if inputs.prompts else ""
             error = _error_message(exc)
@@ -478,7 +479,7 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
         completed = {case.name: case for case in report.cases}
         failures = {failure.name: failure.error_message for failure in report.failures}
         output.write_text(json.dumps({
-            "run": {"timestamp": datetime.now(UTC).isoformat(), "commit": commit, "dirty": dirty, "dataset": selected.name, "case_fingerprint": case_fingerprint(cases, fixtures, getattr(llm, "suite_instructions", ""), instruction_version), "evaluator_version": EVALUATOR_VERSION, "suite_instructions": getattr(llm, "suite_instructions", ""), "instruction_version": instruction_version, "model": llm.model_kwargs.get("default", {}).get("model"), "api": getattr(llm, "api", None), "provider": "openrouter" if getattr(llm, "endpoint", None) == "https://openrouter.ai/api/v1" else "openai", "decision_model": type(decision_model).__name__ if decision_model is not None else None},
+            "run": {"timestamp": datetime.now(UTC).isoformat(), "commit": commit, "dirty": dirty, "dataset": selected.name, "case_fingerprint": case_fingerprint(cases, fixtures, getattr(llm, "suite_instructions", ""), instruction_version), "evaluator_version": EVALUATOR_VERSION, "suite_instructions": getattr(llm, "suite_instructions", ""), "instruction_version": instruction_version, "model": llm.model_kwargs.get("default", {}).get("model"), "api": getattr(llm, "api", None), "provider": "openrouter" if getattr(llm, "endpoint", None) == "https://openrouter.ai/api/v1" else "openai", "decision_model": type(decision_model).__name__ if decision_model is not None else None, "decision_thresholds": decision_thresholds or {}},
             "cases": [
                 {"name": case.name, "turns": [asdict(turn) | {"cached_percent": turn.usage.cached_percent if turn.usage else None} for turn in completed[case.name].output.turns] if case.name in completed else [], "usage": asdict(completed[case.name].output.usage) | {"cached_percent": completed[case.name].output.usage.cached_percent} if case.name in completed and completed[case.name].output.usage else None, "assertions": {name: result.value for name, result in completed[case.name].assertions.items()} if case.name in completed else {}, "duration": completed[case.name].task_duration if case.name in completed else None, "error": failures.get(case.name)}
                 for case in cases

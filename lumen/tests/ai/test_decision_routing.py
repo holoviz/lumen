@@ -245,3 +245,17 @@ async def test_decisions_are_recorded_on_the_llm_trace(llm, decision_model, noul
     assert call.certainty == pytest.approx(2 * abs(noul - 0.5))
     assert call.usage == {"cost": 0.00001}
     assert call.fallback_value == (False if route == "fallback" else None)
+
+
+async def test_clarification_state_includes_available_tables(llm, decision_model, monkeypatch):
+    """The table list lets the decision model see when the data settles an ambiguity."""
+    model, invoke = decision_model
+    invoke.return_value = answer("planner.clarification", {"type": "noul", "noul": 0.02})
+    planner = Planner(llm=llm, agents=[], planner_tools=[], decision_model=model)
+    monkeypatch.setattr(planner, "_invoke_prompt", AsyncMock())
+    metaset = SimpleNamespace(table_context=lambda include_metadata: "sales: category, amount")
+
+    assert await planner._check_clarification_needed(MESSAGES, {"metaset": metaset}) is False
+    state, questions = invoke.await_args.args
+    assert state == {"user_request": "Show the latest sales", "available_tables": "sales: category, amount"}
+    assert set(questions["planner.clarification"].criteria) == {"true", "false"}

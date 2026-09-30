@@ -32,7 +32,8 @@ from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import (
-    content_to_text, log_debug, mutate_user_message, wrap_logfire,
+    content_to_text, log_debug, mutate_user_message, truncate_string,
+    wrap_logfire,
 )
 from .base import Coordinator, Plan
 
@@ -40,6 +41,10 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+# Keeps the clarification decision state small; the table list is only there
+# to show whether the data settles an ambiguity.
+CLARIFICATION_TABLES_MAX_CHARS = 2000
 
 
 
@@ -413,12 +418,24 @@ class Planner(Coordinator):
             user_text = user_content if isinstance(user_content, str) else ""
             if not user_text:
                 return await fallback()
+            decision_state = {"user_request": user_text}
+            # Without the tables, Jev rates plain requests like "total amount by
+            # category" as ambiguous (p ~0.6); with them it drops to ~0.15.
+            if (metaset := context.get("metaset")) is not None and hasattr(metaset, "table_context"):
+                decision_state["available_tables"] = truncate_string(
+                    metaset.table_context(include_metadata=False), CLARIFICATION_TABLES_MAX_CHARS
+                )
             return await self._decide_or_fallback(
-                "planner.clarification", {"user_request": user_text},
-                Noul(instructions=(
-                    "Does this request need clarification before planning? Answer yes only if multiple interpretations "
-                    "require fundamentally different actions, none is the obvious default, and the data cannot resolve it."
-                )), fallback,
+                "planner.clarification", decision_state,
+                Noul(
+                    instructions="Must the assistant ask the user a clarifying question before it can act on this request?",
+                    criteria={
+                        "true": ("Several readings would lead to fundamentally different actions, none is the obvious "
+                                 "default, and the available tables cannot settle it."),
+                        "false": ("There is an obvious default reading, or the available tables settle what the user "
+                                  "means. Most data requests are like this."),
+                    },
+                ), fallback,
             )
         except Exception:
             return False  # On failure, default to not clarifying
