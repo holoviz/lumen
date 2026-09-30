@@ -1264,6 +1264,24 @@ class SQLAgent(BaseLumenAgent):
         step.stream(f"\n\n✂️ Removed result columns the question did not ask for: {dropped}\n```sql\n{pruned}\n```")
         return pruned, pruned_preview
 
+    async def _empty_result_plausible(self, question: str, sql_query: str) -> bool:
+        """
+        Whether the decision model is confident an empty result answers the
+        question, which saves the round that asks the model to double-check.
+        """
+        if self.decision_model is None or not question:
+            return False
+        outcome = (await self._decide("sql.empty_result", {"question": question, "sql": sql_query}, {
+            "sql.empty_result": Noul(
+                instructions="The query returned no rows. Is no rows a plausible correct answer to the question?",
+                criteria={
+                    "true": "The filters are exactly what the question asks for, so no matching rows is a valid answer.",
+                    "false": "The filters look mistyped, too strict or not what the question asks, so rows probably exist.",
+                },
+            ),
+        }))["sql.empty_result"]
+        return outcome.accepted and outcome.value is True
+
     async def _gate_cleanup(
         self, messages: list[Message], sql_query: str, findings: list[str], step: ChatStep
     ) -> list[str]:
@@ -1591,7 +1609,7 @@ class SQLAgent(BaseLumenAgent):
         return source, tables
 
     def _submit_sql_tool(
-        self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any]
+        self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any], question: str = ""
     ) -> SubmitTool:
         """
         Offer the SQL response model as ``submit_sql``, executing each submission.
@@ -1628,11 +1646,12 @@ class SQLAgent(BaseLumenAgent):
                 # Asked once, since an empty answer is often correct and a model
                 # pushed to find rows tends to loosen the filters the user asked for.
                 checked["empty"] = sql_query
-                raise ValueError(
-                    "The query returned no rows. If its filters match the question, submit "
-                    "it again unchanged; an empty result is a valid answer. Otherwise check "
-                    "the literal values (distinct_values) and fix the filters."
-                )
+                if not await self._empty_result_plausible(question, sql_query):
+                    raise ValueError(
+                        "The query returned no rows. If its filters match the question, submit "
+                        "it again unchanged; an empty result is a valid answer. Otherwise check "
+                        "the literal values (distinct_values) and fix the filters."
+                    )
             checked.update(output=output, source=source, tables=tables, sql=sql_query, preview=preview)
 
         return SubmitTool("submit_sql", SUBMIT_SQL_DESCRIPTION, check)
@@ -1686,7 +1705,7 @@ class SQLAgent(BaseLumenAgent):
                         previous_attempt=previous_attempt,
                         tools=tool_list,
                         max_tool_rounds=MAIN_TOOL_ROUNDS,
-                        submit_tool=self._submit_sql_tool(sources, checked),
+                        submit_tool=self._submit_sql_tool(sources, checked, _latest_user_text(messages)),
                     )
                 finally:
                     attempt["tools"] = summarize_tool_calls(events)

@@ -152,3 +152,15 @@ async def test_batched_decisions_are_traced_per_question(llm, jev):
     assert [(c.site, c.route, c.value) for c in calls] == [
         ("sql.cleanup_gate:0", "accepted", False), ("sql.cleanup_gate:1", "accepted", True),
     ]
+
+
+@pytest.mark.parametrize(("noul", "plausible"), [(0.99, True), (0.7, False), (0.01, False)])
+async def test_empty_result_plausible_only_on_confident_yes(llm, jev, noul, plausible):
+    model, invoke = jev
+    invoke.return_value = DecisionResult(model="fake", answers={"sql.empty_result": {"type": "noul", "noul": noul}}, usage={})
+    agent = SQLAgent(llm=llm, decision_model=model)
+    assert await agent._empty_result_plausible("Paid orders above 1000?", "SELECT * FROM orders WHERE amount > 1000") is plausible
+
+
+async def test_empty_result_is_never_plausible_without_a_model(llm):
+    assert await SQLAgent(llm=llm)._empty_result_plausible("Paid orders above 1000?", "SELECT 1") is False
