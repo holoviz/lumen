@@ -152,16 +152,17 @@ def test_parallel_bird_runner_checkpoints_in_order_and_times_out(tmp_path):
     output = tmp_path / "result.json"
     started = time.monotonic()
     summary = run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", False, 2,
-                           worker=simulated_bird_case_process, case_timeout=3)
+                           worker=simulated_bird_case_process, case_timeout=6)
     saved = json.loads(output.read_text())
-    assert time.monotonic() - started < 7
+    # Spawned workers import lumen, which alone takes about 3s.
+    assert time.monotonic() - started < 14
     assert [case["name"] for case in saved["cases"]] == [case.name for case in cases]
     assert saved["cases"][1]["assertions"] == {}
     assert "wall-clock limit" in saved["cases"][1]["error"]
     assert summary["completed"] == 3
     assert summary["unscorable"] == 1
     assert run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", True, 2,
-                        worker=simulated_bird_case_process, case_timeout=3) == summary
+                        worker=simulated_bird_case_process, case_timeout=6) == summary
 
 
 def test_parallel_bird_runner_reads_result_sent_before_worker_exit(tmp_path, monkeypatch):
@@ -574,3 +575,15 @@ def test_bird_execution_accuracy_and_read_only_source(tmp_path):
 
     assert asyncio.run(evaluate_prediction("SELECT SUM(spent) FROM budget WHERE category = 'Food'"))
     assert not asyncio.run(evaluate_prediction("SELECT SUM(spent) FROM budget"))
+
+
+def test_bird_scorer_times_out_inside_the_child(tmp_path):
+    path = tmp_path / "slow.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE t (x INTEGER)")
+    slow = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT COUNT(*) FROM n"
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        execute_read_only(path, slow, timeout=1)
+    # The child enforces the deadline, so the startup grace is not spent waiting.
+    assert time.monotonic() - started < 30
