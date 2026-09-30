@@ -771,6 +771,7 @@ class TestFuseMessagesMultimodal:
         assert len(result) == 2
         assert result[0]["role"] == "system"
         assert "first" in result[0]["content"]
+        assert result[0]["content"].endswith("\n</Chat History>")
         assert result[1] == msgs[-1]
 
     def test_multimodal_user_content_in_history(self):

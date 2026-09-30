@@ -30,18 +30,20 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
     EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, VALIDATION_MAX_ROWS,
     SQLCleanup, execute_exploration_sql, format_exploration_result,
-    make_load_table_schemas_tool, make_sql_model, sql_contains_aggregates,
+    format_sql_error, make_load_table_schemas_tool,
+    make_run_exploration_sql_tool, make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
 from lumen.ai.analysis import Analysis
-from lumen.ai.config import RetriesExceededError
+from lumen.ai.config import DeterministicError, RetriesExceededError
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
 from lumen.ai.llm import Llm
+from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
@@ -1335,3 +1337,65 @@ def test_colliding_slug_does_not_clobber_source_table():
     source.create_sql_expr_source({slug: bad_sql}, materialize=True)
 
     pd.testing.assert_frame_equal(source.get("hosts"), before)
+
+
+async def test_revise_keeps_sql_hash_literals(llm):
+    """Revised SQL used to round-trip through YAML, which truncates at '#'."""
+    agent = SQLAgent(llm=llm)
+    fixed = "SELECT * FROM schools WHERE street = '80651 Route #271'"
+    revision = RetrySpec(chain_of_thought="Fix the street", edits=[ReplaceLine(line_no=1, line=fixed)])
+
+    with patch.object(agent, "_invoke_prompt", AsyncMock(return_value=revision)):
+        result = await agent.revise("fix", [{"role": "user", "content": "fix"}], {}, spec="SELECT 1", language="sql.duckdb")
+
+    assert result == fixed
+
+
+async def test_sql_agent_accepts_empty_result_after_one_retry(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT * FROM (VALUES (1, 'paid')) AS t(id, status)"})
+    model = make_sql_model([(source.name, "orders")])
+    query = model(query="SELECT id FROM orders WHERE status = 'refunded'", table_slug="refunded_orders", tables=["orders"])
+    llm.set_responses([query, query])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+
+    out, _ = await SQLAgent(llm=llm, clean_data=False).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert len(out[0].component.data) == 0
+
+
+async def test_sql_agent_does_not_retry_unresolvable_table(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT 1 AS id"})
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+    source._connection.execute("DROP VIEW orders")
+    model = make_sql_model([(source.name, "orders")])
+    llm.set_responses([model(query="SELECT id FROM orders", table_slug="order_ids", tables=["orders"])] * 3)
+
+    with pytest.raises(DeterministicError, match="orders"):
+        await SQLAgent(llm=llm, clean_data=False).respond(test_messages, context)
+
+    assert llm._index == 1
+
+
+async def test_sql_exploration_error_hides_limit_wrapper():
+    source = DuckDBSource(tables={"t": "SELECT 1 AS a"})
+    result = await execute_exploration_sql(source.name, "SELECT nope FROM t", sources={(source.name, "t"): source})
+
+    assert "subquery" not in result
+    query_line, caret_line = next(
+        (line, following) for line, following in zip(result.splitlines(), result.splitlines()[1:], strict=False)
+        if "SELECT nope FROM t" in line
+    )
+    assert caret_line.index("^") == query_line.index("nope")
+
+
+def test_format_sql_error_strips_ansi_codes():
+    error = ValueError("Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE \x1b[4m(\x1b[0m")
+    assert format_sql_error(error) == "ValueError: Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE ("
+
+
+def test_exploration_tool_doc_quotes_every_name():
+    sources = {("src", "orders"): None, ("src", "customers"): None}
+    doc = make_run_exploration_sql_tool(sources).function.__doc__
+    assert "Sources: `src`." in doc
+    assert "Tables: `customers`, `orders`." in doc

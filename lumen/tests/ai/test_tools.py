@@ -393,3 +393,20 @@ async def test_invoke_prompt_forwards_max_retries(llm, monkeypatch):
     await actor._invoke_prompt("main", [{"role": "user", "content": "hi"}], {}, max_retries=3)
 
     assert seen["max_retries"] == 3
+
+
+async def test_metadata_lookup_does_not_consume_shared_column_descriptions():
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 as id"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+    context = {"sources": [source], "provenance_chain": ["global"], "tables_metadata": {}}
+    await tool.sync(context)
+    slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}orders"
+    context["tables_metadata"][slug] = {"columns": {"id": {"description": "Order id", "data_type": "INTEGER"}}}
+
+    messages = [{"role": "user", "content": "Show orders"}]
+    for _ in range(2):
+        _, outputs = await tool.respond(messages, context)
+        (column,) = outputs["metaset"].catalog[slug].columns
+        assert column.description == "Order id"
+        assert column.metadata == {"data_type": "INTEGER"}
+    assert context["tables_metadata"][slug]["columns"]["id"]["description"] == "Order id"

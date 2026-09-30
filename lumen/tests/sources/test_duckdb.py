@@ -1696,3 +1696,40 @@ def test_file_table_key_survives_normalization(tmp_path):
     assert not table.startswith("_")
     assert source.normalize_table(table) in source.tables
     assert len(source.get(table)) == 2
+
+
+@pytest.fixture
+def table_function_source(tmp_path):
+    orders, refunds = tmp_path / "orders.csv", tmp_path / "refunds.json"
+    pd.DataFrame({"order_id": [1, 2, 3], "status": ["paid", "paid", "cancelled"]}).to_csv(orders, index=False)
+    refunds.write_text('[{"order_id": 1, "refund": 5}, {"order_id": 3, "refund": 7}]')
+    return DuckDBSource(uri=":memory:", tables={
+        "orders": f"read_csv('{orders}')",
+        "refunds": f"read_json_auto('{refunds}')",
+    })
+
+
+def test_table_function_expression_is_queryable_by_name(table_function_source):
+    assert table_function_source.tables["orders"].startswith("read_csv(")
+    result = table_function_source.execute("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid'")
+    assert result["n"].tolist() == [2]
+
+
+def test_sql_expr_source_joins_table_functions_by_name(table_function_source):
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    derived = table_function_source.create_sql_expr_source({"joined": sql})
+    assert derived.get("joined").values.tolist() == [[1, 5], [3, 7]]
+
+
+def test_missing_tables_are_inlined_across_a_join(table_function_source):
+    table_function_source._connection.execute("DROP VIEW orders")
+    table_function_source._connection.execute("DROP VIEW refunds")
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    with table_function_source._connection.cursor() as cursor:
+        rows = table_function_source._execute_resolving_tables(cursor, sql).fetchall()
+    assert rows == [(1, 5), (3, 7)]
+
+
+def test_missing_table_outside_the_source_raises_original_error(table_function_source):
+    with pytest.raises(duckdb.CatalogException, match="nope"):
+        table_function_source.create_sql_expr_source({"bad": "SELECT * FROM nope JOIN orders USING (order_id)"})
