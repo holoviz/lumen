@@ -10,7 +10,8 @@ import re
 import time
 import traceback
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import (
@@ -27,8 +28,9 @@ from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ValidationError, create_model
 
+from .config import UNRECOVERABLE_ERRORS
 from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
@@ -41,7 +43,8 @@ from .usage import (
     UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
 )
 from .utils import (
-    format_exception, format_msg_content, log_debug, truncate_string,
+    format_exception, format_msg_content, format_unknown_name, log_debug,
+    truncate_string,
 )
 
 if TYPE_CHECKING:
@@ -60,6 +63,92 @@ class ImageResponse(BaseModel):
     # To easily analyze images, we need instructor patch activated,
     # so we use a pass-thru dummy string basemodel
     output: str
+
+
+# Accuracy falls as exploration grows (74% with 1-2 tool calls, 37% with 11+
+# on BIRD), so a small budget that the model is told about beats a large one
+# it is not.
+DEFAULT_MAX_TOOL_ROUNDS = 6
+
+DUPLICATE_TOOL_CALL_NOTE = (
+    "[Identical call already made in this request; returning the earlier result. "
+    "Use it rather than repeating the call.]\n"
+)
+
+
+@dataclass
+class SubmitTool:
+    """
+    A tool through which the model delivers its structured answer inside the tool loop.
+
+    Offering the response model as a tool lets a request that needs no other
+    tool finish in one call, and keeps the tool transcript in the prompt that
+    produces the answer instead of re-sending it for a separate structured call.
+
+    ``validate`` receives the parsed response model and raises to reject it;
+    the exception message is returned to the model as the tool result so it
+    can correct the answer with the context it already has.
+    """
+
+    name: str
+    description: str
+    validate: Callable[[BaseModel], Awaitable[None] | None] | None = None
+    model: type[BaseModel] | None = None
+
+
+@dataclass
+class ToolLoopState:
+    """Per-request bookkeeping shared by every round of one tool loop."""
+
+    max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
+    submit: SubmitTool | None = None
+    rounds: int = 0
+    results: dict[str, str] = field(default_factory=dict)
+    answer: BaseModel | None = None
+
+    @property
+    def exhausted(self) -> bool:
+        return self.rounds >= self.max_rounds
+
+    def budget_note(self) -> str:
+        remaining = self.max_rounds - self.rounds
+        if remaining > 0:
+            return f"\n\n[Tool round {self.rounds} of {self.max_rounds}; {remaining} remaining.]"
+        final = f"call `{self.submit.name}`" if self.submit else "give your final answer"
+        return (
+            f"\n\n[Tool budget exhausted after {self.max_rounds} rounds; further tool "
+            f"calls will not run. Now {final}.]"
+        )
+
+
+def inline_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve local ``$ref``s so providers that reject ``$defs`` (e.g. Gemini) accept the schema."""
+    defs = schema.get("$defs", {})
+
+    def resolve(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                target = resolve(defs[ref.rsplit("/", 1)[-1]])
+                return {**target, **{k: resolve(v) for k, v in node.items() if k != "$ref"}}
+            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    return resolve(schema)
+
+
+def format_validation_error(error: ValidationError, skip: tuple[str, ...] | list[str] = ()) -> str:
+    """One line per pydantic error, dropping errors on fields in ``skip``."""
+    parts = []
+    for err in error.errors():
+        loc = err.get("loc") or ()
+        if loc and loc[0] in skip:
+            continue
+        where = ".".join(str(part) for part in loc) or "arguments"
+        parts.append(f"{where}: {err.get('msg')}")
+    return "; ".join(parts)
 
 
 BASE_MODES = list(Mode)
@@ -650,6 +739,7 @@ class Llm(param.Parameterized):
         allow_partial: bool = False,
         model_spec: str | dict = "default",
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
+        submit_tool: SubmitTool | None = None,
         **input_kwargs,
     ) -> BaseModel | str:
         """
@@ -670,6 +760,11 @@ class Llm(param.Parameterized):
             Tool definitions, FunctionTool, or MCPTool instances to pass through.
             When ``response_model`` is also given, the client runs tool calls in a loop
             until none are requested, then requests the structured response (tools may be unused).
+            Tool errors, unknown tools and invalid arguments are returned to the model as
+            tool results; ``max_tool_rounds`` (default 6) caps the rounds.
+        submit_tool: SubmitTool | None
+            Offer ``response_model`` as a tool so the model can answer inside the tool
+            loop. Requires ``response_model``.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -693,12 +788,16 @@ class Llm(param.Parameterized):
             config = self.model_kwargs.get(model_spec) or self.model_kwargs.get("default", {})
             self._resolved_model = config.get("model", str(model_spec))
 
-        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
+        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
         combined_tools = self._combine_tools(tools)
         tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
+        submit = None
+        if submit_tool is not None and response_model is not None and not contains_image:
+            submit = SubmitTool(submit_tool.name, submit_tool.description, submit_tool.validate, response_model)
+            tool_specs = [*(tool_specs or []), self._submit_tool_spec(submit)]
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
@@ -723,6 +822,7 @@ class Llm(param.Parameterized):
             tool_contexts,
             model_spec=model_spec,
             max_tool_rounds=max_tool_rounds,
+            submit=submit,
             **kwargs
         )
         if output is None or output == "":
@@ -736,7 +836,8 @@ class Llm(param.Parameterized):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs
     ) -> BaseModel | str:
         # ``max_retries`` is consumed by the instructor wrapper; on bare-client
@@ -751,13 +852,14 @@ class Llm(param.Parameterized):
             messages = self._normalize_multimodal_messages(messages)
             return await self._traced_run_client(model_spec, messages, **kwargs)
 
+        uses_tools = bool(tool_instances) or submit is not None
         stream = False
-        if structured_model is not None and not tool_instances:
+        if structured_model is not None and not uses_tools:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
         else:
-            if tool_instances:
+            if uses_tools:
                 stream = kwargs.pop("stream", False)
             kwargs.pop("response_model", None)
             # Without response_model the raw client is used, which
@@ -765,29 +867,97 @@ class Llm(param.Parameterized):
             messages = self._normalize_multimodal_messages(messages)
 
         output = await self._traced_run_client(model_spec, messages, **kwargs)
-        if not tool_instances:
+        if not uses_tools:
             return output
 
+        state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
         messages_curr = list(messages)
-        for _ in range(max_tool_rounds):
+        while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_calls_message = self._tool_calls_message(tool_calls)
-            tool_messages = await self._run_tool_calls(
-                tool_instances, tool_calls, tool_contexts, messages_curr
+            tool_messages = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages_curr, state
             )
+            if state.answer is not None:
+                return state.answer
             if not tool_messages:
                 break
-            messages_curr = messages_curr + [tool_calls_message] + tool_messages
+            messages_curr = messages_curr + [self._tool_calls_message(tool_calls)] + tool_messages
             output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
+            if submit is not None:
+                messages_curr = messages_curr + self._submit_nudge(output, submit)
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
             output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
         return output
+
+    def _submit_nudge(self, output: Any, submit: SubmitTool) -> list[Message]:
+        """
+        Messages that carry a text-only reply into the structured fallback call.
+
+        Without them the model's final reasoning, often the query itself, is
+        discarded and the structured call has to reconstruct it.
+        """
+        nudge: list[Message] = []
+        try:
+            text = self._get_content(output) if output is not None else None
+        except Exception:
+            text = None
+        if isinstance(text, str) and text.strip():
+            nudge.append(Message(role="assistant", content=text))
+        nudge.append(Message(
+            role="user",
+            content=f"Return your final answer now in the `{submit.name}` format.",
+        ))
+        return nudge
+
+    @classmethod
+    def _submit_tool_spec(cls, submit: SubmitTool) -> dict[str, Any]:
+        schema = inline_schema_refs(submit.model.model_json_schema())
+        schema.pop("title", None)
+        return {
+            "type": "function",
+            "function": {
+                "name": submit.name,
+                "description": submit.description,
+                "parameters": schema,
+            },
+        }
+
+    async def _run_tool_round(
+        self,
+        tool_instances: dict[str, FunctionTool | MCPTool],
+        tool_calls: list[Any],
+        tool_contexts: dict[str, Any],
+        messages: list[Message],
+        state: ToolLoopState,
+    ) -> list[Message]:
+        """
+        Answer one round of tool calls, or return [] when the loop must stop.
+
+        A submission is still accepted after the budget is spent, since
+        accepting it costs nothing and is what the budget note asks for.
+        """
+        if state.exhausted:
+            if state.submit is None:
+                return []
+            tool_calls = [call for call in tool_calls if self._parse_tool_call(call)[0] == state.submit.name]
+            if not tool_calls:
+                return []
+        tool_messages = await self._run_tool_calls(
+            tool_instances, tool_calls, tool_contexts, messages, state=state
+        )
+        if state.answer is not None or state.exhausted or not tool_messages:
+            return []
+        state.rounds += 1
+        last = dict(tool_messages[-1])
+        last["content"] = f"{last.get('content', '')}{state.budget_note()}"
+        tool_messages[-1] = last  # type: ignore[assignment]
+        return tool_messages
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
@@ -992,6 +1162,12 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _parse_tool_call(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None]:
+        name, args, call_id, _ = cls._parse_tool_call_strict(call)
+        return name, args, call_id
+
+    @classmethod
+    def _parse_tool_call_strict(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None, str | None]:
+        """Parse a tool call, also returning a description of malformed arguments."""
         if isinstance(call, dict):
             function = call.get("function") or {}
             name = function.get("name") or call.get("name")
@@ -1002,12 +1178,88 @@ class Llm(param.Parameterized):
             name = getattr(function, "name", None) if function else None
             args = getattr(function, "arguments", None) if function else {}
             call_id = getattr(call, "id", None)
-        if isinstance(args, str):
+        error = None
+        # Some models double-encode the arguments as a JSON string.
+        for _ in range(2):
+            if not isinstance(args, str):
+                break
+            if not args.strip():
+                args = {}
+                break
             try:
                 args = json.loads(args)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                error = f"Arguments are not valid JSON ({e.msg} at position {e.pos}): {truncate_string(args, 300)}"
                 args = {}
-        return name, args or {}, call_id
+        if not isinstance(args, dict):
+            error = f"Arguments must be a JSON object, got {type(args).__name__}."
+            args = {}
+        return name, args or {}, call_id, error
+
+    @staticmethod
+    def _describe_tool_parameters(tool: FunctionTool | MCPTool) -> str:
+        schema = tool._model.model_json_schema()
+        required = set(schema.get("required", []))
+        params = [
+            f"{name} ({'required' if name in required else 'optional'})"
+            for name in schema.get("properties", {})
+        ]
+        return ", ".join(params) or "none"
+
+    @classmethod
+    def _validate_tool_arguments(cls, tool: FunctionTool | MCPTool, arguments: dict[str, Any]) -> str | None:
+        """Check model-supplied arguments against the tool's pydantic model before running it."""
+        model = getattr(tool, "_model", None)
+        if model is None:
+            return None
+        unexpected = [key for key in arguments if key not in model.model_fields]
+        if unexpected:
+            return (
+                f"Unexpected argument(s) {', '.join(map(repr, unexpected))} for {tool.name!r}. "
+                f"Parameters: {cls._describe_tool_parameters(tool)}."
+            )
+        try:
+            model.model_validate(arguments)
+        except ValidationError as e:
+            # Context-injected requirements are not the model's to supply.
+            details = format_validation_error(e, skip=tool.requires)
+            if details:
+                return (
+                    f"Invalid arguments for {tool.name!r}: {details}. "
+                    f"Parameters: {cls._describe_tool_parameters(tool)}."
+                )
+        return None
+
+    async def _check_submission(self, state: ToolLoopState, arguments: dict[str, Any]) -> str | None:
+        """Accept a submission into ``state.answer`` or return why it was rejected."""
+        submit = state.submit
+        name = submit.name
+        try:
+            answer = submit.model.model_validate(arguments)
+        except ValidationError as e:
+            return f"Invalid {name} arguments: {format_validation_error(e)}. Fix them and call {name} again."
+        if submit.validate is not None:
+            try:
+                result = submit.validate(answer)
+                if inspect.isawaitable(result):
+                    await result
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as e:
+                return f"{name} rejected: {type(e).__name__}: {e}\nFix the problem and call {name} again."
+        state.answer = answer
+        return None
+
+    async def _execute_tool(self, tool: FunctionTool | MCPTool, arguments: dict[str, Any]) -> Any:
+        # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
+        from .tools import FunctionTool, MCPTool
+        if isinstance(tool, MCPTool):
+            return await tool.execute(**arguments)
+        if isinstance(tool, FunctionTool):
+            if inspect.iscoroutinefunction(tool.function):
+                return await tool.function(**arguments)
+            return await asyncio.to_thread(tool.function, **arguments)
+        raise TypeError(f"Unsupported tool type for {tool.name!r}: {type(tool)!r}")
 
     async def _run_tool_calls(
         self,
@@ -1015,77 +1267,115 @@ class Llm(param.Parameterized):
         tool_calls: list[Any],
         tool_contexts: dict[str, Any],
         messages: list[Message],
+        state: ToolLoopState | None = None,
     ) -> list[Message]:
-        # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
-        from .tools import FunctionTool, MCPTool
+        """
+        Run one round of tool calls and answer every call id.
 
-        async def run_single_tool_call(call: Any) -> Message | None:
-            name, arguments, call_id = self._parse_tool_call(call)
-            if not name:
-                log_debug(
-                    f"LLM tool call skipped: missing tool name (call_id={call_id!r})",
-                    prefix="[LLM tools]",
-                )
-                return None
-            if name not in tool_instances:
-                log_debug(
-                    "LLM tool call skipped: unknown tool "
-                    f"{name!r} (call_id={call_id!r}); registered: {sorted(tool_instances)}",
-                    prefix="[LLM tools]",
-                )
-                return None
+        Unanswered call ids make most providers reject the next request, and a
+        raised exception throws away the whole attempt, so malformed calls,
+        unknown tools, invalid arguments and tool exceptions all come back to
+        the model as tool results it can act on. Identical calls are answered
+        from ``state.results`` instead of being re-executed.
+        """
+        state = state if state is not None else ToolLoopState()
+        parsed = [self._parse_tool_call_strict(call) for call in tool_calls]
+
+        contents: list[str | None] = [None] * len(parsed)
+        if state.submit is not None:
+            submitted = False
+            for i, (name, arguments, _, error) in enumerate(parsed):
+                if name != state.submit.name:
+                    continue
+                if error:
+                    contents[i] = f"{error} Fix the arguments and call {name} again."
+                elif submitted:
+                    contents[i] = "Only the first submission in a round is checked."
+                else:
+                    submitted = True
+                    rejection = await self._check_submission(state, arguments)
+                    if rejection is None:
+                        record_trace(self, ToolCall(name, dict(arguments), "accepted"))
+                        return []
+                    contents[i] = rejection
+
+        async def run(name: str, arguments: dict[str, Any], call_id: str | None) -> str:
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
             for requirement in tool.requires:
                 if requirement not in arguments and requirement in context:
                     arguments[requirement] = context[requirement]
+            if (invalid := self._validate_tool_arguments(tool, arguments)) is not None:
+                return invalid
+            args_repr = truncate_string(json.dumps(arguments, default=str, ensure_ascii=False), max_length=4000)
+            log_debug(
+                f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
+                prefix="[LLM tools]",
+            )
             try:
-                args_repr = truncate_string(
-                    json.dumps(arguments, default=str, ensure_ascii=False),
-                    max_length=4000,
-                )
+                formatted = self._format_tool_result(await self._execute_tool(tool, arguments))
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as e:
                 log_debug(
-                    f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
-                    prefix="[LLM tools]",
-                )
-                if isinstance(tool, MCPTool):
-                    result = await tool.execute(**arguments)
-                elif isinstance(tool, FunctionTool):
-                    if inspect.iscoroutinefunction(tool.function):
-                        result = await tool.function(**arguments)
-                    else:
-                        # Synchronous function, run in thread
-                        result = await asyncio.to_thread(tool.function, **arguments)
-                else:
-                    raise TypeError(f"Unsupported tool type for {name!r}: {type(tool)!r}")
-                formatted = self._format_tool_result(result)
-                log_debug(
-                    f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
-                    f"{truncate_string(formatted, max_length=16000)}",
-                    prefix="[LLM tools]",
-                    show_length=True,
-                )
-            except Exception:
-                log_debug(
-                    [
-                        f"LLM tool call failed tool={name!r} call_id={call_id!r}",
-                        traceback.format_exc(),
-                    ],
+                    [f"LLM tool call failed tool={name!r} call_id={call_id!r}", traceback.format_exc()],
                     prefix="[LLM tools]",
                     show_sep="above",
                 )
-                raise
-            record_trace(self, ToolCall(name, dict(arguments), formatted))
-            return Message(
-                role="tool",
-                content=formatted,
-                name=name,
-                tool_call_id=call_id,
+                return f"Tool {name!r} failed: {type(e).__name__}: {e}"
+            log_debug(
+                f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
+                f"{truncate_string(formatted, max_length=16000)}",
+                prefix="[LLM tools]",
+                show_length=True,
             )
-        results = await asyncio.gather(
-            *(run_single_tool_call(call) for call in tool_calls)
-        )
-        return [msg for msg in results if msg is not None]
+            return formatted
+
+        valid_tools = [*tool_instances, *([state.submit.name] if state.submit else [])]
+        keys: list[str | None] = [None] * len(parsed)
+        pending: dict[str, asyncio.Future] = {}
+        for i, (name, arguments, call_id, error) in enumerate(parsed):
+            if contents[i] is not None:
+                continue
+            if not name:
+                contents[i] = f"Tool call is missing a tool name. Valid tools: {', '.join(sorted(valid_tools))}."
+            elif name not in tool_instances:
+                contents[i] = format_unknown_name("tool", name, valid_tools)
+            elif error:
+                contents[i] = f"{error} Parameters: {self._describe_tool_parameters(tool_instances[name])}."
+            else:
+                key = json.dumps([name, arguments], sort_keys=True, default=str)
+                keys[i] = key
+                if key not in state.results and key not in pending:
+                    pending[key] = asyncio.ensure_future(run(name, dict(arguments), call_id))
+
+        if pending:
+            outcomes = await asyncio.gather(*pending.values())
+        else:
+            outcomes = []
+        fresh = dict(zip(pending, outcomes, strict=True))
+
+        tool_messages: list[Message] = []
+        answered: set[str] = set()
+        for i, (name, arguments, call_id, _) in enumerate(parsed):
+            key = keys[i]
+            if key is not None:
+                if key in fresh and key not in answered:
+                    content = fresh[key]
+                    state.results[key] = content
+                    answered.add(key)
+                else:
+                    content = DUPLICATE_TOOL_CALL_NOTE + state.results[key]
+            else:
+                content = contents[i]
+            record_trace(self, ToolCall(str(name), dict(arguments), content))
+            tool_messages.append(Message(
+                role="tool",
+                content=content,
+                name=name or "unknown",
+                tool_call_id=call_id,
+            ))
+        return tool_messages
 
     async def initialize(self, log_level: str):
         try:
@@ -1132,6 +1422,11 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        # Tool rounds recurse through stream(), so the budget and the call
+        # cache travel with the recursion instead of resetting each round.
+        tool_state = kwargs.pop("_tool_state", None) or ToolLoopState(
+            max_rounds=int(kwargs.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))
+        )
         combined_tools = self._combine_tools(tools)
         _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         messages, contains_image = self._check_for_image(messages)
@@ -1220,8 +1515,16 @@ class Llm(param.Parameterized):
 
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
-            tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
-            if tool_messages:
+            tool_messages = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages, tool_state
+            )
+            if not tool_messages:
+                log_debug(
+                    f"Tool budget of {tool_state.max_rounds} rounds exhausted; ending the stream.",
+                    prefix="[LLM tools]",
+                )
+            else:
+                kwargs["_tool_state"] = tool_state
                 if (
                     getattr(self, "api", None) == "responses"
                     and hasattr(self, "_tool_messages_to_response_inputs")
@@ -1440,7 +1743,8 @@ class LlmCli(Llm):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs,
     ) -> BaseModel | str:
         if tool_instances:
@@ -1905,12 +2209,14 @@ class OpenAI(Llm, OpenAIMixin):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs
     ) -> BaseModel | str:
         if self.api != "responses":
             return await super()._run_tool_loop(
-                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
+                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds,
+                submit=submit, **kwargs
             )
 
         max_retries = kwargs.pop("max_retries", None)
@@ -1924,9 +2230,10 @@ class OpenAI(Llm, OpenAIMixin):
             for t in kwargs.get("tools", [])
         )
 
+        uses_tools = bool(tool_instances) or has_inbuilt or submit is not None
         # When there are NO inbuilt tools and NO function-tool instances we
         # can ask for the structured response in a single round-trip.
-        if structured_model is not None and not tool_instances and not has_inbuilt:
+        if structured_model is not None and not uses_tools:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
@@ -1934,16 +2241,19 @@ class OpenAI(Llm, OpenAIMixin):
             kwargs.pop("response_model", None)
 
         output = await self._traced_run_client(model_spec, messages, **kwargs)
-        if not tool_instances and not has_inbuilt:
+        if not uses_tools:
             return output
 
-        for _ in range(max_tool_rounds):
+        state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
+        while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_messages = await self._run_tool_calls(
-                tool_instances, tool_calls, tool_contexts, messages
+            tool_messages = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages, state
             )
+            if state.answer is not None:
+                return state.answer
             if not tool_messages:
                 break
             tool_outputs = self._tool_messages_to_response_inputs(tool_messages)
@@ -1963,7 +2273,11 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self._traced_run_client(model_spec, [] if response_id else messages, **final_kwargs)
+            final_messages = [] if response_id else list(messages)
+            if submit is not None:
+                # The previous response already holds the model's text reply.
+                final_messages += self._submit_nudge(None if response_id else output, submit)
+            output = await self._traced_run_client(model_spec, final_messages, **final_kwargs)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):

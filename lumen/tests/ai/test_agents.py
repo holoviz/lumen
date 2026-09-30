@@ -94,7 +94,7 @@ async def test_load_table_schemas_rejects_ambiguous_bare_name():
 
     result = await make_load_table_schemas_tool(metaset).function(["orders"])
 
-    assert "ambiguous" in result
+    assert "ambiguous" in result.lower()
     assert all(slug in result for slug in slugs)
     metaset.ensure_stats.assert_not_awaited()
 
@@ -1396,7 +1396,7 @@ def test_format_sql_error_strips_ansi_codes():
 
 
 def test_exploration_tool_doc_quotes_every_name():
-    sources = {("src", "orders"): None, ("src", "customers"): None}
+    sources = {("src_b", "orders"): None, ("src_a", "customers"): None}
     doc = make_run_exploration_sql_tool(sources).function.__doc__
-    assert "Sources: `src`." in doc
-    assert "Tables: `customers`, `orders`." in doc
+    assert "one of `src_a`, `src_b`." in doc
+    assert doc.count("`") % 2 == 0
