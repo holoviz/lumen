@@ -41,7 +41,7 @@ Write SQL query for user's data transformation request, focusing on intent over 
 - **load_relevant_metaset_docs**: documentation text.
 {%- endif %}
 
-You have {{ tool_rounds }} tool rounds. Submit the final query with **submit_sql** as soon as you know enough; it executes the query and returns any error for you to fix.
+You have {{ tool_rounds }} tool rounds. Before submitting, check what the summary does not settle: the stored form of each string literal you filter on, unless the summary lists that value, and which column holds a concept when more than one could. Then submit the final query with **submit_sql**; it executes the query and returns any error for you to fix.
 {%- endif %}
 
 Use `{{ dialect }}` SQL dialect.
