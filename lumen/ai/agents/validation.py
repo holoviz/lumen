@@ -1,3 +1,5 @@
+import json
+
 from typing import Any, NotRequired
 
 import param
@@ -7,10 +9,14 @@ from pydantic import Field
 
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext, input_dependency_keys
+from ..decisions import Noul
 from ..llm import Message
 from ..models import BaseModel
-from ..utils import content_to_text, log_debug
+from ..utils import content_to_text, log_debug, truncate_string
 from .base import Agent
+
+# Keeps the decision state small; the start of each output is enough to judge completeness.
+VALIDATION_STATE_MAX_CHARS = 2000
 
 
 class QueryCompletionValidation(BaseModel):
@@ -108,6 +114,40 @@ class ValidationAgent(Agent):
         ctx["previous_keys"] = previous_keys
         return ctx
 
+    async def _decide_complete(self, messages: list[Message], context: TContext) -> QueryCompletionValidation | None:
+        """
+        Skip the validation call when the decision model is confident the
+        result is complete. An incomplete verdict still needs the LLM for the
+        missing elements and suggestions, so only a confident "yes" is used.
+        """
+        if self.decision_model is None:
+            return None
+        content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+        if not isinstance(content, str) or not content:
+            return None
+        state = {"user_request": content}
+        for key in ("sql", "data", "chat", "listing", "view"):
+            value = context.get(key)
+            if key == "view" and value:
+                # A chart request is answered by the spec, not by the SQL or data.
+                value = json.dumps(value, default=str)
+            if isinstance(value, str) and value:
+                state[key] = truncate_string(value, VALIDATION_STATE_MAX_CHARS)
+        if len(state) == 1:
+            return None
+        outcome = (await self._decide("validation.complete", state, {"validation.complete": Noul(
+            instructions="Does the executed result fully answer every part of the user's request?",
+            criteria={
+                "true": "Every requested value, breakdown, filter and output is present in the result.",
+                "false": "Some requested part is missing, wrong in kind, or only partly answered.",
+            },
+        )}))["validation.complete"]
+        if not (outcome.accepted and outcome.value is True):
+            return None
+        return QueryCompletionValidation(
+            chain_of_thought="The decision model judged the result complete.", correct=True,
+        )
+
     async def respond(
         self,
         messages: list[Message],
@@ -123,6 +163,8 @@ class ValidationAgent(Agent):
             suggestions_list = '\n- '.join(result.suggestions)
             interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
+        if (result := await self._decide_complete(messages, context)) is not None:
+            return [result], {"validation_result": result}
         try:
             result = await self._invoke_prompt("main", messages, context)
         except Exception as e:

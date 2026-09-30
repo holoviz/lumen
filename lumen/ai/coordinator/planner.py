@@ -25,13 +25,15 @@ from ..config import PROMPTS_DIR
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
+from ..decisions import Choice, Noul
 from ..llm import Message
 from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import (
-    content_to_text, log_debug, mutate_user_message, wrap_logfire,
+    content_to_text, log_debug, mutate_user_message, truncate_string,
+    wrap_logfire,
 )
 from .base import Coordinator, Plan
 
@@ -39,6 +41,10 @@ if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+# Keeps the clarification decision state small; the table list is only there
+# to show whether the data settles an ambiguity.
+CLARIFICATION_TABLES_MAX_CHARS = 2000
 
 
 
@@ -346,10 +352,45 @@ class Planner(Coordinator):
         if "data" not in context:
             return "new"
 
-        # Use the follow_up prompt to classify
-        result = await self._invoke_prompt("follow_up", messages, context)
+        async def fallback():
+            result = await self._invoke_prompt("follow_up", messages, context)
+            return result.follow_up_type
 
-        follow_up_type = result.follow_up_type
+        if self.decision_model is None:
+            follow_up_type = await fallback()
+        else:
+            user_content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+            user_text = user_content if isinstance(user_content, str) else ""
+            if not user_text:
+                follow_up_type = await fallback()
+            else:
+                metaset = context.get("metaset")
+                if (not isinstance(context["data"], str) or not isinstance(context.get("sql") or "", str)
+                    or (metaset is not None and not hasattr(metaset, "table_context"))):
+                    follow_up_type = await fallback()
+                else:
+                    # The same provenance the follow_up prompt reads, so both routes see the same facts.
+                    source = context.get("source")
+                    source_meta = {
+                        table: meta for table, meta in ((getattr(source, "metadata", None) or {}).items())
+                        if isinstance(meta, dict)
+                    }
+                    decision_state = {
+                        "user_request": user_text, "previous_sql": context.get("sql") or "",
+                        "data_summary": context["data"],
+                        "external_api_tables": sorted(t for t, m in source_meta.items() if m.get("source_action")),
+                        "derived_tables": sorted(t for t, m in source_meta.items() if m.get("derived_from")),
+                        "available_tables": metaset.table_context(include_metadata=False) if metaset else "",
+                    }
+                    question = Choice(
+                        instructions="Does the request use data already in memory (direct), filter a previously derived table (derived), or require a fresh query/fetch (new)? A narrow API fetch cannot be expanded without a new fetch.",
+                        criteria={
+                            "direct": "Existing in-memory data answers without querying again.",
+                            "derived": "Filter or subset an existing derived table; no recomputation from raw sources.",
+                            "new": "Requires new computation, data beyond a narrow fetch, or a different topic.",
+                        },
+                    )
+                    follow_up_type = await self._decide_or_fallback("planner.follow_up", decision_state, question, fallback)
         if follow_up_type == "new":
             context.pop("pipeline", None)
 
@@ -362,13 +403,40 @@ class Planner(Coordinator):
         Returns True only if the query is genuinely ambiguous.
         """
         try:
-            result = await self._invoke_prompt("clarification_check", messages, context)
-            log_debug(
-                f"Clarification check: needs_clarification={result.yes} "
-                f"({result.chain_of_thought})",
-                prefix="[clarification]",
+            async def fallback():
+                result = await self._invoke_prompt("clarification_check", messages, context)
+                log_debug(
+                    f"Clarification check: needs_clarification={result.yes} "
+                    f"({result.chain_of_thought})",
+                    prefix="[clarification]",
+                )
+                return result.yes
+
+            if self.decision_model is None:
+                return await fallback()
+            user_content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+            user_text = user_content if isinstance(user_content, str) else ""
+            if not user_text:
+                return await fallback()
+            decision_state = {"user_request": user_text}
+            # Without the tables, Jev rates plain requests like "total amount by
+            # category" as ambiguous (p ~0.6); with them it drops to ~0.15.
+            if (metaset := context.get("metaset")) is not None and hasattr(metaset, "table_context"):
+                decision_state["available_tables"] = truncate_string(
+                    metaset.table_context(include_metadata=False), CLARIFICATION_TABLES_MAX_CHARS
+                )
+            return await self._decide_or_fallback(
+                "planner.clarification", decision_state,
+                Noul(
+                    instructions="Must the assistant ask the user a clarifying question before it can act on this request?",
+                    criteria={
+                        "true": ("Several readings would lead to fundamentally different actions, none is the obvious "
+                                 "default, and the available tables cannot settle it."),
+                        "false": ("There is an obvious default reading, or the available tables settle what the user "
+                                  "means. Most data requests are like this."),
+                    },
+                ), fallback,
             )
-            return result.yes
         except Exception:
             return False  # On failure, default to not clarifying
 

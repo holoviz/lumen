@@ -41,6 +41,9 @@ def main():
     parser.add_argument("--no-sql-cleanup", action="store_true", help="Disable automatic SQL cleanup in evaluation cases")
     parser.add_argument("--output", type=Path, help="Result file (defaults to a timestamped file in tests/evals/results)")
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted parallel BIRD run using --output")
+    parser.add_argument("--decision-model", choices=["jev"], help="Route closed-choice decisions through a decision model")
+    parser.add_argument("--decision-threshold", action="append", default=[], metavar="SITE=VALUE",
+                        help="Override a decision site's minimum certainty, e.g. planner.clarification=0.6")
     parser.add_argument("--workers", type=int, default=18, help="Concurrent isolated BIRD workers (default: 18)")
     args = parser.parse_args()
     if args.download_bird_questions:
@@ -95,18 +98,28 @@ def main():
         model_kwargs={"default": {"model": args.model}, "ui": {"model": args.model}},
     )
     llm.disable_sql_cleanup = args.no_sql_cleanup
+    decision_thresholds = {}
+    for item in args.decision_threshold:
+        site, _, value = item.partition("=")
+        decision_thresholds[site] = float(value)
     output = args.output or RESULTS / f"{args.model.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     if args.bird_all or args.bird_stratified or args.bird_ids:
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
                                args.model, args.provider, key, args.resume, args.workers,
                                instructions=instructions, instruction_version=instruction_version,
-                               disable_sql_cleanup=args.no_sql_cleanup)
+                               disable_sql_cleanup=args.no_sql_cleanup,
+                               decision_model=args.decision_model, decision_thresholds=decision_thresholds)
         LOG.warning("BIRD run summary: %s", summary)
         if summary["failed"] or summary["unscorable"]:
             raise SystemExit(1)
         return
+    decision_model = None
+    if args.decision_model == "jev":
+        from lumen.ai.decisions import Jev
+        decision_model = Jev()
     report = asyncio.run(evaluate(llm, dataset, source_factory, output, args.case, documents_factory,
-                                  fixtures, instruction_version=instruction_version))
+                                  fixtures, instruction_version=instruction_version, decision_model=decision_model,
+                                  decision_thresholds=decision_thresholds))
     report.print()
     if report.failures or any(not all(result.value for result in case.assertions.values()) for case in report.cases):
         raise SystemExit(1)
@@ -114,7 +127,7 @@ def main():
 
 def run_all_bird(dataset, output, questions, databases, model, provider, key, resume, workers,
                  worker=run_bird_case_process, case_timeout=240, instructions="", instruction_version="",
-                 disable_sql_cleanup=False):
+                 disable_sql_cleanup=False, decision_model=None, decision_thresholds=None):
     """Checkpoint a contiguous prefix while evaluating cases in separate workers."""
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},
                                    instructions, instruction_version)
@@ -144,7 +157,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                 receiver, sender = context.Pipe(duplex=False)
                 case = dataset.cases[next_start - 1]
                 args = (next_start, case, databases, model, provider, key, output, instructions, instruction_version,
-                        disable_sql_cleanup)
+                        disable_sql_cleanup, decision_model, decision_thresholds or {})
                 process = context.Process(target=worker, args=(args, sender))
                 process.start()
                 sender.close()
