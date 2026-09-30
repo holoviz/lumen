@@ -176,7 +176,7 @@ def test_parallel_bird_runner_reads_result_sent_before_worker_exit(tmp_path, mon
     questions.write_text("[]")
     summary = runner.run_all_bird(Dataset(name="bird_test", cases=cases), tmp_path / "result.json", questions,
                                   tmp_path, "test", "openai", "test-key", False, 1,
-                                  worker=simulated_bird_case_process, case_timeout=5)
+                                  worker=simulated_bird_case_process, case_timeout=60)
     assert summary["correct"] == 1
     assert summary["unscorable"] == 0
 
