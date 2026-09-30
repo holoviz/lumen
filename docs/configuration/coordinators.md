@@ -86,30 +86,42 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-### Use a decision model for bounded planning choices
+### Use a decision model for bounded choices
 
-Optionally let Jev answer three planning decisions before the LLM: classify a follow-up as `direct`, `derived`, or `new`; decide whether clarification is necessary; and decide whether a tool is relevant to the current task. The LLM still generates plans, instructions, queries, and responses. Without a decision model, the planner behaves as before. If a decision is uncertain, invalid, or unavailable, the same LLM prompt handles it instead.
+Optionally let Jev answer closed-choice decisions before, or instead of, an LLM call. The coordinator shares the decision model and thresholds with its agents. The LLM still generates plans, instructions, queries, and responses. Without a decision model, everything behaves as before. If a decision is uncertain, invalid, or unavailable, the existing path handles it instead.
+
+| Site | Decision | Accepted answer |
+|------|----------|-----------------|
+| `planner.follow_up` | Is a follow-up `direct`, `derived`, or `new`? | Skips the follow-up classifier call |
+| `planner.clarification` | Must the assistant ask a clarifying question? | Skips the clarification call |
+| `coordinator.tool_relevance` | Is a planner tool relevant? (only tools without `always_use`) | Skips the relevance call |
+| `sql.projection` | Did the question ask for each result column? | A confident "no" removes that column from the outer `SELECT` |
+| `sql.cleanup_gate` | Could fixing each data-quality finding change the answer? | Findings rated "no" do not trigger the cleaning rewrite |
+| `sql.empty_result` | Is an empty result a plausible answer? | Accepts it without asking the model to double-check |
+| `validation.complete` | Does the result answer every part of the request? | A confident "yes" skips the validation call; "no" still runs it |
+
+`sql.projection` only ever removes columns, never all of them, and keeps the query when the rewrite would change its meaning (`DISTINCT`, `SELECT *`, set operations, positional `ORDER BY`) or does not run.
 
 Install the optional SDK with `pip install 'lumen[ai-typesafe]'`, then configure a Jev API key:
 
-``` py title="Use Jev for planning decisions"
+``` py title="Use Jev for bounded decisions"
 import os
 
 import lumen.ai as lmai
 
 ui = lmai.ExplorerUI(
     data='penguins.csv',
-    decision_model=lmai.Jev(api_key=os.environ['JEV_API_KEY']),
+    decision_model=lmai.Jev(api_key=os.environ['TYPESAFE_API_KEY']),
     decision_thresholds={
         'planner.follow_up': 0.90,
-        'planner.clarification': 0.90,
         'coordinator.tool_relevance': 0.95,
+        'sql.projection': 0.60,
     },
 )
 ui.servable()
 ```
 
-Pass the key from your secret manager or environment instead of putting it in source code. An omitted threshold defaults to `0.90`; these numbers are provisional and should be checked against real queries. Jev's `Choice` confidence gates the follow-up classification. Binary (`Noul`) decisions use `2 * abs(probability - 0.5)` so an uncertain "no" falls back as readily as an uncertain "yes". Tool relevance merits particular care: an incorrect rejection may hide data the planner needs. Decision calls do not run for unsupported multimodal requests; those keep the LLM path.
+Pass the key from your secret manager or environment instead of putting it in source code. An omitted threshold defaults to `0.90`, at which Jev rarely answers; these numbers are provisional and should be checked against real queries. On replayed BIRD Mini-Dev results, `sql.projection` at `0.60` removed columns from 44 of 526 queries, fixed 24 and broke none; note that it favors answers that show only what was asked, which may drop context columns some users want to see. Jev's `Choice` confidence gates the follow-up classification. Binary (`Noul`) decisions use `2 * abs(probability - 0.5)` so an uncertain "no" falls back as readily as an uncertain "yes". Tool relevance merits particular care: an incorrect rejection may hide data the planner needs. Decision calls do not run for unsupported multimodal requests; those keep the LLM path.
 
 ## How coordinators work
 
