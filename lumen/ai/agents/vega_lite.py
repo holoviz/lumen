@@ -29,9 +29,9 @@ from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..utils import (
-    category_palette, get_data, get_gridded_metadata, get_schema,
-    has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
-    retry_llm_output, subset_gridded_to_2d,
+    PROFILE_SAMPLE_ROWS, category_palette, get_data, get_gridded_metadata,
+    get_schema, has_categorical_color, load_json, log_debug,
+    normalize_vegalite_spec, retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -126,6 +126,18 @@ class AltairSpec(BaseModel):
     )
 
 
+class PointExplanations(BaseModel):
+    """LLM-generated natural language explanations for each data point in a chart."""
+
+    explanations: list[str] = Field(
+        description=(
+            "One short human-readable explanation per data row, in the same order as the input rows. "
+            "Each string should describe what makes that specific data point notable or interesting "
+            "in the context of the chart being shown."
+        )
+    )
+
+
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -146,6 +158,7 @@ class VegaLiteAgent(BaseCodeAgent):
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
+            "ai_explanation": {"response_model": PointExplanations, "template": PROMPTS_DIR / "VegaLiteAgent" / "ai_explanation.jinja2"},
         }
     )
 
@@ -507,6 +520,7 @@ class VegaLiteAgent(BaseCodeAgent):
                 doc=doc,
                 doc_pages=doc_pages,
                 gridded=gridded,
+                code_execution_enabled=self.code_execution_enabled,
                 **errors_context,
             )
             async for output in response:
@@ -918,6 +932,109 @@ class VegaLiteAgent(BaseCodeAgent):
                 out.spec = dump_yaml(normalized["spec"])
             log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
+    @retry_llm_output()
+    async def _generate_ai_explanations(
+        self,
+        view: VegaLiteView,
+        messages: list[Message],
+        context: TContext,
+    ) -> bool:
+        """
+        Generate LLM-powered natural language explanations for each data row
+        and store them on the view's own _ai_explanations param, keyed to the
+        row order of the data at generation time.
+
+        Stored on the view rather than written into pipeline.data: the
+        pipeline can be shared by other charts and agents on the same table,
+        and a column that only exists to serve this one chart's tooltip
+        should not leak into their view of the data. Setting the param
+        triggers the same update()/rerender path pipeline.data changes would
+        have (see View._internal_params / view.update in views/base.py).
+        """
+        # 1. Get current pipeline data as pandas DataFrame.
+        # get_data handles lazy frames (narwhals/polars) correctly and runs
+        # off-thread — pd.DataFrame(lazyframe) would raise. Same pattern
+        # used elsewhere in this file (e.g. _generate_altair_spec).
+        df = await get_data(view.pipeline)
+
+        # 2. Build prompt variables — cap rows to avoid blowing the context window.
+        # We use PROFILE_SAMPLE_ROWS (same cap as the rest of the file) but take
+        # the HEAD (not a random sample) so explanations stay row-aligned: the
+        # LLM gets rows 0..N-1 and must return exactly that many explanations.
+        n_rows = len(df)
+        is_capped = n_rows > PROFILE_SAMPLE_ROWS
+        df_for_llm = df.head(PROFILE_SAMPLE_ROWS) if is_capped else df
+        if is_capped:
+            log_debug(
+                f"ai_explanation: DataFrame has {n_rows} rows — "
+                f"capping prompt to first {PROFILE_SAMPLE_ROWS} rows."
+            )
+        data_csv = df_for_llm.to_csv(index=False)
+        user_query = self._last_user_query(messages)
+
+        # 3. Invoke LLM using the ai_explanation prompt template (same pattern as
+        #    _stream_prompt / _invoke_prompt used elsewhere in this agent).
+        #    response_model is picked up automatically from the prompts dict entry.
+        result = await self._invoke_prompt(
+            "ai_explanation",
+            messages,
+            context,
+            user_query=user_query,
+            data_csv=data_csv,
+        )
+
+        # 4. Inject explanations as a new column into the DataFrame.
+        # Guard against LLM returning a different number of items than rows —
+        # pandas raises ValueError on length mismatch, which would silently
+        # swallow inside this fire-and-forget task with no visible error.
+        # Note: LLM was given df_for_llm (capped) so we align against that length,
+        # then pad the remaining rows with empty string for the full df.
+        explanations = result.explanations
+        capped_rows = len(df_for_llm)
+        if len(explanations) != capped_rows:
+            log_debug(
+                f"ai_explanation: LLM returned {len(explanations)} items for "
+                f"{capped_rows} capped rows — truncating/padding to match."
+            )
+            # Truncate if too many, pad with empty string if too few
+            explanations = (explanations + [""] * capped_rows)[:capped_rows]
+
+        # Pad remaining rows (beyond cap) with empty string
+        if is_capped:
+            explanations = explanations + [""] * (n_rows - capped_rows)
+
+        # 5. Store on the view. View.__init__ already watches every param but
+        # rerender/selection_expr/name and calls update() on change, so
+        # assigning this triggers the same update/rerender path pipeline.data
+        # would have, with no separate call needed.
+        view._ai_explanations = explanations
+        # Signal success to @retry_llm_output — falsy return (None) would
+        # be treated as failure and trigger unnecessary retries.
+        return True
+
+    @classmethod
+    def _spec_has_aggregation(cls, spec: dict) -> bool:
+        """
+        Return True if any encoding channel in the Vega-Lite spec uses an
+        aggregate function (e.g. mean, sum, count).
+
+        Adding a raw per-row field (ai_explanation) to a tooltip alongside
+        aggregated encodings causes Vega-Lite to group by that field too,
+        which silently splits a single bar into one bar per row. Composition
+        containers are walked, mirroring _spec_has_tooltips, so a layered or
+        concatenated spec with an aggregated layer is still caught.
+        """
+        spec = spec.get("spec", spec)
+        for key in ("layer", "concat", "hconcat", "vconcat"):
+            views = spec.get(key)
+            if isinstance(views, list):
+                return any(cls._spec_has_aggregation(v) for v in views)
+        encoding = spec.get("encoding", {})
+        return any(
+            isinstance(channel, dict) and "aggregate" in channel
+            for channel in encoding.values()
+        )
+
     @staticmethod
     def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
         """A plot for the "All" overview that tracks an editor's component.
@@ -1001,8 +1118,24 @@ class VegaLiteAgent(BaseCodeAgent):
 
         # Step 4: enhancements (LLM-driven creative decisions), per editable chart
         if not self.code_execution_enabled:
-            for editor in editors:
+            # editors is built one-to-one from charts (Step 2 above), so the
+            # lengths always match; strict=True surfaces it loudly if that
+            # invariant ever breaks instead of silently dropping entries.
+            for editor, (spec, _) in zip(editors, charts, strict=True):
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
+                # Step 5: Background LLM-driven row explanations, per chart.
+                # Skip aggregate specs (mean/sum bar charts etc.): adding a raw
+                # per-row field to a tooltip alongside aggregated encodings makes
+                # Vega-Lite group by that field too, silently splitting one bar
+                # into many. Explanations are stored per-view (see
+                # VegaLiteView._ai_explanations), so charts sharing a pipeline
+                # each get their own independent background task with no
+                # shared state to race on.
+                if not self._spec_has_aggregation(spec):
+                    state.execute(partial(
+                        self._generate_ai_explanations,
+                        editor.component, messages, context,
+                    ))
 
         out_context = await editors[-1].render_context()
         return outs, out_context

@@ -1,0 +1,29 @@
+You are a data analyst helping users understand charts and visualizations.
+
+The user asked: {{ user_query }}
+
+Below is the dataset shown in the chart (CSV format):
+
+```csv
+{{ data_csv }}
+```
+
+## Your Task
+
+For each row in the CSV above, write exactly one short explanation (1-2 sentences) that:
+- Describes what makes that specific data point **notable or interesting** in the context of the user's query and the chart being shown.
+- Uses plain English — no jargon, no column name references like "the value of body_mass_g". Instead say "the body mass" or "its weight".
+- Is concise and directly insightful.
+
+## Rules
+
+- Return **exactly as many explanations as there are data rows** (excluding the header row).
+- Preserve the **exact same order** as the input rows.
+- Do NOT include row numbers, bullet points, or any other prefix in each explanation.
+- If a row has no notable characteristics, say so briefly (e.g. "A typical specimen with average measurements across all traits.").
+
+## Example
+
+For a penguins dataset row: `Adelie,Torgersen,181,3750,MALE`
+
+Good explanation: "A male Adelie penguin from Torgersen Island with a relatively short flipper length of 181mm and body mass close to the species average."
