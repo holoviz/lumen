@@ -362,6 +362,49 @@ def test_sql_filter_datetime_range():
     assert result == expected
 
 
+def test_sql_filter_range_open_start():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (None, 3))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'3\''
+    assert result == expected
+
+
+def test_sql_filter_range_open_end():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (1, None))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'1\''
+    assert result == expected
+
+
+def test_sql_filter_date_range_open_end():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", (dt.date(2017, 2, 22), None))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'2017-02-22 00:00:00\''
+    assert result == expected
+
+
+def test_sql_filter_range_unbounded():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (None, None))])
+    assert result == "SELECT * FROM TABLE"
+
+
+def test_sql_filter_range_list_open_ends():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", [(None, 0), (None, None), (4, None)])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'0\' OR "A" >= \'4\''
+    assert result == expected
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("value", [(None, 2), (2, None), [(None, 0), (4, None)]])
+def test_sql_filter_open_range_matches_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4]})
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("A", value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("A", value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
 def test_sql_filter_slice_numeric():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", slice(20.0, 40.0))]
