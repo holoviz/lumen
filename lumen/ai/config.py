@@ -104,6 +104,17 @@ class DeterministicError(Exception):
     """
 
 
+class EmptyResultError(ValueError):
+    """
+    Raised when a query returns no rows, so the model can check its filters.
+
+    `retry_llm_output` passes `retry_kwargs` to the next attempt, which
+    accepts no rows as the answer.
+    """
+
+    retry_kwargs = {"raise_if_empty": False}
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 

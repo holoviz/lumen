@@ -1017,6 +1017,10 @@ class FileSource(Source):
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
+class QueryTimeoutError(TimeoutError):
+    """Raised when a query does not finish within the allotted time."""
+
+
 class BaseSQLSource(Source):
     """
     The BaseSQLSource implements the additional API required by
@@ -1192,6 +1196,61 @@ class BaseSQLSource(Source):
             The result as a pandas DataFrame
         """
         return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
+
+    async def execute_with_timeout(
+        self, sql_query: str, timeout: float | None, fetch: bool = False
+    ) -> DataFrame:
+        """
+        Executes a SQL query, giving up after `timeout` seconds.
+
+        The default stops waiting but leaves the statement running in its
+        worker thread; sources whose engine can cancel a statement override
+        this or cancel in `execute_async`.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        timeout : float | None
+            Seconds to wait for the result, or None to wait indefinitely.
+        fetch : bool
+            Whether to return the result in `dataframe_backend` like `fetch`
+            rather than as pandas like `execute`.
+
+        Returns
+        -------
+        DataFrame
+            The result of the query.
+
+        Raises
+        ------
+        QueryTimeoutError
+            If the query does not finish within `timeout` seconds.
+        """
+        query = asyncio.to_thread(self.fetch, sql_query) if fetch else self.execute_async(sql_query)
+        try:
+            return await asyncio.wait_for(query, timeout)
+        except TimeoutError as e:
+            raise QueryTimeoutError(f"The query did not finish within {timeout} seconds.") from e
+
+    def missing_table(self, error: Exception) -> str | None:
+        """
+        Returns the table a query error reports as missing.
+
+        Sources override this to parse their engine's error message and
+        to normalize the name the way the engine resolves identifiers.
+
+        Arguments
+        ---------
+        error : Exception
+            The error raised while executing a query.
+
+        Returns
+        -------
+        str | None
+            The missing table, or None if the error is not a missing table.
+        """
+        return None
 
     def fetch(self, sql_query: str, params: list | dict | None = None) -> DataFrame:
         """

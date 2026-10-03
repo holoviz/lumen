@@ -30,8 +30,8 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
     EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, VALIDATION_MAX_ROWS,
     SQLCleanup, execute_exploration_sql, format_exploration_result,
-    format_sql_error, make_load_table_schemas_tool,
-    make_run_exploration_sql_tool, make_sql_model, sql_contains_aggregates,
+    make_load_table_schemas_tool, make_run_exploration_sql_tool,
+    make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
@@ -48,9 +48,10 @@ from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
-from lumen.ai.utils import count_tokens
+from lumen.ai.utils import count_tokens, format_error
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
+from lumen.sources.base import QueryTimeoutError
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
@@ -241,15 +242,15 @@ async def test_sql_agent_validation_fetch_is_bounded(llm, test_messages):
     model = make_sql_model([(source.name, "numbers")])
     llm.set_responses([model(query="SELECT i FROM numbers", table_slug="numbers_result", tables=["numbers"])])
     context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["numbers"])}
-    original = source.execute_async
+    original = source.execute_with_timeout
     validated = []
 
-    async def capture(query):
-        result = await original(query)
+    async def capture(query, timeout, fetch=False):
+        result = await original(query, timeout, fetch)
         validated.append((query, len(result)))
         return result
 
-    with patch.object(source, "execute_async", capture):
+    with patch.object(source, "execute_with_timeout", capture):
         out, _ = await agent.respond(test_messages, context)
 
     assert len(validated) == 1
@@ -260,19 +261,19 @@ async def test_sql_agent_validation_fetch_is_bounded(llm, test_messages):
 
 async def test_sql_exploration_caps_fetched_rows():
     source = DuckDBSource(tables={"numbers": "SELECT i FROM range(5000) AS t(i)"})
-    with patch.object(source, "fetch", wraps=source.fetch) as fetch:
+    with patch.object(source, "execute_with_timeout", wraps=source.execute_with_timeout) as execute:
         result = await execute_exploration_sql(source.name, "SELECT i FROM numbers", sources={(source.name, "numbers"): source})
     assert f"at least {EXPLORATION_MAX_ROWS} rows" in result
-    assert "LIMIT" in fetch.call_args.args[0].upper()
+    assert "LIMIT" in execute.call_args.args[0].upper()
 
 
 @pytest.mark.parametrize("query", ["SELECT 1; DROP TABLE numbers", "DELETE FROM numbers", "WITH x AS (DELETE FROM numbers) SELECT * FROM x", "SELECT * INTO temp FROM numbers", 'SELECT "unterminated FROM numbers'])
 async def test_sql_exploration_rejects_non_read_only(query):
     source = DuckDBSource(tables={"numbers": "SELECT 1 AS i"})
-    with patch.object(source, "fetch", wraps=source.fetch) as fetch:
+    with patch.object(source, "execute_with_timeout", wraps=source.execute_with_timeout) as execute:
         result = await execute_exploration_sql(source.name, query, sources={(source.name, "numbers"): source})
     assert "error" in result.lower() or "read-only" in result.lower()
-    fetch.assert_not_called()
+    execute.assert_not_called()
 
 
 @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
@@ -1386,6 +1387,28 @@ async def test_sql_agent_does_not_retry_unresolvable_table(llm, test_messages):
     assert llm._index == 1
 
 
+async def test_sql_agent_revises_a_timed_out_query_once(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT 1 AS id"})
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+    model = make_sql_model([(source.name, "orders")])
+    revision = RetrySpec(chain_of_thought="Do less work", edits=[ReplaceLine(line_no=2, line="  1 AS id")])
+    llm.set_responses([model(query="SELECT id FROM orders", table_slug="order_ids", tables=["orders"]), revision])
+
+    timeout = AsyncMock(side_effect=QueryTimeoutError("The query did not finish within 1 seconds."))
+    with patch.object(DuckDBSource, "execute_with_timeout", timeout), pytest.raises(DeterministicError, match="timed out"):
+        await SQLAgent(llm=llm, clean_data=False, query_timeout=1).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert [call.args[1] for call in timeout.call_args_list] == [1, 1]
+
+
+async def test_sql_exploration_reports_timeout():
+    source = DuckDBSource(tables={"t": "SELECT 1 AS a"})
+    slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
+    result = await execute_exploration_sql(source.name, slow, sources={(source.name, "t"): source}, timeout=0.1)
+    assert result == "QueryTimeoutError: The query did not finish within 0.1 seconds."
+
+
 async def test_sql_exploration_error_hides_limit_wrapper():
     source = DuckDBSource(tables={"t": "SELECT 1 AS a"})
     result = await execute_exploration_sql(source.name, "SELECT nope FROM t", sources={(source.name, "t"): source})
@@ -1398,9 +1421,9 @@ async def test_sql_exploration_error_hides_limit_wrapper():
     assert caret_line.index("^") == query_line.index("nope")
 
 
-def test_format_sql_error_strips_ansi_codes():
+def test_format_error_strips_ansi_codes():
     error = ValueError("Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE \x1b[4m(\x1b[0m")
-    assert format_sql_error(error) == "ValueError: Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE ("
+    assert format_error(error) == "ValueError: Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE ("
 
 
 def test_exploration_tool_doc_quotes_every_name():

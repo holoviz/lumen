@@ -206,14 +206,19 @@ def test_plan_model_coerces_string_steps_while_streaming():
     assert plan.steps[0].actor == "ChatAgent"
 
 
-def test_plan_model_rejects_string_step_without_actor():
-    PlanModel = make_plan_model(["SQLAgent"], [])
+@pytest.mark.parametrize("text", [
+    "Calculate the total",
+    "After SQLAgent returns, have ChatAgent summarize",
+])
+def test_plan_model_rejects_string_step_without_single_actor(text):
+    PlanModel = make_plan_model(["SQLAgent", "ChatAgent"], [])
     with pytest.raises(ValidationError):
-        PlanModel(chain_of_thought="", title="Total", steps=["Calculate the total"])
+        PlanModel(chain_of_thought="", title="Total", steps=[text])
 
 
 def test_plan_model_schema_has_no_refs():
-    schema = json.dumps(make_plan_model(["SQLAgent"], ["MetadataLookup"]).model_json_schema())
+    # Streaming sends the Partial model's schema, not the plan model's.
+    schema = json.dumps(Partial[make_plan_model(["SQLAgent"], ["MetadataLookup"])].model_json_schema())
     assert "$ref" not in schema
     assert "$defs" not in schema
     assert '"enum": ["SQLAgent", "MetadataLookup"]' in schema

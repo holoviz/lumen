@@ -78,6 +78,9 @@ IMAGE_MIME_TYPES = {
 # it is asked to act on are drawn from the same amount of data.
 PROFILE_SAMPLE_ROWS = 5000
 
+# Terminal colour codes, which sqlglot puts in its error messages
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
 # Column-selection tuning for describe_data_sync.
 DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
@@ -310,6 +313,11 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
         )
 
 
+def format_error(error: BaseException) -> str:
+    """Render an error as ``Type: message`` for the model, without terminal colour codes."""
+    return ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}")
+
+
 def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
     """
     Recursively get the root cause of an exception up to a specified depth.
@@ -371,7 +379,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -407,7 +416,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -1574,6 +1584,39 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def inline_schema_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Replace local ``$ref`` pointers in a JSON schema with their ``$defs`` definitions.
+
+    Instructor already inlines them for the native Gemini client, but OpenAI
+    compatible endpoints such as OpenRouter forward them unchanged.
+    Recursive definitions stay referenced.
+    """
+    defs = schema.get("$defs", {})
+    unresolved = False
+
+    def resolve(node: Any, seen: frozenset[str]) -> Any:
+        nonlocal unresolved
+        if isinstance(node, list):
+            return [resolve(item, seen) for item in node]
+        if not isinstance(node, dict):
+            return node
+        name = node.get("$ref", "").removeprefix("#/$defs/")
+        if name in defs:
+            if name in seen:
+                unresolved = True
+                return node
+            siblings = {k: v for k, v in node.items() if k != "$ref"}
+            return resolve({**defs[name], **siblings}, seen | {name})
+        return {k: resolve(v, seen) for k, v in node.items() if k != "$defs"}
+
+    inlined = resolve(schema, frozenset())
+    if unresolved:
+        inlined["$defs"] = defs
+    return inlined
+
 
 def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     """

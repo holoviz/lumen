@@ -1,5 +1,3 @@
-import asyncio
-import re
 import typing as t
 
 import narwhals.stable.v2 as nw
@@ -14,11 +12,13 @@ from pydantic.fields import FieldInfo
 
 from ...filters import ConstantFilter
 from ...pipeline import Pipeline
-from ...sources.base import BaseSQLSource, Source
+from ...sources.base import BaseSQLSource, QueryTimeoutError, Source
 from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ...util import as_narwhals, as_pandas, is_lazyframe
-from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError
+from ..config import (
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError, EmptyResultError,
+)
 from ..context import ContextModel, TContext
 from ..data_quality import lint_data
 from ..editors import LumenEditor, SQLEditor
@@ -27,14 +27,34 @@ from ..models import RetrySpec
 from ..schemas import Metaset
 from ..tools import FunctionTool
 from ..utils import (
-    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, get_frame, get_pipeline,
-    log_debug, normalize_object_dtypes, parse_table_slug, retry_llm_output,
-    stream_details, truncate_to_tokens,
+    PROFILE_SAMPLE_ROWS, clean_sql, describe_data, format_error, get_frame,
+    get_pipeline, log_debug, normalize_object_dtypes, parse_table_slug,
+    retry_llm_output, stream_details, truncate_to_tokens,
 )
 from .base_lumen import BaseLumenAgent
 
 if t.TYPE_CHECKING:
     from narwhals.stable.v2.typing import Frame, IntoFrame
+
+# Rows/columns shown by format_exploration_result. Exploration reveals a frame's
+# shape, dtypes and value domains; a handful of rows does that, and the previous
+# 50-row aligned dump cost ~3.4k tokens for a 53x7 frame — 8x this one.
+EXPLORATION_PREVIEW_ROWS = 5
+EXPLORATION_PREVIEW_COLS = 25
+EXPLORATION_MAX_TOKENS = 1200
+EXPLORATION_MAX_ROWS = 1000
+VALIDATION_MAX_ROWS = PROFILE_SAMPLE_ROWS
+# Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
+# chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
+SCHEMA_MAX_TOKENS = 3000
+# Source tables profiled for one query. Each costs a query, and a join across
+# more inputs than this is not worth the round trips.
+SOURCE_PROFILE_MAX_TABLES = 3
+
+EMPTY_RESULT_HINT = (
+    "The query returned no rows. If the filters match the question, no rows is a valid "
+    "result and the same query may be returned unchanged; otherwise verify the filter values."
+)
 
 
 def make_source_table_model(sources: list[tuple[str, str]]):
@@ -118,89 +138,6 @@ class SQLCleanup(BaseModel):
         query alone is a correct and expected answer.""")
 
 
-# Rows/columns shown by format_exploration_result. Exploration reveals a frame's
-# shape, dtypes and value domains; a handful of rows does that, and the previous
-# 50-row aligned dump cost ~3.4k tokens for a 53x7 frame — 8x this one.
-EXPLORATION_PREVIEW_ROWS = 5
-EXPLORATION_PREVIEW_COLS = 25
-EXPLORATION_MAX_TOKENS = 1200
-EXPLORATION_MAX_ROWS = 1000
-VALIDATION_MAX_ROWS = PROFILE_SAMPLE_ROWS
-# Schema YAML is dense (nested keys, enum lists) and tokenizes near 2.5
-# chars/token, so the previous 12k-character cap admitted ~4.5k tokens.
-SCHEMA_MAX_TOKENS = 3000
-# Source tables profiled for one query. Each costs a query, and a join across
-# more inputs than this is not worth the round trips.
-SOURCE_PROFILE_MAX_TABLES = 3
-# Seconds before a query run on the model's behalf is abandoned. The worker
-# thread cannot be killed, but the request stops waiting on it.
-SQL_STATEMENT_TIMEOUT = 60
-
-EMPTY_RESULT_HINT = (
-    "The query returned no rows. If the filters match the question, no rows is a valid "
-    "answer and the same query may be returned unchanged; otherwise verify the filter values."
-)
-
-ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
-# SQLLimit wraps queries it cannot limit in place, and engine errors quote the wrapper.
-LIMIT_WRAPPER = re.compile(r"SELECT \* FROM \((?P<inner>.*)\) AS subquery LIMIT \d+", re.IGNORECASE)
-LIMIT_WRAPPER_PREFIX = len("SELECT * FROM (")
-MISSING_TABLE_PATTERNS = (
-    re.compile(r"Table with name\s+\"?([^\s\"!]+)\"?\s+does not exist", re.IGNORECASE),
-    re.compile(r"no such table:\s*\"?([^\s\"]+)\"?", re.IGNORECASE),
-    re.compile(r"relation\s+\"([^\"]+)\"\s+does not exist", re.IGNORECASE),
-)
-
-
-def format_sql_error(error: BaseException) -> str:
-    """Render an execution error for the model without ANSI codes or the LIMIT wrapper."""
-    lines = ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}").splitlines()
-    for i, line in enumerate(lines):
-        match = LIMIT_WRAPPER.search(line)
-        if not match:
-            continue
-        lines[i] = line[:match.start()] + match["inner"] + line[match.end():]
-        if i + 1 < len(lines) and lines[i + 1].strip() == "^":
-            caret = lines[i + 1].index("^") - LIMIT_WRAPPER_PREFIX
-            lines[i + 1] = " " * max(caret, match.start()) + "^"
-    return "\n".join(lines)
-
-
-def unresolvable_table(error: BaseException, source: BaseSQLSource) -> str | None:
-    """
-    Name of a table the engine reports missing although ``source`` lists it.
-
-    Rewriting the query cannot fix that, so retrying only burns LLM calls.
-    """
-    message = str(error)
-    for pattern in MISSING_TABLE_PATTERNS:
-        if match := pattern.search(message):
-            name = match.group(1).strip('"')
-            break
-    else:
-        return None
-    try:
-        tables = source.get_tables()
-    except Exception:
-        return None
-    # Only DuckDB resolves identifiers case-insensitively; elsewhere a case
-    # mismatch is something the model can fix.
-    if source.dialect == "duckdb":
-        return next((table for table in tables if table.lower() == name.lower()), None)
-    return name if name in tables else None
-
-
-async def await_query(query: t.Awaitable, timeout: float = SQL_STATEMENT_TIMEOUT):
-    """
-    Await a query, stopping after ``timeout``. Pass blocking source calls
-    through ``asyncio.to_thread`` so the event loop keeps running.
-    """
-    try:
-        return await asyncio.wait_for(query, timeout)
-    except TimeoutError as e:
-        raise TimeoutError(f"The query did not finish within {timeout} seconds.") from e
-
-
 def validate_read_only_sql(sql_query: str, dialect: str) -> None:
     statements = sqlglot.parse(sql_query, read=None if dialect == "any" else dialect)
     if len(statements) != 1 or not isinstance(statements[0], sqlglot.exp.Query) or any(
@@ -261,6 +198,7 @@ async def execute_exploration_sql(
     sql_query: str,
     *,
     sources: dict[tuple[str, str], BaseSQLSource],
+    timeout: float | None = None,
 ) -> str:
     """
     Run a read-only SQL statement on the named Lumen source and return a text preview of results.
@@ -276,6 +214,8 @@ async def execute_exploration_sql(
         SQL to execute (SELECT or WITH only).
     sources : dict[tuple[str, str], Source]
         Mapping from ``(source_name, table_name)`` to :class:`~lumen.sources.base.Source` instances.
+    timeout : float, optional
+        Seconds after which the query is abandoned and reported as an error.
 
     Returns
     -------
@@ -308,22 +248,24 @@ async def execute_exploration_sql(
         validate_read_only_sql(sql_clean, base.dialect)
         limited = SQLLimit(limit=EXPLORATION_MAX_ROWS + 1, write=base.dialect).apply(sql_clean)
     except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
-        return f"SQL parse/clean error: {ANSI_ESCAPE.sub('', str(e))}"
+        return f"SQL parse/clean error: {format_error(e)}"
 
     try:
-        df = await await_query(asyncio.to_thread(base.fetch, limited))
+        df = await base.execute_with_timeout(limited, timeout, fetch=True)
     except Exception as e:
-        return format_sql_error(e)
+        return format_error(e)
 
     capped = len(df) > EXPLORATION_MAX_ROWS
     return format_exploration_result(df.head(EXPLORATION_MAX_ROWS) if capped else df, capped=capped)
 
 
-def make_run_exploration_sql_tool(sources: dict[tuple[str, str], BaseSQLSource]) -> FunctionTool:
+def make_run_exploration_sql_tool(
+    sources: dict[tuple[str, str], BaseSQLSource], timeout: float | None = None
+) -> FunctionTool:
     """Build a :class:`~lumen.ai.tools.FunctionTool` that runs :func:`execute_exploration_sql` for ``sources``."""
 
     async def run_exploration_sql(source: str, sql_query: str) -> str:
-        return await execute_exploration_sql(source, sql_query, sources=sources)
+        return await execute_exploration_sql(source, sql_query, sources=sources, timeout=timeout)
 
     names = ", ".join(f"`{s}`" for s in sorted({s for s, _ in sources})) or "(none)"
     tables = ", ".join(f"`{t}`" for t in sorted({t for _, t in sources})) or "(none)"
@@ -643,6 +585,11 @@ class SQLAgent(BaseLumenAgent):
         placeholder numbers, outliers) and reports them."""
     )
 
+    query_timeout = param.Number(default=60, bounds=(0, None), allow_None=True, doc="""
+        Seconds a query run on the model's behalf may take before it is
+        abandoned, or None to wait indefinitely. A timed out query is
+        revised once; a second timeout ends the request.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -691,6 +638,7 @@ class SQLAgent(BaseLumenAgent):
             step.stream(f"\n\n❌ SQL cleaning failed: {e}")
 
         # Validate with retries
+        timed_out = False
         for i in range(max_retries):
             try:
                 validate_read_only_sql(sql_query, source.dialect)
@@ -700,7 +648,7 @@ class SQLAgent(BaseLumenAgent):
                 if i == max_retries - 1:
                     raise
                 retry_result = await self.revise(
-                    format_sql_error(e), messages, context, spec=sql_query,
+                    format_error(e), messages, context, spec=sql_query,
                     language=f"sql.{source.dialect}", discovery_context=discovery_context, tools=tools,
                 )
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
@@ -708,22 +656,30 @@ class SQLAgent(BaseLumenAgent):
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 validated = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(sql_query)
-                result = await await_query(source.execute_async(validated))
+                result = await source.execute_with_timeout(validated, self.query_timeout)
                 step.stream("\n\n✅ SQL validation successful")
                 return sql_query, result
             except Exception as e:
-                feedback = format_sql_error(e)
-                if table := unresolvable_table(e, source):
-                    step.stream(f"\n\n❌ SQL validation failed: {feedback}")
-                    raise DeterministicError(
-                        f"Table {table!r} is listed by source {source.name!r} but the "
-                        f"engine cannot resolve it: {feedback}"
-                    ) from e
+                feedback = format_error(e)
+                # Rewriting the query cannot make a listed table resolvable, and
+                # each timed out attempt may leave a query running on the engine.
+                table = source.missing_table(e)
+                if table is not None and table in source.get_tables():
+                    unrecoverable = (
+                        f"Table {table!r} is listed by source {source.name!r} "
+                        f"but the engine cannot resolve it: {feedback}"
+                    )
+                elif isinstance(e, QueryTimeoutError) and (timed_out or i == max_retries - 1):
+                    unrecoverable = f"The revised query timed out as well: {feedback}"
+                else:
+                    unrecoverable = None
+                if unrecoverable:
+                    step.stream(f"\n\n❌ SQL validation failed: {unrecoverable}")
+                    raise DeterministicError(unrecoverable) from e
                 if i == max_retries - 1:
                     step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {feedback}")
-                    # Implicit chaining: retry_llm_output follows __cause__ to the root
-                    # and would feed the raw engine message back to the model.
-                    raise ValueError(feedback)  # noqa: B904
+                    raise
+                timed_out = timed_out or isinstance(e, QueryTimeoutError)
 
                 # Retry with LLM fix
                 step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {feedback}")
@@ -737,8 +693,7 @@ class SQLAgent(BaseLumenAgent):
                 sql_query = clean_sql(retry_result, source.dialect, prettify=True)
         return sql_query, None
 
-    @staticmethod
-    async def _profile_source_rows(source: BaseSQLSource, tables: list[str]) -> list[str]:
+    async def _profile_source_rows(self, source: BaseSQLSource, tables: list[str]) -> list[str]:
         """
         Profile a sample of the rows feeding an aggregating query.
 
@@ -762,7 +717,7 @@ class SQLAgent(BaseLumenAgent):
                 limited = SQLLimit(
                     limit=PROFILE_SAMPLE_ROWS, write=source.dialect, pretty=False, identify=False
                 ).apply(source.get_sql_expr(table))
-                sample = await await_query(asyncio.to_thread(source.execute, limited))
+                sample = await source.execute_with_timeout(limited, self.query_timeout)
             except Exception as e:
                 # A source that cannot be sampled simply contributes nothing;
                 # the query it feeds has already run successfully.
@@ -809,7 +764,7 @@ class SQLAgent(BaseLumenAgent):
             return sql_query
 
         try:
-            cleaned_result = await await_query(asyncio.to_thread(source.execute, cleaned))
+            cleaned_result = await source.execute_with_timeout(cleaned, self.query_timeout)
         except Exception as e:
             step.stream(f"\n\n⚠️ Cleaned query failed, keeping the original: {e}")
             return sql_query
@@ -866,7 +821,7 @@ class SQLAgent(BaseLumenAgent):
         # method on failure, and a rejected query left installed as
         # ``context["source"]`` becomes the base every later attempt builds on.
         if not len(df) and raise_if_empty:
-            raise ValueError(f"Query `{sql_query}`: {EMPTY_RESULT_HINT}")
+            raise EmptyResultError(f"Query `{sql_query}`: {EMPTY_RESULT_HINT}")
 
         if should_materialize:
             context["source"] = sql_expr_source
@@ -1006,9 +961,9 @@ class SQLAgent(BaseLumenAgent):
         discovery_context : str, optional
             Optional discovery context to include in prompt
         raise_if_empty : bool, optional
-            Whether to raise error if query returns empty results. Only the
-            first empty result raises; no rows is a valid answer once the
-            model has been asked to check its filters.
+            Whether to raise EmptyResultError if the query returns no rows.
+            retry_llm_output clears it for the retry, so no rows is accepted
+            once the model has been asked to check its filters.
         output_title : str, optional
             Title to use for the output
         errors : list[str], optional
@@ -1019,14 +974,13 @@ class SQLAgent(BaseLumenAgent):
         SQLEditor
             Output object from successful execution
         """
-        raise_if_empty = raise_if_empty and not any(EMPTY_RESULT_HINT in error for error in errors or [])
         with self._add_step(title=step_title, steps_layout=self._steps_layout, context_exception="raise") as step:
             # Generate SQL using common prompt pattern
             dialects = set(src.dialect for src in sources.values())
             dialect = "duckdb" if len(dialects) > 1 else next(iter(dialects))
 
             metaset = context.get("metaset")
-            exploration = make_run_exploration_sql_tool(sources)
+            exploration = make_run_exploration_sql_tool(sources, timeout=self.query_timeout)
             if metaset is not None:
                 tool_list: list[FunctionTool] = [
                     make_browse_data_catalog_tool(metaset),
@@ -1157,7 +1111,7 @@ class SQLAgent(BaseLumenAgent):
             except Exception as e:
                 if i == max_retries - 1:
                     raise
-                feedback = f"{type(e).__name__}: {e!s}"
+                feedback = format_error(e)
                 result = await super().revise(
                     instruction, messages, context, spec=result, language=revise_language,
                     errors=[feedback], **kwargs
