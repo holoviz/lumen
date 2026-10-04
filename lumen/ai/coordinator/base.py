@@ -38,6 +38,7 @@ from ..tools import (
 )
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
+from ..tools.monty import make_monty_llm_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
     mutate_user_message, normalized_name, truncate_to_tokens, wrap_logfire,
@@ -118,7 +119,7 @@ class Plan(Section):
             return task.views, task.out_context
 
         outputs = []
-        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout) as step:
+        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout, context_exception="raise") as step:
             history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
             if self.steps_layout is not None:
@@ -293,7 +294,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     )
 
     llm_tools = param.List(
-        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
+        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools, make_monty_llm_tool],
         doc="""
         List of tools for the Planner to make available to the LLM. The tools are also
         made available to the agents.""",
@@ -553,7 +554,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context = {"agent_tool_contexts": [], **context}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
-                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Assistant") as step:
+                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
                     if "repo" in default_kwargs and "model_file" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")

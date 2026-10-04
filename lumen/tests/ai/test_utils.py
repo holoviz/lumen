@@ -16,16 +16,16 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.config import PROMPTS_DIR
+from lumen.ai.config import PROMPTS_DIR, EmptyResultError
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
     count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
-    fuse_messages, get_schema, mutate_user_message, parse_huggingface_url,
-    render_template, report_error, retry_llm_output, sanitize_column_names,
-    serialize_image_content, set_content_text, slug_to_table_name,
-    truncate_to_tokens,
+    fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
+    parse_huggingface_url, render_template, report_error, retry_llm_output,
+    sanitize_column_names, serialize_image_content, set_content_text,
+    slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -211,6 +211,46 @@ class TestRetryLLMOutput:
         with pytest.raises(unrecoverable_error, match="Failed"):
             await mock_func(errors=["Failed"])
         assert mock_sleep.call_count == 0
+
+    @patch("asyncio.sleep", return_value=None)
+    async def test_async_retry_kwargs_and_ansi_codes(self, mock_sleep):
+        calls = []
+
+        @retry_llm_output(retries=3)
+        async def mock_func(raise_if_empty=True, errors=None):
+            calls.append((raise_if_empty, errors and list(errors)))
+            if raise_if_empty:
+                raise EmptyResultError("no \x1b[4mrows\x1b[0m")
+            return "Accepted"
+
+        assert await mock_func() == "Accepted"
+        assert calls == [(True, None), (False, ["no rows"])]
+
+
+class TestInlineSchemaDefs:
+
+    def test_nested_refs_are_inlined(self):
+        schema = {
+            "properties": {"steps": {"items": {"$ref": "#/$defs/Step"}, "type": "array"}},
+            "$defs": {
+                "Step": {"properties": {"actor": {"$ref": "#/$defs/Actor", "description": "Who"}}},
+                "Actor": {"enum": ["SQLAgent"], "type": "string"},
+            },
+        }
+        assert inline_schema_defs(schema) == {
+            "properties": {"steps": {"items": {"properties": {"actor": {
+                "enum": ["SQLAgent"], "type": "string", "description": "Who",
+            }}}, "type": "array"}},
+        }
+
+    def test_recursive_refs_stay_referenced(self):
+        schema = {
+            "properties": {"root": {"$ref": "#/$defs/Node"}},
+            "$defs": {"Node": {"properties": {"children": {"items": {"$ref": "#/$defs/Node"}, "type": "array"}}}},
+        }
+        inlined = inline_schema_defs(schema)
+        assert inlined["properties"]["root"]["properties"]["children"]["items"] == {"$ref": "#/$defs/Node"}
+        assert inlined["$defs"] == schema["$defs"]
 
 
 
@@ -771,6 +811,7 @@ class TestFuseMessagesMultimodal:
         assert len(result) == 2
         assert result[0]["role"] == "system"
         assert "first" in result[0]["content"]
+        assert result[0]["content"].endswith("\n</Chat History>")
         assert result[1] == msgs[-1]
 
     def test_multimodal_user_content_in_history(self):

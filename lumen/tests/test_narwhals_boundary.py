@@ -959,9 +959,9 @@ async def test_exploration_preview_reads_the_source_frame_unconverted(backend):
     seen = []
     original = sql_module.format_exploration_result
 
-    def spy(df):
+    def spy(df, *, capped=False):
         seen.append(df)
-        return original(df)
+        return original(df, capped=capped)
 
     with patch.object(sql_module, "format_exploration_result", spy):
         await sql_module.execute_exploration_sql(

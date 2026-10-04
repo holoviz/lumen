@@ -494,7 +494,7 @@ class Source(MultiTypeComponent):
         elif self.cache_dir:
             if self.cache_with_dask:
                 try:
-                    import dask.dataframe as dd  # noqa: PLC0415
+                    import dask.dataframe as dd
                 except Exception:
                     dd = None
             else:
@@ -541,7 +541,7 @@ class Source(MultiTypeComponent):
         if self.cache_dir and write_to_file:
             if self.cache_with_dask:
                 try:
-                    import dask.dataframe as dd  # noqa: PLC0415
+                    import dask.dataframe as dd
                 except Exception:
                     dd = None
             else:
@@ -914,7 +914,7 @@ class FileSource(Source):
             kwargs.update(self.kwargs)
         if self.use_dask and dask:
             try:
-                import dask.dataframe as dd  # noqa: PLC0415
+                import dask.dataframe as dd
             except Exception:
                 return self._load_fn(ext, dask=False)
             if ext == 'csv':
@@ -998,7 +998,7 @@ class FileSource(Source):
                 if len(dfs) <= 1:
                     df = dfs[0] if dfs else None
                 elif self.use_dask and hasattr(dfs[0], 'compute'):
-                    import dask.dataframe as dd  # noqa: PLC0415
+                    import dask.dataframe as dd
                     df = dd.concat(dfs)
                 else:
                     df = pd.concat(dfs)
@@ -1015,6 +1015,10 @@ class FileSource(Source):
         df = self._load_table(table)
         df = FilterTransform.apply_to(df, conditions=list(query.items()))
         return df if dask or not hasattr(df, 'compute') else df.compute()
+
+
+class QueryTimeoutError(TimeoutError):
+    """Raised when a query does not finish within the allotted time."""
 
 
 class BaseSQLSource(Source):
@@ -1192,6 +1196,61 @@ class BaseSQLSource(Source):
             The result as a pandas DataFrame
         """
         return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
+
+    async def execute_with_timeout(
+        self, sql_query: str, timeout: float | None, fetch: bool = False
+    ) -> DataFrame:
+        """
+        Executes a SQL query, giving up after `timeout` seconds.
+
+        The default stops waiting but leaves the statement running in its
+        worker thread; sources whose engine can cancel a statement override
+        this or cancel in `execute_async`.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        timeout : float | None
+            Seconds to wait for the result, or None to wait indefinitely.
+        fetch : bool
+            Whether to return the result in `dataframe_backend` like `fetch`
+            rather than as pandas like `execute`.
+
+        Returns
+        -------
+        DataFrame
+            The result of the query.
+
+        Raises
+        ------
+        QueryTimeoutError
+            If the query does not finish within `timeout` seconds.
+        """
+        query = asyncio.to_thread(self.fetch, sql_query) if fetch else self.execute_async(sql_query)
+        try:
+            return await asyncio.wait_for(query, timeout)
+        except TimeoutError as e:
+            raise QueryTimeoutError(f"The query did not finish within {timeout} seconds.") from e
+
+    def missing_table(self, error: Exception) -> str | None:
+        """
+        Returns the table a query error reports as missing.
+
+        Sources override this to parse their engine's error message and
+        to normalize the name the way the engine resolves identifiers.
+
+        Arguments
+        ---------
+        error : Exception
+            The error raised while executing a query.
+
+        Returns
+        -------
+        str | None
+            The missing table, or None if the error is not a missing table.
+        """
+        return None
 
     def fetch(self, sql_query: str, params: list | dict | None = None) -> DataFrame:
         """

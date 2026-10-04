@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import inspect
 import io
 import sqlite3
 import sys
@@ -1690,7 +1691,7 @@ async def test_edit_callback_is_set_on_interface(explorer_ui):
     """Test that edit_callback is properly wired to the ChatInterface."""
     ui = explorer_ui
     assert ui.interface.edit_callback is not None
-    assert asyncio.iscoroutinefunction(ui.interface.edit_callback)
+    assert inspect.iscoroutinefunction(ui.interface.edit_callback)
 
 
 # --- Tests for on_edit exploration lifecycle ---

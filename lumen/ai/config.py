@@ -11,17 +11,35 @@ import platformdirs
 import yaml
 
 from instructor.utils import disable_pydantic_error_url
+from panel.pane import SVG
 from panel_material_ui import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR  # NOQA: F401
 
+LUMEN_AVATAR = (Path(__file__).parent.parent / "_assets" / "logo.svg").read_text().replace(
+    'viewBox="0 0 200 200"', 'viewBox="-25 -25 250 250"'
+)
+
 ChatMessage.default_avatars.update({
+    # Keep old speaker names recognizable when displaying existing chat history.
+    "Agent": {"type": "icon", "icon": "auto_awesome"},
+    "Assistant": {"type": "icon", "icon": "auto_awesome"},
+    "Lumen": SVG(LUMEN_AVATAR),
     "Planner": {"type": "icon", "icon": "checklist"},
     "Runner": {"type": "icon", "icon": "playlist_play"},
+    "Tables": {"type": "icon", "icon": "table_chart"},
+    "Documents": {"type": "icon", "icon": "description"},
     "SQL": {"type": "icon", "icon": "storage"},
     "Source": {"type": "icon", "icon": "cloud_download"},
     "DBT": {"type": "icon", "icon": "analytics"},
-    "Clarification": {"type": "icon", "icon": "live_help"}
+    "Analysis": {"type": "icon", "icon": "insights"},
+    "hvPlot": {"type": "icon", "icon": "show_chart"},
+    "Vega": {"type": "icon", "icon": "bar_chart"},
+    "DeckGL": {"type": "icon", "icon": "map"},
+    "Panel": {"type": "icon", "icon": "dashboard"},
+    "Summarizer": {"type": "icon", "icon": "summarize"},
+    "Validation": {"type": "icon", "icon": "fact_check"},
+    "Clarification": {"type": "icon", "icon": "live_help"},
 })
 
 FORMAT_ICONS = {
@@ -79,6 +97,24 @@ class MissingContextError(Exception):
     """Raise to indicate missing context for a query."""
 
 
+class DeterministicError(Exception):
+    """
+    Raised for failures that regenerating the LLM output cannot fix,
+    e.g. a cataloged table the engine cannot resolve.
+    """
+
+
+class EmptyResultError(ValueError):
+    """
+    Raised when a query returns no rows, so the model can check its filters.
+
+    `retry_llm_output` passes `retry_kwargs` to the next attempt, which
+    accepts no rows as the answer.
+    """
+
+    retry_kwargs = {"raise_if_empty": False}
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
@@ -107,6 +143,7 @@ VECTOR_STORE_ASSETS_URL = "https://assets.holoviz.org/lumen/vector_store/"
 
 UNRECOVERABLE_ERRORS = (
     ImportError,
+    DeterministicError,
     LlmSetupError,
     RecursionError,
     MissingContextError,
@@ -169,7 +206,7 @@ def get_markitdown():
     Built on first use rather than at import, because markitdown reaches
     pandas through its xlsx converter and costs about 0.7s to import.
     """
-    from markitdown import MarkItDown  # noqa: PLC0415
+    from markitdown import MarkItDown
 
     return MarkItDown()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,13 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
     DataFrame = pd.DataFrame
+
+# How each dialect's driver reports a table it cannot find
+MISSING_TABLE_PATTERNS = {
+    "sqlite": re.compile(r"no such table:\s*\"?([^\s\"]+)\"?"),
+    "postgresql": re.compile(r"relation\s+\"([^\"]+)\"\s+does not exist"),
+    "mysql": re.compile(r"Table\s+'(?:[^'.]+\.)?([^'.]+)'\s+doesn't exist"),
+}
 
 
 class SQLAlchemySource(BaseSQLSource):
@@ -140,9 +148,7 @@ class SQLAlchemySource(BaseSQLSource):
             )
 
             if self._driver_is_async:
-                from sqlalchemy.ext.asyncio import (  # noqa: PLC0415
-                    create_async_engine,
-                )
+                from sqlalchemy.ext.asyncio import create_async_engine
                 self._engine = create_async_engine(self._url, **engine_kwargs)
             else:
                 self._engine = create_engine(self._url, **engine_kwargs)
@@ -215,6 +221,12 @@ class SQLAlchemySource(BaseSQLSource):
         except Exception:
             # Fallback to dialect-agnostic (None) if detection fails.
             return None
+
+    def missing_table(self, error: Exception) -> str | None:
+        pattern = MISSING_TABLE_PATTERNS.get(self.dialect)
+        if pattern is None or not (match := pattern.search(str(error))):
+            return None
+        return match.group(1)
 
     def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """

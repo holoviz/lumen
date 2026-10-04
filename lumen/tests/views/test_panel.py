@@ -2,7 +2,7 @@ from panel.layout import Column
 from panel.pane import Markdown
 from panel.widgets import Checkbox
 
-from lumen.views.base import Panel, View
+from lumen.views.base import Panel
 
 
 def test_panel_view_roundtrip():
@@ -79,6 +79,8 @@ def test_panel_cross_reference_rx():
     b = Markdown("B", visible=a.rx().rx.not_())
     column = Column(a, b)
     spec = Panel(object=column).to_spec()
+    operation = spec['object']['objects'][1]['visible']['operation']
+    assert operation.pop('process_failures', False) is False
     assert spec == {
         'type': 'panel',
         'object': {

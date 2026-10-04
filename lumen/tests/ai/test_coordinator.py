@@ -1,6 +1,8 @@
 import io
+import json
 
 from typing import get_args
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -10,11 +12,13 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor.dsl.partial import Partial
 from panel.pane import Image
 from panel.tests.util import async_wait_until
 from panel_material_ui import (
     Card, ChatMessage, ChatStep, Typography,
 )
+from pydantic import ValidationError
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
@@ -145,9 +149,8 @@ async def test_planner_error(llm):
 
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
-    llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Invalid plan", yes=False),
-        lambda: PlanModel(
+    def invalid_plan():
+        return PlanModel(
             chain_of_thought="Just use ChatAgent",
             title="Hello!",
             steps=[
@@ -157,6 +160,12 @@ async def test_planner_error(llm):
                     title="Hello Reply"
                 )
             ])
+
+    # Planning reasks once, so both attempts must fail
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Invalid plan", yes=False),
+        invalid_plan,
+        invalid_plan,
     ])
 
     planner = Planner(llm=llm)
@@ -176,6 +185,79 @@ async def test_planner_error(llm):
     title, todos = steps_layout.header
     assert title.object == "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
     assert todos.object is None
+
+
+@pytest.mark.parametrize("text, instruction", [
+    ("Use SQLAgent to calculate the total.", "Use SQLAgent to calculate the total."),
+    ("SQLAgent: calculate the total", "calculate the total"),
+    ("`SQLAgent`: calculate the total", "calculate the total"),
+    ("`SQLAgent` to calculate the total", "`SQLAgent` to calculate the total"),
+])
+def test_plan_model_coerces_string_steps(text, instruction):
+    PlanModel = make_plan_model(["SQLAgent", "ChatAgent"], [])
+    plan = PlanModel(chain_of_thought="", title="Total", steps=[text])
+    assert plan.steps[0].actor == "SQLAgent"
+    assert plan.steps[0].instruction == instruction
+
+
+def test_plan_model_coerces_string_steps_while_streaming():
+    PlanModel = make_plan_model(["SQLAgent", "ChatAgent"], [])
+    plan = Partial[PlanModel].model_validate({"chain_of_thought": "", "title": "", "steps": ["ChatAgent: summarize"]})
+    assert plan.steps[0].actor == "ChatAgent"
+
+
+@pytest.mark.parametrize("text", [
+    "Calculate the total",
+    "After SQLAgent returns, have ChatAgent summarize",
+])
+def test_plan_model_rejects_string_step_without_single_actor(text):
+    PlanModel = make_plan_model(["SQLAgent", "ChatAgent"], [])
+    with pytest.raises(ValidationError):
+        PlanModel(chain_of_thought="", title="Total", steps=[text])
+
+
+def test_plan_model_schema_has_no_refs():
+    # Streaming sends the Partial model's schema, not the plan model's.
+    schema = json.dumps(Partial[make_plan_model(["SQLAgent"], ["MetadataLookup"])].model_json_schema())
+    assert "$ref" not in schema
+    assert "$defs" not in schema
+    assert '"enum": ["SQLAgent", "MetadataLookup"]' in schema
+
+
+async def test_planner_reasks_after_invalid_plan(llm):
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+
+    def invalid_plan():
+        return PlanModel(chain_of_thought="", title="Hello!", steps=[{"instruction": "Say Hello!"}])
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        invalid_plan,
+        PlanModel(chain_of_thought="", title="Hello!", steps=[StepModel(actor="ChatAgent", instruction="Say Hello!")]),
+    ])
+    with patch.object(llm, "invoke", wraps=llm.invoke) as invoke:
+        plan = await Planner(llm=llm).respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+    assert len(plan) == 1
+    assert "Your previous plan was rejected" in invoke.call_args.kwargs["system"]
+
+
+async def test_planner_retries_empty_completion(llm):
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+
+    def empty_completion():
+        raise RuntimeError("No tool calls or function call found in response (mode: TOOLS)")
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        empty_completion,
+        PlanModel(chain_of_thought="", title="Hello!", steps=[StepModel(actor="ChatAgent", instruction="Say Hello!")]),
+    ])
+    plan = await Planner(llm=llm).respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+    assert len(plan) == 1
 
 
 @pytest.fixture

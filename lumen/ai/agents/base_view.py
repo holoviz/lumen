@@ -30,7 +30,7 @@ class ViewInputs(ContextModel):
 
 class ViewOutputs(ContextModel):
 
-    view = Any
+    view: Any
 
 
 class BaseViewAgent(BaseLumenAgent):

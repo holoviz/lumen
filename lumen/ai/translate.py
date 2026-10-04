@@ -213,7 +213,7 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
                     mapped_types.append(created_models[model_name])
                 else:  # Not a param class or not converted, use raw type or mapping
                     mapped_types.append(PARAM_TYPE_MAPPING.get(cls, cls))
-            type_ = Union.__getitem__(tuple(mapped_types))
+            type_ = Union[tuple(mapped_types)]  # noqa: UP007
             if parameter.default is not None:  # Add default handling for tuple class types
                 field_kwargs["default"] = parameter.default
 
@@ -246,7 +246,7 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
                         mapped_types.append(created_models[model_name])
                     else:
                         mapped_types.append(PARAM_TYPE_MAPPING.get(cls, cls))
-                item_type = Union.__getitem__(tuple(mapped_types))
+                item_type = Union[tuple(mapped_types)]  # noqa: UP007
                 type_ = list[item_type]
             else:
                 type_ = list[_get_model(parameter.item_type, created_models)]

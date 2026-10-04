@@ -29,6 +29,8 @@ class hvPlotAgent(BaseViewAgent):
 
     purpose = param.String(default="Generates a plot of the data given a user prompt.")
 
+    user = param.String(default="hvPlot")
+
     prompts = param.Dict(
         default={
             "main": {"template": PROMPTS_DIR / "hvPlotAgent" / "main.jinja2"},

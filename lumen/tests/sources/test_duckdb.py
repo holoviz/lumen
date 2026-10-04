@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import os
 import tempfile
@@ -14,6 +15,7 @@ from lumen.transforms.sql import SQLGroupBy
 try:
     import duckdb
 
+    from lumen.sources.base import QueryTimeoutError
     from lumen.sources.duckdb import DuckDBSource
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
@@ -1696,3 +1698,74 @@ def test_file_table_key_survives_normalization(tmp_path):
     assert not table.startswith("_")
     assert source.normalize_table(table) in source.tables
     assert len(source.get(table)) == 2
+
+
+@pytest.fixture
+def table_function_source(tmp_path):
+    orders, refunds = tmp_path / "orders.csv", tmp_path / "refunds.json"
+    pd.DataFrame({"order_id": [1, 2, 3], "status": ["paid", "paid", "cancelled"]}).to_csv(orders, index=False)
+    refunds.write_text('[{"order_id": 1, "refund": 5}, {"order_id": 3, "refund": 7}]')
+    return DuckDBSource(uri=":memory:", tables={
+        "orders": f"read_csv('{orders}')",
+        "refunds": f"read_json_auto('{refunds}')",
+    })
+
+
+def test_table_function_expression_is_queryable_by_name(table_function_source):
+    assert table_function_source.tables["orders"].startswith("read_csv(")
+    result = table_function_source.execute("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid'")
+    assert result["n"].tolist() == [2]
+
+
+def test_sql_expr_source_joins_table_functions_by_name(table_function_source):
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    derived = table_function_source.create_sql_expr_source({"joined": sql})
+    assert derived.get("joined").values.tolist() == [[1, 5], [3, 7]]
+
+
+def test_missing_tables_are_inlined_across_a_join(table_function_source):
+    table_function_source._connection.execute("DROP VIEW orders")
+    table_function_source._connection.execute("DROP VIEW refunds")
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    with table_function_source._connection.cursor() as cursor:
+        rows = table_function_source._execute_resolving_tables(cursor, sql).fetchall()
+    assert rows == [(1, 5), (3, 7)]
+
+
+def test_missing_table_outside_the_source_raises_original_error(table_function_source):
+    with pytest.raises(duckdb.CatalogException, match="nope"):
+        table_function_source.create_sql_expr_source({"bad": "SELECT * FROM nope JOIN orders USING (order_id)"})
+
+
+def test_failed_view_creation_is_logged(tmp_path, caplog):
+    DuckDBSource(uri=":memory:", tables={"orders": f"read_csv('{tmp_path / 'missing.csv'}')"})
+    assert "could not create a view for table 'orders'" in caplog.text
+
+
+def test_missing_table_resolves_case_insensitively():
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 AS id"})
+    source._connection.execute("DROP VIEW orders")
+    with pytest.raises(duckdb.CatalogException) as excinfo:
+        source.execute("SELECT * FROM ORDERS")
+    assert source.missing_table(excinfo.value) == "orders"
+    assert source.missing_table(ValueError("Table with name orders does not exist!")) is None
+
+
+async def test_execute_with_timeout_interrupts_the_query():
+    source = DuckDBSource(uri=":memory:")
+    connection, cursors = source._connection, []
+
+    class RecordingConnection:
+        def cursor(self):
+            cursors.append(connection.cursor())
+            return cursors[-1]
+
+    source._connection = RecordingConnection()
+    slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
+    with pytest.raises(QueryTimeoutError, match="0.1 seconds"):
+        await source.execute_with_timeout(slow, 0.1)
+    await asyncio.sleep(0.2)
+    # The worker closes its cursor once the interrupted statement returns.
+    with pytest.raises(duckdb.ConnectionException):
+        cursors[0].execute("SELECT 1")
+    assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]

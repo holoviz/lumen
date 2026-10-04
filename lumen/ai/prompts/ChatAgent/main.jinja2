@@ -94,7 +94,7 @@ System executed this plan:
 {% if memory.data|length == 0 %}
 **Query returned no rows.**
 
-Your task: Analyze SQL query below to identify why returned empty results. Suggest specific corrections (which columns to use, what values to filter for, etc.). Then prompt user to click rerun button to try corrected query.
+If the query's filters match what the user asked for, say plainly that no rows match. Only if a filter looks wrong (wrong column, value or format), point out the specific correction and suggest rerunning the query.
 {%- else %}
 Below summary of data returned by query. Includes:
 - **Shape**: number of rows and columns
@@ -132,7 +132,7 @@ External source actions configured:
 {%- endfor %}
 {%- endif -%}
 
-{%- if memory.get('metaset') and memory['visible_slugs'] %}
+{%- if memory.get('metaset') and memory.get('visible_slugs') %}
 {%- set visible_list = render_visible_slugs() %}
 {%- if visible_list | trim %}
 ## Loaded Data Sources
