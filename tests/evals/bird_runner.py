@@ -11,7 +11,7 @@ from lumen.ai.evals.harness import CheckResult, EvalOpenAI, evaluate
 
 
 def run_bird_case(args):
-    index, case, databases, model, provider, key, output, instructions, instruction_version, disable_sql_cleanup = args
+    index, case, databases, model, provider, key, output, instructions, instruction_version, disable_sql_cleanup, settings = args
     llm = EvalOpenAI(
         suite_instructions=instructions,
         api="chat_completions" if provider == "openrouter" else "responses",
@@ -25,7 +25,8 @@ def run_bird_case(args):
     part = output.with_name(f"{output.stem}.{index}.current.json")
     try:
         report = asyncio.run(asyncio.wait_for(evaluate(llm, one, source_factory, part,
-                                                     instruction_version=instruction_version), timeout=240))
+                                                     instruction_version=instruction_version,
+                                                     settings=settings), timeout=240))
         result = json.loads(part.read_text(encoding="utf-8"))
         if not result["cases"]:
             failure = report.failures[0].error_message if report.failures else "No case result returned"

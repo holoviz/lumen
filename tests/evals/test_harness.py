@@ -46,6 +46,8 @@ def test_suite_instructions_apply_to_system_prompt_and_fingerprint():
     assert revised != baseline
     assert revised != case_fingerprint([case], instructions=instructions + " More rules", instruction_version=version)
     assert revised != case_fingerprint([case], instructions=instructions, instruction_version=version + "-no-sql-cleanup-v1")
+    assert case_fingerprint([case], settings={}) == baseline
+    assert case_fingerprint([case], settings={"option": 1}) not in (baseline, case_fingerprint([case], settings={"option": 2}))
 
 
 def test_bird_stratified_cases_cover_all_databases():
@@ -164,6 +166,21 @@ def test_parallel_bird_runner_checkpoints_in_order_and_times_out(tmp_path):
     assert summary["unscorable"] == 1
     assert run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", True, 2,
                         worker=simulated_bird_case_process, case_timeout=30) == summary
+
+
+def test_parallel_bird_runner_rejects_resume_with_other_settings(tmp_path):
+    from tests.evals.__main__ import run_all_bird
+
+    dataset = Dataset(name="bird_test", cases=[Case(name="case_1", inputs=Inputs(["1"]))])
+    questions = tmp_path / "questions.json"
+    questions.write_text("[]")
+    output = tmp_path / "result.json"
+    run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", False, 1,
+                 worker=simulated_bird_case_process, case_timeout=60, settings={"option": 1})
+    assert json.loads(output.read_text())["run"]["settings"] == {"option": 1}
+    with pytest.raises(ValueError, match="different case set, settings"):
+        run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", True, 1,
+                     worker=simulated_bird_case_process, case_timeout=60, settings={"option": 2})
 
 
 def test_parallel_bird_runner_reads_result_sent_before_worker_exit(tmp_path, monkeypatch):
@@ -462,6 +479,30 @@ async def test_run_case_scopes_usage_to_each_turn(monkeypatch):
     assert result.usage.cost_usd == pytest.approx(0.0002)
 
 
+
+
+@pytest.mark.asyncio
+async def test_run_case_passes_constructor_params(monkeypatch):
+    """Configure the UI and directly run agents without changing the harness."""
+    from lumen.ai.evals import harness
+
+    created = []
+
+    def capture(cls):
+        return lambda **params: created.append((cls.__name__, params)) or cls(**params)
+
+    async def respond(self, messages, context):
+        return None
+
+    monkeypatch.setattr("lumen.ai.coordinator.planner.Planner.respond", respond)
+    monkeypatch.setattr(harness, "ExplorerUI", capture(harness.ExplorerUI))
+    monkeypatch.setattr(harness, "TableListAgent", capture(harness.TableListAgent))
+    await run_case(Inputs(["What data is available?"]), MockLLM(), source(Inputs([])), ui_params={"log_level": "INFO"})
+    await run_case(Inputs(["List tables"], agents=("TableListAgent",)), MockLLM(), source(Inputs([])),
+                   agent_params={"debug": True})
+
+    assert created[0][0] == "ExplorerUI" and created[0][1]["log_level"] == "INFO"
+    assert created[1][0] == "TableListAgent" and created[1][1]["debug"] is True
 
 
 @pytest.mark.asyncio

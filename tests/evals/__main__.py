@@ -114,10 +114,15 @@ def main():
 
 def run_all_bird(dataset, output, questions, databases, model, provider, key, resume, workers,
                  worker=run_bird_case_process, case_timeout=240, instructions="", instruction_version="",
-                 disable_sql_cleanup=False):
-    """Checkpoint a contiguous prefix while evaluating cases in separate workers."""
+                 disable_sql_cleanup=False, settings=None):
+    """
+    Checkpoint a contiguous prefix while evaluating cases in separate workers.
+
+    ``settings`` is passed to each worker and is part of the fingerprint, so a
+    resumed run cannot mix results produced with different settings.
+    """
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},
-                                   instructions, instruction_version)
+                                   instructions, instruction_version, settings)
     previous = None
     if output.exists():
         if not resume:
@@ -126,7 +131,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
         meta = previous["run"]
         api = "chat_completions" if provider == "openrouter" else "responses"
         if meta["case_fingerprint"] != fingerprint or meta["model"] != model or meta["api"] != api or meta.get("provider") != provider:
-            raise ValueError("Existing result has a different case set, model, or API")
+            raise ValueError("Existing result has a different case set, settings, model, or API")
         expected = [case.name for case in dataset.cases]
         recorded = [case["name"] for case in previous["cases"]]
         if recorded != expected[:len(recorded)]:
@@ -144,7 +149,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                 receiver, sender = context.Pipe(duplex=False)
                 case = dataset.cases[next_start - 1]
                 args = (next_start, case, databases, model, provider, key, output, instructions, instruction_version,
-                        disable_sql_cleanup)
+                        disable_sql_cleanup, settings or {})
                 process = context.Process(target=worker, args=(args, sender))
                 process.start()
                 sender.close()
@@ -184,7 +189,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                                            question_count=len(dataset.cases), suite_instructions=instructions,
                                            instruction_version=instruction_version, model=model,
                                            api="chat_completions" if provider == "openrouter" else "responses",
-                                           provider=provider)
+                                           provider=provider, settings=settings or {})
                 previous["cases"].extend(result["cases"])
                 previous["failures"].extend(result["failures"])
                 output.parent.mkdir(parents=True, exist_ok=True)
