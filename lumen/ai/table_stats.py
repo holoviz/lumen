@@ -8,18 +8,21 @@ prompt. Computing that must also stay affordable on warehouse tables, so each
 table is profiled with the cheapest strategy that is still accurate:
 
 1. Metadata the engine already maintains (``pg_stats``, Parquet footers,
-   Snowflake micro-partition metadata, ``duckdb_tables()``), which is free.
+   Snowflake micro-partition metadata, Postgres and SQLite row estimates),
+   which is free.
 2. One exact aggregate pass when the table has at most ``exact_row_limit`` rows.
 3. A seeded engine-side sample of ``sample_rows`` rows above that.
 
 Low-cardinality columns found in step 2 or 3 get exact value counts when the
 engine can afford a ``GROUP BY``. Every result records how it was computed so
-the prompt can say ``sampled 10000 of 2300000000 rows`` rather than implying
+the prompt can say ``stats from a 10000-row sample`` rather than implying
 that a sampled range is exact.
 
 Results are cached in memory and, for sources with a stable identity, on disk,
-keyed by the table definition and validated against its column types and
-modification time where the engine exposes one.
+keyed by the table definition and validated against its column types and a
+modification token where the engine exposes one. Persisted entries contain
+real data values (ranges, frequent values, examples); set
+``LUMEN_TABLE_STATS_CACHE`` to an empty string to keep them in memory only.
 """
 from __future__ import annotations
 
@@ -33,17 +36,26 @@ import os
 import re
 import threading
 import time
+import uuid
+import weakref
 
+from collections import OrderedDict
 from concurrent.futures import (
     ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote
 
 import numpy as np
 import pandas as pd
 import param
+import sqlglot
+
+from platformdirs import user_cache_dir
+from sqlglot import exp
+from sqlglot.dialects import Dialect
 
 from .utils import log_debug
 
@@ -52,7 +64,7 @@ if TYPE_CHECKING:
 
 #: Bumped whenever the computed statistics change meaning, which invalidates
 #: every persisted entry.
-STATS_VERSION = 1
+STATS_VERSION = 2
 
 EXACT = "exact"
 ESTIMATED = "estimated"
@@ -71,7 +83,9 @@ _OTHER_RE = re.compile(
     r"BLOB|BINARY|BYTEA|BYTES|STRUCT|MAP|LIST|ARRAY|\[\]|JSON|GEOMETRY|GEOGRAPHY|VARIANT|OBJECT|INTERVAL",
     re.IGNORECASE,
 )
-_BARE_NAME_RE = re.compile(r'^\s*(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$]*)){0,2}\s*$')
+# Hyphens are allowed because BigQuery project IDs contain them.
+_BARE_NAME_RE = re.compile(r'^\s*(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$-]*)(?:\s*\.\s*(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$-]*)){0,2}\s*$')
+_PLAIN_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _SELECT_STAR_RE = re.compile(r'^\s*SELECT\s+\*\s+FROM\s+(.+?)\s*;?\s*$', re.IGNORECASE | re.DOTALL)
 _FILE_ARG_RE = re.compile(r"""read_\w+\s*\(\s*\[?\s*['"]([^'"]+)['"]""", re.IGNORECASE)
 
@@ -102,9 +116,15 @@ class TableStats:
     columns: list[ColumnStats] = field(default_factory=list)
     rows: int | None = None
     rows_exact: bool = False
+    #: Lower bound when the row count is unknown but exceeds a limit.
+    rows_at_least: int | None = None
     method: str = TYPES_ONLY
     sample_size: int | None = None
+    #: False when the "sample" is the first rows, which may be sorted.
+    sample_random: bool = True
     ranges_exact: bool = False
+    #: Hash of the column names and types as the engine described them.
+    signature: str | None = None
     fingerprint: str | None = None
     computed_at: float = 0.0
     version: int = STATS_VERSION
@@ -244,11 +264,43 @@ def quote_identifier(name: str, dialect: str | None) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _reserved_words() -> frozenset[str]:
+    # sqlglot only lists reserved words for some dialects; their union is a
+    # superset, and quoting a non-reserved name is harmless once case-folded.
+    words: set[str] = set()
+    for name in ("duckdb", "bigquery", "mysql", "postgres", "snowflake", "tsql", "oracle"):
+        try:
+            words |= {w.lower() for w in Dialect.get_or_raise(name).generator_class.RESERVED_KEYWORDS}
+        except Exception:
+            continue
+    return frozenset(words | {"order", "group", "user", "table", "select", "from", "where", "limit"})
+
+
+_RESERVED = _reserved_words()
+
+
+def _quote_part(part: str, dialect: str | None) -> str:
+    """
+    Quote one name part only when it needs it. Quoting makes a name
+    case-sensitive, so plain names stay unquoted to keep the engine's own
+    case folding, and reserved words are folded the way the engine would
+    have folded them unquoted.
+    """
+    if part[0] in '"`[':
+        return part
+    if _PLAIN_IDENT_RE.match(part) and part.lower() not in _RESERVED:
+        return part
+    if _PLAIN_IDENT_RE.match(part):
+        if dialect in ("postgresql", "postgres", "redshift"):
+            part = part.lower()
+        elif dialect in ("snowflake", "oracle"):
+            part = part.upper()
+    return quote_identifier(part, dialect)
+
+
 def _quote_qualified(name: str, dialect: str | None) -> str:
-    parts = re.findall(r'"[^"]+"|`[^`]+`|[^.\s]+', name)
-    return ".".join(
-        part if part[0] in '"`' else quote_identifier(part, dialect) for part in parts
-    )
+    parts = re.findall(r'"[^"]+"|`[^`]+`|\[[^\]]+\]|[^.\s]+', name)
+    return ".".join(_quote_part(part, dialect) for part in parts)
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +320,10 @@ class StatsAdapter:
     #: Whether exact GROUP BY value counts are affordable on large tables.
     local = False
 
+    #: Whether reading the first rows bills a full scan (BigQuery), so it is
+    #: never used as a fallback for a failed or empty sample.
+    limit_scans_table = False
+
     def __init__(self, source: Source):
         self.source = source
         self.dialect = getattr(source, "dialect", None)
@@ -280,8 +336,9 @@ class StatsAdapter:
 
     def definition(self, table: str) -> str:
         tables = getattr(self.source, "tables", None)
-        if isinstance(tables, dict) and table in tables:
-            return str(tables[table])
+        # Non-SQL sources may map names to DataFrames, whose repr is no definition.
+        if isinstance(tables, dict) and isinstance(tables.get(table), str):
+            return tables[table]
         try:
             return self.source.get_sql_expr(table)
         except Exception:
@@ -332,28 +389,42 @@ class StatsAdapter:
         """A FROM-clause item for `table`."""
         if name := self.bare_name(table):
             return _quote_qualified(name, self.dialect)
-        return f"({self.source.get_sql_expr(table)}) AS {quote_identifier('__lumen_t', self.dialect)}"
+        return f"({self.source.get_sql_expr(table)}) {self.alias('lumen_t')}"
 
     def params(self, table: str):
         return (getattr(self.source, "table_params", None) or {}).get(table) or None
 
+    # Dialect -------------------------------------------------------------------
+
+    def limit(self, sql: str, rows: int) -> str:
+        """`sql` (a plain SELECT) restricted to its first `rows` rows."""
+        if self.dialect in ("mssql", "tsql"):
+            return re.sub(r"^\s*SELECT\s", f"SELECT TOP {rows} ", sql, count=1, flags=re.IGNORECASE)
+        if self.dialect == "oracle":
+            return f"{sql} FETCH FIRST {rows} ROWS ONLY"
+        return f"{sql} LIMIT {rows}"
+
+    def alias(self, name: str) -> str:
+        """A subquery alias; Oracle rejects ``AS`` there."""
+        return name if self.dialect == "oracle" else f"AS {name}"
+
     # Execution -----------------------------------------------------------------
 
     def execute(self, sql: str, params=None, timeout: float | None = None) -> pd.DataFrame:
-        return _run_with_timeout(lambda: self.source.execute(sql, params), timeout, self.cancel)
-
-    def cancel(self) -> None:
-        """Interrupt the statement currently running, where the engine allows it."""
+        return _run_abandonable(lambda: self.source.execute(sql, params), timeout)
 
     # Metadata ------------------------------------------------------------------
 
     def columns(self, table: str, relation: str, timeout: float | None) -> list[tuple[str, str | None]]:
-        sql = f"SELECT * FROM {relation} LIMIT 0"
-        df = self.execute(sql, self.params(table), timeout)
+        df = self.execute(self.limit(f"SELECT * FROM {relation}", 0), self.params(table), timeout)
         return [(str(name), None) for name in df.columns] if df is not None else []
 
     def keys(self, table: str) -> tuple[set[str], dict[str, str]]:
         return set(), {}
+
+    def exact_row_count(self, table: str) -> int | None:
+        """An exact row count from metadata, e.g. Parquet footers."""
+        return None
 
     def row_estimate(self, table: str) -> int | None:
         """A row count the engine already knows without scanning."""
@@ -363,9 +434,12 @@ class StatsAdapter:
         """Fill min/max/nulls (and more) from engine metadata; return True on success."""
         return False
 
-    def sample_sql(self, relation: str, rows: int, total: int | None, seed: int) -> tuple[str, bool]:
-        """A query returning roughly `rows` rows, and whether it is a random sample."""
-        return f"SELECT * FROM {relation} LIMIT {rows}", False
+    def sample_sql(self, relation: str, rows: int, total: int | None, seed: int) -> tuple[str | None, bool]:
+        """
+        A query returning roughly `rows` rows and whether it is a random
+        sample, or None when no affordable sample exists.
+        """
+        return self.limit(f"SELECT * FROM {relation}", rows), False
 
 
 
@@ -379,10 +453,6 @@ class DuckDBStatsAdapter(StatsAdapter):
 
     local = True
 
-    def __init__(self, source):
-        super().__init__(source)
-        self._cursor = None
-
     def identity(self) -> str | None:
         uri = getattr(self.source, "uri", None)
         if uri and uri != ":memory:" and "://" not in uri:
@@ -390,41 +460,46 @@ class DuckDBStatsAdapter(StatsAdapter):
         return None
 
     def modified(self, table: str) -> str | None:
-        if self.identity() and self.bare_name(table):
-            uri = Path(self.source.uri).expanduser()
+        # A table or view's oid changes on CREATE OR REPLACE and its
+        # estimated size on inserts, which also covers in-memory databases.
+        tokens = [token] if (token := super().modified(table)) else []
+        if names := self._referenced_tables(table):
+            placeholders = ", ".join("?" for _ in names)
             try:
-                stat = uri.stat()
-            except OSError:
+                df = self.execute(
+                    "SELECT lower(table_name) AS name, table_oid AS oid, estimated_size AS size "
+                    f"FROM duckdb_tables() WHERE lower(table_name) IN ({placeholders}) "
+                    "UNION ALL SELECT lower(view_name), view_oid, NULL FROM duckdb_views() "
+                    f"WHERE NOT internal AND lower(view_name) IN ({placeholders}) ORDER BY 1, 2",
+                    [*names, *names], 5,
+                )
+            except Exception:
                 return None
-            return f"{stat.st_size}:{stat.st_mtime_ns}"
-        return super().modified(table)
+            tokens.append(";".join(f"{name}:{oid}:{size}" for name, oid, size in df.itertuples(index=False)))
+        return "|".join(tokens) or None
 
-    def relation(self, table: str) -> str:
-        # DuckDB resolves views and table functions itself; the only thing to
-        # guard against is a reserved word used as a table name.
+    def _referenced_tables(self, table: str) -> list[str]:
         if name := self.bare_name(table):
-            return _quote_qualified(name, self.dialect)
-        expr = self.source.get_sql_expr(table)
-        return f"({expr}) AS __lumen_t"
+            return [name.split(".")[-1].strip('"`').lower()]
+        try:
+            tree = sqlglot.parse_one(self.definition(table), read="duckdb")
+        except Exception:
+            return []
+        ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+        names = {t.name.lower() for t in tree.find_all(exp.Table) if t.name and t.name.lower() not in ctes}
+        return sorted(names)
 
     def execute(self, sql: str, params=None, timeout: float | None = None) -> pd.DataFrame:
-        def run():
-            cursor = self.source._connection.cursor()
-            self._cursor = cursor
-            try:
-                rel = cursor.execute(sql, params) if params else cursor.execute(sql)
-                return rel.fetch_df()
-            finally:
-                self._cursor = None
-                cursor.close()
-        return _run_with_timeout(run, timeout, self.cancel)
+        # A cursor per statement so interrupt() only stops this one.
+        cursor = self.source._connection.cursor()
 
-    def cancel(self) -> None:
-        if (cursor := self._cursor) is not None:
-            try:
-                cursor.interrupt()
-            except Exception:
-                pass
+        def run():
+            return (cursor.execute(sql, params) if params else cursor.execute(sql)).fetch_df()
+
+        try:
+            return _run_interruptible(run, timeout, cursor.interrupt)
+        finally:
+            cursor.close()
 
     def columns(self, table, relation, timeout):
         df = self.execute(f"DESCRIBE SELECT * FROM {relation}", self.params(table), timeout)
@@ -454,7 +529,7 @@ class DuckDBStatsAdapter(StatsAdapter):
                     fks[col] = f"{row.referenced_table}.{ref}"
         return pk, fks
 
-    def row_estimate(self, table):
+    def exact_row_count(self, table):
         if path := self._parquet_path(table):
             try:
                 df = self.execute(f"SELECT SUM(num_rows) AS n FROM parquet_file_metadata('{path}')", None, 10)
@@ -506,7 +581,7 @@ class DuckDBStatsAdapter(StatsAdapter):
 
     def sample_sql(self, relation, rows, total, seed):
         if total is None or total <= rows:
-            return f"SELECT * FROM {relation} LIMIT {rows}", False
+            return super().sample_sql(relation, rows, total, seed)
         if total <= self.reservoir_row_limit:
             return (
                 f"SELECT * FROM {relation} USING SAMPLE reservoir({rows} ROWS) REPEATABLE ({seed})"
@@ -514,7 +589,7 @@ class DuckDBStatsAdapter(StatsAdapter):
         pct = _percent(rows, total)
         return (
             f"SELECT * FROM (SELECT * FROM {relation} USING SAMPLE {pct:.4f} PERCENT (system, {seed})) "
-            f"AS __lumen_s LIMIT {rows}"
+            f"AS lumen_s LIMIT {rows}"
         ), True
 
 
@@ -555,7 +630,6 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
         if database in ("", ":memory:"):
             return None
         database = database.split("?", 1)[0].removeprefix("file:")
-        from urllib.parse import unquote
         path = Path(unquote(database)).expanduser()
         return str(path.resolve()) if path.exists() else None
 
@@ -607,7 +681,7 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
     def execute(self, sql, params=None, timeout=None):
         if self.dialect == "sqlite" and not getattr(self.source, "_driver_is_async", False):
             return self._execute_sqlite(sql, params, timeout)
-        if self.dialect in ("postgresql", "postgres") and timeout:
+        if self.dialect in ("postgresql", "postgres") and timeout and not getattr(self.source, "_driver_is_async", False):
             return self._execute_postgres(sql, params, timeout)
         return super().execute(sql, params, timeout)
 
@@ -636,13 +710,22 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
 
     def _execute_postgres(self, sql, params, timeout):
         from sqlalchemy import text
-        with self.source._engine.connect() as conn:
-            conn.exec_driver_sql(f"SET statement_timeout = {int(timeout * 1000)}")
-            try:
-                result = conn.execute(text(sql), params or {})
+
+        # Without bind parameters every colon is literal, e.g. inside a
+        # quoted identifier, and must not be parsed as one.
+        stmt = text(sql) if params else text(sql.replace(":", "\\:"))
+        start = time.monotonic()
+        try:
+            # SET LOCAL ends with the transaction, so nothing has to run
+            # after a timeout has aborted it.
+            with self.source._engine.connect() as conn, conn.begin():
+                conn.exec_driver_sql(f"SET LOCAL statement_timeout = {max(1, int(timeout * 1000))}")
+                result = conn.execute(stmt, params or {})
                 return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
-            finally:
-                conn.exec_driver_sql("RESET statement_timeout")
+        except Exception as e:
+            if _is_pg_timeout(e) or time.monotonic() - start >= timeout:
+                raise StatementTimeout(f"statement exceeded {timeout:g}s") from e
+            raise
 
     def row_estimate(self, table):
         split = self._split(table)
@@ -711,7 +794,7 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
 
     def sample_sql(self, relation, rows, total, seed):
         if total is None or total <= rows:
-            return f"SELECT * FROM {relation} LIMIT {rows}", False
+            return super().sample_sql(relation, rows, total, seed)
         if self.dialect in ("postgresql", "postgres") and not relation.startswith("("):
             pct = _percent(rows, total)
             return (
@@ -764,8 +847,34 @@ class SnowflakeStatsAdapter(StatsAdapter):
 
     def identity(self):
         src = self.source
-        parts = [getattr(src, attr, None) for attr in ("account", "database", "schema")]
-        return "snowflake:" + "/".join(str(p) for p in parts) if parts[0] else None
+        if not getattr(src, "account", None):
+            return None
+        # Stats computed under one role must not be served to another.
+        conn = getattr(src, "_conn", None)
+        conn_kwargs = getattr(src, "conn_kwargs", None) or {}
+        user = getattr(src, "user", None) or getattr(conn, "user", None)
+        role = getattr(conn, "role", None) or conn_kwargs.get("role")
+        parts = [src.account, user, role, getattr(src, "database", None), getattr(src, "schema", None)]
+        return "snowflake:" + "/".join(str(p) for p in parts)
+
+    def execute(self, sql, params=None, timeout=None):
+        # The source's shared cursor would interleave with user queries, and
+        # a cursor-level timeout cancels the query server-side.
+        cursor = self.source._conn.cursor()
+        kwargs = {"timeout": max(1, math.ceil(timeout))} if timeout else {}
+        start = time.monotonic()
+        try:
+            if params:
+                cursor.execute(sql, params, **kwargs)
+            else:
+                cursor.execute(sql, **kwargs)
+            return cursor.fetch_pandas_all()
+        except Exception as e:
+            if timeout and time.monotonic() - start >= timeout:
+                raise StatementTimeout(f"statement exceeded {timeout:g}s") from e
+            raise
+        finally:
+            cursor.close()
 
     def metadata_stats(self, table, columns, rows, timeout):
         if not self.bare_name(table):
@@ -807,9 +916,15 @@ class BigQueryStatsAdapter(StatsAdapter):
         super().__init__(source)
         self.max_bytes_billed = max_bytes_billed
 
+    # LIMIT does not reduce the bytes BigQuery bills.
+    limit_scans_table = True
+
     def identity(self):
         project = getattr(self.source, "project_id", None)
-        return f"bigquery:{project}" if project else None
+        if not project:
+            return None
+        principal = getattr(getattr(self.source, "_credentials", None), "service_account_email", None)
+        return f"bigquery:{project}" + (f"/{principal}" if principal else "")
 
     def modified(self, table):
         try:
@@ -820,14 +935,21 @@ class BigQueryStatsAdapter(StatsAdapter):
 
     def execute(self, sql, params=None, timeout=None):
         from google.cloud import bigquery  # type: ignore[import-not-found]
-        config = bigquery.QueryJobConfig()
+
+        # Built here rather than by source.execute, which replaces any
+        # job_config when it binds parameters and would drop the caps.
+        config = self.source._build_query_config(params) if params else bigquery.QueryJobConfig()
         if self.max_bytes_billed:
             config.maximum_bytes_billed = int(self.max_bytes_billed)
         if timeout:
-            config.job_timeout_ms = int(timeout * 1000)
-        return _run_with_timeout(
-            lambda: self.source.execute(sql, params, job_config=config), timeout, self.cancel
-        )
+            config.job_timeout_ms = max(1, int(timeout * 1000))
+        start = time.monotonic()
+        try:
+            return self.source.execute(sql, None, job_config=config)
+        except Exception as e:
+            if timeout and time.monotonic() - start >= timeout:
+                raise StatementTimeout(f"statement exceeded {timeout:g}s") from e
+            raise
 
     def row_estimate(self, table):
         try:
@@ -838,8 +960,12 @@ class BigQueryStatsAdapter(StatsAdapter):
         return int(rows) if rows is not None else None
 
     def sample_sql(self, relation, rows, total, seed):
-        if total is None or total <= rows or relation.startswith("("):
+        if total is None or total <= rows:
             return super().sample_sql(relation, rows, total, seed)
+        if relation.startswith("("):
+            # TABLESAMPLE only applies to tables, and anything else bills a
+            # scan of the whole expression.
+            return None, False
         pct = _percent(rows, total)
         # BigQuery cannot seed TABLESAMPLE; the persisted cache is what keeps
         # the rendered context stable across runs.
@@ -861,19 +987,65 @@ def get_adapter(source: Source, max_bytes_billed: int | None = None) -> StatsAda
     return StatsAdapter(source)
 
 
-_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lumen-table-stats")
+#: Statements of engines that cannot be interrupted from inside run here so
+#: the profiler can give up on them.
+_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lumen-table-stats-sql")
 
 
-def _run_with_timeout(fn, timeout: float | None, cancel=None):
+def _run_abandonable(fn, timeout: float | None):
+    """
+    Run `fn` in a worker and stop waiting after `timeout` seconds. The deadline
+    covers time spent queued behind statements abandoned earlier, and a
+    statement that never started is cancelled rather than run late.
+    """
     if not timeout:
         return fn()
-    future = _EXECUTOR.submit(fn)
+    deadline = time.monotonic() + timeout
+    started = threading.Event()
+
+    def run():
+        started.set()
+        return fn()
+
+    future = _EXECUTOR.submit(run)
     try:
-        return future.result(timeout=timeout)
+        if not started.wait(timeout):
+            raise FutureTimeout
+        return future.result(timeout=max(0.0, deadline - time.monotonic()))
     except FutureTimeout as e:
-        if cancel is not None:
-            cancel()
+        future.cancel()
         raise StatementTimeout(f"statement exceeded {timeout:g}s") from e
+
+
+def _run_interruptible(fn, timeout: float | None, interrupt):
+    """Run `fn` in this thread and call `interrupt` from a timer once `timeout` passes."""
+    if not timeout:
+        return fn()
+    fired = threading.Event()
+
+    def fire():
+        fired.set()
+        try:
+            interrupt()
+        except Exception:
+            pass
+
+    timer = threading.Timer(timeout, fire)
+    timer.daemon = True
+    timer.start()
+    try:
+        return fn()
+    except Exception as e:
+        if fired.is_set():
+            raise StatementTimeout(f"statement exceeded {timeout:g}s") from e
+        raise
+    finally:
+        timer.cancel()
+
+
+def _is_pg_timeout(error: Exception) -> bool:
+    orig = getattr(error, "orig", error)
+    return (getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)) == "57014"
 
 
 # ---------------------------------------------------------------------------
@@ -886,6 +1058,7 @@ class _Budget:
     def __init__(self, seconds: float | None):
         self.seconds = seconds
         self.spent = 0.0
+        self.created = time.monotonic()
         self._local = threading.local()
 
     def __enter__(self):
@@ -910,6 +1083,10 @@ class _Budget:
         if remaining is None:
             return statement_timeout
         return remaining if statement_timeout is None else min(remaining, statement_timeout)
+
+
+def _signature(columns: list[tuple[str, str | None]]) -> str:
+    return hashlib.sha1(json.dumps(columns, default=str).encode()).hexdigest()
 
 
 class TableProfiler(param.Parameterized):
@@ -960,6 +1137,7 @@ class TableProfiler(param.Parameterized):
         except Exception as e:
             log_debug(f"[table_stats] could not describe {table!r}: {e}")
             return stats
+        stats.signature = _signature(columns)
         pk, fks = adapter.keys(table)
         stats.columns = [
             ColumnStats(
@@ -978,7 +1156,15 @@ class TableProfiler(param.Parameterized):
     def _compute(self, adapter, stats, relation, params, budget):
         rows = self._row_count(adapter, stats, relation, params, budget)
         if stats.rows_exact and rows <= self.exact_row_limit:
-            sample = self._sample(adapter, stats, relation, params, budget, None)
+            try:
+                # Only for example values. Where LIMIT bills a full scan, a
+                # real sample is cheaper than the first rows.
+                sample = self._sample(adapter, stats, relation, params, budget, rows if adapter.limit_scans_table else None)
+            except (StatsBudgetExceeded, StatementTimeout):
+                raise
+            except Exception as e:
+                log_debug(f"[table_stats] no example rows for {stats.table!r}: {e}")
+                sample = None
             self._exact(adapter, stats, relation, params, budget, sample)
             return
         if adapter.metadata_stats(stats.table, stats.columns, stats.rows, budget.timeout(self.statement_timeout)):
@@ -998,6 +1184,9 @@ class TableProfiler(param.Parameterized):
         Set `stats.rows` and return it, or a lower bound when the table is
         larger than `exact_row_limit` and the engine offers no estimate.
         """
+        if (exact := adapter.exact_row_count(stats.table)) is not None:
+            stats.rows, stats.rows_exact = exact, True
+            return exact
         if adapter.metadata_count and adapter.bare_name(stats.table):
             df = adapter.execute(f"SELECT COUNT(*) AS n FROM {relation}", params, budget.timeout(self.statement_timeout))
             stats.rows, stats.rows_exact = int(df.iloc[0, 0]), True
@@ -1008,8 +1197,9 @@ class TableProfiler(param.Parameterized):
             return estimate
         # Bounded so a huge table costs at most exact_row_limit rows of scan.
         limit = self.exact_row_limit + 1
+        bounded = adapter.limit(f"SELECT 1 AS one FROM {relation}", limit)
         df = adapter.execute(
-            f"SELECT COUNT(*) AS n FROM (SELECT 1 AS one FROM {relation} LIMIT {limit}) AS __lumen_c",
+            f"SELECT COUNT(*) AS n FROM ({bounded}) {adapter.alias('lumen_c')}",
             params, budget.timeout(self.statement_timeout),
         )
         count = int(df.iloc[0, 0])
@@ -1024,26 +1214,33 @@ class TableProfiler(param.Parameterized):
             except StatementTimeout:
                 pass
         stats.rows, stats.rows_exact = estimate, False
-        return estimate if estimate is not None else limit
+        if estimate is None:
+            stats.rows_at_least = self.exact_row_limit
+            return limit
+        return estimate
 
     def _sample(self, adapter, stats, relation, params, budget, total: int | None) -> pd.DataFrame | None:
         sql, random = adapter.sample_sql(relation, self.sample_rows, total, self.seed)
+        if sql is None:
+            return None
+        first_rows = adapter.limit(f"SELECT * FROM {relation}", self.sample_rows)
         try:
             df = adapter.execute(sql, params, budget.timeout(self.statement_timeout))
         except (StatsBudgetExceeded, StatementTimeout):
             raise
         except Exception as e:
-            if not random:
+            if not random or adapter.limit_scans_table:
                 raise
             log_debug(f"[table_stats] sampling failed for {stats.table!r}, reading first rows: {e}")
-            df = adapter.execute(f"SELECT * FROM {relation} LIMIT {self.sample_rows}", params, budget.timeout(self.statement_timeout))
-        if random and df is not None and df.empty and (total or 0) > 0:
+            df, random = adapter.execute(first_rows, params, budget.timeout(self.statement_timeout)), False
+        if random and df is not None and df.empty and (total or 0) > 0 and not adapter.limit_scans_table:
             # Block sampling can miss every block of a small or skewed table.
-            df = adapter.execute(f"SELECT * FROM {relation} LIMIT {self.sample_rows}", params, budget.timeout(self.statement_timeout))
+            df, random = adapter.execute(first_rows, params, budget.timeout(self.statement_timeout)), False
         if df is None:
             return None
-        if random or total is not None:
-            stats.sample_size = len(df)
+        stats.sample_size = len(df)
+        # Fewer rows than requested means the read covered the whole table.
+        stats.sample_random = random or len(df) < self.sample_rows
         for col in stats.columns:
             # SQLite columns may be declared without a type.
             if col.type in (None, "", "NULL") and col.name in df.columns:
@@ -1051,32 +1248,34 @@ class TableProfiler(param.Parameterized):
         return df
 
     def _exact(self, adapter, stats, relation, params, budget, sample):
-        exprs = ["COUNT(*) AS __n"]
+        # Aliases must be valid unquoted identifiers everywhere, so no
+        # leading underscores (Oracle).
+        exprs = ["COUNT(*) AS lumen_n"]
         for i, col in enumerate(stats.columns):
             q = quote_identifier(col.name, adapter.dialect)
-            exprs.append(f"COUNT({q}) AS __c{i}")
+            exprs.append(f"COUNT({q}) AS lumen_c{i}")
             if col.kind != "other":
-                exprs.append(f"COUNT(DISTINCT {q}) AS __d{i}")
+                exprs.append(f"COUNT(DISTINCT {q}) AS lumen_d{i}")
             if col.kind in ("numeric", "temporal"):
-                exprs += [f"MIN({q}) AS __lo{i}", f"MAX({q}) AS __hi{i}"]
+                exprs += [f"MIN({q}) AS lumen_lo{i}", f"MAX({q}) AS lumen_hi{i}"]
         # Chunked so very wide tables stay under engine limits on select-list size.
         row: dict[str, Any] = {}
         for start in range(0, len(exprs), 240):
             chunk = exprs[start:start + 240]
             if start:
-                chunk = ["COUNT(*) AS __n", *chunk]
+                chunk = ["COUNT(*) AS lumen_n", *chunk]
             df = adapter.execute(f"SELECT {', '.join(chunk)} FROM {relation}", params, budget.timeout(self.statement_timeout))
             # Per column, since a row-wise iloc upcasts mixed dtypes to float.
             row.update({str(k).lower(): df[k].iloc[0] for k in df.columns})
-        total = int(row["__n"])
-        stats.rows, stats.rows_exact = total, True
+        total = int(row["lumen_n"])
+        stats.rows, stats.rows_exact, stats.rows_at_least = total, True, None
         for i, col in enumerate(stats.columns):
-            nonnull = int(row[f"__c{i}"])
+            nonnull = int(row[f"lumen_c{i}"])
             col.nulls = (1 - nonnull / total) if total else 0.0
-            if f"__d{i}" in row and row[f"__d{i}"] is not None:
-                col.distinct = int(row[f"__d{i}"])
+            if f"lumen_d{i}" in row and row[f"lumen_d{i}"] is not None:
+                col.distinct = int(row[f"lumen_d{i}"])
             if col.kind in ("numeric", "temporal"):
-                col.min, col.max = _to_python(row.get(f"__lo{i}")), _to_python(row.get(f"__hi{i}"))
+                col.min, col.max = _to_python(row.get(f"lumen_lo{i}")), _to_python(row.get(f"lumen_hi{i}"))
         stats.method, stats.ranges_exact, stats.sample_size = EXACT, True, None
         if sample is not None:
             self._examples(stats, sample)
@@ -1094,9 +1293,9 @@ class TableProfiler(param.Parameterized):
             if not self._is_candidate(col):
                 continue
             q = quote_identifier(col.name, adapter.dialect)
-            sql = (
+            sql = adapter.limit(
                 f"SELECT {q} AS v, COUNT(*) AS n FROM {relation} WHERE {q} IS NOT NULL "
-                f"GROUP BY {q} ORDER BY n DESC, v LIMIT {self.top_values}"
+                f"GROUP BY {q} ORDER BY n DESC, v", self.top_values,
             )
             try:
                 df = adapter.execute(sql, params, budget.timeout(self.statement_timeout))
@@ -1234,7 +1433,8 @@ def _fit(items: list[str], max_chars: int, minimum: int) -> list[str]:
 def _format_count(count: Any) -> str:
     if count is None:
         return ""
-    if isinstance(count, float) and count < 1:
+    # Floats are shares of a sample or of pg_stats; counts are always ints.
+    if isinstance(count, float):
         pct = count * 100
         return ":<1%" if 0 < pct < 1 else f":{pct:.0f}%"
     return f":{int(count)}"
@@ -1326,14 +1526,17 @@ def render_stats_header(stats: TableStats | None) -> str:
     if stats is None:
         return ""
     if stats.rows is None:
-        rows = f"over {TableProfiler.param.exact_row_limit.default} rows" if stats.method == SAMPLED else None
+        rows = f"over {stats.rows_at_least} rows" if stats.rows_at_least else None
     elif stats.rows_exact:
         rows = f"{stats.rows} rows"
     else:
         rows = f"~{stats.rows} rows"
     notes = [rows] if rows else []
     if stats.method == SAMPLED:
-        notes.append(f"stats from a {stats.sample_size}-row sample")
+        if stats.sample_random:
+            notes.append(f"stats from a {stats.sample_size}-row sample")
+        else:
+            notes.append(f"stats from the first {stats.sample_size} rows")
     elif stats.method == ESTIMATED:
         notes.append("engine-estimated stats" + ("" if not stats.ranges_exact else ", exact ranges"))
     return "; ".join(notes)
@@ -1347,11 +1550,24 @@ def _default_cache_dir() -> Path | None:
     env = os.environ.get("LUMEN_TABLE_STATS_CACHE")
     if env is not None:
         return Path(env).expanduser() if env.strip() else None
-    try:
-        from platformdirs import user_cache_dir
-    except ImportError:
-        return None
     return Path(user_cache_dir("lumen")) / "table_stats"
+
+
+@dataclass
+class _Entry:
+    stats: TableStats
+    token: str | None
+    checked_at: float
+
+
+#: Profiling runs here rather than in the event loop's default executor,
+#: which also serves LLM tool calls and query execution.
+_PROFILE_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lumen-table-stats")
+
+
+def _forget(store_ref: weakref.ref, identity: str) -> None:
+    if (store := store_ref()) is not None:
+        store._forget(identity)
 
 
 class TableStatsStore(param.Parameterized):
@@ -1361,16 +1577,35 @@ class TableStatsStore(param.Parameterized):
     """
 
     budget_seconds = param.Number(default=300, allow_None=True, doc="""
-        Wall time one source may spend on statistics per session. Once spent,
-        further tables render names and types only.""")
+        Wall time one database may spend on statistics within
+        `budget_window`. Once spent, further tables render names and types
+        only.""")
+
+    budget_window = param.Number(default=3600, allow_None=True, doc="""
+        Seconds after which a database's spent budget is reset, so a
+        long-running server keeps profiling new and changed tables. None
+        never resets it.""")
 
     cache_dir = param.Parameter(default=None, doc="""
         Directory for persisted statistics; None disables persistence.
-        Defaults to the user cache directory, or LUMEN_TABLE_STATS_CACHE.""")
+        Defaults to the user cache directory, or LUMEN_TABLE_STATS_CACHE.
+        Entries contain data values and are written readable by the
+        current user only.""")
 
-    max_age = param.Number(default=7 * 24 * 3600, doc="""
-        Seconds a persisted entry stays valid when the engine exposes no
-        modification time for the table.""")
+    max_age = param.Number(default=7 * 24 * 3600, allow_None=True, doc="""
+        Seconds cached statistics stay valid when the engine exposes no
+        modification token for the table.""")
+
+    retry_after = param.Number(default=300, doc="""
+        Seconds before a table whose statistics could not be computed, and
+        which therefore renders names and types only, is profiled again.""")
+
+    revalidate_interval = param.Number(default=60, doc="""
+        Seconds between checks that a cached table on a remote engine is
+        unchanged. Tables on local engines are checked on every lookup.""")
+
+    max_entries = param.Integer(default=5000, bounds=(1, None), doc="""
+        Tables kept in memory; the least recently used are dropped first.""")
 
     concurrency = param.Integer(default=2, bounds=(1, None), doc="""
         Tables of one source profiled concurrently.""")
@@ -1380,28 +1615,60 @@ class TableStatsStore(param.Parameterized):
             params["cache_dir"] = _default_cache_dir()
         super().__init__(**params)
         self.profiler = profiler or TableProfiler()
-        self._memory: dict[tuple, TableStats] = {}
+        self._memory: OrderedDict[tuple, _Entry] = OrderedDict()
         self._tasks: dict[tuple, asyncio.Future] = {}
         # Keyed by database identity so sources derived from one another
         # share a single budget and concurrency limit.
         self._budgets: dict[str, _Budget] = {}
         self._slots: dict[str, threading.BoundedSemaphore] = {}
-        self._lock = threading.Lock()
+        self._async_slots: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        self._ephemeral: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+        self._lock = threading.RLock()
 
     def clear(self):
-        self._memory.clear()
-        self._tasks.clear()
-        self._budgets.clear()
+        with self._lock:
+            self._memory.clear()
+            self._tasks.clear()
+            self._budgets.clear()
+            self._slots.clear()
 
-    def _key(self, source: Source, table: str) -> tuple:
-        adapter = get_adapter(source)
-        identity = adapter.identity()
-        if identity is None:
-            # Sources derived with create_sql_expr_source share a DuckDB
-            # connection, so key by it and every derivation reuses the stats.
-            conn = getattr(source, "_connection", None)
-            identity = f"memory:{id(conn) if conn is not None else id(source)}"
-        return (identity, table, adapter.definition(table))
+    # Keys ----------------------------------------------------------------------
+
+    def _adapter(self, source: Source) -> StatsAdapter:
+        return get_adapter(source, self.profiler.max_bytes_billed)
+
+    def _identity(self, source: Source, adapter: StatsAdapter) -> str:
+        if (identity := adapter.identity()) is not None:
+            return identity
+        # Sources derived with create_sql_expr_source share a DuckDB
+        # connection, so key by it and every derivation reuses the stats.
+        # The identity is minted per object because id() is reused once an
+        # object is freed, which would serve one session's data to another.
+        owner = getattr(source, "_connection", None)
+        if owner is None:
+            owner = source
+        with self._lock:
+            identity = self._ephemeral.get(owner)
+            if identity is None:
+                identity = f"memory:{uuid.uuid4().hex}"
+                self._ephemeral[owner] = identity
+                weakref.finalize(owner, _forget, weakref.ref(self), identity)
+        return identity
+
+    def _forget(self, identity: str) -> None:
+        with self._lock:
+            for key in [k for k in self._memory if k[0] == identity]:
+                del self._memory[key]
+            for key in [k for k in self._tasks if k[0] == identity]:
+                del self._tasks[key]
+            self._budgets.pop(identity, None)
+            self._slots.pop(identity, None)
+            for slots in list(self._async_slots.values()):
+                slots.pop(identity, None)
+
+    def _key(self, source: Source, table: str) -> tuple[tuple, StatsAdapter]:
+        adapter = self._adapter(source)
+        return (self._identity(source, adapter), table, adapter.definition(table)), adapter
 
     def _path(self, key: tuple) -> Path | None:
         if self.cache_dir is None or str(key[0]).startswith("memory:"):
@@ -1409,92 +1676,216 @@ class TableStatsStore(param.Parameterized):
         digest = hashlib.sha1(json.dumps(key, default=str).encode()).hexdigest()
         return Path(self.cache_dir) / f"{digest}.json"
 
-    def _fingerprint(self, source: Source, table: str, stats: TableStats) -> str:
-        adapter = get_adapter(source)
-        token = adapter.modified(table)
-        columns = [(c.name, c.type) for c in stats.columns]
-        return hashlib.sha1(json.dumps([STATS_VERSION, columns, token], default=str).encode()).hexdigest()
+    @staticmethod
+    def _fingerprint(signature: str | None, token: str | None) -> str:
+        return hashlib.sha1(json.dumps([STATS_VERSION, signature, token], default=str).encode()).hexdigest()
 
-    def get(self, source: Source, table: str) -> TableStats | None:
-        """Cached statistics, if any, without computing anything."""
-        key = self._key(source, table)
-        if key in self._memory:
-            return self._memory[key]
+    @staticmethod
+    def _token(adapter: StatsAdapter, table: str) -> str | None:
+        try:
+            return adapter.modified(table)
+        except Exception:
+            return None
+
+    # Memory --------------------------------------------------------------------
+
+    def _lookup(self, key: tuple, adapter: StatsAdapter, table: str, validate: str = "local") -> TableStats | None:
+        """
+        A cached entry if it is still valid. `validate` is ``"local"`` to
+        check the modification token on local engines only, since remote
+        ones may need a network round trip, ``"all"`` to also check remote
+        engines once `revalidate_interval` has passed, or ``"none"`` for an
+        entry already validated by the caller.
+        """
+        with self._lock:
+            entry = self._memory.get(key)
+        if entry is None:
+            return None
+        now = time.time()
+        stats = entry.stats
+        valid = True
+        if stats.method == TYPES_ONLY and now - stats.computed_at > self.retry_after:
+            valid = False
+        elif entry.token is None and self.max_age is not None and now - stats.computed_at > self.max_age:
+            valid = False
+        elif validate != "none" and (
+            adapter.local or (validate == "all" and now - entry.checked_at > self.revalidate_interval)
+        ):
+            valid = self._token(adapter, table) == entry.token
+            entry.checked_at = now
+        with self._lock:
+            if not valid:
+                if self._memory.get(key) is entry:
+                    del self._memory[key]
+                return None
+            if key in self._memory:
+                self._memory.move_to_end(key)
+        return stats
+
+    def _needs_check(self, key: tuple, adapter: StatsAdapter) -> bool:
+        entry = self._memory.get(key)
+        return (
+            entry is not None and not adapter.local
+            and time.time() - entry.checked_at > self.revalidate_interval
+        )
+
+    def _remember(self, key: tuple, stats: TableStats, token: str | None) -> None:
+        with self._lock:
+            self._memory[key] = _Entry(stats, token, time.time())
+            self._memory.move_to_end(key)
+            while len(self._memory) > self.max_entries:
+                self._memory.popitem(last=False)
+
+    # Disk ----------------------------------------------------------------------
+
+    def _load(self, key: tuple, adapter: StatsAdapter, table: str) -> TableStats | None:
         path = self._path(key)
         if path is None or not path.exists():
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            stats = TableStats.from_dict(data)
+            stats = TableStats.from_dict(json.loads(path.read_text(encoding="utf-8")))
         except Exception:
             return None
         if stats.version != STATS_VERSION:
             return None
-        token = get_adapter(source).modified(table)
-        if token is None and time.time() - stats.computed_at > self.max_age:
+        token = self._token(adapter, table)
+        if token is None and self.max_age is not None and time.time() - stats.computed_at > self.max_age:
             return None
-        if stats.fingerprint != self._fingerprint(source, table, stats):
+        try:
+            columns = adapter.columns(table, adapter.relation(table), self.profiler.statement_timeout)
+        except Exception:
             return None
-        self._memory[key] = stats
+        if stats.fingerprint != self._fingerprint(_signature(columns), token):
+            return None
+        self._remember(key, stats, token)
         return stats
+
+    def _persist(self, path: Path, stats: TableStats) -> None:
+        tmp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(stats.to_dict(), default=str))
+            os.replace(tmp, path)
+        except OSError as e:
+            tmp.unlink(missing_ok=True)
+            log_debug(f"[table_stats] could not persist stats for {stats.table!r}: {e}")
+
+    # Computation ---------------------------------------------------------------
+
+    def _budget(self, identity: str) -> _Budget:
+        with self._lock:
+            budget = self._budgets.get(identity)
+            if budget is None or (
+                self.budget_window is not None and time.monotonic() - budget.created > self.budget_window
+            ):
+                budget = self._budgets[identity] = _Budget(self.budget_seconds)
+            return budget
+
+    def _from_schema(self, source: Source, table: str) -> TableStats:
+        # Sources without SQL describe themselves through get_schema; the
+        # whole table, unshuffled, so the result is deterministic.
+        try:
+            schema = source.get_schema(table)
+        except Exception as e:
+            log_debug(f"[table_stats] get_schema failed for {table!r}: {e}")
+            return TableStats(table=table, computed_at=time.time())
+        stats = TableStats.from_json_schema(table, schema)
+        stats.computed_at = time.time()
+        stats.signature = _signature([(c.name, c.type) for c in stats.columns])
+        return stats
+
+    def get(self, source: Source, table: str) -> TableStats | None:
+        """
+        Cached statistics, if any, without computing anything or touching
+        remote engines, so it is safe to call from the event loop.
+        """
+        try:
+            key, adapter = self._key(source, table)
+        except Exception:
+            return None
+        return self._lookup(key, adapter, table)
 
     def compute(self, source: Source, table: str) -> TableStats:
         """Compute (or load) statistics synchronously."""
-        if (cached := self.get(source, table)) is not None:
+        key, adapter = self._key(source, table)
+        if (cached := self._lookup(key, adapter, table, validate="all")) is not None:
             return cached
-        key = self._key(source, table)
         with self._lock:
-            budget = self._budgets.setdefault(key[0], _Budget(self.budget_seconds))
             slot = self._slots.setdefault(key[0], threading.BoundedSemaphore(self.concurrency))
         with slot:
-            if key in self._memory:
-                return self._memory[key]
-            stats = self.profiler.profile(source, table, budget)
-        stats.fingerprint = self._fingerprint(source, table, stats)
-        self._memory[key] = stats
+            # Invalid entries were dropped above, so anything here was just
+            # computed by another thread.
+            if (cached := self._lookup(key, adapter, table, validate="none")) is not None:
+                return cached
+            if (loaded := self._load(key, adapter, table)) is not None:
+                return loaded
+            if hasattr(source, "execute"):
+                stats = self.profiler.profile(source, table, self._budget(key[0]))
+            else:
+                stats = self._from_schema(source, table)
+        token = self._token(adapter, table)
+        stats.fingerprint = self._fingerprint(stats.signature, token)
+        self._remember(key, stats, token)
         path = self._path(key)
         if path is not None and stats.method != TYPES_ONLY:
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text(json.dumps(stats.to_dict(), default=str), encoding="utf-8")
-                tmp.replace(path)
-            except OSError as e:
-                log_debug(f"[table_stats] could not persist stats for {table!r}: {e}")
+            self._persist(path, stats)
         return stats
+
+    def _async_slot(self, identity: str) -> asyncio.Semaphore:
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            slots = self._async_slots.get(loop)
+            if slots is None:
+                slots = self._async_slots[loop] = {}
+            return slots.setdefault(identity, asyncio.Semaphore(self.concurrency))
 
     def schedule(self, source: Source, tables: list[str]) -> list[asyncio.Future]:
         """Start computing statistics for `tables` in the background."""
-        if not hasattr(source, "execute"):
-            return []
+        return list(self._schedule(source, tables)[1].values())
+
+    def _schedule(
+        self, source: Source, tables: list[str]
+    ) -> tuple[dict[str, TableStats], dict[str, asyncio.Future]]:
+        """Validated cached statistics, and tasks for the tables that need computing."""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return []
-        futures = []
+            return {}, {}
+        ready, futures = {}, {}
         for table in tables:
             try:
-                key = self._key(source, table)
+                key, adapter = self._key(source, table)
             except Exception:
                 continue
-            if key in self._memory:
-                continue
-            task = self._tasks.get(key)
-            if task is None or task.done() or task.get_loop() is not loop:
-                task = loop.create_task(self._run(source, table, key))
-                self._tasks[key] = task
-            futures.append(task)
-        return futures
+            cached = self._lookup(key, adapter, table)
+            if cached is not None:
+                ready[table] = cached
+                if not self._needs_check(key, adapter):
+                    continue
+            with self._lock:
+                task = self._tasks.get(key)
+                if task is None or task.done() or task.get_loop() is not loop:
+                    task = loop.create_task(self._run(source, table, key))
+                    self._tasks[key] = task
+            futures[table] = task
+        return ready, futures
 
     async def _run(self, source, table, key):
         try:
-            return await asyncio.to_thread(self.compute, source, table)
+            # Tables wait for a slot here rather than in a worker thread, so
+            # a large catalog holds no threads while queued.
+            async with self._async_slot(key[0]):
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(_PROFILE_EXECUTOR, self.compute, source, table)
         except Exception as e:
             log_debug(f"[table_stats] failed for {table!r}: {e}")
             return None
         finally:
-            if self._tasks.get(key) is asyncio.current_task():
-                self._tasks.pop(key, None)
+            with self._lock:
+                if self._tasks.get(key) is asyncio.current_task():
+                    self._tasks.pop(key, None)
 
     async def ensure(
         self, source: Source, tables: list[str], timeout: float | None = None
@@ -1503,19 +1894,16 @@ class TableStatsStore(param.Parameterized):
         Return statistics for `tables`, waiting at most `timeout` seconds for
         any still being computed; those keep computing in the background.
         """
-        futures = self.schedule(source, tables)
-        pending = [f for f in futures if not f.done()]
+        ready, futures = self._schedule(source, tables)
+        pending = [f for f in futures.values() if not f.done()]
         if pending:
             await asyncio.wait(pending, timeout=timeout)
-        result = {}
-        for table in tables:
-            try:
-                key = self._key(source, table)
-            except Exception:
-                continue
-            if key in self._memory:
-                result[table] = self._memory[key]
-        return result
+        # Results come from the tasks and the lookups above, so no table is
+        # validated twice.
+        for table, future in futures.items():
+            if future.done() and not future.cancelled() and (stats := future.result()) is not None:
+                ready[table] = stats
+        return {table: ready[table] for table in tables if table in ready}
 
 
 _DEFAULT_STORE: dict[str, TableStatsStore] = {}

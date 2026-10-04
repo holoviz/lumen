@@ -239,6 +239,36 @@ source = DuckDBSource(
 
 1. Use 'customers' instead of 'customer_data.csv' in queries
 
+## Table statistics
+
+Lumen AI describes each table to the model with SQL types, keys, value ranges, null shares and frequent values. It computes these per table, starting in the background when a source is first indexed, using the cheapest accurate method the engine offers:
+
+- Engine metadata where it is free: Postgres `pg_stats`, Parquet footers, Snowflake metadata-served aggregates, Postgres and SQLite row estimates.
+- One exact aggregate pass for tables up to 1M rows.
+- A seeded engine-side sample of 10,000 rows above that.
+
+The prompt says which method was used, for example `(1056320 rows; stats from a 10000-row sample)`, or `stats from the first 10000 rows` where the engine cannot sample randomly. On BigQuery, where `LIMIT` does not reduce the bytes billed, tables defined by a SQL expression are not sampled at all, and each statistics query is capped at 10 GB billed.
+
+Each database may spend 300 seconds per hour on statistics, and a single query may run for 30 seconds before it is cancelled. Tables profiled after the budget is spent show names and types only and are retried later. `SQLAgent` waits up to `stats_wait` seconds (default 10) for statistics before answering, and the schema block is capped at `schema_max_tokens` (default 4000) across at most `schema_tables_shown` tables (default 25):
+
+``` py title="Tune statistics in the SQL prompt"
+from lumen.ai.agents import SQLAgent
+
+agent = SQLAgent(stats_wait=30, schema_max_tokens=6000, schema_tables_shown=40)
+```
+
+### Statistics cache
+
+Statistics are cached in memory and, for databases with a stable identity (database files, SQLAlchemy URLs, Snowflake and BigQuery accounts), on disk under the user cache directory, for example `~/Library/Caches/lumen/table_stats` on macOS. A cached entry is discarded when the table's columns change or its modification token changes (file modification time, BigQuery `modified`, DuckDB catalog entry), and after seven days on engines that expose no such token.
+
+!!! warning "The cache contains data values"
+
+    Cached entries include value ranges, frequent values and example strings from your tables. Files are created readable by the current user only, and Snowflake entries are keyed by user and role so stats computed under one role are not served to another. To keep statistics in memory only, set `LUMEN_TABLE_STATS_CACHE` to an empty string; set it to a path to move the cache.
+
+``` bash title="Disable the on-disk cache"
+export LUMEN_TABLE_STATS_CACHE=""
+```
+
 ## Troubleshooting
 
 **"Table not found"** - Table names are case-sensitive. Check exact names.

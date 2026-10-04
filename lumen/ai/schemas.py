@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -13,8 +14,8 @@ from .table_stats import (
     render_column, render_stats_header,
 )
 from .utils import (
-    INDEXED_COLUMN_RE, collapse_indexed_columns, count_tokens, log_debug,
-    slug_to_table_name, truncate_string,
+    INDEXED_COLUMN_RE, collapse_indexed_columns, count_tokens, get_schema,
+    log_debug, slug_to_table_name, truncate_string,
 )
 
 if TYPE_CHECKING:
@@ -28,6 +29,17 @@ SAMPLED_NOTE = (
     "Stats from a sample or engine estimates can miss rare values; confirm "
     "literal values with run_exploration_sql before filtering on them."
 )
+# Catalog metadata keys that duplicate what the table rendering already shows.
+_METADATA_EXCLUDE = frozenset({'columns', 'data_type', 'source_name', 'rows', 'description'})
+
+
+def _extra_metadata(entry: TableCatalogEntry) -> dict[str, Any]:
+    return {
+        k: v for k, v in (entry.metadata or {}).items()
+        if k not in _METADATA_EXCLUDE and v is not None and v != ''
+    }
+
+
 DEGRADED_NOTE = (
     "Some tables list names and types only; call load_table_schemas for their statistics."
 )
@@ -114,6 +126,31 @@ class Metaset:
                 self.stats[by_table[table]] = stats
         return self.stats
 
+    async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
+        """Deprecated: the legacy schema dict for one table; use `get_stats`."""
+        warnings.warn(
+            "Metaset.get_schema is deprecated, use Metaset.ensure_stats and "
+            "Metaset.get_stats instead.", DeprecationWarning, stacklevel=2,
+        )
+        if self.schemas is None:
+            self.schemas = {}
+        if table_slug in self.schemas:
+            return self.schemas[table_slug]
+        entry = self.catalog.get(table_slug)
+        if not entry or not entry.source:
+            return None
+        schema = await get_schema(entry.source, slug_to_table_name(table_slug), include_count=True)
+        self.schemas[table_slug] = schema
+        return schema
+
+    async def ensure_schemas(self, table_slugs: list[str] | None = None) -> None:
+        """Deprecated: use `ensure_stats`."""
+        warnings.warn(
+            "Metaset.ensure_schemas is deprecated, use Metaset.ensure_stats instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        await self.ensure_stats(table_slugs)
+
     def get_stats(self, table_slug: str) -> TableStats | None:
         """Statistics for a table, adapting a legacy schema dict if that is all there is."""
         if table_slug in self.stats:
@@ -176,15 +213,8 @@ class Metaset:
                 desc = truncate_string(desc, max_length=100)
             data['info'] = desc
 
-        if include_metadata and catalog_entry.metadata:
-            clean_metadata = {}
-            exclude_keys = {'columns', 'data_type', 'source_name', 'rows', 'description'}
-            for key, value in catalog_entry.metadata.items():
-                if key in exclude_keys or value is None or value == '':
-                    continue
-                clean_metadata[key] = value
-            if clean_metadata:
-                data['metadata'] = clean_metadata
+        if include_metadata and (clean_metadata := _extra_metadata(catalog_entry)):
+            data['metadata'] = clean_metadata
 
         if include_lineage and catalog_entry.derived_from:
             data['derived_from'] = [
@@ -202,7 +232,7 @@ class Metaset:
     @property
     def single_source(self) -> bool:
         sources = {slug.split(SOURCE_TABLE_SEPARATOR, 1)[0] for slug in self.catalog if SOURCE_TABLE_SEPARATOR in slug}
-        return len(sources) <= 1
+        return len(sources) == 1
 
     def display_name(self, table_slug: str) -> str:
         """The identifier prompts, tools and errors use: the bare table name when there is one source."""
@@ -250,14 +280,8 @@ class Metaset:
             parents = ", ".join(slug_to_table_name(p) for p in entry.derived_from)
             step = f"step {entry.created_order}" + (", latest" if entry.created_order == max_order else "")
             lines.append(f"  derived_from: {parents} ({step})")
-        if include_metadata and entry.metadata:
-            exclude_keys = {'columns', 'data_type', 'source_name', 'rows', 'description'}
-            extra = {
-                k: v for k, v in entry.metadata.items()
-                if k not in exclude_keys and v is not None and v != ''
-            }
-            if extra:
-                lines.append("  metadata: " + ", ".join(f"{k}={v}" for k, v in extra.items()))
+        if include_metadata and (extra := _extra_metadata(entry)):
+            lines.append("  metadata: " + ", ".join(f"{k}={v}" for k, v in extra.items()))
         if include_sql and entry.sql_expr:
             sql = " ".join(entry.sql_expr.split())
             lines.append(f"  read_with: {truncate_string(sql, max_length=200) if truncate else sql}")
@@ -348,10 +372,13 @@ class Metaset:
         """
         blocks, overflow, degraded, uncertain = [], [], False, False
         used = 0
+        # Tables are in relevance order, so once one table had to drop
+        # detail no less relevant table gets more.
+        details = ("full", "types", "names")
         for slug in primary_slugs:
             entry = self.catalog[slug]
             rendered = None
-            for detail in ("full", "types", "names"):
+            for i, detail in enumerate(details):
                 block = self._render_table(
                     slug, display[slug], entry, detail, truncate, include_sql,
                     include_metadata, include_lineage, max_order,
@@ -361,12 +388,14 @@ class Metaset:
                     rendered = block
                     used += cost
                     degraded |= detail != "full"
+                    details = details[i:]
                     break
             if rendered is None:
                 overflow.append(slug)
+                details = ()
                 continue
             stats = self.get_stats(slug)
-            if stats is not None and stats.method in (SAMPLED, ESTIMATED) and "(" in rendered.split("\n", 1)[0]:
+            if stats is not None and stats.method in (SAMPLED, ESTIMATED) and detail == "full":
                 uncertain = True
             if stats is None or stats.method == TYPES_ONLY:
                 degraded = degraded or bool(entry.columns or (stats and stats.columns))
@@ -431,24 +460,15 @@ class Metaset:
             # Fall back to top n by similarity, filtered to active slugs
             primary_slugs = [s for s in self.get_top_tables(n, offset) if s in active_slugs]
 
-        # Check if all tables come from a single source
-        unique_sources = set()
-        for slug in self.catalog.keys():
-            if SOURCE_TABLE_SEPARATOR in slug:
-                unique_sources.add(slug.split(SOURCE_TABLE_SEPARATOR, 1)[0])
-        single_source = len(unique_sources) == 1
-
         # Auto-detect show_source: hide source prefix when there's only one source
         if show_source is None:
-            show_source = not single_source
+            show_source = not self.single_source
 
         # Precompute max created_order for "latest" annotation
         max_order = max((e.created_order for e in self.catalog.values()), default=0)
 
         def display_name(slug: str) -> str:
-            if single_source and not show_source and SOURCE_TABLE_SEPARATOR in slug:
-                return slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-            return slug
+            return slug if show_source else self.display_name(slug)
 
         result = ""
         overflow: list[str] = []
@@ -604,7 +624,8 @@ class Metaset:
 async def get_metaset(
     sources: list[Source],
     tables: list[str],
-    prev: Metaset | None = None
+    prev: Metaset | None = None,
+    stats_timeout: float | None = 30,
 ) -> Metaset:
     """
     Get the metaset for the given sources and tables.
@@ -617,6 +638,10 @@ async def get_metaset(
         The tables to get the metaset for.
     prev: Metaset | None
         Previous metaset to reuse cached data from.
+    stats_timeout: float | None
+        Seconds to wait for column statistics; tables still being
+        profiled render names and types and keep profiling in the
+        background.
 
     Returns
     -------
@@ -680,11 +705,10 @@ async def get_metaset(
             slug: schema for slug, schema in (prev.schemas or {}).items() if slug in catalog_data
         } if prev and prev.schemas else None,
         docs=docs,
-        stats={slug: s for slug, s in prev.stats.items() if slug in catalog_data} if prev else {},
     )
-    # Waited for in full: callers of get_metaset pin an explicit table list
-    # and expect it described completely.
-    await metaset.ensure_stats(list(catalog_data))
+    # Statistics are not carried over from `prev`: the store revalidates
+    # them, so a table replaced since then is profiled again.
+    await metaset.ensure_stats(list(catalog_data), timeout=stats_timeout)
     return metaset
 
 

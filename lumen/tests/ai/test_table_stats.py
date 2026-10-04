@@ -1,10 +1,16 @@
 """Tests for lumen.ai.table_stats: tiered statistics, caching and rendering."""
 import asyncio
+import gc
 import json
 import sqlite3
+import sys
+import threading
 import time
+import types
+import warnings
 
-from unittest.mock import patch
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -16,10 +22,12 @@ except ModuleNotFoundError:
 
 from lumen.ai.schemas import Metaset, TableCatalogEntry, get_metaset
 from lumen.ai.table_stats import (
-    ESTIMATED, EXACT, SAMPLED, SCHEMA, TYPES_ONLY, ColumnStats,
-    SnowflakeStatsAdapter, SQLAlchemyStatsAdapter, StatementTimeout,
-    TableProfiler, TableStats, TableStatsStore, _parse_pg_array, column_kind,
-    format_number, format_value, render_column, render_stats_header,
+    ESTIMATED, EXACT, SAMPLED, SCHEMA, TYPES_ONLY, BigQueryStatsAdapter,
+    ColumnStats, DuckDBStatsAdapter, SnowflakeStatsAdapter,
+    SQLAlchemyStatsAdapter, StatementTimeout, StatsAdapter, TableProfiler,
+    TableStats, TableStatsStore, _format_count, _parse_pg_array,
+    _quote_qualified, _run_abandonable, column_kind, format_number,
+    format_value, render_column, render_stats_header,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
@@ -236,12 +244,37 @@ class TestStore:
         assert json.loads(entry.read_text())["rows"] == 5
 
         fresh = TableStatsStore(cache_dir=cache)
+        # Disk is only read off the event loop, by compute.
+        assert fresh.get(_sqlite_source(sqlite_path), "account") is None
         with patch.object(TableProfiler, "profile", side_effect=AssertionError("recomputed")):
-            assert fresh.get(_sqlite_source(sqlite_path), "account").rows == 5
+            assert fresh.compute(_sqlite_source(sqlite_path), "account").rows == 5
 
         with sqlite3.connect(sqlite_path) as conn:
             conn.execute("INSERT INTO account VALUES (99, 'WEEKLY')")
-        assert TableStatsStore(cache_dir=cache).get(_sqlite_source(sqlite_path), "account") is None
+        assert TableStatsStore(cache_dir=cache).compute(_sqlite_source(sqlite_path), "account").rows == 6
+        # The in-memory entry is revalidated too, since SQLite is local.
+        assert fresh.get(_sqlite_source(sqlite_path), "account") is None
+
+    def test_persisted_entry_rejected_when_columns_change(self, sqlite_path, tmp_path):
+        pytest.importorskip("sqlalchemy")
+        cache = tmp_path / "cache"
+        TableStatsStore(cache_dir=cache).compute(_sqlite_source(sqlite_path), "account")
+        store = TableStatsStore(cache_dir=cache)
+        with (
+            patch.object(SQLAlchemyStatsAdapter, "modified", return_value="unchanged"),
+            patch.object(SQLAlchemyStatsAdapter, "columns", return_value=[("account_id", "INTEGER")]),
+            patch.object(TableProfiler, "profile", side_effect=AssertionError("recomputed")),
+            pytest.raises(AssertionError, match="recomputed"),
+        ):
+            store.compute(_sqlite_source(sqlite_path), "account")
+
+    def test_persisted_files_are_private(self, sqlite_path, tmp_path):
+        pytest.importorskip("sqlalchemy")
+        cache = tmp_path / "cache"
+        TableStatsStore(cache_dir=cache).compute(_sqlite_source(sqlite_path), "account")
+        [entry] = list(cache.glob("*.json"))
+        assert entry.stat().st_mode & 0o077 == 0
+        assert cache.stat().st_mode & 0o077 == 0
 
     def test_in_memory_sources_are_not_persisted(self, duckdb_source, tmp_path):
         TableStatsStore(cache_dir=tmp_path).compute(duckdb_source, "orders")
@@ -308,10 +341,18 @@ class TestRendering:
         assert render_column(enum, stats, detail="types") == "Virtual TEXT"
 
     def test_sampled_values_render_as_shares(self):
-        stats = TableStats("t", rows=None, method=SAMPLED, sample_size=10000)
+        stats = TableStats("t", rows=None, rows_at_least=1_000_000, method=SAMPLED, sample_size=10000)
         col = ColumnStats("type", "TEXT", "string", values=[["VYDAJ", 0.6254], ["VYBER", 0.004]])
         assert render_column(col, stats) == "type TEXT {VYDAJ:63%, VYBER:<1%, ...}"
         assert render_stats_header(stats) == "over 1000000 rows; stats from a 10000-row sample"
+
+    def test_full_sampled_share_renders_as_percent(self):
+        assert _format_count(1.0) == ":100%"
+        assert _format_count(5) == ":5"
+
+    def test_first_rows_and_lower_bound_headers(self):
+        stats = TableStats("t", rows=None, rows_at_least=500, method=SAMPLED, sample_size=50, sample_random=False)
+        assert render_stats_header(stats) == "over 500 rows; stats from the first 50 rows"
 
     def test_estimated_header(self):
         assert render_stats_header(TableStats("t", rows=5_000_000, method=ESTIMATED)) == "~5000000 rows; engine-estimated stats"
@@ -360,3 +401,358 @@ class TestMetasetIntegration:
         assert metaset.compact_context() == "orders"
         await metaset.ensure_stats()
         assert "status VARCHAR {paid:3, cancelled:1}" in metaset.compact_context()
+
+
+# ---------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------
+
+class TestEphemeralIdentity:
+
+    def test_freed_in_memory_sources_never_share_stats(self):
+        store = TableStatsStore(cache_dir=None)
+        seen = set()
+        for i in range(8):
+            source = DuckDBSource.from_df(tables={"data": pd.DataFrame({"secret": [f"user{i}"] * 3})})
+            values = store.compute(source, "data").column("secret").values
+            assert values == [[f"user{i}", 3]]
+            seen.add(store._identity(source, store._adapter(source)))
+            source.close()
+            del source
+            gc.collect()
+        assert len(seen) == 8
+        # Entries of collected connections are dropped with them.
+        assert not store._memory and not store._budgets
+
+    def test_replaced_table_is_profiled_again(self, duckdb_source):
+        store = TableStatsStore(cache_dir=None)
+        assert store.compute(duckdb_source, "orders").rows == 4
+        duckdb_source._connection.execute("CREATE OR REPLACE TABLE orders AS SELECT 1 AS id, 'paid' AS status")
+        assert store.get(duckdb_source, "orders") is None
+        assert store.compute(duckdb_source, "orders").rows == 1
+
+    def test_derived_expression_tracks_parent_table(self, duckdb_source):
+        store = TableStatsStore(cache_dir=None)
+        derived = duckdb_source.create_sql_expr_source({"paid": "SELECT * FROM orders WHERE status = 'paid'"})
+        assert store.compute(derived, "paid").rows == 3
+        duckdb_source._connection.execute("INSERT INTO orders VALUES (14, 2, 1.0, 'paid', NULL)")
+        assert store.get(derived, "paid") is None
+
+
+class TestBackgroundScheduling:
+
+    async def test_queued_tables_do_not_hold_default_executor_threads(self):
+        source = DuckDBSource(uri=":memory:")
+        tables = [f"t{i}" for i in range(40)]
+        for t in tables:
+            source._connection.execute(f"CREATE TABLE {t} AS SELECT 1 AS x")
+        source.tables = tables
+        store = TableStatsStore(cache_dir=None, concurrency=2)
+        running, peak = 0, 0
+        lock = threading.Lock()
+        original = store.profiler.profile
+
+        def slow(*args, **kwargs):
+            nonlocal running, peak
+            with lock:
+                running += 1
+                peak = max(peak, running)
+            time.sleep(0.2)
+            with lock:
+                running -= 1
+            return original(*args, **kwargs)
+
+        with patch.object(store.profiler, "profile", side_effect=slow):
+            futures = store.schedule(source, tables)
+            start = time.monotonic()
+            await asyncio.to_thread(lambda: None)
+            assert time.monotonic() - start < 0.5
+            await asyncio.wait(futures, timeout=30)
+        assert peak <= 2
+        source.close()
+
+
+class TestStatementTimeouts:
+
+    def test_queued_statement_is_cancelled_not_run_late(self):
+        ran = threading.Event()
+        release = threading.Event()
+        pool = ThreadPoolExecutor(max_workers=1)
+        pool.submit(release.wait)
+        try:
+            with patch("lumen.ai.table_stats._EXECUTOR", pool), pytest.raises(StatementTimeout):
+                _run_abandonable(ran.set, 0.1)
+        finally:
+            release.set()
+            pool.shutdown(wait=True)
+        assert not ran.is_set()
+
+    def test_duckdb_statement_is_interrupted(self, duckdb_source):
+        adapter = DuckDBStatsAdapter(duckdb_source)
+        start = time.monotonic()
+        with pytest.raises(StatementTimeout):
+            adapter.execute(
+                "SELECT COUNT(*) FROM range(100000000) a, range(100000) b WHERE a.range + b.range < 0",
+                None, timeout=0.2,
+            )
+        assert time.monotonic() - start < 5
+        # The connection stays usable.
+        assert adapter.execute("SELECT 1 AS one", None, 1)["one"].iloc[0] == 1
+
+    def test_postgres_timeout_uses_set_local_and_is_recognised(self):
+        executed = []
+
+        class QueryCanceled(Exception):
+            pgcode = "57014"
+
+        conn = MagicMock()
+        conn.exec_driver_sql.side_effect = executed.append
+
+        def run(stmt, params):
+            executed.append(str(stmt))
+            error = Exception("canceling statement due to statement timeout")
+            error.orig = QueryCanceled()
+            raise error
+
+        conn.execute.side_effect = run
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value = conn
+        adapter = SQLAlchemyStatsAdapter.__new__(SQLAlchemyStatsAdapter)
+        adapter.source = types.SimpleNamespace(_engine=engine, _driver_is_async=False)
+        adapter.dialect, adapter.local = "postgresql", False
+        with pytest.raises(StatementTimeout):
+            adapter.execute('SELECT COUNT("a:b") AS n FROM t', None, timeout=5)
+        assert executed[0] == "SET LOCAL statement_timeout = 5000"
+        assert not any("RESET" in sql for sql in executed)
+        # The colon in a quoted identifier is not a bind parameter.
+        assert executed[1] == 'SELECT COUNT("a:b") AS n FROM t'
+
+
+class _FakeSnowflakeConn:
+
+    user = "ANALYST"
+    role = "REPORTING"
+
+    def __init__(self):
+        self.cursors = []
+
+    def cursor(self):
+        cursor = MagicMock()
+        cursor.fetch_pandas_all.return_value = pd.DataFrame({"N": [1]})
+        self.cursors.append(cursor)
+        return cursor
+
+
+def test_snowflake_uses_own_cursor_with_server_timeout():
+    source = _FakeSnowflake()
+    source._conn = _FakeSnowflakeConn()
+    source._cursor = MagicMock()
+    adapter = SnowflakeStatsAdapter(source)
+    assert adapter.execute("SELECT 1", None, timeout=4.5)["N"].iloc[0] == 1
+    [cursor] = source._conn.cursors
+    cursor.execute.assert_called_once_with("SELECT 1", timeout=5)
+    cursor.close.assert_called_once()
+    source._cursor.execute.assert_not_called()
+
+
+def test_snowflake_identity_includes_user_and_role():
+    source = _FakeSnowflake()
+    source._conn = _FakeSnowflakeConn()
+    identity = SnowflakeStatsAdapter(source).identity()
+    assert "ANALYST" in identity and "REPORTING" in identity
+
+
+class _QueryJobConfig:
+    maximum_bytes_billed = None
+    job_timeout_ms = None
+
+    def __init__(self, query_parameters=None):
+        self.query_parameters = query_parameters
+
+
+class _FakeBigQuery:
+    dialect = "bigquery"
+    project_id = "my-proj"
+    table_params = {}
+
+    def __init__(self, tables):
+        self.tables = tables
+        self.calls = []
+
+    def _build_query_config(self, params):
+        return _QueryJobConfig(query_parameters=params)
+
+    def execute(self, sql, params=None, **kwargs):
+        self.calls.append((sql, params, kwargs))
+        return pd.DataFrame()
+
+    def get_sql_expr(self, table):
+        return self.tables[table] if isinstance(self.tables, dict) else f"SELECT * FROM {table}"
+
+
+@pytest.fixture
+def fake_bigquery_module():
+    google = types.ModuleType("google")
+    cloud = types.ModuleType("google.cloud")
+    bigquery = types.ModuleType("google.cloud.bigquery")
+    bigquery.QueryJobConfig = _QueryJobConfig
+    google.cloud, cloud.bigquery = cloud, bigquery
+    with patch.dict(sys.modules, {"google": google, "google.cloud": cloud, "google.cloud.bigquery": bigquery}):
+        yield
+
+
+class TestBigQuery:
+
+    def test_caps_survive_bound_parameters(self, fake_bigquery_module):
+        source = _FakeBigQuery(["my-proj.ds.events"])
+        adapter = BigQueryStatsAdapter(source, max_bytes_billed=1000)
+        adapter.execute("SELECT @x", {"x": 1}, timeout=2)
+        _, params, kwargs = source.calls[0]
+        config = kwargs["job_config"]
+        assert params is None and config.query_parameters == {"x": 1}
+        assert (config.maximum_bytes_billed, config.job_timeout_ms) == (1000, 2000)
+
+    def test_hyphenated_project_is_a_bare_table(self):
+        adapter = BigQueryStatsAdapter(_FakeBigQuery(["my-proj.ds.events"]))
+        assert adapter.bare_name("my-proj.ds.events") == "my-proj.ds.events"
+        relation = adapter.relation("my-proj.ds.events")
+        assert relation == "`my-proj`.ds.events"
+        sql, random = adapter.sample_sql(relation, 100, 10_000_000, 42)
+        assert "TABLESAMPLE SYSTEM" in sql and random
+
+    def test_expression_tables_are_never_scanned_for_a_sample(self):
+        source = _FakeBigQuery({"recent": "SELECT * FROM `my-proj.ds.events` WHERE day > '2024-01-01'"})
+        adapter = BigQueryStatsAdapter(source)
+        assert adapter.sample_sql(adapter.relation("recent"), 100, 10_000_000, 42) == (None, False)
+
+    def test_empty_sample_does_not_fall_back_to_first_rows(self, fake_bigquery_module):
+        source = _FakeBigQuery(["my-proj.ds.events"])
+        adapter = BigQueryStatsAdapter(source)
+        stats = TableStats("my-proj.ds.events", columns=[ColumnStats("x", "INT64", "numeric")])
+        TableProfiler(sample_rows=100)._sample(
+            adapter, stats, adapter.relation("my-proj.ds.events"), None, MagicMock(timeout=lambda t: t), 10_000_000,
+        )
+        assert [sql for sql, *_ in source.calls] == [
+            "SELECT * FROM `my-proj`.ds.events TABLESAMPLE SYSTEM (0.0015 PERCENT) LIMIT 100"
+        ]
+
+
+class TestQuoting:
+
+    @pytest.mark.parametrize("name, dialect, expected", [
+        ("mydb.public.orders", "snowflake", "mydb.public.orders"),
+        ("Users", "postgresql", "Users"),
+        ("order", "postgresql", '"order"'),
+        ("Order", "postgresql", '"order"'),
+        ("order", "snowflake", '"ORDER"'),
+        ("my-proj.ds.order", "bigquery", "`my-proj`.ds.`order`"),
+        ('"Mixed Case".t', "duckdb", '"Mixed Case".t'),
+    ])
+    def test_quotes_only_what_needs_it(self, name, dialect, expected):
+        assert _quote_qualified(name, dialect) == expected
+
+    @pytest.mark.parametrize("dialect, expected", [
+        ("mssql", "SELECT TOP 5 * FROM t"),
+        ("oracle", "SELECT * FROM t FETCH FIRST 5 ROWS ONLY"),
+        ("duckdb", "SELECT * FROM t LIMIT 5"),
+    ])
+    def test_row_limit_per_dialect(self, dialect, expected):
+        adapter = StatsAdapter(types.SimpleNamespace(dialect=dialect))
+        assert adapter.limit("SELECT * FROM t", 5) == expected
+
+
+class TestSampleLabels:
+
+    def test_first_rows_of_an_expression_are_labelled(self, sqlite_path):
+        pytest.importorskip("sqlalchemy")
+        source = SQLAlchemySource(url=f"sqlite:///{sqlite_path}", tables={"o": 'SELECT order_id, k_symbol FROM "order"'})
+        stats = TableProfiler(exact_row_limit=100, sample_rows=50).profile(source, "o")
+        assert stats.method == SAMPLED and not stats.sample_random
+        assert render_stats_header(stats).endswith("stats from the first 50 rows")
+
+    def test_parquet_row_count_is_exact(self, tmp_path):
+        path = tmp_path / "data.parquet"
+        pd.DataFrame({"x": range(10)}).to_parquet(path)
+        source = DuckDBSource(uri=":memory:", tables={"data": f"SELECT * FROM read_parquet('{path}')"})
+        stats = TableProfiler().profile(source, "data")
+        assert (stats.rows, stats.rows_exact) == (10, True)
+        assert render_stats_header(stats) == "10 rows"
+        source.close()
+
+
+class TestStoreLifetime:
+
+    def test_budget_resets_after_window(self, duckdb_source):
+        store = TableStatsStore(cache_dir=None, budget_seconds=0, budget_window=0.05)
+        assert store.compute(duckdb_source, "orders").method == TYPES_ONLY
+        store.budget_seconds = 300
+        time.sleep(0.1)
+        # Types-only results are retried, and the new window has budget.
+        store.retry_after = 0
+        assert store.compute(duckdb_source, "orders").method == EXACT
+
+    def test_types_only_results_are_retried(self, duckdb_source):
+        store = TableStatsStore(cache_dir=None, budget_seconds=0, retry_after=3600)
+        assert store.compute(duckdb_source, "orders").method == TYPES_ONLY
+        store.budget_seconds = None
+        store._budgets.clear()
+        assert store.compute(duckdb_source, "orders").method == TYPES_ONLY
+        store.retry_after = 0
+        assert store.compute(duckdb_source, "orders").method == EXACT
+
+    def test_memory_is_bounded(self, duckdb_source):
+        store = TableStatsStore(cache_dir=None, max_entries=1)
+        store.compute(duckdb_source, "orders")
+        store.compute(duckdb_source, "customers")
+        assert len(store._memory) == 1
+        assert store.get(duckdb_source, "customers") is not None
+
+
+class TestMetasetFixes:
+
+    async def test_get_metaset_wait_is_bounded(self, duckdb_source, table_stats_store):
+        original = table_stats_store.profiler.profile
+
+        def slow(*args, **kwargs):
+            time.sleep(1)
+            return original(*args, **kwargs)
+
+        with patch.object(table_stats_store.profiler, "profile", side_effect=slow):
+            start = time.monotonic()
+            metaset = await get_metaset([duckdb_source], ["orders"], stats_timeout=0.05)
+            assert time.monotonic() - start < 0.9
+        assert not metaset.stats
+
+    async def test_non_sql_sources_get_schema_stats(self):
+        from lumen.sources.base import InMemorySource
+        source = InMemorySource(tables={"t": pd.DataFrame({"x": [1, 2, 3], "c": ["a", "b", "a"]})})
+        slug = f"{source.name}{SEP}t"
+        metaset = Metaset(query=None, catalog={slug: TableCatalogEntry(slug, 1, [], source=source)})
+        await metaset.ensure_stats()
+        context = metaset.compact_context()
+        assert "x INTEGER 1..3" in context
+        assert "load_table_schemas" not in context
+
+    async def test_legacy_schema_methods_warn(self, duckdb_source):
+        slug = f"{duckdb_source.name}{SEP}orders"
+        metaset = Metaset(query=None, catalog={slug: TableCatalogEntry(slug, 1, [], source=duckdb_source)})
+        with pytest.warns(DeprecationWarning, match="ensure_schemas"):
+            await metaset.ensure_schemas()
+        assert slug in metaset.stats
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            with pytest.raises(DeprecationWarning, match="get_schema"):
+                await metaset.get_schema(slug)
+
+    async def test_less_relevant_tables_never_get_more_detail(self, duckdb_source):
+        metaset = await get_metaset([duckdb_source], ["orders", "customers"])
+        full_orders = metaset._render_table(
+            f"{duckdb_source.name}{SEP}orders", "orders", metaset.catalog[f"{duckdb_source.name}{SEP}orders"],
+            "full", True, False, True, True, 0,
+        )
+        from lumen.ai.utils import count_tokens
+        tight = metaset.compact_context(max_tokens=count_tokens(full_orders) - 1, schema_tables=[
+            f"{duckdb_source.name}{SEP}orders", f"{duckdb_source.name}{SEP}customers",
+        ])
+        customers = tight.split("customers", 1)[1]
+        assert "{" not in customers.split("\n\n", 1)[0]
