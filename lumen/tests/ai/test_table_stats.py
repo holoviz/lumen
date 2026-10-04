@@ -481,7 +481,7 @@ class TestStatementTimeouts:
         pool = ThreadPoolExecutor(max_workers=1)
         pool.submit(release.wait)
         try:
-            with patch("lumen.ai.table_stats._EXECUTOR", pool), pytest.raises(StatementTimeout):
+            with patch("lumen.ai.table_stats._executor", return_value=pool), pytest.raises(StatementTimeout):
                 _run_abandonable(ran.set, 0.1)
         finally:
             release.set()
@@ -962,3 +962,89 @@ def test_untyped_dates_and_decimals_keep_their_ranges():
     day, amount = stats.column("day"), stats.column("amount")
     assert (day.type, day.kind, day.min, day.max) == ("DATE", "temporal", "2024-01-01", "2024-02-01")
     assert (amount.type, amount.kind, amount.min, amount.max) == ("DECIMAL", "numeric", 1.5, 9.25)
+
+
+# ---------------------------------------------------------------
+# Fourth review
+# ---------------------------------------------------------------
+
+def test_sqlite_hash_sample_survives_large_rowids(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    path = tmp_path / "events.sqlite"
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE events (ts INTEGER PRIMARY KEY, v INTEGER)")
+        conn.executemany("INSERT INTO events VALUES (?, ?)", [(1_700_000_000_000 + i * 1000, i) for i in range(10_000)])
+    source = SQLAlchemySource(url=f"sqlite:///{path}", tables=["events"])
+    stats = TableProfiler(exact_row_limit=1000, sample_rows=500).profile(source, "events")
+    assert stats.method == SAMPLED and stats.sample_random
+    assert 400 <= stats.sample_size <= 500
+    assert stats.column("v").max > 9000
+
+
+def test_abandoned_statements_only_block_their_own_database():
+    release = threading.Event()
+
+    class Slow:
+        dialect = None
+
+        def execute(self, sql, params=None):
+            release.wait(5)
+
+    class Fast:
+        dialect = None
+
+        def execute(self, sql, params=None):
+            return pd.DataFrame({"one": [1]})
+
+    slow, fast = StatsAdapter(Slow()), StatsAdapter(Fast())
+    try:
+        for _ in range(8):
+            with pytest.raises(StatementTimeout):
+                slow.execute("SELECT 1", None, timeout=0.05)
+        assert fast.execute("SELECT 1", None, timeout=1)["one"].iloc[0] == 1
+    finally:
+        release.set()
+
+
+def test_disk_entries_are_keyed_by_profiler_settings(sqlite_path, tmp_path):
+    pytest.importorskip("sqlalchemy")
+    cache = tmp_path / "cache"
+    TableStatsStore(cache_dir=cache).compute(_sqlite_source(sqlite_path), "order")
+    narrow = TableStatsStore(TableProfiler(top_values=1), cache_dir=cache)
+    stats = narrow.compute(_sqlite_source(sqlite_path), "order")
+    assert len(stats.column("k_symbol").values) == 1
+    assert len(list(cache.glob("*.json"))) == 2
+
+
+def test_change_during_profile_is_noticed(duckdb_source):
+    store = TableStatsStore(cache_dir=None)
+    changed = {"done": False}
+    original = store.profiler.profile
+
+    def profile(*args, **kwargs):
+        result = original(*args, **kwargs)
+        changed["done"] = True
+        return result
+
+    with (
+        patch.object(store.profiler, "profile", side_effect=profile),
+        patch.object(DuckDBStatsAdapter, "modified", lambda self, table: "after" if changed["done"] else "before"),
+    ):
+        store.compute(duckdb_source, "orders")
+        assert store.get(duckdb_source, "orders") is None
+
+
+async def test_due_recheck_does_not_delay_cached_stats(duckdb_source):
+    store = TableStatsStore(cache_dir=None)
+    stats = store.compute(duckdb_source, "orders")
+
+    def slow(*args, **kwargs):
+        time.sleep(1)
+        return stats
+
+    with patch.object(store, "_needs_check", return_value=True), patch.object(store, "compute", side_effect=slow):
+        start = time.monotonic()
+        result = await store.ensure(duckdb_source, ["orders"], timeout=5)
+        assert time.monotonic() - start < 0.5
+    assert result["orders"] is stats
+    await asyncio.sleep(1.2)

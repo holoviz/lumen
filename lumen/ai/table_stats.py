@@ -447,7 +447,10 @@ class StatsAdapter:
     # Execution -----------------------------------------------------------------
 
     def execute(self, sql: str, params=None, timeout: float | None = None) -> pd.DataFrame:
-        return _run_abandonable(lambda: self.source.execute(sql, params), timeout)
+        # Sources without a stable identity share a pool per type rather
+        # than leaking one per instance.
+        pool = self.identity() or type(self.source).__name__
+        return _run_abandonable(lambda: self.source.execute(sql, params), timeout, pool)
 
     # Metadata ------------------------------------------------------------------
 
@@ -867,10 +870,14 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
             ), True
         if self.dialect == "sqlite" and not relation.startswith("("):
             # Deterministic hash of rowid rather than ORDER BY RANDOM(), which
-            # sorts the whole table and differs on every run.
+            # sorts the whole table and differs on every run. Reducing modulo
+            # a 31-bit prime before the multiply keeps the product below
+            # 2**63, past which SQLite switches to REAL and % stops hashing,
+            # e.g. for epoch-millisecond keys.
             modulus = max(1, math.ceil(total / rows))
             return (
-                f"SELECT * FROM {relation} WHERE ((rowid * 2654435761 + {seed}) % {modulus * 7919}) < 7919 "
+                f"SELECT * FROM {relation} WHERE "
+                f"((((abs(rowid) % 2147483647) * 48271 + {seed}) % 2147483647) % {modulus}) = 0 "
                 f"LIMIT {rows}"
             ), True
         return super().sample_sql(relation, rows, total, seed)
@@ -1111,12 +1118,22 @@ def get_adapter(source: Source, max_bytes_billed: int | None = None) -> StatsAda
     return StatsAdapter(source)
 
 
-#: Statements of engines that cannot be interrupted from inside run here so
-#: the profiler can give up on them.
-_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="lumen-table-stats-sql")
+#: Statements of engines that cannot be interrupted from inside run in
+#: these pools so the profiler can give up on them. An abandoned statement
+#: keeps its thread, so each database gets its own pool and one slow
+#: database cannot starve the others.
+_EXECUTORS: dict[str, ThreadPoolExecutor] = {}
+_EXECUTORS_LOCK = threading.Lock()
 
 
-def _run_abandonable(fn, timeout: float | None):
+def _executor(key: str) -> ThreadPoolExecutor:
+    with _EXECUTORS_LOCK:
+        if (pool := _EXECUTORS.get(key)) is None:
+            pool = _EXECUTORS[key] = ThreadPoolExecutor(max_workers=4, thread_name_prefix="lumen-table-stats-sql")
+        return pool
+
+
+def _run_abandonable(fn, timeout: float | None, pool: str = "default"):
     """
     Run `fn` in a worker and stop waiting after `timeout` seconds. The deadline
     covers time spent queued behind statements abandoned earlier, and a
@@ -1131,7 +1148,7 @@ def _run_abandonable(fn, timeout: float | None):
         started.set()
         return fn()
 
-    future = _EXECUTOR.submit(run)
+    future = _executor(pool).submit(run)
     try:
         if not started.wait(timeout):
             raise FutureTimeout
@@ -1837,7 +1854,11 @@ class TableStatsStore(param.Parameterized):
     def _path(self, key: tuple) -> Path | None:
         if self.cache_dir is None or str(key[0]).startswith("memory:"):
             return None
-        digest = hashlib.sha1(json.dumps(key, default=str).encode()).hexdigest()
+        # Settings that change what is computed are part of the key, so a
+        # store configured differently never loads another store's entries.
+        p = self.profiler
+        settings = [p.exact_row_limit, p.sample_rows, p.group_by_row_limit, p.enum_limit, p.top_values, p.seed]
+        digest = hashlib.sha1(json.dumps([*key, settings], default=str).encode()).hexdigest()
         return Path(self.cache_dir) / f"{digest}.json"
 
     @staticmethod
@@ -1985,6 +2006,9 @@ class TableStatsStore(param.Parameterized):
                 return cached
             if (loaded := self._load(key, adapter, table)) is not None:
                 return loaded
+            # Read before profiling: a change during the profile then leaves
+            # the entry with a stale token, so the next lookup recomputes.
+            token = self._token(adapter, table)
             if hasattr(source, "execute"):
                 stats = self.profiler.profile(source, table, self._budget(key[0]))
             else:
@@ -1993,7 +2017,6 @@ class TableStatsStore(param.Parameterized):
             # Not even described; caching that would hide the table until
             # retry_after, though the cause (e.g. a transient error) may pass.
             return stats
-        token = self._token(adapter, table)
         stats.fingerprint = self._fingerprint(stats.signature, token)
         self._remember(key, stats, token)
         path = self._path(key)
@@ -2068,7 +2091,9 @@ class TableStatsStore(param.Parameterized):
         any still being computed; those keep computing in the background.
         """
         ready, futures = self._schedule(source, tables)
-        pending = [f for f in futures.values() if not f.done()]
+        # A cached table due for a recheck is served as is; waiting on the
+        # recheck would queue behind background profiling for the slots.
+        pending = [f for table, f in futures.items() if table not in ready and not f.done()]
         if pending:
             await asyncio.wait(pending, timeout=timeout)
         # Results come from the tasks and the lookups above, so no table is
