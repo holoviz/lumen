@@ -34,6 +34,7 @@ except ImportError as e:
     ) from e
 
 from ..transforms.sql import SQLFilter
+from ..util import to_backend
 from .base import BaseSQLSource, cached, cached_schema
 
 # PEM certificates have the pattern:
@@ -338,13 +339,21 @@ class SnowflakeSource(BaseSQLSource):
             QueryStatus.ABORTED,
             QueryStatus.FAILED_WITH_INCIDENT,
         )
-        while True:
-            status = await asyncio.to_thread(
-                self._conn.get_query_status, query_id
+        try:
+            while True:
+                status = await asyncio.to_thread(
+                    self._conn.get_query_status, query_id
+                )
+                if status in terminal_statuses:
+                    break
+                await asyncio.sleep(0.5)  # Check every 500ms
+        except asyncio.CancelledError:
+            # A caller's timeout cancels the poll; without this the warehouse
+            # keeps running (and billing) the query.
+            await asyncio.to_thread(
+                self._conn.cursor().execute, f"SELECT SYSTEM$CANCEL_QUERY('{query_id}')"
             )
-            if status in terminal_statuses:
-                break
-            await asyncio.sleep(0.5)  # Check every 500ms
+            raise
 
         if status != QueryStatus.SUCCESS:
             raise snowflake.connector.errors.ProgrammingError(
@@ -353,6 +362,11 @@ class SnowflakeSource(BaseSQLSource):
         self._cursor.get_results_from_sfqid(query_id)
         df = self._cursor.fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
+
+    async def execute_with_timeout(self, sql_query: str, timeout: float | None, fetch: bool = False):
+        # Only execute_async cancels the query on timeout; fetch runs in a thread.
+        df = await super().execute_with_timeout(sql_query, timeout)
+        return to_backend(df, self.dataframe_backend) if fetch else df
 
     def get_tables(self) -> list[str]:
         # limited set of tables was provided

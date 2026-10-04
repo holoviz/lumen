@@ -14,7 +14,7 @@ from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
-    Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
+    Limit, Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
     TableSample, and_, func, or_, replace_placeholders, select,
 )
 from sqlglot.optimizer import optimize
@@ -452,6 +452,11 @@ class SQLLimit(SQLTransform):
                 # if existing limit is less than the new limit
                 # do not modify the original query
                 return sql_in
+
+        # Limiting in place keeps the query engines quote in error messages
+        # identical to the one that was written.
+        if isinstance(parsed_expression, Select) and (existing_limit is None or isinstance(existing_limit, Limit)):
+            return self.to_sql(parsed_expression.limit(self.limit))
 
         subquery = self._to_subquery(parsed_expression)
         expression = select("*").from_(subquery).limit(self.limit)

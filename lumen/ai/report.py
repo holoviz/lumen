@@ -405,7 +405,7 @@ class TaskGroup(Task):
                 if p not in out_context
             ]
             if unprovided:
-                raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
+                raise RuntimeError(f"{task.__class__.__name__} failed to provide declared context.")
         return outputs, out_context
 
     def _render_tasks(self) -> list[tuple[str, Viewable]]:

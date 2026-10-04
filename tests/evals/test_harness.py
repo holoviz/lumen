@@ -12,7 +12,7 @@ from openai import RateLimitError
 from panel_material_ui import ChatMessage
 from pydantic_evals import Case, Dataset
 
-from lumen.ai.agents.sql import SQLAgent, make_sql_model
+from lumen.ai.agents.sql import SQLAgent, SQLCleanup, make_sql_model
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.evals.bird import bird_source, database_path, execute_read_only
@@ -353,9 +353,11 @@ async def test_direct_commerce_plan_uses_current_followup(monkeypatch):
 
     class SQLMockLLM(MockLLM):
         async def invoke(self, *args, **kwargs):
+            if kwargs.get("response_model") is SQLCleanup:
+                return SQLCleanup(chain_of_thought="No edit needed.", query=self.last_sql)
             if kwargs.get("response_model"):
                 query = make_sql_model([("commerce", "customers"), ("commerce", "orders")])
-                sql = queries.pop(0)
+                sql = self.last_sql = queries.pop(0)
                 return query(query=sql, table_slug="count_result", tables=["orders" if "orders" in sql else "customers"])
             return await super().invoke(*args, **kwargs)
 

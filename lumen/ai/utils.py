@@ -78,6 +78,9 @@ IMAGE_MIME_TYPES = {
 # it is asked to act on are drawn from the same amount of data.
 PROFILE_SAMPLE_ROWS = 5000
 
+# Terminal colour codes, which sqlglot puts in its error messages
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
 # Column-selection tuning for describe_data_sync.
 DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
@@ -172,7 +175,7 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     )
     system_prompt = {
         "role": "system",
-        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        "content": f"<Chat History>\n{formatted_history}\n</Chat History>"
     }
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
@@ -256,6 +259,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -308,6 +312,29 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
             f"from these variables: {unused_keys}. If this is unintended, "
             f"please create a template that contains those keys."
         )
+
+
+def format_error(error: BaseException) -> str:
+    """Render an error as ``Type: message`` for the model, without terminal colour codes."""
+    return ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}")
+
+
+# Credentials that error messages commonly quote, e.g. an HTTP error naming
+# the request URL with ``?key=...`` or ``https://user:token@host``.
+URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@]+@")
+URL_QUERY = re.compile(r"(?P<url>\b[a-z][\w+.-]*://[^\s?#'\"<>]*)\?[^\s#'\"<>)]+", re.IGNORECASE)
+
+
+def format_tool_error(error: BaseException | str, max_length: int = 1000) -> str:
+    """
+    Render an error for a tool result that is sent to the provider.
+
+    Tool results are re-sent every round, so the text is truncated, and URL
+    credentials and query strings are redacted so secrets do not leak.
+    """
+    text = error if isinstance(error, str) else format_error(error)
+    text = URL_CREDENTIALS.sub("<redacted>@", URL_QUERY.sub(r"\g<url>?<redacted>", text))
+    return truncate_string(text, max_length)
 
 
 def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
@@ -371,7 +398,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -407,7 +435,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -1348,6 +1377,34 @@ def truncate_string(s, max_length=30, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
+def closest_names(name: str, options, n: int = 3) -> list[str]:
+    """Return up to ``n`` entries of ``options`` that most resemble ``name``, ignoring case."""
+    by_lower: dict[str, str] = {}
+    for option in options:
+        by_lower.setdefault(str(option).lower(), str(option))
+    matches = difflib.get_close_matches(str(name).lower(), list(by_lower), n=n, cutoff=0.5)
+    return [by_lower[match] for match in matches]
+
+
+def format_unknown_name(kind: str, name: Any, options, max_listed: int = 30) -> str:
+    """
+    Describe an unknown ``kind`` (tool, table, column, ...) so a model can correct itself.
+
+    Lists the closest matches first, then the valid names, capped at
+    ``max_listed`` so a large catalog does not flood the transcript.
+    """
+    options = sorted({str(option) for option in options})
+    message = f"Unknown {kind} {name!r}."
+    close = closest_names(str(name), options)
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    if options:
+        listed = ", ".join(options[:max_listed])
+        more = f" (and {len(options) - max_listed} more)" if len(options) > max_listed else ""
+        message += f" Valid {kind}s: {listed}{more}."
+    return message
+
+
 def _get_token_encoder():
     """
     Return a cached tiktoken encoder, or ``None`` if one cannot be loaded.
@@ -1574,6 +1631,39 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def inline_schema_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Replace local ``$ref`` pointers in a JSON schema with their ``$defs`` definitions.
+
+    Instructor already inlines them for the native Gemini client, but OpenAI
+    compatible endpoints such as OpenRouter forward them unchanged.
+    Recursive definitions stay referenced.
+    """
+    defs = schema.get("$defs", {})
+    unresolved = False
+
+    def resolve(node: Any, seen: frozenset[str]) -> Any:
+        nonlocal unresolved
+        if isinstance(node, list):
+            return [resolve(item, seen) for item in node]
+        if not isinstance(node, dict):
+            return node
+        name = node.get("$ref", "").removeprefix("#/$defs/")
+        if name in defs:
+            if name in seen:
+                unresolved = True
+                return node
+            siblings = {k: v for k, v in node.items() if k != "$ref"}
+            return resolve({**defs[name], **siblings}, seen | {name})
+        return {k: resolve(v, seen) for k, v in node.items() if k != "$defs"}
+
+    inlined = resolve(schema, frozenset())
+    if unresolved:
+        inlined["$defs"] = defs
+    return inlined
+
 
 def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     """

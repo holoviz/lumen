@@ -177,13 +177,25 @@ def test_sql_group_by_multi_columns():
 
 def test_sql_limit():
     result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery LIMIT 10"
+    expected = "SELECT * FROM TABLE LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_keeps_order_and_offset():
+    result = SQLLimit.apply_to("SELECT A FROM TABLE ORDER BY A OFFSET 5", limit=10)
+    expected = "SELECT A FROM TABLE ORDER BY A LIMIT 10 OFFSET 5"
+    assert result == expected
+
+
+def test_sql_limit_wraps_set_operation():
+    result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=10)
+    expected = "SELECT * FROM (SELECT A FROM X UNION SELECT A FROM Y) AS subquery LIMIT 10"
     assert result == expected
 
 
 def test_sql_limit_lower_than_original():
     result = SQLLimit.apply_to("SELECT * FROM TABLE LIMIT 15", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE LIMIT 15) AS subquery LIMIT 10"
+    expected = "SELECT * FROM TABLE LIMIT 10"
     assert result == expected
 
 
@@ -195,8 +207,8 @@ def test_sql_limit_higher_than_original():
 
 def test_sql_limit_mssql_aliases_derived_table():
     """SQL Server rejects a derived table in FROM unless it carries an alias."""
-    result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=1, write="mssql")
-    expected = "SELECT TOP 1 * FROM (SELECT * FROM TABLE) AS subquery"
+    result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=1, write="mssql")
+    expected = "SELECT TOP 1 * FROM (SELECT A FROM X UNION SELECT A FROM Y) AS subquery"
     assert result == expected
 
 

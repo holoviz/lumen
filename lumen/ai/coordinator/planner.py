@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import traceback
 
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal
+from typing import (
+    TYPE_CHECKING, Any, ClassVar, Literal,
+)
 
 import param
 
 from panel.io.state import state
 from panel_material_ui import ChatStep
 from pydantic import (
-    BaseModel, Field, create_model, model_validator,
+    BaseModel, Field, ValidationError, create_model, field_validator,
+    model_validator,
 )
 from pydantic.fields import FieldInfo
 
@@ -27,13 +31,51 @@ from ..report import ActorTask
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import (
-    content_to_text, log_debug, mutate_user_message, wrap_logfire,
+    content_to_text, get_root_exception, inline_schema_defs, log_debug,
+    mutate_user_message, wrap_logfire,
 )
 from .base import Coordinator, Plan
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
+_URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+
+
+def plan_retry_feedback(error: BaseException) -> str | None:
+    """
+    System prompt addition for retrying a failed plan generation, or None
+    when the failure is not one a second attempt can fix.
+    """
+    root = get_root_exception(error)
+    # instructor's ResponseParsingError for a completion without a tool call
+    if "No tool calls or function call found" in str(root):
+        return ""
+    # instructor's retry exception carries the pydantic message, not the error
+    if not isinstance(root, ValidationError) and "validation error for" not in str(root):
+        return None
+    return (
+        f"\n\nYour previous plan was rejected:\n{str(root)[:2000]}\n"
+        "Return every step as an object with `actor` and `instruction` fields."
+    )
+
+
+def _coerce_string_step(step: str, actors: tuple[str, ...]) -> dict[str, str] | str:
+    """
+    Turn a step written as a string, e.g. ``"SQLAgent: ..."`` or
+    ``"`SQLAgent` to ..."``, into a step dict for the actor it names.
+    Strings naming no actor or several are returned unchanged, so they
+    fail validation and the retry explains the expected format.
+    """
+    named = [actor for actor in actors if re.search(rf"\b{re.escape(actor)}\b", step)]
+    if len(named) != 1:
+        return step
+    actor = named[0]
+    prefix = re.match(rf"^\s*`?{re.escape(actor)}`?\s*:\s*", step)
+    instruction = (step[prefix.end():] if prefix else step).strip() or step.strip()
+    log_debug(f"Coerced plan step string {step!r} to a {actor} step.")
+    return {"actor": actor, "instruction": instruction}
 
 
 class RawStep(BaseModel):
@@ -46,10 +88,10 @@ class RawStep(BaseModel):
         if not, do not randomly add arbitrary numbers or details.
         Do include any clarifications.
 
-        - ❌ Too low: implementation details (SQL syntax, chart specs)
-        - ❌ Too high: vague ("handle this", "process data")
-        - ❌ No leaking: mentioning downstream purpose ("for plotting", "for the chart")
-        - ✅ Just right: what THIS actor should do, nothing about why
+        - Too low (avoid): implementation details (SQL syntax, chart specs)
+        - Too high (avoid): vague ("handle this", "process data")
+        - Leaking (avoid): mentioning downstream purpose ("for plotting", "for the chart")
+        - Just right: what THIS actor should do, nothing about why
         """,
         examples=[
             "Query top 5 countries by sales # only if user requested the top 5, otherwise just query all countries",
@@ -91,6 +133,23 @@ class RawPlan(BaseModel):
         """
     )
 
+    # Actor names a step may use; make_plan_model fills these in.
+    actors: ClassVar[tuple[str, ...]] = ()
+
+    @field_validator("steps", mode="before")
+    @classmethod
+    def _coerce_string_steps(cls, steps: Any) -> Any:
+        # Some models (e.g. Gemini) return steps as prose like
+        # "Use SQLAgent to ..." instead of objects.
+        if not isinstance(steps, list):
+            return steps
+        return [_coerce_string_step(step, cls.actors) if isinstance(step, str) else step for step in steps]
+
+    @classmethod
+    def model_json_schema(cls, *args, **kwargs) -> dict[str, Any]:
+        # Weaker models follow a flat schema more reliably than $ref indirection.
+        return inline_schema_defs(super().model_json_schema(*args, **kwargs))
+
 
 def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
     step = create_model(
@@ -103,6 +162,7 @@ def make_plan_model(agents: list[str], tools: list[str]) -> type[RawPlan]:
         __base__=RawPlan,
         steps=(list[step], RawPlan.model_fields["steps"]),
     )
+    plan.actors = tuple(agents + tools)
     return plan
 
 
@@ -212,6 +272,28 @@ class Planner(Coordinator):
             if id(tool) not in synced_tools:
                 await tool.sync(context)
                 synced_tools.add(id(tool))
+
+    @staticmethod
+    def _excluded_actors(messages: list[Message], context: TContext) -> set[str]:
+        """
+        Actors to leave out of the planner prompt and the plan's actor enum.
+
+        ValidationAgent is appended by the planner itself. SourceAgent is only
+        offered when SourceLookup found an action for this query, and a
+        URL-only action needs a URL in the query.
+        """
+        excluded = {"ValidationAgent"}
+        actions = context.get("source_actions")
+        if actions is not None:
+            query = content_to_text(next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+            ))
+            # An action taking nothing but a URL has nothing to fetch unless
+            # the user supplied one.
+            url_only = all(set(info.get("parameters") or {}) == {"url"} for info in actions.values())
+            if not actions or (url_only and not _URL_RE.search(query)):
+                excluded.add("SourceAgent")
+        return excluded
 
     async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> str:
         """
@@ -359,7 +441,12 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in context
-        agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
+        excluded = self._excluded_actors(messages, context)
+        agents = [
+            agent for agent in agents
+            if len(set(agent.input_schema.__required_keys__) - all_provides) == 0
+            and type(agent).__name__ not in excluded
+        ]
         tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
         llm_tools = list(_merge_prompt_tools(self.llm_tools, None, context) or [])
         if self._clarification_enabled:
@@ -378,27 +465,58 @@ class Planner(Coordinator):
             response_model=plan_model,
             agents=agents,
             tools=tools,
+            llm_tools=llm_tools,
             unmet_dependencies=unmet_dependencies,
             candidates=agent_candidates + tool_candidates,
             previous_actors=previous_actors,
             previous_plans=previous_plans,
             follow_up_type=follow_up_type,
         )
-        async for raw_plan in self.llm.stream(
-            messages=messages,
-            system=system,
-            model_spec=model_spec,
-            response_model=plan_model,
-            max_retries=3,
-            tools=llm_tools,
-        ):
-            if raw_plan.chain_of_thought:
-                step.stream(raw_plan.chain_of_thought, replace=True)
-            partial_todos = self._render_partial_todos(raw_plan)
-            if partial_todos and self.steps_layout is not None:
-                self._todos_title.object = "📋 Building checklist..."
-                self.steps_layout.header[1].object = partial_todos
+        stream_plan = partial(
+            self._stream_plan, messages, model_spec=model_spec, plan_model=plan_model, llm_tools=llm_tools, step=step
+        )
+        # Streamed structured output bypasses instructor's retries, so an empty
+        # completion or an invalid plan gets one more attempt here.
+        try:
+            return await stream_plan(system)
+        except Exception as e:
+            if (feedback := plan_retry_feedback(e)) is None:
+                raise
+            log_debug(f"Retrying plan generation after: {e}")
+        return await stream_plan(system + feedback)
 
+    async def _stream_plan(
+        self,
+        messages: list[Message],
+        system: str,
+        *,
+        model_spec: str,
+        plan_model: type[RawPlan],
+        llm_tools: list,
+        step: ChatStep,
+    ) -> RawPlan | None:
+        """Stream a plan from the LLM, rendering the partial checklist as it arrives."""
+        raw_plan = None
+        try:
+            async for raw_plan in self.llm.stream(
+                messages=messages,
+                system=system,
+                model_spec=model_spec,
+                response_model=plan_model,
+                max_retries=3,
+                tools=llm_tools,
+            ):
+                if raw_plan.chain_of_thought:
+                    step.stream(raw_plan.chain_of_thought, replace=True)
+                partial_todos = self._render_partial_todos(raw_plan)
+                if partial_todos and self.steps_layout is not None:
+                    self._todos_title.object = "📋 Building checklist..."
+                    self.steps_layout.header[1].object = partial_todos
+        except Exception:
+            # A retry must not start from the rejected plan's checklist.
+            if self.steps_layout is not None:
+                self.steps_layout.header[1].object = None
+            raise
         return raw_plan
 
     async def _resolve_plan(
@@ -508,7 +626,9 @@ class Planner(Coordinator):
             self.validation_enabled and
             "ValidationAgent" not in actors_in_graph
         ):
-            validation_step = type(step)(
+            # Not validated: ValidationAgent is kept out of the actor enum so
+            # the model cannot plan it, but the planner still appends it.
+            validation_step = type(step).model_construct(
                 actor="ValidationAgent",
                 instruction="Validate whether the executed plan fully answered the user's original query.",
                 title="Validating results",
@@ -541,7 +661,8 @@ class Planner(Coordinator):
         self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]
     ) -> Plan:
         tool_names = list(tools)
-        agent_names = list(agents)
+        excluded = self._excluded_actors(messages, context)
+        agent_names = [name for name, agent in agents.items() if type(agent).__name__ not in excluded]
         plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
         follow_up_type = pre_plan_output.get("follow_up_type", "new")
         is_followup = follow_up_type in ("direct", "derived")

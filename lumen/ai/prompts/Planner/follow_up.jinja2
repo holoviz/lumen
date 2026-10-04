@@ -60,8 +60,25 @@ Derived tables: top_result (from raw_data) ★ — but only 1 row
 {% block context -%}
 ## Context
 
-{%- if memory.get('source_actions') %}
-Note: tables loaded from external API — rows limited to fetched parameters.
+{#- SQLAgent and SourceAgent record lineage and provenance on the source they
+    return, which is current even before MetadataLookup indexes new tables. -#}
+{%- set source_meta = (memory['source'].metadata or {}) if memory.get('source') else {} %}
+{%- set external, derived = [], [] %}
+{%- for table, meta in source_meta.items() if meta is mapping %}
+{%- if meta.get('source_action') %}{% set _ = external.append(table) %}{% endif %}
+{%- if meta.get('derived_from') %}{% set _ = derived.append((meta.get('created_order', 0), table, meta['derived_from'])) %}{% endif %}
+{%- endfor %}
+
+{%- if external %}
+Note: `{{ external | join('`, `') }}` loaded from an external API; rows limited to the parameters fetched.
+{%- endif %}
+
+{%- if derived %}
+{%- set latest = (derived | max(attribute=0))[0] %}
+Derived tables:
+{%- for order, table, parents in derived | sort(attribute=0, reverse=True) %}
+- {{ table }} (from {{ parents | map('table_name') | join(', ') }}){{ ' ★' if order == latest else '' }}
+{%- endfor %}
 {%- endif %}
 
 {%- if memory.get('sql') %}
@@ -78,6 +95,8 @@ Most recent data in memory:
 
 {%- if memory.get('metaset') %}
 Available tables:
-{{ memory['metaset'].compact_context(include_docs=False) }}
+{#- Row counts, enums and ranges are what tell a one-row derived table from
+    a full one; the budget keeps a large catalog from swamping the prompt. -#}
+{{ memory['metaset'].compact_context(include_docs=False, include_lineage=False, max_tokens=2000) }}
 {%- endif %}
 {%- endblock -%}
