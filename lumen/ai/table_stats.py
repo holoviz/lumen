@@ -213,8 +213,21 @@ def column_kind(sql_type: str | None) -> str:
     return "other"
 
 
-def _kind_from_dtype(dtype) -> tuple[str, str]:
-    kind = getattr(dtype, "kind", "O")
+def _kind_from_series(series: pd.Series) -> tuple[str, str]:
+    """A SQL type guessed from fetched values, for engines that did not report one."""
+    series = series.infer_objects()
+    kind = getattr(series.dtype, "kind", "O")
+    if kind == "O":
+        # Drivers return DATE and DECIMAL as Python objects, which would
+        # otherwise read as text and lose their ranges.
+        sample = series.dropna()
+        first = sample.iloc[0] if len(sample) else None
+        if isinstance(first, dt.datetime):
+            return "TIMESTAMP", "temporal"
+        if isinstance(first, dt.date):
+            return "DATE", "temporal"
+        if isinstance(first, decimal.Decimal):
+            return "DECIMAL", "numeric"
     if kind == "b":
         return "BOOLEAN", "boolean"
     if kind in "iu":
@@ -1005,12 +1018,40 @@ class BigQueryStatsAdapter(StatsAdapter):
         principal = getattr(getattr(self.source, "_credentials", None), "service_account_email", None)
         return f"bigquery:{project}" + (f"/{principal}" if principal else "")
 
-    def modified(self, table):
+    def _table(self, table: str):
+        """
+        The BigQuery table object for a bare table name. `get_metadata` would
+        list every dataset and table to answer the same question.
+        """
+        if not (name := self.bare_name(table)):
+            return None
         try:
-            meta = self.source.get_metadata(table) or {}
+            return self.source._get_table(name.replace("`", ""))
         except Exception:
             return None
-        return str(meta.get("modified")) if meta.get("modified") else None
+
+    def modified(self, table):
+        bq_table = self._table(table)
+        return str(bq_table.modified) if bq_table is not None and bq_table.modified else None
+
+    def columns(self, table, relation, timeout):
+        from google.cloud import bigquery  # type: ignore[import-not-found]
+
+        # A LIMIT 0 result carries no SQL types. Tables have a schema; any
+        # other expression gets one from a dry run, which bills nothing.
+        if (bq_table := self._table(table)) is not None and bq_table.schema:
+            fields = bq_table.schema
+        else:
+            try:
+                job = self.source._sql_client.query(
+                    f"SELECT * FROM {relation}",
+                    job_config=bigquery.QueryJobConfig(dry_run=True, use_query_cache=False),
+                )
+                fields = job.schema
+            except Exception as e:
+                log_debug(f"[table_stats] dry run failed for {table!r}: {e}")
+                return super().columns(table, relation, timeout)
+        return [(field.name, _bigquery_type(field)) for field in fields]
 
     def execute(self, sql, params=None, timeout=None):
         from google.cloud import bigquery  # type: ignore[import-not-found]
@@ -1031,12 +1072,8 @@ class BigQueryStatsAdapter(StatsAdapter):
             raise
 
     def row_estimate(self, table):
-        try:
-            meta = self.source.get_metadata(table) or {}
-        except Exception:
-            return None
-        rows = meta.get("num_rows", meta.get("rows"))
-        return int(rows) if rows is not None else None
+        bq_table = self._table(table)
+        return int(bq_table.num_rows) if bq_table is not None and bq_table.num_rows is not None else None
 
     def sample_sql(self, relation, rows, total, seed):
         if total is None or total <= rows:
@@ -1050,6 +1087,14 @@ class BigQueryStatsAdapter(StatsAdapter):
         # the rendered context stable across runs.
         return f"SELECT * FROM {relation} TABLESAMPLE SYSTEM ({pct:.4f} PERCENT) LIMIT {rows}", True
 
+
+
+def _bigquery_type(field) -> str:
+    if field.field_type in ("RECORD", "STRUCT"):
+        sql_type = "STRUCT"
+    else:
+        sql_type = field.field_type
+    return f"ARRAY<{sql_type}>" if field.mode == "REPEATED" else sql_type
 
 
 def get_adapter(source: Source, max_bytes_billed: int | None = None) -> StatsAdapter:
@@ -1326,9 +1371,10 @@ class TableProfiler(param.Parameterized):
         # Fewer rows than requested means the read covered the whole table.
         stats.sample_random = random or len(df) < self.sample_rows
         for col in stats.columns:
-            # SQLite columns may be declared without a type.
+            # SQLite columns may be declared without a type, and generic
+            # adapters report none at all.
             if col.type in (None, "", "NULL") and col.name in df.columns:
-                col.type, col.kind = _kind_from_dtype(df[col.name].infer_objects().dtype)
+                col.type, col.kind = _kind_from_series(df[col.name])
         return df
 
     def _exact(self, adapter, stats, relation, params, budget, sample):

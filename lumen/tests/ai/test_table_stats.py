@@ -567,8 +567,9 @@ class _QueryJobConfig:
     maximum_bytes_billed = None
     job_timeout_ms = None
 
-    def __init__(self, query_parameters=None):
+    def __init__(self, query_parameters=None, **kwargs):
         self.query_parameters = query_parameters
+        self.__dict__.update(kwargs)
 
 
 class _FakeBigQuery:
@@ -896,3 +897,68 @@ def test_unaggregatable_column_keeps_the_rest(duckdb_source):
     amount = stats.column("amount")
     assert amount.min is None and amount.nulls == 0.0
     assert adapter.dialect == duckdb_source.dialect
+
+
+# ---------------------------------------------------------------
+# Third review
+# ---------------------------------------------------------------
+
+def _field(name, field_type, mode="NULLABLE"):
+    return types.SimpleNamespace(name=name, field_type=field_type, mode=mode)
+
+
+class TestBigQueryMetadata:
+
+    @pytest.fixture
+    def source(self):
+        source = _FakeBigQuery({"events": "my-proj.ds.events", "recent": "SELECT * FROM `my-proj.ds.events` WHERE day > '2024-01-01'"})
+        table = types.SimpleNamespace(
+            modified="2026-10-01 12:00:00", num_rows=2_000_000,
+            schema=[_field("day", "DATE"), _field("amount", "NUMERIC"), _field("tags", "STRING", "REPEATED")],
+        )
+        source._get_table = MagicMock(return_value=table)
+        source._sql_client = MagicMock()
+        source._sql_client.query.return_value = types.SimpleNamespace(schema=[_field("day", "DATE")])
+        return source
+
+    def test_table_object_supplies_token_rows_and_types(self, source, fake_bigquery_module):
+        adapter = BigQueryStatsAdapter(source)
+        assert adapter.modified("events") == "2026-10-01 12:00:00"
+        assert adapter.row_estimate("events") == 2_000_000
+        columns = adapter.columns("events", adapter.relation("events"), 5)
+        assert columns == [("day", "DATE"), ("amount", "NUMERIC"), ("tags", "ARRAY<STRING>")]
+        assert [column_kind(t) for _, t in columns] == ["temporal", "numeric", "other"]
+        source._get_table.assert_called_with("my-proj.ds.events")
+
+    def test_expression_types_come_from_a_dry_run(self, source, fake_bigquery_module):
+        adapter = BigQueryStatsAdapter(source)
+        assert adapter.columns("recent", adapter.relation("recent"), 5) == [("day", "DATE")]
+        config = source._sql_client.query.call_args.kwargs["job_config"]
+        assert config.dry_run and not source.calls
+        assert adapter.modified("recent") is None
+
+
+def test_untyped_dates_and_decimals_keep_their_ranges():
+    import datetime as dt
+    import decimal
+
+    from lumen.ai.table_stats import _Budget
+
+    class Untyped(StatsAdapter):
+        def sample_sql(self, relation, rows, total, seed):
+            return "sample", True
+
+        def execute(self, sql, params=None, timeout=None):
+            # Object dtype, as drivers return DATE and DECIMAL.
+            return pd.DataFrame({
+                "day": [dt.date(2024, 1, 1), dt.date(2024, 2, 1)],
+                "amount": [decimal.Decimal("1.5"), decimal.Decimal("9.25")],
+            })
+
+    stats = TableStats("t", columns=[ColumnStats("day"), ColumnStats("amount")])
+    profiler = TableProfiler()
+    sample = profiler._sample(Untyped(types.SimpleNamespace(dialect=None)), stats, "t", None, _Budget(None), 10_000_000)
+    profiler._from_sample(stats, sample)
+    day, amount = stats.column("day"), stats.column("amount")
+    assert (day.type, day.kind, day.min, day.max) == ("DATE", "temporal", "2024-01-01", "2024-02-01")
+    assert (amount.type, amount.kind, amount.min, amount.max) == ("DECIMAL", "numeric", 1.5, 9.25)
