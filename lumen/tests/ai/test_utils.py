@@ -112,8 +112,8 @@ def test_render_template_with_valid_template():
     now = dt.datetime.now()
     expected = (
         "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
-        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What topic of data?"
+        "What topic of data?\n\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
@@ -125,9 +125,9 @@ def test_render_template_with_override():
     now = dt.datetime.now()
     expected = (
         "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
-        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
         "What topic of data?\n"
-        "Its Lumen"
+        "Its Lumen\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen", "tools": ""}, current_datetime=now).strip()

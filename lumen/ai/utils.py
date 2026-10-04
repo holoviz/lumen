@@ -259,6 +259,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 

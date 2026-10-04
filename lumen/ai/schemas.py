@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -8,13 +9,40 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from .config import SOURCE_TABLE_SEPARATOR
+from .table_stats import (
+    ESTIMATED, SAMPLED, TYPES_ONLY, ColumnStats, TableStats, get_stats_store,
+    render_column, render_stats_header,
+)
 from .utils import (
-    collapse_indexed_columns, get_schema, log_debug, slug_to_table_name,
-    truncate_string,
+    INDEXED_COLUMN_RE, collapse_indexed_columns, count_tokens, get_schema,
+    log_debug, slug_to_table_name, truncate_string,
 )
 
 if TYPE_CHECKING:
     from ..sources import Source
+
+# Pandas dtype names some sources report as column types; they say less than
+# the statistics next to them, so they are not rendered as SQL types.
+_PANDAS_DTYPES = {"object", "string", "str", "category"}
+
+SAMPLED_NOTE = (
+    "Stats from a sample or engine estimates can miss rare values; confirm "
+    "literal values with run_exploration_sql before filtering on them."
+)
+# Catalog metadata keys that duplicate what the table rendering already shows.
+_METADATA_EXCLUDE = frozenset({'columns', 'data_type', 'source_name', 'rows', 'description'})
+
+
+def _extra_metadata(entry: TableCatalogEntry) -> dict[str, Any]:
+    return {
+        k: v for k, v in (entry.metadata or {}).items()
+        if k not in _METADATA_EXCLUDE and v is not None and v != ''
+    }
+
+
+DEGRADED_NOTE = (
+    "Some tables list names and types only; call load_table_schemas for their statistics."
+)
 
 
 @dataclass
@@ -66,10 +94,81 @@ class Metaset:
     schemas: dict[str, dict[str, Any]] | None = None
     docs: list[DocumentChunk] | None = None
     schema_tables: list[str] | None = None
+    stats: dict[str, TableStats] = field(default_factory=dict)
 
     @property
     def has_schemas(self) -> bool:
         return self.schemas is not None and len(self.schemas) > 0
+
+    async def ensure_stats(
+        self, table_slugs: list[str] | None = None, timeout: float | None = None
+    ) -> dict[str, TableStats]:
+        """
+        Load column statistics for `table_slugs` (default: every catalog table),
+        waiting at most `timeout` seconds; tables still being profiled render
+        names and types until a later call finds them ready.
+        """
+        slugs = [s for s in (table_slugs or list(self.catalog)) if s not in self.stats]
+        by_source: dict[int, tuple[Source, dict[str, str]]] = {}
+        for slug in slugs:
+            entry = self.catalog.get(slug)
+            if entry is None or entry.source is None:
+                continue
+            _, by_table = by_source.setdefault(id(entry.source), (entry.source, {}))
+            by_table[slug_to_table_name(slug)] = slug
+        store = get_stats_store()
+        results = await asyncio.gather(*(
+            store.ensure(source, list(by_table), timeout=timeout)
+            for source, by_table in by_source.values()
+        ))
+        for (_, by_table), found in zip(by_source.values(), results, strict=False):
+            for table, stats in found.items():
+                self.stats[by_table[table]] = stats
+        return self.stats
+
+    async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
+        """Deprecated: the legacy schema dict for one table; use `get_stats`."""
+        warnings.warn(
+            "Metaset.get_schema is deprecated, use Metaset.ensure_stats and "
+            "Metaset.get_stats instead.", DeprecationWarning, stacklevel=2,
+        )
+        if self.schemas is None:
+            self.schemas = {}
+        if table_slug in self.schemas:
+            return self.schemas[table_slug]
+        entry = self.catalog.get(table_slug)
+        if not entry or not entry.source:
+            return None
+        schema = await get_schema(entry.source, slug_to_table_name(table_slug), include_count=True)
+        self.schemas[table_slug] = schema
+        return schema
+
+    async def ensure_schemas(self, table_slugs: list[str] | None = None) -> None:
+        """Deprecated: use `ensure_stats`."""
+        warnings.warn(
+            "Metaset.ensure_schemas is deprecated, use Metaset.ensure_stats instead.",
+            DeprecationWarning, stacklevel=2,
+        )
+        await self.ensure_stats(table_slugs)
+
+    def get_stats(self, table_slug: str) -> TableStats | None:
+        """Statistics for a table, adapting a legacy schema dict if that is all there is."""
+        if table_slug in self.stats:
+            return self.stats[table_slug]
+        schema = (self.schemas or {}).get(table_slug)
+        if isinstance(schema, dict) and schema:
+            return TableStats.from_json_schema(slug_to_table_name(table_slug), schema)
+        entry = self.catalog.get(table_slug)
+        if entry is not None and entry.source is not None:
+            # Profiled in the background since this metaset was built.
+            try:
+                stats = get_stats_store().get(entry.source, slug_to_table_name(table_slug))
+            except Exception:
+                stats = None
+            if stats is not None:
+                self.stats[table_slug] = stats
+                return stats
+        return None
 
     @property
     def has_docs(self) -> bool:
@@ -89,65 +188,17 @@ class Metaset:
         sims = [float(c.similarity) for c in docs]
         return (len(docs), min(sims), max(sims))
 
-    async def get_schema(self, table_slug: str) -> dict[str, Any] | None:
-        """
-        Lazily fetch and cache schema for a specific table.
-
-        Parameters
-        ----------
-        table_slug : str
-            The table slug to fetch schema for.
-
-        Returns
-        -------
-        dict[str, Any] | None
-            The schema for the table, or None if not found.
-        """
-        if self.schemas is None:
-            self.schemas = {}
-
-        if table_slug in self.schemas:
-            return self.schemas[table_slug]
-
-        entry = self.catalog.get(table_slug)
-        if not entry or not entry.source:
-            return None
-
-        # Parse table name from slug
-        if SOURCE_TABLE_SEPARATOR in table_slug:
-            _, table_name = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)
-        else:
-            table_name = table_slug
-
-        # Fetch and cache
-        schema = await get_schema(entry.source, table_name, include_count=True)
-        self.schemas[table_slug] = schema
-        return schema
-
-    async def ensure_schemas(self, table_slugs: list[str] | None = None) -> None:
-        """
-        Ensure schemas are populated for given tables (or all tables in catalog).
-
-        Parameters
-        ----------
-        table_slugs : list[str] | None
-            The table slugs to ensure schemas for. If None, all tables in catalog.
-        """
-        slugs = table_slugs or list(self.catalog.keys())
-        await asyncio.gather(*[self.get_schema(slug) for slug in slugs])
-
     def _build_table_data(
         self,
-        table_slug: str,
         catalog_entry: TableCatalogEntry,
         include_columns: bool,
-        include_schema: bool,
         truncate: bool,
         include_sql: bool = True,
         include_metadata: bool = True,
         include_lineage: bool = False,
         max_order: int = 0,
     ) -> dict:
+        """YAML-ready summary of a table without column statistics."""
         data = {}
 
         if include_sql:
@@ -162,20 +213,8 @@ class Metaset:
                 desc = truncate_string(desc, max_length=100)
             data['info'] = desc
 
-        if include_metadata and catalog_entry.metadata:
-            clean_metadata = {}
-            exclude_keys = {'columns', 'data_type', 'source_name', 'rows', 'description'}
-            for key, value in catalog_entry.metadata.items():
-                if key in exclude_keys or value is None or value == '':
-                    continue
-                clean_metadata[key] = value
-            if clean_metadata:
-                data['metadata'] = clean_metadata
-
-        if include_schema and self.has_schemas:
-            schema = self.schemas.get(table_slug)
-            if schema and schema.get("__len__"):
-                data['n_rows'] = schema["__len__"]
+        if include_metadata and (clean_metadata := _extra_metadata(catalog_entry)):
+            data['metadata'] = clean_metadata
 
         if include_lineage and catalog_entry.derived_from:
             data['derived_from'] = [
@@ -185,71 +224,191 @@ class Metaset:
             if catalog_entry.created_order == max_order:
                 data['latest'] = True
 
-        if not (catalog_entry.columns and (include_columns or include_schema)):
-            return data
-
-        data['columns'] = cols = self._build_columns_data(
-            table_slug, catalog_entry.columns, include_schema, truncate
-        )
-        # Collapse large numbered column series (e.g. embedding/PCA matrices)
-        # wherever columns render as a bare name list: either schema was
-        # excluded (list), or no per-column schema was available and the dict
-        # degenerates to names. A dict with real per-column info stays a mapping.
-        if isinstance(cols, list):
-            data['columns'] = collapse_indexed_columns(cols)
-        elif not any(info for info in cols.values()):
-            data['columns'] = collapse_indexed_columns(list(cols))
+        if catalog_entry.columns and include_columns:
+            # Collapse large numbered column series (e.g. embedding/PCA matrices).
+            data['columns'] = collapse_indexed_columns([col.name for col in catalog_entry.columns])
         return data
 
-    def _build_columns_data(
+    @property
+    def single_source(self) -> bool:
+        sources = {slug.split(SOURCE_TABLE_SEPARATOR, 1)[0] for slug in self.catalog if SOURCE_TABLE_SEPARATOR in slug}
+        return len(sources) == 1
+
+    def display_name(self, table_slug: str) -> str:
+        """The identifier prompts, tools and errors use: the bare table name when there is one source."""
+        if self.single_source and SOURCE_TABLE_SEPARATOR in table_slug:
+            return table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
+        return table_slug
+
+    def table_detail(self, table_slug: str, include_lineage: bool = True) -> str:
+        """Every statistic available for one table, untruncated."""
+        entry = self.catalog[table_slug]
+        max_order = max((e.created_order for e in self.catalog.values()), default=0)
+        return self._render_table(
+            table_slug, self.display_name(table_slug), entry, "full", truncate=False,
+            include_sql=False, include_metadata=True, include_lineage=include_lineage,
+            max_order=max_order,
+        )
+
+    def _render_table(
         self,
         table_slug: str,
-        columns: list[Column],
-        include_schema: bool,
-        truncate: bool
-    ) -> dict | list:
-        # If include_schema is False, just return column names as a list.
-        # (Numbered-series collapsing happens in the caller, which also handles
-        # the case where a schema dict degenerates to a bare name list.)
-        if not include_schema:
-            return [col.name for col in columns]
+        display_slug: str,
+        entry: TableCatalogEntry,
+        detail: str,
+        truncate: bool,
+        include_sql: bool,
+        include_metadata: bool,
+        include_lineage: bool,
+        max_order: int,
+    ) -> str:
+        """
+        Render one table as a header line followed by one line per column.
 
-        # Otherwise, build full column data with schema info
-        columns_data = {}
-        schema = self.schemas.get(table_slug) if self.has_schemas else None
+        `detail` is ``"full"``, ``"types"`` (names, types and keys) or
+        ``"names"`` (a single line listing the columns).
+        """
+        stats = self.get_stats(table_slug)
+        header = display_slug
+        if note := render_stats_header(stats):
+            header += f" ({note})"
+        lines = [header]
+        if entry.description:
+            desc = " ".join(entry.description.split())
+            lines.append(f"  info: {truncate_string(desc, max_length=100) if truncate else desc}")
+        if include_lineage and entry.derived_from:
+            parents = ", ".join(slug_to_table_name(p) for p in entry.derived_from)
+            step = f"step {entry.created_order}" + (", latest" if entry.created_order == max_order else "")
+            lines.append(f"  derived_from: {parents} ({step})")
+        if include_metadata and (extra := _extra_metadata(entry)):
+            lines.append("  metadata: " + ", ".join(f"{k}={v}" for k, v in extra.items()))
+        if include_sql and entry.sql_expr:
+            sql = " ".join(entry.sql_expr.split())
+            lines.append(f"  read_with: {truncate_string(sql, max_length=200) if truncate else sql}")
 
-        for col in columns:
-            col_info = {}
+        catalog_cols = {col.name: col for col in entry.columns}
+        if stats is not None and stats.columns:
+            columns = list(stats.columns)
+            # Catalog columns the engine did not report, e.g. xarray coordinates.
+            known = {c.name for c in columns}
+            columns += [self._column_from_catalog(c) for c in entry.columns if c.name not in known]
+        else:
+            columns = [self._column_from_catalog(c) for c in entry.columns]
+        if not columns:
+            return "\n".join(lines)
 
-            if col.description:
-                desc = col.description
-                if truncate:
-                    desc = truncate_string(desc, max_length=100)
-                col_info['description'] = desc
+        if detail == "names":
+            names = collapse_indexed_columns([c.name for c in columns])
+            lines.append("  columns: " + ", ".join(names))
+            return "\n".join(lines)
 
-            if schema and col.name in schema:
-                schema_data = schema[col.name]
+        for label, members in self._column_groups(columns):
+            col = members[0]
+            description = None
+            if len(members) == 1 and (cat := catalog_cols.get(col.name)) and cat.description:
+                description = truncate_string(cat.description, max_length=100) if truncate else cat.description
+            if len(members) > 1:
+                col = self._merge_series(members)
+            lines.append("  " + render_column(col, stats, description, detail=detail, name=label))
+        return "\n".join(lines)
 
-                if truncate and schema_data == "<null>":
-                    continue
+    @staticmethod
+    def _column_from_catalog(column: Column) -> ColumnStats:
+        data_type = (column.metadata or {}).get("data_type")
+        if not data_type or str(data_type).lower() in _PANDAS_DTYPES:
+            data_type = None
+        return ColumnStats(name=column.name, type=str(data_type) if data_type else None)
 
-                if schema_data != "<null>":
-                    if isinstance(schema_data, dict):
-                        schema_copy = {
-                            k: v for k, v in schema_data.items()
-                            if not (k == 'type' and v == 'str')
-                        }
-                        if truncate and schema_copy.get('type') == 'enum':
-                            schema_str = str(schema_copy)
-                            if len(schema_str) > 50:
-                                schema_copy = truncate_string(schema_str, max_length=50)
-                        col_info.update(schema_copy)
-                    else:
-                        col_info['value'] = schema_data
+    @staticmethod
+    def _column_groups(columns: list[ColumnStats]) -> list[tuple[str | None, list[ColumnStats]]]:
+        """Group numbered column series (embeddings, one-hot expansions) onto one line."""
+        names = [c.name for c in columns]
+        collapsed = collapse_indexed_columns(names)
+        if len(collapsed) == len(names):
+            return [(None, [c]) for c in columns]
+        by_name = {c.name: c for c in columns}
+        groups = []
+        for label in collapsed:
+            if label in by_name:
+                groups.append((None, [by_name[label]]))
+                continue
+            stem = INDEXED_COLUMN_RE.match(label.split("..", 1)[0]).group("stem")
+            members = [
+                c for c in columns
+                if (m := INDEXED_COLUMN_RE.match(c.name)) and m.group("stem") == stem
+            ]
+            groups.append((label, members))
+        return groups
 
-            columns_data[col.name] = col_info if col_info else None
+    @staticmethod
+    def _merge_series(members: list[ColumnStats]) -> ColumnStats:
+        first = members[0]
+        merged = ColumnStats(name=first.name, type=first.type, kind=first.kind)
+        mins = [m.min for m in members if m.min is not None]
+        maxs = [m.max for m in members if m.max is not None]
+        try:
+            merged.min, merged.max = (min(mins), max(maxs)) if mins and maxs else (None, None)
+        except TypeError:
+            pass
+        nulls = [m.nulls for m in members if m.nulls is not None]
+        merged.nulls = max(nulls) if nulls else None
+        return merged
 
-        return columns_data
+    def _generate_schema_context(
+        self,
+        primary_slugs: list[str],
+        display: dict[str, str],
+        truncate: bool,
+        include_sql: bool,
+        include_metadata: bool,
+        include_lineage: bool,
+        max_order: int,
+        max_tokens: int | None,
+    ) -> tuple[str, list[str]]:
+        """
+        Render primary tables with full statistics until `max_tokens` is
+        reached, then with names and types, then as bare column lists.
+        Returns the text and the slugs that did not fit at all.
+        """
+        blocks, overflow, degraded, uncertain = [], [], False, False
+        used = 0
+        # Tables are in relevance order, so once one table had to drop
+        # detail no less relevant table gets more.
+        details = ("full", "types", "names")
+        for slug in primary_slugs:
+            entry = self.catalog[slug]
+            rendered = None
+            for i, detail in enumerate(details):
+                block = self._render_table(
+                    slug, display[slug], entry, detail, truncate, include_sql,
+                    include_metadata, include_lineage, max_order,
+                )
+                cost = count_tokens(block) if max_tokens is not None else 0
+                if max_tokens is None or used + cost <= max_tokens:
+                    rendered = block
+                    used += cost
+                    degraded |= detail != "full"
+                    details = details[i:]
+                    break
+            if rendered is None:
+                overflow.append(slug)
+                details = ()
+                continue
+            stats = self.get_stats(slug)
+            if stats is not None and stats.method in (SAMPLED, ESTIMATED) and detail == "full":
+                uncertain = True
+            if stats is None or stats.method == TYPES_ONLY:
+                degraded = degraded or bool(entry.columns or (stats and stats.columns))
+            blocks.append(rendered)
+        text = "\n\n".join(blocks)
+        notes = []
+        if uncertain:
+            notes.append(SAMPLED_NOTE)
+        if degraded or overflow:
+            notes.append(DEGRADED_NOTE)
+        if notes and text:
+            text += "\n\n" + "\n".join(notes)
+        return text, overflow
 
     def _deduplicated_slugs(self) -> list[str]:
         """
@@ -281,6 +440,7 @@ class Metaset:
         show_source: bool | None = None,
         n_others: int = 0,
         schema_tables: list[str] | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         # Deduplicate catalog slugs, keeping only the newest entry per
         # table name so stale materialization generations don't appear.
@@ -300,55 +460,52 @@ class Metaset:
             # Fall back to top n by similarity, filtered to active slugs
             primary_slugs = [s for s in self.get_top_tables(n, offset) if s in active_slugs]
 
-        # Check if all tables come from a single source
-        unique_sources = set()
-        for slug in self.catalog.keys():
-            if SOURCE_TABLE_SEPARATOR in slug:
-                unique_sources.add(slug.split(SOURCE_TABLE_SEPARATOR, 1)[0])
-        single_source = len(unique_sources) == 1
-
         # Auto-detect show_source: hide source prefix when there's only one source
         if show_source is None:
-            show_source = not single_source
+            show_source = not self.single_source
 
         # Precompute max created_order for "latest" annotation
         max_order = max((e.created_order for e in self.catalog.values()), default=0)
 
-        # Build tables data for primary tables
-        tables_data = {}
-        for table_slug in primary_slugs:
-            entry = self.catalog.get(table_slug)
-            if not entry:
-                continue
-            display_slug = table_slug
-            if single_source and not show_source and SOURCE_TABLE_SEPARATOR in table_slug:
-                display_slug = table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
-            tables_data[display_slug] = self._build_table_data(
-                table_slug, entry, include_columns, include_schema, truncate,
-                include_sql, include_metadata, include_lineage, max_order
-            )
+        def display_name(slug: str) -> str:
+            return slug if show_source else self.display_name(slug)
 
-        # Build result
         result = ""
-        if tables_data:
-            if not include_lineage and all(not data for data in tables_data.values()):
-                result = yaml.dump(list(tables_data.keys()), default_flow_style=False, allow_unicode=True)
-            else:
-                result = yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        overflow: list[str] = []
+        primary_slugs = [s for s in primary_slugs if s in self.catalog]
+        if include_schema:
+            result, overflow = self._generate_schema_context(
+                primary_slugs, {s: display_name(s) for s in primary_slugs}, truncate,
+                include_sql, include_metadata, include_lineage, max_order, max_tokens,
+            )
+            if overflow:
+                primary_slugs = [s for s in primary_slugs if s not in overflow]
+                n_others = max(n_others, len(overflow))
+        else:
+            tables_data = {
+                display_name(slug): self._build_table_data(
+                    self.catalog[slug], include_columns, truncate,
+                    include_sql, include_metadata, include_lineage, max_order
+                )
+                for slug in primary_slugs
+            }
+            if tables_data:
+                if not include_lineage and all(not data for data in tables_data.values()):
+                    result = yaml.dump(list(tables_data.keys()), default_flow_style=False, allow_unicode=True)
+                else:
+                    result = yaml.dump(tables_data, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
         # Add other tables section
         if n_others > 0:
             primary_set = set(primary_slugs)
-            other_slugs = [
+            other_slugs = list(dict.fromkeys(overflow + [
                 slug for slug in self.catalog.keys()
                 if slug not in primary_set and slug in active_slugs
-            ][:n_others]
+            ]))[:n_others]
             if other_slugs:
                 result += "\n\nOthers available:\n"
                 for slug in other_slugs:
-                    display_slug = slug
-                    if single_source and not show_source and SOURCE_TABLE_SEPARATOR in slug:
-                        display_slug = slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
+                    display_slug = display_name(slug)
                     # Add a short lineage hint for derived tables
                     entry = self.catalog.get(slug)
                     if include_lineage and entry and entry.derived_from:
@@ -467,7 +624,8 @@ class Metaset:
 async def get_metaset(
     sources: list[Source],
     tables: list[str],
-    prev: Metaset | None = None
+    prev: Metaset | None = None,
+    stats_timeout: float | None = 30,
 ) -> Metaset:
     """
     Get the metaset for the given sources and tables.
@@ -480,13 +638,17 @@ async def get_metaset(
         The tables to get the metaset for.
     prev: Metaset | None
         Previous metaset to reuse cached data from.
+    stats_timeout: float | None
+        Seconds to wait for column statistics; tables still being
+        profiled render names and types and keep profiling in the
+        background.
 
     Returns
     -------
     metaset: Metaset
         The metaset for the given sources and tables.
     """
-    schemas_data, catalog_data = {}, {}
+    catalog_data = {}
 
     for table_slug in tables:
         if SOURCE_TABLE_SEPARATOR in table_slug:
@@ -504,12 +666,6 @@ async def get_metaset(
             table_slug = f"{source_name}{SOURCE_TABLE_SEPARATOR}{table_name}"
 
         source = next((s for s in sources if s.name == source_name), None)
-
-        if prev and prev.schemas and table_slug in prev.schemas:
-            schema = prev.schemas[table_slug]
-        else:
-            schema = await get_schema(source, table_name, include_count=True)
-        schemas_data[table_slug] = schema
 
         if prev and table_slug in prev.catalog:
             catalog_entry = prev.catalog[table_slug]
@@ -542,12 +698,18 @@ async def get_metaset(
     # Preserve docs from previous metaset if available
     docs = prev.docs if prev else None
 
-    return Metaset(
+    metaset = Metaset(
         query=None,
         catalog=catalog_data,
-        schemas=schemas_data,
+        schemas={
+            slug: schema for slug, schema in (prev.schemas or {}).items() if slug in catalog_data
+        } if prev and prev.schemas else None,
         docs=docs,
     )
+    # Statistics are not carried over from `prev`: the store revalidates
+    # them, so a table replaced since then is profiled again.
+    await metaset.ensure_stats(list(catalog_data), timeout=stats_timeout)
+    return metaset
 
 
 @dataclass

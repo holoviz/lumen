@@ -1565,3 +1565,39 @@ async def test_stream_sets_resolved_model(monkeypatch):
     chunks = [c async for c in llm.stream([{"role": "user", "content": "hi"}])]
     assert chunks[-1] == "ok"
     assert llm._resolved_model == "gpt-stream"
+
+
+@pytest.mark.parametrize("cache, cached", [("5m", True), (None, False)])
+async def test_anthropic_system_prompt_sets_cache_control(monkeypatch, cache, cached):
+    llm = Anthropic(model_kwargs={"default": {"model": "m"}}, cache=cache)
+    captured = {}
+
+    async def client(messages, **kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    async def get_client(model_spec, **kwargs):
+        return client
+
+    monkeypatch.setattr(llm, "get_client", get_client)
+    await llm.run_client("default", [{"role": "system", "content": "Static"}, {"role": "user", "content": "hi"}])
+
+    if cached:
+        assert captured["system"] == [{"type": "text", "text": "Static", "cache_control": {"type": "ephemeral"}}]
+    else:
+        assert captured["system"] == "Static"
+
+
+async def test_invoke_keeps_single_blank_lines_in_system(monkeypatch):
+    llm = Llm(model_kwargs={"default": {"model": "m"}})
+    captured = {}
+
+    async def run_tool_loop(messages, *args, **kwargs):
+        captured["messages"] = messages
+        return "ok"
+
+    monkeypatch.setattr(llm, "_run_tool_loop", run_tool_loop)
+    monkeypatch.setattr(llm, "_create_base_client", lambda **kwargs: None, raising=False)
+    await llm.invoke([{"role": "user", "content": "hi"}], system="## A\n\nText\n\n\n\n## B")
+    system = next(m["content"] for m in captured["messages"] if m["role"] == "system")
+    assert system == "## A\n\nText\n\n## B"

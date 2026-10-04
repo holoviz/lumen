@@ -39,6 +39,9 @@ from .base import Coordinator, Plan
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
 
+_URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+
 
 def plan_retry_feedback(error: BaseException) -> str | None:
     """
@@ -270,6 +273,28 @@ class Planner(Coordinator):
                 await tool.sync(context)
                 synced_tools.add(id(tool))
 
+    @staticmethod
+    def _excluded_actors(messages: list[Message], context: TContext) -> set[str]:
+        """
+        Actors to leave out of the planner prompt and the plan's actor enum.
+
+        ValidationAgent is appended by the planner itself. SourceAgent is only
+        offered when SourceLookup found an action for this query, and a
+        URL-only action needs a URL in the query.
+        """
+        excluded = {"ValidationAgent"}
+        actions = context.get("source_actions")
+        if actions is not None:
+            query = content_to_text(next(
+                (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+            ))
+            # An action taking nothing but a URL has nothing to fetch unless
+            # the user supplied one.
+            url_only = all(set(info.get("parameters") or {}) == {"url"} for info in actions.values())
+            if not actions or (url_only and not _URL_RE.search(query)):
+                excluded.add("SourceAgent")
+        return excluded
+
     async def _check_follow_up_question(self, messages: list[Message], context: TContext) -> str:
         """
         Classify the user's query as a follow-up type.
@@ -416,7 +441,12 @@ class Planner(Coordinator):
         # e.g. DbtslAgent is unsatisfiable if DbtslLookup was used in planning
         # but did not provide dbtsl_metaset
         # also filter out agents where excluded keys exist in context
-        agents = [agent for agent in agents if len(set(agent.input_schema.__required_keys__) - all_provides) == 0 and type(agent).__name__ != "ValidationAgent"]
+        excluded = self._excluded_actors(messages, context)
+        agents = [
+            agent for agent in agents
+            if len(set(agent.input_schema.__required_keys__) - all_provides) == 0
+            and type(agent).__name__ not in excluded
+        ]
         tools = [tool for tool in tools if len(set(tool.input_schema.__required_keys__) - all_provides) == 0]
         llm_tools = list(_merge_prompt_tools(self.llm_tools, None, context) or [])
         if self._clarification_enabled:
@@ -435,6 +465,7 @@ class Planner(Coordinator):
             response_model=plan_model,
             agents=agents,
             tools=tools,
+            llm_tools=llm_tools,
             unmet_dependencies=unmet_dependencies,
             candidates=agent_candidates + tool_candidates,
             previous_actors=previous_actors,
@@ -595,7 +626,9 @@ class Planner(Coordinator):
             self.validation_enabled and
             "ValidationAgent" not in actors_in_graph
         ):
-            validation_step = type(step)(
+            # Not validated: ValidationAgent is kept out of the actor enum so
+            # the model cannot plan it, but the planner still appends it.
+            validation_step = type(step).model_construct(
                 actor="ValidationAgent",
                 instruction="Validate whether the executed plan fully answered the user's original query.",
                 title="Validating results",
@@ -627,7 +660,8 @@ class Planner(Coordinator):
         self, messages: list[Message], context: TContext, agents: dict[str, Agent], tools: dict[str, Tool], pre_plan_output: dict[str, Any]
     ) -> Plan:
         tool_names = list(tools)
-        agent_names = list(agents)
+        excluded = self._excluded_actors(messages, context)
+        agent_names = [name for name, agent in agents.items() if type(agent).__name__ not in excluded]
         plan_model = self._get_model("main", agents=agent_names, tools=tool_names)
         follow_up_type = pre_plan_output.get("follow_up_type", "new")
         is_followup = follow_up_type in ("direct", "derived")

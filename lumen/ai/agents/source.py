@@ -363,6 +363,14 @@ class SourceAgent(Agent):
                     success_title=f"Loaded {len(df):,} rows into '{table_name}'",
                 )
 
+        if tool_results:
+            # Lets the follow-up classifier tell fetched tables, whose rows are
+            # limited to the parameters used, from tables it can re-query.
+            source.metadata = dict(source.metadata or {})
+            entry = dict(source.metadata.get(table_name) or {})
+            entry["source_action"] = tool_results[0]["action"]
+            source.metadata[table_name] = entry
+
         out_context: SourceOutputs = {
             "source": source,
             "data": summary,
