@@ -9,7 +9,8 @@ import pytest
 try:
     from lumen.ai.config import MissingContextError
     from lumen.ai.llm import (
-        DUPLICATE_TOOL_CALL_NOTE, OpenAI, SubmitTool, inline_schema_refs,
+        DEFAULT_MAX_TOOL_ROUNDS, DUPLICATE_TOOL_CALL_NOTE, OpenAI, SubmitTool,
+        inline_schema_refs,
     )
     from lumen.ai.tools import FunctionTool
 except ModuleNotFoundError:
@@ -78,7 +79,7 @@ def lookup(calls):
         """Look up a key."""
         calls.append((key, limit))
         return f"value of {key}"
-    return FunctionTool(lookup)
+    return FunctionTool(lookup, read_only=True)
 
 
 def _final(messages, kwargs):
@@ -142,6 +143,22 @@ async def test_tool_exception_is_returned_to_the_model(llm, monkeypatch):
     assert message["content"].startswith("Tool 'boom' failed: RuntimeError: nope")
 
 
+async def test_tool_error_is_truncated_and_redacted(llm, monkeypatch):
+    def fetch(x: int) -> str:
+        """Always fails."""
+        raise RuntimeError(f"403 for https://user:pw@api.example.com/v1?key=SECRET&q=1 {'x' * 5000}")
+
+    script = Script(_response(("fetch", {"x": 1})), _response(), _final)
+    monkeypatch.setattr(llm, "run_client", script)
+
+    await llm.invoke([{"role": "user", "content": "hi"}], response_model=Answer, tools=[FunctionTool(fetch)])
+
+    (message,) = script.tool_messages(1)
+    assert "SECRET" not in message["content"] and "pw@" not in message["content"]
+    assert "https://<redacted>@api.example.com/v1?<redacted>" in message["content"]
+    assert len(message["content"]) < 1200
+
+
 async def test_unrecoverable_tool_error_propagates(llm, monkeypatch):
     def needs_context(x: int) -> str:
         """Requires context."""
@@ -172,8 +189,51 @@ async def test_identical_calls_are_executed_once(llm, lookup, calls, monkeypatch
     assert later["content"].startswith(DUPLICATE_TOOL_CALL_NOTE)
 
 
+async def test_failed_calls_are_not_cached(llm, monkeypatch):
+    attempts = []
+
+    def flaky(key: str) -> str:
+        """Fails the first time."""
+        attempts.append(key)
+        if len(attempts) == 1:
+            raise ConnectionError("timeout")
+        return "ok"
+
+    script = Script(_response(("flaky", {"key": "a"})), _response(("flaky", {"key": "a"})), _response(), _final)
+    monkeypatch.setattr(llm, "run_client", script)
+
+    await llm.invoke(
+        [{"role": "user", "content": "hi"}], response_model=Answer, tools=[FunctionTool(flaky, read_only=True)],
+    )
+
+    assert attempts == ["a", "a"]
+    assert script.tool_messages(2)[-1]["content"].startswith("ok")
+
+
+async def test_identical_calls_to_tools_with_side_effects_run_again(llm, monkeypatch):
+    applied = []
+
+    def apply_filter(year: int) -> str:
+        """Filter the data."""
+        applied.append(year)
+        return f"filtered to {year}"
+
+    script = Script(
+        *(_response(("apply_filter", {"year": year})) for year in (2020, 2021, 2020)), _response(), _final,
+    )
+    monkeypatch.setattr(llm, "run_client", script)
+
+    await llm.invoke([{"role": "user", "content": "hi"}], response_model=Answer, tools=[FunctionTool(apply_filter)])
+
+    assert applied == [2020, 2021, 2020]
+
+
+def test_default_tool_budget_is_not_the_sql_budget():
+    assert DEFAULT_MAX_TOOL_ROUNDS == 16
+
+
 async def test_tool_rounds_are_capped_and_the_budget_is_stated(llm, lookup, calls, monkeypatch):
-    script = Script(*(_response(("lookup", {"key": str(i)})) for i in range(3)), _final)
+    script = Script(*(_response(("lookup", {"key": str(i)})) for i in range(4)), _final)
     monkeypatch.setattr(llm, "run_client", script)
 
     result = await llm.invoke(
@@ -182,10 +242,14 @@ async def test_tool_rounds_are_capped_and_the_budget_is_stated(llm, lookup, call
 
     assert result == Answer(value=1)
     assert [key for key, _ in calls] == ["0", "1"]
-    # First call, two tool rounds, the unanswered third request, then the structured call.
-    assert len(script.requests) == 4
+    # First call, two tool rounds, one turn answered as not run, then the structured call.
+    assert len(script.requests) == 5
     assert "[Tool round 1 of 2; 1 remaining.]" in script.tool_messages(1)[-1]["content"]
     assert "Tool budget exhausted after 2 rounds" in script.tool_messages(2)[-1]["content"]
+    assert script.tool_messages(3)[-1]["content"].startswith("Not run")
+    # The structured call answers every call id, including the last unexecuted one.
+    final_messages = script.requests[-1][0]
+    assert final_messages[-1]["role"] == "tool" and final_messages[-1]["content"].startswith("Not run")
     assert "response_model" in script.requests[-1][1]
 
 
@@ -243,6 +307,41 @@ async def test_submission_is_accepted_after_the_budget_is_spent(llm, lookup, mon
     assert "call `submit_answer`" in script.tool_messages(1)[-1]["content"]
 
 
+async def test_accepted_submission_still_runs_the_other_calls(llm, monkeypatch):
+    applied = []
+
+    def apply_filter(year: int) -> str:
+        """Filter the data."""
+        applied.append(year)
+        return "filtered"
+
+    script = Script(_response(("apply_filter", {"year": 2020}), ("submit_answer", {"value": 2})))
+    monkeypatch.setattr(llm, "run_client", script)
+
+    result = await llm.invoke(
+        [{"role": "user", "content": "hi"}], response_model=Answer, tools=[FunctionTool(apply_filter)],
+        submit_tool=SubmitTool("submit_answer", "Submit."),
+    )
+
+    assert result == Answer(value=2)
+    assert applied == [2020]
+
+
+async def test_structured_fallback_answer_is_validated(llm, monkeypatch):
+    def validate(answer):
+        if answer.value == 42:
+            raise ValueError("hardcoded answer")
+
+    script = Script(_response(content="Done."), lambda messages, kwargs: Answer(value=42))
+    monkeypatch.setattr(llm, "run_client", script)
+
+    with pytest.raises(ValueError, match="submit_answer rejected: ValueError: hardcoded answer"):
+        await llm.invoke(
+            [{"role": "user", "content": "hi"}], response_model=Answer,
+            submit_tool=SubmitTool("submit_answer", "Submit.", validate),
+        )
+
+
 async def test_text_reply_with_submit_tool_keeps_the_text_for_the_structured_call(llm, monkeypatch):
     script = Script(_response(content="The answer is 4."), _final)
     monkeypatch.setattr(llm, "run_client", script)
@@ -293,6 +392,29 @@ async def test_responses_api_accepts_submission(monkeypatch):
     assert len(script.requests) == 1
 
 
+async def test_responses_api_answers_pending_calls_before_the_structured_call(lookup, monkeypatch):
+    llm = OpenAI(api="responses", model_kwargs={"default": {"model": "gpt-test"}})
+
+    def call(i):
+        return SimpleNamespace(
+            id=f"resp_{i}",
+            output=[SimpleNamespace(type="function_call", call_id=f"call_{i}", name="lookup", arguments=f'{{"key": "{i}"}}')],
+        )
+
+    script = Script(call(0), call(1), call(2), _final)
+    monkeypatch.setattr(llm, "run_client", script)
+
+    result = await llm.invoke(
+        [{"role": "user", "content": "hi"}], response_model=Answer, tools=[lookup], max_tool_rounds=1,
+    )
+
+    assert result == Answer(value=1)
+    final_inputs, final_kwargs = script.requests[-1]
+    assert final_kwargs["previous_response_id"] == "resp_2"
+    outputs = [item for item in final_inputs if item.get("type") == "function_call_output"]
+    assert [item["call_id"] for item in outputs] == ["call_2"]
+
+
 def _stream_chunks(tool_call=None, text=""):
     async def gen():
         if tool_call:
@@ -319,5 +441,6 @@ async def test_stream_tool_recursion_is_capped(llm, lookup, calls, monkeypatch):
         pass
 
     assert [key for key, _ in calls] == ["1", "2"]
-    assert len(requests) == 3
-    assert "Tool budget exhausted" in requests[-1][-1]["content"]
+    assert len(requests) == 4
+    assert "Tool budget exhausted" in requests[2][-1]["content"]
+    assert requests[3][-1]["content"].startswith("Not run")

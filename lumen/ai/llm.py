@@ -43,8 +43,8 @@ from .usage import (
     UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
 )
 from .utils import (
-    format_exception, format_msg_content, format_unknown_name, log_debug,
-    truncate_string,
+    format_exception, format_msg_content, format_tool_error,
+    format_unknown_name, log_debug, truncate_string,
 )
 
 if TYPE_CHECKING:
@@ -65,10 +65,8 @@ class ImageResponse(BaseModel):
     output: str
 
 
-# Accuracy falls as exploration grows (74% with 1-2 tool calls, 37% with 11+
-# on BIRD), so a small budget that the model is told about beats a large one
-# it is not.
-DEFAULT_MAX_TOOL_ROUNDS = 6
+# Agents that benefit from a tighter budget, like SQLAgent, pass their own.
+DEFAULT_MAX_TOOL_ROUNDS = 16
 
 DUPLICATE_TOOL_CALL_NOTE = (
     "[Identical call already made in this request; returning the earlier result. "
@@ -105,19 +103,29 @@ class ToolLoopState:
     rounds: int = 0
     results: dict[str, str] = field(default_factory=dict)
     answer: BaseModel | None = None
+    # Set once a round past the budget has been answered; the next one stops the loop.
+    closed: bool = False
 
     @property
     def exhausted(self) -> bool:
         return self.rounds >= self.max_rounds
 
+    def _final_instruction(self) -> str:
+        return f"call `{self.submit.name}`" if self.submit else "give your final answer"
+
     def budget_note(self) -> str:
         remaining = self.max_rounds - self.rounds
         if remaining > 0:
             return f"\n\n[Tool round {self.rounds} of {self.max_rounds}; {remaining} remaining.]"
-        final = f"call `{self.submit.name}`" if self.submit else "give your final answer"
         return (
             f"\n\n[Tool budget exhausted after {self.max_rounds} rounds; further tool "
-            f"calls will not run. Now {final}.]"
+            f"calls will not run. Now {self._final_instruction()}.]"
+        )
+
+    def not_run_note(self) -> str:
+        return (
+            f"Not run: the tool budget of {self.max_rounds} rounds is exhausted. "
+            f"Now {self._final_instruction()}."
         )
 
 
@@ -761,7 +769,7 @@ class Llm(param.Parameterized):
             When ``response_model`` is also given, the client runs tool calls in a loop
             until none are requested, then requests the structured response (tools may be unused).
             Tool errors, unknown tools and invalid arguments are returned to the model as
-            tool results; ``max_tool_rounds`` (default 6) caps the rounds.
+            tool results; ``max_tool_rounds`` (default 16) caps the rounds.
         submit_tool: SubmitTool | None
             Offer ``response_model`` as a tool so the model can answer inside the tool
             loop. Requires ``response_model``.
@@ -876,14 +884,14 @@ class Llm(param.Parameterized):
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_messages = await self._run_tool_round(
+            tool_messages, stop = await self._run_tool_round(
                 tool_instances, tool_calls, tool_contexts, messages_curr, state
             )
             if state.answer is not None:
                 return state.answer
-            if not tool_messages:
-                break
             messages_curr = messages_curr + [self._tool_calls_message(tool_calls)] + tool_messages
+            if stop:
+                break
             output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
@@ -893,7 +901,21 @@ class Llm(param.Parameterized):
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
             output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._check_fallback_answer(state, output)
         return output
+
+    async def _check_fallback_answer(self, state: ToolLoopState, output: Any) -> Any:
+        """
+        Hold an answer from the structured fallback call to the submit tool's checks.
+
+        Without this, an answer the submit tool would reject, or one the model
+        never got to correct after the budget ran out, is returned as if accepted.
+        """
+        if state.submit is None or not isinstance(output, state.submit.model):
+            return output
+        if (rejection := await self._accept_submission(state, output)) is not None:
+            raise ValueError(rejection)
+        return state.answer
 
     def _submit_nudge(self, output: Any, submit: SubmitTool) -> list[Message]:
         """
@@ -935,29 +957,29 @@ class Llm(param.Parameterized):
         tool_contexts: dict[str, Any],
         messages: list[Message],
         state: ToolLoopState,
-    ) -> list[Message]:
+    ) -> tuple[list[Message], bool]:
         """
-        Answer one round of tool calls, or return [] when the loop must stop.
+        Answer one round of tool calls and report whether the loop must stop.
 
-        A submission is still accepted after the budget is spent, since
-        accepting it costs nothing and is what the budget note asks for.
+        Every call id is answered even when the loop stops, since the provider
+        rejects a follow-up request that leaves a call pending. Past the budget,
+        calls other than a submission are answered as not run and the model
+        gets one more turn; the round after that stops the loop.
         """
-        if state.exhausted:
-            if state.submit is None:
-                return []
-            tool_calls = [call for call in tool_calls if self._parse_tool_call(call)[0] == state.submit.name]
-            if not tool_calls:
-                return []
+        exhausted = state.exhausted
         tool_messages = await self._run_tool_calls(
             tool_instances, tool_calls, tool_contexts, messages, state=state
         )
-        if state.answer is not None or state.exhausted or not tool_messages:
-            return []
+        if state.answer is not None or not tool_messages:
+            return tool_messages, True
+        if exhausted:
+            stop, state.closed = state.closed, True
+            return tool_messages, stop
         state.rounds += 1
         last = dict(tool_messages[-1])
         last["content"] = f"{last.get('content', '')}{state.budget_note()}"
         tool_messages[-1] = last  # type: ignore[assignment]
-        return tool_messages
+        return tool_messages, False
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
@@ -1232,12 +1254,15 @@ class Llm(param.Parameterized):
 
     async def _check_submission(self, state: ToolLoopState, arguments: dict[str, Any]) -> str | None:
         """Accept a submission into ``state.answer`` or return why it was rejected."""
-        submit = state.submit
-        name = submit.name
+        name = state.submit.name
         try:
-            answer = submit.model.model_validate(arguments)
+            answer = state.submit.model.model_validate(arguments)
         except ValidationError as e:
             return f"Invalid {name} arguments: {format_validation_error(e)}. Fix them and call {name} again."
+        return await self._accept_submission(state, answer)
+
+    async def _accept_submission(self, state: ToolLoopState, answer: BaseModel) -> str | None:
+        submit = state.submit
         if submit.validate is not None:
             try:
                 result = submit.validate(answer)
@@ -1246,7 +1271,8 @@ class Llm(param.Parameterized):
             except UNRECOVERABLE_ERRORS:
                 raise
             except Exception as e:
-                return f"{name} rejected: {type(e).__name__}: {e}\nFix the problem and call {name} again."
+                name = submit.name
+                return f"{name} rejected: {format_tool_error(e)}\nFix the problem and call {name} again."
         state.answer = answer
         return None
 
@@ -1275,38 +1301,37 @@ class Llm(param.Parameterized):
         Unanswered call ids make most providers reject the next request, and a
         raised exception throws away the whole attempt, so malformed calls,
         unknown tools, invalid arguments and tool exceptions all come back to
-        the model as tool results it can act on. Identical calls are answered
-        from ``state.results`` instead of being re-executed.
+        the model as tool results it can act on. Identical calls to read-only
+        tools are answered from ``state.results`` instead of being re-executed.
+
+        A submission is checked after the round's other calls have run, so
+        side effects the model requested alongside it are not dropped.
         """
         state = state if state is not None else ToolLoopState()
         parsed = [self._parse_tool_call_strict(call) for call in tool_calls]
+        exhausted = state.exhausted
 
         contents: list[str | None] = [None] * len(parsed)
+        submission: int | None = None
         if state.submit is not None:
-            submitted = False
-            for i, (name, arguments, _, error) in enumerate(parsed):
+            for i, (name, _, _, error) in enumerate(parsed):
                 if name != state.submit.name:
                     continue
                 if error:
                     contents[i] = f"{error} Fix the arguments and call {name} again."
-                elif submitted:
+                elif submission is not None:
                     contents[i] = "Only the first submission in a round is checked."
                 else:
-                    submitted = True
-                    rejection = await self._check_submission(state, arguments)
-                    if rejection is None:
-                        record_trace(self, ToolCall(name, dict(arguments), "accepted"))
-                        return []
-                    contents[i] = rejection
+                    submission = i
 
-        async def run(name: str, arguments: dict[str, Any], call_id: str | None) -> str:
+        async def run(name: str, arguments: dict[str, Any], call_id: str | None) -> tuple[str, bool]:
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
             for requirement in tool.requires:
                 if requirement not in arguments and requirement in context:
                     arguments[requirement] = context[requirement]
             if (invalid := self._validate_tool_arguments(tool, arguments)) is not None:
-                return invalid
+                return invalid, False
             args_repr = truncate_string(json.dumps(arguments, default=str, ensure_ascii=False), max_length=4000)
             log_debug(
                 f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
@@ -1322,20 +1347,21 @@ class Llm(param.Parameterized):
                     prefix="[LLM tools]",
                     show_sep="above",
                 )
-                return f"Tool {name!r} failed: {type(e).__name__}: {e}"
+                return f"Tool {name!r} failed: {format_tool_error(e)}", False
             log_debug(
                 f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
                 f"{truncate_string(formatted, max_length=16000)}",
                 prefix="[LLM tools]",
                 show_length=True,
             )
-            return formatted
+            return formatted, True
 
         valid_tools = [*tool_instances, *([state.submit.name] if state.submit else [])]
         keys: list[str | None] = [None] * len(parsed)
-        pending: dict[str, asyncio.Future] = {}
+        first: dict[str, int] = {}
+        pending: dict[int, asyncio.Future] = {}
         for i, (name, arguments, call_id, error) in enumerate(parsed):
-            if contents[i] is not None:
+            if contents[i] is not None or i == submission:
                 continue
             if not name:
                 contents[i] = f"Tool call is missing a tool name. Valid tools: {', '.join(sorted(valid_tools))}."
@@ -1343,31 +1369,39 @@ class Llm(param.Parameterized):
                 contents[i] = format_unknown_name("tool", name, valid_tools)
             elif error:
                 contents[i] = f"{error} Parameters: {self._describe_tool_parameters(tool_instances[name])}."
+            elif exhausted:
+                contents[i] = state.not_run_note()
             else:
-                key = json.dumps([name, arguments], sort_keys=True, default=str)
-                keys[i] = key
-                if key not in state.results and key not in pending:
-                    pending[key] = asyncio.ensure_future(run(name, dict(arguments), call_id))
+                # A repeated call to a tool with side effects must run again,
+                # e.g. re-applying a filter another call has since replaced.
+                if getattr(tool_instances[name], "read_only", False):
+                    key = json.dumps([name, arguments], sort_keys=True, default=str)
+                    keys[i] = key
+                    if key in state.results or key in first:
+                        continue
+                    first[key] = i
+                pending[i] = asyncio.ensure_future(run(name, dict(arguments), call_id))
 
-        if pending:
-            outcomes = await asyncio.gather(*pending.values())
-        else:
-            outcomes = []
-        fresh = dict(zip(pending, outcomes, strict=True))
+        outcomes = dict(zip(pending, await asyncio.gather(*pending.values()), strict=True)) if pending else {}
+        for i, (content, ok) in outcomes.items():
+            contents[i] = content
+            # Failures are not cached, so a transient error can be retried.
+            if ok and keys[i] is not None:
+                state.results[keys[i]] = content
+        for i, key in enumerate(keys):
+            if key is None or i in outcomes:
+                continue
+            earlier = state.results.get(key)
+            if earlier is None:
+                earlier = contents[first[key]]
+            contents[i] = DUPLICATE_TOOL_CALL_NOTE + earlier
+
+        if submission is not None:
+            rejection = await self._check_submission(state, parsed[submission][1])
+            contents[submission] = "accepted" if rejection is None else rejection
 
         tool_messages: list[Message] = []
-        answered: set[str] = set()
-        for i, (name, arguments, call_id, _) in enumerate(parsed):
-            key = keys[i]
-            if key is not None:
-                if key in fresh and key not in answered:
-                    content = fresh[key]
-                    state.results[key] = content
-                    answered.add(key)
-                else:
-                    content = DUPLICATE_TOOL_CALL_NOTE + state.results[key]
-            else:
-                content = contents[i]
+        for (name, arguments, call_id, _), content in zip(parsed, contents, strict=True):
             record_trace(self, ToolCall(str(name), dict(arguments), content))
             tool_messages.append(Message(
                 role="tool",
@@ -1515,10 +1549,10 @@ class Llm(param.Parameterized):
 
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
-            tool_messages = await self._run_tool_round(
+            tool_messages, stop = await self._run_tool_round(
                 tool_instances, tool_calls, tool_contexts, messages, tool_state
             )
-            if not tool_messages:
+            if stop:
                 log_debug(
                     f"Tool budget of {tool_state.max_rounds} rounds exhausted; ending the stream.",
                     prefix="[LLM tools]",
@@ -2245,19 +2279,21 @@ class OpenAI(Llm, OpenAIMixin):
             return output
 
         state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
+        # Outputs for the calls of the last response, which a request chained
+        # onto it through previous_response_id must include.
+        pending_outputs: list[dict[str, Any]] = []
         while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_messages = await self._run_tool_round(
+            tool_messages, stop = await self._run_tool_round(
                 tool_instances, tool_calls, tool_contexts, messages, state
             )
             if state.answer is not None:
                 return state.answer
-            if not tool_messages:
-                break
             tool_outputs = self._tool_messages_to_response_inputs(tool_messages)
-            if not tool_outputs:
+            if stop or not tool_outputs:
+                pending_outputs = tool_outputs
                 break
             next_kwargs = dict(kwargs)
             response_id = getattr(output, "id", None)
@@ -2273,11 +2309,12 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            final_messages = [] if response_id else list(messages)
+            final_messages = list(pending_outputs) if response_id else list(messages)
             if submit is not None:
                 # The previous response already holds the model's text reply.
                 final_messages += self._submit_nudge(None if response_id else output, submit)
             output = await self._traced_run_client(model_spec, final_messages, **final_kwargs)
+            output = await self._check_fallback_answer(state, output)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):

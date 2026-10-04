@@ -207,6 +207,8 @@ def test_filter_values_are_coerced():
     ("SELECT a, SUM(b) OVER () FROM t", False),
     ("SELECT a FROM t", False),
     ("SELECT COUNT(*) FROM a UNION SELECT COUNT(*) FROM b", False),
+    ("SELECT (SELECT MAX(b.v) FROM b WHERE b.id = a.id) FROM a", False),
+    ("SELECT UNNEST(LIST(x)) FROM t", False),
 ])
 def test_sql_is_scalar_aggregate(sql, expected):
     assert sql_is_scalar_aggregate(sql, "duckdb") is expected

@@ -422,6 +422,23 @@ async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_sou
     assert "-9999" in joined, "the placeholder the aggregate hid must reach the rewrite"
 
 
+async def test_sql_agent_profiles_source_rows_behind_a_scalar_aggregate(llm, dirty_source, test_messages):
+    """A one-row AVG gives the result lint nothing, but the -9999 it averaged in must still be found."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    captured = {}
+
+    async def _capture(self, sql_query, findings, original_rows, source, messages, context, step):
+        captured["findings"] = findings
+        return sql_query
+
+    with patch.object(SQLAgent, "_clean_data_pass", new=_capture):
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(query='SELECT AVG("value") AS mean FROM dirty', table_slug="mean", tables=["dirty"]),
+        ])
+
+    assert "-9999" in " ".join(captured["findings"])
+
+
 async def test_sql_agent_skips_source_profiling_when_not_aggregating(llm, dirty_source, test_messages):
     """A plain SELECT already shows its own problems, so it must not pay for extra queries."""
     SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])

@@ -60,6 +60,8 @@ SOURCE_PROFILE_MAX_TABLES = 3
 # catalog browsing tool is only worth offering when the catalog exceeds both.
 PROMPT_OTHER_TABLES = 25
 DISTINCT_VALUES_LIMIT = 50
+# Accuracy falls as exploration grows (74% with 1-2 tool calls, 37% with 11+
+# on BIRD), so a small budget the model is told about beats a large one.
 MAIN_TOOL_ROUNDS = 6
 REVISE_TOOL_ROUNDS = 3
 SUBMIT_SQL_DESCRIPTION = (
@@ -426,7 +428,7 @@ def make_run_exploration_sql_tool(
         f"Parameters\n----------\n{params_doc}\n"
     )
     return FunctionTool(
-        run_exploration_sql,
+        run_exploration_sql, read_only=True,
         purpose=(
             f"Run exploratory read-only SQL (SELECT/WITH). {output} "
             "Use it to learn column formats and value domains you cannot see in the data "
@@ -467,7 +469,7 @@ def make_distinct_values_tool(
         )
 
     return FunctionTool(
-        distinct_values,
+        distinct_values, read_only=True,
         purpose=(
             f"List up to {DISTINCT_VALUES_LIMIT} most frequent stored values of one column with "
             "row counts, optionally only those containing `like` (case-insensitive). Use it to "
@@ -592,7 +594,7 @@ def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
         return f"Tables {offset + 1}-{end} of {total}, most relevant first:\n{listing}"
 
     return FunctionTool(
-        browse_data_catalog,
+        browse_data_catalog, read_only=True,
         purpose=(
             "Page through catalog tables that the data summary does not list. Returns table "
             "names (and optionally descriptions), not columns; use load_table_schemas for those."
@@ -646,7 +648,7 @@ def make_load_table_schemas_tool(metaset: Metaset, stats_timeout: float | None =
         return "\n\n".join(blocks)
 
     return FunctionTool(
-        load_table_schemas,
+        load_table_schemas, read_only=True,
         purpose=(
             "Load full column statistics (types, keys, ranges, values, null fractions) for "
             "chosen tables. Call it only for what the data summary lacks: tables it lists "
@@ -677,12 +679,19 @@ def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
     return bool(parsed.find(sqlglot.exp.Group) or parsed.find(sqlglot.exp.AggFunc))
 
 
+ROW_GENERATING_FUNCTIONS = (sqlglot.exp.Unnest, sqlglot.exp.Explode)
+
+
 def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
     """
     Whether the outermost SELECT collapses everything into a single row.
 
     True for ``SELECT COUNT(*) FROM t`` or ``SELECT MAX(x) / MIN(x) FROM t``:
     aggregates in every projection and no GROUP BY. Unparseable SQL returns False.
+
+    Aggregates inside a subquery or wrapped in a row-generating function do
+    not count: ``SELECT (SELECT MAX(b.v) FROM b WHERE b.id = a.id) FROM a``
+    and ``SELECT UNNEST(LIST(x)) FROM t`` return many rows.
     """
     try:
         parsed = sqlglot.parse_one(sql_query, read=None if dialect in (None, "any") else dialect)
@@ -690,11 +699,14 @@ def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
         return False
     if not isinstance(parsed, sqlglot.exp.Select) or parsed.args.get("group"):
         return False
+
+    def collapses(proj: sqlglot.exp.Expression) -> bool:
+        if proj.find(sqlglot.exp.Window, *ROW_GENERATING_FUNCTIONS) is not None:
+            return False
+        return any(agg.find_ancestor(sqlglot.exp.Select) is parsed for agg in proj.find_all(sqlglot.exp.AggFunc))
+
     projections = parsed.expressions
-    return bool(projections) and all(
-        proj.find(sqlglot.exp.AggFunc) is not None and proj.find(sqlglot.exp.Window) is None
-        for proj in projections
-    )
+    return bool(projections) and all(collapses(proj) for proj in projections)
 
 
 def referenced_columns(sql_query: str, dialect: str | None = None) -> set[str] | None:
@@ -1545,18 +1557,18 @@ class SQLAgent(BaseLumenAgent):
             # Profile the bounded validation sample without loading the full result.
             findings: list[str] = []
             actionable: list[str] = []
-            # A single aggregated row gives the profile nothing to work with,
-            # and cleaning such queries was neutral on accuracy at extra cost.
-            clean = self.clean_data and not sql_is_scalar_aggregate(validated_sql, source.dialect)
             if preview is not None:
                 findings = lint_data(preview)
                 # Only the actionable subset justifies (and is shown to) the
                 # rewriting pass. Constant columns and outliers are reported but
-                # must not provoke a query rewrite.
-                if clean:
+                # must not provoke a query rewrite. A single aggregated row gives
+                # the lint nothing to work with.
+                if self.clean_data and not sql_is_scalar_aggregate(validated_sql, source.dialect):
                     actionable = lint_data(preview, actionable_only=True)
 
-            if clean and sql_contains_aggregates(validated_sql, source.dialect):
+            # Scalar aggregates are profiled too: AVG over -9999 placeholders
+            # is wrong and nothing in its one-row result shows it.
+            if self.clean_data and sql_contains_aggregates(validated_sql, source.dialect):
                 source_findings = await self._profile_source_rows(source, tables, validated_sql)
                 findings += source_findings
                 actionable += source_findings

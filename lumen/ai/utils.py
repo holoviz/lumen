@@ -319,6 +319,24 @@ def format_error(error: BaseException) -> str:
     return ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}")
 
 
+# Credentials that error messages commonly quote, e.g. an HTTP error naming
+# the request URL with ``?key=...`` or ``https://user:token@host``.
+URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@]+@")
+URL_QUERY = re.compile(r"(?P<url>\b[a-z][\w+.-]*://[^\s?#'\"<>]*)\?[^\s#'\"<>)]+", re.IGNORECASE)
+
+
+def format_tool_error(error: BaseException | str, max_length: int = 1000) -> str:
+    """
+    Render an error for a tool result that is sent to the provider.
+
+    Tool results are re-sent every round, so the text is truncated, and URL
+    credentials and query strings are redacted so secrets do not leak.
+    """
+    text = error if isinstance(error, str) else format_error(error)
+    text = URL_CREDENTIALS.sub("<redacted>@", URL_QUERY.sub(r"\g<url>?<redacted>", text))
+    return truncate_string(text, max_length)
+
+
 def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
     """
     Recursively get the root cause of an exception up to a specified depth.
