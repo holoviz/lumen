@@ -396,7 +396,9 @@ def test_sql_filter_range_list_open_ends():
 
 
 @pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
-@pytest.mark.parametrize("value", [(None, 2), (2, None), [(None, 0), (4, None)]])
+@pytest.mark.parametrize(
+    "value", [(None, 2), (2, None), [(None, 0), (4, None)], [(None, 0), (None, None), (4, None)]]
+)
 def test_sql_filter_open_range_matches_pandas_filter(value):
     df = pd.DataFrame({"A": [0, 1, 2, 3, 4]})
     source = DuckDBSource.from_df({"df": df})

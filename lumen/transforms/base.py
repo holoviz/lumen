@@ -450,15 +450,11 @@ class Filter(Transform):
                     val, _ = self._widen_dates(val, None)
                 mask = column == val
             elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                val = [v for v in val if v is not None]
-                if not val:
+                masks = [self._range_filter(column, *v) for v in val if v is not None]
+                masks = [m for m in masks if m is not None]
+                if not masks:
                     continue
-                mask = self._range_filter(column, *val[0])
-                for v in val[1:]:
-                    mask |= self._range_filter(column, *v)
-                if mask is not None:
-                    filters.append(mask)
-                continue
+                mask = reduce(or_, masks)
             elif isinstance(val, list):
                 if not val:
                     continue
