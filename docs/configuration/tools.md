@@ -8,13 +8,37 @@ Most users don't need custom tools. Built-in tools handle common needs.
 
 ## Built-in tools
 
-Lumen includes tools automatically:
+Lumen adds these tools automatically:
 
-- **TableLookup** - Finds relevant tables in your data (see [Vector Stores](vector_stores.md#table-discovery))
-- **DocumentLookup** - Searches uploaded documents (see [Vector Stores](vector_stores.md#document-search))
-- **DbtslLookup** - Queries dbt Semantic Layer metrics
+- **MetadataLookup** - Finds relevant tables in your data (see [Vector Stores](vector_stores.md#table-discovery))
+- **SourceLookup** - Finds relevant external data source actions, added when a `SourceAgent` is present
+- **`list_indexed_documents` and `search_document_chunks`** - Search uploaded documents, added when a document vector store holds documents (see [Vector Stores](vector_stores.md#document-search))
 
 You don't need to configure these. Agents use them when needed.
+
+**DbtslLookup** queries dbt Semantic Layer metrics and is not automatic; pass it via `tools=` to enable it.
+
+### Python calculations with Monty
+
+Install the optional Monty integration alongside an LLM provider, for example:
+
+```bash
+pip install 'lumen[ai-monty,ai-openai]'
+```
+
+When `pydantic-monty` is installed, Lumen automatically makes the `run_python` tool available to the coordinator and its agents. Without it, the tool is omitted. The LLM decides whether to call the tool; requesting Python explicitly helps distinguish a calculation from a question it can answer directly.
+
+``` py title="Monty calculation"
+from lumen.ai import ExplorerUI
+from lumen.ai.agents import ChatAgent
+
+ui = ExplorerUI(default_agents=[ChatAgent])
+ui.servable()
+```
+
+Save this as `app.py` and run `panel serve app.py`, then ask: "Use Python to calculate the sum of squares from 1 to 100." The agent can call `run_python` with `sum(i**2 for i in range(1, 101))` and use the returned `338350` in its answer. The repository also includes `examples/ai/monty.py` as a demo.
+
+Monty runs a **subset of Python**, not CPython. Snippets can import only Monty's bundled standard-library modules, not third-party packages such as pandas or NumPy. They cannot access Lumen's in-memory data, local files, environment variables, the network, or subprocesses. Each tool call starts a fresh session, so variables do not persist between calls; put any needed values in the snippet. The last expression and `print()` output are returned to the agent. Execution is limited to 1 second per snippet, 10 MB of memory, and 64 KiB of captured printed output (with a 3-second request timeout). Use Lumen's data tools instead when an agent needs to query datasets or work with packages unavailable in Monty.
 
 ## Create a simple tool
 
@@ -249,7 +273,7 @@ Combine tools for complex workflows:
 === "With built-in tools"
 
     ``` py title="Mix custom and built-in tools"
-    from lumen.ai.tools import DocumentLookup
+    from lumen.ai.tools import MetadataLookup
 
     def get_stats(table) -> dict:
         """Calculate summary statistics."""
@@ -269,7 +293,7 @@ Combine tools for complex workflows:
 
     ui = lmai.ExplorerUI(
         data='penguins.csv',
-        tools=[get_stats, filter_species, DocumentLookup()]
+        tools=[get_stats, filter_species, MetadataLookup(include_columns=False)]
     )
     ui.servable()
     ```

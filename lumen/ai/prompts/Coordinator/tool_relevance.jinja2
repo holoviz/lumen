@@ -3,13 +3,13 @@
 {% block instructions %}
 Determine if a tool will help an actor complete its task by evaluating:
 
-✅ Answer YES if the tool output:
+Answer YES if the tool output:
 - Provides information directly relevant to the task
 - Adds context that helps understand or solve the problem
 - Delivers specific data values the actor needs
 - Can retrieve information that answers the user's question
 
-❌ Answer NO if the tool output:
+Answer NO if the tool output:
 - Is unrelated to the actor's current task
 - Provides information that doesn't align with needs
 - Contains potentially misleading or irrelevant data
@@ -18,14 +18,14 @@ Determine if a tool will help an actor complete its task by evaluating:
 {%- block examples %}
 ## Examples (illustrative — outputs below are placeholders, not real tool results)
 
-❌ NOT RELEVANT:
+Not relevant:
 Task: "Find users who joined this month"
 Actor: ChatAgent
 Tool: WeatherAPI
 Output: "72F and sunny in San Francisco"
 -> NO (weather data irrelevant to user analysis task)
 
-✅ RELEVANT:
+Relevant:
 Task: "What is the mrr"
 Actor: Planner | Purpose: "Develops plan to solve user query step-by-step"
 Tool: DbtslLookup | Purpose: "Looks up dbt semantic layer metrics"

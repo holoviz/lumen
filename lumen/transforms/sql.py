@@ -14,7 +14,7 @@ from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
-    Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
+    Limit, Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
     TableSample, and_, func, or_, replace_placeholders, select,
 )
 from sqlglot.optimizer import optimize
@@ -310,8 +310,13 @@ class SQLSelectFrom(SQLFormat):
             # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
-        # if 'data/life-expectancy.csv' becomes 'data / life-expectancy.csv'
-        if not list(expression.find_all(Select)) and " / " in expression.sql():
+        # A bare table name that does not round-trip was mis-parsed as an
+        # expression, e.g. 'data/life-expectancy.csv' becomes
+        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'
+        if (
+            not list(expression.find_all(Select))
+            and expression.sql().strip().lower() != sql_in.strip().lower()
+        ):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         tables = {}
@@ -447,6 +452,11 @@ class SQLLimit(SQLTransform):
                 # if existing limit is less than the new limit
                 # do not modify the original query
                 return sql_in
+
+        # Limiting in place keeps the query engines quote in error messages
+        # identical to the one that was written.
+        if isinstance(parsed_expression, Select) and (existing_limit is None or isinstance(existing_limit, Limit)):
+            return self.to_sql(parsed_expression.limit(self.limit))
 
         subquery = self._to_subquery(parsed_expression)
         expression = select("*").from_(subquery).limit(self.limit)
@@ -588,6 +598,44 @@ class SQLColumns(SQLTransform):
 
         subquery = self._to_subquery(self.parse_sql(sql_in))
         expression = select(*self.columns).from_(subquery)
+        return self.to_sql(expression)
+
+
+class SQLSort(SQLTransform):
+    """
+    Performs an ORDER BY on the query.
+
+    Null and NaN placement follows the database engine, which does not always
+    agree with `lumen.transforms.base.Sort`: pandas puts both last whichever
+    way the sort runs, while DuckDB orders NaN above every value on a
+    descending sort. Reach for this to have the engine do the ordering, e.g.
+    ahead of an `SQLLimit` to get a real top-N query, rather than as a
+    drop-in for the pandas transform.
+    """
+
+    by = param.List(default=[], doc="Columns to sort by.")
+
+    ascending = param.ClassSelector(default=True, class_=(bool, list), doc="""
+        Sort ascending vs. descending. Specify a list to give each column in
+        `by` its own direction.""")
+
+    transform_type: ClassVar[str] = 'sql_sort'
+
+    def apply(self, sql_in: str) -> str:
+        if not self.by:
+            return sql_in
+
+        ascending = (
+            self.ascending if isinstance(self.ascending, list)
+            else [self.ascending] * len(self.by)
+        )
+        subquery = self._to_subquery(self.parse_sql(sql_in))
+        order = []
+        for col, asc in zip(self.by, ascending, strict=True):
+            quoted = self.identify or bool(re.search(r'\W', col))
+            column = Column(this=Identifier(this=col, quoted=quoted)).sql(dialect=self.write)
+            order.append(f'{column} {"ASC" if asc else "DESC"}')
+        expression = select("*").from_(subquery).order_by(*order)
         return self.to_sql(expression)
 
 
@@ -805,7 +853,6 @@ class SQLPreFilter(SQLFilterBase):
         Table
             Subquery expression that can replace the original table
         """
-        from sqlglot.expressions import Identifier
 
         # Start with SELECT * FROM table_name
         base_table = Table(this=Identifier(this=table_name, quoted=True))

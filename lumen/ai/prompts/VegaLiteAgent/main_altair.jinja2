@@ -3,8 +3,8 @@
 {% block instructions %}
 Generate Altair code. Data is `df`, assign to `chart`, end with `.interactive()`. Use `width='container'` for single charts only. NO I/O methods.
 
-## MULTIPLE CHARTS
-Return several entries in `charts` ONLY when the request spans distinct metrics or relationships, or the user asks for more than one; otherwise return exactly one. Each entry is an independent code block that assigns its own `chart` (use `alt.hconcat`/`alt.vconcat`/`.facet`/`.repeat` only to compose within a single entry), and give each entry a short `title` used as its tab label.
+## Multiple Charts
+Return several entries in `charts` ONLY when request spans distinct metrics or relationships, or user asks for more than one; otherwise return exactly one. Each entry is independent code block assigning its own `chart` (use `alt.hconcat`/`alt.vconcat`/`.facet`/`.repeat` only to compose within single entry), give each entry short `title` used as tab label.
 
 ## Encodings: `:Q` quantitative | `:N` nominal | `:O` ordinal | `:T` temporal
 
@@ -16,20 +16,25 @@ Return several entries in `charts` ONLY when the request spans distinct metrics 
 - **Geo**: `longitude='lon:Q', latitude='lat:Q'` with `.project(type='mercator')`
 
 ## Rules
-- When the n_rows > 5000:
-  - You **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
+- When a discrete axis would carry more than 25 distinct values (check `nunique` in data summary), reduce before plotting: `.transform_window(rank='rank()', sort=[...])` then `.transform_filter('datum.rank <= 25')`, and name the cut in the title. Alternatives: group tail into `"Other"`, or bin the measure instead. Only add text labels to a chart already reduced to 25 marks or fewer.
+- When n_rows > 5000:
+  - **MUST** include `alt.data_transformers.disable_max_rows()` and `alt.renderers.set_embed_options(renderer="canvas")`
   - Prefer aggregated and binned plots
 {%- if gridded is defined and gridded %}
 
 ## Gridded xarray data
-`df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
-Pick two dimensions for `x`/`y` and use `mark_rect()` with `color` as the quantitative value (`alt.Scale(scheme='viridis')`). Keep the axes ordinal; Vega-Lite cannot project `mark_rect`, so a true geographic map needs the hvPlot or DeckGL views instead. Any dimension you leave unencoded is reduced to a single slice automatically.
+`df` is long-form grid from xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
+Pick two dimensions for `x`/`y`, use `mark_rect()` with `color` as quantitative value (`alt.Scale(scheme='viridis')`). Keep axes ordinal; Vega-Lite cannot project `mark_rect`, so true geographic map needs hvPlot or DeckGL views instead. Any dimension left unencoded reduced to single slice automatically.
 {%- endif %}
 {% endblock %}
 
+{% block docs %}
+{% include 'VegaLiteAgent/doc_pages.jinja2' %}
+{% endblock %}
+
 {% block examples %}
-{% if doc_examples is defined and doc_examples %}{% for example in doc_examples %}{{ example }}
-{% endfor %}{% endif %}
+## Examples (illustrative — field names below placeholders, not real columns)
+
 Bar (sorted):
 ```python
 chart = alt.Chart(df).mark_bar().encode(y=alt.Y('state:N', sort='-x'), x='count:Q', tooltip=['state', 'count']).properties(width='container', height=400).interactive()
@@ -65,7 +70,7 @@ chart = alt.hconcat(alt.Chart(df).mark_bar().encode(x='cat:N', y='val:Q'), alt.C
 {% block context %}
 Table: {{ memory['pipeline'].table }}
 Data: {{ memory['data'] }}
-{%- if "view" in memory %}
+{%- if memory.get("view") %}
 Previous: {{ memory["view"]["spec"] | json_to_yaml }}
 {%- endif %}
 {% if memory['pipeline'].source.dialect == "snowflake" %}Use UPPER CASE field names.{% endif %}

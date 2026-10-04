@@ -262,7 +262,7 @@ transforms:
 | `aggregate` | Group and compute stats | Average sales by region |
 | `sort` | Order rows | Sort by date |
 | `query` | SQL-like filtering | `price > 100` |
-| `astype` | Change column data types | Convert to datetime |
+| `as_type` | Change column data types | Convert to datetime |
 | `project` | Create derived columns | `total = price * quantity` |
 
 ## Building pipelines declaratively

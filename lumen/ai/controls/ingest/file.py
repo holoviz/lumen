@@ -12,6 +12,7 @@ from panel_material_ui import Button, Column as MuiColumn
 
 from ....sources.duckdb import DuckDBSource
 from ....util import detect_file_encoding
+from ...config import get_markitdown
 from ...utils import log_debug
 from .base import BaseSourceControls
 from .constants import TABLE_EXTENSIONS
@@ -53,7 +54,6 @@ class FileSourceControls(BaseSourceControls):
     __abstract = True
 
     def __init__(self, **params):
-        self._markitdown = None
         self._file_cards = []
         super().__init__(**params)
 
@@ -142,7 +142,7 @@ class FileSourceControls(BaseSourceControls):
         filename = f"{card.filename}.{extension}"
 
         try:
-            if extension.endswith("json"):
+            if extension == "json":
                 # Use the more robust JSON parser on this class
                 df = self._read_json_file(file, filename)
                 result = FileReadResult(tables={alias: df})
@@ -261,10 +261,7 @@ class FileSourceControls(BaseSourceControls):
                 return json.dumps(json.loads(content), indent=2)
             except json.JSONDecodeError:
                 return content
-        from markitdown import MarkItDown
-        if self._markitdown is None:
-            self._markitdown = MarkItDown()
-        return self._markitdown.convert_stream(file_obj, file_extension=extension).text_content
+        return get_markitdown().convert_stream(file_obj, file_extension=extension).text_content
 
     def _add_metadata_file(self, card: UploadedFileRow) -> int:
         try:

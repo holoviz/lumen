@@ -21,12 +21,12 @@ from panel.pane import HTML, Image
 from panel.viewable import Viewer
 from panel.widgets import Tabulator
 from panel_material_ui import (
-    Card, ChatInterface, ChatStep, Column, Typography,
+    Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 
 from ..actor import Actor
 from ..agents import (
-    Agent, AnalysisAgent, ChatAgent, SourceAgent,
+    Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
@@ -38,9 +38,10 @@ from ..tools import (
 )
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
+from ..tools.monty import make_monty_llm_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, wrap_logfire,
+    mutate_user_message, normalized_name, truncate_to_tokens, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -118,7 +119,7 @@ class Plan(Section):
             return task.views, task.out_context
 
         outputs = []
-        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout) as step:
+        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout, context_exception="raise") as step:
             history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
             if self.steps_layout is not None:
@@ -293,7 +294,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     )
 
     llm_tools = param.List(
-        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
+        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools, make_monty_llm_tool],
         doc="""
         List of tools for the Planner to make available to the LLM. The tools are also
         made available to the agents.""",
@@ -301,9 +302,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     prompts = param.Dict(
         default={
-            "main": {
-                "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
-            },
+            # No template here: the base Coordinator never renders "main" — each
+            # subclass supplies its own, and _lookup_prompt_key walks the MRO to
+            # find it. The key exists so _process_prompts can attach tools to it.
+            "main": {},
             "tool_relevance": {
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": ThinkingYesNo,
@@ -521,6 +523,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if isinstance(obj, str):
             return obj
 
+        if isinstance(obj, Tabs):
+            return "\n".join(
+                f"## {name}\n{self._serialize(content, exclude_passwords=exclude_passwords)}"
+                for name, content in zip(obj._names, obj, strict=False)
+            )
+
         if isinstance(obj, (ListLike, NamedListLike)):
             return self._serialize(list(obj), exclude_passwords=exclude_passwords)
 
@@ -546,6 +554,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         # Handle Tabulator widgets - serialize using describe_data_sync for rich summary
         if isinstance(obj, Tabulator):
             df = obj.value
+            if len(df.columns) == 1:
+                # Do not waste tokens with a summary if just one column
+                col_name = df.columns[0]
+                return f"{col_name}(s): {truncate_to_tokens('`, `'.join(df[col_name].tolist()), max_tokens=1500)}"
             if df is not None and not df.empty:
                 return describe_data_sync(df)
             return "[Empty table]"
@@ -566,14 +578,20 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context = {"agent_tool_contexts": [], **context}
         with self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
-                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Assistant") as step:
+                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
                     if "repo" in default_kwargs and "model_file" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
                     elif "model_path" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
-            messages = fuse_messages(self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages, max_user_messages=self.history)
+            # Validation verdicts are about a previous plan, not part of the
+            # conversation, and read as instructions if left in the history.
+            exclude_users = ["help"] + [a.user for a in self.agents if isinstance(a, ValidationAgent)]
+            serialized = self.interface.serialize(
+                exclude_users=exclude_users, custom_serializer=self._serialize, limit=10
+            )
+            messages = fuse_messages(serialized or messages, max_user_messages=self.history)
 
             # the master dict of agents / tools to be used downstream
             # change this for filling models' literals

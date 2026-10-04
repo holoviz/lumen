@@ -3,12 +3,12 @@
 {% block instructions %}
 {{ super() }}
 
-- Do NOT modify the data field
+- Do NOT modify data field
 - For overlays: data at top level, encoding in layer
 
 ## Publication-Ready Requests
 
-If user asks to "make it look better", "professional", "publication-ready", or similar, apply these changes:
+If user asks "make it look better", "professional", "publication-ready", or similar, apply changes:
 
 1. **Remove clutter**: `config.view.stroke: null` (no border)
 2. **Clean gridlines**: 
@@ -22,13 +22,12 @@ If user asks to "make it look better", "professional", "publication-ready", or s
 8. **Limit results**: For bar charts with 10+ categories, show top 5-10 using **top-level** `transform`
 {% endblock %}
 
+{% block docs %}
+{% include 'VegaLiteAgent/doc_pages.jinja2' %}
+{% endblock %}
+
 {%- block examples -%}
-## EXAMPLES
-{% if doc_examples is defined and doc_examples %}
-{% for example in doc_examples %}
-{{ example }}
-{% endfor %}
-{% endif %}
+## Examples (illustrative — field, category names below placeholders, not real data)
 
 ## Publication-ready config
 ```yaml

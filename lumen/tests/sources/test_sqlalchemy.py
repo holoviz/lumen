@@ -1,6 +1,8 @@
 import datetime as dt
 import os
 
+from unittest.mock import PropertyMock, patch
+
 import pandas as pd
 import pytest
 
@@ -640,3 +642,20 @@ def test_sqlalchemy_create_sql_expr_no_nested_transaction(memory_source):
 
     assert len(result) == 2
     assert list(result['id']) == [1, 2]
+
+
+def test_sqlalchemy_missing_table_sqlite(memory_source):
+    with pytest.raises(Exception) as excinfo:
+        memory_source.execute("SELECT * FROM orders")
+    assert memory_source.missing_table(excinfo.value) == "orders"
+    assert memory_source.missing_table(ValueError("no such column: id")) is None
+
+
+@pytest.mark.parametrize("dialect, message", [
+    ("postgresql", '(psycopg2.errors.UndefinedTable) relation "orders" does not exist\nLINE 1: SELECT * FROM orders'),
+    ("mysql", "(pymysql.err.ProgrammingError) (1146, \"Table 'shop.orders' doesn't exist\")"),
+])
+def test_sqlalchemy_missing_table_by_dialect(memory_source, dialect, message):
+    with patch.object(SQLAlchemySource, "dialect", new_callable=PropertyMock, return_value=dialect):
+        assert memory_source.missing_table(Exception(message)) == "orders"
+        assert memory_source.missing_table(Exception("syntax error at or near \"FORM\"")) is None

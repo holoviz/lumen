@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import pathlib
 import re
@@ -11,6 +12,7 @@ from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
 import param
+import vl_convert as vlc
 
 from panel.config import config
 from panel.layout import Column, Row
@@ -32,18 +34,40 @@ from ..config import dump_yaml, load_yaml
 from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
+from ..util import as_pandas
 from ..views.base import Panel, Table, View
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_data
+from .utils import describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
+
+
+_PAGINATED_TABLE_STYLES = """
+.tabulator-footer {
+  display: flex;
+  text-align: left;
+  padding: 0px;
+}
+/* Tabulator drops its page-number group when the footer overflows
+   horizontally, so let the paginator wrap to keep the pages reachable.
+   The Panel theme stylesheet loads later and would otherwise win. */
+.tabulator .tabulator-footer .tabulator-paginator {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+}
+.tabulator .tabulator-footer .tabulator-pages {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+}
+"""
 
 
 class LumenEditor(Viewer):
@@ -205,37 +229,32 @@ class LumenEditor(Viewer):
 
     async def _render_pipeline(self, pipeline):
         table = Table(
-            pipeline=pipeline, pagination='remote',
-            min_height=200, sizing_mode="stretch_both", stylesheets=[
-            """
-            .tabulator-footer {
-            display: flex;
-            text-align: left;
-            padding: 0px;
-            }
-            """
-            ]
+            pipeline=pipeline, pagination='remote', min_height=200,
+            sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
         )
-        controls = Row(
-            styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
-        )
+        layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
                 break
         else:
-            sql_limit = None
-        if sql_limit:
-            data = pipeline.data
-            limited = len(data) == sql_limit.limit
-            if limited:
-                def unlimit(e):
-                    sql_limit.limit = None if e.new else 1_000_000
-                full_data = Checkbox(
-                    label='Full data', width=100, visible=limited
-                )
-                full_data.param.watch(unlimit, 'value')
-                controls.insert(0, full_data)
-        return Column(controls, table)
+            return layout
+        if len(pipeline.data) != sql_limit.limit:
+            return layout
+
+        # Restore the limit this query actually ran with, so unchecking cannot
+        # silently widen a query that was limited more tightly than the default.
+        limit = sql_limit.limit
+
+        def unlimit(e):
+            sql_limit.limit = None if e.new else limit
+
+        full_data = Checkbox(label='Full data', height=36, margin=0)
+        full_data.param.watch(unlimit, 'value')
+        layout.append(Row(
+            full_data, height=36, sizing_mode='stretch_width',
+            styles={'justify-content': 'flex-end', 'align-items': 'center'},
+        ))
+        return layout
 
     async def render_context(self):
         view = self.component
@@ -243,7 +262,7 @@ class LumenEditor(Viewer):
             # If output is a view we provide the full View specification
             return {"view": self._spec_dict}
         elif isinstance(view, Pipeline):
-            data = await get_data(view)
+            data = await get_frame(view)
             return {
                 "pipeline": view,
                 "table": view.table,
@@ -352,18 +371,59 @@ class VegaLiteEditor(LumenEditor):
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
+    @staticmethod
+    def _supplies_geometry(data: dict) -> bool:
+        """Whether a data definition yields features a geoshape can draw."""
+        fmt = data.get("format") or {}
+        return fmt.get("type") in ("topojson", "geojson") or fmt.get("property") == "features"
+
+    @classmethod
+    def _check_geoshape_data(cls, node: Any, inherited: dict | None = None) -> None:
+        """Raise if any geoshape mark resolves to data that carries no geometry.
+
+        Such a spec compiles cleanly and then draws nothing at all, so the only
+        symptom is an empty canvas; raising turns that silence into an error the
+        agent can retry against. Layers inherit their parent's ``data`` when they
+        declare none, so the check follows the same scoping rather than looking
+        only at the top level. A spec with no ``data`` anywhere is the valid case
+        where the table's own geometry is injected at render time.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._check_geoshape_data(item, inherited)
+            return
+        if not isinstance(node, dict):
+            return
+
+        data = node.get("data", inherited)
+        mark = node.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        if mark_type == "geoshape" and isinstance(data, dict) and not cls._supplies_geometry(data):
+            raise RuntimeError(
+                "A geoshape mark draws the geometry found in `data`, but `data` here is the "
+                "table, which carries no geometry, so the map renders empty. Either set `data` "
+                "to the boundary topojson/geojson and pull the table's columns in with a "
+                "`transform.lookup` whose `from.data` names the table, or omit `data` entirely "
+                "when the table has its own geometry column."
+            )
+
+        for key, value in node.items():
+            if key != "data":
+                cls._check_geoshape_data(value, data)
+
     @classmethod
     def validate_spec(cls, spec):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            import vl_convert as vlc
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)
             if '\n    at Nc.' in msg:
                 msg = msg[:msg.index('\n    at Nc.')]
             raise RuntimeError(msg) from e
+
+        cls._check_geoshape_data(spec)
         return super().validate_spec(spec)
 
     def __str__(self):
@@ -512,7 +572,7 @@ class AnalysisOutput(LumenEditor):
         return out_context
 
     async def _rerun(self, event):
-        if asyncio.iscoroutinefunction(self.analysis.__call__):
+        if inspect.iscoroutinefunction(self.analysis.__call__):
             view = await self.analysis(self.pipeline, self.context)
         else:
             view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
@@ -675,7 +735,8 @@ class SQLEditor(LumenEditor):
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
-        data = self.component.data
+        # to_csv, to_json and to_markdown are all pandas only.
+        data = as_pandas(self.component.data)
         if fmt == 'sql':
             return StringIO(self.spec)
         sio = StringIO()

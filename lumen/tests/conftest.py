@@ -77,6 +77,22 @@ def mixed_df_object_type():
     yield df
     pd.set_option('mode.string_storage', string)
 
+@pytest.fixture(params=['pandas', 'polars', 'pyarrow'])
+def constructor(request):
+    """Builds the same frame in each dataframe library narwhals supports.
+
+    Parametrizing a test over this fixture runs it once per backend; backends
+    that are not installed skip rather than fail, which is what keeps the
+    core test environment (pandas only) green.
+    """
+    backend = request.param
+    if backend == 'pandas':
+        return pd.DataFrame
+    module = pytest.importorskip(backend)
+    if backend == 'polars':
+        return module.DataFrame
+    return module.table
+
 @pytest.fixture
 def yaml_file():
     tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)

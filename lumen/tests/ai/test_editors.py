@@ -18,6 +18,7 @@ from lumen.ai.editors import (
 from lumen.base import Component
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
+from lumen.transforms.sql import SQLLimit
 
 
 class MockComponent(Component):
@@ -200,6 +201,60 @@ def test_render_controls_inserts_add_filter_menu(sql_pipeline_editor):
     controls = sql_pipeline_editor.render_controls(task=None, interface=None)
     labels = [getattr(c, "label", None) for c in controls]
     assert "Add Filter" in labels
+
+
+@pytest.fixture
+def limited_sql_pipeline_editor(monkeypatch):
+    """Return an editor whose source data exceeds its SQL limit."""
+    source = DuckDBSource(tables={
+        'tiny': """
+            SELECT * FROM (
+              VALUES (1,'A'),
+                     (2,'B'),
+                     (3,'C'),
+                     (4,'D')
+            ) AS t(id, category)
+        """
+    })
+    pipeline = Pipeline(
+        source=source, table='tiny', sql_transforms=[SQLLimit(limit=3)]
+    )
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    return SQLEditor(component=pipeline, spec="SELECT * FROM tiny")
+
+
+@pytest.mark.asyncio
+async def test_render_pipeline_places_full_data_control_below_table(limited_sql_pipeline_editor):
+    editor = limited_sql_pipeline_editor
+    assert len(editor.component.data) == 3
+
+    layout = await editor._render_pipeline(editor.component)
+    table, controls = layout.objects
+
+    assert table._pane.stylesheets == [editors_module._PAGINATED_TABLE_STYLES]
+    assert controls.sizing_mode == 'stretch_width'
+    assert controls.styles == {
+        'justify-content': 'flex-end',
+        'align-items': 'center',
+    }
+    full_data = controls.objects[0]
+    assert full_data.label == "Full data"
+
+    full_data.value = True
+    assert editor.component.sql_transforms[0].limit is None
+    assert len(editor.component.data) == 4
+
+    # Unchecking restores this query's own limit, not a hardcoded default.
+    full_data.value = False
+    assert editor.component.sql_transforms[0].limit == 3
+    assert len(editor.component.data) == 3
+
+
+@pytest.mark.asyncio
+async def test_render_pipeline_omits_empty_full_data_row(sql_pipeline_editor):
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+
+    assert len(layout.objects) == 1
 
 
 @pytest.fixture

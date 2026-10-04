@@ -29,10 +29,11 @@ from ..controls.ingest.result import SourceResult
 from ..llm import Message
 from ..schemas import Metaset, get_metaset
 from ..tools import FunctionTool
+from ..tools.source_lookup import _control_hash
 from ..translate import doc_descriptions
 from ..utils import (
     describe_data, get_pipeline, log_debug, result_to_dataframe,
-    retry_llm_output,
+    retry_llm_output, truncate_to_tokens,
 )
 from .base import Agent
 
@@ -56,6 +57,17 @@ class SourceOutputs(ContextModel, total=False):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# describe_data output is YAML statistics plus sample rows, which tokenizes near
+# 3 chars/token, so the previous 4000-character cap admitted ~1300 tokens.
+DATA_SUMMARY_MAX_TOKENS = 1200
+
+
+async def _summarize_source_data(df) -> str:
+    """Describe *df* for the prompt, capped to a token budget."""
+    summary = await describe_data(df, reduce_enums=False)
+    return truncate_to_tokens(summary, DATA_SUMMARY_MAX_TOKENS)
+
 
 def _build_catalog_summary(context: TContext) -> str:
     """
@@ -250,7 +262,6 @@ class SourceAgent(Agent):
         ctrl_map: dict[str, BaseSourceControls] = {}
         for c in controls:
             if c._supports_tools:
-                from ..tools.source_lookup import _control_hash
                 ctrl_map[_control_hash(c)] = c
 
         tools: list[FunctionTool] = []
@@ -352,6 +363,14 @@ class SourceAgent(Agent):
                     success_title=f"Loaded {len(df):,} rows into '{table_name}'",
                 )
 
+        if tool_results:
+            # Lets the follow-up classifier tell fetched tables, whose rows are
+            # limited to the parameters used, from tables it can re-query.
+            source.metadata = dict(source.metadata or {})
+            entry = dict(source.metadata.get(table_name) or {})
+            entry["source_action"] = tool_results[0]["action"]
+            source.metadata[table_name] = entry
+
         out_context: SourceOutputs = {
             "source": source,
             "data": summary,
@@ -419,9 +438,7 @@ class SourceAgent(Agent):
             pipeline = await get_pipeline(source=source, table=table_name)
             metaset = await get_metaset([source], [table_name])
             df = await asyncio.to_thread(lambda: pipeline.data)
-            summary = await describe_data(df, reduce_enums=False)
-            if len(summary) >= 4000:
-                summary = summary[:3997] + "..."
+            summary = await _summarize_source_data(df)
             return source, table_name, df, summary, pipeline, metaset
 
         # --- DataFrame path (CodeSourceControls, raw callables) ---
@@ -453,9 +470,7 @@ class SourceAgent(Agent):
 
         pipeline = await get_pipeline(source=source, table=table_name)
         metaset = await get_metaset([source], [table_name])
-        summary = await describe_data(df, reduce_enums=False)
-        if len(summary) >= 4000:
-            summary = summary[:3997] + "..."
+        summary = await _summarize_source_data(df)
 
         return source, table_name, df, summary, pipeline, metaset
 

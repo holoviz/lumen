@@ -35,7 +35,9 @@ class TableListAgent(BaseListAgent):
     purpose = param.String(default="""
         Displays a list of all available data & datasets. Not useful for identifying which dataset to use for analysis.""")
 
-    _column_name = "Data"
+    user = param.String(default="Tables")
+
+    _column_name = "Table"
 
     _message_format = "Show the data: {item}"
 

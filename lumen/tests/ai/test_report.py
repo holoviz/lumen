@@ -511,6 +511,31 @@ async def test_section_renders_a_checkbox_per_task():
     assert False in [checkbox.value for checkbox in _find_checkboxes(outer._view)]
 
 
+async def test_section_hides_the_row_of_a_task_that_renders_nothing():
+    silent = A(order=[], title='Silent', render_outputs=False)
+    section = Section(A(order=[], title='Loud'), silent, title='Section A')
+    report = Report(section, title='Report')
+    await report.execute()
+
+    loud_row, silent_row = section._view.objects[-2:]
+    assert loud_row.visible is True
+    # Its outputs are not rendered, so the row would be a lone checkbox.
+    assert silent_row.visible is False
+    assert len(silent._view) == 0
+
+
+async def test_section_skips_the_header_of_an_untitled_nested_section():
+    nested = Section(B(order=[]))
+    section = Section(A(order=[]), nested, title='Section A')
+    report = Report(section, title='Report')
+    await report.execute()
+
+    # A header would put a checkbox next to an empty title, so the nested
+    # section is rendered on its own: only its task and B's are selectable.
+    assert section._view.objects[-1] is nested._container
+    assert len(_find_checkboxes(section._view)) == 2
+
+
 async def test_report_to_html_excludes_deselected_section():
     report = Report(
         Section(A(order=[]), title='Section A'),

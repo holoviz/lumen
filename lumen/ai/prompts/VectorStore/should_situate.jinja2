@@ -10,15 +10,17 @@ Respond yes if this chunk needs context to be understood, no if it's self-contai
 {%- endblock -%}
 
 {%- block examples -%}
+## Examples (illustrative — chunks below are placeholders, not real content)
+
 Example 1:
 Chunk: "The company's revenue grew by 3% over the previous quarter."
 Response:
-chain_of_thought: This chunk contains an ambiguous reference to "the company" without identifying which one.
+chain_of_thought: Ambiguous reference to "the company" without identifying which one.
 yes: true
 
 Example 2:
 Chunk: "ACME Q2'23 report: 3% revenue growth vs Q1'23"
 Response:
-chain_of_thought: This chunk is self-contained with specific entity (ACME) and timeframe (Q2'23, Q1'23).
+chain_of_thought: Self-contained with specific entity (ACME) and timeframe (Q2'23, Q1'23).
 yes: false
 {%- endblock -%}

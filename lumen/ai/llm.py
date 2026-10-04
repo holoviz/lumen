@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
+import inspect
 import json
 import os
+import re
+import time
 import traceback
 
-from collections.abc import Callable
-from functools import partial
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import (
     TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
@@ -23,15 +28,23 @@ from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, create_model
 
+from .config import UNRECOVERABLE_ERRORS
 from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
 )
+from .tool_trace import (
+    ModelCall, ToolCall, capture_trace, is_tracing, record_trace,
+)
+from .usage import (
+    UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
+)
 from .utils import (
-    format_exception, format_msg_content, log_debug, truncate_string,
+    format_exception, format_msg_content, format_tool_error,
+    format_unknown_name, log_debug, truncate_string,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +63,100 @@ class ImageResponse(BaseModel):
     # To easily analyze images, we need instructor patch activated,
     # so we use a pass-thru dummy string basemodel
     output: str
+
+
+# Agents that benefit from a tighter budget, like SQLAgent, pass their own.
+DEFAULT_MAX_TOOL_ROUNDS = 16
+
+DUPLICATE_TOOL_CALL_NOTE = (
+    "[Identical call already made in this request; returning the earlier result. "
+    "Use it rather than repeating the call.]\n"
+)
+
+
+@dataclass
+class SubmitTool:
+    """
+    A tool through which the model delivers its structured answer inside the tool loop.
+
+    Offering the response model as a tool lets a request that needs no other
+    tool finish in one call, and keeps the tool transcript in the prompt that
+    produces the answer instead of re-sending it for a separate structured call.
+
+    ``validate`` receives the parsed response model and raises to reject it;
+    the exception message is returned to the model as the tool result so it
+    can correct the answer with the context it already has.
+    """
+
+    name: str
+    description: str
+    validate: Callable[[BaseModel], Awaitable[None] | None] | None = None
+    model: type[BaseModel] | None = None
+
+
+@dataclass
+class ToolLoopState:
+    """Per-request bookkeeping shared by every round of one tool loop."""
+
+    max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
+    submit: SubmitTool | None = None
+    rounds: int = 0
+    results: dict[str, str] = field(default_factory=dict)
+    answer: BaseModel | None = None
+    # Set once a round past the budget has been answered; the next one stops the loop.
+    closed: bool = False
+
+    @property
+    def exhausted(self) -> bool:
+        return self.rounds >= self.max_rounds
+
+    def _final_instruction(self) -> str:
+        return f"call `{self.submit.name}`" if self.submit else "give your final answer"
+
+    def budget_note(self) -> str:
+        remaining = self.max_rounds - self.rounds
+        if remaining > 0:
+            return f"\n\n[Tool round {self.rounds} of {self.max_rounds}; {remaining} remaining.]"
+        return (
+            f"\n\n[Tool budget exhausted after {self.max_rounds} rounds; further tool "
+            f"calls will not run. Now {self._final_instruction()}.]"
+        )
+
+    def not_run_note(self) -> str:
+        return (
+            f"Not run: the tool budget of {self.max_rounds} rounds is exhausted. "
+            f"Now {self._final_instruction()}."
+        )
+
+
+def inline_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve local ``$ref``s so providers that reject ``$defs`` (e.g. Gemini) accept the schema."""
+    defs = schema.get("$defs", {})
+
+    def resolve(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                target = resolve(defs[ref.rsplit("/", 1)[-1]])
+                return {**target, **{k: resolve(v) for k, v in node.items() if k != "$ref"}}
+            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    return resolve(schema)
+
+
+def format_validation_error(error: ValidationError, skip: tuple[str, ...] | list[str] = ()) -> str:
+    """One line per pydantic error, dropping errors on fields in ``skip``."""
+    parts = []
+    for err in error.errors():
+        loc = err.get("loc") or ()
+        if loc and loc[0] in skip:
+            continue
+        where = ".".join(str(part) for part in loc) or "arguments"
+        parts.append(f"{where}: {err.get('msg')}")
+    return "; ".join(parts)
 
 
 BASE_MODES = list(Mode)
@@ -72,8 +179,56 @@ LLM_PROVIDERS = {
     'llama-cpp': 'LlamaCpp',
     'mlx': 'MLX',
     'litellm': 'LiteLLM',
-    'openrouter': 'OpenRouter'
+    'openrouter': 'OpenRouter',
+    'kilo': 'Kilo',
+    'codex-cli': 'CodexCli',
+    'claude-code': 'ClaudeCode',
 }
+
+# Request parameters an OpenAI-compatible model may reject, and the value to
+# retry with; None omits the parameter entirely. Applied only after the API
+# names the parameter in a 400, so new models need no entry here.
+ADAPTIVE_KWARGS = {
+    "temperature": None,
+    "reasoning_effort": "none",
+}
+
+# Every content shape a message may carry an image in, before and after
+# _check_for_image normalises it.
+IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
+
+# model_kwargs entries that configure routing rather than the provider client,
+# and so must never reach an SDK constructor.
+ROUTING_KEYS = ("routing", "description")
+
+# The spec keys every provider shares, described for the routing prompt. Agent
+# specs are added on top by the UI layer, which can reach agent metadata.
+SPEC_DESCRIPTIONS = {
+    "default": "General purpose model for most tasks",
+    "edit": "Advanced model for retry & edit tasks",
+    "ui": "Lightweight model for UI interactions",
+}
+
+
+@lru_cache
+def build_route_spec_model(spec_keys: tuple[str, ...]) -> type[BaseModel]:
+    """Build the pydantic model constraining the routing model's output.
+
+    The ``model_spec`` field is constrained via a ``Literal`` to the keys
+    present in ``model_kwargs``, so a hallucinated key cannot silently fall
+    back to ``'default'`` unnoticed. Cached on the keys because instructor
+    re-derives the JSON schema per class, and routing runs on every call.
+    """
+    return create_model("RouteSpec", model_spec=(Literal[*spec_keys], ...))
+
+
+def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
+    """Find a provider 400 on an exception's cause chain, if there is one."""
+    while error is not None:
+        if isinstance(error, openai.BadRequestError):
+            return error
+        error = error.__cause__
+    return None
 
 
 def get_available_llm() -> type[Llm] | None:
@@ -123,7 +278,29 @@ class Llm(param.Parameterized):
     model_kwargs = param.Dict(default={}, doc="""
         LLM model definitions indexed by type. Supported types include
         'default', 'reasoning' and 'sql'. Agents may pick which model to
-        invoke for different reasons.""")
+        invoke for different reasons.
+
+        An entry may declare an optional 'description' (shown to the routing
+        model so it can reason about what each option is for) and an optional
+        'routing' key to opt in to model routing for that type: the routing
+        model is invoked first to pick which entry to actually use for each
+        call, e.g.
+        {"default": {"model": "gpt-5.4-mini"},
+         "edit": {"model": "gpt-5.2",
+                  "description": "Best for editing tables and visualizations",
+                  "routing": {"model": "nemotron-switchyard"}}}""")
+
+    usage_pricing = param.Dict(default={}, doc="""USD per million tokens by model:
+        {"model-name": {"input": 1.0, "cached": 0.1, "cache_write": 1.25,
+                        "output": 4.0}}.
+        Unknown models retain token counts but have no estimated cost.""")
+
+    spec_descriptions = param.Dict(default=SPEC_DESCRIPTIONS, doc="""
+        Mapping of spec key to human-readable description, used as a
+        fallback in the routing prompt when ``model_kwargs`` entries
+        do not declare their own ``description``. Seeded with the spec
+        keys every provider shares and enriched by the UI layer from
+        agent class metadata.""")
 
     tools = param.List(default=[], doc="""
         Default tools that are always available to this LLM instance.
@@ -190,6 +367,12 @@ class Llm(param.Parameterized):
         # Instance-level client caches
         self._base_client = None
         self._instructor_clients: dict[Mode, Any] = {}
+        self.usage = UsageCollector()
+
+        # Resolved model name from the last invoke()/stream() call.
+        # Set after _resolve_routing() so callers can read which model
+        # actually handled the request (issue #2043).
+        self._resolved_model: str | None = None
 
         if self.logfire_tags is not None and not self._supports_logfire:
             raise ValueError(
@@ -201,6 +384,13 @@ class Llm(param.Parameterized):
                 f"Please specify a 'default' model in the model_kwargs "
                 f"parameter for {self.__class__.__name__}."
             )
+        for spec_name, config in self.model_kwargs.items():
+            routing = config.get("routing") if isinstance(config, dict) else None
+            if routing is not None and not isinstance(routing, dict):
+                raise ValueError(
+                    f"Invalid 'routing' entry for model spec {spec_name!r} in "
+                    f"model_kwargs: expected a dict, got {type(routing).__name__}."
+                )
 
     @param.depends("logfire_tags", watch=True)
     def _update_logfire_tags(self):
@@ -215,12 +405,19 @@ class Llm(param.Parameterized):
         """
         Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
         or as a string that is a model type; else the actual name of the model.
+
+        The ``routing`` and ``description`` keys are routing-only directives and are
+        stripped here so they can never reach a provider's ``get_client`` and from
+        there the SDK constructor. ``_get_model_kwargs`` is the single place every
+        provider resolves its model config, so stripping here protects them all.
         """
         if isinstance(model_spec, dict):
-            return model_spec
-
-        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        return dict(model_kwargs)
+            model_kwargs = dict(model_spec)
+        else:
+            model_kwargs = dict(self.model_kwargs.get(model_spec) or self.model_kwargs["default"])
+        for key in ROUTING_KEYS:
+            model_kwargs.pop(key, None)
+        return model_kwargs
 
     def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
         kwargs = dict(self.create_kwargs)
@@ -238,6 +435,46 @@ class Llm(param.Parameterized):
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
+
+    def capture_usage(self):
+        """Capture provider usage for this LLM in the current async context."""
+        return capture_usage(self)
+
+    def trace(self):
+        """Capture model round trips and tool calls in the current async context."""
+        return capture_trace(self)
+
+    async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        if not is_tracing(self):
+            return await self.run_client(model_spec, messages, **kwargs)
+        started = time.perf_counter()
+        model = model_spec.get("model", "unknown") if isinstance(model_spec, dict) else self.model_kwargs.get(model_spec, {}).get("model", str(model_spec))
+        try:
+            with self.capture_usage() as usage:
+                result = await self.run_client(model_spec, messages, **kwargs)
+        except Exception as exc:
+            record_trace(self, ModelCall(model, messages, None, time.perf_counter() - started, repr(exc), usage.records))
+            raise
+        if not kwargs.get("stream") or not hasattr(result, "__aiter__"):
+            record_trace(self, ModelCall(model, messages, result, time.perf_counter() - started, usage=usage.records))
+            return result
+
+        async def traced_stream():
+            last = None
+            error = None
+            with self.capture_usage() as stream_usage:
+                try:
+                    async for chunk in result:
+                        last = chunk
+                        yield chunk
+                except Exception as exc:
+                    error = repr(exc)
+                    raise
+                finally:
+                    records = usage.records if usage.records else stream_usage.records
+                    record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, records))
+
+        return traced_stream()
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         """Wrap the base client with instructor. Override for non-standard wrapping."""
@@ -375,6 +612,133 @@ class Llm(param.Parameterized):
         files.
         """
 
+    def _route_spec_model(self) -> type[BaseModel]:
+        """The routing response model for the current ``model_kwargs`` keys."""
+        return build_route_spec_model(tuple(self.model_kwargs))
+
+    def _spec_description(self, model_spec: str) -> str | None:
+        """How *model_spec* describes itself to the routing model, if at all.
+
+        An explicit ``description`` on the ``model_kwargs`` entry wins over
+        ``spec_descriptions``, so per-provider config beats the generic
+        agent metadata the UI layer supplies.
+        """
+        config = self.model_kwargs.get(model_spec)
+        if isinstance(config, dict) and "description" in config:
+            return config["description"]
+        return self.spec_descriptions.get(model_spec)
+
+    def _routing_system_prompt(self, model_spec: str) -> str:
+        """Build the dedicated system prompt for the routing call.
+
+        The router is told which task was requested and is given each
+        ``model_kwargs`` entry's description, so it chooses between documented
+        options for a named task rather than guessing from bare key names.
+
+        See ``_spec_description`` for how each option describes itself.
+        """
+        options = "\n".join(
+            f"- {key}: {self._spec_description(key) or 'No description provided.'}"
+            for key, config in self.model_kwargs.items()
+            if isinstance(config, dict)
+        )
+        described = self._spec_description(model_spec)
+        task = f"{model_spec!r} ({described})" if described else repr(model_spec)
+        return (
+            "You are a routing model. Choose the configured model type best "
+            f"suited to handle the request below, which was made for the {task} "
+            "task. Weigh how much capability the request actually needs, so "
+            "simple requests go to cheaper models.\n"
+            "Available model types:\n"
+            f"{options}\n"
+            "Reply with exactly one of the option names above."
+        )
+
+    def _strip_for_routing(self, messages: list[Message]) -> list[Message]:
+        """Prepare messages for the routing call: last user message only, images removed.
+
+        Routing models are chosen for being small and cheap and are typically
+        text-only, so every image shape ``_check_for_image`` can produce has to
+        be dropped here, not just the OpenAI-native content-part dicts.
+        """
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        if not user_msgs:
+            return []
+        last = dict(user_msgs[-1])
+        content = last.get("content")
+        if isinstance(content, list):
+            last["content"] = [
+                item for item in content
+                if not isinstance(item, IMAGE_TYPES)
+                and not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, IMAGE_TYPES):
+            last["content"] = ""
+        return [last]
+
+    def _routing_config(self, model_spec: str) -> dict | None:
+        """The ``routing`` config governing *model_spec*, or None if it is not routed.
+
+        Resolution mirrors ``_get_model_kwargs``: a spec that names no entry
+        falls back to ``'default'``. Actors derive their spec from their class
+        name (``sql``, ``chat``, ``vega_lite``, ...) and providers enumerate
+        only a handful of entries, so without the fallback routing would never
+        fire for the calls Lumen actually makes.
+        """
+        return (self.model_kwargs.get(model_spec) or self.model_kwargs["default"]).get("routing")
+
+    async def _resolve_routing(
+        self,
+        model_spec: str | dict,
+        messages: list[Message],
+    ) -> str | dict:
+        """
+        Pick which ``model_kwargs`` entry to use via a routing model when the
+        entry named by ``model_spec`` declares a ``routing`` config.
+
+        Only string ``model_spec`` values are routed, and only when the entry
+        they resolve to declares ``routing`` (see ``_routing_config``). Dict
+        specs bypass the ``model_kwargs`` lookup entirely, so they are never
+        routed.
+
+        The routing call itself uses a dict spec and ``tools=[]``, so it can
+        never trigger routing for itself nor run the real tool loop. Both
+        the success and fallback paths return a dict config: dict specs
+        bypass ``_resolve_routing`` downstream, so a resolved spec threads
+        through the tool loop and ``stream()`` recursion without being
+        re-resolved (and without paying another routing call per round).
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        routing_spec = self._routing_config(model_spec)
+        if not routing_spec:
+            return model_spec
+
+        routing_spec = dict(routing_spec)
+        routing_prompt = self._routing_system_prompt(model_spec)
+        routing_messages = self._strip_for_routing(messages)
+        try:
+            route = await self.invoke(
+                messages=routing_messages,
+                system=routing_prompt,
+                model_spec=routing_spec,
+                response_model=self._route_spec_model(),
+                tools=[],
+            )
+        except Exception:
+            log_debug(
+                [
+                    f"Routing for {model_spec!r} failed; falling back to {model_spec!r}",
+                    traceback.format_exc(),
+                ],
+                prefix="[LLM routing]",
+                show_sep="above",
+            )
+            return self._get_model_kwargs(model_spec)
+        log_debug(f"Routing {model_spec!r} -> {route.model_spec!r}", prefix="[LLM routing]")
+        return self._get_model_kwargs(route.model_spec)
+
     async def invoke(
         self,
         messages: list[Message],
@@ -383,6 +747,7 @@ class Llm(param.Parameterized):
         allow_partial: bool = False,
         model_spec: str | dict = "default",
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
+        submit_tool: SubmitTool | None = None,
         **input_kwargs,
     ) -> BaseModel | str:
         """
@@ -403,6 +768,11 @@ class Llm(param.Parameterized):
             Tool definitions, FunctionTool, or MCPTool instances to pass through.
             When ``response_model`` is also given, the client runs tool calls in a loop
             until none are requested, then requests the structured response (tools may be unused).
+            Tool errors, unknown tools and invalid arguments are returned to the model as
+            tool results; ``max_tool_rounds`` (default 16) caps the rounds.
+        submit_tool: SubmitTool | None
+            Offer ``response_model`` as a tool so the model can answer inside the tool
+            loop. Requires ``response_model``.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -411,18 +781,34 @@ class Llm(param.Parameterized):
         -------
         The completed response_model.
         """
-        system = system.strip().replace("\n\n", "\n")
+        # Only runs of blank lines left by empty template blocks are squeezed;
+        # single blank lines separate sections the model should see as such.
+        system = re.sub(r"\n{3,}", "\n\n", system.strip())
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
-        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
+        messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
+
+        # Capture the resolved model name so callers can read it via
+        # ``llm._resolved_model`` after invoke() completes (issue #2043).
+        if isinstance(model_spec, dict):
+            self._resolved_model = model_spec.get("model", "unknown")
+        else:
+            config = self.model_kwargs.get(model_spec) or self.model_kwargs.get("default", {})
+            self._resolved_model = config.get("model", str(model_spec))
+
+        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
         combined_tools = self._combine_tools(tools)
         tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
+        submit = None
+        if submit_tool is not None and response_model is not None and not contains_image:
+            submit = SubmitTool(submit_tool.name, submit_tool.description, submit_tool.validate, response_model)
+            tool_specs = [*(tool_specs or []), self._submit_tool_spec(submit)]
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
-        messages, contains_image = self._check_for_image(messages)
         if contains_image:
             # Currently instructor does not support streaming with multimodal
             # https://github.com/567-labs/instructor/issues/1872
@@ -444,6 +830,7 @@ class Llm(param.Parameterized):
             tool_contexts,
             model_spec=model_spec,
             max_tool_rounds=max_tool_rounds,
+            submit=submit,
             **kwargs
         )
         if output is None or output == "":
@@ -457,7 +844,8 @@ class Llm(param.Parameterized):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs
     ) -> BaseModel | str:
         # ``max_retries`` is consumed by the instructor wrapper; on bare-client
@@ -470,45 +858,128 @@ class Llm(param.Parameterized):
             # Return the provider stream and let stream() inspect chunks for tool calls.
             kwargs.pop("response_model", None)
             messages = self._normalize_multimodal_messages(messages)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
+        uses_tools = bool(tool_instances) or submit is not None
         stream = False
-        if structured_model is not None and not tool_instances:
+        if structured_model is not None and not uses_tools:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
         else:
-            if tool_instances:
+            if uses_tools:
                 stream = kwargs.pop("stream", False)
             kwargs.pop("response_model", None)
             # Without response_model the raw client is used, which
             # cannot handle instructor Image objects in list content.
             messages = self._normalize_multimodal_messages(messages)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances:
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
+        if not uses_tools:
             return output
 
+        state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
         messages_curr = list(messages)
-        for _ in range(max_tool_rounds):
+        while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_calls_message = self._tool_calls_message(tool_calls)
-            tool_messages = await self._run_tool_calls(
-                tool_instances, tool_calls, tool_contexts, messages_curr
+            tool_messages, stop = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages_curr, state
             )
-            if not tool_messages:
+            if state.answer is not None:
+                return state.answer
+            messages_curr = messages_curr + [self._tool_calls_message(tool_calls)] + tool_messages
+            if stop:
                 break
-            messages_curr = messages_curr + [tool_calls_message] + tool_messages
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
+            if submit is not None:
+                messages_curr = messages_curr + self._submit_nudge(output, submit)
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
-            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._check_fallback_answer(state, output)
         return output
+
+    async def _check_fallback_answer(self, state: ToolLoopState, output: Any) -> Any:
+        """
+        Hold an answer from the structured fallback call to the submit tool's checks.
+
+        Without this, an answer the submit tool would reject, or one the model
+        never got to correct after the budget ran out, is returned as if accepted.
+        """
+        if state.submit is None or not isinstance(output, state.submit.model):
+            return output
+        if (rejection := await self._accept_submission(state, output)) is not None:
+            raise ValueError(rejection)
+        return state.answer
+
+    def _submit_nudge(self, output: Any, submit: SubmitTool) -> list[Message]:
+        """
+        Messages that carry a text-only reply into the structured fallback call.
+
+        Without them the model's final reasoning, often the query itself, is
+        discarded and the structured call has to reconstruct it.
+        """
+        nudge: list[Message] = []
+        try:
+            text = self._get_content(output) if output is not None else None
+        except Exception:
+            text = None
+        if isinstance(text, str) and text.strip():
+            nudge.append(Message(role="assistant", content=text))
+        nudge.append(Message(
+            role="user",
+            content=f"Return your final answer now in the `{submit.name}` format.",
+        ))
+        return nudge
+
+    @classmethod
+    def _submit_tool_spec(cls, submit: SubmitTool) -> dict[str, Any]:
+        schema = inline_schema_refs(submit.model.model_json_schema())
+        schema.pop("title", None)
+        return {
+            "type": "function",
+            "function": {
+                "name": submit.name,
+                "description": submit.description,
+                "parameters": schema,
+            },
+        }
+
+    async def _run_tool_round(
+        self,
+        tool_instances: dict[str, FunctionTool | MCPTool],
+        tool_calls: list[Any],
+        tool_contexts: dict[str, Any],
+        messages: list[Message],
+        state: ToolLoopState,
+    ) -> tuple[list[Message], bool]:
+        """
+        Answer one round of tool calls and report whether the loop must stop.
+
+        Every call id is answered even when the loop stops, since the provider
+        rejects a follow-up request that leaves a call pending. Past the budget,
+        calls other than a submission are answered as not run and the model
+        gets one more turn; the round after that stops the loop.
+        """
+        exhausted = state.exhausted
+        tool_messages = await self._run_tool_calls(
+            tool_instances, tool_calls, tool_contexts, messages, state=state
+        )
+        if state.answer is not None or not tool_messages:
+            return tool_messages, True
+        if exhausted:
+            stop, state.closed = state.closed, True
+            return tool_messages, stop
+        state.rounds += 1
+        last = dict(tool_messages[-1])
+        last["content"] = f"{last.get('content', '')}{state.budget_note()}"
+        tool_messages[-1] = last  # type: ignore[assignment]
+        return tool_messages, False
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
@@ -529,12 +1000,19 @@ class Llm(param.Parameterized):
         self,
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
     ) -> list[dict[str, Any] | FunctionTool | MCPTool] | None:
-        """Combine instance-level ``self.tools`` with per-call *tools*."""
-        if self.tools and tools:
+        """Combine instance-level ``self.tools`` with per-call *tools*.
+
+        ``tools=None`` means "use instance tools"; an explicit empty list opts
+        out of instance tools entirely (used by the routing call so the routing
+        model never runs the real tool loop).
+        """
+        if tools is None:
+            return list(self.tools) if self.tools else None
+        if not tools:
+            return []
+        if self.tools:
             return list(self.tools) + list(tools)
-        elif self.tools:
-            return list(self.tools)
-        return tools
+        return list(tools)
 
     @classmethod
     def _normalize_tools(
@@ -543,7 +1021,7 @@ class Llm(param.Parameterized):
     ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool | MCPTool], dict[str, Any]]:
         tool_instances: dict[str, FunctionTool | MCPTool] = {}
         tool_contexts: dict[str, Any] = {}
-        if tools is None:
+        if not tools:
             return None, tool_instances, tool_contexts
         tool_specs: list[dict[str, Any]] = []
         for tool in tools:
@@ -553,6 +1031,7 @@ class Llm(param.Parameterized):
             else:
                 tool_context = None
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
+                # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
                 from .tools import FunctionTool
                 tool = FunctionTool(tool)
             if hasattr(tool, "_model"):
@@ -705,6 +1184,12 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _parse_tool_call(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None]:
+        name, args, call_id, _ = cls._parse_tool_call_strict(call)
+        return name, args, call_id
+
+    @classmethod
+    def _parse_tool_call_strict(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None, str | None]:
+        """Parse a tool call, also returning a description of malformed arguments."""
         if isinstance(call, dict):
             function = call.get("function") or {}
             name = function.get("name") or call.get("name")
@@ -715,12 +1200,92 @@ class Llm(param.Parameterized):
             name = getattr(function, "name", None) if function else None
             args = getattr(function, "arguments", None) if function else {}
             call_id = getattr(call, "id", None)
-        if isinstance(args, str):
+        error = None
+        # Some models double-encode the arguments as a JSON string.
+        for _ in range(2):
+            if not isinstance(args, str):
+                break
+            if not args.strip():
+                args = {}
+                break
             try:
                 args = json.loads(args)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                error = f"Arguments are not valid JSON ({e.msg} at position {e.pos}): {truncate_string(args, 300)}"
                 args = {}
-        return name, args or {}, call_id
+        if not isinstance(args, dict):
+            error = f"Arguments must be a JSON object, got {type(args).__name__}."
+            args = {}
+        return name, args or {}, call_id, error
+
+    @staticmethod
+    def _describe_tool_parameters(tool: FunctionTool | MCPTool) -> str:
+        schema = tool._model.model_json_schema()
+        required = set(schema.get("required", []))
+        params = [
+            f"{name} ({'required' if name in required else 'optional'})"
+            for name in schema.get("properties", {})
+        ]
+        return ", ".join(params) or "none"
+
+    @classmethod
+    def _validate_tool_arguments(cls, tool: FunctionTool | MCPTool, arguments: dict[str, Any]) -> str | None:
+        """Check model-supplied arguments against the tool's pydantic model before running it."""
+        model = getattr(tool, "_model", None)
+        if model is None:
+            return None
+        unexpected = [key for key in arguments if key not in model.model_fields]
+        if unexpected:
+            return (
+                f"Unexpected argument(s) {', '.join(map(repr, unexpected))} for {tool.name!r}. "
+                f"Parameters: {cls._describe_tool_parameters(tool)}."
+            )
+        try:
+            model.model_validate(arguments)
+        except ValidationError as e:
+            # Context-injected requirements are not the model's to supply.
+            details = format_validation_error(e, skip=tool.requires)
+            if details:
+                return (
+                    f"Invalid arguments for {tool.name!r}: {details}. "
+                    f"Parameters: {cls._describe_tool_parameters(tool)}."
+                )
+        return None
+
+    async def _check_submission(self, state: ToolLoopState, arguments: dict[str, Any]) -> str | None:
+        """Accept a submission into ``state.answer`` or return why it was rejected."""
+        name = state.submit.name
+        try:
+            answer = state.submit.model.model_validate(arguments)
+        except ValidationError as e:
+            return f"Invalid {name} arguments: {format_validation_error(e)}. Fix them and call {name} again."
+        return await self._accept_submission(state, answer)
+
+    async def _accept_submission(self, state: ToolLoopState, answer: BaseModel) -> str | None:
+        submit = state.submit
+        if submit.validate is not None:
+            try:
+                result = submit.validate(answer)
+                if inspect.isawaitable(result):
+                    await result
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as e:
+                name = submit.name
+                return f"{name} rejected: {format_tool_error(e)}\nFix the problem and call {name} again."
+        state.answer = answer
+        return None
+
+    async def _execute_tool(self, tool: FunctionTool | MCPTool, arguments: dict[str, Any]) -> Any:
+        # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
+        from .tools import FunctionTool, MCPTool
+        if isinstance(tool, MCPTool):
+            return await tool.execute(**arguments)
+        if isinstance(tool, FunctionTool):
+            if inspect.iscoroutinefunction(tool.function):
+                return await tool.function(**arguments)
+            return await asyncio.to_thread(tool.function, **arguments)
+        raise TypeError(f"Unsupported tool type for {tool.name!r}: {type(tool)!r}")
 
     async def _run_tool_calls(
         self,
@@ -728,81 +1293,129 @@ class Llm(param.Parameterized):
         tool_calls: list[Any],
         tool_contexts: dict[str, Any],
         messages: list[Message],
+        state: ToolLoopState | None = None,
     ) -> list[Message]:
-        from .tools import FunctionTool, MCPTool
+        """
+        Run one round of tool calls and answer every call id.
 
-        async def run_single_tool_call(call: Any) -> Message | None:
-            name, arguments, call_id = self._parse_tool_call(call)
-            if not name:
-                log_debug(
-                    f"LLM tool call skipped: missing tool name (call_id={call_id!r})",
-                    prefix="[LLM tools]",
-                )
-                return None
-            if name not in tool_instances:
-                log_debug(
-                    "LLM tool call skipped: unknown tool "
-                    f"{name!r} (call_id={call_id!r}); registered: {sorted(tool_instances)}",
-                    prefix="[LLM tools]",
-                )
-                return None
+        Unanswered call ids make most providers reject the next request, and a
+        raised exception throws away the whole attempt, so malformed calls,
+        unknown tools, invalid arguments and tool exceptions all come back to
+        the model as tool results it can act on. Identical calls to read-only
+        tools are answered from ``state.results`` instead of being re-executed.
+
+        A submission is checked after the round's other calls have run, so
+        side effects the model requested alongside it are not dropped.
+        """
+        state = state if state is not None else ToolLoopState()
+        parsed = [self._parse_tool_call_strict(call) for call in tool_calls]
+        exhausted = state.exhausted
+
+        contents: list[str | None] = [None] * len(parsed)
+        submission: int | None = None
+        if state.submit is not None:
+            for i, (name, _, _, error) in enumerate(parsed):
+                if name != state.submit.name:
+                    continue
+                if error:
+                    contents[i] = f"{error} Fix the arguments and call {name} again."
+                elif submission is not None:
+                    contents[i] = "Only the first submission in a round is checked."
+                else:
+                    submission = i
+
+        async def run(name: str, arguments: dict[str, Any], call_id: str | None) -> tuple[str, bool]:
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
             for requirement in tool.requires:
                 if requirement not in arguments and requirement in context:
                     arguments[requirement] = context[requirement]
+            if (invalid := self._validate_tool_arguments(tool, arguments)) is not None:
+                return invalid, False
+            args_repr = truncate_string(json.dumps(arguments, default=str, ensure_ascii=False), max_length=4000)
+            log_debug(
+                f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
+                prefix="[LLM tools]",
+            )
             try:
-                args_repr = truncate_string(
-                    json.dumps(arguments, default=str, ensure_ascii=False),
-                    max_length=4000,
-                )
+                formatted = self._format_tool_result(await self._execute_tool(tool, arguments))
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as e:
                 log_debug(
-                    f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
-                    prefix="[LLM tools]",
-                )
-                if isinstance(tool, MCPTool):
-                    result = await tool.execute(**arguments)
-                elif isinstance(tool, FunctionTool):
-                    if asyncio.iscoroutinefunction(tool.function):
-                        result = await tool.function(**arguments)
-                    else:
-                        # Synchronous function, run in thread
-                        result = await asyncio.to_thread(tool.function, **arguments)
-                else:
-                    raise TypeError(f"Unsupported tool type for {name!r}: {type(tool)!r}")
-                formatted = self._format_tool_result(result)
-                log_debug(
-                    f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
-                    f"{truncate_string(formatted, max_length=16000)}",
-                    prefix="[LLM tools]",
-                    show_length=True,
-                )
-            except Exception:
-                log_debug(
-                    [
-                        f"LLM tool call failed tool={name!r} call_id={call_id!r}",
-                        traceback.format_exc(),
-                    ],
+                    [f"LLM tool call failed tool={name!r} call_id={call_id!r}", traceback.format_exc()],
                     prefix="[LLM tools]",
                     show_sep="above",
                 )
-                raise
-            return Message(
-                role="tool",
-                content=formatted,
-                name=name,
-                tool_call_id=call_id,
+                return f"Tool {name!r} failed: {format_tool_error(e)}", False
+            log_debug(
+                f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
+                f"{truncate_string(formatted, max_length=16000)}",
+                prefix="[LLM tools]",
+                show_length=True,
             )
-        results = await asyncio.gather(
-            *(run_single_tool_call(call) for call in tool_calls)
-        )
-        return [msg for msg in results if msg is not None]
+            return formatted, True
+
+        valid_tools = [*tool_instances, *([state.submit.name] if state.submit else [])]
+        keys: list[str | None] = [None] * len(parsed)
+        first: dict[str, int] = {}
+        pending: dict[int, asyncio.Future] = {}
+        for i, (name, arguments, call_id, error) in enumerate(parsed):
+            if contents[i] is not None or i == submission:
+                continue
+            if not name:
+                contents[i] = f"Tool call is missing a tool name. Valid tools: {', '.join(sorted(valid_tools))}."
+            elif name not in tool_instances:
+                contents[i] = format_unknown_name("tool", name, valid_tools)
+            elif error:
+                contents[i] = f"{error} Parameters: {self._describe_tool_parameters(tool_instances[name])}."
+            elif exhausted:
+                contents[i] = state.not_run_note()
+            else:
+                # A repeated call to a tool with side effects must run again,
+                # e.g. re-applying a filter another call has since replaced.
+                if getattr(tool_instances[name], "read_only", False):
+                    key = json.dumps([name, arguments], sort_keys=True, default=str)
+                    keys[i] = key
+                    if key in state.results or key in first:
+                        continue
+                    first[key] = i
+                pending[i] = asyncio.ensure_future(run(name, dict(arguments), call_id))
+
+        outcomes = dict(zip(pending, await asyncio.gather(*pending.values()), strict=True)) if pending else {}
+        for i, (content, ok) in outcomes.items():
+            contents[i] = content
+            # Failures are not cached, so a transient error can be retried.
+            if ok and keys[i] is not None:
+                state.results[keys[i]] = content
+        for i, key in enumerate(keys):
+            if key is None or i in outcomes:
+                continue
+            earlier = state.results.get(key)
+            if earlier is None:
+                earlier = contents[first[key]]
+            contents[i] = DUPLICATE_TOOL_CALL_NOTE + earlier
+
+        if submission is not None:
+            rejection = await self._check_submission(state, parsed[submission][1])
+            contents[submission] = "accepted" if rejection is None else rejection
+
+        tool_messages: list[Message] = []
+        for (name, arguments, call_id, _), content in zip(parsed, contents, strict=True):
+            record_trace(self, ToolCall(str(name), dict(arguments), content))
+            tool_messages.append(Message(
+                role="tool",
+                content=content,
+                name=name or "unknown",
+                tool_call_id=call_id,
+            ))
+        return tool_messages
 
     async def initialize(self, log_level: str):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
             self._ready = True
@@ -843,9 +1456,15 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        # Tool rounds recurse through stream(), so the budget and the call
+        # cache travel with the recursion instead of resetting each round.
+        tool_state = kwargs.pop("_tool_state", None) or ToolLoopState(
+            max_rounds=int(kwargs.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))
+        )
         combined_tools = self._combine_tools(tools)
         _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
         if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
                 messages,
@@ -930,8 +1549,16 @@ class Llm(param.Parameterized):
 
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
-            tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
-            if tool_messages:
+            tool_messages, stop = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages, tool_state
+            )
+            if stop:
+                log_debug(
+                    f"Tool budget of {tool_state.max_rounds} rounds exhausted; ending the stream.",
+                    prefix="[LLM tools]",
+                )
+            else:
+                kwargs["_tool_state"] = tool_state
                 if (
                     getattr(self, "api", None) == "responses"
                     and hasattr(self, "_tool_messages_to_response_inputs")
@@ -973,11 +1600,11 @@ class Llm(param.Parameterized):
                 role = message["type"]
             if role == "system":
                 content = message.get("content", "")
-                log_debug(f"System prompt ({len(content)} chars):\n\033[90m{content}\033[0m")
+                log_debug(f"System prompt:\n\033[90m{content}\033[0m", show_length=True)
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:
-                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
+                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=10000)
             role_char = role[0]
             log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
             if previous_role == role and not role.startswith("tool"):
@@ -998,8 +1625,291 @@ class Llm(param.Parameterized):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
+
+
+class LlmCli(Llm):
+    """Base class for locally authenticated coding CLIs.
+
+    These providers invoke an already authenticated local CLI instead of handling
+    credentials. Lumen renders its messages as a text prompt and sends it over
+    standard input. Each subclass parses the CLI-specific response format to
+    obtain the final text response. For structured responses, Lumen appends the
+    Pydantic JSON Schema to the prompt, extracts the returned JSON value, and
+    validates it against the response model.
+
+    They are intended for local development only: output is collected after the
+    command completes and native Lumen function tools are not forwarded to the
+    CLI.
+    """
+
+    executable = param.String(default="", constant=True, doc="Path or name of the CLI executable.")
+
+    working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
+        Working directory for CLI subprocesses. By default, the CLI inherits the
+        directory from which Lumen was launched.""")
+
+    _supports_stream = False
+    _supports_model_stream = False
+    _supports_vision = False
+
+    def _create_base_client(self, **kwargs) -> Any:
+        raise NotImplementedError("CLI-backed providers do not create an SDK client.")
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        messages, contains_image = super()._check_for_image(messages)
+        if contains_image:
+            raise ValueError(f"{self.display_name} does not support image inputs.")
+        return messages, False
+
+    @staticmethod
+    def _content_to_text(content: str | Image | list[dict[str, Any]]) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text", "")))
+                    else:
+                        parts.append(json.dumps(item, default=str, ensure_ascii=False))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
+        return str(content)
+
+    def _messages_to_prompt(self, messages: list[Message]) -> str:
+        rendered = []
+        for message in messages:
+            role = message.get("role", "user").upper()
+            content = self._content_to_text(message.get("content", ""))
+            tool_calls = message.get("tool_calls")
+            if not content and tool_calls:
+                content = json.dumps(tool_calls, default=str, ensure_ascii=False)
+            rendered.append(f"[{role}]\n{content}")
+        return "\n\n".join(rendered)
+
+    @staticmethod
+    def _extract_json(output: str) -> Any:
+        """Extract the first JSON value from a CLI response."""
+        output = output.strip()
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(output):
+            if character not in "[{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(output[index:])
+            except json.JSONDecodeError:
+                continue
+            return value
+        raise ValueError("The CLI did not return valid JSON for Lumen's structured response.")
+
+    def _structured_prompt(self, prompt: str, response_model: type[BaseModel]) -> str:
+        schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+        return (
+            f"{prompt}\n\n"
+            "Return only one JSON value matching this JSON Schema. Do not use Markdown, "
+            "explain the answer, or call tools.\n"
+            f"JSON Schema:\n{schema}"
+        )
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.working_dir,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(prompt.encode("utf-8")), timeout=self.timeout
+            )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(
+                f"{self.display_name} did not finish within {self.timeout:g} seconds."
+            ) from exc
+
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        if process.returncode:
+            detail = stderr_text.strip() or stdout_text.strip() or "no error output"
+            detail = truncate_string(detail, max_length=4000)
+            raise RuntimeError(
+                f"{self.display_name} exited with status {process.returncode}: {detail}"
+            )
+        return stdout_text
+
+    def _build_command(self, model: str | None) -> list[str]:
+        raise NotImplementedError
+
+    def _decode_output(self, output: str) -> str:
+        raise NotImplementedError
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
+        **kwargs,
+    ) -> BaseModel | str:
+        if tool_instances:
+            log_debug(
+                "CLI providers do not support native Lumen tools; continuing without them.",
+                prefix="[LLM tools]",
+            )
+        kwargs.pop("tools", None)
+        return await super()._run_tool_loop(
+            messages,
+            structured_model,
+            {},
+            {},
+            model_spec=model_spec,
+            max_tool_rounds=max_tool_rounds,
+            **kwargs,
+        )
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        model = self._get_model_kwargs(model_spec).get("model")
+        prompt = self._messages_to_prompt(messages)
+        if response_model is not None:
+            prompt = self._structured_prompt(prompt, response_model)
+
+        command = self._build_command(model)
+        log_debug(f"CLI command: \033[96m{' '.join(command)} <stdin>\033[0m")
+        stdout = await self._run_command(command, prompt)
+        output = self._decode_output(stdout)
+
+        if response_model is not None:
+            try:
+                result = response_model.model_validate(self._extract_json(output))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{self.display_name} returned an invalid structured response: {exc}"
+                ) from exc
+        else:
+            result = output
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
+        return result
+
+
+class CodexCli(LlmCli):
+    """Use the locally authenticated Codex CLI as a Lumen provider."""
+
+    display_name = param.String(default="Codex CLI", constant=True)
+
+    executable = param.String(default="codex", constant=True)
+
+    sandbox = param.Selector(
+        default="read-only",
+        objects=["read-only", "workspace-write", "danger-full-access"],
+        constant=True,
+        doc="Codex sandbox policy. The safe read-only policy is the default.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "exec", "--json", "--sandbox", self.sandbox,
+            "--skip-git-repo-check", "--ephemeral",
+        ]
+        if model:
+            command.extend(["--model", model])
+        return [*command, "-"]
+
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item = event.get("item") if isinstance(event, dict) else None
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or item.get("content")
+                if text:
+                    final_message = str(text)
+        if final_message is None:
+            raise ValueError("Codex CLI did not return a final agent message.")
+        return final_message.strip()
+
+
+class ClaudeCode(LlmCli):
+    """Use the locally authenticated Claude Code CLI as a Lumen provider."""
+
+    display_name = param.String(default="Claude Code CLI", constant=True)
+
+    executable = param.String(default="claude", constant=True)
+
+    permission_mode = param.Selector(
+        default="plan",
+        objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
+        constant=True,
+        doc="Claude Code permission mode. The non-writing plan mode is the default.",
+    )
+
+    max_turns = param.Integer(
+        default=3,
+        bounds=(1, None),
+        constant=True,
+        doc="Maximum Claude Code turns per Lumen request, including internal tool calls.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "--print", "--output-format", "json",
+            "--no-session-persistence", "--max-turns", str(self.max_turns),
+            "--permission-mode", self.permission_mode,
+        ]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    def _decode_output(self, output: str) -> str:
+        try:
+            response = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Claude Code CLI returned invalid JSON.") from exc
+        if not isinstance(response, dict):
+            raise ValueError("Claude Code CLI returned an unexpected JSON response.")
+        if response.get("is_error"):
+            raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
+        if "result" not in response:
+            raise ValueError("Claude Code CLI response did not include a result.")
+        return str(response["result"]).strip()
 
 
 class LlamaCpp(Llm, LlamaCppMixin):
@@ -1034,14 +1944,20 @@ class LlamaCpp(Llm, LlamaCppMixin):
     # LlamaCpp doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
 
-    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
-        if isinstance(model_spec, dict):
-            return model_spec
+    def _routing_config(self, model_spec: str) -> dict | None:
+        # A repo id names a model directly rather than resolving to an entry,
+        # so routing must not override a model the caller asked for by name.
+        if model_spec not in self.model_kwargs and "/" in model_spec:
+            return None
+        return super()._routing_config(model_spec)
 
-        if model_spec in self.model_kwargs or "/" not in model_spec:
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        if isinstance(model_spec, dict) or model_spec in self.model_kwargs or "/" not in model_spec:
             model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            base_kwargs = self.model_kwargs["default"]
+            # super() strips the routing keys, so the resolved repo id inherits
+            # a base config that is already safe to hand to the SDK.
+            base_kwargs = super()._get_model_kwargs("default")
             model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
         if "n_ctx" not in model_kwargs:
@@ -1112,11 +2028,12 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-5.4-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
+        "default": {"model": "gpt-5.6-luna"},  # Runs with reasoning disabled; see _reasoning_models
         "ui": {"model": "gpt-5.4-nano"},
     })
 
     select_models = param.List(default=[
+        "gpt-5.6-luna",
         "gpt-5.2",
         "gpt-5-mini",
         "gpt-5-nano",
@@ -1128,6 +2045,12 @@ class OpenAI(Llm, OpenAIMixin):
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     _supports_logfire = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Per-model request fixes learned from the API, e.g. gpt-5.6-luna
+        # rejecting a non-default temperature. See ADAPTIVE_KWARGS.
+        self._kwarg_fixes: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def _resolve_openai_mode(cls, mode: Mode) -> Mode:
@@ -1184,6 +2107,10 @@ class OpenAI(Llm, OpenAIMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(async_client=True, **kwargs)
+        if self.api == "responses":
+            meter_method(self, client.responses, "create", "openai")
+        else:
+            meter_method(self, client.chat.completions, "create", "openai")
         if self.logfire_tags:
             self._logfire.instrument_openai(client)
         return client
@@ -1316,55 +2243,63 @@ class OpenAI(Llm, OpenAIMixin):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs
     ) -> BaseModel | str:
         if self.api != "responses":
             return await super()._run_tool_loop(
-                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
+                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds,
+                submit=submit, **kwargs
             )
 
         max_retries = kwargs.pop("max_retries", None)
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
             for t in kwargs.get("tools", [])
         )
 
+        uses_tools = bool(tool_instances) or has_inbuilt or submit is not None
         # When there are NO inbuilt tools and NO function-tool instances we
         # can ask for the structured response in a single round-trip.
-        if structured_model is not None and not tool_instances and not has_inbuilt:
+        if structured_model is not None and not uses_tools:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
         else:
             kwargs.pop("response_model", None)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances and not has_inbuilt:
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
+        if not uses_tools:
             return output
 
-        for _ in range(max_tool_rounds):
+        state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
+        # Outputs for the calls of the last response, which a request chained
+        # onto it through previous_response_id must include.
+        pending_outputs: list[dict[str, Any]] = []
+        while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_messages = await self._run_tool_calls(
-                tool_instances, tool_calls, tool_contexts, messages
+            tool_messages, stop = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages, state
             )
-            if not tool_messages:
-                break
+            if state.answer is not None:
+                return state.answer
             tool_outputs = self._tool_messages_to_response_inputs(tool_messages)
-            if not tool_outputs:
+            if stop or not tool_outputs:
+                pending_outputs = tool_outputs
                 break
             next_kwargs = dict(kwargs)
             response_id = getattr(output, "id", None)
             if response_id:
                 next_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
+            output = await self._traced_run_client(model_spec, tool_outputs, **next_kwargs)
 
         if structured_model:
             final_kwargs = dict(kwargs)
@@ -1374,7 +2309,12 @@ class OpenAI(Llm, OpenAIMixin):
             response_id = getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, [], **final_kwargs)
+            final_messages = list(pending_outputs) if response_id else list(messages)
+            if submit is not None:
+                # The previous response already holds the model's text reply.
+                final_messages += self._submit_nudge(None if response_id else output, submit)
+            output = await self._traced_run_client(model_spec, final_messages, **final_kwargs)
+            output = await self._check_fallback_answer(state, output)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
@@ -1401,7 +2341,42 @@ class OpenAI(Llm, OpenAIMixin):
         # Add timeout to the partial
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    def _apply_kwarg_fixes(self, model: str, kwargs: dict[str, Any]):
+        for key, value in self._kwarg_fixes.get(model, {}).items():
+            if value is None:
+                kwargs.pop(key, None)
+            else:
+                kwargs[key] = value
+
+    def _learn_kwarg_fix(self, model: str, error: openai.BadRequestError) -> bool:
+        """
+        Record how to satisfy a model that rejected a request parameter,
+        returning whether anything new was learned. Explicit ``create_kwargs``
+        are never overridden, so a deliberate choice still surfaces its error.
+        """
+        fixes = self._kwarg_fixes.setdefault(model, {})
+        if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
+            return False
+        fixes[error.param] = ADAPTIVE_KWARGS[error.param]
+        log_debug(f"Adapting to \033[96m{model!r}\033[0m: {error.param}={fixes[error.param]!r}")
+        return True
+
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        model = self._get_model_kwargs(model_spec)["model"]
+        self._apply_kwarg_fixes(model, kwargs)
+        while True:
+            try:
+                return await self._send(model_spec, messages, **kwargs)
+            except Exception as e:
+                # instructor re-raises provider errors wrapped in its own
+                # retry exception, so the 400 is found on the cause chain.
+                error = find_bad_request(e)
+                # Each retry records one more parameter, so this terminates.
+                if error is None or not self._learn_kwarg_fix(model, error):
+                    raise
+                self._apply_kwarg_fixes(model, kwargs)
+
+    async def _send(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
         if self.api == "chat_completions":
             return await super().run_client(model_spec, messages, **kwargs)
 
@@ -1411,7 +2386,7 @@ class OpenAI(Llm, OpenAIMixin):
             kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
         client = await self.get_client(model_spec, **kwargs)
         result = await client(input=messages, **kwargs)
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -1447,7 +2422,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return {**instance_kwargs, **model_kwargs}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(async_client=True, **kwargs)
+        client = self._instantiate_client(async_client=True, **kwargs)
+        meter_method(self, client.chat.completions, "create", "openai")
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         if self.interceptor:
@@ -1503,7 +2480,10 @@ class MistralAI(Llm, MistralAIMixin):
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
@@ -1554,7 +2534,10 @@ class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     ], constant=True, doc="Available models for selection dropdowns")
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
 
 class Anthropic(Llm, AnthropicMixin):
@@ -1602,6 +2585,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
+        meter_method(self, client.messages, "create", "anthropic")
         if self.logfire_tags:
             self._logfire.instrument_anthropic(client)
         return client
@@ -1802,6 +2786,13 @@ class Anthropic(Llm, AnthropicMixin):
         cache_control = self._cache_control()
         if cache_control is not None:
             kwargs["cache_control"] = cache_control
+            # Automatic caching only writes at the end of the conversation, so
+            # a new question never reuses the previous one's tools+system
+            # prefix. An explicit breakpoint on the system prompt does.
+            if isinstance(kwargs.get("system"), str) and kwargs["system"]:
+                kwargs["system"] = [
+                    {"type": "text", "text": kwargs["system"], "cache_control": cache_control}
+                ]
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
@@ -1809,7 +2800,7 @@ class Anthropic(Llm, AnthropicMixin):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
     @classmethod
@@ -1858,13 +2849,15 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
 
     def _create_base_client(self, **kwargs) -> Any:
         from anthropic.lib.bedrock import AsyncAnthropicBedrock
-        return AsyncAnthropicBedrock(
+        client = AsyncAnthropicBedrock(
             aws_access_key=self.aws_access_key_id,
             aws_secret_key=self.api_key,
             aws_session_token=self.aws_session_token,
             aws_region=self.region_name,
             **kwargs
         )
+        meter_method(self, client.messages, "create", "anthropic")
+        return client
 
 
 class Bedrock(Llm, BedrockMixin):
@@ -2006,14 +2999,21 @@ class Bedrock(Llm, BedrockMixin):
 
         if stream:
             resp = await asyncio.to_thread(self._base_client.converse_stream, **call_kwargs)
-            return self._wrap_stream(resp)
+            return self._wrap_stream(resp, model, contextvars.copy_context())
         else:
             resp = await asyncio.to_thread(self._base_client.converse, **call_kwargs)
+            usage = parse_usage(resp, "bedrock", model, self.usage_pricing)
+            if usage is not None:
+                record_usage(self, self.usage, usage)
             return resp["output"]["message"]["content"][0]["text"]
 
-    async def _wrap_stream(self, response):
+    async def _wrap_stream(self, response, model, context):
         """Wrap synchronous Bedrock stream as async generator."""
         for chunk in response["stream"]:
+            if "metadata" in chunk:
+                usage = parse_usage(chunk, "bedrock", model, self.usage_pricing)
+                if usage is not None:
+                    context.run(record_usage, self, self.usage, usage)
             yield chunk
 
     @classmethod
@@ -2082,7 +3082,10 @@ class Google(Llm, GenAIMixin):
     def _create_base_client(self, **kwargs) -> Any:
         if self.logfire_tags:
             self._logfire.instrument_google_genai()
-        return self._instantiate_client()
+        client = self._instantiate_client()
+        meter_method(self, client.aio.models, "generate_content", "google")
+        meter_method(self, client.aio.models, "generate_content_stream", "google", stream_method=True)
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_genai(base_client, mode=mode, use_async=True)
@@ -2495,12 +3498,6 @@ class MLX(Llm):
             # Override to use OpenAI-compatible wrapper
             self._instructor_wrapper = "openai"
 
-    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
-        if isinstance(model_spec, dict):
-            return model_spec
-        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        return dict(model_kwargs)
-
     def _load_mlx_model(self, model_id: str) -> tuple:
         """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
         if model_id not in self._mlx_models:
@@ -2636,7 +3633,7 @@ class MLX(Llm):
                 self._create_chat_completion, messages, model=model_spec, **kwargs
             )
 
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -2782,7 +3779,7 @@ class WebLLM(Llm):
         self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
         try:
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
         except Exception as e:
@@ -2883,6 +3880,7 @@ class LiteLLM(Llm):
             if self.fallback_models:
                 router_kwargs['fallbacks'] = self.fallback_models
             self._router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+            meter_method(self, self._router, "acompletion", "openai")
         return self._router
 
     @property
@@ -2979,3 +3977,44 @@ class OpenRouter(OpenAI):
             for model in response.json().get("data", [])
             if model.get("id")
         }
+
+
+class Kilo(OpenAI):
+    """
+    An LLM implementation using the Kilo API.
+
+    Kilo provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Kilo has a free tier, but for other models,
+    optionally set the ``KILO_API_KEY`` environment variable or pass ``api_key``
+    directly. The provider is auto-detected when
+    ``KILO_API_KEY`` is present, or can be selected explicitly with
+    ``--provider kilo``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
+
+    display_name = param.String(
+        default="Kilo",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://api.kilo.ai/api/gateway",
+        doc="The Kilo API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "kilo-auto/free"},
+    })
+
+    select_models = param.List(default=[
+        "kilo-auto/free",
+        "kilo-auto/balanced",
+        "kilo-auto/efficient",
+        "kilo-auto/frontier",
+    ], constant=True, doc="Available Kilo models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Kilo."""
+        return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}

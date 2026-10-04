@@ -16,15 +16,16 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.config import PROMPTS_DIR
+from lumen.ai.config import PROMPTS_DIR, EmptyResultError
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
-    IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
-    collapse_indexed_columns, content_to_text, describe_data,
-    find_slug_by_table_name, format_msg_content, fuse_messages, get_schema,
+    FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
+    apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
+    count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
+    format_tool_error, fuse_messages, get_schema, inline_schema_defs,
     mutate_user_message, parse_huggingface_url, render_template, report_error,
-    retry_llm_output, serialize_image_content, set_content_text,
-    slug_to_table_name,
+    retry_llm_output, sanitize_column_names, serialize_image_content,
+    set_content_text, slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -110,9 +111,9 @@ def test_collapse_indexed_columns_alternate_separators():
 def test_render_template_with_valid_template():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        "What topic of data?\n\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
@@ -123,10 +124,10 @@ def test_render_template_with_valid_template():
 def test_render_template_with_override():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?\n"
-        "Its Lumen"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        "What topic of data?\n"
+        "Its Lumen\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen", "tools": ""}, current_datetime=now).strip()
@@ -210,6 +211,46 @@ class TestRetryLLMOutput:
         with pytest.raises(unrecoverable_error, match="Failed"):
             await mock_func(errors=["Failed"])
         assert mock_sleep.call_count == 0
+
+    @patch("asyncio.sleep", return_value=None)
+    async def test_async_retry_kwargs_and_ansi_codes(self, mock_sleep):
+        calls = []
+
+        @retry_llm_output(retries=3)
+        async def mock_func(raise_if_empty=True, errors=None):
+            calls.append((raise_if_empty, errors and list(errors)))
+            if raise_if_empty:
+                raise EmptyResultError("no \x1b[4mrows\x1b[0m")
+            return "Accepted"
+
+        assert await mock_func() == "Accepted"
+        assert calls == [(True, None), (False, ["no rows"])]
+
+
+class TestInlineSchemaDefs:
+
+    def test_nested_refs_are_inlined(self):
+        schema = {
+            "properties": {"steps": {"items": {"$ref": "#/$defs/Step"}, "type": "array"}},
+            "$defs": {
+                "Step": {"properties": {"actor": {"$ref": "#/$defs/Actor", "description": "Who"}}},
+                "Actor": {"enum": ["SQLAgent"], "type": "string"},
+            },
+        }
+        assert inline_schema_defs(schema) == {
+            "properties": {"steps": {"items": {"properties": {"actor": {
+                "enum": ["SQLAgent"], "type": "string", "description": "Who",
+            }}}, "type": "array"}},
+        }
+
+    def test_recursive_refs_stay_referenced(self):
+        schema = {
+            "properties": {"root": {"$ref": "#/$defs/Node"}},
+            "$defs": {"Node": {"properties": {"children": {"items": {"$ref": "#/$defs/Node"}, "type": "array"}}}},
+        }
+        inlined = inline_schema_defs(schema)
+        assert inlined["properties"]["root"]["properties"]["children"]["items"] == {"$ref": "#/$defs/Node"}
+        assert inlined["$defs"] == schema["$defs"]
 
 
 
@@ -770,6 +811,7 @@ class TestFuseMessagesMultimodal:
         assert len(result) == 2
         assert result[0]["role"] == "system"
         assert "first" in result[0]["content"]
+        assert result[0]["content"].endswith("\n</Chat History>")
         assert result[1] == msgs[-1]
 
     def test_multimodal_user_content_in_history(self):
@@ -865,3 +907,111 @@ class TestMutateUserMessageMultimodal:
         assert original[0]["content"] == ["query", img]
         # Result should have the mutation
         assert img in result[0]["content"]
+
+
+# -------------------------------------------------------------------
+# count_tokens / truncate_to_tokens
+# -------------------------------------------------------------------
+
+class TestCountTokens:
+
+    def test_empty_string(self):
+        assert count_tokens("") == 0
+
+    def test_counts_tokens(self):
+        # Exact counts are tokenizer-specific; assert the shape of the answer
+        # rather than a magic number, so a vocab change doesn't break the suite.
+        assert count_tokens("hello world") >= 2
+        assert count_tokens("hello world " * 100) > count_tokens("hello world")
+
+    def test_falls_back_when_encoder_unavailable(self):
+        """A missing tokenizer must degrade to a char estimate, not raise."""
+        text = "a" * 300
+        with patch("lumen.ai.utils._get_token_encoder", return_value=None):
+            assert count_tokens(text) == pytest.approx(300 / FALLBACK_CHARS_PER_TOKEN, abs=1)
+
+    def test_encoder_is_cached(self):
+        from lumen.ai.utils import _get_token_encoder
+        assert _get_token_encoder() is _get_token_encoder()
+
+    def test_encoder_failure_is_soft(self):
+        """A tokenizer that fails to load yields None rather than propagating."""
+        from lumen.ai import utils
+        with patch.dict(utils._TOKEN_ENCODER_CACHE, clear=True):
+            with patch.dict("sys.modules", {"tiktoken": None}):
+                # `import tiktoken` raises ImportError when the module is None.
+                assert utils._get_token_encoder() is None
+                assert utils.count_tokens("some text") > 0
+
+
+class TestTruncateToTokens:
+
+    def test_under_budget_is_unchanged(self):
+        text = "line one\nline two"
+        assert truncate_to_tokens(text, 1000) == text
+
+    def test_over_budget_respects_cap(self):
+        text = "\n".join(f"row {i} has a value of {i * 3.14159}" for i in range(300))
+        result = truncate_to_tokens(text, 100)
+        assert count_tokens(result) <= 100
+        assert len(result) < len(text)
+
+    def test_reports_what_was_dropped(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        result = truncate_to_tokens(text, 60)
+        assert "truncated, showing" in result
+        assert "tokens)" in result
+
+    def test_cuts_on_a_line_boundary(self):
+        """The last retained line must be whole, so YAML/tables stay parseable."""
+        lines = [f"key_{i}: value_{i}" for i in range(300)]
+        result = truncate_to_tokens("\n".join(lines), 100)
+        body = result.split("\n")[:-1]  # drop the appended note
+        assert body
+        assert all(line in lines for line in body)
+
+    def test_single_oversized_line(self):
+        """One line longer than the whole budget still respects the cap."""
+        result = truncate_to_tokens("x" * 5000, 50)
+        assert count_tokens(result) <= 50
+
+    def test_custom_marker(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        assert "elided, showing" in truncate_to_tokens(text, 60, marker="elided")
+
+
+@pytest.mark.parametrize("columns, expected", [
+    (["a b", "c!d"], ["a_b", "cd"]),
+    (["ok", "fine_2"], ["ok", "fine_2"]),
+    (["total ($)", "50% off"], ["total_", "50_off"]),
+    # Two names that sanitize to one keep both columns, as they always have.
+    (["a b", "a_b"], ["a_b", "a_b"]),
+])
+def test_sanitize_column_names(columns, expected):
+    df = pd.DataFrame([list(range(len(columns)))], columns=columns)
+    sanitized = sanitize_column_names(df)
+    assert list(sanitized.columns) == expected
+    assert sanitized.values.tolist() == df.values.tolist()
+
+
+def test_sanitize_column_names_leaves_the_caller_alone():
+    """The DeckGL agent renames a frame it does not own, so writing to the
+    result must not reach back into the pipeline's cached data."""
+    df = pd.DataFrame({"a b": [1, 2]})
+    sanitized = sanitize_column_names(df)
+    sanitized.iloc[0, 0] = 99
+    assert list(df.columns) == ["a b"]
+    assert df.iloc[0, 0] == 1
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("GET https://api.x/v1?key=SECRET failed", "GET https://api.x/v1?<redacted> failed"),
+    ("postgresql://user:pw@host/db?sslkey=k down", "postgresql://<redacted>@host/db?<redacted> down"),
+    ('Binder Error: column "a?b" not found', 'Binder Error: column "a?b" not found'),
+])
+def test_format_tool_error_redacts_url_secrets(text, expected):
+    assert format_tool_error(text) == expected
+
+
+def test_format_tool_error_truncates():
+    assert len(format_tool_error(ValueError("x" * 5000), max_length=200)) <= 200

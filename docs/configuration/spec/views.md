@@ -694,4 +694,4 @@ Now that you can visualize data:
 - **[Customization guide](customization.md)** - Build custom view types
 - **[Deployment guide](deployment.md)** - Deploy your dashboard
 
-For complete plot options, see the [hvPlot reference](https://hvplot.holoviz.org/reference/index.html).
+For complete plot options, see the [hvPlot reference](https://hvplot.holoviz.org/en/docs/latest/ref/index.html).

@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import os
 import tempfile
@@ -14,6 +15,7 @@ from lumen.transforms.sql import SQLGroupBy
 try:
     import duckdb
 
+    from lumen.sources.base import QueryTimeoutError
     from lumen.sources.duckdb import DuckDBSource
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
@@ -1401,6 +1403,150 @@ def test_duckdb_geometry_returns_geodataframe():
     assert str(result.geometry.dtype) == 'geometry'
 
 
+def _backend_source():
+    return DuckDBSource(
+        uri=':memory:',
+        initializers=[
+            "CREATE TABLE t AS SELECT i::BIGINT AS n, (i * 1.5) AS amount, "
+            "(DATE '2020-01-01' + i::INTEGER) AS day, "
+            "('c' || (i % 3)::VARCHAR) AS g FROM range(20) tbl(i)"
+        ],
+        tables={'t': 'SELECT * FROM t'},
+    )
+
+
+def test_native_fetch_builds_an_arrow_table_not_a_reader():
+    """arrow() answers with a Table up to duckdb 1.3 and a RecordBatchReader
+    from 1.4, and Pipeline.data takes only the Table."""
+    pa = pytest.importorskip("pyarrow")
+
+    source = _backend_source()
+    source.dataframe_backend = 'pyarrow'
+    fetched = source.fetch("SELECT * FROM t")
+    assert isinstance(fetched, pa.Table)
+    assert fetched.num_rows == 20
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_native_fetch_matches_pandas(backend):
+    """A frame DuckDB builds natively must hold what the pandas one holds."""
+    pytest.importorskip(backend)
+    from lumen.util import as_narwhals, as_pandas
+
+    query = "SELECT * FROM t"
+    native = _backend_source()
+    native.dataframe_backend = backend
+    fetched = native.fetch(query)
+    assert as_narwhals(fetched).implementation.name.lower() == backend
+
+    expected = _backend_source().fetch(query)
+    # check_dtype is off on purpose. DuckDB types i*1.5 as DECIMAL, which
+    # fetch_df widens to float64 while arrow and polars keep it a Decimal, and
+    # a DATE comes back as datetime.date through arrow but datetime64 through
+    # polars. The values are the same either way, which is what is asserted.
+    pd.testing.assert_frame_equal(
+        as_pandas(fetched).astype({'day': 'datetime64[us]'}),
+        expected.astype({'day': 'datetime64[us]'}),
+        check_dtype=False,
+    )
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_native_fetch_keeps_date_a_date(backend):
+    """A DATE must stay a date, not silently become a string or a number.
+
+    get fetches with date_as_object, so the pandas path yields datetime.date.
+    DuckDB's own frames type the column Date and date32 respectively; both are
+    real date types, and both have to carry the same days.
+    """
+    pytest.importorskip(backend)
+    import narwhals.stable.v2 as nw
+
+    native = _backend_source()
+    native.dataframe_backend = backend
+    frame = nw.from_native(native.fetch("SELECT * FROM t"))
+    assert isinstance(frame.collect_schema()['day'], (nw.Date, nw.Datetime))
+
+    expected = _backend_source().fetch("SELECT * FROM t")['day']
+    assert [d.year for d in expected] == [2020] * 20
+    days = frame.get_column('day').to_list()
+    assert [dt.date(d.year, d.month, d.day) for d in days] == list(expected)
+
+
+def _sql_geometry_source():
+    """A GEOMETRY table built in SQL alone, so no geopandas is needed.
+
+    The geopandas-backed _spatial_source skips wherever geopandas is absent,
+    which is every environment in pixi.toml, so a test written against it
+    never runs. The rule under test here holds without it.
+    """
+    try:
+        return DuckDBSource(
+            uri=':memory:',
+            initializers=[
+                "INSTALL spatial;", "LOAD spatial;",
+                "CREATE TABLE geo_tbl AS SELECT 'a' AS name, ST_Point(0, 0) AS geometry "
+                "UNION ALL SELECT 'b', ST_Point(1, 1)",
+            ],
+            tables={'geo': 'SELECT * FROM geo_tbl'},
+        )
+    except Exception as e:  # pragma: no cover - needs network on first install
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_native_fetch_geometry_stays_pandas(backend):
+    """Geometry has no narwhals dtype, so it must not leave pandas at all.
+
+    Not merely 'is not fetched natively': converting the pandas frame after
+    fetching it is just as bad, because the column comes out the far side as
+    opaque bytes, drops from the schema, and renders a blank map with nothing
+    raising.
+    """
+    pytest.importorskip(backend)
+    source = _sql_geometry_source()
+    source.dataframe_backend = backend
+    result = source.get('geo')
+    assert isinstance(result, pd.DataFrame)
+    assert 'geometry' in result.columns
+    assert 'geometry' in source.get_schema('geo')
+
+
+def test_native_fetch_geometry_returns_geodataframe():
+    """With geopandas present the geometry column is still a real geometry."""
+    pytest.importorskip("polars")
+    source, gpd = _spatial_source()
+    source.dataframe_backend = 'polars'
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert str(result.geometry.dtype) == 'geometry'
+
+
+def test_duckdb_geometry_crs_read_from_column_type(tmp_path):
+    """ST_Read reports a CRS-carrying column as GEOMETRY('EPSG:4326'), so the
+    type must be matched by prefix and the CRS taken from it."""
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    path = tmp_path / 'shapes.geojson'
+    gpd.GeoDataFrame(
+        {'name': ['a']},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1)])],
+        crs='EPSG:4326',
+    ).to_file(path, driver='GeoJSON')
+    try:
+        source = DuckDBSource(
+            uri=':memory:',
+            initializers=["INSTALL spatial;", "LOAD spatial;"],
+            tables={'geo': f"SELECT * FROM ST_Read('{path}')"},
+        )
+    except Exception as e:  # pragma: no cover - environment dependent
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert result.crs.to_epsg() == 4326
+
+
 def test_duckdb_geometry_crs_none_by_default():
     """Without geometry_crs set the CRS stays None (WKB carries none); no regression."""
     source, gpd = _spatial_source()
@@ -1408,7 +1554,7 @@ def test_duckdb_geometry_crs_none_by_default():
 
 
 def test_duckdb_geometry_crs_preserved():
-    """geometry_crs is reapplied when rebuilding the GeoDataFrame (gh-1904)."""
+    """geometry_crs is reapplied when rebuilding the GeoDataFrame."""
     source, gpd = _spatial_source()
     source.geometry_crs = 'EPSG:4326'
     result = source.get('geo')
@@ -1417,7 +1563,7 @@ def test_duckdb_geometry_crs_preserved():
 
 
 def test_duckdb_geometry_crs_propagates_to_derived_source():
-    """A source created via create_sql_expr_source keeps geometry_crs (gh-1904)."""
+    """A source created via create_sql_expr_source keeps geometry_crs."""
     source, gpd = _spatial_source()
     source.geometry_crs = 'EPSG:4326'
     derived = source.create_sql_expr_source(
@@ -1425,6 +1571,99 @@ def test_duckdb_geometry_crs_propagates_to_derived_source():
     )
     assert derived.geometry_crs == 'EPSG:4326'
     assert derived.get('geo').crs.to_epsg() == 4326
+
+
+def _geo_frame():
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    return gpd.GeoDataFrame(
+        {'name': ['a', 'b']},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(2, 0), (3, 0), (3, 1)]),
+        ],
+        crs='EPSG:4326',
+    )
+
+
+def _skip_if_spatial_unavailable(e: Exception):
+    # pragma: no cover - needs network on first install
+    if 'spatial' in str(e).lower():
+        pytest.skip(f"duckdb spatial extension unavailable: {e}")
+    raise e
+
+
+def test_duckdb_from_df_geodataframe_keeps_crs():
+    """A GeoDataFrame handed to from_df lands as a native GEOMETRY table and
+    keeps its CRS through the WKB roundtrip. DuckDB's pandas scanner rejects
+    the geometry dtype outright, so this previously raised."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    # the CRS travels on the GEOMETRY('EPSG:4326') column type, not the
+    # source-wide fallback param
+    assert source.geometry_crs is None
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_from_df_geodataframes_keep_distinct_crs():
+    """Each ingested table records its own CRS on the column type, so two
+    tables with different CRS do not share one source-wide label."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(
+            tables={'wgs': gdf, 'mercator': gdf.to_crs('EPSG:3857')}
+        )
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    assert source.get('wgs').crs.to_epsg() == 4326
+    assert source.get('mercator').crs.to_epsg() == 3857
+
+
+def test_duckdb_ingest_flips_between_geometry_and_plain():
+    """Re-ingesting under the same name may flip between the view a plain
+    frame gets and the table a geometry frame needs (e.g. a mirrored Pipeline
+    update gaining or losing geometry); neither direction may raise."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    source._ingest_table('geo', pd.DataFrame({'name': ['a']}))  # table -> view
+    assert list(source.execute('SELECT * FROM geo').columns) == ['name']
+    source._ingest_table('geo', gdf)  # view -> table
+    assert source.execute('SELECT * FROM geo').crs.to_epsg() == 4326
+
+
+def test_duckdb_geometry_ingest_quotes_identifiers():
+    """Identifiers with embedded quotes survive the ingest SQL."""
+    gdf = _geo_frame().rename(columns={'name': 'na"me'})
+    try:
+        source = DuckDBSource.from_df(tables={'geo': gdf})
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert 'na"me' in result.columns
+    assert result.crs.to_epsg() == 4326
+
+
+def test_duckdb_geodataframe_mirror_keeps_crs():
+    """A GeoDataFrame mirror lands as a native GEOMETRY table and keeps its
+    CRS."""
+    gdf = _geo_frame()
+    try:
+        source = DuckDBSource(
+            uri=':memory:', mirrors={'geo': gdf}, tables={'geo': 'SELECT * FROM geo'}
+        )
+    except duckdb.Error as e:
+        _skip_if_spatial_unavailable(e)
+    result = source.get('geo')
+    assert isinstance(result, gpd.GeoDataFrame)
+    assert result.crs.to_epsg() == 4326
 
 
 def test_duckdb_get_schema_geometry_no_distinct():
@@ -1438,3 +1677,95 @@ def test_duckdb_get_schema_geometry_no_distinct():
     # non-geometry columns still summarised as usual
     assert schema['pop']['inclusiveMinimum'] == 1
     assert schema['pop']['inclusiveMaximum'] == 2
+
+
+def test_file_table_key_survives_normalization(tmp_path):
+    """A registered file-based table must be findable by its own name.
+
+    File-based keys were normalized with a bare non-word substitution while
+    every lookup goes through ``normalize_table``, which also strips leading
+    and trailing underscores. An absolute path starts with a separator and so
+    produced a leading underscore, leaving the source unable to resolve the
+    table it had just registered. That broke ``lumen-ai serve /abs/path.csv``
+    for any absolute path.
+    """
+    csv = tmp_path / "sales.csv"
+    pd.DataFrame({"region": ["North", "South"], "revenue": [10, 20]}).to_csv(csv, index=False)
+
+    source = DuckDBSource(tables={str(csv): str(csv)}, uri=":memory:")
+
+    (table,) = source.get_tables()
+    assert not table.startswith("_")
+    assert source.normalize_table(table) in source.tables
+    assert len(source.get(table)) == 2
+
+
+@pytest.fixture
+def table_function_source(tmp_path):
+    orders, refunds = tmp_path / "orders.csv", tmp_path / "refunds.json"
+    pd.DataFrame({"order_id": [1, 2, 3], "status": ["paid", "paid", "cancelled"]}).to_csv(orders, index=False)
+    refunds.write_text('[{"order_id": 1, "refund": 5}, {"order_id": 3, "refund": 7}]')
+    return DuckDBSource(uri=":memory:", tables={
+        "orders": f"read_csv('{orders}')",
+        "refunds": f"read_json_auto('{refunds}')",
+    })
+
+
+def test_table_function_expression_is_queryable_by_name(table_function_source):
+    assert table_function_source.tables["orders"].startswith("read_csv(")
+    result = table_function_source.execute("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid'")
+    assert result["n"].tolist() == [2]
+
+
+def test_sql_expr_source_joins_table_functions_by_name(table_function_source):
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    derived = table_function_source.create_sql_expr_source({"joined": sql})
+    assert derived.get("joined").values.tolist() == [[1, 5], [3, 7]]
+
+
+def test_missing_tables_are_inlined_across_a_join(table_function_source):
+    table_function_source._connection.execute("DROP VIEW orders")
+    table_function_source._connection.execute("DROP VIEW refunds")
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    with table_function_source._connection.cursor() as cursor:
+        rows = table_function_source._execute_resolving_tables(cursor, sql).fetchall()
+    assert rows == [(1, 5), (3, 7)]
+
+
+def test_missing_table_outside_the_source_raises_original_error(table_function_source):
+    with pytest.raises(duckdb.CatalogException, match="nope"):
+        table_function_source.create_sql_expr_source({"bad": "SELECT * FROM nope JOIN orders USING (order_id)"})
+
+
+def test_failed_view_creation_is_logged(tmp_path, caplog):
+    DuckDBSource(uri=":memory:", tables={"orders": f"read_csv('{tmp_path / 'missing.csv'}')"})
+    assert "could not create a view for table 'orders'" in caplog.text
+
+
+def test_missing_table_resolves_case_insensitively():
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 AS id"})
+    source._connection.execute("DROP VIEW orders")
+    with pytest.raises(duckdb.CatalogException) as excinfo:
+        source.execute("SELECT * FROM ORDERS")
+    assert source.missing_table(excinfo.value) == "orders"
+    assert source.missing_table(ValueError("Table with name orders does not exist!")) is None
+
+
+async def test_execute_with_timeout_interrupts_the_query():
+    source = DuckDBSource(uri=":memory:")
+    connection, cursors = source._connection, []
+
+    class RecordingConnection:
+        def cursor(self):
+            cursors.append(connection.cursor())
+            return cursors[-1]
+
+    source._connection = RecordingConnection()
+    slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
+    with pytest.raises(QueryTimeoutError, match="0.1 seconds"):
+        await source.execute_with_timeout(slow, 0.1)
+    await asyncio.sleep(0.2)
+    # The worker closes its cursor once the interrupted statement returns.
+    with pytest.raises(duckdb.ConnectionException):
+        cursors[0].execute("SELECT 1")
+    assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]

@@ -11,6 +11,7 @@ except ModuleNotFoundError:
 import vl_convert
 
 from lumen.ai.agents.vega_lite import VegaLiteAgent
+from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.utils import category_palette, normalize_vegalite_spec
 from lumen.config import dump_yaml
@@ -77,6 +78,15 @@ def test_normalize_vegalite_spec_adds_geographic_interactivity():
     assert spec["projection"]["type"] == "mercator"
     assert "scale" in {p.get("name") for p in spec["params"]}
     assert "layer" in spec
+
+
+def test_main_prompt_guards_ungrouped_multi_series_lines():
+    """A categorical column left un-aggregated and un-split joins its rows into
+    one zigzagging line, so the split-or-aggregate guidance must survive as a
+    pair rather than collapse to neither escape hatch."""
+    text = (PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2").read_text()
+    assert "zigzag" in text
+    assert "aggregate" in text.lower()
 
 
 CATEGORICAL_SPEC = {
@@ -149,3 +159,107 @@ def test_palette_reaches_the_compiled_vega_scale():
     compiled = vl_convert.vegalite_to_vega(spec)
 
     assert compiled["config"]["range"]["category"] == category_palette()
+
+
+class TestGeoshapeGeometryValidation:
+    """A geoshape over a table with no geometry compiles cleanly and draws nothing,
+    so validation has to reject it or the only symptom is an empty canvas."""
+
+    BOUNDARIES = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+
+    def test_rejects_geoshape_bound_to_the_table(self):
+        spec = {
+            "data": {"name": "avg_pm25_by_state"},
+            "projection": {"type": "albersUsa"},
+            "layer": [{
+                "mark": {"type": "geoshape", "stroke": "white"},
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+            "transform": [{
+                "lookup": "properties.name",
+                "from": {
+                    "data": {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}},
+                    "key": "properties.name",
+                    "fields": ["state"],
+                },
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_boundaries_as_primary_data(self):
+        spec = {
+            "data": {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}},
+            "transform": [{
+                "lookup": "properties.name",
+                "from": {"data": {"name": "t"}, "key": "state", "fields": ["avg_pm25"]},
+            }],
+            "mark": "geoshape",
+            "projection": {"type": "albersUsa"},
+            "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_omitted_data_for_own_geometry(self):
+        """The table's own geometry is injected at render time, so the spec has no data."""
+        spec = {
+            "mark": "geoshape",
+            "projection": {"type": "naturalEarth1"},
+            "encoding": {"color": {"field": "properties.avg_pm25", "type": "quantitative"}},
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_the_two_layer_base_plus_join_pattern(self):
+        """The base layer keeps regions the table does not cover on the map."""
+        boundaries = {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}}
+        spec = {
+            "projection": {"type": "albersUsa"},
+            "layer": [
+                {"data": boundaries, "mark": {"type": "geoshape", "fill": "#eeeeee"}},
+                {
+                    "data": boundaries,
+                    "transform": [{
+                        "lookup": "properties.name",
+                        "from": {"data": {"name": "t"}, "key": "state", "fields": ["avg_pm25"]},
+                    }],
+                    "mark": "geoshape",
+                    "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+                },
+            ],
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_rejects_a_layer_bound_to_the_table(self):
+        spec = {
+            "projection": {"type": "albersUsa"},
+            "layer": [{
+                "data": {"name": "t"},
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_rejects_a_layer_inheriting_table_bound_data(self):
+        """A layer with no data of its own uses its parent's, so the check follows it."""
+        spec = {
+            "data": {"name": "t"},
+            "layer": [{
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_leaves_non_geographic_charts_alone(self):
+        spec = {
+            "data": {"name": "t"},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "state", "type": "nominal"},
+                "y": {"field": "avg_pm25", "type": "quantitative"},
+            },
+        }
+        VegaLiteEditor.validate_spec(spec)

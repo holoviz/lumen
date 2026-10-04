@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,13 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
     DataFrame = pd.DataFrame
+
+# How each dialect's driver reports a table it cannot find
+MISSING_TABLE_PATTERNS = {
+    "sqlite": re.compile(r"no such table:\s*\"?([^\s\"]+)\"?"),
+    "postgresql": re.compile(r"relation\s+\"([^\"]+)\"\s+does not exist"),
+    "mysql": re.compile(r"Table\s+'(?:[^'.]+\.)?([^'.]+)'\s+doesn't exist"),
+}
 
 
 class SQLAlchemySource(BaseSQLSource):
@@ -214,6 +222,12 @@ class SQLAlchemySource(BaseSQLSource):
             # Fallback to dialect-agnostic (None) if detection fails.
             return None
 
+    def missing_table(self, error: Exception) -> str | None:
+        pattern = MISSING_TABLE_PATTERNS.get(self.dialect)
+        if pattern is None or not (match := pattern.search(str(error))):
+            return None
+        return match.group(1)
+
     def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
         Creates a new SQL Source given a set of table names and
@@ -367,7 +381,7 @@ class SQLAlchemySource(BaseSQLSource):
             sql_expr = st.apply(sql_expr)
 
         params = self.table_params.get(table, None)
-        df = self.execute(sql_expr, params)
+        df = self.fetch(sql_expr, params)
         if not self.filter_in_sql:
             df = Filter.apply_to(df, conditions=conditions)
         return df

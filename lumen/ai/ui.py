@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import os
 import tempfile
+import traceback
 
 from contextlib import contextmanager
 from functools import partial
@@ -61,7 +62,8 @@ from .llm import Llm, OpenAI, get_available_llm
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Report, Section
+from .report import ActorTask, Section
+from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
     wrap_logfire,
@@ -455,7 +457,7 @@ class UI(Viewer):
     source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
-    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadSourceControls.
         Common options include 'accepted_filetypes' and 'max_file_size'.
         See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
 
@@ -503,6 +505,8 @@ class UI(Viewer):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
         self._current_mode = "Exploration"
+        self._report = None
+        self._report_plans = None
         if self.logfire_tags is not None:
             if self.llm._supports_logfire:
                 self.llm.logfire_tags = self.logfire_tags
@@ -687,6 +691,9 @@ class UI(Viewer):
 
         source = DuckDBSource(
             initializers=result.source_params.get('initializers', []),
+            # WKB carries no CRS, so re apply the one read_geo_file captured
+            # from the file after the roundtrip
+            geometry_crs=result.source_params.get('geometry_crs'),
             tables={},
             uri=':memory:',
         )
@@ -742,7 +749,6 @@ class UI(Viewer):
             self._chat_input.disabled = False
             self.interface.disabled = False
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
@@ -820,6 +826,21 @@ class UI(Viewer):
         """Whether an exploration should be shown in split view."""
         return exploration is not self._home
 
+    def _exploration_plans(self, item) -> list[Plan]:
+        """The item's plan followed by every followup plan below it, in reading
+        order. Followups nest arbitrarily deep, so descending a single level
+        would drop the newest explorations from the report."""
+        plans = [item["view"].plan]
+        for child in item["items"]:
+            plans += self._exploration_plans(child)
+        return plans
+
+    def _select_exploration(self, item):
+        """Picking an exploration in the navigation leaves report mode and
+        returns to the chat showing that exploration."""
+        if self._is_report_mode():
+            self._handle_sidebar_event(self._sidebar_menu.items[0])
+
     @hold()
     def _update_main_view(self, force_report_mode: bool | None = None):
         """
@@ -852,10 +873,22 @@ class UI(Viewer):
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
             else:
-                main_content = Report(
-                    *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                      for item in self._explorations.items[1:])
-                )
+                sections = [
+                    (item["view"].plan.title, self._exploration_plans(item))
+                    for item in self._explorations.items[1:]
+                ]
+                plans = tuple(plan for _, section_plans in sections for plan in section_plans)
+                # Reuse the report unless the explorations changed, so a story
+                # written on it survives a trip back to the chat. Building the
+                # sections is what reparents the plans, so it has to stay
+                # inside this branch.
+                if plans != self._report_plans:
+                    self._report = StoryReport(
+                        *(Section(*section_plans, title=title) for title, section_plans in sections),
+                        llm=self.llm,
+                    )
+                    self._report_plans = plans
+                main_content = self._report
             self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
         else:
@@ -1440,7 +1473,7 @@ class UI(Viewer):
 
         self._explorations = MenuList(
             items=[self._exploration], value=self.param._exploration, show_children=True,
-            dense=True, margin=0, sizing_mode='stretch_width',
+            dense=True, margin=0, on_click=self._select_exploration, sizing_mode='stretch_width',
             sx={".mui-light .MuiBox-root": {"backgroundColor": "var(--mui-palette-grey-100)"}},
         )
         self._explorations.param.watch(self._cleanup_explorations, 'items')
@@ -1585,7 +1618,7 @@ class UI(Viewer):
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
-        if hasattr(self, '_cta'):
+        if self._cta is not None:
             self._cta.object = self._get_status_text()
 
         if hasattr(self, '_input_tabs'):
@@ -1643,6 +1676,24 @@ class UI(Viewer):
         """Handle visibility changes from SourceCatalog by re-syncing the coordinator."""
         if hasattr(self, '_coordinator'):
             await self._coordinator.sync(self.context)
+
+    def _ensure_model_label(self, message) -> None:
+        """Embed the resolved model name into *message.timestamp_format*.
+
+        Reads the resolved model name from ``self.llm._resolved_model``
+        (set by ``Llm.invoke()`` after routing).  The model name is
+        appended to the existing timestamp format string so the rendered
+        footer reads e.g. ``09:23 AM (used gpt-5.6-luna)``.
+        """
+        if not getattr(self, "llm", None):
+            return
+        model_name = getattr(self.llm, "_resolved_model", None)
+        if not model_name:
+            return
+        fmt = message.timestamp_format or "%H:%M"
+        if f"(used {model_name})" in fmt:
+            return
+        message.timestamp_format = f"{fmt} (used {model_name})"
 
     def _add_suggestions_to_footer(
         self,
@@ -1748,8 +1799,9 @@ class UI(Viewer):
 
         if len(self.interface):
             message = self.interface.objects[-1]
+            self._ensure_model_label(message)
             if inplace:
-                footer_objects = message.footer_objects or []
+                footer_objects = list(message.footer_objects or [])
                 prev_suggestions = [obj for obj in footer_objects if obj.name == "Suggestions"]
                 if prev_suggestions:
                     prev_suggestions[0][:] = list(suggestion_buttons)
@@ -1790,7 +1842,7 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor", "texteditor"},
                 css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page
@@ -1798,7 +1850,7 @@ class UI(Viewer):
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor", "texteditor"},
             notifications=True,
             css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
         )
@@ -1949,7 +2001,13 @@ class ExplorerUI(UI):
         if not hasattr(self, '_page'):
             return
         exploration, report = self._sidebar_menu.items[:2]
-        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
+        # Report mode owns the active state while it is on, so the Explore item
+        # keeps the outlined icon it gets when switching to the report.
+        in_report = report["active"]
+        self._sidebar_menu.update_item(
+            exploration, active=not in_report,
+            icon="insert_chart_outlined" if in_report else "insert_chart",
+        )
         self._update_main_view()
 
     def _handle_llm_dialog(self, event):
@@ -2263,6 +2321,8 @@ class ExplorerUI(UI):
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
         """Propagate source keys into the active exploration's context."""
+        if self._exploration is None:
+            return
         exploration = self._exploration.get('view')
         if exploration is None or exploration is self._home:
             return
@@ -2795,6 +2855,10 @@ class ExplorerUI(UI):
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
 
+            if self.interface.objects:
+                last_message = self.interface.objects[-1]
+                self._ensure_model_label(last_message)
+
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
             return
@@ -2802,7 +2866,7 @@ class ExplorerUI(UI):
         # On error we have to sync the conversation, unwatch the plan,
         # and remove the exploration if it was newly create
         last_message = self.interface.objects[-1]
-        footer_objects = last_message.footer_objects or []
+        self._ensure_model_label(last_message)
         buttons = []
         if is_new:
             replan_button = Button(
@@ -2814,13 +2878,13 @@ class ExplorerUI(UI):
                 description="Rerun with the same plan and context"
             )
             buttons = [rerun_button, replan_button]
-        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in footer_objects):
+        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in last_message.footer_objects or []):
             retry_button = Button(
                 label="Retry", icon="replay", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
                 description="Try re-running failed steps"
             )
             buttons = [retry_button]
-        last_message.footer_objects = footer_objects + buttons
+        last_message.footer_objects = list(last_message.footer_objects or []) + buttons
         if exploration.parent:
             exploration.parent.conversation = exploration.conversation
 

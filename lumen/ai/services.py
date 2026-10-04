@@ -1,3 +1,4 @@
+import json
 import os
 
 from abc import abstractmethod
@@ -19,6 +20,7 @@ PROVIDER_ENV_VARS = {
     "groq": "GROQ_API_KEY",
     "ai-catalyst": "AI_CATALYST_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
+    "kilo": "KILO_API_KEY",
 }
 
 
@@ -216,8 +218,6 @@ class LlamaCppMixin(ServiceMixin):
         if not huggingface_models:
             return
 
-        import json
-
         from huggingface_hub import hf_hub_download
         print(f"{cls.__name__} provider is downloading following models:\n\n{json.dumps(huggingface_models, indent=2)}")  # noqa: T201
         for kwargs in model_kwargs_dict.values():
@@ -242,7 +242,14 @@ class APIKeyServiceMixin(ServiceMixin):
 
     def __init__(self, **params):
         if "api_key" not in params:
-            params["api_key"] = os.environ.get(self.api_key_env_var)
+            # Only override when the variable is actually set. os.environ.get
+            # returns None otherwise, which overwrote subclass defaults: Ollama
+            # declares api_key="ollama" and does not accept None, so it could
+            # not be constructed at all unless OPENAI_API_KEY happened to be
+            # set, despite needing no key of its own.
+            api_key = os.environ.get(self.api_key_env_var)
+            if api_key:
+                params["api_key"] = api_key
         super().__init__(**params)
 
     def _instantiate_client_kwargs(self, **extra_kwargs) -> dict:

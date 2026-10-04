@@ -1,0 +1,1059 @@
+"""Covers frames from dataframe libraries other than pandas.
+
+The ``constructor`` fixture builds the same data in pandas, polars and pyarrow,
+so each test here runs once per backend and skips the ones that are not
+installed. Every assertion is either that the three backends agree, or that a
+pandas caller gets back exactly what it got before.
+"""
+import datetime as dt
+
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pandas as pd
+import param
+import pytest
+import yaml
+
+from lumen.filters.base import ConstantFilter
+from lumen.pipeline import DataFrame as PipelineDataFrame, Pipeline
+from lumen.sources.base import DerivedSource, InMemorySource, Source
+from lumen.transforms.base import (
+    Aggregate, Columns, DropNA, Filter as FilterTransform, HistoryTransform,
+    Iloc, Melt, Query, Rename, Sample, Sort,
+)
+from lumen.util import (
+    _NULLABLE_DTYPES, as_narwhals, as_pandas, get_dataframe_schema,
+    is_lazyframe,
+)
+from lumen.views.base import Table, hvPlotView
+
+
+class ParamHolder(param.Parameterized):
+    """Isolates the Pipeline.data parameter from Pipeline's own construction."""
+
+    data = PipelineDataFrame()
+
+
+def rows(frame):
+    """Row count for a frame from any of the three backends."""
+    return len(as_pandas(frame))
+
+
+def test_pipeline_data_accepts_backend(constructor):
+    frame = constructor({"i": [0, 1]})
+    holder = ParamHolder()
+    holder.data = frame
+    # Read the stored value directly: the parameter's __get__ is Pipeline's
+    # resolve-on-access hook, which ParamHolder cannot satisfy.
+    assert holder._param__private.values["data"] is frame
+
+
+@pytest.mark.parametrize("value", [{"i": [0]}, [0, 1], "frame", 3])
+def test_pipeline_data_still_rejects_non_frames(value):
+    with pytest.raises(ValueError, match="expects a pandas DataFrame"):
+        ParamHolder().data = value
+
+
+def test_schema_matches_across_backends(constructor):
+    data = {
+        "i": [0, 1, 2],
+        "f": [0.5, 1.5, 2.5],
+        "s": ["foo", "bar", "foo"],
+        "b": [True, False, True],
+    }
+    schema = get_dataframe_schema(constructor(data))["items"]["properties"]
+    assert schema["i"] == {"type": "integer", "inclusiveMinimum": 0, "inclusiveMaximum": 2}
+    assert schema["f"] == {"type": "number", "inclusiveMinimum": 0.5, "inclusiveMaximum": 2.5}
+    assert schema["s"] == {"type": "string", "enum": ["foo", "bar"]}
+    assert schema["b"] == {"type": "boolean"}
+
+
+def test_schema_datetime_across_backends(constructor):
+    data = {"d": [dt.datetime(2020, 1, 1), dt.datetime(2020, 1, 3)]}
+    schema = get_dataframe_schema(constructor(data))["items"]["properties"]
+    assert schema["d"] == {
+        "type": "string",
+        "inclusiveMinimum": "2020-01-01T00:00:00",
+        "inclusiveMaximum": "2020-01-03T00:00:00",
+        "format": "datetime",
+    }
+
+
+def test_schema_column_subset_across_backends(constructor):
+    frame = constructor({"i": [0, 1], "s": ["a", "b"]})
+    assert set(get_dataframe_schema(frame, columns=["s"])["items"]["properties"]) == {"s"}
+
+
+def test_schema_all_null_datetime_matches_pandas(constructor):
+    data = {"d": pd.Series([None, None], dtype="datetime64[ns]")}
+    reference = get_dataframe_schema(pd.DataFrame(data))["items"]["properties"]
+    schema = get_dataframe_schema(constructor(data))["items"]["properties"]
+    assert schema["d"] == reference["d"]
+
+
+def test_schema_empty_frame_matches_pandas(constructor):
+    data = {"i": pd.Series([], dtype="int64"), "s": pd.Series([], dtype="object")}
+    reference = get_dataframe_schema(pd.DataFrame(data))["items"]["properties"]
+    schema = get_dataframe_schema(constructor(data))["items"]["properties"]
+    # A None type is what auto_filters keys off, so it has to survive.
+    assert schema["i"]["type"] is reference["i"]["type"] is None
+
+
+def test_schema_decimal_is_not_truncated_to_integer():
+    pa = pytest.importorskip("pyarrow")
+    frame = pa.table({"d": pa.array([Decimal("1.5"), Decimal("2.5")], pa.decimal128(5, 2))})
+    assert get_dataframe_schema(frame)["items"]["properties"]["d"] == {
+        "type": "number", "inclusiveMinimum": 1.5, "inclusiveMaximum": 2.5
+    }
+
+
+def test_schema_omits_dtypes_no_filter_understands():
+    pa = pytest.importorskip("pyarrow")
+    frame = pa.table({"d": pa.array([1, 2], pa.duration("s")), "i": [0, 1]})
+    properties = get_dataframe_schema(frame)["items"]["properties"]
+    assert set(properties) == {"i"}
+
+
+@pytest.mark.parametrize("conditions, expected", [
+    ([("i", 1)], 1),
+    ([("s", ["a", "b"])], 3),
+    ([("i", (1, 2))], 2),
+    ([("i", [(0, 0), (3, 3)])], 2),
+    ([("i", (1, 2)), ("s", ["a"])], 1),
+    ([("missing", 1)], 4),
+    ([("s", [])], 4),
+])
+def test_filter_matches_across_backends(constructor, conditions, expected):
+    data = {"i": [0, 1, 2, 3], "s": ["a", "b", "a", "c"]}
+    reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=conditions)
+    result = as_pandas(FilterTransform.apply_to(constructor(data), conditions=conditions))
+    assert len(reference) == expected
+    assert result["i"].tolist() == reference["i"].tolist()
+
+
+@pytest.mark.parametrize("value, expected", [
+    (["a", None, "b"], ["a", None, "b"]),
+    ([None], [None]),
+    (["a"], ["a"]),
+])
+def test_filter_enum_containing_null(constructor, value, expected):
+    """The schema emits None inside the enum of a nullable column, and that
+    enum is fed straight back as a filter value by the auto-generated widgets.
+    """
+    data = {"s": ["a", None, "b"]}
+    reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=[("s", value)])
+    result = as_pandas(FilterTransform.apply_to(constructor(data), conditions=[("s", value)]))
+    kept = [None if pd.isna(v) else v for v in result["s"]]
+    assert kept == [None if pd.isna(v) else v for v in reference["s"]] == expected
+
+
+def test_filter_with_nulls_matches_pandas(constructor):
+    data = {"v": [1.0, 2.0, None, 4.0]}
+    conditions = [("v", [(1.0, 2.0), (4.0, 5.0)])]
+    reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=conditions)
+    assert rows(FilterTransform.apply_to(constructor(data), conditions=conditions)) == len(reference)
+
+
+def test_filter_preserves_backend(constructor):
+    frame = constructor({"i": [0, 1, 2]})
+    filtered = FilterTransform.apply_to(frame, conditions=[("i", (0, 1))])
+    assert type(filtered) is type(frame)
+
+
+def test_sort_matches_across_backends(constructor):
+    frame = constructor({"i": [2, 0, 1], "s": ["c", "a", "b"]})
+    sorted_frame = Sort.apply_to(frame, by=["i"])
+    assert as_pandas(sorted_frame)["s"].tolist() == ["a", "b", "c"]
+
+
+def test_columns_matches_across_backends(constructor):
+    frame = constructor({"i": [0, 1], "s": ["a", "b"]})
+    selected = Columns.apply_to(frame, columns=["s"])
+    assert as_narwhals(selected).collect_schema().names() == ["s"]
+
+
+# HistoryTransform is the one transform that keeps state, so it cannot go in
+# the parity matrix: apply_to builds a fresh instance per call and would only
+# ever exercise the first entry, which is the one path with no concat in it.
+
+
+def accumulate(transform, frame):
+    """Run one step the way a Pipeline runs it, coercing before applying."""
+    return transform.apply(transform._coerce(frame))
+
+
+# Constructing one is deprecated. That warning has its own test; the rest of
+# these are about what the transform does while it is still here.
+deprecated_history = pytest.mark.filterwarnings(
+    "ignore:HistoryTransform is deprecated"
+)
+
+
+def test_history_warns_that_it_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="HistoryTransform is deprecated"):
+        HistoryTransform()
+
+
+@deprecated_history
+def test_history_accumulates_and_preserves_backend(constructor):
+    frame = constructor({"i": [0, 1]})
+    transform = HistoryTransform(length=2)
+    results = [accumulate(transform, frame) for _ in range(4)]
+    assert [rows(result) for result in results] == [2, 4, 4, 4]
+    # The row counts above come out the same whether or not the narwhals path
+    # ran, because _coerce would have converted first. The type is what says
+    # the frame reached the end as the library it started as.
+    assert [type(result) for result in results] == [type(frame)] * 4
+
+
+@deprecated_history
+def test_history_matches_pandas(constructor):
+    """The accumulated frame is the one pandas would have built, every step."""
+    frames = [{"i": [0, 1]}, {"i": [2]}, {"i": [3, 4]}]
+    reference, result = HistoryTransform(length=2), HistoryTransform(length=2)
+    for data in frames:
+        expected = accumulate(reference, pd.DataFrame(data))
+        got = as_pandas(accumulate(result, constructor(data)))
+        assert got["i"].tolist() == expected["i"].tolist()
+
+
+@deprecated_history
+def test_history_adds_date_column(constructor, monkeypatch):
+    """The stamp is taken once per call and shared by that call's rows.
+
+    The clock is fixed because Windows only advances it every 15 ms or so,
+    which is long enough for two calls to land on the same instant and read
+    as one stamp per frame rather than one per call.
+    """
+    from lumen.transforms import base
+
+    ticks = iter([dt.datetime(2020, 1, 1), dt.datetime(2020, 1, 2)])
+
+    class FixedClock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(ticks)
+
+    monkeypatch.setattr(base, "dt", SimpleNamespace(datetime=FixedClock, date=dt.date))
+    frame = constructor({"i": [0, 1]})
+    transform = HistoryTransform(length=2, date_column="ts")
+    accumulate(transform, frame)
+    result = accumulate(transform, frame)
+    assert type(result) is type(frame)
+    stamps = as_pandas(result)["ts"]
+    assert stamps.dtype.kind == "M"
+    assert stamps.tolist() == [dt.datetime(2020, 1, 1)] * 2 + [dt.datetime(2020, 1, 2)] * 2
+
+
+@deprecated_history
+def test_history_buffer_survives_a_failed_concat():
+    """A concat that raises must not leave its frame in the buffer.
+
+    _try_narwhals runs the pandas branch on any failure, so a buffer committed
+    before the concat succeeded would accumulate the same frame twice.
+    """
+    pl = pytest.importorskip("polars")
+    transform = HistoryTransform(length=5)
+    accumulate(transform, pl.DataFrame({"v": [1.0]}))
+    # Int64 against Float64 is a polars SchemaError, so narwhals gives up.
+    result = as_pandas(accumulate(transform, pl.DataFrame({"v": [2]})))
+    assert result["v"].tolist() == [1.0, 2.0]
+    assert len(transform._buffer) == 2
+    # and the history keeps accumulating rather than restarting
+    assert rows(accumulate(transform, pl.DataFrame({"v": [3.0]}))) == 3
+
+
+@deprecated_history
+def test_history_announces_the_conversion_once(caplog):
+    """A converted history must not re-announce itself on every render."""
+    pl = pytest.importorskip("polars")
+    transform = HistoryTransform(length=10)
+    with caplog.at_level("WARNING"):
+        accumulate(transform, pl.DataFrame({"v": [1.0]}))
+        accumulate(transform, pl.DataFrame({"v": [2]}))
+        assert caplog.text.count("converted to pandas") == 1
+        accumulate(transform, pl.DataFrame({"v": [3.0]}))
+        accumulate(transform, pl.DataFrame({"v": [4.0]}))
+        assert caplog.text.count("converted to pandas") == 1
+
+
+def test_iloc_matches_across_backends(constructor):
+    frame = constructor({"i": [0, 1, 2, 3]})
+    assert as_pandas(Iloc.apply_to(frame, start=1, end=3))["i"].tolist() == [1, 2]
+
+
+def test_sort_puts_nulls_last_like_pandas(constructor):
+    data = {"v": [3.0, None, 1.0, 2.0], "s": ["c", "n", "a", "b"]}
+    reference = Sort.apply_to(pd.DataFrame(data), by=["v"])
+    result = as_pandas(Sort.apply_to(constructor(data), by=["v"]))
+    assert result["s"].tolist() == reference["s"].tolist() == ["a", "b", "c", "n"]
+
+
+def test_sample_matches_across_backends(constructor):
+    frame = constructor({"i": [0, 1, 2, 3]})
+    sampled = as_pandas(Sample.apply_to(frame, n=2))
+    assert len(sampled) == 2
+    assert sampled["i"].is_unique
+    assert set(sampled["i"]) <= {0, 1, 2, 3}
+
+
+def test_aggregate_matches_pandas_across_backends(constructor):
+    data = {"g": ["b", "a", "b", "a"], "v": [1.0, 2.0, 3.0, 4.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method="sum"
+    )
+    result = as_pandas(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method="sum")
+    )
+    assert result["g"].tolist() == reference["g"].tolist()
+    assert result["v"].tolist() == reference["v"].tolist()
+
+
+def test_aggregate_with_index_matches_pandas(constructor):
+    """with_index moves the keys into an index narwhals does not have, so the
+    frame has to be materialized rather than silently reshaped.
+    """
+    data = {"g": ["b", "a", "b", "a"], "v": [1.0, 2.0, 3.0, 4.0]}
+    reference = Aggregate.apply_to(pd.DataFrame(data), by=["g"], method="sum")
+    result = Aggregate.apply_to(constructor(data), by=["g"], method="sum")
+    assert isinstance(result, pd.DataFrame)
+    assert list(result.columns) == list(reference.columns) == ["v"]
+    assert result.index.tolist() == reference.index.tolist() == ["a", "b"]
+
+
+def test_aggregate_drops_null_groups_like_pandas(constructor):
+    data = {"g": ["a", None, "b", "a"], "v": [1.0, 3.0, 1.0, 5.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method="sum"
+    )
+    result = as_pandas(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method="sum")
+    )
+    assert result["g"].tolist() == reference["g"].tolist() == ["a", "b"]
+    assert result["v"].tolist() == reference["v"].tolist()
+
+
+def test_pandas_only_transform_materializes(constructor, caplog):
+    frame = constructor({"i": [0, 1, 2]})
+    result = Query.apply_to(frame, query="i > 0")
+    assert isinstance(result, pd.DataFrame)
+    assert result["i"].tolist() == [1, 2]
+    if isinstance(frame, pd.DataFrame):
+        assert "no narwhals implementation" not in caplog.text
+    else:
+        assert "Query has no narwhals implementation" in caplog.text
+
+
+def test_derived_source_coerces_for_pandas_only_transform(constructor):
+    """DerivedSource runs transforms in its own loop, not through apply_to."""
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    derived = DerivedSource(source=source, transforms=[Query(query="i > 0")])
+    assert as_pandas(derived.get("t"))["i"].tolist() == [1, 2]
+
+
+def test_disk_cache_roundtrip(tmp_path, constructor):
+    frame = constructor({"i": [0, 1]})
+    source = InMemorySource(tables={}, cache_dir=str(tmp_path))
+    source._set_cache(frame, "t")
+    assert (tmp_path / "t.parq").is_file()
+    cached, _ = source._get_cache("t")
+    assert type(cached) is type(frame)
+    assert as_pandas(cached)["i"].tolist() == [0, 1]
+
+
+def test_set_cache_failure_keeps_other_cached_tables(tmp_path):
+    """A failed write must delete its own file, not the whole cache directory."""
+    source = InMemorySource(tables={}, cache_dir=str(tmp_path))
+    source._set_cache(pd.DataFrame({"i": [0, 1]}), "keep")
+    source._set_cache(object(), "broken")
+    assert (tmp_path / "keep.parq").is_file()
+    assert not (tmp_path / "broken.parq").exists()
+
+
+def test_pipeline_end_to_end_across_backends(constructor):
+    frame = constructor({"g": ["b", "a", "b", "a"], "v": [1.0, 2.0, 3.0, 4.0]})
+    source = InMemorySource(tables={"t": frame})
+    pipeline = Pipeline(
+        source=source, table="t",
+        filters=[ConstantFilter(field="g", value="a")],
+        transforms=[Sort(by=["v"])],
+    )
+    assert as_pandas(pipeline.data)["v"].tolist() == [2.0, 4.0]
+
+
+def test_view_materializes_to_pandas(constructor):
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    view = Table(pipeline=Pipeline(source=source, table="t"))
+    assert isinstance(view.get_data(), pd.DataFrame)
+
+
+def test_pipeline_renders_itself(constructor):
+    """pn.panel(pipeline) drives Tabulator directly, not through View."""
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    Pipeline(source=source, table="t").__panel__()
+
+
+def test_lazy_source_does_not_leak_a_lazyframe():
+    pl = pytest.importorskip("polars")
+    source = InMemorySource(tables={"t": pl.LazyFrame({"i": [0, 1, 2]})})
+    assert not is_lazyframe(as_narwhals(source.get("t")))
+    pipeline = Pipeline(source=source, table="t")
+    assert len(as_pandas(pipeline.data)) == 3
+
+
+def test_aggregate_drops_nan_group_keys_like_pandas(constructor):
+    data = {"g": [1.0, float("nan"), 2.0, 1.0], "v": [1.0, 3.0, 1.0, 5.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method="sum"
+    )
+    result = as_pandas(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method="sum")
+    )
+    assert result["g"].tolist() == reference["g"].tolist() == [1.0, 2.0]
+
+
+@pytest.mark.parametrize("method", ["nunique", "prod", "sum"])
+def test_aggregate_falls_back_for_unsupported_methods(constructor, method):
+    """method is documented as a pandas name and narwhals has fewer of them."""
+    data = {"g": ["a", "a", "b"], "v": [2.0, 3.0, 4.0]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], with_index=False, method=method
+    )
+    result = as_pandas(
+        Aggregate.apply_to(constructor(data), by=["g"], with_index=False, method=method)
+    )
+    assert result["v"].tolist() == reference["v"].tolist()
+
+
+def test_aggregate_falls_back_for_non_numeric_columns(constructor):
+    data = {"g": ["a", "a", "b"], "s": ["x", "z", "y"]}
+    reference = Aggregate.apply_to(
+        pd.DataFrame(data), by=["g"], columns=["s"], with_index=False, method="sum"
+    )
+    result = as_pandas(Aggregate.apply_to(
+        constructor(data), by=["g"], columns=["s"], with_index=False, method="sum"
+    ))
+    assert result["s"].tolist() == reference["s"].tolist()
+
+
+def test_melt_matches_pandas(constructor):
+    data = {"g": ["a", "b"], "x": [1.0, 2.0], "y": [3.0, 4.0]}
+    reference = Melt.apply_to(pd.DataFrame(data), id_vars=["g"], value_vars=["x", "y"])
+    result = as_pandas(Melt.apply_to(constructor(data), id_vars=["g"], value_vars=["x", "y"]))
+    assert sorted(result.columns) == sorted(reference.columns)
+    assert sorted(map(tuple, result[reference.columns].values.tolist())) == \
+        sorted(map(tuple, reference.values.tolist()))
+
+
+def test_rename_columns_matches_pandas(constructor):
+    data = {"a": [1, 2], "b": [3, 4]}
+    reference = Rename.apply_to(pd.DataFrame(data), columns={"a": "z"})
+    result = as_pandas(Rename.apply_to(constructor(data), columns={"a": "z"}))
+    assert list(result.columns) == list(reference.columns) == ["z", "b"]
+
+
+def test_dropna_matches_pandas(constructor):
+    data = {"a": [1.0, None, 3.0], "b": [1.0, 2.0, None]}
+    reference = DropNA.apply_to(pd.DataFrame(data))
+    result = as_pandas(DropNA.apply_to(constructor(data)))
+    assert result["a"].tolist() == reference["a"].tolist() == [1.0]
+
+
+def test_every_arrow_integer_type_has_a_nullable_pandas_dtype():
+    """An unmapped type would convert to whatever pandas defaults to.
+
+    The reroute in ``_to_pandas`` fires on any integer narwhals reports, so a
+    gap here is a column that silently keeps the widened dtype.
+    """
+    pa = pytest.importorskip("pyarrow")
+    arrow_integers = {
+        getattr(pa, f"{prefix}int{width}")()
+        for prefix in ("", "u") for width in (8, 16, 32, 64)
+    }
+    assert arrow_integers <= set(_NULLABLE_DTYPES)
+    assert pa.bool_() in _NULLABLE_DTYPES
+
+
+def test_a_dtype_pandas_cannot_hold_raises_rather_than_corrupting():
+    """polars Int128 has no pandas or arrow counterpart.
+
+    It already fails in ``to_pandas`` before the reroute, and failing is the
+    correct outcome: the alternative is a column of quietly wrong numbers.
+    """
+    pl = pytest.importorskip("polars")
+    frame = pl.DataFrame({"i": pl.Series([1, None], dtype=pl.Int128)})
+    with pytest.raises(Exception, match="i128"):
+        as_pandas(frame)
+
+
+@pytest.mark.parametrize("index_type", ["uint8", "uint16", "uint32", "uint64"])
+def test_as_pandas_converts_an_unsigned_dictionary_column(index_type):
+    """polars writes uint32 indices for a Categorical, and pyarrow before 23
+    cannot convert an unsigned dictionary index to pandas at all."""
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({
+        "c": pa.DictionaryArray.from_arrays(
+            pa.array([0, 1, None], getattr(pa, index_type)()), pa.array(["x", "y"])
+        ),
+        "n": [1.0, 2.0, 3.0],
+    })
+    result = as_pandas(table)
+    assert isinstance(result["c"].dtype, pd.CategoricalDtype)
+    assert result["c"].tolist()[:2] == ["x", "y"]
+    assert result["c"].isna().tolist() == [False, False, True]
+
+
+def test_as_pandas_keeps_a_dictionary_column_ordered():
+    pa = pytest.importorskip("pyarrow")
+    table = pa.table({"c": pa.DictionaryArray.from_arrays(
+        pa.array([1, 0], pa.uint8()), pa.array(["lo", "hi"]), ordered=True
+    )})
+    assert as_pandas(table)["c"].dtype.ordered
+
+
+def test_as_pandas_keeps_a_polars_categorical_through_pyarrow():
+    """The end of the road for the issue: a polars Categorical read as arrow."""
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pyarrow")
+    table = pl.DataFrame({"c": pl.Series(["x", "y", "x"], dtype=pl.Categorical)}).to_arrow()
+    assert as_pandas(table)["c"].tolist() == ["x", "y", "x"]
+
+
+def test_as_pandas_keeps_nullable_integer_and_boolean(constructor):
+    """Converting must not widen a nullable column, or an id renders as 3.0."""
+    data = {
+        "i": pd.Series([1, None, 3], dtype="Int64"),
+        "u": pd.Series([1, None, 3], dtype="UInt8"),
+        "b": pd.Series([True, None, False], dtype="boolean"),
+    }
+    result = as_pandas(constructor(data))
+    assert [str(dtype) for dtype in result.dtypes] == ["Int64", "UInt8", "boolean"]
+    assert result["i"].tolist() == [1, pd.NA, 3]
+
+
+def test_as_pandas_leaves_a_column_without_nulls_alone(constructor):
+    """Only the columns the conversion would widen may change."""
+    result = as_pandas(constructor({"i": [1, 2, 3], "b": [True, False, True]}))
+    assert [str(dtype) for dtype in result.dtypes] == ["int64", "bool"]
+
+
+def test_as_pandas_keeps_an_integer_beyond_float_precision(constructor):
+    """Above 2**53 the float detour returns a different number, silently."""
+    big = 2**62 + 1
+    result = as_pandas(constructor({"i": pd.Series([big, None], dtype="Int64")}))
+    # Compared as an int: a float64 comparison rounds both sides and passes on
+    # a value that has already been corrupted.
+    assert int(result["i"][0]) == big
+
+
+def test_fallback_and_native_paths_agree_on_dtype(constructor):
+    """Two configurations of one transform must not disagree on the schema.
+
+    Both configurations here leave the null in ``id``: one drops on ``v``
+    natively, the other converts to pandas because ``how='all'`` has no
+    narwhals counterpart. The dtype must not depend on which one ran.
+    """
+    data = {"id": pd.Series([1, 2, None, 4], dtype="Int64"), "v": [1.0, None, 3.0, 4.0]}
+    native = as_pandas(DropNA.apply_to(constructor(data), subset=["v"]))
+    fallback = as_pandas(DropNA.apply_to(constructor(data), how="all"))
+    assert native["id"].isna().any() and fallback["id"].isna().any()
+    assert str(fallback["id"].dtype) == str(native["id"].dtype) == "Int64"
+
+
+def test_hvplot_view_gets_numpy_dtypes(constructor):
+    """datashader raises on a pandas extension dtype, so plots take numpy.
+
+    Rasterizing is the case that breaks, but every kind can reach datashader
+    through an operation, so the whole hvPlot path widens.
+    """
+    data = {"id": pd.Series([1, 2, None, 4], dtype="Int64"), "v": [1.0, None, 3.0, 4.0]}
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"t": constructor(data)}), table="t",
+        transforms=[DropNA(how="all")],
+    )
+    plotted = hvPlotView(pipeline=pipeline, kind="scatter", x="v", y="id").get_data()
+    assert str(plotted["id"].dtype) == "float64"
+    # The table is not a datashader consumer and keeps the id an id.
+    assert str(Table(pipeline=pipeline).get_data()["id"].dtype) == "Int64"
+
+
+def test_lazy_transforms_stay_lazy():
+    pl = pytest.importorskip("polars")
+    frame = pl.LazyFrame({"i": [0, 1, 2, 3]})
+    for transform in (Iloc(end=2), Sample(n=2), Sort(by=["i"]), Columns(columns=["i"])):
+        result = transform.apply(frame)
+        assert isinstance(result, pl.LazyFrame), type(transform).__name__
+
+
+def test_disk_cache_keeps_its_backend(tmp_path, constructor):
+    """A cold read must return the same kind of frame the write produced."""
+    frame = constructor({"i": [0, 1]})
+    source = InMemorySource(tables={}, cache_dir=str(tmp_path))
+    source._set_cache(frame, "t")
+    source._cache.clear()
+    from_disk, _ = source._get_cache("t")
+    assert type(from_disk) is type(frame)
+    assert as_pandas(from_disk)["i"].tolist() == [0, 1]
+
+
+def test_disk_cache_survives_an_uninstallable_backend(tmp_path):
+    pl = pytest.importorskip("polars")
+    source = InMemorySource(tables={}, cache_dir=str(tmp_path))
+    source._set_cache(pl.DataFrame({"i": [0, 1]}), "t")
+    (tmp_path / "t.backend").write_text("a_library_nobody_has")
+    source._cache.clear()
+    from_disk, _ = source._get_cache("t")
+    assert isinstance(from_disk, pd.DataFrame)
+    assert from_disk["i"].tolist() == [0, 1]
+
+
+def test_filter_numeric_enum_with_null_matches_pandas(constructor):
+    """pandas isin([None]) does not match NaN on a numeric column."""
+    data = {"v": [1.0, None, 3.0]}
+    reference = FilterTransform.apply_to(pd.DataFrame(data), conditions=[("v", [1.0, None])])
+    result = as_pandas(FilterTransform.apply_to(constructor(data), conditions=[("v", [1.0, None])]))
+    assert result["v"].tolist() == reference["v"].tolist() == [1.0]
+
+
+@pytest.mark.parametrize("backend", ["pandas", "polars", "pyarrow"])
+def test_pipeline_dataframe_backend(constructor, backend):
+    """Pipeline.data can be pinned to a library regardless of the Source."""
+    pytest.importorskip(backend)
+    source = InMemorySource(tables={"t": constructor({"i": [0, 1, 2]})})
+    pipeline = Pipeline(source=source, table="t", dataframe_backend=backend)
+    assert type(pipeline.data).__module__.split(".")[0] == backend
+    assert as_pandas(pipeline.data)["i"].tolist() == [0, 1, 2]
+
+
+def test_pipeline_dataframe_backend_defaults_to_the_source(constructor):
+    frame = constructor({"i": [0, 1, 2]})
+    pipeline = Pipeline(source=InMemorySource(tables={"t": frame}), table="t")
+    assert type(pipeline.data) is type(frame)
+
+
+def test_pipeline_dataframe_backend_rejects_unknown():
+    source = InMemorySource(tables={"t": pd.DataFrame({"i": [0]})})
+    with pytest.raises(ValueError):
+        Pipeline(source=source, table="t", dataframe_backend="nonesuch")
+
+
+def test_describe_data_accepts_any_backend(constructor):
+    """describe_data converts internally so callers do not have to."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync
+    summary = describe_data_sync(constructor({"i": [0, 1, 2], "s": ["a", "b", "c"]}))
+    assert "data_shape" in summary
+
+
+def test_uncached_source_may_return_a_lazy_frame():
+    """A Source that skips the cache can hand back a frame it has not read."""
+    pl = pytest.importorskip("polars")
+
+    class ScanSource(Source):
+
+        def get_tables(self):
+            return ["t"]
+
+        def get(self, table, **query):
+            return pl.LazyFrame({"n": [0, 1, 2]})
+
+    pipeline = Pipeline(source=ScanSource(), table="t")
+    assert isinstance(pipeline.data, pl.DataFrame)
+    assert pipeline.data["n"].to_list() == [0, 1, 2]
+
+
+def test_pipeline_collects_a_lazy_frame_for_its_own_backend():
+    """dataframe_backend returns early when it already matches, so the collect
+    cannot be left to it.
+    """
+    pl = pytest.importorskip("polars")
+
+    class ScanSource(Source):
+
+        def get_tables(self):
+            return ["t"]
+
+        def get(self, table, **query):
+            return pl.LazyFrame({"n": [0, 1]})
+
+    pipeline = Pipeline(source=ScanSource(), table="t", dataframe_backend="polars")
+    assert isinstance(pipeline.data, pl.DataFrame)
+
+
+def test_describe_data_samples_before_converting():
+    """The summary reads 5000 rows, so only 5000 rows may reach pandas."""
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
+
+    converted = []
+    original = pl.DataFrame.to_pandas
+
+    def spy(self, *args, **kwargs):
+        converted.append(self.height)
+        return original(self, *args, **kwargs)
+
+    rows = PROFILE_SAMPLE_ROWS * 4
+    frame = pl.DataFrame({"i": range(rows), "s": ["a", "b", "c", "d"] * (rows // 4)})
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(pl.DataFrame, "to_pandas", spy)
+        describe_data_sync(frame)
+    assert converted == [PROFILE_SAMPLE_ROWS]
+
+
+def test_describe_data_reports_true_shape_when_sampled(constructor):
+    """Sampling must not shrink the row count the summary reports."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
+
+    rows = PROFILE_SAMPLE_ROWS + 1000
+    summary = yaml.safe_load(describe_data_sync(constructor({
+        "i": list(range(rows)), "f": [float(i) for i in range(rows)],
+    })))
+    assert summary["summary"]["data_shape"] == [rows, 2]
+    assert summary["summary"]["is_sampled"]
+    assert summary["stats"]["i"]["count"] == PROFILE_SAMPLE_ROWS
+
+
+def test_describe_data_matches_pandas_across_backends(constructor):
+    """Below the sampling threshold every backend describes the same frame."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync
+
+    data = {
+        "i": list(range(200)),
+        "f": [i / 3 for i in range(200)],
+        "s": ["foo", "bar"] * 100,
+    }
+    summary = yaml.safe_load(describe_data_sync(constructor(data)))
+    expected = yaml.safe_load(describe_data_sync(pd.DataFrame(data)))
+    assert summary["summary"] == expected["summary"]
+    assert summary["stats"].keys() == expected["stats"].keys()
+    assert summary["stats"]["s"]["nunique"] == expected["stats"]["s"]["nunique"]
+
+
+async def test_get_frame_skips_the_pandas_conversion(constructor):
+    """The summary callers take the source's own frame; everyone else pandas."""
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import get_data, get_frame
+
+    frame = constructor({"i": [0, 1, 2]})
+    pipeline = Pipeline(source=InMemorySource(tables={"t": frame}), table="t")
+    assert type(await get_frame(pipeline)) is type(frame)
+    assert isinstance(await get_data(pipeline), pd.DataFrame)
+
+
+@pytest.mark.parametrize("backend", [None, "pandas", "polars", "pyarrow"])
+def test_sql_source_dataframe_backend(backend, tmp_path):
+    """dataframe_backend picks the library get returns, and nothing else."""
+    duckdb = pytest.importorskip("duckdb")
+    if backend not in (None, "pandas"):
+        pytest.importorskip(backend)
+    from lumen.sources.duckdb import DuckDBSource
+
+    def source(**params):
+        return DuckDBSource(
+            uri=":memory:", tables={"t": "SELECT * FROM t"},
+            initializers=[
+                "CREATE TABLE t AS SELECT i::BIGINT AS n, "
+                "('c' || (i % 3)::VARCHAR) AS g FROM range(50) tbl(i)"
+            ],
+            **params,
+        )
+
+    default, pinned = source(), source(dataframe_backend=backend)
+    frame = pinned.get("t")
+    assert rows(frame) == 50
+
+    if backend in (None, "pandas"):
+        assert isinstance(frame, pd.DataFrame)
+    else:
+        assert as_narwhals(frame).implementation.name.lower() == backend
+
+    # execute and everything reading it stay on pandas whatever get returns,
+    # which is what keeps the .iloc and dtype.kind reads in get_schema working.
+    assert isinstance(pinned.execute("SELECT * FROM t"), pd.DataFrame)
+    # Sorted because array_agg(DISTINCT) fixes no order, so two runs of the
+    # same query disagree on it whatever the backend.
+    def schema(source):
+        return {
+            name: {k: sorted(v) if k == "enum" else v for k, v in col.items()}
+            if isinstance(col, dict) else col
+            for name, col in source.get_schema("t").items()
+        }
+    assert schema(pinned) == schema(default)
+    pd.testing.assert_frame_equal(as_pandas(frame), default.get("t"))
+
+
+def test_sql_source_backend_change_clears_the_cache():
+    """The backend is a param, so flipping it must not serve the old frame."""
+    pytest.importorskip("duckdb")
+    pl = pytest.importorskip("polars")
+    from lumen.sources.duckdb import DuckDBSource
+
+    source = DuckDBSource(
+        uri=":memory:", tables={"t": "SELECT * FROM t"},
+        initializers=["CREATE TABLE t AS SELECT i::BIGINT AS n FROM range(5) tbl(i)"],
+    )
+    assert isinstance(source.get("t"), pd.DataFrame)
+    source.dataframe_backend = "polars"
+    assert isinstance(source.get("t"), pl.DataFrame)
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_sql_summary_reads_the_source_frame_unconverted(backend):
+    """The LLM summary path takes the source's own frame, not a pandas copy.
+
+    This is the end of the chain the dataframe_backend param exists for: a
+    DuckDB source builds polars or arrow, the Pipeline keeps it, and the
+    summary is generated from it without the whole frame ever reaching pandas.
+    """
+    pytest.importorskip("duckdb")
+    pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync, get_frame
+    from lumen.sources.duckdb import DuckDBSource
+
+    def source(**params):
+        return DuckDBSource(
+            uri=":memory:", tables={"t": "SELECT * FROM t"},
+            initializers=[
+                "CREATE TABLE t AS SELECT i::BIGINT AS n, "
+                "('c' || (i % 3)::VARCHAR) AS g FROM range(50) tbl(i)"
+            ],
+            **params,
+        )
+
+    frame = await get_frame(Pipeline(source=source(dataframe_backend=backend), table="t"))
+    assert as_narwhals(frame).implementation.name.lower() == backend
+    assert len(frame) == 50  # what the empty-result check reads
+
+    expected = await get_frame(Pipeline(source=source(), table="t"))
+    assert isinstance(expected, pd.DataFrame)
+    assert describe_data_sync(frame) == describe_data_sync(expected)
+
+
+@pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
+async def test_empty_result_is_detectable_on_any_backend(backend):
+    """The SQL agent rejects an empty result with len, not the pandas .empty."""
+    pytest.importorskip("duckdb")
+    if backend is not None:
+        pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import get_frame
+    from lumen.sources.duckdb import DuckDBSource
+
+    source = DuckDBSource(
+        tables={"e": "SELECT * FROM (VALUES (1, 'a')) AS t(n, g) WHERE n > 99"},
+        dataframe_backend=backend,
+    )
+    frame = await get_frame(Pipeline(source=source, table="e"))
+    assert len(frame) == 0
+    assert as_narwhals(frame).columns == ["n", "g"]  # empty of rows, not columns
+
+
+def test_describe_data_keeps_decimal_and_date_numeric():
+    """A money or date column must be described, not listed as an enum.
+
+    The constructor fixture cannot express this: it builds from a dict, and a
+    dict of Decimal or date lands on object in pandas, which is the very dtype
+    under test. Each backend's frame is built with its own type instead.
+    """
+    pl = pytest.importorskip("polars")
+    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import describe_data_sync
+
+    rows = 200
+    decimals = [Decimal(f"{i}.50") for i in range(rows)]
+    dates = [dt.date(2020, 1, 1) + dt.timedelta(days=i) for i in range(rows)]
+    # A null is what makes an integer widen, so the column has to carry one.
+    ints = [None if i % 50 == 0 else i for i in range(rows)]
+    labels = ["a", "b"] * (rows // 2)
+
+    frames = [
+        pd.DataFrame({
+            "amount": [i + 0.5 for i in range(rows)],
+            "day": pd.to_datetime(dates),
+            "n": pd.array(ints, dtype="Int64"),
+            "g": labels,
+        }),
+        # pandas produces object columns of Decimal and date for a DECIMAL or
+        # DATE result of its own, so this is not only about other libraries.
+        pd.DataFrame({
+            "amount": decimals,
+            "day": dates,
+            "n": pd.array(ints, dtype="Int64"),
+            "g": labels,
+        }),
+        pl.DataFrame({
+            "amount": pl.Series(decimals, dtype=pl.Decimal(12, 2)),
+            "day": pl.Series(dates, dtype=pl.Date),
+            "n": pl.Series(ints, dtype=pl.Int64),
+            "g": labels,
+        }),
+        pa.table({
+            "amount": pa.array(decimals, pa.decimal128(12, 2)),
+            "day": pa.array(dates, pa.date32()),
+            "n": pa.array(ints, pa.int64()),
+            "g": labels,
+        }),
+    ]
+    summaries = [describe_data_sync(frame) for frame in frames]
+
+    # safe_load is the assertion, not a convenience: an object column of
+    # Decimal renders as !!python/object/apply, which SafeLoader refuses.
+    expected, *rest = [yaml.safe_load(summary) for summary in summaries]
+    assert expected["stats"]["amount"]["mean"] == 100
+    assert "enum" not in expected["stats"]["day"]
+    assert expected["tail"]["n"] == 198
+    for summary in rest:
+        assert summary == expected
+
+
+def test_describe_data_summarises_a_dask_frame():
+    """A dask frame answers shape with a Delayed, so it must be computed."""
+    dd = pytest.importorskip("dask.dataframe")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
+
+    rows = PROFILE_SAMPLE_ROWS + 1000
+    frame = pd.DataFrame({"i": range(rows), "s": ["a", "b"] * (rows // 2)})
+    summary = yaml.safe_load(describe_data_sync(dd.from_pandas(frame, npartitions=4)))
+    assert summary["summary"]["data_shape"] == [rows, 2]
+    assert summary["stats"]["i"]["count"] == PROFILE_SAMPLE_ROWS
+
+
+def _exploration_source(**params):
+    """A DuckDB table with the column types the preview has to normalise."""
+    from lumen.sources.duckdb import DuckDBSource
+
+    return DuckDBSource(
+        uri=":memory:", tables={"t": "SELECT * FROM t"},
+        initializers=[
+            "CREATE TABLE t AS SELECT i::BIGINT AS n, "
+            "('c' || (i % 3)::VARCHAR) AS g, "
+            "(DATE '2020-01-01' + INTERVAL (i) DAY)::DATE AS d, "
+            "(i * 1.5)::DECIMAL(10,2) AS amt FROM range(8) tbl(i)"
+        ],
+        **params,
+    )
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_exploration_preview_reads_the_source_frame_unconverted(backend):
+    """The exploration tool previews the source's own frame, not a pandas copy.
+
+    Asserted on the frame format_exploration_result is handed, because that is
+    the only place the conversion would have happened; asserting on the
+    rendered text would pass whether or not one occurred.
+    """
+    pytest.importorskip("duckdb")
+    pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents import sql as sql_module
+
+    source = _exploration_source(dataframe_backend=backend)
+    seen = []
+    original = sql_module.format_exploration_result
+
+    def spy(df, *, capped=False):
+        seen.append(df)
+        return original(df, capped=capped)
+
+    with patch.object(sql_module, "format_exploration_result", spy):
+        await sql_module.execute_exploration_sql(
+            "t", "SELECT * FROM t", sources={("t", "t"): source}
+        )
+
+    assert seen, "format_exploration_result was never reached"
+    assert as_narwhals(seen[0]).implementation.name.lower() == backend
+
+
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+async def test_exploration_preview_renders_the_same_rows_on_any_backend(backend):
+    """A decimal and a date have to read as numbers and dates, not as str.
+
+    Which of the two arrives in an object column varies by library, since
+    pandas converts a DECIMAL to float itself while the others keep it, so
+    the dtype line is the part most likely to drift between backends.
+    """
+    pytest.importorskip("duckdb")
+    pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents.sql import execute_exploration_sql
+
+    async def preview(**params):
+        source = _exploration_source(**params)
+        return await execute_exploration_sql(
+            "t", "SELECT * FROM t", sources={("t", "t"): source}
+        )
+
+    expected = await preview()
+    result = await preview(dataframe_backend=backend)
+
+    def rendered_rows(text):
+        return [line for line in text.splitlines() if line.startswith("|")]
+
+    def dtypes(text):
+        line = next(line for line in text.splitlines() if line.startswith("Columns"))
+        return dict(
+            part.split(": ") for part in line.split(" — ", 1)[1].split(", ")
+        )
+
+    assert rendered_rows(result) == rendered_rows(expected)
+    assert "8 rows x 4 columns" in result
+    # The time unit differs (polars reads a DATE as ms, pandas as us), so the
+    # assertion is that it is a datetime at all rather than the exact dtype.
+    for reported in (dtypes(expected), dtypes(result)):
+        assert reported["amt"] == "float64"
+        assert reported["d"].startswith("datetime64")
+        assert reported["n"] == "int64"
+
+
+@pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
+async def test_exploration_preview_handles_an_empty_result(backend):
+    """No rows must still report the columns, on any backend."""
+    pytest.importorskip("duckdb")
+    if backend is not None:
+        pytest.importorskip(backend)
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents.sql import execute_exploration_sql
+
+    source = _exploration_source(dataframe_backend=backend)
+    result = await execute_exploration_sql(
+        "t", "SELECT * FROM t WHERE n > 99", sources={("t", "t"): source}
+    )
+    assert "0 rows x 4 columns" in result
+    assert "The query returned no rows." in result
+
+
+def test_exploration_preview_converts_only_the_rendered_cells():
+    """The preview must not pull the whole frame through pandas.
+
+    A column of an extension type pandas cannot hold is the assertion: it
+    survives conversion of the five previewed rows and would raise if the
+    whole frame were converted.
+    """
+    pl = pytest.importorskip("polars")
+    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    from lumen.ai.agents.sql import (
+        EXPLORATION_PREVIEW_COLS, EXPLORATION_PREVIEW_ROWS,
+        format_exploration_result,
+    )
+
+    rows = 5000
+    frame = pl.DataFrame({
+        f"c{i}": pl.Series(range(rows), dtype=pl.Int64)
+        for i in range(EXPLORATION_PREVIEW_COLS + 5)
+    })
+    result = format_exploration_result(frame)
+    assert f"{rows} rows x {EXPLORATION_PREVIEW_COLS + 5} columns" in result
+    assert f"first {EXPLORATION_PREVIEW_COLS} columns" in result
+    # The column past the cap must not appear anywhere in the preview.
+    assert f"c{EXPLORATION_PREVIEW_COLS}" not in result
+    assert len([line for line in result.splitlines() if line.startswith("|")]) == (
+        EXPLORATION_PREVIEW_ROWS + 2  # header and the markdown rule
+    )

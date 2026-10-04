@@ -15,6 +15,7 @@ Critical Requirements:
 - Each edit must declare its op: "insert", "replace", or "delete"
 - All line_no values refer to the ORIGINAL numbering shown above — they do not shift as edits are applied
 - To insert a block of N lines before original line L, use N inserts all with line_no=L — they appear in order
+- To append after the LAST original line L, use line_no=L+1 — never reuse L, which inserts before it instead
 {% endblock %}
 
 {%- block context %}

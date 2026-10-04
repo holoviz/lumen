@@ -3,14 +3,14 @@
 {% block instructions %}
 {{ super() }}
 
-- Do NOT modify the data injection (data will be added automatically)
-- Keep map_style URLs as CartoDB (no Mapbox API key available)
-- Ensure latitude/longitude column names match the data schema
+- Do NOT modify data injection (data added automatically)
+- Keep map_style URLs CartoDB (no Mapbox API key available)
+- Ensure latitude/longitude column names match data schema
 
 ## Common Fixes
 
 ### View State Issues
-If the map appears blank or shows wrong location:
+If map appears blank or shows wrong location:
 ```python
 # Center on data
 view_state = pdk.ViewState(
@@ -34,7 +34,7 @@ Use CartoDB styles (no API key needed):
 {% endblock %}
 
 {%- block examples -%}
-## EXAMPLES
+## Examples (illustrative — column names below placeholders, not real data)
 
 ### Fix blank map (center on data)
 ```python

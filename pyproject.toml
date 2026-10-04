@@ -18,6 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
@@ -26,33 +27,44 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "bokeh",
+    "bokeh >=3.9.0",
     "chardet",
     "duckdb >=1.2.0",
     "lxml",
-    "griffe",
+    "griffe <2",
     "holoviews >=1.17.0",
+    "httpx",
     "hvplot",
     "instructor >=1.14.3",
     "intake <2",
     "jinja2 >3.0",
+    "jsonschema",
+    "markdown-it-py",
     "markitdown",
+    "narwhals >=2",
     "nbformat",
     "numpy",
+    "openai",
     "packaging",
     "pandas",
-    "panel >=1.7.5",
+    "panel >=1.9.0",
     "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
-    "param >=2.2.1",
+    "param >=2.2.1,<2.5.0",
+    "pillow",
+    "platformdirs",
     "pyarrow",
     "pydantic >=2.8.0",
     "pydantic-extra-types",
+    "pyyaml",
+    "requests",
     "semchunk",
     "sqlglot[c]",
     "tabulate",
     "tiktoken",
+    "tornado",
+    "tqdm",
     "vl-convert-python",
 ]
 
@@ -62,7 +74,7 @@ Source = "https://github.com/holoviz/lumen"
 HoloViz = "https://holoviz.org/"
 
 [project.optional-dependencies]
-tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml']
+tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars', 'pyarrow']
 dev = [
     'lumen[tests,sql,ai-openai,xarray,geo]',
     'panel>=1.9.0rc0',
@@ -72,6 +84,7 @@ ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
 ai-openrouter = ['lumen[ai-openai]']
 ai-mistralai = ['mistralai']
+ai-monty = ['pydantic-monty>=1.0.0']
 ai-bedrock = ['boto3>=1.42.23']
 ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
@@ -169,6 +182,7 @@ ignore = [
     "E731", # Do not assign a lambda expression, use a def
     "E741", # Ambiguous variable name
     "F405", # From star imports
+    "PLC0415", # import should be at the top-level of a file
     "PLE0604", # Invalid object in `__all__`, must contain only strings
     "PLE0605", # Invalid format for `__all__`
     "PLR091", # Too many arguments/branches/statements

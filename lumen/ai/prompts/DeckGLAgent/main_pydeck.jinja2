@@ -3,10 +3,10 @@
 {% block instructions %}
 Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html(), .show(), etc.).
 
-## Layer Type Selection (in order of preference for 3D impact)
+## Layer Type Selection (preference order for 3D impact)
 
 **For data with numeric values to visualize:**
-1. **ColumnLayer** - Best for discrete points with values; creates striking 3D bar charts on the map
+1. **ColumnLayer** - Best for discrete points with values; creates striking 3D bar charts on map
 2. **HexagonLayer** - Best for aggregating many points into 3D hexagonal bins
 3. **GridLayer** - Best for square grid aggregation with 3D elevation
 
@@ -23,13 +23,13 @@ Generate PyDeck code. Data is `df`, assign to `deck`. NO I/O methods (.to_html()
 ## Key Parameters for 3D Visualization
 - `pitch`: 45-60 for good 3D perspective
 - `bearing`: 0 or slight angle (-15 to 15) for visual interest
-- `elevation_scale`: Controls the height of 3D elements
-- `extruded`: Set to True for 3D extrusion
+- `elevation_scale`: Controls height of 3D elements
+- `extruded`: Set True for 3D extrusion
 {%- if gridded is defined and gridded %}
 
 ## Gridded xarray data
-`df` is a long-form grid from an xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
-Make a geographic map with `ColumnLayer`: `get_position` on the longitude/latitude columns and `get_elevation="{{ gridded.data_vars[0] }}"`. Plot only the two map axes; any dimension you leave unused is reduced to a single slice automatically.
+`df` is long-form grid from xarray dataset (dimensions: {{ gridded.dims | join(', ') }}; variables: {{ gridded.data_vars | join(', ') }}).
+Make geographic map with `ColumnLayer`: `get_position` on longitude/latitude columns and `get_elevation="{{ gridded.data_vars[0] }}"`. Plot only two map axes; any dimension left unused reduced to single slice automatically.
 {%- endif %}
 
 ## Map Styles (no API key needed)
@@ -39,6 +39,8 @@ Make a geographic map with `ColumnLayer`: `get_position` on the longitude/latitu
 {% endblock %}
 
 {% block examples %}
+## Examples (illustrative — coordinates, field names below placeholders, not real data)
+
 ColumnLayer (3D bars - PREFERRED for point data with values):
 ```python
 import pydeck as pdk
@@ -143,8 +145,8 @@ Table: {{ memory['pipeline'].table }}
 Data schema and sample:
 {{ memory['data'] }}
 
-**Important:** Use the exact column names from the data schema above for get_position and other accessors.
-{%- if "view" in memory %}
+**Important:** Use exact column names from data schema above for get_position and other accessors.
+{%- if memory.get("view") %}
 
 Previous specification (modify as requested):
 {{ memory["view"]["spec"] | json_to_yaml }}

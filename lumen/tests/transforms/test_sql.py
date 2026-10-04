@@ -11,7 +11,7 @@ import lumen as lm
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
-    SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
+    SQLSample, SQLSchemaStats, SQLSelectFrom, SQLSort, SQLTransform,
 )
 
 try:
@@ -177,13 +177,25 @@ def test_sql_group_by_multi_columns():
 
 def test_sql_limit():
     result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery LIMIT 10"
+    expected = "SELECT * FROM TABLE LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_keeps_order_and_offset():
+    result = SQLLimit.apply_to("SELECT A FROM TABLE ORDER BY A OFFSET 5", limit=10)
+    expected = "SELECT A FROM TABLE ORDER BY A LIMIT 10 OFFSET 5"
+    assert result == expected
+
+
+def test_sql_limit_wraps_set_operation():
+    result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=10)
+    expected = "SELECT * FROM (SELECT A FROM X UNION SELECT A FROM Y) AS subquery LIMIT 10"
     assert result == expected
 
 
 def test_sql_limit_lower_than_original():
     result = SQLLimit.apply_to("SELECT * FROM TABLE LIMIT 15", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE LIMIT 15) AS subquery LIMIT 10"
+    expected = "SELECT * FROM TABLE LIMIT 10"
     assert result == expected
 
 
@@ -195,8 +207,8 @@ def test_sql_limit_higher_than_original():
 
 def test_sql_limit_mssql_aliases_derived_table():
     """SQL Server rejects a derived table in FROM unless it carries an alias."""
-    result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=1, write="mssql")
-    expected = "SELECT TOP 1 * FROM (SELECT * FROM TABLE) AS subquery"
+    result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=1, write="mssql")
+    expected = "SELECT TOP 1 * FROM (SELECT A FROM X UNION SELECT A FROM Y) AS subquery"
     assert result == expected
 
 
@@ -204,6 +216,55 @@ def test_sql_columns():
     result = SQLColumns.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
     expected = "SELECT A, B FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
+
+
+def test_sql_sort():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"])
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A ASC"
+    assert result == expected
+
+
+def test_sql_sort_descending():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"], ascending=False)
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A DESC"
+    assert result == expected
+
+
+def test_sql_sort_per_column_direction():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A", "B"], ascending=[True, False])
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A ASC, B DESC"
+    assert result == expected
+
+
+def test_sql_sort_nonalphanum_characters():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A_B-123"])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY "A_B-123" ASC'
+    assert result == expected
+
+
+def test_sql_sort_without_columns_is_a_noop():
+    assert SQLSort.apply_to("SELECT * FROM TABLE", by=[]) == "SELECT * FROM TABLE"
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "postgres", "mysql", "snowflake", "bigquery", "sqlite"])
+def test_sql_sort_renders_for_dialect(dialect):
+    """Every dialect gets an ORDER BY, whatever it does with null placement."""
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"], ascending=False, write=dialect)
+    assert "ORDER BY" in result and "DESC" in result
+
+
+def test_sql_sort_before_limit_is_a_top_n_query():
+    """The pairing SQLSort exists for: ordering inside, limit outside."""
+    if DuckDBSource is None:
+        pytest.skip("duckdb is not installed")
+    source = DuckDBSource(tables={"t": "SELECT * FROM t"}, uri=":memory:")
+    source._connection.execute(
+        "CREATE TABLE t AS SELECT * FROM (VALUES (3), (1), (2)) v(n)"
+    )
+    sql = SQLLimit.apply_to(
+        SQLSort.apply_to("SELECT * FROM t", by=["n"], ascending=False), limit=2
+    )
+    assert source._connection.execute(sql).fetchall() == [(3,), (2,)]
 
 
 def test_sql_distinct():
@@ -828,6 +889,12 @@ def test_sql_select_from_path():
 def test_sql_select_from_duckdb_path():
     result = SQLSelectFrom.apply_to("read_csv('data/life_expectancy.csv')", sql_expr="SELECT id, name FROM {table}")
     expected = "SELECT id, name FROM READ_CSV('data/life_expectancy.csv')"
+    assert result == expected
+
+
+def test_sql_select_from_table_starting_with_digit():
+    result = SQLSelectFrom.apply_to("2014_world_gdp_with_codes")
+    expected = 'SELECT * FROM "2014_world_gdp_with_codes"'
     assert result == expected
 
 

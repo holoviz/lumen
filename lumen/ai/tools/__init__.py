@@ -5,6 +5,7 @@ from .component_control import ComponentController
 from .dbtsl_lookup import DbtslLookup
 from .mcp import MCPTool
 from .metadata_lookup import MetadataLookup
+from .monty import make_monty_llm_tool
 from .source_lookup import SourceLookup
 from .vector_lookup import VectorLookupTool, VectorLookupToolUser
 
@@ -20,4 +21,5 @@ __all__ = [
     "VectorLookupTool",
     "VectorLookupToolUser",
     "define_tool",
+    "make_monty_llm_tool",
 ]

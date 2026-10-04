@@ -168,7 +168,7 @@ When contributing to `lumen.ai.controls` source loaders, keep these output invar
 ## Code of Conduct
 
 We're committed to providing a welcoming and inclusive environment.
-By participating, you agree to uphold the [HoloViz Code of Conduct](https://holoviz.org/code_of_conduct.html).
+By participating, you agree to uphold the [HoloViz Code of Conduct](https://holoviz.org/about/governance/org-docs/CODE-OF-CONDUCT.html).
 
 ---
 

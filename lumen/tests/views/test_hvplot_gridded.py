@@ -5,10 +5,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from hvplot import hvPlotTabular
+
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.views import base as views_base
-from lumen.views.base import hvPlotUIView, hvPlotView
+from lumen.views.base import GRIDDED_KINDS, hvPlotUIView, hvPlotView
 
 # ---- Fixtures ----
 
@@ -58,6 +60,16 @@ def test_hvplot_z_param_accepted():
 def test_hvplot_quadmesh_in_kind_objects():
     """quadmesh is a recognised kind value."""
     assert "quadmesh" in hvPlotView.param.kind.objects
+
+
+def test_hvplot_tabular_kinds_stay_in_sync_with_hvplot():
+    """All tabular hvPlot kinds are accepted except the UI explorer."""
+    expected = {
+        kind for kind in hvPlotTabular.__all__ if kind not in {"explorer", "dataset"}
+    }
+    assert set(hvPlotView.param.kind.objects) == expected | set(GRIDDED_KINDS)
+    assert "explorer" not in hvPlotView.param.kind.objects
+    assert "dataset" not in hvPlotView.param.kind.objects
 
 
 def test_hvplot_heatmap_from_longform_df(gridded_pipeline):

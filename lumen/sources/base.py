@@ -20,6 +20,7 @@ from typing import (
 )
 from urllib.parse import quote, urlparse
 
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -34,6 +35,7 @@ except ImportError:
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
+from ..config import config
 from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
@@ -41,7 +43,10 @@ from ..transforms.sql import (
     ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
     SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
 )
-from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..util import (
+    DATAFRAME_BACKENDS, as_narwhals, collect_lazy, get_dataframe_schema,
+    is_lazyframe, is_narwhals, is_ref, merge_schemas, to_backend,
+)
 from ..validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
@@ -140,6 +145,11 @@ def cached(method, locks=None):
             filtered = FilterTransform.apply_to(
                 df, conditions=list(query.items())
             )
+        collected = collect_lazy(filtered)
+        if collected is not filtered:
+            # A lazy frame answers to collect, not compute, so it would
+            # otherwise sail past the dask branch below and fail much later.
+            return collected
         if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
             return filtered
         return filtered.compute()
@@ -372,7 +382,6 @@ class Source(MultiTypeComponent):
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
-        from ..config import config
         params['root'] = Path(params.get('root', config.root))
         super().__init__(**params)
         self.param.watch(self.clear_cache, self._reload_params)
@@ -496,6 +505,23 @@ class Source(MultiTypeComponent):
                 filename = f'{table}.parq'
             path = self.root / self.cache_dir / filename
             if path.is_file():
+                # A sidecar records which dataframe library wrote the file, so
+                # a warm cache hands back the same kind of frame the cold path
+                # produced rather than silently switching everything to pandas.
+                backend = path.with_suffix('.backend')
+                if backend.is_file():
+                    try:
+                        return (
+                            nw.read_parquet(
+                                str(path), backend=backend.read_text()
+                            ).to_native(),
+                            not bool(query)
+                        )
+                    except Exception:
+                        # The library that wrote this cache is no longer
+                        # installed. Parquet is portable, so read it as pandas
+                        # rather than treating the cache as a miss.
+                        pass
                 return pd.read_parquet(path), not bool(query)
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
@@ -531,12 +557,29 @@ class Source(MultiTypeComponent):
                 if isinstance(data, dd.DataFrame):
                     filepath = filepath.with_suffix('')
             try:
-                data.to_parquet(filepath)
+                narwhals_data = as_narwhals(data)
+                if is_narwhals(narwhals_data) and not isinstance(data, pd.DataFrame):
+                    # polars and pyarrow spell this write_parquet, and only an
+                    # eager frame has it. The sidecar written below is what
+                    # lets the read hand back this same kind of frame.
+                    if is_lazyframe(narwhals_data):
+                        narwhals_data = narwhals_data.collect()
+                    narwhals_data.write_parquet(str(filepath))
+                    filepath.with_suffix('.backend').write_text(
+                        str(narwhals_data.implementation)
+                    )
+                else:
+                    data.to_parquet(filepath)
+                    # A sidecar from an earlier non-pandas write would make the
+                    # next read hand back the wrong kind of frame.
+                    filepath.with_suffix('.backend').unlink(missing_ok=True)
             except Exception as e:
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    shutil.rmtree(path)
+                # Remove the file this write was aiming at, not the whole cache
+                # directory it lives in.
+                if filepath.is_file():
+                    filepath.unlink()
+                elif filepath.is_dir():
+                    shutil.rmtree(filepath)
                 self.param.warning(
                     f"Could not cache '{table}' to parquet file. "
                     f"Error during saving process: {e}"
@@ -797,6 +840,7 @@ class InMemorySource(Source):
         dask = query.pop('__dask', False)
         table = self.tables.get(table)
         df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        df = collect_lazy(df)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
     def add_table(self, name, table):
@@ -973,6 +1017,10 @@ class FileSource(Source):
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
+class QueryTimeoutError(TimeoutError):
+    """Raised when a query does not finish within the allotted time."""
+
+
 class BaseSQLSource(Source):
     """
     The BaseSQLSource implements the additional API required by
@@ -980,6 +1028,12 @@ class BaseSQLSource(Source):
     """
 
     dialect = None
+
+    dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
+        The dataframe library table data is returned as. Leave unset to get
+        pandas, which is what every source has always produced. Only the data
+        `fetch` reads is affected; the schema and metadata queries stay on
+        pandas whatever this is set to.""")
 
     excluded_tables = param.List(default=[], doc="""
         List of table names that should be excluded from the results. Supports:
@@ -1143,6 +1197,90 @@ class BaseSQLSource(Source):
         """
         return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
+    async def execute_with_timeout(
+        self, sql_query: str, timeout: float | None, fetch: bool = False
+    ) -> DataFrame:
+        """
+        Executes a SQL query, giving up after `timeout` seconds.
+
+        The default stops waiting but leaves the statement running in its
+        worker thread; sources whose engine can cancel a statement override
+        this or cancel in `execute_async`.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        timeout : float | None
+            Seconds to wait for the result, or None to wait indefinitely.
+        fetch : bool
+            Whether to return the result in `dataframe_backend` like `fetch`
+            rather than as pandas like `execute`.
+
+        Returns
+        -------
+        DataFrame
+            The result of the query.
+
+        Raises
+        ------
+        QueryTimeoutError
+            If the query does not finish within `timeout` seconds.
+        """
+        query = asyncio.to_thread(self.fetch, sql_query) if fetch else self.execute_async(sql_query)
+        try:
+            return await asyncio.wait_for(query, timeout)
+        except TimeoutError as e:
+            raise QueryTimeoutError(f"The query did not finish within {timeout} seconds.") from e
+
+    def missing_table(self, error: Exception) -> str | None:
+        """
+        Returns the table a query error reports as missing.
+
+        Sources override this to parse their engine's error message and
+        to normalize the name the way the engine resolves identifiers.
+
+        Arguments
+        ---------
+        error : Exception
+            The error raised while executing a query.
+
+        Returns
+        -------
+        str | None
+            The missing table, or None if the error is not a missing table.
+        """
+        return None
+
+    def fetch(self, sql_query: str, params: list | dict | None = None) -> DataFrame:
+        """
+        Executes a SQL query and returns the result in `dataframe_backend`.
+
+        The data path, as against `execute`, which is the pandas path the
+        schema and metadata queries read with `.iloc` and pandas dtypes. This
+        is where a whole table or an ad hoc result comes back, so it is where
+        a large frame is worth building in the engine's own library rather
+        than converting one.
+
+        Sources whose engine can build the requested frame directly override
+        this. The default converts, which costs a copy but is correct for
+        every source, and is free at the default because `to_backend` returns
+        the frame untouched when no backend is asked for.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query
+
+        Returns
+        -------
+        DataFrame
+            The result, in whichever library `dataframe_backend` names.
+        """
+        return to_backend(self.execute(sql_query, params), self.dataframe_backend)
+
     async def get_async(self, table: str, **query) -> DataFrame:
         """
         Return a table asynchronously; optionally filtered by the given query.
@@ -1166,7 +1304,10 @@ class BaseSQLSource(Source):
             sql_filter = SQLFilter(conditions=conditions)
             sql_expr = sql_filter.apply(sql_expr)
 
-        return await self.execute_async(sql_expr)
+        # Through execute_async rather than fetch, because a source with a
+        # genuinely async driver overrides that one and threading fetch
+        # instead would step around it.
+        return to_backend(await self.execute_async(sql_expr), self.dataframe_backend)
 
     @cached_schema
     def get_schema(
@@ -1746,8 +1887,8 @@ class DerivedSource(Source):
             transforms = list(self.transforms)
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
-            df = transform.apply(df)
-        return df
+            df = transform.apply(transform._coerce(df))
+        return collect_lazy(df)
 
     get.__doc__ = Source.get.__doc__
 

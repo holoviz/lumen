@@ -26,16 +26,30 @@ Common use cases include:
 
 ### Built-in controls
 
-| Control | Use for |
-|---------|---------|
-| `UploadControls` | Uploading local files (CSV, Excel, etc.) |
-| `DownloadControls` | Fetching data from URLs (including Kaggle datasets) |
+Lumen ships with a set of built-in source controls:
 
-`UploadControls` stages selected files before processing. After selecting files, click `Confirm file(s)` to process them, or `Clear selected` to reset the staged selection.
+| Control | Type | Use for |
+|---------|------|---------|
+| `UploadSourceControls` | Concrete | Uploading local files (CSV, Excel, etc.) |
+| `DownloadSourceControls` | Concrete | Fetching data from URLs (including Kaggle datasets) |
+| `CodeSourceControls` | Concrete | Wrapping Python functions or object methods as data sources |
+| `URLSourceControls` | Base class | Fetching data from URL templates |
+| `RESTAPISourceControls` | Base class | Defining REST API endpoints manually |
+| `OpenAPISourceControls` | Concrete | Auto-discovering endpoints from an OpenAPI spec |
+| `CatalogSourceControls` | Base class | Browsing and loading from a pre-fetched dataset catalog |
+
+`UploadSourceControls` stages selected files before processing. After selecting files, click `Upload file(s)` to process them, or `Clear selected` to reset the staged selection. `DownloadSourceControls` uses the inherited label, `Confirm file(s)`.
+
+Both `UploadSourceControls` and `DownloadSourceControls` inherit from `FileSourceControls`, which classifies each file as either **data** or **metadata**:
+
+- **Data files** (CSV, Parquet, Excel, GeoJSON, HTML, scientific formats, etc.) are parsed into DuckDB tables.
+- **Metadata files** (`md`, `txt`, `yaml`, `yml`, `json`, `pdf`, `docx`, `doc`, `pptx`, `ppt`) or files whose name contains `_metadata`, `metadata_`, `readme`, or `schema` are added to the document vector store so the agent can retrieve their contents.
+
+Extensions in both lists resolve to metadata, so a `.json` file is treated as metadata by default. For each file you can toggle between `data` and `metadata`, edit its table alias, and (for `.xlsx` files) pick the sheet to import.
 
 #### Kaggle datasets
 
-`DownloadControls` can fetch datasets directly from Kaggle. Paste a Kaggle dataset URL into the URL input field:
+`DownloadSourceControls` can fetch datasets directly from Kaggle. Paste a Kaggle dataset URL into the URL input field:
 
 ```
 https://www.kaggle.com/datasets/sharmajicoder/gen-z-social-media-usage-dataset
@@ -49,7 +63,7 @@ Requires the `kagglehub` package:
 pip install kagglehub
 ```
 
-If `kagglehub` is not installed, Kaggle URL support is silently disabled.
+If `kagglehub` is not installed, the input placeholder stops advertising Kaggle URLs, and pasting one returns a message telling you to install the package.
 
 ### Creating custom controls
 
@@ -221,9 +235,59 @@ def _update_year_options(self):
 - **Cache API responses** when possible to avoid redundant calls
 - **Use `normalize_table_name()`** to ensure DuckDB-compatible table names
 
+## Catalog controls
+
+`CatalogSourceControls` is a base class for controls that browse a pre-fetched catalog of datasets, letting users click a row to ingest that dataset. The `SourceAgent` can search and load entries from a natural-language query out of the box, using keyword matching over `search_columns`. Passing a `vector_store` embeds the entries in the background and upgrades that search to semantic matching.
+
+Subclasses implement three methods:
+
+| Method | Purpose |
+|--------|---------|
+| `_load_catalog()` | Fetch the catalog `DataFrame` once on session load |
+| `_fetch_entry(entry)` | Download and process a single catalog entry, returning a `SourceResult` |
+| `_entry_to_text(entry)` | (Optional) text representation used for vector embedding (defaults to joining `search_columns`) |
+
+Class-level attributes configure the `Tabulator` browser:
+
+| Attribute | Purpose |
+|-----------|---------|
+| `display_columns` | `{col: {"title": ..., "width": ..., "formatter": ...}}` |
+| `filter_columns` | `{col: header_filter config}` for column filtering |
+| `search_columns` | Column names concatenated for vector embedding |
+| `detail_columns` | Column names shown in the expanded row detail view |
+
+Semantic search is enabled separately by passing a `vector_store` to the constructor, as with every other control.
+
+The catalog is fetched via `pn.state.onload`, so these controls only populate inside a served Panel session (`panel serve`), not in a plain script or notebook.
+
+```python
+import pandas as pd
+
+from lumen.ai.controls import CatalogSourceControls, SourceResult
+from lumen.util import normalize_table_name
+
+
+class CensusCatalogControls(CatalogSourceControls):
+    display_columns = {
+        "name": {"title": "Dataset"},
+        "year": {"title": "Year"},
+    }
+    search_columns = ["name", "description"]
+    detail_columns = ["description", "url"]
+
+    async def _load_catalog(self) -> pd.DataFrame:
+        return await fetch_catalog()
+
+    async def _fetch_entry(self, entry: pd.Series) -> SourceResult:
+        df = await download(entry["url"])
+        return SourceResult.from_dataframe(df, normalize_table_name(entry["name"]))
+```
+
+Agents ingest a dataset by searching the catalog via the control's tool exposed through `as_tools()`.
+
 ## Parametric controls
 
-For common patterns like wrapping Python functions or fetching from URL templates, Lumen provides higher-level controls that handle widget generation automatically.
+For common patterns like wrapping Python functions, fetching from URL templates, or calling REST endpoints, Lumen provides higher-level controls that handle widget generation automatically. These build on `ParametricSourceControls`, which renders widgets from function signatures or class-level parameters and exposes the same inputs to the `SourceAgent`.
 
 ### CodeSourceControls
 
@@ -363,6 +427,64 @@ class MesonetDailyControls(URLSourceControls):
 | Class-level params | Become UI widgets; values interpolate into URL |
 | `label` | HTML label in sidebar |
 
+### RESTAPISourceControls
+
+`RESTAPISourceControls` exposes manually-defined REST API endpoints. Each endpoint is described with `method`, `path`, `summary`, `description`, and `parameters`, and the control builds a callable (rendered as widgets) for each one.
+
+```python
+from lumen.ai.controls import RESTAPISourceControls
+
+controls = RESTAPISourceControls(
+    base_url="https://api.weather.gov",
+    headers={"User-Agent": "MyApp/1.0"},
+    endpoints={
+        "Active Alerts": {
+            "method": "get",
+            "path": "/alerts/active",
+            "description": "Fetch currently active alerts",
+            "parameters": [
+                {"name": "area", "in": "query", "type": "string",
+                 "description": "State/territory code"},
+                {"name": "status", "in": "query", "type": "string",
+                 "enum": ["actual", "exercise", "test"], "default": "actual"},
+            ],
+        },
+    },
+)
+```
+
+| Parameter | Purpose |
+|-----------|---------|
+| `base_url` | Root URL for all API requests |
+| `headers` | Default HTTP headers sent with every request |
+| `endpoints` | `{display_name: endpoint_spec}`; each spec has `method`, `path`, `summary`, `description`, `parameters` |
+
+Endpoint parameters support `enum` (rendered as a dropdown), `required`, `default`, and `description`. The base class renders every parameter as a string; override `_resolve_param_type()` to map the `type` field onto real Python types, as `OpenAPISourceControls` does.
+
+### OpenAPISourceControls
+
+`OpenAPISourceControls` fetches an OpenAPI 3.x spec on session load, resolves `$ref` references, and registers every path/method pair as an action, with no manual endpoint definitions needed. Like `CatalogSourceControls`, it fetches via `pn.state.onload` and so only populates under `panel serve`.
+
+```python
+from lumen.ai.controls import OpenAPISourceControls
+
+controls = OpenAPISourceControls(
+    spec_url="https://api.weather.gov/openapi.json",
+    headers={"User-Agent": "MyApp/1.0"},
+    include_paths=["/alerts", "/points"],
+    exclude_paths=["/icons"],
+)
+```
+
+| Parameter | Purpose |
+|-----------|---------|
+| `spec_url` | URL of the OpenAPI JSON spec |
+| `include_paths` | Only include paths matching these prefixes |
+| `exclude_paths` | Exclude paths matching these prefixes |
+| `base_url` | (Optional) override the base URL from the spec |
+
+For a full walkthrough see [Building a Weather API Explorer](../examples/tutorials/weather_openapi_explorer.md).
+
 ### Using with SourceAgent
 
 When you pass `source_controls` to `ExplorerUI`, the `SourceAgent` can invoke them programmatically based on user queries:
@@ -383,3 +505,5 @@ The agent sees each control's actions as tools and can call them with appropriat
 
 - [Building a Census Data Explorer](../examples/tutorials/census_data_ai_explorer.md) — Complete walkthrough with BaseSourceControls
 - [Building a Weather Data Explorer](../examples/tutorials/mesonet_weather_explorer.md) — URLSourceControls tutorial with preprocessing
+- [Building a Weather API Explorer](../examples/tutorials/weather_openapi_explorer.md) — OpenAPISourceControls tutorial with auto-discovered endpoints
+- [Building a Stock Market Data Explorer](../examples/tutorials/massive_stock_explorer.md) — CodeSourceControls tutorial wrapping a Python SDK

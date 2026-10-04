@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .context import ContextModel, TContext
-from .llm import Llm, Message
+from .llm import Llm, Message, SubmitTool
 from .utils import (
     class_name_to_llm_spec_key, log_debug, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
@@ -27,6 +27,7 @@ def _expand_llm_tool_entries(entries: list[Any] | None, context: TContext) -> li
     Expand :attr:`LLMUser.llm_tools` entries: keep plain tools; resolve callables
     ``f(context)`` or no-arg ``f()`` to a tool or list of tools.
     """
+    # Deferred: .tools.base imports Actor from this module.
     from .tools.base import FunctionTool
 
     if not entries:
@@ -268,6 +269,9 @@ class LLMUser(param.Parameterized):
         model_index: int | None = None,
         model_kwargs: dict | None = None,
         tools: list | None = None,
+        max_retries: int | None = None,
+        max_tool_rounds: int | None = None,
+        submit_tool: SubmitTool | None = None,
         **prompt_kwargs
     ) -> Any:
         """
@@ -291,6 +295,10 @@ class LLMUser(param.Parameterized):
             The index of the model to subset if the model spec returns a list of models
         tools : list, optional
             Per-call tools forwarded to ``llm.invoke``, after :attr:`llm_tools` are expanded.
+        max_tool_rounds : int, optional
+            Cap on tool rounds for this call.
+        submit_tool : SubmitTool, optional
+            Let the model deliver the response model as a tool call inside the tool loop.
         **kwargs : dict
             Additional context variables for the prompt template
 
@@ -318,6 +326,12 @@ class LLMUser(param.Parameterized):
         merged_tools = _merge_prompt_tools(self.llm_tools, tools, context)
         if merged_tools is not None:
             invoke_kw["tools"] = merged_tools
+        if max_retries is not None:
+            invoke_kw["max_retries"] = max_retries
+        if max_tool_rounds is not None:
+            invoke_kw["max_tool_rounds"] = max_tool_rounds
+        if submit_tool is not None:
+            invoke_kw["submit_tool"] = submit_tool
 
         result = await self.llm.invoke(
             messages=messages,

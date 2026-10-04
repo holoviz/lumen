@@ -179,6 +179,24 @@ Requires an LLM to generate context - see [LLM Providers](llm_providers.md) for 
 
 ## Integration with Lumen AI
 
+### Table discovery
+
+Lumen embeds the metadata of every table in your sources, then searches those embeddings to pick the tables relevant to a question. This runs by default through the `MetadataLookup` tool, which returns the 20 closest matches, so a session with hundreds of tables only sends those to the agents.
+
+``` py title="Reuse a store for table metadata"
+import lumen.ai as lmai
+
+vector_store = DuckDBVectorStore(uri='tables.db')
+
+ui = lmai.ExplorerUI(
+    data=['penguins.csv', 'earthquakes.parquet'],
+    vector_store=vector_store
+)
+ui.servable()
+```
+
+See [Tools - Built-in tools](tools.md#built-in-tools) for the tools that use these embeddings.
+
 ### Document search
 
 ``` py title="Enable document search"
@@ -194,7 +212,7 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-Users can now ask questions about uploaded documents. See [Tools - DocumentLookup](tools.md#built-in-tools) for how this works.
+Users can now ask questions about uploaded documents. See [Tools - Built-in tools](tools.md#built-in-tools) for how this works.
 
 ## Configuration
 

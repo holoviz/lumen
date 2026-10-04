@@ -14,7 +14,7 @@ from panel.reactive import ReactiveHTML
 
 from lumen.sources.base import Source
 from lumen.state import state as lm_state
-from lumen.util import catch_and_notify
+from lumen.util import as_pandas, catch_and_notify
 
 from .base import WizardItem
 from .fast import FastComponent
@@ -102,7 +102,8 @@ class SourceEditor(FastComponent, Editor):
     def _load_table_data(self, event):
         if self._source is None:
             self._update_preview()
-        self.preview.value = self._source.get(self._select_table.value)
+        # Tabulator reads .index off its value, which only pandas has.
+        self.preview.value = as_pandas(self._source.get(self._select_table.value))
 
     @property
     def thumbnail(self):

@@ -17,13 +17,15 @@ except Exception:
 
 from panel.widgets import Select
 
-from lumen.filters.base import ConstantFilter
+from lumen.filters.base import ConstantFilter, ParamFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
-from lumen.transforms.base import Columns, Transform
-from lumen.transforms.sql import SQLColumns, SQLGroupBy
+from lumen.transforms.base import (
+    Aggregate, Columns, Query, Sort, Transform,
+)
+from lumen.transforms.sql import SQLColumns, SQLGroupBy, SQLSort
 from lumen.validation import ValidationError
 
 sql_available = pytest.mark.skipif(intake_sql is None or duckdb is None, reason="intake-sql is not installed")
@@ -432,3 +434,152 @@ def test_pipeline_preserves_geodataframe():
     assert 'geometry' in data.columns
     assert len(data) == 2
     assert data.geometry.notna().all()
+
+
+@pytest.fixture
+def duckdb_pushdown_source():
+    """A three-column DuckDB table plus a record of every query it runs."""
+    if duckdb is None:
+        pytest.skip("duckdb is not installed")
+    queries = []
+
+    def make():
+        source = DuckDBSource(tables={'t': 'SELECT * FROM t'}, uri=':memory:')
+        source._connection.execute(
+            "CREATE TABLE t AS SELECT * FROM "
+            "(VALUES (3, 'b', 1.5), (1, 'a', 2.5), (2, 'b', 3.5)) v(n, grp, f)"
+        )
+        return source
+
+    original = DuckDBSource._fetch_df
+
+    def record(self, cursor, sql_expr, *args, **kwargs):
+        queries.append(sql_expr)
+        return original(self, cursor, sql_expr, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(DuckDBSource, '_fetch_df', record)
+        yield make, queries
+
+
+def _query_and_data(make, queries, **params):
+    """Return the SQL that materialised the data, and the data itself.
+
+    The Pipeline queries the schema on construction, so the query that
+    matters is the one issued once ``data`` is read.
+    """
+    pipeline = Pipeline(source=make(), table='t', **params)
+    queries.clear()
+    data = pipeline.data
+    return queries[-1], data
+
+
+def test_pipeline_pushes_projection_into_sql(duckdb_pushdown_source):
+    """The columns a pipeline projects to are selected by the query, not by pandas."""
+    make, queries = duckdb_pushdown_source
+    transforms = [Sort(by=['n']), Columns(columns=['n'])]
+    sql, data = _query_and_data(make, queries, transforms=transforms)
+    assert 'SELECT n FROM' in sql
+    assert 'grp' not in sql
+
+    plain_sql, plain_data = _query_and_data(
+        make, queries, transforms=transforms, sql_pushdown=False
+    )
+    assert plain_sql == 'SELECT * FROM t'
+    assert_df_equal(data, plain_data)
+
+
+def test_pipeline_pushdown_keeps_filtered_columns(duckdb_pushdown_source):
+    """A column that is only filtered on still has to reach the filter."""
+    make, queries = duckdb_pushdown_source
+    sql, data = _query_and_data(
+        make, queries, transforms=[Columns(columns=['n'])],
+        filters=[ConstantFilter(field='grp', value='b')],
+    )
+    assert sql.startswith('SELECT n, grp FROM')
+    assert list(data.columns) == ['n']
+    assert sorted(data['n']) == [2, 3]
+
+
+def test_pipeline_pushdown_skipped_without_a_columns_transform(duckdb_pushdown_source):
+    """With no projection the pipeline still owes the caller every column."""
+    make, queries = duckdb_pushdown_source
+    sql, data = _query_and_data(make, queries, transforms=[Sort(by=['n'])])
+    assert sql == 'SELECT * FROM t'
+    assert list(data.columns) == ['n', 'grp', 'f']
+
+
+def test_pipeline_pushdown_covers_any_transform_that_names_its_columns(duckdb_pushdown_source):
+    """Aggregate declares what it reads, so a projection can still be proven."""
+    make, queries = duckdb_pushdown_source
+    transforms = [
+        Aggregate(by=['grp'], columns=['n'], with_index=False),
+        Columns(columns=['n']),
+    ]
+    sql, data = _query_and_data(make, queries, transforms=transforms)
+    assert sql.startswith('SELECT n, grp FROM')
+    assert 'f' not in sql
+
+    _, plain_data = _query_and_data(
+        make, queries, transforms=transforms, sql_pushdown=False
+    )
+    assert_df_equal(data, plain_data)
+
+
+def test_pipeline_pushdown_skipped_for_open_ended_aggregate(duckdb_pushdown_source):
+    """Without an explicit selection Aggregate reads every numeric column."""
+    make, queries = duckdb_pushdown_source
+    sql, _ = _query_and_data(
+        make, queries,
+        transforms=[Aggregate(by=['grp'], with_index=False), Columns(columns=['n'])],
+    )
+    assert sql == 'SELECT * FROM t'
+
+
+def test_pipeline_pushdown_skipped_for_unknown_transform(duckdb_pushdown_source):
+    """Query names its columns in a string, so its needs cannot be read off."""
+    make, queries = duckdb_pushdown_source
+    sql, data = _query_and_data(
+        make, queries, transforms=[Query(query='grp == "b"'), Columns(columns=['n'])]
+    )
+    assert sql == 'SELECT * FROM t'
+    assert sorted(data['n']) == [2, 3]
+
+
+def test_pipeline_pushdown_skipped_with_param_filter(duckdb_pushdown_source):
+    """A ParamFilter reads the source output before the transforms narrow it."""
+    make, queries = duckdb_pushdown_source
+    sql, _ = _query_and_data(
+        make, queries, transforms=[Columns(columns=['n'])], filters=[ParamFilter()]
+    )
+    assert sql == 'SELECT * FROM t'
+
+
+def test_pipeline_pushdown_skipped_when_nothing_is_dropped(duckdb_pushdown_source):
+    """Projecting to every column is not worth a subquery."""
+    make, queries = duckdb_pushdown_source
+    sql, _ = _query_and_data(
+        make, queries, transforms=[Columns(columns=['n', 'grp', 'f'])]
+    )
+    assert sql == 'SELECT * FROM t'
+
+
+def test_pipeline_pushdown_runs_after_declared_sql_transforms(duckdb_pushdown_source):
+    """A user's own SQL transform still sees the columns it was written against."""
+    make, queries = duckdb_pushdown_source
+    sql, data = _query_and_data(
+        make, queries, transforms=[Columns(columns=['n'])],
+        sql_transforms=[SQLSort(by=['grp'])],
+    )
+    assert 'ORDER BY grp' in sql
+    assert sql.startswith('SELECT n FROM')
+    assert list(data.columns) == ['n']
+
+
+def test_pipeline_pushdown_ignores_non_sql_source(make_filesource, mixed_df):
+    """A source with no SQL to push into is left alone."""
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    pipeline = Pipeline(source=source, table='test', transforms=[Columns(columns=['A', 'B'])])
+    assert pipeline._pushdown_transform() is None
+    assert_df_equal(pipeline.data, mixed_df[['A', 'B']])

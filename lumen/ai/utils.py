@@ -23,7 +23,6 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
-import colorcet as cc
 import numpy as np
 import pandas as pd
 import param
@@ -37,7 +36,6 @@ from jinja2 import (
 )
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
-from markupsafe import escape
 from panel_material_ui import Details
 
 from ..config import dump_yaml
@@ -46,13 +44,17 @@ from ..pipeline import Pipeline
 from ..sources.base import Source
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms import SQLRemoveSourceSeparator
-from ..util import log, try_import_xarray
+from ..util import (
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, log, try_import,
+    try_import_xarray,
+)
 from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
+    from narwhals.stable.v2.typing import Frame, IntoFrame
     from panel.chat.step import ChatStep
 
     from .editors import VegaLiteEditor
@@ -71,6 +73,14 @@ IMAGE_MIME_TYPES = {
     '.bmp': 'image/bmp',
 }
 
+# Rows beyond which a frame is sampled before being profiled. Shared by
+# describe_data_sync and lint_data so the summary an LLM reads and the findings
+# it is asked to act on are drawn from the same amount of data.
+PROFILE_SAMPLE_ROWS = 5000
+
+# Terminal colour codes, which sqlglot puts in its error messages
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
 # Column-selection tuning for describe_data_sync.
 DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
@@ -81,6 +91,18 @@ LOW_CARDINALITY_MAX = 10
 # separator so all common series conventions are caught: "X_pca_12", "PC1",
 # "dim-1", "emb.2". Used to collapse machine-generated numbered column series.
 INDEXED_COLUMN_RE = re.compile(r"^(?P<stem>.+?)[_.\-]?(?P<idx>\d+)$")
+
+# Tokenizer used to size prompt payloads. o200k_base is what semchunk resolves
+# vector_store's "gpt-4o-mini" default to, so chunking and truncation agree.
+TOKEN_ENCODING = "o200k_base"
+# Used when the tokenizer cannot be loaded. Deliberately below the ~4 chars/token
+# of English prose: dense YAML and aligned numeric tables run nearer 2.5, and
+# under-estimating the ratio over-estimates tokens, so we truncate early rather
+# than blowing a budget.
+FALLBACK_CHARS_PER_TOKEN = 3.0
+# Resolved lazily by _get_token_encoder. Key presence (not its value)
+# distinguishes "not yet resolved" from "resolved, and unavailable".
+_TOKEN_ENCODER_CACHE: dict[str, Any] = {}
 
 
 def deterministic_hash(text: str) -> int:
@@ -153,7 +175,7 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     )
     system_prompt = {
         "role": "system",
-        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        "content": f"<Chat History>\n{formatted_history}\n</Chat History>"
     }
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
@@ -214,6 +236,8 @@ def json_to_yaml(data):
 def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
+        from markupsafe import escape
+
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
             f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
@@ -235,6 +259,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -287,6 +312,29 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
             f"from these variables: {unused_keys}. If this is unintended, "
             f"please create a template that contains those keys."
         )
+
+
+def format_error(error: BaseException) -> str:
+    """Render an error as ``Type: message`` for the model, without terminal colour codes."""
+    return ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}")
+
+
+# Credentials that error messages commonly quote, e.g. an HTTP error naming
+# the request URL with ``?key=...`` or ``https://user:token@host``.
+URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@]+@")
+URL_QUERY = re.compile(r"(?P<url>\b[a-z][\w+.-]*://[^\s?#'\"<>]*)\?[^\s#'\"<>)]+", re.IGNORECASE)
+
+
+def format_tool_error(error: BaseException | str, max_length: int = 1000) -> str:
+    """
+    Render an error for a tool result that is sent to the provider.
+
+    Tool results are re-sent every round, so the text is truncated, and URL
+    credentials and query strings are redacted so secrets do not leak.
+    """
+    text = error if isinstance(error, str) else format_error(error)
+    text = URL_CREDENTIALS.sub("<redacted>@", URL_QUERY.sub(r"\g<url>?<redacted>", text))
+    return truncate_string(text, max_length)
 
 
 def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
@@ -350,7 +398,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -386,7 +435,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -605,14 +655,27 @@ async def get_pipeline(**kwargs):
     return await asyncio.to_thread(get_pipeline_sync)
 
 
+async def get_frame(pipeline):
+    """
+    Return pipeline.data off the main thread, in whichever dataframe
+    library the source produced it.
+
+    For consumers that accept any of them; everything written against pandas
+    calls get_data instead.
+    """
+    def get_frame_sync():
+        return pipeline.data
+    return await asyncio.to_thread(get_frame_sync)
+
+
 async def get_data(pipeline):
     """
-    A wrapper be able to use asyncio.to_thread and not
-    block the main thread when calling pipeline.data
+    Return pipeline.data as pandas, off the main thread.
+
+    result_to_dataframe, the LLM code sandbox and the plotting agents are
+    all written against pandas.
     """
-    def get_data_sync():
-        return pipeline.data
-    return await asyncio.to_thread(get_data_sync)
+    return as_pandas(await get_frame(pipeline))
 
 
 def _score_column_relevance(series: pd.Series, n_rows: int) -> float:
@@ -721,8 +784,86 @@ def _select_relevant_columns(
     return selected, len(selected) < len(columns)
 
 
+# The types numpy cannot hold, and what to read them as instead.
+_OBJECT_DTYPE_CASTS = {'decimal': 'float64', 'date': 'datetime64[us]'}
+
+
+def normalize_object_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Return df with columns numpy is able to describe.
+
+    numpy has no decimal and no date, so both sit in an object column, which
+    anything reading dtypes takes for text: the summary reads it as
+    categorical, so a money column loses its mean and range and comes out as
+    an enum of decimal.Decimal that yaml.safe_load cannot even read back, and
+    the exploration preview reports it as str.
+
+    Inferred from the values rather than the source dtype, because pandas
+    produces such a column for a DECIMAL result of its own, so this is not
+    only about the frame having arrived from another library.
+    """
+    casts = {
+        col: _OBJECT_DTYPE_CASTS[kind]
+        for col in df.columns
+        if (kind := pd.api.types.infer_dtype(df[col])) in _OBJECT_DTYPE_CASTS
+    }
+    return df.astype(casts) if casts else df
+
+
+def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int, int], bool]:
+    """
+    Return df as pandas, row-sampled for profiling, along with its true shape.
+
+    Sampling before the pandas conversion is the point of this function. The
+    summary reads PROFILE_SAMPLE_ROWS rows at most, and converting first pays
+    for the whole frame to get them: on a 2M x 15 polars frame the conversion
+    alone costs 0.38s and allocates ~700MB.
+
+    The shape returned is the frame's own rather than the sample's, so the
+    summary still reports the real row count.
+
+    Parameters
+    ----------
+    df : IntoFrame | Frame
+        The frame to profile, in pandas, dask or any library narwhals
+        supports.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, tuple[int, int], bool]
+        The (possibly sampled) pandas frame, the original frame's shape, and
+        whether the frame was sampled.
+    """
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        # A dask frame reports its shape as a Delayed, which none of the
+        # branches below can act on. Sampling partitions would have to compute
+        # the row count anyway, so compute the frame and profile the result.
+        df = df.compute()
+
+    narwhals_df = df if isinstance(df, pd.DataFrame) else as_narwhals(df)
+    if is_lazyframe(narwhals_df):
+        # Collect in the frame's own library rather than through pandas; the
+        # sample below is what keeps the conversion small.
+        narwhals_df = narwhals_df.collect()
+    if is_narwhals(narwhals_df):
+        shape = narwhals_df.shape
+        sampled = shape[0] > PROFILE_SAMPLE_ROWS
+        if sampled:
+            narwhals_df = narwhals_df.sample(n=PROFILE_SAMPLE_ROWS)
+        # as_pandas rather than to_pandas: it keeps an integer column holding a
+        # null an integer, instead of widening an id to 3.0 in the sample rows.
+        return normalize_object_dtypes(as_pandas(narwhals_df)), shape, sampled
+
+    shape = df.shape
+    sampled = shape[0] > PROFILE_SAMPLE_ROWS
+    if sampled:
+        df = df.sample(PROFILE_SAMPLE_ROWS)
+    return normalize_object_dtypes(df), shape, sampled
+
+
 def describe_data_sync(
-    df: pd.DataFrame,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -734,8 +875,8 @@ def describe_data_sync(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
@@ -759,8 +900,8 @@ def describe_data_sync(
     str
         YAML-formatted summary of the DataFrame
     """
-    size = df.size
-    shape = df.shape
+    df, shape, is_sampled = _sample_for_summary(df)
+    size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
         records = df.to_dict(orient='records')
@@ -769,11 +910,6 @@ def describe_data_sync(
     if size < 100:
         header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return header + df.to_markdown(index=False)
-
-    is_sampled = False
-    if shape[0] > 5000:
-        is_sampled = True
-        df = df.sample(5000)
 
     df = df.sort_index()
 
@@ -849,11 +985,12 @@ def describe_data_sync(
         if nulls > 0:
             df_describe_dict[col]["nulls"] = nulls
 
-    # select datetime64 columns
-    for col in df.select_dtypes(include=["datetime64"]).columns:
-        for key in df_describe_dict[col]:
-            df_describe_dict[col][key] = str(df_describe_dict[col][key])
-        df[col] = df[col].astype(str)  # shorten output
+    # select datetime64 columns (including tz-aware)
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
 
     # select all numeric columns and round
     for col in df.select_dtypes(include=["int64", "float64"]).columns:
@@ -917,7 +1054,7 @@ def describe_data_sync(
 
 
 async def describe_data(
-    df: pd.DataFrame,
+    df: IntoFrame | Frame,
     enum_limit: int = 3,
     reduce_enums: bool = True,
     row_limit: int | None = None,
@@ -929,8 +1066,8 @@ async def describe_data(
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
@@ -954,7 +1091,6 @@ async def describe_data(
         describe_data_sync, df, enum_limit, reduce_enums, row_limit,
         max_cols, priority_columns,
     )
-
 
 
 def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False) -> str:
@@ -1100,7 +1236,8 @@ def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", sh
     else:
         log.debug(msg)
     if show_length:
-        log.debug(f"Characters: \033[94m{len(msg)}\033[0m")
+        num_tokens = count_tokens(msg) if isinstance(msg, str) else sum(count_tokens(m) for m in msg)
+        log.debug(f"Characters: \033[94m{len(msg)}\033[0m Tokens: \033[94m{num_tokens}\033[0m")
     if suffix:
         log.debug(suffix)
     if show_sep == "below":
@@ -1240,6 +1377,129 @@ def truncate_string(s, max_length=30, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
+def closest_names(name: str, options, n: int = 3) -> list[str]:
+    """Return up to ``n`` entries of ``options`` that most resemble ``name``, ignoring case."""
+    by_lower: dict[str, str] = {}
+    for option in options:
+        by_lower.setdefault(str(option).lower(), str(option))
+    matches = difflib.get_close_matches(str(name).lower(), list(by_lower), n=n, cutoff=0.5)
+    return [by_lower[match] for match in matches]
+
+
+def format_unknown_name(kind: str, name: Any, options, max_listed: int = 30) -> str:
+    """
+    Describe an unknown ``kind`` (tool, table, column, ...) so a model can correct itself.
+
+    Lists the closest matches first, then the valid names, capped at
+    ``max_listed`` so a large catalog does not flood the transcript.
+    """
+    options = sorted({str(option) for option in options})
+    message = f"Unknown {kind} {name!r}."
+    close = closest_names(str(name), options)
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    if options:
+        listed = ", ".join(options[:max_listed])
+        more = f" (and {len(options) - max_listed} more)" if len(options) > max_listed else ""
+        message += f" Valid {kind}s: {listed}{more}."
+    return message
+
+
+def _get_token_encoder():
+    """
+    Return a cached tiktoken encoder, or ``None`` if one cannot be loaded.
+
+    Resolution is deferred to first use: ``tiktoken.get_encoding`` downloads the
+    BPE vocabulary over HTTPS unless it is already in ``$TIKTOKEN_CACHE_DIR``,
+    so importing this module must not trigger it. Any failure (no tiktoken,
+    offline, upstream 5xx) is logged once and yields ``None``, which callers
+    treat as "estimate from character length" — sizing a prompt payload is never
+    worth raising into an in-flight conversation.
+    """
+    if "encoder" in _TOKEN_ENCODER_CACHE:
+        return _TOKEN_ENCODER_CACHE["encoder"]
+    try:
+        # Deferred so a missing tiktoken degrades to the character estimate
+        # rather than breaking the import.
+        import tiktoken
+
+        encoder = tiktoken.get_encoding(TOKEN_ENCODING)
+    except Exception as e:
+        log.warning(
+            f"Could not load the {TOKEN_ENCODING!r} tokenizer ({type(e).__name__}: {e}); "
+            f"token counts will be estimated from character length at "
+            f"~{FALLBACK_CHARS_PER_TOKEN} chars/token."
+        )
+        encoder = None
+    _TOKEN_ENCODER_CACHE["encoder"] = encoder
+    return encoder
+
+
+def count_tokens(text: str) -> int:
+    """
+    Estimate how many tokens *text* occupies in an LLM prompt.
+
+    Counts with the :data:`TOKEN_ENCODING` tokenizer. Lumen also targets
+    Anthropic, Google, Mistral, Bedrock and LiteLLM models, whose tokenizers
+    differ, so this is an estimate for every provider — use it to size payloads,
+    not to predict billing. Falls back to a character-length estimate when the
+    tokenizer is unavailable.
+    """
+    if not text:
+        return 0
+    encoder = _get_token_encoder()
+    if encoder is None:
+        return math.ceil(len(text) / FALLBACK_CHARS_PER_TOKEN)
+    return len(encoder.encode(text, disallowed_special=()))
+
+
+def truncate_to_tokens(text: str, max_tokens: int, marker: str = "truncated") -> str:
+    """
+    Trim *text* to roughly *max_tokens*, cutting on a line boundary.
+
+    Prompt payloads are YAML, whitespace-aligned tables and markdown, where a
+    mid-line cut leaves a fragment the model may misread as data — so the text
+    is cut back to the last complete line that fits. The appended note reports
+    what was dropped, letting the model distinguish "this is everything" from
+    "there is more", rather than inferring it from a bare ellipsis.
+
+    Parameters
+    ----------
+    text : str
+        Text to trim.
+    max_tokens : int
+        Approximate token budget, per :func:`count_tokens`.
+    marker : str
+        Word used in the appended note.
+
+    Returns
+    -------
+    str
+        *text* unchanged when it already fits, otherwise the leading lines that
+        fit followed by ``... (truncated, showing N of M tokens)``.
+    """
+    total = count_tokens(text)
+    if total <= max_tokens:
+        return text
+
+    # Cut proportionally on characters first, then walk back a line at a time
+    # until the result plus its note fits. The first guess is usually right;
+    # the loop only corrects for uneven token density within the text.
+    note_budget = count_tokens(f"\n... ({marker}, showing {max_tokens} of {total} tokens)")
+    budget = max(max_tokens - note_budget, 1)
+    lines = text.split("\n")
+    keep = max(1, int(len(lines) * budget / total))
+    while keep > 1 and count_tokens("\n".join(lines[:keep])) > budget:
+        keep -= 1
+    kept = "\n".join(lines[:keep])
+    if count_tokens(kept) > budget:
+        # A single line exceeds the budget on its own; fall back to a character
+        # cut so we still respect the cap.
+        kept = kept[: max(1, int(len(kept) * budget / count_tokens(kept)))]
+    shown = count_tokens(kept)
+    return f"{kept}\n... ({marker}, showing {shown} of {total} tokens)"
+
+
 def collapse_indexed_columns(
     names: list[str], min_series: int = 8, max_gaps: int = 5
 ) -> list[str]:
@@ -1371,6 +1631,39 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def inline_schema_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Replace local ``$ref`` pointers in a JSON schema with their ``$defs`` definitions.
+
+    Instructor already inlines them for the native Gemini client, but OpenAI
+    compatible endpoints such as OpenRouter forward them unchanged.
+    Recursive definitions stay referenced.
+    """
+    defs = schema.get("$defs", {})
+    unresolved = False
+
+    def resolve(node: Any, seen: frozenset[str]) -> Any:
+        nonlocal unresolved
+        if isinstance(node, list):
+            return [resolve(item, seen) for item in node]
+        if not isinstance(node, dict):
+            return node
+        name = node.get("$ref", "").removeprefix("#/$defs/")
+        if name in defs:
+            if name in seen:
+                unresolved = True
+                return node
+            siblings = {k: v for k, v in node.items() if k != "$ref"}
+            return resolve({**defs[name], **siblings}, seen | {name})
+        return {k: resolve(v, seen) for k, v in node.items() if k != "$defs"}
+
+    inlined = resolve(schema, frozenset())
+    if unresolved:
+        inlined["$defs"] = defs
+    return inlined
+
 
 def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     """
@@ -1664,14 +1957,9 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of the DataFrame with sanitized column names
+        The DataFrame with sanitized column names, leaving the caller's alone
     """
-    df = df.copy()
-    df.columns = [
-        re.sub(r'[^\w]', '', col.replace(' ', '_'))
-        for col in df.columns
-    ]
-    return df
+    return df.rename(columns=lambda col: re.sub(r'[^\w]', '', col.replace(' ', '_')))
 
 
 def result_to_dataframe(result) -> pd.DataFrame | None:
@@ -1687,7 +1975,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     if isinstance(result, Source):
         return None
 
-    # SourceResult from controls — extract the DataFrame from the first source
+    # SourceResult from controls — extract the DataFrame from the first source.
+    # Deferred: the controls package reaches .editors, which imports this module.
     from .controls.ingest.result import SourceResult
     if isinstance(result, SourceResult):
         if not result.sources or not result.table:
@@ -1695,7 +1984,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
         src = result.sources[0]
         table = result.table
         try:
-            return src.get(table)
+            # Declared pd.DataFrame, and callers concat it and read .empty.
+            return as_pandas(src.get(table))
         except Exception:
             return None
 
@@ -1877,6 +2167,8 @@ def category_palette(ncolors: int = 20) -> list[str]:
     colorcet.glasbey_category10 gives float RGB tuples that cannot be
     serialized into a spec.
     """
+    import colorcet as cc
+
     return cc.b_glasbey_category10[:ncolors]
 
 

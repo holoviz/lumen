@@ -4,23 +4,23 @@
 Available visualization types:
 {{ doc }}
 
-The current SQL table name: {{ memory['pipeline'].table }}.
+Current SQL table name: {{ memory['pipeline'].table }}.
 
-Here is the current dataset to use:
+Current dataset:
 {{ memory['data'] }}
 
 {%- if gridded is defined and gridded %}
 
-Data originates from an xarray dataset.
+Data originates from xarray dataset.
 - dimensions: {{ gridded.dims | join(', ') }}
 - data variables: {{ gridded.data_vars | join(', ') }}
-Use a 2D gridded encoding with axes on the coordinate dimensions and
-colour/value on the data variable, using whichever syntax this agent
-accepts (see agent-specific instructions below).
+Use 2D gridded encoding with axes on coordinate dimensions and
+colour/value on data variable, using whichever syntax agent accepts
+(see agent-specific instructions below).
 {%- endif %}
 
 {%- if "view" in memory and memory["view"].get("agent") and actor_name.startswith(memory["view"].get("agent")) %}
-Adapt from the previous view specification below as needed:
+Adapt from previous view specification below as needed:
 ```yaml
 {{ memory["view"]["spec"] | json_to_yaml }}
 ```
