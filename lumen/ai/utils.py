@@ -1359,6 +1359,34 @@ def truncate_string(s, max_length=30, ellipsis="..."):
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
+def closest_names(name: str, options, n: int = 3) -> list[str]:
+    """Return up to ``n`` entries of ``options`` that most resemble ``name``, ignoring case."""
+    by_lower: dict[str, str] = {}
+    for option in options:
+        by_lower.setdefault(str(option).lower(), str(option))
+    matches = difflib.get_close_matches(str(name).lower(), list(by_lower), n=n, cutoff=0.5)
+    return [by_lower[match] for match in matches]
+
+
+def format_unknown_name(kind: str, name: Any, options, max_listed: int = 30) -> str:
+    """
+    Describe an unknown ``kind`` (tool, table, column, ...) so a model can correct itself.
+
+    Lists the closest matches first, then the valid names, capped at
+    ``max_listed`` so a large catalog does not flood the transcript.
+    """
+    options = sorted({str(option) for option in options})
+    message = f"Unknown {kind} {name!r}."
+    close = closest_names(str(name), options)
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    if options:
+        listed = ", ".join(options[:max_listed])
+        more = f" (and {len(options) - max_listed} more)" if len(options) > max_listed else ""
+        message += f" Valid {kind}s: {listed}{more}."
+    return message
+
+
 def _get_token_encoder():
     """
     Return a cached tiktoken encoder, or ``None`` if one cannot be loaded.

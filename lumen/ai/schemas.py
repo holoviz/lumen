@@ -14,12 +14,70 @@ from .table_stats import (
     render_column, render_stats_header,
 )
 from .utils import (
-    INDEXED_COLUMN_RE, collapse_indexed_columns, count_tokens, get_schema,
-    log_debug, slug_to_table_name, truncate_string,
+    INDEXED_COLUMN_RE, closest_names, collapse_indexed_columns, count_tokens,
+    get_schema, log_debug, slug_to_table_name, truncate_string,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..sources import Source
+
+# Separators models use between a source and a table name.
+_SLUG_DELIMITERS = ("/", ".", SOURCE_TABLE_SEPARATOR.strip())
+
+
+def resolve_table_slug(reference: str, slugs: Iterable[str]) -> str:
+    """
+    Resolve a model-supplied table reference to one of ``slugs``.
+
+    Accepts, case-insensitively and in order of preference: the slug itself,
+    ``<source>/<table>`` or ``<source>.<table>``, the bare table name, and any
+    ``<prefix>/<table>`` whose table part is unambiguous. The last covers
+    references such as ``source/orders`` that name the source generically.
+
+    Raises
+    ------
+    ValueError
+        If nothing matches or a reference matches several tables. The
+        message lists the candidates or the closest names so the model can
+        correct the reference.
+    """
+    slugs = list(dict.fromkeys(slugs))
+    raw = str(reference).strip().strip("`\"'")
+    if raw in slugs:
+        return raw
+    target = raw.lower()
+    parts = [
+        (slug, *(slug.split(SOURCE_TABLE_SEPARATOR, 1) if SOURCE_TABLE_SEPARATOR in slug else (None, slug)))
+        for slug in slugs
+    ]
+    # Every split point, since table names may themselves contain dots.
+    suffixes = {raw[i + 1:].strip().lower() for i, char in enumerate(raw) if char in _SLUG_DELIMITERS}
+    tiers = (
+        [
+            slug for slug, source, table in parts
+            if slug.lower() == target or (source is not None and target in {
+                f"{source}{delim}{table}".lower() for delim in _SLUG_DELIMITERS
+            })
+        ],
+        [slug for slug, _, table in parts if table.lower() == target],
+        [slug for slug, _, table in parts if table.lower() in suffixes],
+    )
+    for matches in tiers:
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            raise ValueError(f"Ambiguous table {reference!r}. Use one of: {sorted(matches)}.")
+
+    tables = sorted({table for _, _, table in parts})
+    close = closest_names(raw.rsplit("/", 1)[-1], tables)
+    message = f"Unknown table {reference!r}."
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    more = f" (and {len(tables) - 30} more)" if len(tables) > 30 else ""
+    raise ValueError(f"{message} Available tables: {', '.join(tables[:30])}{more}.")
+
 
 # Pandas dtype names some sources report as column types; they say less than
 # the statistics next to them, so they are not rendered as SQL types.
@@ -27,7 +85,7 @@ _PANDAS_DTYPES = {"object", "string", "str", "category"}
 
 SAMPLED_NOTE = (
     "Stats from a sample or engine estimates can miss rare values; confirm "
-    "literal values with run_exploration_sql before filtering on them."
+    "literal values with distinct_values before filtering on them."
 )
 # Catalog metadata keys that duplicate what the table rendering already shows.
 _METADATA_EXCLUDE = frozenset({'columns', 'data_type', 'source_name', 'rows', 'description'})
@@ -240,14 +298,25 @@ class Metaset:
             return table_slug.split(SOURCE_TABLE_SEPARATOR, 1)[1]
         return table_slug
 
-    def table_detail(self, table_slug: str, include_lineage: bool = True) -> str:
-        """Every statistic available for one table, untruncated."""
+    def table_columns(self, table_slug: str) -> list[str]:
+        """Names of the columns :meth:`table_detail` can render for a table."""
+        stats = self.get_stats(table_slug)
+        names = [c.name for c in stats.columns] if stats is not None else []
+        return names + [c.name for c in self.catalog[table_slug].columns if c.name not in names]
+
+    def table_detail(
+        self, table_slug: str, include_lineage: bool = True, columns: set[str] | None = None
+    ) -> str:
+        """
+        Every statistic available for one table, untruncated. `columns`
+        restricts the column lines to these lowercased names.
+        """
         entry = self.catalog[table_slug]
         max_order = max((e.created_order for e in self.catalog.values()), default=0)
         return self._render_table(
             table_slug, self.display_name(table_slug), entry, "full", truncate=False,
             include_sql=False, include_metadata=True, include_lineage=include_lineage,
-            max_order=max_order,
+            max_order=max_order, only_columns=columns,
         )
 
     def _render_table(
@@ -261,6 +330,7 @@ class Metaset:
         include_metadata: bool,
         include_lineage: bool,
         max_order: int,
+        only_columns: set[str] | None = None,
     ) -> str:
         """
         Render one table as a header line followed by one line per column.
@@ -294,6 +364,8 @@ class Metaset:
             columns += [self._column_from_catalog(c) for c in entry.columns if c.name not in known]
         else:
             columns = [self._column_from_catalog(c) for c in entry.columns]
+        if only_columns is not None:
+            columns = [c for c in columns if c.name.lower() in only_columns]
         if not columns:
             return "\n".join(lines)
 
@@ -497,9 +569,11 @@ class Metaset:
 
         # Add other tables section
         if n_others > 0:
+            # Continue the similarity ranking after the primary page, so
+            # paging with offset neither repeats nor skips tables.
             primary_set = set(primary_slugs)
             other_slugs = list(dict.fromkeys(overflow + [
-                slug for slug in self.catalog.keys()
+                slug for slug in self.get_top_tables(None, offset)
                 if slug not in primary_set and slug in active_slugs
             ]))[:n_others]
             if other_slugs:
