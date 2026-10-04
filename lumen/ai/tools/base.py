@@ -105,6 +105,11 @@ class FunctionTool(Tool):
     render_output = param.Boolean(default=False, doc="""
         Whether to render the tool output directly, even if it is not already a Lumen View or Panel Viewable.""")
 
+    read_only = param.Boolean(default=False, doc="""
+        Whether calling the tool leaves all state unchanged. Identical calls
+        to a read-only tool within one LLM request reuse the earlier result
+        instead of running again.""")
+
     prompts = param.Dict(
         default={
             "main": {

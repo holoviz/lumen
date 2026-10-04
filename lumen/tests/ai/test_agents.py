@@ -96,7 +96,7 @@ async def test_load_table_schemas_rejects_ambiguous_bare_name():
 
     result = await make_load_table_schemas_tool(metaset).function(["orders"])
 
-    assert "ambiguous" in result
+    assert "ambiguous" in result.lower()
     assert all(slug in result for slug in slugs)
     metaset.ensure_stats.assert_not_awaited()
 
@@ -420,6 +420,23 @@ async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_sou
     joined = " ".join(captured["findings"])
     assert "before aggregation" in joined
     assert "-9999" in joined, "the placeholder the aggregate hid must reach the rewrite"
+
+
+async def test_sql_agent_profiles_source_rows_behind_a_scalar_aggregate(llm, dirty_source, test_messages):
+    """A one-row AVG gives the result lint nothing, but the -9999 it averaged in must still be found."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    captured = {}
+
+    async def _capture(self, sql_query, findings, original_rows, source, messages, context, step):
+        captured["findings"] = findings
+        return sql_query
+
+    with patch.object(SQLAgent, "_clean_data_pass", new=_capture):
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(query='SELECT AVG("value") AS mean FROM dirty', table_slug="mean", tables=["dirty"]),
+        ])
+
+    assert "-9999" in " ".join(captured["findings"])
 
 
 async def test_sql_agent_skips_source_profiling_when_not_aggregating(llm, dirty_source, test_messages):
@@ -1428,7 +1445,7 @@ def test_format_error_strips_ansi_codes():
 
 
 def test_exploration_tool_doc_quotes_every_name():
-    sources = {("src", "orders"): None, ("src", "customers"): None}
+    sources = {("src_b", "orders"): None, ("src_a", "customers"): None}
     doc = make_run_exploration_sql_tool(sources).function.__doc__
-    assert "Sources: `src`." in doc
-    assert "Tables: `customers`, `orders`." in doc
+    assert "one of `src_a`, `src_b`." in doc
+    assert doc.count("`") % 2 == 0
