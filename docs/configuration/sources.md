@@ -259,7 +259,7 @@ agent = SQLAgent(stats_wait=30, schema_max_tokens=6000, schema_tables_shown=40)
 
 ### Statistics cache
 
-Statistics are cached in memory and, for databases with a stable identity (database files, SQLAlchemy URLs, Snowflake and BigQuery accounts), on disk under the user cache directory, for example `~/Library/Caches/lumen/table_stats` on macOS. A cached entry is discarded when the table's columns change or its modification token changes (file modification time, BigQuery `modified`, DuckDB catalog entry), and after seven days on engines that expose no such token.
+Statistics are cached in memory and, for databases with a stable identity (database files, SQLAlchemy URLs, Snowflake and BigQuery accounts), on disk under the user cache directory, for example `~/Library/Caches/lumen/table_stats` on macOS. A cached entry is discarded when the table's columns change or its modification token changes (the modification time of the file or database and its write-ahead log, BigQuery `modified`, the DuckDB catalog entry), and after seven days on engines that expose no such token. An `UPDATE` to a table in an in-memory DuckDB database is not detected; the entry is dropped with the connection.
 
 !!! warning "The cache contains data values"
 

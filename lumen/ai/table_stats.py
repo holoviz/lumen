@@ -87,6 +87,9 @@ _OTHER_RE = re.compile(
 _BARE_NAME_RE = re.compile(r'^\s*(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$-]*)(?:\s*\.\s*(?:"[^"]+"|`[^`]+`|[A-Za-z_][\w$-]*)){0,2}\s*$')
 _PLAIN_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _SELECT_STAR_RE = re.compile(r'^\s*SELECT\s+\*\s+FROM\s+(.+?)\s*;?\s*$', re.IGNORECASE | re.DOTALL)
+_WHOLE_PARQUET_RE = re.compile(
+    r"""^\s*(?:SELECT\s+\*\s+FROM\s+)?read_parquet\s*\(\s*'([^']+)'\s*\)\s*;?\s*$""", re.IGNORECASE
+)
 _FILE_ARG_RE = re.compile(r"""read_\w+\s*\(\s*\[?\s*['"]([^'"]+)['"]""", re.IGNORECASE)
 
 
@@ -303,6 +306,28 @@ def _quote_qualified(name: str, dialect: str | None) -> str:
     return ".".join(_quote_part(part, dialect) for part in parts)
 
 
+def _stat_token(paths: list[str], journals: tuple[str, ...] = ()) -> str | None:
+    """
+    Size and mtime of `paths`, plus each path's write-ahead log (suffixes in
+    `journals`) when it exists: in WAL mode a commit, UPDATE included, only
+    touches the log until the next checkpoint.
+    """
+    tokens = []
+    for path in paths:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return None
+        tokens.append(f"{path}:{stat.st_size}:{stat.st_mtime_ns}")
+        for suffix in journals:
+            try:
+                stat = os.stat(path + suffix)
+            except OSError:
+                continue
+            tokens.append(f"{suffix}:{stat.st_size}:{stat.st_mtime_ns}")
+    return "|".join(tokens)
+
+
 # ---------------------------------------------------------------------------
 # Engine adapters
 # ---------------------------------------------------------------------------
@@ -323,6 +348,13 @@ class StatsAdapter:
     #: Whether reading the first rows bills a full scan (BigQuery), so it is
     #: never used as a fallback for a failed or empty sample.
     limit_scans_table = False
+
+    #: Whether only the thread that created the data can see it, so the
+    #: table cannot be profiled on a worker thread.
+    thread_bound = False
+
+    #: Whether min/max from `metadata_stats` are exact rather than estimates.
+    exact_metadata_ranges = False
 
     def __init__(self, source: Source):
         self.source = source
@@ -347,16 +379,7 @@ class StatsAdapter:
     def modified(self, table: str) -> str | None:
         """A token that changes when the table's data changes, if cheaply known."""
         paths = self._file_paths(table)
-        if not paths:
-            return None
-        tokens = []
-        for path in paths:
-            try:
-                stat = os.stat(path)
-            except OSError:
-                return None
-            tokens.append(f"{path}:{stat.st_size}:{stat.st_mtime_ns}")
-        return "|".join(tokens)
+        return _stat_token(paths) if paths else None
 
     def _file_paths(self, table: str) -> list[str]:
         file_tables = getattr(self.source, "_file_based_tables", {}) or {}
@@ -453,6 +476,9 @@ class DuckDBStatsAdapter(StatsAdapter):
 
     local = True
 
+    # Parquet footers bound every row group exactly.
+    exact_metadata_ranges = True
+
     def identity(self) -> str | None:
         uri = getattr(self.source, "uri", None)
         if uri and uri != ":memory:" and "://" not in uri:
@@ -461,8 +487,14 @@ class DuckDBStatsAdapter(StatsAdapter):
 
     def modified(self, table: str) -> str | None:
         # A table or view's oid changes on CREATE OR REPLACE and its
-        # estimated size on inserts, which also covers in-memory databases.
+        # estimated size on inserts; neither changes on UPDATE, which only
+        # the database file and its WAL reveal. In-memory databases have no
+        # file, so an UPDATE there is not seen while the connection lives.
         tokens = [token] if (token := super().modified(table)) else []
+        if identity := self.identity():
+            if (db := _stat_token([identity.removeprefix("duckdb:")], (".wal",))) is None:
+                return None
+            tokens.append(db)
         if names := self._referenced_tables(table):
             placeholders = ", ".join("?" for _ in names)
             try:
@@ -539,8 +571,22 @@ class DuckDBStatsAdapter(StatsAdapter):
         return None
 
     def _parquet_path(self, table) -> str | None:
-        paths = [p for p in self._file_paths(table) if p.lower().endswith((".parquet", ".parq"))]
-        return paths[0].replace("'", "''") if len(paths) == 1 else None
+        """
+        The Parquet file `table` reads in full. Footer counts and ranges
+        describe the whole file, so any filter, join or projection on top of
+        it disqualifies the table.
+        """
+        file_tables = getattr(self.source, "_file_based_tables", {}) or {}
+        if table in file_tables:
+            candidate = str(file_tables[table])
+        elif match := _WHOLE_PARQUET_RE.match(self.definition(table)):
+            candidate = match.group(1)
+        else:
+            return None
+        if not candidate.lower().endswith((".parquet", ".parq")) or "://" in candidate or any(ch in candidate for ch in "*?["):
+            return None
+        path = Path(candidate).expanduser()
+        return str(path.resolve()).replace("'", "''") if path.exists() else None
 
     def metadata_stats(self, table, columns, rows, timeout):
         path = self._parquet_path(table)
@@ -615,6 +661,13 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
     def __init__(self, source):
         super().__init__(source)
         self.local = self.dialect == "sqlite"
+        # SingletonThreadPool, SQLAlchemy's default for SQLite :memory:,
+        # gives every thread its own empty database.
+        pool = getattr(getattr(source, "_engine", None), "pool", None)
+        self.thread_bound = (
+            self.dialect == "sqlite" and type(pool).__name__ == "SingletonThreadPool"
+            and (getattr(getattr(source, "_url", None), "database", None) or ":memory:") == ":memory:"
+        )
 
     def identity(self) -> str | None:
         url = getattr(self.source, "_url", None)
@@ -635,8 +688,7 @@ class SQLAlchemyStatsAdapter(StatsAdapter):
 
     def modified(self, table):
         if self.dialect == "sqlite" and (path := self._sqlite_path()):
-            stat = os.stat(path)
-            return f"{stat.st_size}:{stat.st_mtime_ns}"
+            return _stat_token([path], ("-wal",))
         return super().modified(table)
 
     def _split(self, table: str) -> tuple[str | None, str] | None:
@@ -839,11 +891,38 @@ def _parse_pg_array(text: str | None) -> list[str]:
     return [v for v in values if v is not None]
 
 
+#: Snowflake's internal type names, as cursor metadata reports them, mapped
+#: to SQL type names the profiler classifies.
+_SNOWFLAKE_TYPES = {"FIXED": "NUMBER", "REAL": "FLOAT", "TEXT": "VARCHAR"}
+
+
 class SnowflakeStatsAdapter(StatsAdapter):
 
     # Snowflake answers COUNT(*), COUNT(col), MIN and MAX on base tables from
     # micro-partition metadata, so these never consume warehouse time.
     metadata_count = True
+
+    exact_metadata_ranges = True
+
+    def columns(self, table, relation, timeout):
+        # A LIMIT 0 result carries names only, and without types no column
+        # would get a range. describe() compiles the query without running it.
+        from snowflake.connector.constants import (  # type: ignore[import-not-found]
+            FIELD_ID_TO_NAME,
+        )
+        cursor = self.source._conn.cursor()
+        try:
+            meta = cursor.describe(f"SELECT * FROM {relation}")
+        except Exception as e:
+            log_debug(f"[table_stats] describe failed for {table!r}: {e}")
+            return super().columns(table, relation, timeout)
+        finally:
+            cursor.close()
+        columns = []
+        for col in meta:
+            name = FIELD_ID_TO_NAME.get(col.type_code)
+            columns.append((col.name, _SNOWFLAKE_TYPES.get(name, name)))
+        return columns
 
     def identity(self):
         src = self.source
@@ -1169,7 +1248,12 @@ class TableProfiler(param.Parameterized):
             return
         if adapter.metadata_stats(stats.table, stats.columns, stats.rows, budget.timeout(self.statement_timeout)):
             stats.method = ESTIMATED
-            stats.ranges_exact = isinstance(adapter, SnowflakeStatsAdapter | DuckDBStatsAdapter)
+            # Only a claim about the ranges metadata actually supplied;
+            # anything filled from the sample later is not exact.
+            ranged = [c for c in stats.columns if c.kind in ("numeric", "temporal")]
+            stats.ranges_exact = adapter.exact_metadata_ranges and bool(ranged) and all(
+                c.min is not None and c.max is not None for c in ranged
+            )
         sample = self._sample(adapter, stats, relation, params, budget, rows)
         if sample is None:
             return
@@ -1250,26 +1334,59 @@ class TableProfiler(param.Parameterized):
     def _exact(self, adapter, stats, relation, params, budget, sample):
         # Aliases must be valid unquoted identifiers everywhere, so no
         # leading underscores (Oracle).
-        exprs = ["COUNT(*) AS lumen_n"]
+        groups = []
         for i, col in enumerate(stats.columns):
             q = quote_identifier(col.name, adapter.dialect)
-            exprs.append(f"COUNT({q}) AS lumen_c{i}")
+            exprs = [f"COUNT({q}) AS lumen_c{i}"]
             if col.kind != "other":
                 exprs.append(f"COUNT(DISTINCT {q}) AS lumen_d{i}")
             if col.kind in ("numeric", "temporal"):
                 exprs += [f"MIN({q}) AS lumen_lo{i}", f"MAX({q}) AS lumen_hi{i}"]
+            groups.append(exprs)
+
+        def aggregate(exprs):
+            df = adapter.execute(
+                f"SELECT {', '.join(['COUNT(*) AS lumen_n', *exprs])} FROM {relation}",
+                params, budget.timeout(self.statement_timeout),
+            )
+            # Per column, since a row-wise iloc upcasts mixed dtypes to float.
+            return {str(k).lower(): df[k].iloc[0] for k in df.columns}
+
         # Chunked so very wide tables stay under engine limits on select-list size.
         row: dict[str, Any] = {}
-        for start in range(0, len(exprs), 240):
-            chunk = exprs[start:start + 240]
-            if start:
-                chunk = ["COUNT(*) AS lumen_n", *chunk]
-            df = adapter.execute(f"SELECT {', '.join(chunk)} FROM {relation}", params, budget.timeout(self.statement_timeout))
-            # Per column, since a row-wise iloc upcasts mixed dtypes to float.
-            row.update({str(k).lower(): df[k].iloc[0] for k in df.columns})
+        chunk: list[list[str]] = []
+        for group in [*groups, None]:
+            if group is not None and sum(map(len, chunk)) + len(group) <= 240:
+                chunk.append(group)
+                continue
+            if chunk:
+                try:
+                    row.update(aggregate([e for g in chunk for e in g]))
+                except (StatsBudgetExceeded, StatementTimeout):
+                    raise
+                except Exception as e:
+                    # One column the engine cannot aggregate, such as a CLOB
+                    # or a Postgres range, fails the statement. Retrying per
+                    # column limits the loss to that column, keeping its plain
+                    # COUNT where DISTINCT or MIN/MAX are what failed.
+                    log_debug(f"[table_stats] aggregates failed for {stats.table!r}, retrying per column: {e}")
+                    for g in chunk:
+                        for attempt in (g, g[:1]) if len(g) > 1 else (g,):
+                            try:
+                                row.update(aggregate(attempt))
+                                break
+                            except (StatsBudgetExceeded, StatementTimeout):
+                                raise
+                            except Exception:
+                                continue
+            chunk = [group] if group is not None else []
+        if "lumen_n" not in row:
+            row.update(aggregate([]))
         total = int(row["lumen_n"])
         stats.rows, stats.rows_exact, stats.rows_at_least = total, True, None
         for i, col in enumerate(stats.columns):
+            if f"lumen_c{i}" not in row:
+                continue
             nonnull = int(row[f"lumen_c{i}"])
             col.nulls = (1 - nonnull / total) if total else 0.0
             if f"lumen_d{i}" in row and row[f"lumen_d{i}"] is not None:
@@ -1826,6 +1943,10 @@ class TableStatsStore(param.Parameterized):
                 stats = self.profiler.profile(source, table, self._budget(key[0]))
             else:
                 stats = self._from_schema(source, table)
+        if not stats.columns:
+            # Not even described; caching that would hide the table until
+            # retry_after, though the cause (e.g. a transient error) may pass.
+            return stats
         token = self._token(adapter, table)
         stats.fingerprint = self._fingerprint(stats.signature, token)
         self._remember(key, stats, token)
@@ -1878,6 +1999,11 @@ class TableStatsStore(param.Parameterized):
             # Tables wait for a slot here rather than in a worker thread, so
             # a large catalog holds no threads while queued.
             async with self._async_slot(key[0]):
+                if self._adapter(source).thread_bound:
+                    # Only the thread that created the data sees it, which
+                    # is normally the loop's; the statement timeout still
+                    # bounds how long the loop is blocked.
+                    return self.compute(source, table)
                 loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(_PROFILE_EXECUTOR, self.compute, source, table)
         except Exception as e:

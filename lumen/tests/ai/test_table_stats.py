@@ -757,3 +757,142 @@ class TestMetasetFixes:
         ])
         customers = tight.split("customers", 1)[1]
         assert "{" not in customers.split("\n\n", 1)[0]
+
+
+# ---------------------------------------------------------------
+# Second review
+# ---------------------------------------------------------------
+
+class TestChangeTokens:
+
+    def test_update_in_file_backed_duckdb_invalidates(self, tmp_path):
+        source = DuckDBSource(uri=str(tmp_path / "db.duckdb"), read_only=False)
+        source._connection.execute("CREATE TABLE t AS SELECT range AS x FROM range(10)")
+        source._connection.execute("CHECKPOINT")
+        source.tables = ["t"]
+        store = TableStatsStore(cache_dir=tmp_path / "cache")
+        assert store.compute(source, "t").column("x").max == 9
+        source._connection.execute("UPDATE t SET x = 100 WHERE x = 9")
+        assert store.get(source, "t") is None
+        assert store.compute(source, "t").column("x").max == 100
+        source.close()
+
+    def test_update_in_sqlite_wal_mode_invalidates(self, sqlite_path):
+        pytest.importorskip("sqlalchemy")
+        with sqlite3.connect(sqlite_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+        # An open connection keeps the WAL from being checkpointed away.
+        writer = sqlite3.connect(sqlite_path)
+        try:
+            store = TableStatsStore(cache_dir=None)
+            source = _sqlite_source(sqlite_path)
+            assert store.compute(source, "account").column("frequency").values == [["MONTHLY", 5]]
+            writer.execute("UPDATE account SET frequency = 'WEEKLY'")
+            writer.commit()
+            assert store.get(source, "account") is None
+        finally:
+            writer.close()
+
+
+def test_parquet_footer_stats_only_for_whole_file(tmp_path):
+    path = tmp_path / "data.parquet"
+    pd.DataFrame({"x": range(5000)}).to_parquet(path)
+    source = DuckDBSource(uri=":memory:", tables={
+        "whole": f"SELECT * FROM read_parquet('{path}')",
+        "small": f"SELECT * FROM read_parquet('{path}') WHERE x < 100",
+    })
+    assert DuckDBStatsAdapter(source)._parquet_path("small") is None
+    stats = TableProfiler().profile(source, "small")
+    assert (stats.rows, stats.column("x").min, stats.column("x").max) == (100, 0, 99)
+    assert DuckDBStatsAdapter(source).exact_row_count("whole") == 5000
+    source.close()
+
+
+async def test_in_memory_sqlite_is_profiled_on_its_own_thread():
+    pytest.importorskip("sqlalchemy")
+    from sqlalchemy import text
+    source = SQLAlchemySource(url="sqlite:///:memory:")
+    with source._engine.connect() as conn:
+        conn.execute(text("CREATE TABLE t (x INTEGER)"))
+        conn.execute(text("INSERT INTO t VALUES (1), (2), (3)"))
+        conn.commit()
+    source.tables = ["t"]
+    assert SQLAlchemyStatsAdapter(source).thread_bound
+    store = TableStatsStore(cache_dir=None)
+    result = await store.ensure(source, ["t"], timeout=5)
+    assert (result["t"].rows, result["t"].column("x").max) == (3, 3)
+
+
+def test_undescribed_tables_are_not_cached(duckdb_source):
+    store = TableStatsStore(cache_dir=None)
+    with patch.object(DuckDBStatsAdapter, "columns", side_effect=RuntimeError("no such table")):
+        assert store.compute(duckdb_source, "orders").columns == []
+    assert store.compute(duckdb_source, "orders").rows == 4
+
+
+class _Column:
+
+    def __init__(self, name, type_code):
+        self.name, self.type_code = name, type_code
+
+
+def test_snowflake_columns_carry_types():
+    constants = types.ModuleType("snowflake.connector.constants")
+    constants.FIELD_ID_TO_NAME = {0: "FIXED", 2: "TEXT", 8: "TIMESTAMP_NTZ"}
+    connector = types.ModuleType("snowflake.connector")
+    snowflake = types.ModuleType("snowflake")
+    snowflake.connector, connector.constants = connector, constants
+    source = _FakeSnowflake()
+    source._conn = _FakeSnowflakeConn()
+    modules = {"snowflake": snowflake, "snowflake.connector": connector, "snowflake.connector.constants": constants}
+    with patch.dict(sys.modules, modules), patch.object(
+        _FakeSnowflakeConn, "cursor", lambda self: MagicMock(describe=lambda sql: [_Column("V", 0), _Column("S", 2), _Column("T", 8)])
+    ):
+        columns = SnowflakeStatsAdapter(source).columns("EVENTS", '"EVENTS"', 5)
+    assert columns == [("V", "NUMBER"), ("S", "VARCHAR"), ("T", "TIMESTAMP_NTZ")]
+    assert [column_kind(t) for _, t in columns] == ["numeric", "string", "temporal"]
+
+
+class _UntypedSnowflake(SnowflakeStatsAdapter):
+    """Snowflake whose columns came back without types, so metadata supplies no ranges."""
+
+    metadata_count = False
+
+    def metadata_stats(self, table, columns, rows, timeout):
+        return True
+
+    def sample_sql(self, relation, rows, total, seed):
+        return "sample", True
+
+    def execute(self, sql, params=None, timeout=None):
+        if "COUNT" in sql:
+            return pd.DataFrame({"n": [10_000_000]})
+        return pd.DataFrame({"v": [2175, 8126]})
+
+
+def test_sample_ranges_are_never_labelled_exact():
+    from lumen.ai.table_stats import _Budget
+    adapter = _UntypedSnowflake(_FakeSnowflake())
+    stats = TableStats("t", columns=[ColumnStats("v")])
+    TableProfiler()._compute(adapter, stats, "t", None, _Budget(None))
+    assert stats.method == ESTIMATED and stats.column("v").min == 2175
+    assert not stats.ranges_exact
+    assert "exact ranges" not in render_stats_header(stats)
+
+
+def test_unaggregatable_column_keeps_the_rest(duckdb_source):
+    adapter = DuckDBStatsAdapter(duckdb_source)
+    original = DuckDBStatsAdapter.execute
+
+    def execute(self, sql, params=None, timeout=None):
+        if 'MIN(amount)' in sql or 'MIN("amount")' in sql:
+            raise RuntimeError("cannot aggregate")
+        return original(self, sql, params, timeout)
+
+    with patch.object(DuckDBStatsAdapter, "execute", execute):
+        stats = TableProfiler().profile(duckdb_source, "orders")
+    assert stats.method == EXACT and stats.rows == 4
+    assert (stats.column("customer_id").min, stats.column("customer_id").max) == (1, 3)
+    amount = stats.column("amount")
+    assert amount.min is None and amount.nulls == 0.0
+    assert adapter.dialect == duckdb_source.dialect
