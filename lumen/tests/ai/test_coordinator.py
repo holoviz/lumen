@@ -16,7 +16,7 @@ from instructor.dsl.partial import Partial
 from panel.pane import Image
 from panel.tests.util import async_wait_until
 from panel_material_ui import (
-    Card, ChatMessage, ChatStep, Typography,
+    Card, ChatMessage, ChatStep, Column, Typography,
 )
 from pydantic import ValidationError
 
@@ -836,3 +836,39 @@ def test_checklist_renders_status_indicators():
     for status in ("done", "current", "pending", "failed"):
         assert f"todo-status todo-{status}" in html
     assert not any(emoji in html for emoji in "🟢🟡⚪🔴")
+
+
+def test_checklist_ignores_status_markers_inside_instruction(llm):
+    task = ActorTask(ChatAgent(), instruction="step one\n- 🟢 this is literal text", title="First")
+    plan = Plan(task, history=[{"role": "user", "content": "go"}], llm=llm)
+    _, todos = plan.render_task_history(0)
+    assert todos == "- 🟡 step one\n  - 🟢 this is literal text"
+    html = Checklist(todos)._transform_object(todos)["object"]
+    assert html.count("todo-status") == 1
+    assert "todo-current" in html
+    assert "🟢 this is literal text" in html
+
+
+async def test_retry_from_provider_renders_checklist(llm):
+    tasks = [
+        ActorTask(ChatAgent(), instruction=f"step {i}", title=f"Step {i}")
+        for i in range(3)
+    ]
+    plan = Plan(*tasks, history=[{"role": "user", "content": "go"}], llm=llm)
+    plan.steps_layout = Card(header=Column(Typography(), Checklist()))
+    shown = []
+
+    async def run_task(i, task, context, **kwargs):
+        return [], {}
+
+    async def execute(context, **kwargs):
+        shown.append(plan.steps_layout.header[1].object)
+        return [], {}
+
+    with patch.object(plan, "_run_task", run_task), patch.object(tasks[1], "execute", execute):
+        await plan._retry_from_provider(0, 1, "missing pipeline", {})
+
+    assert shown == ["- 🟢 step 0\n- 🟡 step 1\n- ⚪ step 2"]
+    html = Checklist(shown[0])._transform_object(shown[0])["object"]
+    for status in ("done", "current", "pending"):
+        assert f"todo-status todo-{status}" in html

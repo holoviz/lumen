@@ -34,7 +34,7 @@ from ..utils import (
     content_to_text, get_root_exception, inline_schema_defs, log_debug,
     mutate_user_message, wrap_logfire,
 )
-from .base import Coordinator, Plan
+from .base import Coordinator, Plan, format_todo
 
 if TYPE_CHECKING:
     from panel.chat.step import ChatStep
@@ -384,7 +384,7 @@ class Planner(Coordinator):
             else:
                 instruction = step.instruction or '...'
             if instruction:
-                todos_list.append(f"- ⚪ {instruction}")
+                todos_list.append(format_todo("⚪", instruction))
 
         return "\n".join(todos_list)
 

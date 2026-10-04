@@ -92,7 +92,7 @@ class Plan(Section):
                 status = "🟡"
             else:
                 status = "⚪"
-            todos_list.append(f"- {status} {instruction}")
+            todos_list.append(format_todo(status, instruction))
         todos = "\n".join(todos_list)
 
         roadmap_system = (
@@ -237,10 +237,7 @@ class Plan(Section):
 
                 # Update todos to show retry
                 if self.steps_layout is not None:
-                    todos = "\n".join(
-                        f"- {'🟢' if tidx < idx else '🟡' if tidx == idx else '⚪'} {t.instruction}"
-                        for tidx, t in enumerate(self)
-                    )
+                    _, todos = self.render_task_history(idx)
                     self.steps_layout.header[1].object = todos
 
                 # Run with mutated history
@@ -273,7 +270,18 @@ class Plan(Section):
 
 _TODO_STATUS = {"🟢": "done", "🟡": "current", "⚪": "pending", "🔴": "failed"}
 
-_TODO_PATTERN = re.compile(rf"^(\s*[-*] )({'|'.join(_TODO_STATUS)}) ", re.MULTILINE)
+# Anchored at column 0: format_todo indents continuation lines, so text inside
+# an instruction can never be mistaken for a status line.
+_TODO_PATTERN = re.compile(rf"^- ({'|'.join(_TODO_STATUS)}) ", re.MULTILINE)
+
+
+def format_todo(status: str, instruction: str) -> str:
+    """
+    Formats a checklist line in the form `Checklist` parses.
+    """
+    first, *rest = instruction.split("\n")
+    return "\n".join([f"- {status} {first}", *(f"  {line}" if line.strip() else line for line in rest)])
+
 
 _TODO_SX = {
     "& ul": {"listStyle": "none", "pl": 0, "my": 0.5},
@@ -318,7 +326,7 @@ class Checklist(Typography):
     def _transform_object(self, obj):
         if isinstance(obj, str):
             obj = _TODO_PATTERN.sub(
-                lambda m: f'{m.group(1)}<span class="todo-status todo-{_TODO_STATUS[m.group(2)]}"></span>', obj
+                lambda m: f'- <span class="todo-status todo-{_TODO_STATUS[m.group(1)]}"></span>', obj
             )
         return super()._transform_object(obj)
 
