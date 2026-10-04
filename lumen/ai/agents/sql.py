@@ -248,8 +248,13 @@ class RequestBudget:
 
 
 def validate_read_only_sql(sql_query: str, dialect: str) -> None:
-    statements = sqlglot.parse(sql_query, read=None if dialect == "any" else dialect)
-    if len(statements) != 1 or not isinstance(statements[0], sqlglot.exp.Query) or any(
+    # A comment after the final ";" parses as an empty Semicolon statement.
+    statements = [
+        statement for statement in sqlglot.parse(sql_query, read=None if dialect == "any" else dialect)
+        if statement is not None and not isinstance(statement, sqlglot.exp.Semicolon)
+    ]
+    # DuckDB's top-level PIVOT/UNPIVOT parses as a Pivot rather than a Query.
+    if len(statements) != 1 or not isinstance(statements[0], (sqlglot.exp.Query, sqlglot.exp.Pivot)) or any(
         statements[0].find(kind) for kind in (
             sqlglot.exp.Insert, sqlglot.exp.Update, sqlglot.exp.Delete,
             sqlglot.exp.Create, sqlglot.exp.Drop, sqlglot.exp.Command, sqlglot.exp.Into,
@@ -388,8 +393,10 @@ async def execute_exploration_sql(
     except Exception as e:
         return format_error(e)
 
-    capped = len(df) > EXPLORATION_MAX_ROWS
-    return format_exploration_result(df.head(EXPLORATION_MAX_ROWS) if capped else df, capped=capped)
+    # A pyarrow Table has no .head(); narwhals gives every backend one.
+    frame = as_narwhals(df)
+    capped = len(frame) > EXPLORATION_MAX_ROWS
+    return format_exploration_result(frame.head(EXPLORATION_MAX_ROWS) if capped else frame, capped=capped)
 
 
 def make_run_exploration_sql_tool(
@@ -634,15 +641,22 @@ def make_load_table_schemas_tool(metaset: Metaset, stats_timeout: float | None =
         if resolved:
             await metaset.ensure_stats(resolved, timeout=stats_timeout)
         found: set[str] = set()
+        per_table = SCHEMA_MAX_TOKENS // max(1, len(resolved))
+        truncated = False
         for slug in resolved:
             if wanted is not None:
                 found.update(name.lower() for name in metaset.table_columns(slug) if name.lower() in wanted)
             detail = metaset.table_detail(slug, columns=wanted)
-            blocks.append(truncate_to_tokens(detail, SCHEMA_MAX_TOKENS // 3))
+            block = truncate_to_tokens(detail, per_table)
+            truncated = truncated or block != detail
+            blocks.append(block)
         if len(table_slugs) > 8:
             blocks.append(f"Only the first 8 tables were processed; request the remaining {len(table_slugs) - 8} separately.")
-        if len(resolved) > 3:
-            blocks.append("Each table is capped independently; request fewer tables for more detail.")
+        if truncated and len(resolved) > 1:
+            blocks.append(
+                f"The schema budget is split across the {len(resolved)} tables; request fewer "
+                "tables or pass `columns` for more detail."
+            )
         if wanted is not None and (missing := sorted(wanted - found)):
             blocks.append(f"Columns not found in the requested tables: {', '.join(missing)}.")
         return "\n\n".join(blocks)
@@ -1013,36 +1027,32 @@ class SQLAgent(BaseLumenAgent):
         Returns the validated SQL alongside a bounded frame for profiling.
         The frame is None only when every attempt failed.
         """
-        # Reject non-query statements before clean_sql can discard trailing statements.
-        try:
-            validate_read_only_sql(sql_query, source.dialect)
-        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
-            pass
-        try:
-            sql_query = clean_sql(sql_query, source.dialect, prettify=True)
-        except Exception as e:
-            step.stream(f"\n\n❌ SQL cleaning failed: {e}")
-
-        # Validate with retries
         timed_out = False
         for i in range(max_retries):
             try:
+                # Reject non-query statements before clean_sql can discard trailing statements.
+                try:
+                    validate_read_only_sql(sql_query, source.dialect)
+                except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+                    # clean_sql may still repair fences, backticks or source separators.
+                    pass
+                try:
+                    sql_query = clean_sql(sql_query, source.dialect, prettify=True)
+                except Exception as e:
+                    step.stream(f"\n\n❌ SQL cleaning failed: {e}")
                 validate_read_only_sql(sql_query, source.dialect)
-            except ValueError:
-                raise
-            except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
+            except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
                 if i == max_retries - 1:
                     raise
-                retry_result = await self.revise(
+                sql_query = await self.revise(
                     format_error(e), messages, context, spec=sql_query,
                     language=f"sql.{source.dialect}", discovery_context=discovery_context, tools=tools,
                     max_tool_rounds=REVISE_TOOL_ROUNDS,
                 )
-                sql_query = clean_sql(retry_result, source.dialect, prettify=True)
                 continue
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
-                validated = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(sql_query)
+                validated = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
                 result = await source.execute_with_timeout(validated, self.query_timeout)
                 step.stream("\n\n✅ SQL validation successful")
                 return sql_query, result
@@ -1073,11 +1083,10 @@ class SQLAgent(BaseLumenAgent):
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
-                retry_result = await self.revise(
+                sql_query = await self.revise(
                     feedback, messages, context, spec=sql_query, language=f"sql.{source.dialect}",
                     discovery_context=discovery_context, tools=tools, max_tool_rounds=REVISE_TOOL_ROUNDS,
                 )
-                sql_query = clean_sql(retry_result, source.dialect, prettify=True)
         return sql_query, None
 
     async def _profile_source_rows(
@@ -1446,7 +1455,7 @@ class SQLAgent(BaseLumenAgent):
                     "instead of returning literal values."
                 )
             sql_query = clean_sql(output.query.strip(), source.dialect, prettify=True)
-            limited = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(sql_query)
+            limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
             try:
                 preview = await source.execute_with_timeout(limited, self.query_timeout)
             except Exception as e:
@@ -1557,14 +1566,18 @@ class SQLAgent(BaseLumenAgent):
             # Profile the bounded validation sample without loading the full result.
             findings: list[str] = []
             actionable: list[str] = []
+            # The extra fetched row only reveals that the preview is a prefix of a longer result.
+            capped = preview is not None and len(preview) > VALIDATION_MAX_ROWS
+            if capped:
+                preview = preview.head(VALIDATION_MAX_ROWS)
             if preview is not None:
-                findings = lint_data(preview)
+                findings = lint_data(preview, capped=capped)
                 # Only the actionable subset justifies (and is shown to) the
                 # rewriting pass. Constant columns and outliers are reported but
                 # must not provoke a query rewrite. A single aggregated row gives
                 # the lint nothing to work with.
                 if self.clean_data and not sql_is_scalar_aggregate(validated_sql, source.dialect):
-                    actionable = lint_data(preview, actionable_only=True)
+                    actionable = lint_data(preview, actionable_only=True, capped=capped)
 
             # Scalar aggregates are profiled too: AVG over -9999 placeholders
             # is wrong and nothing in its one-row result shows it.

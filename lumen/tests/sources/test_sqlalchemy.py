@@ -491,6 +491,26 @@ async def test_sqlalchemy_async_with_sync_driver():
         os.unlink(temp_db.name)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fetch", [False, True])
+async def test_sqlalchemy_async_in_memory_sqlite_sees_caller_data(memory_source, fetch):
+    """An in-memory SQLite database exists once per thread, so a query run in
+    a worker thread would find it empty."""
+    with memory_source._engine.begin() as conn:
+        conn.execute(text("CREATE TABLE t (a INTEGER)"))
+        conn.execute(text("INSERT INTO t VALUES (1), (2)"))
+
+    result = await memory_source.execute_with_timeout("SELECT count(*) AS n FROM t", 5, fetch=fetch)
+    assert result.iloc[0, 0] == 2
+    result = await memory_source.execute_async("SELECT count(*) AS n FROM t")
+    assert result.iloc[0, 0] == 2
+
+
+def test_sqlalchemy_file_sqlite_is_not_thread_bound(sqlalchemy_source, memory_source):
+    assert memory_source._thread_bound
+    assert not sqlalchemy_source._thread_bound
+
+
 def test_sqlalchemy_error_handling(memory_source):
     """Test error handling for invalid queries."""
     # Invalid SQL should raise an error

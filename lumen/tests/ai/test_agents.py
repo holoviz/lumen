@@ -27,10 +27,10 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.document_list import DocumentListAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
-    EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, VALIDATION_MAX_ROWS,
-    SQLCleanup, execute_exploration_sql, format_exploration_result,
-    make_load_table_schemas_tool, make_run_exploration_sql_tool,
-    make_sql_model, sql_contains_aggregates,
+    EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, SCHEMA_MAX_TOKENS,
+    VALIDATION_MAX_ROWS, SQLCleanup, execute_exploration_sql,
+    format_exploration_result, make_load_table_schemas_tool,
+    make_run_exploration_sql_tool, make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
@@ -101,8 +101,8 @@ async def test_load_table_schemas_rejects_ambiguous_bare_name():
     metaset.ensure_stats.assert_not_awaited()
 
 
-async def test_load_table_schemas_budget_applies_to_each_table():
-    slugs = [f"src{SOURCE_TABLE_SEPARATOR}table_{i}" for i in range(4)]
+def _wide_schema_metaset(n_tables):
+    slugs = [f"src{SOURCE_TABLE_SEPARATOR}table_{i}" for i in range(n_tables)]
     names = [f"field_{a}{b}" for a in "abcdefghij" for b in "klmnopqrs"]
     schemas = {
         slug: {"__len__": 100, **{name: {"type": "string", "enum": [f"{name} value {k}" for k in range(4)]} for name in names}}
@@ -113,14 +113,28 @@ async def test_load_table_schemas_budget_applies_to_each_table():
         catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
         schemas=schemas,
     )
+    return metaset, slugs
+
+
+async def test_load_table_schemas_budget_is_split_across_tables():
+    metaset, slugs = _wide_schema_metaset(4)
 
     result = await make_load_table_schemas_tool(metaset).function(slugs)
 
-    assert count_tokens(result) > 3000
     for i in range(4):
         assert f"table_{i} (100 rows)\n  field_ak VARCHAR {{field_ak value 0" in result
     assert result.count("truncated") == 4
-    assert count_tokens(result) < 4500
+    assert "split across the 4 tables" in result
+    assert count_tokens(result) < SCHEMA_MAX_TOKENS * 1.1
+
+
+async def test_load_table_schemas_single_table_gets_full_budget():
+    metaset, slugs = _wide_schema_metaset(1)
+
+    result = await make_load_table_schemas_tool(metaset).function(slugs)
+
+    assert SCHEMA_MAX_TOKENS * 0.9 < count_tokens(result) < SCHEMA_MAX_TOKENS * 1.1
+    assert "split across" not in result
 
 
 @pytest.mark.filterwarnings("ignore:Widget.name is deprecated:PendingDeprecationWarning")
@@ -256,12 +270,34 @@ async def test_sql_agent_validation_fetch_is_bounded(llm, test_messages):
 
     assert len(validated) == 1
     assert "LIMIT" in validated[0][0].upper()
-    assert validated[0][1] == VALIDATION_MAX_ROWS
+    # One row past the cap shows the preview is a prefix of a longer result.
+    assert validated[0][1] == VALIDATION_MAX_ROWS + 1
     assert len(out[0].component.data) == 6000
 
 
-async def test_sql_exploration_caps_fetched_rows():
-    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(5000) AS t(i)"})
+async def test_sql_agent_lints_capped_preview_as_prefix(llm, test_messages):
+    source = DuckDBSource(tables={"sorted": "SELECT i // 5000 AS bucket FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm, clean_data=False)
+    model = make_sql_model([(source.name, "sorted")])
+    llm.set_responses([model(query="SELECT * FROM sorted ORDER BY bucket", table_slug="buckets", tables=["sorted"])])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["sorted"])}
+    linted = []
+
+    def capture(df, actionable_only=False, capped=False):
+        linted.append((len(df), capped))
+        return []
+
+    with patch("lumen.ai.agents.sql.lint_data", capture):
+        await agent.respond(test_messages, context)
+
+    assert linted == [(VALIDATION_MAX_ROWS, True)]
+
+
+@pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
+async def test_sql_exploration_caps_fetched_rows(backend):
+    if backend:
+        pytest.importorskip(backend)
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(5000) AS t(i)"}, dataframe_backend=backend)
     with patch.object(source, "execute_with_timeout", wraps=source.execute_with_timeout) as execute:
         result = await execute_exploration_sql(source.name, "SELECT i FROM numbers", sources={(source.name, "numbers"): source})
     assert f"at least {EXPLORATION_MAX_ROWS} rows" in result
@@ -275,6 +311,42 @@ async def test_sql_exploration_rejects_non_read_only(query):
         result = await execute_exploration_sql(source.name, query, sources={(source.name, "numbers"): source})
     assert "error" in result.lower() or "read-only" in result.lower()
     execute.assert_not_called()
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT * FROM numbers; -- trailing note",
+    "PIVOT numbers ON k USING SUM(i)",
+    "UNPIVOT (SELECT 1 AS a, 2 AS b) ON a, b INTO NAME n VALUE x",
+])
+async def test_sql_exploration_accepts_read_only_statements(query):
+    source = DuckDBSource(tables={"numbers": "SELECT 'a' AS k, 1 AS i"})
+    result = await execute_exploration_sql(source.name, query, sources={(source.name, "numbers"): source})
+    assert result.splitlines()[0].endswith(" columns")
+
+
+@pytest.mark.parametrize("query", ["SELECT * FROM t; DROP TABLE t", "DELETE FROM t"])
+async def test_sql_agent_validate_revises_non_read_only_sql(llm, query):
+    source = DuckDBSource(tables={"t": "SELECT 1 AS i"})
+    agent = SQLAgent(llm=llm)
+    agent.revise = AsyncMock(return_value="SELECT i FROM t")
+    step = SimpleNamespace(stream=lambda msg: None)
+
+    sql, result = await agent._validate_sql({}, query, "slug", source, [], step)
+
+    assert "Only one read-only SELECT" in agent.revise.await_args.args[0]
+    assert sql == "SELECT\n  i\nFROM t"
+    assert result["i"].tolist() == [1]
+
+
+async def test_sql_agent_validate_raises_non_read_only_sql_on_last_attempt(llm):
+    source = DuckDBSource(tables={"t": "SELECT 1 AS i"})
+    agent = SQLAgent(llm=llm)
+    agent.revise = AsyncMock(return_value="DELETE FROM t")
+    step = SimpleNamespace(stream=lambda msg: None)
+
+    with pytest.raises(ValueError, match="Only one read-only SELECT"):
+        await agent._validate_sql({}, "DELETE FROM t", "slug", source, [], step)
+    assert agent.revise.await_count == 1
 
 
 @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
