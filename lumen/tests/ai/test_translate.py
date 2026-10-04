@@ -1,3 +1,5 @@
+from typing import Literal, get_args
+
 import param
 import pytest
 
@@ -6,7 +8,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from lumen.ai.translate import param_to_pydantic, pydantic_to_param_instance
 
@@ -15,7 +17,10 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.translate import doc_descriptions, function_to_model
+from lumen.ai.translate import (
+    doc_descriptions, function_to_model, parameter_to_annotation,
+    parameter_to_json_type,
+)
 
 
 def add(a: int, b: int) -> int:
@@ -573,3 +578,27 @@ def test_param_range_conversion():
     instance = PydanticPlotConfig(xlim=(1.0, 5.0), ylim=(-1.0, 1.0))
     assert instance.xlim == (1.0, 5.0)
     assert instance.ylim == (-1.0, 1.0)
+
+
+class TestParameterToJsonType:
+
+    def test_options_become_literal_of_labels(self):
+        annotation = parameter_to_json_type(param.Parameter(), options={"Viridis": "viridis", "Plasma": "plasma"})
+        assert annotation == Literal["Viridis", "Plasma"]
+        assert get_args(parameter_to_json_type(param.ListSelector(), options={"a": 1}))[0] == Literal["a"]
+
+    def test_too_many_options_fall_back_to_str(self):
+        assert parameter_to_json_type(param.Parameter(), options={str(i): i for i in range(5)}, max_options=3) is str
+
+    def test_bounds_are_constraints(self):
+        schema = TypeAdapter(parameter_to_json_type(param.Integer(), bounds=(0, 10))).json_schema()
+        assert schema == {"type": "integer", "minimum": 0, "maximum": 10}
+
+    def test_unrepresentable_parameter_is_none(self):
+        assert parameter_to_json_type(param.DataFrame()) is None
+        assert parameter_to_json_type(param.ClassSelector(class_=param.Parameterized)) is None
+
+    def test_parameter_to_annotation_uses_selector_objects(self):
+        assert parameter_to_annotation(param.Selector(objects=["a", "b"], default="a")) == Literal["a", "b"]
+        assert parameter_to_annotation(param.String(default=None, allow_None=True)) == str | None
+        assert parameter_to_annotation(param.DataFrame()) == str | None

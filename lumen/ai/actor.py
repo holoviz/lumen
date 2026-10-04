@@ -493,6 +493,15 @@ class ContextProvider(param.Parameterized):
     async def requirements(self, messages: list[Message]) -> list[str]:
         return list(self.input_schema.__annotations__)
 
+    def routing_purpose(self, context: TContext) -> str:
+        """
+        The purpose shown to a coordinator choosing which actor to use.
+
+        Override it when what an actor can do depends on the current context,
+        so the choice can take that into account.
+        """
+        return self.purpose
+
     def __str__(self):
         string = (
             f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"

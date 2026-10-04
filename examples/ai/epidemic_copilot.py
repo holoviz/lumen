@@ -4,10 +4,9 @@ Outbreak simulator whose scenario is steered by a conversation.
 Unlike `penguin_copilot.py`, which walks a whole page for widgets, this demo
 hands the `ComponentController` two `param.Parameterized` objects directly: the
 model, whose parameters and docstrings are all the assistant needs to reason
-about the simulation, and a read-only `Outcome` whose values it can read back
-after every change. Because it can both act and observe, the assistant in the
-drawer on the right can iterate towards a goal instead of just flipping
-switches:
+about the simulation, and a read-only `Outcome`. Every write reports how the
+outcome changed, so the assistant in the drawer on the right can iterate
+towards a goal instead of just flipping switches:
 
 - "What can you control here?"
 - "Model a measles-like outbreak in a city of three million"
@@ -158,6 +157,12 @@ class Outcome(param.Parameterized):
         percent; negative means this scenario is milder than the baseline.""")
 
 
+class Results(param.Parameterized):
+    """The simulated course of the current scenario."""
+
+    data = param.DataFrame(default=None)
+
+
 class Reference(param.Parameterized):
     """The saved scenario the current one is compared against."""
 
@@ -188,6 +193,7 @@ def scenario_label(model: Epidemic) -> str:
 
 model = Epidemic()
 outcome = Outcome()
+results = Results()
 reference = Reference(data=model.simulate(), label=scenario_label(model))
 
 preset = pmui.Select(
@@ -218,6 +224,7 @@ compare = pmui.Switch(
 save = pmui.Button(label="Save as baseline", icon="bookmark_add", variant="outlined")
 
 reset = pmui.Button(label="Reset scenario", icon="restart_alt", variant="outlined")
+
 
 def apply_preset(event):
     values = PRESETS[event.new]
@@ -270,17 +277,18 @@ reset.on_click(reset_scenario)
 save.on_click(save_baseline)
 
 
-def simulate(baseline, **parameters):
+def simulate(*events):
     """
-    Run the simulation and record its outcome.
+    Re-run the simulation and record its outcome.
 
-    The model parameters are passed in only so that the bound views re-render
-    whenever a slider (or the assistant) changes one of them; ``baseline`` does
-    the same for the comparison recorded on the outcome.
+    Running in a watcher rather than in the views means the outcome is up to
+    date as soon as a parameter changes, which is when the assistant reads it
+    back, and that the simulation runs once per change.
     """
     data = model.simulate()
     beds = model.hospital_beds
     peak = float(data.infected.max())
+    baseline = reference.data
     baseline_peak = None if baseline is None else float(baseline.infected.max())
     with param.parameterized.edit_constant(outcome):
         outcome.param.update(
@@ -292,7 +300,12 @@ def simulate(baseline, **parameters):
             infected_share=round(100 * float(data.recovered.iloc[-1] + data.deaths.iloc[-1]) / model.population, 1),
             peak_vs_baseline=0.0 if not baseline_peak else round(100 * (peak / baseline_peak - 1), 1),
         )
-    return data
+    results.data = data
+
+
+model.param.watch(simulate, [name for name in model.param if name != "name"])
+reference.param.watch(simulate, "data")
+simulate()
 
 
 def metric(title, value, caption, colour=None):
@@ -306,7 +319,7 @@ def metric(title, value, caption, colour=None):
 
 def metrics(data, baseline, label):
     load, change = outcome.peak_hospital_load, outcome.peak_vs_baseline
-    return pn.FlexBox(
+    return pmui.FlexBox(
         metric("Peak infections", f"{outcome.peak_infections:,}", f"on day {outcome.peak_day}"),
         metric("Total infected", f"{outcome.infected_share:g}%", "of the population"),
         metric("Deaths", f"{outcome.deaths:,}", f"{100 * outcome.deaths / model.population:.2f}% of the population"),
@@ -382,13 +395,10 @@ def hospital_plot(data, capacity_line):
     return hv.Overlay(elements).opts(toolbar=None, legend_position="top_right")
 
 
-data = pn.bind(
-    simulate, reference.param.data,
-    **{name: model.param[name] for name in model.param if name != "name"},
-)
+data = results.param.data
 
-main = pn.Row(
-    pn.Column(
+main = pmui.Row(
+    pmui.Column(
         pn.panel(pn.bind(metrics, data, reference.param.data, reference.param.label), sizing_mode="stretch_width"),
         pn.panel(pn.bind(headline, data), sizing_mode="stretch_width", margin=10),
         pmui.Card(
@@ -455,16 +465,9 @@ controller = ComponentController(
         "save_baseline": save,
         "reset_scenario": reset,
     },
-    # Outcome parameters are constant, so they are reported to the LLM but no
-    # tool is generated for them; listing them makes the result of a change
-    # readable and lets the assistant iterate towards a target.
-    parameters={"outcome": [
-        "peak_infections", "peak_day", "peak_hospital_load", "overflow_days",
-        "deaths", "infected_share", "peak_vs_baseline",
-    ]},
     descriptions={
         "model": "The epidemiological scenario that is re-simulated whenever one of its parameters changes",
-        "outcome": "Read-only results of the latest simulation; read these back after changing the model",
+        "outcome": "Read-only results of the latest simulation, reported back after every change to the model",
         "save_baseline": "Stores the current scenario as the baseline that later scenarios are compared against",
         "reset_scenario": "Restores every model parameter to its default",
     },
@@ -475,10 +478,23 @@ controller = ComponentController(
         hospital load below 100%.""",
 )
 
+# Specific to searching for a setting that meets a target, which is what this
+# demo invites, so kept out of the agent's generic instructions.
+GOAL_SEEKING = """
+{{ super() }}
+
+## Finding the weakest setting that meets a target
+- Asking for the weakest, smallest, latest or cheapest setting that meets a target rules out jumping to the extreme: once a value meets it, step back towards what the user asked for for as long as the target still holds and settle on the last value that held
+- Never leave the application in a state that fails the target; if your last attempt broke it, write the last value that held back before answering
+"""
+
 assistant = Planner(
-    agents=[ChatAgent, ComponentControlAgent(controller=controller)],
-    # Searching for a setting that meets a target takes many write-then-read
-    # rounds; the smaller models tend to stop after the first write.
+    agents=[
+        ChatAgent,
+        ComponentControlAgent(controller=controller, template_overrides={"main": {"instructions": GOAL_SEEKING}}),
+    ],
+    # Searching for a setting that meets a target takes many rounds; the
+    # smaller models tend to stop after the first write.
     llm=OpenAI(model_kwargs={"default": {"model": "gpt-5.4"}, "ui": {"model": "gpt-5.4-mini"}}),
 )
 

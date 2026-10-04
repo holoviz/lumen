@@ -712,7 +712,7 @@ class UI(Viewer):
         # messages can be anything submitted through chat area input
         log_debug(f"New Message: \033[91m{format_msg_content(messages)!r}\033[0m", show_sep="above")
         context = self.context if context is None else context
-        await self._coordinator.respond(messages, context)
+        await self._coordinator.run(messages, context)
 
     def _configure_context(self, data: DataT | list[DataT] | dict[DataT] | None):
         """

@@ -2,13 +2,13 @@
 Palmer Penguins explorer with a natural language copilot.
 
 Every widget on the page is discovered by the `ComponentController`, which
-hands one tool per widget to the assistant docked on the right, so the
-conversation drives the dashboard:
+hands them to the assistant docked on the right, so the conversation drives
+the dashboard:
 
 - "Which controls do you have and what are they set to?"
 - "Show only Gentoo penguins from Biscoe"
 - "Plot flipper length against body mass, colour by sex and make the points bigger"
-- "Narrow it down to the heaviest third of the penguins"
+- "Only keep penguins heavier than four and a half kilos"
 - "Reset the filters"
 
 Run it with::
@@ -79,12 +79,12 @@ show_distribution = pmui.Switch(
 
 reset = pmui.Button(label="Reset filters", icon="restart_alt", variant="outlined")
 
-FILTERS = (species, islands, sex, bill_length, body_mass)
+INITIAL_FILTERS = {widget: widget.value for widget in (species, islands, sex, bill_length, body_mass)}
 
 
 def reset_filters(event):
-    for widget in FILTERS:
-        widget.value = widget.param.value.default
+    for widget, value in INITIAL_FILTERS.items():
+        widget.value = value
 
 
 reset.on_click(reset_filters)
@@ -159,6 +159,8 @@ page = pmui.Page(
 
 controller = ComponentController(
     components=page,
+    # Buttons found on the page are only clickable when listed explicitly
+    actions=[reset],
     purpose="""
         Filters and plot options of a dashboard exploring the Palmer Penguins
         dataset, which measures the bills, flippers and body mass of penguins

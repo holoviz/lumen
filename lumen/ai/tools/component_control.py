@@ -3,85 +3,84 @@ Hand Lumen AI the controls of an application.
 
 :class:`ComponentController` takes a set of Panel widgets, ``Parameterized``
 objects or an entire layout (e.g. a ``panel_material_ui.Page``) and turns them
-into LLM tools:
+into a fixed set of LLM tools:
 
-* ``list_<namespace>_components`` -- an overview of every controllable
-  component including the current value of each widget.
-* ``describe_<namespace>_component`` -- every parameter of one component,
-  with types, allowed values, current values and their ``doc`` strings.
-* ``set_<component>`` / ``click_<component>`` -- one tool per component that
-  writes the exposed parameters (or triggers a button).
+* ``list_<namespace>_components`` -- an overview of every component and its
+  current state.
+* ``describe_<namespace>_component`` -- every parameter of one component, with
+  types, allowed values, current values and their ``doc`` strings.
+* ``set_<namespace>_components`` -- writes any number of components in one
+  call and reports the values read back from the application afterwards,
+  including components that changed as a consequence.
+* ``click_<namespace>_component`` -- clicks one of the buttons passed in
+  ``components`` or listed in ``actions``.
 
-The controller is re-resolved every time the tools are requested, so a layout
-whose contents change over the lifetime of a session stays in sync and the
-schemas the LLM sees always reflect the live state of the application.
-
-Usage::
+The components are resolved every time a tool runs, so a layout whose contents
+change over the lifetime of a session stays in sync. Hand the controller to a
+:class:`~lumen.ai.agents.ComponentControlAgent`, which keeps these tools to
+itself rather than sharing them with every agent of a coordinator::
 
     controller = ComponentController(
-        components=page, purpose="Controls for the wind turbine dashboard."
+        components=page, actions=[reset], purpose="Controls for the turbine dashboard."
     )
-    ui = ExplorerUI(llm_tools=[controller])
+    agent = ComponentControlAgent(controller=controller)
 """
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
-import importlib
 import inspect
+import keyword
 import re
 
 from typing import Annotated, Any, Literal
 
-import pandas as pd
 import param
 
+from panel.io.document import hold
 from panel.layout.base import ListLike, NamedListLike
 from panel.viewable import Layoutable, Viewable, Viewer
+from panel.widgets import PasswordInput
 from panel.widgets.base import WidgetBase
-from pydantic import Field
+from panel_material_ui.base import MaterialComponent
+from panel_material_ui.widgets import PasswordInput as MaterialPasswordInput
+from panel_material_ui.widgets.base import MaterialWidget
+from pydantic import TypeAdapter, ValidationError, WithJsonSchema
 
+from ..translate import parameter_to_json_type
 from ..utils import truncate_string
 from .base import FunctionTool
 
-# Number of allowed values that are inlined into a schema before truncating
+# Above this many allowed values the schema falls back to a plain string and
+# the values are only enumerated by the describe tool.
 MAX_OPTIONS = 50
 
-# Components from these modules are never picked up when walking a layout;
-# they belong to the chat UI itself rather than to the application being
-# driven, which matters because the assistant is usually mounted inside the
-# very layout it is being handed.
+# The assistant is usually mounted inside the very layout it is handed, so
+# its own components must never be picked up as application controls.
 EXCLUDED_MODULES = ("lumen.ai.", "panel.chat", "panel_material_ui.chat")
 
-# Parameters that are only ever exposed when explicitly requested
-ALWAYS_SKIPPED = frozenset({"name", "value_throttled"})
+ALWAYS_SKIPPED = frozenset({"name", "value_input", "value_throttled"})
+
+SECRET_TYPES = (PasswordInput, MaterialPasswordInput)
+
+CHROME_BASES = (param.Parameterized, Layoutable, Viewable, WidgetBase, MaterialComponent, MaterialWidget)
+
+
+def _chrome_parameters(component: param.Parameterized) -> set[str]:
+    """
+    Parameters contributed by the framework base classes of a component.
+
+    Only the bases the component actually inherits count, so a plain
+    Parameterized keeps a ``label`` or ``width`` of its own.
+    """
+    names = set()
+    for base in CHROME_BASES:
+        if isinstance(component, base):
+            names |= set(base.param)
+    return names - {"value", "options"}
 
 _UNSET = object()
-
-
-def _chrome_parameters() -> frozenset[str]:
-    """
-    Parameters contributed by framework baseclasses (layout, styling, chrome).
-
-    These are excluded when the exposed parameters of a component are derived
-    automatically; they can still be exposed by requesting them explicitly.
-    """
-    names: set[str] = set(param.Parameterized.param) | set(Layoutable.param) | set(Viewable.param)
-    for module, cls_name in (
-        ("panel.widgets.base", "WidgetBase"),
-        ("panel_material_ui.base", "MaterialComponent"),
-        ("panel_material_ui.widgets.base", "MaterialWidget"),
-    ):
-        try:
-            cls = getattr(importlib.import_module(module), cls_name, None)
-        except ImportError:
-            continue
-        if cls is not None:
-            names |= set(cls.param)
-    return frozenset(names - {"value", "options"})
-
-
-CHROME_PARAMETERS = _chrome_parameters()
 
 
 def _slugify(name: str) -> str:
@@ -89,12 +88,16 @@ def _slugify(name: str) -> str:
     slug = re.sub(r"\W+", "_", (name or "").strip()).strip("_").lower()
     if not slug or slug[0].isdigit():
         slug = f"c_{slug}" if slug else "component"
-    return slug[:48]
+    slug = slug[:48]
+    return f"{slug}_" if keyword.iskeyword(slug) else slug
 
 
 def _label(component: param.Parameterized) -> str:
     """The human readable label of a component, if it has a meaningful one."""
-    for attr in ("label", "name"):
+    # Only Panel components use ``label`` as a display name; on a plain
+    # Parameterized it may well be data.
+    attrs = ("label", "name") if isinstance(component, Viewable) else ("name",)
+    for attr in attrs:
         if attr not in component.param:
             continue
         value = getattr(component, attr, None)
@@ -109,24 +112,13 @@ def _label(component: param.Parameterized) -> str:
 
 def _serializer(parameter: param.Parameter):
     """
-    The parameter's own JSON serializer, if it declares one.
+    The parameter's own JSON serializer, if it overrides the identity one.
 
-    ``param.Parameter`` defines identity ``serialize``/``deserialize``
-    classmethods that subclasses override to describe how their values cross a
-    JSON boundary (dates as ISO strings, tuples as lists). Honouring them means
-    the values shown to the LLM are exactly the values it has to send back.
+    Displaying values in this form (dates as ISO strings, tuples as lists)
+    shows the LLM exactly the form it is expected to send back.
     """
-    return _custom_classmethod(parameter, "serialize")
-
-
-def _deserializer(parameter: param.Parameter):
-    """The parameter's own JSON deserializer, if it declares one."""
-    return _custom_classmethod(parameter, "deserialize")
-
-
-def _custom_classmethod(parameter: param.Parameter, name: str):
-    method = getattr(type(parameter), name, None)
-    base = getattr(param.Parameter, name)
+    method = getattr(type(parameter), "serialize", None)
+    base = param.Parameter.serialize
     if method is None or getattr(method, "__func__", method) is getattr(base, "__func__", base):
         return None
     return method
@@ -136,11 +128,10 @@ def _format_value(value: Any, options: dict[str, Any] | None = None) -> str:
     """Render a parameter value for display to the LLM."""
     if options is not None:
         if isinstance(value, list):
-            labels = [_option_label(v, options) for v in value]
-            return "[" + ", ".join(labels) + "]"
+            return "[" + ", ".join(_option_label(v, options) for v in value) + "]"
         return _option_label(value, options)
     if getattr(value, "shape", None) == () and hasattr(value, "item"):
-        # unwrap numpy scalars, whose repr is noise to an LLM
+        # numpy scalars have a noisy repr
         value = value.item()
     if isinstance(value, str):
         return repr(truncate_string(value, max_length=200))
@@ -156,7 +147,6 @@ def _format_value(value: Any, options: dict[str, Any] | None = None) -> str:
 
 
 def _option_label(value: Any, options: dict[str, Any]) -> str:
-    """The label an option value is listed under."""
     for label, option in options.items():
         try:
             if option is value or option == value:
@@ -166,129 +156,12 @@ def _option_label(value: Any, options: dict[str, Any]) -> str:
     return _format_value(value)
 
 
-class ParameterInfo:
-    """
-    Everything needed to expose a single ``param.Parameter`` to the LLM.
-
-    Bundles the parameter itself with the constraints that Panel widgets
-    declare on sibling parameters (a ``Select``'s ``options``, a slider's
-    ``start``/``end``/``step``) so both the generated schema and the coercion
-    of incoming values can take them into account.
-    """
-
-    def __init__(self, component: param.Parameterized, name: str):
-        self.component = component
-        self.name = name
-        self.parameter = component.param[name]
-        self.options = _options(component, self.parameter)
-        # param.List declares bounds on the number of items rather than on the
-        # values themselves, so the two are tracked separately
-        self.length_bounds = _bounds(component, self.parameter) if isinstance(self.parameter, param.List) else None
-        self.bounds = None if self.options or self.length_bounds else _bounds(component, self.parameter)
-        self.step = getattr(component, "step", None) if self.name == "value" else None
-        self.annotation = _annotation(self.parameter, self.options, self.bounds)
-
-    @property
-    def value(self) -> Any:
-        return getattr(self.component, self.name)
-
-    @property
-    def settable(self) -> bool:
-        parameter = self.parameter
-        return (
-            self.annotation is not None
-            and not parameter.readonly
-            and not parameter.constant
-        )
-
-    @property
-    def doc(self) -> str:
-        return " ".join((self.parameter.doc or "").split())
-
-    def display(self, value: Any = _UNSET) -> str:
-        """Render a value in the form the LLM is expected to supply it in."""
-        if value is _UNSET:
-            value = self.value
-        if self.options is None:
-            serialize = _serializer(self.parameter)
-            if serialize is not None:
-                try:
-                    return _format_value(serialize(value))
-                except Exception:
-                    pass
-        return _format_value(value, self.options)
-
-    def constraints(self) -> str:
-        """A description of the values this parameter accepts."""
-        parts = []
-        if self.options is not None:
-            labels = list(self.options)
-            listed = ", ".join(labels[:MAX_OPTIONS])
-            if len(labels) > MAX_OPTIONS:
-                listed += f", ... ({len(labels)} options in total)"
-            multiple = isinstance(self.parameter, (param.List, param.ListSelector))
-            parts.append(f"{'any of' if multiple else 'one of'}: {listed}")
-        elif self.bounds:
-            low, high = self.bounds
-            if low is not None or high is not None:
-                low_str = "unbounded" if low is None else self.display(low)
-                high_str = "unbounded" if high is None else self.display(high)
-                parts.append(f"between {low_str} and {high_str}")
-            if self.step:
-                parts.append(f"step {_format_value(self.step)}")
-        if self.length_bounds:
-            low, high = self.length_bounds
-            if low:
-                parts.append(f"at least {low} items")
-            if high is not None:
-                parts.append(f"at most {high} items")
-        return "; ".join(parts)
-
-    def nullable(self) -> bool:
-        """Whether the LLM may pass null to clear the parameter."""
-        return bool(self.parameter.allow_None) and self.options is None
-
-    def summary(self) -> str:
-        """One line description of the parameter and its current value."""
-        summary = f"{self.name}: {self.display()}"
-        notes = [note for note in (self.constraints(), "may be null" if self.nullable() else "") if note]
-        if notes:
-            summary += " (" + "; ".join(notes) + ")"
-        return summary
-
-    def describe(self) -> str:
-        """Multi-line description including the parameter's doc string."""
-        type_name = type(self.parameter).__name__
-        lines = [f"- `{self.name}` ({type_name}) = {self.display()}"]
-        constraints = self.constraints()
-        if constraints:
-            lines.append(f"  Accepts: {constraints}" + (" (or null)" if self.nullable() else ""))
-        elif self.nullable():
-            lines.append("  Accepts: null to clear it")
-        if self.doc:
-            lines.append(f"  Doc: {truncate_string(self.doc, max_length=500)}")
-        if not self.settable:
-            reason = "read-only" if (self.parameter.readonly or self.parameter.constant) else "not settable via this API"
-            lines.append(f"  ({reason})")
-        return "\n".join(lines)
-
-    def argument_doc(self) -> str:
-        """The docstring entry generated for this parameter in a setter tool."""
-        doc = self.doc or f"The {self.name} of the component."
-        constraints = self.constraints()
-        if constraints:
-            doc += f" Accepts {constraints}."
-        if self.nullable():
-            doc += " May be null."
-        return f"{doc} Currently {self.display()}."
-
-
 def _options(component: param.Parameterized, parameter: param.Parameter) -> dict[str, Any] | None:
     """
     The allowed values of a parameter as a ``{label: value}`` mapping.
 
-    Covers both ``param.Selector`` parameters and Panel widgets, which declare
-    the allowed values of their ``value`` on a sibling ``options`` parameter.
+    Panel widgets declare the allowed values of their ``value`` on a sibling
+    ``options`` parameter rather than on the parameter itself.
     """
     objects: Any = None
     if isinstance(parameter, param.Selector):
@@ -309,8 +182,8 @@ def _bounds(component: param.Parameterized, parameter: param.Parameter) -> tuple
     """
     The bounds of a parameter.
 
-    Panel sliders declare the range of their ``value`` on sibling ``start`` and
-    ``end`` parameters rather than on the value parameter itself.
+    Panel sliders declare the range of their ``value`` on sibling ``start``
+    and ``end`` parameters rather than on the value parameter itself.
     """
     bounds = getattr(parameter, "bounds", None) or getattr(parameter, "softbounds", None)
     if bounds is None and parameter.name == "value":
@@ -323,261 +196,248 @@ def _bounds(component: param.Parameterized, parameter: param.Parameter) -> tuple
     return None
 
 
-def _numeric_annotation(base: type, bounds: tuple[Any, Any] | None) -> Any:
-    """Annotate a numeric type with its bounds so they show up in the schema."""
-    if not bounds:
-        return base
-    low, high = bounds
-    constraints = {}
-    if isinstance(low, (int, float)) and not isinstance(low, bool):
-        constraints["ge"] = low
-    if isinstance(high, (int, float)) and not isinstance(high, bool):
-        constraints["le"] = high
-    if not constraints:
-        return base
-    return Annotated[base, Field(**constraints)]
+def _validation_messages(error: ValidationError) -> str:
+    return "; ".join(item["msg"] for item in error.errors())
 
 
-def _annotation(
-    parameter: param.Parameter,
-    options: dict[str, Any] | None,
-    bounds: tuple[Any, Any] | None,
-) -> Any:
+class ParameterInfo:
     """
-    The type annotation to expose a parameter under, or None if it cannot be
-    represented in a JSON schema.
+    Everything needed to expose a single ``param.Parameter`` to the LLM.
+
+    Bundles the parameter with the constraints Panel widgets declare on
+    sibling parameters (a ``Select``'s ``options``, a slider's
+    ``start``/``end``/``step``), which both the schema and the validation of
+    incoming values need.
     """
-    if options is not None:
-        literal = Literal[tuple(list(options)[:MAX_OPTIONS])]
-        if isinstance(parameter, (param.List, param.ListSelector)):
-            return list[literal]
-        return literal
-    if isinstance(parameter, param.Boolean):  # includes param.Event
-        return bool
-    if isinstance(parameter, param.Integer):
-        return _numeric_annotation(int, bounds)
-    if isinstance(parameter, param.CalendarDate):
-        return dt.date
-    if isinstance(parameter, param.Date):
-        return dt.datetime
-    if isinstance(parameter, param.Number):
-        return _numeric_annotation(float, bounds)
-    if isinstance(parameter, param.CalendarDateRange):
-        return tuple[dt.date, dt.date]
-    if isinstance(parameter, param.DateRange):
-        return tuple[dt.datetime, dt.datetime]
-    if isinstance(parameter, param.Range):
-        return tuple[float, float]
-    if isinstance(parameter, param.NumericTuple):
-        return tuple[float, ...]
-    if isinstance(parameter, param.Tuple):
-        return tuple
-    if isinstance(parameter, param.Color):
-        return str
-    if isinstance(parameter, (param.String, param.Path)):
-        return str
-    if isinstance(parameter, param.List):
-        item_type = getattr(parameter, "item_type", None)
-        if item_type in (str, int, float, bool):
-            return list[item_type]
-        return list
-    if isinstance(parameter, param.Dict):
-        return dict[str, Any]
-    if isinstance(parameter, param.ClassSelector):
-        classes = parameter.class_ if isinstance(parameter.class_, tuple) else (parameter.class_,)
-        if all(cls in (str, int, float, bool, list, dict) for cls in classes):
-            return classes[0] if len(classes) == 1 else Any
-        return None
-    if type(parameter) is param.Parameter:
-        return Any
-    return None
 
+    def __init__(self, component: param.Parameterized, name: str):
+        self.component = component
+        self.name = name
+        self.parameter = component.param[name]
+        self.options = _options(component, self.parameter)
+        self.multiple = isinstance(self.parameter, (param.List, param.ListSelector))
+        # param.List bounds the number of items rather than the items
+        self.length_bounds = _bounds(component, self.parameter) if isinstance(self.parameter, param.List) else None
+        self.bounds = None if self.options or self.length_bounds else _bounds(component, self.parameter)
+        self.step = getattr(component, "step", None) if name == "value" else None
+        self.json_type = parameter_to_json_type(self.parameter, self.options, self.bounds, MAX_OPTIONS)
+        self.secret = isinstance(component, SECRET_TYPES) and name == "value"
+        self._adapter = None
 
-def _to_bool(value: Any) -> bool:
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in ("true", "yes", "1", "on"):
-            return True
-        if lowered in ("false", "no", "0", "off", ""):
-            return False
-    return bool(value)
+    @property
+    def value(self) -> Any:
+        return getattr(self.component, self.name)
 
+    @property
+    def readonly(self) -> bool:
+        return bool(self.parameter.readonly or self.parameter.constant)
 
-def _to_datetime(value: Any) -> dt.datetime:
-    if isinstance(value, dt.datetime):
-        return value
-    if isinstance(value, dt.date):
-        return dt.datetime(value.year, value.month, value.day)
-    if isinstance(value, str):
-        try:
-            return dt.datetime.fromisoformat(value)
-        except ValueError:
-            pass
-    timestamp = pd.Timestamp(value)
-    if not isinstance(timestamp, pd.Timestamp):  # i.e. NaT
-        raise ValueError(f"{value!r} could not be interpreted as a date")
-    return dt.datetime.fromisoformat(timestamp.isoformat())
+    @property
+    def disabled(self) -> bool:
+        return bool(getattr(self.component, "disabled", False)) if isinstance(self.component, WidgetBase) else False
 
+    @property
+    def settable(self) -> bool:
+        return self.json_type is not None and not self.readonly and not self.disabled
 
-def _to_date(value: Any) -> dt.date:
-    converted = _to_datetime(value)
-    return converted.date()
+    @property
+    def doc(self) -> str:
+        # The generic doc of a widget's value says nothing; its meaning comes
+        # from the label and description of the widget.
+        if self.name == "value" and isinstance(self.component, WidgetBase):
+            return ""
+        return " ".join((self.parameter.doc or "").split())
 
+    @property
+    def nullable(self) -> bool:
+        """Whether the LLM may send null to clear the parameter."""
+        return bool(self.parameter.allow_None) and self.options is None
 
-def _to_number(value: Any) -> float:
-    if isinstance(value, bool):
-        return float(value)
-    if value is None or isinstance(value, (list, tuple, dict)):
-        raise ValueError(f"{value!r} is not a number")
-    return float(value)
-
-
-def _to_int(value: Any) -> int:
-    return round(_to_number(value))
-
-
-def _coerce_option(info: ParameterInfo, value: Any) -> Any:
-    """Map a label (or raw value) supplied by the LLM onto an allowed value."""
-    options = info.options or {}
-    if isinstance(value, str) and value in options:
-        return options[value]
-    lowered = {label.lower(): label for label in options}
-    if isinstance(value, str) and value.strip().lower() in lowered:
-        return options[lowered[value.strip().lower()]]
-    for option in options.values():
-        try:
-            if option is value or option == value:
-                return option
-        except Exception:
-            continue
-    labels = ", ".join(list(options)[:MAX_OPTIONS]) or "(none)"
-    raise ValueError(f"{value!r} is not one of the allowed values: {labels}")
-
-
-def _coerce(info: ParameterInfo, value: Any) -> Any:
-    """Coerce a raw JSON value from the LLM into a valid parameter value."""
-    parameter = info.parameter
-    if value is None and parameter.allow_None:
-        return None
-    if info.options is not None:
-        if isinstance(parameter, (param.List, param.ListSelector)):
-            values = value if isinstance(value, (list, tuple)) else [value]
-            return [_coerce_option(info, item) for item in values]
-        return _coerce_option(info, value)
-    # Prefer the parameter's own JSON contract, but only if it yields a value
-    # param actually accepts; the declared formats are strict (param.Date
-    # insists on microseconds) and an LLM will happily send "2020-01-01".
-    deserialize = _deserializer(parameter)
-    if deserialize is not None:
-        try:
-            deserialized = deserialize(value)
-        except Exception:
-            deserialized = _UNSET
-        if deserialized is not _UNSET and _validation_error(info, deserialized) is None:
-            return deserialized
-    if isinstance(parameter, param.Boolean):
-        return _to_bool(value)
-    if isinstance(parameter, param.Integer):
-        return _to_int(value)
-    if isinstance(parameter, param.CalendarDate):
-        return _to_date(value)
-    if isinstance(parameter, param.Date):
-        return _to_datetime(value)
-    if isinstance(parameter, param.Number):
-        return _to_number(value)
-    if isinstance(parameter, (param.CalendarDateRange, param.DateRange, param.Range, param.Tuple)):
-        if not isinstance(value, (list, tuple)):
-            raise ValueError(f"{value!r} is not a list of values")
-        if isinstance(parameter, param.CalendarDateRange):
-            return tuple(_to_date(item) for item in value)
-        elif isinstance(parameter, param.DateRange):
-            return tuple(_to_datetime(item) for item in value)
-        elif isinstance(parameter, param.NumericTuple):  # includes param.Range
-            return tuple(_to_number(item) for item in value)
-        return tuple(value)
-    if isinstance(parameter, (param.String, param.Path, param.Color)):
-        return value if isinstance(value, str) else str(value)
-    if isinstance(parameter, param.List):
-        items = list(value) if isinstance(value, (list, tuple, set)) else [value]
-        item_type = getattr(parameter, "item_type", None)
-        converter = {bool: _to_bool, int: _to_int, float: _to_number, str: str}.get(item_type)
-        return [converter(item) for item in items] if converter else items
-    return value
-
-
-def _validation_error(info: ParameterInfo, value: Any) -> str | None:
-    """
-    Validate a coerced value, returning an error message if it is rejected.
-
-    Bounds that a Panel widget declares on sibling parameters (a slider's
-    ``start`` and ``end``) are not enforced by the value parameter itself, so
-    they are checked here rather than silently accepting an invalid value.
-    """
-    try:
-        info.parameter._validate(value)
-    except Exception as e:
-        return str(e)
-    if info.bounds and not isinstance(value, bool):
-        low, high = info.bounds
-        # A range widget bounds every element of its value tuple
-        values = value if isinstance(value, tuple) else (value,)
-        for item in values:
+    def display(self, value: Any = _UNSET) -> str:
+        """Render a value in the form the LLM is expected to supply it in."""
+        if self.secret:
+            return "<hidden>"
+        if value is _UNSET:
+            value = self.value
+        if self.options is None and (serialize := _serializer(self.parameter)) is not None:
             try:
-                if low is not None and item < low:
-                    return f"{info.display(item)} is below the lower bound {info.display(low)}"
-                if high is not None and item > high:
-                    return f"{info.display(item)} is above the upper bound {info.display(high)}"
-            except TypeError:
+                return _format_value(serialize(value))
+            except Exception:
+                pass
+        return _format_value(value, self.options)
+
+    def constraints(self) -> str:
+        """A description of the values this parameter accepts."""
+        parts = []
+        if self.options is not None:
+            labels = list(self.options)
+            listed = ", ".join(labels[:MAX_OPTIONS])
+            if len(labels) > MAX_OPTIONS:
+                listed += f", ... ({len(labels)} options in total)"
+            # A model told "one of" will not send a list
+            parts.append(f"{'any of' if self.multiple else 'one of'}: {listed}")
+        elif self.bounds:
+            low, high = self.bounds
+            if low is not None or high is not None:
+                low_str = "unbounded" if low is None else self.display(low)
+                high_str = "unbounded" if high is None else self.display(high)
+                parts.append(f"between {low_str} and {high_str}")
+            if self.step:
+                parts.append(f"step {_format_value(self.step)}")
+        if self.length_bounds:
+            low, high = self.length_bounds
+            if low:
+                parts.append(f"at least {low} items")
+            if high is not None:
+                parts.append(f"at most {high} items")
+        return "; ".join(parts)
+
+    def _status(self) -> str:
+        if self.readonly:
+            return "read-only"
+        if self.disabled:
+            return "disabled"
+        if self.json_type is None:
+            return "not settable"
+        return ""
+
+    def summary(self) -> str:
+        """One line description of the parameter and its current value."""
+        notes = [
+            note for note in (self._status(), self.constraints(), "may be null" if self.nullable and self.settable else "")
+            if note
+        ]
+        summary = f"{self.name}: {self.display()}"
+        return summary + (" (" + "; ".join(notes) + ")" if notes else "")
+
+    def describe(self) -> str:
+        """Multi-line description including the parameter's doc string."""
+        lines = [f"- `{self.name}` ({type(self.parameter).__name__}) = {self.display()}"]
+        constraints = self.constraints()
+        if constraints:
+            lines.append(f"  Accepts: {constraints}" + (" (or null)" if self.nullable else ""))
+        elif self.nullable:
+            lines.append("  Accepts: null to clear it")
+        if self.doc:
+            lines.append(f"  Doc: {truncate_string(self.doc, max_length=500)}")
+        if status := self._status():
+            lines.append(f"  ({status})")
+        return "\n".join(lines)
+
+    def argument_doc(self) -> str:
+        """Description of the parameter in the schema of the setter tool."""
+        parts = [self.doc] if self.doc else []
+        if constraints := self.constraints():
+            parts.append(f"Accepts {constraints}.")
+        if self.nullable:
+            parts.append("Send null to clear it.")
+        return " ".join(parts)
+
+    def json_schema(self) -> dict[str, Any]:
+        schema = TypeAdapter(self.json_type | None if self.nullable else self.json_type).json_schema()
+        if doc := self.argument_doc():
+            schema["description"] = doc
+        return schema
+
+    def coerce(self, value: Any) -> Any:
+        """
+        Convert a JSON value sent by the LLM into a value for the parameter.
+
+        Options are matched by label (case-insensitively) or by value, since
+        a model happily sends either; everything else is validated against
+        the parameter's JSON type in pydantic's lax mode.
+        """
+        if self.options is not None:
+            if self.multiple:
+                values = value if isinstance(value, (list, tuple)) else [value]
+                return [self._coerce_option(item) for item in values]
+            return self._coerce_option(value)
+        if self._adapter is None:
+            self._adapter = TypeAdapter(self.json_type)
+        try:
+            value = self._adapter.validate_python(value)
+        except ValidationError as e:
+            raise ValueError(_validation_messages(e)) from None
+        # Tuples travel as JSON arrays
+        return tuple(value) if isinstance(self.parameter, param.Tuple) and isinstance(value, list) else value
+
+    def _coerce_option(self, value: Any) -> Any:
+        options = self.options or {}
+        if isinstance(value, str):
+            if value in options:
+                return options[value]
+            lowered = {label.lower(): label for label in options}
+            if value.strip().lower() in lowered:
+                return options[lowered[value.strip().lower()]]
+        for option in options.values():
+            try:
+                if option is value or option == value:
+                    return option
+            except Exception:
                 continue
-    return None
+        labels = ", ".join(list(options)[:MAX_OPTIONS]) or "(none)"
+        raise ValueError(f"{value!r} is not one of the allowed values: {labels}")
+
+    def validation_error(self, value: Any) -> str | None:
+        """
+        Validate a coerced value, returning an error message if it is rejected.
+
+        Bounds a widget declares on sibling parameters (a slider's ``start``
+        and ``end``) are not enforced by param, so they are checked here.
+        """
+        try:
+            self.parameter._validate(value)
+        except Exception as e:
+            return str(e)
+        if self.bounds and not isinstance(value, bool):
+            low, high = self.bounds
+            for item in value if isinstance(value, tuple) else (value,):
+                try:
+                    if low is not None and item < low:
+                        return f"{self.display(item)} is below the lower bound {self.display(low)}"
+                    if high is not None and item > high:
+                        return f"{self.display(item)} is above the upper bound {self.display(high)}"
+                except TypeError:
+                    continue
+        return None
 
 
-def _describe_function(function, name: str, doc: str, arguments: list[inspect.Parameter], docs: list[str]):
+def _exposed_parameters(component: param.Parameterized) -> list[str]:
     """
-    Attach the metadata :func:`~lumen.ai.translate.function_to_model`
-    introspects to a dynamically generated tool function.
-    """
-    if docs:
-        doc = f"{doc}\n\nParameters\n----------\n" + "\n".join(docs)
-    function.__name__ = name
-    function.__qualname__ = name
-    function.__doc__ = doc
-    function.__signature__ = inspect.Signature(arguments)
-    function.__annotations__ = {
-        argument.name: argument.annotation for argument in arguments
-    }
-    return function
+    Derive the parameters of a component to expose to the LLM.
 
-
-def _dress(function, name: str, doc: str, arguments: list[tuple[ParameterInfo, bool]]):
+    Widgets are controlled through their ``value``. Other Panel components
+    (layouts, panes, templates) expose nothing by default, since their
+    parameters describe the structure of the application rather than its
+    state. Any other ``Parameterized`` exposes every public parameter it
+    declares itself, including constant and read-only ones so the LLM can
+    read them back.
     """
-    Give a ``**kwargs`` function the signature, annotations and docstring
-    of the parameters it writes.
-
-    Arguments are declared as ``(info, required)`` pairs; optional arguments
-    default to None which is interpreted as "leave unchanged".
-    """
-    signature, docs = [], []
-    for info, required in arguments:
-        annotation = info.annotation
-        default = inspect.Parameter.empty
-        if not required:
-            annotation = annotation | None
-            default = None
-        signature.append(
-            inspect.Parameter(info.name, inspect.Parameter.KEYWORD_ONLY, default=default, annotation=annotation)
-        )
-        docs.append(f"{info.name}\n    {info.argument_doc()}")
-    return _describe_function(function, name, doc, signature, docs)
+    if isinstance(component, WidgetBase):
+        return ["value"] if "value" in component.param else []
+    if isinstance(component, Viewable):
+        return []
+    chrome = _chrome_parameters(component)
+    exposed = []
+    for name, parameter in component.param.objects("existing").items():
+        if name in ALWAYS_SKIPPED or name in chrome or name.startswith("_"):
+            continue
+        if parameter.precedence is not None and parameter.precedence < 0:
+            continue
+        options, bounds = _options(component, parameter), _bounds(component, parameter)
+        if parameter_to_json_type(parameter, options, bounds) is None:
+            continue
+        exposed.append(name)
+    return exposed
 
 
 class ComponentSpec:
     """
-    A single component the LLM may inspect and control.
+    A single component resolved by :class:`ComponentController`.
 
-    Resolved by :class:`ComponentController`; holds the tool-safe key the
-    component is addressed by, the description the LLM is given and the names
-    of the parameters that are exposed for writing.
+    Holds the key the LLM addresses the component by, its description and
+    the parameters that are exposed. The parameter information is built once
+    per resolution, while the values are always read live.
     """
 
     def __init__(
@@ -591,6 +451,12 @@ class ComponentSpec:
         self.component = component
         self.description = " ".join((description or "").split())
         self.parameters = list(parameters) if parameters else _exposed_parameters(component)
+        self.refresh()
+
+    def refresh(self):
+        """Rebuild the parameter information, e.g. after the options of a widget changed."""
+        self.infos = [ParameterInfo(self.component, name) for name in self.parameters if name in self.component.param]
+        self.settable = [info for info in self.infos if info.settable]
 
     @property
     def label(self) -> str:
@@ -601,36 +467,21 @@ class ComponentSpec:
         return type(self.component).__name__
 
     @property
-    def infos(self) -> list[ParameterInfo]:
-        """Information about every exposed parameter."""
-        infos = []
-        for name in self.parameters:
-            if name in self.component.param:
-                infos.append(ParameterInfo(self.component, name))
-        return infos
-
-    @property
-    def settable(self) -> list[ParameterInfo]:
-        return [info for info in self.infos if info.settable]
-
-    @property
-    def primary(self) -> ParameterInfo | None:
-        """The parameter that holds the component's value, if it has one."""
-        settable = self.settable
-        for info in settable:
-            if info.name == "value":
-                return info
-        return settable[0] if len(settable) == 1 else None
-
-    @property
-    def is_trigger(self) -> bool:
+    def is_action(self) -> bool:
         """Whether controlling this component means firing an event (a button)."""
-        primary = self.primary
-        return (
-            primary is not None
-            and len(self.settable) == 1
-            and isinstance(primary.parameter, param.Event)
-        )
+        return len(self.settable) == 1 and isinstance(self.settable[0].parameter, param.Event)
+
+    @property
+    def takes_value(self) -> bool:
+        """Whether the setter accepts the value itself rather than an object of parameters."""
+        return len(self.settable) == 1 and self.settable[0].name == "value"
+
+    @property
+    def writable(self) -> bool:
+        return bool(self.settable) and not self.is_action
+
+    def state(self) -> dict[str, str]:
+        return {info.name: info.display() for info in self.infos}
 
     def _headline(self) -> str:
         headline = f"`{self.key}` — {self.type_name}"
@@ -639,8 +490,7 @@ class ComponentSpec:
             headline += f' labelled "{label}"'
         return headline
 
-    def _auto_description(self) -> str:
-        """Description derived from the component itself."""
+    def full_description(self) -> str:
         if self.description:
             return self.description
         for attr in ("description", "tooltip"):
@@ -652,160 +502,96 @@ class ComponentSpec:
     def summary(self) -> str:
         """Overview of the component and its current state."""
         lines = [f"- {self._headline()}"]
-        description = self._auto_description()
-        if description:
+        if description := self.full_description():
             lines.append(f"  {truncate_string(description, max_length=300)}")
-        if not self.is_trigger:
-            for info in self.infos:
-                lines.append(f"  {info.summary()}")
-        tool_name = self.tool_name()
-        if tool_name:
-            lines.append(f"  Control with: {tool_name}")
+        if not self.is_action:
+            lines += [f"  {info.summary()}" for info in self.infos]
         return "\n".join(lines)
 
     def describe(self) -> str:
         """Full description of every parameter of the component."""
         lines = [f"### {self._headline()}"]
-        description = self._auto_description()
-        if description:
+        if description := self.full_description():
             lines.append(description)
         class_doc = " ".join((type(self.component).__doc__ or "").split())
         if class_doc:
             lines.append(f"{self.type_name}: {truncate_string(class_doc, max_length=400)}")
-        exposed = self.parameters
-        lines.append(f"\nParameters exposed for control ({len(exposed)}):")
+        lines.append(f"\nExposed parameters ({len(self.infos)}):")
         lines += [info.describe() for info in self.infos] or ["(none)"]
+        exposed = {info.name for info in self.infos}
+        chrome = _chrome_parameters(self.component)
+        # Names only: values of unexposed parameters may hold anything,
+        # including the text of a password input.
         others = [
             name for name in sorted(self.component.param)
-            if name not in exposed and name not in ALWAYS_SKIPPED
+            if name not in exposed and name not in ALWAYS_SKIPPED and name not in chrome
+            and not name.startswith("_")
         ]
         if others:
-            lines.append(
-                "\nOther parameters (not exposed): " + ", ".join(
-                    f"`{name}`={_format_value(getattr(self.component, name, None))}"
-                    for name in others[:40]
-                )
-            )
-        tool_name = self.tool_name()
-        if tool_name:
-            lines.append(f"\nControl with: {tool_name}")
+            lines.append("\nOther parameters (not exposed): " + ", ".join(f"`{name}`" for name in others[:40]))
         return "\n".join(lines)
 
-    def tool_name(self) -> str | None:
-        """Name of the tool that controls this component."""
-        if not self.settable:
-            return None
-        if self.is_trigger:
-            return f"click_{self.key}" if "clicks" in self.component.param else f"trigger_{self.key}"
-        return f"set_{self.key}"
+    def argument_schema(self) -> dict[str, Any]:
+        """JSON schema of the argument the setter tool takes for this component."""
+        if self.takes_value:
+            return self.settable[0].json_schema()
+        return {
+            "type": "object",
+            "properties": {info.name: info.json_schema() for info in self.settable},
+            "additionalProperties": False,
+        }
 
-    def apply(self, values: dict[str, Any]) -> str:
-        """Write *values* onto the component, reporting what changed."""
+    def argument_doc(self) -> str:
+        doc = f"{self.type_name}" + (f' "{self.label}"' if self.label else "")
+        if description := self.full_description():
+            doc += f": {truncate_string(description, max_length=300).rstrip('.')}"
+        detail = self.settable[0].argument_doc() if self.takes_value else "An object of the parameters to change."
+        return f"{doc}. {detail}".strip()
+
+    def prepare(self, raw: Any) -> tuple[dict[str, Any], list[str]]:
+        """Convert the raw argument sent by the LLM into validated parameter updates."""
+        if self.takes_value:
+            raw = {"value": raw}
+        elif not isinstance(raw, dict):
+            return {}, [f"`{self.key}`: expected an object of parameter values, got {raw!r}"]
         infos = {info.name: info for info in self.settable}
-        updates, messages, errors = {}, [], []
-        for name, value in values.items():
+        updates, errors = {}, []
+        for name, value in raw.items():
             info = infos.get(name)
             if info is None:
-                errors.append(f"`{name}` cannot be set on `{self.key}`")
+                errors.append(f"`{self.key}.{name}` cannot be set")
+                continue
+            if value is None:
+                # Providers that send every key send null for the ones they do
+                # not mean to change, so null only clears what may be cleared.
+                if info.nullable:
+                    updates[name] = None
                 continue
             try:
-                updates[name] = _coerce(info, value)
+                value = info.coerce(value)
             except (ValueError, TypeError) as e:
-                errors.append(f"`{name}`: {e}")
-        for name, value in list(updates.items()):
-            info = infos[name]
-            error = _validation_error(info, value)
-            if error:
-                del updates[name]
-                errors.append(f"`{name}`: {error}")
+                errors.append(f"`{self.key}.{name}`: {e}")
                 continue
-            messages.append(f"`{name}` {info.display()} → {info.display(value)}")
-        if updates:
-            try:
-                self.component.param.update(**updates)
-            except Exception as e:
-                return f"Failed to update `{self.key}`: {e}"
-        label = self.label or self.key
-        result = f"Updated {label}: " + ", ".join(messages) if messages else f"No changes applied to {label}."
-        if errors:
-            result += "\nRejected: " + "; ".join(errors)
-        return result
+            if error := info.validation_error(value):
+                errors.append(f"`{self.key}.{name}`: {error}")
+                continue
+            updates[name] = value
+        return updates, errors
 
-    def trigger(self) -> str:
+    def trigger(self):
         """Fire the component's event parameter, i.e. click a button."""
-        primary = self.primary
-        if primary is None:
-            return f"`{self.key}` cannot be triggered."
+        name = self.settable[0].name
         if "clicks" in self.component.param:
             # Panel buttons dispatch on_click callbacks off the clicks parameter
             self.component.param.update(clicks=getattr(self.component, "clicks", 0) + 1)
-        self.component.param.trigger(primary.name)
-        return f"Clicked {self.label or self.key}."
-
-    def tool(self) -> FunctionTool | None:
-        """Build the tool that controls this component."""
-        settable = self.settable
-        tool_name = self.tool_name()
-        if not settable or tool_name is None:
-            return None
-        label = self.label or self.key
-        description = self._auto_description()
-        if self.is_trigger:
-            async def control(**values) -> str:
-                return self.trigger()
-            _dress(control, tool_name, f'Click the "{label}" {self.type_name}.', [])
-            purpose = f'Click the "{label}" {self.type_name} in the application UI.'
-        else:
-            primary = self.primary
-            arguments = [(info, info is primary) for info in settable]
-
-            async def control(**values) -> str:
-                return self.apply({k: v for k, v in values.items() if v is not None})
-            _dress(
-                control,
-                tool_name,
-                f'Set parameters of the "{label}" {self.type_name}. '
-                'Arguments that are left out (or null) are not modified.',
-                arguments,
-            )
-            purpose = f'Change the "{label}" {self.type_name} in the application UI.'
-        if description:
-            purpose += f" {truncate_string(description, max_length=300)}"
-        return FunctionTool(control, purpose=purpose)
-
-
-def _exposed_parameters(component: param.Parameterized) -> list[str]:
-    """
-    Derive the parameters of a component to expose to the LLM.
-
-    Widgets are controlled through their ``value``; for any other
-    ``Parameterized`` object every parameter it declares itself is exposed,
-    i.e. everything but layout, styling and other framework chrome.
-    """
-    if "value" in component.param and isinstance(component, WidgetBase):
-        return ["value"]
-    exposed = []
-    for name, parameter in component.param.objects("existing").items():
-        if name in ALWAYS_SKIPPED or name in CHROME_PARAMETERS:
-            continue
-        if parameter.readonly or parameter.constant:
-            continue
-        if parameter.precedence is not None and parameter.precedence < 0:
-            continue
-        if _annotation(parameter, _options(component, parameter), _bounds(component, parameter)) is None:
-            continue
-        exposed.append(name)
-    return exposed
+        self.component.param.trigger(name)
 
 
 def _is_excluded(component: Any, exclude: list[Any]) -> bool:
     for excluded in exclude:
-        if component is excluded:
+        if component is excluded or (isinstance(excluded, type) and isinstance(component, excluded)):
             return True
-        if isinstance(excluded, type) and isinstance(component, excluded):
-            return True
-    module = type(component).__module__ or ""
-    return module.startswith(EXCLUDED_MODULES)
+    return (type(component).__module__ or "").startswith(EXCLUDED_MODULES)
 
 
 def _children(component: Any):
@@ -823,6 +609,7 @@ def _children(component: Any):
             yield view
     if not isinstance(component, param.Parameterized):
         return
+    # Templates such as a Page hold their contents on parameters
     for name, parameter in component.param.objects("existing").items():
         if name == "name" or isinstance(parameter, param.Callable):
             continue
@@ -843,13 +630,34 @@ def _walk(component: Any, exclude: list[Any], seen: set[int], depth: int = 0):
     seen.add(id(component))
     if not isinstance(component, (Viewable, Viewer)) or _is_excluded(component, exclude):
         return
+    if getattr(component, "visible", True) is False:
+        return
     if isinstance(component, WidgetBase):
-        infos = (ParameterInfo(component, name) for name in _exposed_parameters(component))
-        if any(info.settable for info in infos):
+        if not isinstance(component, SECRET_TYPES) and _exposed_parameters(component):
             yield component
         return
     for child in _children(component):
         yield from _walk(child, exclude, seen, depth + 1)
+
+
+def _describe_function(function, name: str, doc: str, arguments: list[tuple[str, Any, Any, str]]):
+    """
+    Attach the signature and docstring :func:`~lumen.ai.translate.function_to_model`
+    introspects to a generated ``**kwargs`` tool function.
+
+    Arguments are given as ``(name, annotation, default, doc)``.
+    """
+    if arguments:
+        doc += "\n\nParameters\n----------\n" + "\n".join(f"{arg}\n    {arg_doc}" for arg, _, _, arg_doc in arguments)
+    signature = [
+        inspect.Parameter(arg, inspect.Parameter.KEYWORD_ONLY, default=default, annotation=annotation)
+        for arg, annotation, default, _ in arguments
+    ]
+    function.__name__ = function.__qualname__ = name
+    function.__doc__ = doc
+    function.__signature__ = inspect.Signature(signature)
+    function.__annotations__ = {p.name: p.annotation for p in signature}
+    return function
 
 
 class ComponentController(param.Parameterized):
@@ -858,15 +666,23 @@ class ComponentController(param.Parameterized):
 
     Accepts individual widgets, ``Parameterized`` objects, layouts or a whole
     ``panel_material_ui.Page`` (which is walked for the widgets it contains)
-    and generates one control tool per component alongside two discovery
-    tools. Pass the controller anywhere ``llm_tools`` are accepted, e.g.
-    ``ExplorerUI(llm_tools=[controller])``, or hand it to a
-    ``ComponentControlAgent``.
+    and generates a fixed set of discovery, write and click tools from them.
+    Hand it to a :class:`~lumen.ai.agents.ComponentControlAgent`, or pass
+    :meth:`as_llm_tools` to the ``llm_tools`` of a single actor.
 
-    The components are resolved lazily, every time :attr:`tools` is accessed,
-    so containers whose contents change stay in sync and the schemas handed to
-    the LLM always describe the current state of the application.
+    Every parameter of a ``Parameterized`` object handed over becomes writable
+    by the LLM unless it is constant, read-only or has a negative precedence;
+    use ``parameters`` to narrow that down. Buttons found by walking a layout
+    are only clickable when listed in ``actions``, and password inputs are
+    never picked up.
     """
+
+    actions = param.List(default=[], doc="""
+        Buttons (or other components whose only settable parameter is a
+        ``param.Event``) the LLM may click. Buttons found by walking a
+        layout are ignored unless listed here, since their callbacks may
+        do anything; buttons passed explicitly in ``components`` are always
+        clickable.""")
 
     components = param.Parameter(default=None, doc="""
         The components to expose. Either a single component, a list of
@@ -885,8 +701,8 @@ class ComponentController(param.Parameterized):
         Components or component types to ignore when walking layouts.""")
 
     namespace = param.String(default="ui", doc="""
-        Namespace inserted into the names of the discovery tools, e.g.
-        ``list_ui_components``. Set it to distinguish multiple controllers.""")
+        Namespace inserted into the tool names, e.g. ``set_ui_components``.
+        Set it to distinguish multiple controllers.""")
 
     parameters = param.Dict(default={}, doc="""
         Optional mapping from component name to the list of parameters to
@@ -899,9 +715,17 @@ class ComponentController(param.Parameterized):
         "Controls for the wind turbine dashboard". Shown to the LLM alongside
         the list of components.""")
 
-    def __call__(self, context: Any = None) -> list[FunctionTool]:
-        """Allows passing the controller directly as an ``llm_tools`` entry."""
-        return self.tools
+    settle = param.Callable(default=None, allow_refs=False, doc="""
+        Optional (async) callable awaited after every write or click, before
+        the state of the application is read back. Use it when the
+        application updates asynchronously, e.g. through async watchers or
+        bound coroutines.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Parallel tool calls would otherwise interleave their before and
+        # after snapshots of the application state.
+        self._lock = asyncio.Lock()
 
     @property
     def specs(self) -> list[ComponentSpec]:
@@ -920,32 +744,56 @@ class ComponentController(param.Parameterized):
             entries = [(None, component) for component in components]
         else:
             entries = [(None, components)]
+        entries += [(None, action) for action in self.actions]
 
-        specs: list[ComponentSpec] = []
-        keys: set[str] = set()
+        resolved: list[tuple[str | None, param.Parameterized, bool]] = []
         seen: set[int] = set()
         for key, component in entries:
-            if isinstance(component, ComponentSpec):
-                resolved = [(key or component.key, component.component, component)]
-            elif key is None and not isinstance(component, WidgetBase) and isinstance(component, (Viewable, Viewer)):
-                resolved = [(None, found, None) for found in _walk(component, self.exclude, seen)]
+            if key is None and not isinstance(component, WidgetBase) and isinstance(component, (Viewable, Viewer)):
+                resolved += [(None, found, True) for found in _walk(component, self.exclude, seen)]
+            elif not isinstance(component, param.Parameterized):
+                self.param.warning(
+                    f"Cannot control {component!r}; components must be "
+                    "Parameterized objects such as Panel widgets."
+                )
+            elif id(component) not in seen:
+                seen.add(id(component))
+                resolved.append((key, component, False))
+
+        # Reserved first so a label can never take a key the user chose
+        taken: set[str] = set()
+        for key, _, _ in resolved:
+            if key is None:
+                continue
+            slug = _slugify(key)
+            if slug in taken:
+                raise ValueError(f"Component key {key!r} collides with another component named {slug!r}.")
+            taken.add(slug)
+
+        actions = {id(action) for action in self.actions}
+        specs = []
+        for key, component, walked in resolved:
+            if key is None:
+                spec_key = self._unique_key(_label(component) or type(component).__name__, taken)
+                taken.add(spec_key)
             else:
-                resolved = [(key, component, None)]
-            for resolved_key, resolved_component, spec in resolved:
-                if not isinstance(resolved_component, param.Parameterized):
+                spec_key = _slugify(key)
+            spec = ComponentSpec(
+                spec_key,
+                component,
+                description=self._lookup(self.descriptions, spec_key, key) or "",
+                parameters=self._lookup(self.parameters, spec_key, key),
+            )
+            if walked and spec.is_action and id(component) not in actions:
+                continue
+            if not spec.infos:
+                if not walked:
                     self.param.warning(
-                        f"Cannot control {resolved_component!r}; components must be "
-                        "Parameterized objects such as Panel widgets."
+                        f"{type(component).__name__} {spec_key!r} exposes no parameters; "
+                        "list the ones to expose in `parameters`."
                     )
-                    continue
-                spec_key = self._unique_key(resolved_key, resolved_component, keys)
-                keys.add(spec_key)
-                specs.append(ComponentSpec(
-                    spec_key,
-                    resolved_component,
-                    description=self._lookup(self.descriptions, spec_key, resolved_key) or (spec.description if spec else ""),
-                    parameters=self._lookup(self.parameters, spec_key, resolved_key) or (spec.parameters if spec else None),
-                ))
+                continue
+            specs.append(spec)
         return specs
 
     @staticmethod
@@ -957,8 +805,9 @@ class ComponentController(param.Parameterized):
             return mapping[original]
         return None
 
-    def _unique_key(self, key: str | None, component: param.Parameterized, taken: set[str]) -> str:
-        base = _slugify(key or _label(component) or type(component).__name__)
+    @staticmethod
+    def _unique_key(name: str, taken: set[str]) -> str:
+        base = _slugify(name)
         if base not in taken:
             return base
         index = 2
@@ -966,77 +815,220 @@ class ComponentController(param.Parameterized):
             index += 1
         return f"{base}_{index}"
 
-    @property
-    def tools(self) -> list[FunctionTool]:
-        """The discovery and control tools for the current set of components."""
-        specs = self.specs
-        tools = [self._list_tool(), self._describe_tool(specs)]
-        for spec in specs:
-            tool = spec.tool()
-            if tool is not None:
-                tools.append(tool)
-        return tools
+    def tool_name(self, kind: Literal["list", "describe", "set", "click"]) -> str:
+        # OpenAI limits tool names to 64 characters
+        namespace = _slugify(self.namespace)[:40] if self.namespace else ""
+        noun = "components" if kind in ("list", "set") else "component"
+        return f"{kind}_{namespace}_{noun}" if namespace else f"{kind}_{noun}"
 
-    def summary(self) -> str:
+    def summary(self, specs: list[ComponentSpec] | None = None) -> str:
         """An overview of every component and its current state."""
-        specs = self.specs
+        specs = self.specs if specs is None else specs
         if not specs:
             return "No controllable components are currently available."
-        header = f"Controllable UI components ({len(specs)}):"
+        controls = [spec for spec in specs if not spec.is_action]
+        actions = [spec for spec in specs if spec.is_action]
+        lines = []
         if self.purpose:
-            header = f"{' '.join(self.purpose.split())}\n\n{header}"
-        listing = "\n".join(spec.summary() for spec in specs)
-        return (
-            f"{header}\n{listing}\n\n"
-            f"Call {self._tool_name('describe')} for the full parameter list of one component."
-        )
+            lines += [" ".join(self.purpose.split()), ""]
+        if controls:
+            lines.append(f"Components ({len(controls)}), set with {self.tool_name('set')}:")
+            lines += [spec.summary() for spec in controls]
+        if actions:
+            lines.append(f"\nActions, click with {self.tool_name('click')}:")
+            lines += [spec.summary() for spec in actions]
+        lines.append(f"\nCall {self.tool_name('describe')} for the full parameter list of one component.")
+        return "\n".join(lines)
 
-    def _tool_name(self, kind: Literal["list", "describe"]) -> str:
-        namespace = _slugify(self.namespace)
-        if kind == "list":
-            return f"list_{namespace}_components" if namespace else "list_components"
-        return f"describe_{namespace}_component" if namespace else "describe_component"
+    def routing_summary(self) -> str:
+        """Compact list of the controls, for a coordinator choosing an agent."""
+        controls = []
+        for spec in self.specs:
+            names = [info.name for info in spec.settable]
+            if spec.is_action:
+                controls.append(f"{spec.key} (button)")
+            elif spec.takes_value or not names:
+                controls.append(spec.key)
+            else:
+                controls.append(f"{spec.key} ({', '.join(names)})")
+        return "; ".join(controls)
+
+    def as_llm_tools(self, context: Any = None) -> list[FunctionTool]:
+        """
+        The tools for the current set of components.
+
+        Accepted by ``llm_tools``, which calls it every time an LLM is
+        invoked, so the tools always describe the current layout.
+        """
+        specs = self.specs
+        tools = [self._list_tool(), self._describe_tool()]
+        writable = [spec for spec in specs if spec.writable]
+        if writable:
+            tools.append(self._set_tool(writable))
+        actions = [spec for spec in specs if spec.is_action]
+        if actions:
+            tools.append(self._click_tool(actions))
+        return tools
+
+    async def _settle(self) -> str | None:
+        """Await the settle hook, returning an error message if it fails."""
+        if self.settle is None:
+            return None
+        try:
+            result = self.settle()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as e:
+            return f"Waiting for the application to settle failed: {e}"
+        return None
+
+    def _changes(self, specs: list[ComponentSpec], before: dict[str, dict[str, str]], written: set[tuple[str, str]]) -> list[str]:
+        """Changes the application made on its own in response to a write."""
+        changes = []
+        for spec in specs:
+            for name, value in spec.state().items():
+                old = before.get(spec.key, {}).get(name, value)
+                if old != value and (spec.key, name) not in written:
+                    changes.append(f"- `{spec.key}.{name}` {old} → {value}")
+        return changes
+
+    async def apply(self, values: dict[str, Any]) -> str:
+        """Write the values onto the components, reporting the resulting state."""
+        async with self._lock:
+            return await self._apply(values)
+
+    async def _apply(self, values: dict[str, Any]) -> str:
+        specs = self.specs
+        lookup = {spec.key: spec for spec in specs if spec.writable}
+        before = {spec.key: spec.state() for spec in specs}
+        attempted, errors = [], []
+        with hold():
+            # Components are written one by one, in the order they were sent,
+            # so each is validated against the effects of the previous ones,
+            # e.g. options that depend on another selection.
+            for key, raw in values.items():
+                spec = lookup.get(key)
+                if spec is None:
+                    errors.append(f"`{key}` is not a component that can be set; available: {', '.join(lookup) or '(none)'}")
+                    continue
+                spec.refresh()
+                updates, spec_errors = spec.prepare(raw)
+                errors += spec_errors
+                if not updates:
+                    continue
+                try:
+                    spec.component.param.update(**updates)
+                except Exception as e:
+                    errors.append(f"`{key}`: the application raised an error while applying the change: {e}")
+                attempted.append((spec, updates))
+        if error := await self._settle():
+            errors.append(error)
+
+        lines, written = [], set()
+        for spec, updates in attempted:
+            infos = {info.name: info for info in spec.infos}
+            for name, requested in updates.items():
+                info = infos[name]
+                written.add((spec.key, name))
+                old, new = before[spec.key][name], info.display()
+                if old == new and info.display(requested) == new:
+                    lines.append(f"- `{spec.key}.{name}` already {new}")
+                    continue
+                line = f"- `{spec.key}.{name}` {old} → {new}"
+                if info.display(requested) != new:
+                    line += f" (requested {info.display(requested)}, the application changed it)"
+                lines.append(line)
+        result = ["Updated:", *lines] if lines else ["No changes applied."]
+        if changes := self._changes(specs, before, written):
+            result += ["Also changed as a result:", *changes]
+        if errors:
+            result += ["Rejected:", *(f"- {error}" for error in errors)]
+        return "\n".join(result)
+
+    async def click(self, component: str) -> str:
+        """Click an action, reporting how the state of the application changed."""
+        async with self._lock:
+            specs = self.specs
+            action = next((spec for spec in specs if spec.is_action and spec.key == component), None)
+            if action is None:
+                available = ", ".join(spec.key for spec in specs if spec.is_action) or "(none)"
+                return f"Unknown action {component!r}. Available actions: {available}."
+            before = {spec.key: spec.state() for spec in specs}
+            result = [f"Clicked {action.label or action.key}."]
+            try:
+                with hold():
+                    action.trigger()
+            except Exception as e:
+                result.append(f"The application raised an error in response: {e}")
+            if error := await self._settle():
+                result.append(error)
+            if changes := self._changes(specs, before, set()):
+                result += ["Changed as a result:", *changes]
+            return "\n".join(result)
 
     def _list_tool(self) -> FunctionTool:
         async def list_components() -> str:
             return self.summary()
 
         _describe_function(
-            list_components,
-            self._tool_name("list"),
-            "List the interactive components of the application that can be controlled, "
-            "including the current value of each one.",
-            [], [],
+            list_components, self.tool_name("list"),
+            "List the interactive components of the application and their current state.", [],
         )
         purpose = (
-            "Discover the interactive components of the application UI that can be "
-            "inspected and controlled, and their current values. Call this before "
-            "changing the UI when unsure which components exist."
+            "Discover the components of the application UI that can be inspected and "
+            "controlled, and their current values."
         )
         if self.purpose:
             purpose += f" {' '.join(self.purpose.split())}"
         return FunctionTool(list_components, purpose=purpose)
 
-    def _describe_tool(self, specs: list[ComponentSpec]) -> FunctionTool:
-        lookup = {spec.key: spec for spec in specs}
-
+    def _describe_tool(self) -> FunctionTool:
         async def describe_component(component: str) -> str:
-            spec = lookup.get(component)
+            specs = {spec.key: spec for spec in self.specs}
+            spec = specs.get(component)
             if spec is None:
-                keys = ", ".join(lookup) or "(none)"
-                return f"Unknown component {component!r}. Available components: {keys}."
+                return f"Unknown component {component!r}. Available components: {', '.join(specs) or '(none)'}."
             return spec.describe()
 
-        annotation = Literal[tuple(lookup)] if lookup else str
         _describe_function(
-            describe_component,
-            self._tool_name("describe"),
+            describe_component, self.tool_name("describe"),
             "Describe every parameter of one component of the application UI.",
-            [inspect.Parameter("component", inspect.Parameter.KEYWORD_ONLY, annotation=annotation)],
-            [f"component\n    Name of the component, one of: {', '.join(lookup) or '(none)'}."],
+            [("component", str, inspect.Parameter.empty, f"Name of the component as listed by {self.tool_name('list')}.")],
         )
         return FunctionTool(describe_component, purpose=(
-            "Inspect one component of the application UI in detail: all of its "
-            "parameters, their types, allowed values, current values and documentation. "
-            f"Use {self._tool_name('list')} first to discover the component names."
+            "Inspect one component of the application UI in detail: all of its parameters, "
+            "their types, allowed values, current values and documentation."
         ))
+
+    def _set_tool(self, specs: list[ComponentSpec]) -> FunctionTool:
+        async def set_components(**values) -> str:
+            return await self.apply(values)
+
+        arguments = [
+            (spec.key, Annotated[Any, WithJsonSchema(spec.argument_schema())], None, spec.argument_doc())
+            for spec in specs
+        ]
+        _describe_function(
+            set_components, self.tool_name("set"),
+            "Change any number of components of the application UI in one call. Components "
+            "that are left out are not modified. Returns the values read back from the "
+            "application, including other components that changed as a result.",
+            arguments,
+        )
+        return FunctionTool(set_components, purpose="Change the components of the application UI.")
+
+    def _click_tool(self, specs: list[ComponentSpec]) -> FunctionTool:
+        async def click_component(component: str) -> str:
+            return await self.click(component)
+
+        listing = "; ".join(
+            f"{spec.key}" + (f' ("{spec.label}")' if spec.label and spec.label != spec.key else "")
+            + (f": {truncate_string(spec.full_description(), max_length=200)}" if spec.full_description() else "")
+            for spec in specs
+        )
+        _describe_function(
+            click_component, self.tool_name("click"),
+            "Click a button of the application UI. Returns how the state of the application changed.",
+            [("component", Literal[tuple(spec.key for spec in specs)], inspect.Parameter.empty, f"The button to click, one of: {listing}.")],
+        )
+        return FunctionTool(click_component, purpose="Click a button of the application UI.")

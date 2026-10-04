@@ -65,38 +65,34 @@ class ComponentControlAgent(Agent):
         super().__init__(**params)
         if self.components is None:
             self.components = self.controller.components
-        self._purpose = self.purpose
-        # The controller resolves its components lazily, so listing it as an
-        # llm_tool is enough for the tools to track a live, changing layout.
-        self.llm_tools = [*self.llm_tools, self.controller]
+        # The tools stay on this agent rather than on the coordinator, which
+        # would hand write access to the application to every agent.
+        self.llm_tools = [*self.llm_tools, self.controller.as_llm_tools]
         self.param.watch(self._sync_components, "components")
 
     def _sync_components(self, event):
         self.controller.components = event.new
 
     async def applies(self, context: TContext) -> bool:
-        """
-        Name the controls that currently exist on the purpose.
+        return bool(self.controller.specs)
 
-        A coordinator routes on the purpose alone, so spelling out what can
-        actually be controlled is what lets it tell a request about the
-        application apart from a request about data.
+    def routing_purpose(self, context: TContext) -> str:
         """
-        specs = self.controller.specs
-        if not specs:
-            return False
-        controls = []
-        for spec in specs:
-            names = [info.name for info in spec.settable]
-            controls.append(spec.key if names == ["value"] else f"{spec.key} ({', '.join(names)})")
-        purpose = f"{dedent(self._purpose).strip()}\n\nThe application currently exposes: "
-        self.purpose = purpose + truncate_string("; ".join(controls), max_length=1500)
-        return True
+        Name the controls that currently exist.
+
+        A request such as "show only Gentoo penguins" is only distinguishable
+        from a data query if the coordinator can see that a species filter
+        exists.
+        """
+        controls = truncate_string(self.controller.routing_summary(), max_length=1500)
+        return f"{dedent(self.purpose).strip()}\n\nThe application currently exposes: {controls}"
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list, context: TContext, **kwargs):
         prompt_context = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
         prompt_context["ui_state"] = self.controller.summary()
-        prompt_context["list_tool"] = self.controller._tool_name("list")
+        prompt_context["list_tool"] = self.controller.tool_name("list")
+        prompt_context["set_tool"] = self.controller.tool_name("set")
+        prompt_context["click_tool"] = self.controller.tool_name("click")
         return prompt_context
 
     async def respond(
