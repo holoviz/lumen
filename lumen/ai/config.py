@@ -97,6 +97,24 @@ class MissingContextError(Exception):
     """Raise to indicate missing context for a query."""
 
 
+class DeterministicError(Exception):
+    """
+    Raised for failures that regenerating the LLM output cannot fix,
+    e.g. a cataloged table the engine cannot resolve.
+    """
+
+
+class EmptyResultError(ValueError):
+    """
+    Raised when a query returns no rows, so the model can check its filters.
+
+    `retry_llm_output` passes `retry_kwargs` to the next attempt, which
+    accepts no rows as the answer.
+    """
+
+    retry_kwargs = {"raise_if_empty": False}
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
@@ -125,6 +143,7 @@ VECTOR_STORE_ASSETS_URL = "https://assets.holoviz.org/lumen/vector_store/"
 
 UNRECOVERABLE_ERRORS = (
     ImportError,
+    DeterministicError,
     LlmSetupError,
     RecursionError,
     MissingContextError,
