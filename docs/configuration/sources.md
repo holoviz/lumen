@@ -263,7 +263,7 @@ Statistics are cached in memory and, for databases with a stable identity (datab
 
 !!! warning "The cache contains data values"
 
-    Cached entries include value ranges, frequent values and example strings from your tables. Files are created readable by the current user only, and Snowflake entries are keyed by user and role so stats computed under one role are not served to another. To keep statistics in memory only, set `LUMEN_TABLE_STATS_CACHE` to an empty string; set it to a path to move the cache.
+    Cached entries include value ranges, frequent values and example strings from your tables. On Linux and macOS the files are created readable by the current user only; on Windows the default location is inside the user profile, which only that user can read. Snowflake entries are keyed by user and role so stats computed under one role are not served to another. To keep statistics in memory only, set `LUMEN_TABLE_STATS_CACHE` to an empty string; set it to a path to move the cache.
 
 ``` bash title="Disable the on-disk cache"
 export LUMEN_TABLE_STATS_CACHE=""

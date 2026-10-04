@@ -268,6 +268,7 @@ class TestStore:
         ):
             store.compute(_sqlite_source(sqlite_path), "account")
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows ignores POSIX mode bits; the profile ACL applies")
     def test_persisted_files_are_private(self, sqlite_path, tmp_path):
         pytest.importorskip("sqlalchemy")
         cache = tmp_path / "cache"

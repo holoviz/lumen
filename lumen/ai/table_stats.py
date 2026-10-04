@@ -1590,7 +1590,8 @@ class TableStatsStore(param.Parameterized):
         Directory for persisted statistics; None disables persistence.
         Defaults to the user cache directory, or LUMEN_TABLE_STATS_CACHE.
         Entries contain data values and are written readable by the
-        current user only.""")
+        current user only on POSIX systems; on Windows the user cache
+        directory's ACL applies.""")
 
     max_age = param.Number(default=7 * 24 * 3600, allow_None=True, doc="""
         Seconds cached statistics stay valid when the engine exposes no
