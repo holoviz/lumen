@@ -95,6 +95,8 @@ Most recent data in memory:
 
 {%- if memory.get('metaset') %}
 Available tables:
-{{ memory['metaset'].table_context(include_metadata=False) }}
+{#- Row counts, enums and ranges are what tell a one-row derived table from
+    a full one; the budget keeps a large catalog from swamping the prompt. -#}
+{{ memory['metaset'].compact_context(include_docs=False, include_lineage=False, max_tokens=2000) }}
 {%- endif %}
 {%- endblock -%}

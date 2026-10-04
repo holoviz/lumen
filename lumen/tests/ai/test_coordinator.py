@@ -886,6 +886,20 @@ def test_follow_up_prompt_lists_derived_and_external_tables():
     assert "Derived tables:\n- top_day (from by_day) ★\n- by_day (from weather)\n" in prompt
 
 
+async def test_follow_up_prompt_shows_table_stats():
+    source = DuckDBSource(uri=":memory:")
+    source._connection.execute("CREATE TABLE top_result AS SELECT 'Ada' AS name, 42 AS total")
+    source.tables = ["top_result"]
+    metaset = await get_metaset([source], ["top_result"])
+    prompt = render_template(
+        PROMPTS_DIR / "Planner" / "follow_up.jinja2",
+        memory={"metaset": metaset}, current_datetime=dt.datetime(2026, 1, 1),
+    )
+    # The row count is what marks a one-row derived table as a dead end.
+    assert "top_result (1 rows)" in prompt
+    assert "total INTEGER 42" in prompt
+
+
 async def test_planner_history_excludes_validation_messages(llm, monkeypatch):
     planner = Planner(llm=llm, agents=[ChatAgent(), ValidationAgent()])
     planner.interface.send("Show totals", user="User", respond=False)
