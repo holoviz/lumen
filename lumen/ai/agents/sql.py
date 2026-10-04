@@ -4,7 +4,6 @@ import narwhals.stable.v2 as nw
 import pandas as pd
 import param
 import sqlglot
-import yaml
 
 from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
@@ -59,8 +58,8 @@ EMPTY_RESULT_HINT = (
 
 def make_source_table_model(sources: list[tuple[str, str]]):
     class LiteralSourceTable(BaseModel):
-        source: t.Literal[tuple(set(src for src, _ in sources))]
-        table: t.Literal[tuple(set(table for _, table in sources))]
+        source: t.Literal[tuple(sorted(set(src for src, _ in sources)))]
+        table: t.Literal[tuple(sorted(set(table for _, table in sources)))]
     return LiteralSourceTable
 
 
@@ -68,7 +67,8 @@ def make_table_model(sources: list[tuple[str, str]]):
     """
     Create a table model with constrained table choices.
     """
-    available_tables = list(set(table for _, table in sources))
+    # Sorted so the response schema, part of the cached prompt prefix, is stable across runs.
+    available_tables = sorted(set(table for _, table in sources))
     TableLiteral = t.Literal[tuple(available_tables)]  # type: ignore
     return TableLiteral
 
@@ -308,7 +308,6 @@ def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
         return metaset.table_list(
             n=n,
             offset=offset,
-            show_source=True,
             n_others=n_others,
             include_metadata=include_metadata,
             include_lineage=include_lineage,
@@ -324,88 +323,57 @@ def make_browse_data_catalog_tool(metaset: Metaset) -> FunctionTool:
     )
 
 
-def make_load_table_schemas_tool(metaset: Metaset) -> FunctionTool:
+def make_load_table_schemas_tool(metaset: Metaset, stats_timeout: float | None = 60) -> FunctionTool:
     """
-    Tool to load and return schema details for specific catalog tables, preferring catalog metadata
-    then source introspection (cached on the metaset), not ad-hoc exploration SQL.
+    Tool returning full column statistics for specific catalog tables, computing
+    them if the prompt only had names and types.
     """
 
     async def load_table_schemas(table_slugs: list[str]) -> str:
         """
-        Return YAML combining catalog column metadata (pre-computed) with SQL-engine schema
-        (types, enums, row counts) when available. Call for every table you intend to use in SQL.
-        Accept catalog slugs, source/table, source.table, or an unambiguous table name.
+        Return every column of the given tables with SQL type, keys, value ranges,
+        literal values and null fractions, plus catalog descriptions.
+        Accept table names, catalog slugs, source/table or source.table.
         """
         if not table_slugs:
             return "No table_slugs provided."
-        result: dict[str, t.Any] = {}
+        blocks: list[str] = []
+        resolved: list[str] = []
         for raw in table_slugs[:8]:
             if raw in metaset.catalog:
-                slug = raw
-            else:
-                matches = sorted(
-                    slug for slug in metaset.catalog
-                    if (slug.split(SOURCE_TABLE_SEPARATOR, 1)[-1] == raw
-                        or slug.replace(SOURCE_TABLE_SEPARATOR, "/") == raw
-                        or slug.replace(SOURCE_TABLE_SEPARATOR, ".") == raw)
-                )
-                if len(matches) > 1:
-                    result[raw] = {"error": f"Ambiguous table {raw!r}. Use one of: {matches}"}
-                    continue
-                slug = matches[0] if matches else raw
-            entry = metaset.catalog.get(slug)
-            if not entry:
-                options = sorted(metaset.catalog)[:10]
-                result[raw] = {"error": f"Unknown table {raw!r}. Catalog slugs include: {options}."}
+                resolved.append(raw)
                 continue
-            block: dict[str, t.Any] = {}
-            live = await metaset.get_schema(slug)
-            if live:
-                block["row_count"] = live.get("__len__")
-                schema = {}
-                col_info = {col.name: col for col in entry.columns}
-                for k, v in live.items():
-                    if k == "__len__":
-                        continue
-                    # col_info only carries cataloged columns; live keys not
-                    # in the catalog (e.g. xarray dim coordinates absent from
-                    # a STAC datacube extension) get the live schema as-is.
-                    col = col_info.get(k)
-                    if col is not None and col.description:
-                        schema[k] = dict(col.description, **v)
-                    else:
-                        schema[k] = v
-                block["schema"] = schema
-            elif entry.columns and any(c.description for c in entry.columns):
-                block["columns"] = [
-                    {"name": c.name, "description": c.description}
-                    for c in entry.columns
-                ]
-            elif entry.columns:
-                block["catalog_columns"] = [c.name for c in entry.columns]
-            else:
-                block["note"] = "No catalog columns and no live schema could be loaded for this table."
-            result[slug] = block
-        parts = [
-            truncate_to_tokens(
-                yaml.dump({slug: block}, default_flow_style=False, allow_unicode=True, sort_keys=False),
-                SCHEMA_MAX_TOKENS // 3,
+            matches = sorted(
+                slug for slug in metaset.catalog
+                if (slug.split(SOURCE_TABLE_SEPARATOR, 1)[-1] == raw
+                    or slug.replace(SOURCE_TABLE_SEPARATOR, "/") == raw
+                    or slug.replace(SOURCE_TABLE_SEPARATOR, ".") == raw)
             )
-            for slug, block in result.items()
-        ]
+            if len(matches) > 1:
+                blocks.append(f"{raw}: error: ambiguous table {raw!r}. Use one of: {matches}")
+            elif not matches:
+                options = sorted(metaset.display_name(slug) for slug in metaset.catalog)[:10]
+                blocks.append(f"{raw}: error: unknown table {raw!r}. Tables include: {options}.")
+            else:
+                resolved.append(matches[0])
+        resolved = list(dict.fromkeys(resolved))
+        if resolved:
+            await metaset.ensure_stats(resolved, timeout=stats_timeout)
+        for slug in resolved:
+            blocks.append(truncate_to_tokens(metaset.table_detail(slug), SCHEMA_MAX_TOKENS // 3))
         if len(table_slugs) > 8:
-            parts.append(f"Only the first 8 tables were processed; request the remaining {len(table_slugs) - 8} separately.")
-        if len(parts) > 3:
-            parts.append("Each table is capped independently; request fewer tables for more detail.")
-        return "\n".join(parts)
+            blocks.append(f"Only the first 8 tables were processed; request the remaining {len(table_slugs) - 8} separately.")
+        if len(resolved) > 3:
+            blocks.append("Each table is capped independently; request fewer tables for more detail.")
+        return "\n\n".join(blocks)
 
     load_table_schemas.__doc__ = (load_table_schemas.__doc__ or "").strip()
     return FunctionTool(
         load_table_schemas,
         purpose=(
-            "Load detailed schema for chosen catalog tables: merge vector/catalog column metadata first, "
-            "then attach SQL-engine types via metaset introspection (cached). Prefer this over guessing "
-            "or exploratory SQL when planning which tables to use."
+            "Load full column statistics (types, keys, ranges, values, null fractions) for "
+            "chosen tables. Prefer this over guessing or exploratory SQL when the data "
+            "summary lists a table with names and types only."
         ),
     )
 
@@ -567,6 +535,20 @@ class SQLAgent(BaseLumenAgent):
     )
 
     exclusions = param.List(default=["dbtsl_metaset"])
+
+    schema_max_tokens = param.Integer(default=4000, allow_None=True, doc="""
+        Token budget for the data summary in the prompt. Tables beyond it are
+        listed with names and types only, and the model loads the rest with
+        load_table_schemas.""")
+
+    schema_tables_shown = param.Integer(default=25, bounds=(1, None), doc="""
+        Most relevant tables described in the data summary; the rest are
+        listed by name. schema_max_tokens usually binds first.""")
+
+    stats_wait = param.Number(default=10, allow_None=True, doc="""
+        Seconds to wait for column statistics that are still being computed
+        before answering with names and types; profiling continues in the
+        background for later questions. None waits until they are ready.""")
 
     # When an exploration pipeline is already in context, let the LLM narrow it
     # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
@@ -1006,6 +988,8 @@ class SQLAgent(BaseLumenAgent):
                 discovery_context=discovery_context,
                 active_filters=self._active_filters(context.get("pipeline")),
                 source_names=sorted({s for s, _ in sources}),
+                schema_max_tokens=self.schema_max_tokens,
+                schema_tables_shown=self.schema_tables_shown,
                 tools=tool_list,
             )
 
@@ -1144,6 +1128,7 @@ class SQLAgent(BaseLumenAgent):
                 sources[key] = src
         if not sources:
             raise ValueError("No valid SQL sources available for querying.")
+        await metaset.ensure_stats(metaset.get_top_tables(self.schema_tables_shown), timeout=self.stats_wait)
 
         out = await self._render_execute_query(
             messages,
