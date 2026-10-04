@@ -22,10 +22,10 @@ from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
     count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
-    fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
-    sanitize_column_names, serialize_image_content, set_content_text,
-    slug_to_table_name, truncate_to_tokens,
+    format_tool_error, fuse_messages, get_schema, inline_schema_defs,
+    mutate_user_message, parse_huggingface_url, render_template, report_error,
+    retry_llm_output, sanitize_column_names, serialize_image_content,
+    set_content_text, slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -112,8 +112,8 @@ def test_render_template_with_valid_template():
     now = dt.datetime.now()
     expected = (
         "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
-        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What topic of data?"
+        "What topic of data?\n\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
@@ -125,9 +125,9 @@ def test_render_template_with_override():
     now = dt.datetime.now()
     expected = (
         "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
-        f"Current date time {now.strftime('%b %d, %Y %I:%M %p')}\n"
         "What topic of data?\n"
-        "Its Lumen"
+        "Its Lumen\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen", "tools": ""}, current_datetime=now).strip()
@@ -1002,3 +1002,16 @@ def test_sanitize_column_names_leaves_the_caller_alone():
     sanitized.iloc[0, 0] = 99
     assert list(df.columns) == ["a b"]
     assert df.iloc[0, 0] == 1
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("GET https://api.x/v1?key=SECRET failed", "GET https://api.x/v1?<redacted> failed"),
+    ("postgresql://user:pw@host/db?sslkey=k down", "postgresql://<redacted>@host/db?<redacted> down"),
+    ('Binder Error: column "a?b" not found', 'Binder Error: column "a?b" not found'),
+])
+def test_format_tool_error_redacts_url_secrets(text, expected):
+    assert format_tool_error(text) == expected
+
+
+def test_format_tool_error_truncates():
+    assert len(format_tool_error(ValueError("x" * 5000), max_length=200)) <= 200

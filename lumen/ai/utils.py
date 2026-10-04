@@ -259,6 +259,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -316,6 +317,24 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
 def format_error(error: BaseException) -> str:
     """Render an error as ``Type: message`` for the model, without terminal colour codes."""
     return ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}")
+
+
+# Credentials that error messages commonly quote, e.g. an HTTP error naming
+# the request URL with ``?key=...`` or ``https://user:token@host``.
+URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@]+@")
+URL_QUERY = re.compile(r"(?P<url>\b[a-z][\w+.-]*://[^\s?#'\"<>]*)\?[^\s#'\"<>)]+", re.IGNORECASE)
+
+
+def format_tool_error(error: BaseException | str, max_length: int = 1000) -> str:
+    """
+    Render an error for a tool result that is sent to the provider.
+
+    Tool results are re-sent every round, so the text is truncated, and URL
+    credentials and query strings are redacted so secrets do not leak.
+    """
+    text = error if isinstance(error, str) else format_error(error)
+    text = URL_CREDENTIALS.sub("<redacted>@", URL_QUERY.sub(r"\g<url>?<redacted>", text))
+    return truncate_string(text, max_length)
 
 
 def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
@@ -1356,6 +1375,34 @@ def truncate_string(s, max_length=30, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def closest_names(name: str, options, n: int = 3) -> list[str]:
+    """Return up to ``n`` entries of ``options`` that most resemble ``name``, ignoring case."""
+    by_lower: dict[str, str] = {}
+    for option in options:
+        by_lower.setdefault(str(option).lower(), str(option))
+    matches = difflib.get_close_matches(str(name).lower(), list(by_lower), n=n, cutoff=0.5)
+    return [by_lower[match] for match in matches]
+
+
+def format_unknown_name(kind: str, name: Any, options, max_listed: int = 30) -> str:
+    """
+    Describe an unknown ``kind`` (tool, table, column, ...) so a model can correct itself.
+
+    Lists the closest matches first, then the valid names, capped at
+    ``max_listed`` so a large catalog does not flood the transcript.
+    """
+    options = sorted({str(option) for option in options})
+    message = f"Unknown {kind} {name!r}."
+    close = closest_names(str(name), options)
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    if options:
+        listed = ", ".join(options[:max_listed])
+        more = f" (and {len(options) - max_listed} more)" if len(options) > max_listed else ""
+        message += f" Valid {kind}s: {listed}{more}."
+    return message
 
 
 def _get_token_encoder():

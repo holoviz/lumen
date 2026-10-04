@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 
 from lumen.ai.schemas import DocumentChunk
 
@@ -64,12 +63,12 @@ async def test_load_table_schemas_resolves_aliases(input_slug):
     metaset = Metaset(
         query=None,
         catalog={slug: TableCatalogEntry(slug, 1, [Column("order_id")])},
-        schemas={slug: {"__len__": 12, "order_id": {"type": "integer"}}},
+        schemas={slug: {"__len__": 12, "order_id": {"type": "integer", "inclusiveMinimum": 1, "inclusiveMaximum": 12}}},
     )
 
-    result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function([input_slug]))
+    result = await make_load_table_schemas_tool(metaset).function([input_slug])
 
-    assert result == {slug: {"row_count": 12, "schema": {"order_id": {"type": "integer"}}}}
+    assert result == "orders (12 rows)\n  order_id INTEGER 1..12"
 
 
 async def test_load_table_schemas_preserves_dots_in_source_name():
@@ -81,8 +80,9 @@ async def test_load_table_schemas_preserves_dots_in_source_name():
     )
 
     for alias in ("src.prod/orders", "src.prod.orders"):
-        result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function([alias]))
-        assert slug in result
+        result = await make_load_table_schemas_tool(metaset).function([alias])
+        assert result.startswith("orders")
+        assert "order_id INTEGER" in result
 
 
 async def test_load_table_schemas_rejects_ambiguous_bare_name():
@@ -92,19 +92,20 @@ async def test_load_table_schemas_rejects_ambiguous_bare_name():
         catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
         schemas={},
     )
-    metaset.get_schema = AsyncMock()
+    metaset.ensure_stats = AsyncMock()
 
-    result = yaml.safe_load(await make_load_table_schemas_tool(metaset).function(["orders"]))
+    result = await make_load_table_schemas_tool(metaset).function(["orders"])
 
-    assert "Ambiguous" in result["orders"]["error"]
-    assert all(slug in result["orders"]["error"] for slug in slugs)
-    metaset.get_schema.assert_not_awaited()
+    assert "ambiguous" in result.lower()
+    assert all(slug in result for slug in slugs)
+    metaset.ensure_stats.assert_not_awaited()
 
 
 async def test_load_table_schemas_budget_applies_to_each_table():
     slugs = [f"src{SOURCE_TABLE_SEPARATOR}table_{i}" for i in range(4)]
+    names = [f"field_{a}{b}" for a in "abcdefghij" for b in "klmnopqrs"]
     schemas = {
-        slug: {"__len__": 100, **{f"column_{j}": {"type": "varchar"} for j in range(90)}}
+        slug: {"__len__": 100, **{name: {"type": "string", "enum": [f"{name} value {k}" for k in range(4)]} for name in names}}
         for slug in slugs
     }
     metaset = Metaset(
@@ -116,9 +117,9 @@ async def test_load_table_schemas_budget_applies_to_each_table():
     result = await make_load_table_schemas_tool(metaset).function(slugs)
 
     assert count_tokens(result) > 3000
-    for slug in slugs:
-        assert slug in result
-        assert f"{slug}:\n  row_count: 100\n  schema:\n    column_0:" in result
+    for i in range(4):
+        assert f"table_{i} (100 rows)\n  field_ak VARCHAR {{field_ak value 0" in result
+    assert result.count("truncated") == 4
     assert count_tokens(result) < 4500
 
 
@@ -419,6 +420,23 @@ async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_sou
     joined = " ".join(captured["findings"])
     assert "before aggregation" in joined
     assert "-9999" in joined, "the placeholder the aggregate hid must reach the rewrite"
+
+
+async def test_sql_agent_profiles_source_rows_behind_a_scalar_aggregate(llm, dirty_source, test_messages):
+    """A one-row AVG gives the result lint nothing, but the -9999 it averaged in must still be found."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    captured = {}
+
+    async def _capture(self, sql_query, findings, original_rows, source, messages, context, step):
+        captured["findings"] = findings
+        return sql_query
+
+    with patch.object(SQLAgent, "_clean_data_pass", new=_capture):
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(query='SELECT AVG("value") AS mean FROM dirty', table_slug="mean", tables=["dirty"]),
+        ])
+
+    assert "-9999" in " ".join(captured["findings"])
 
 
 async def test_sql_agent_skips_source_profiling_when_not_aggregating(llm, dirty_source, test_messages):
@@ -744,7 +762,7 @@ async def test_analysis_agent(llm, duckdb_source, test_messages):
     class TestAnalysis(Analysis):
 
         def __call__(self, pipeline, context):
-            return f"Test Analysis"
+            return "Test Analysis"
 
     agent = AnalysisAgent(
         analyses=[TestAnalysis.instance(name='foo'), TestAnalysis.instance(name='bar')],
@@ -788,17 +806,17 @@ class TestDocumentListAgentIntegration:
                 DocumentChunk(filename="schema.md", text="chunk 3", similarity=0.7),
             ]
         )
-        
+
         context = {"metaset": metaset}
-        
+
         # Test applies
         applies = await DocumentListAgent.applies(context)
         assert applies is True  # More than 1 unique document
-        
+
         # Test _get_items
         agent = DocumentListAgent()
         items = agent._get_items(context)
-        
+
         # Should return unique, sorted filenames
         assert items == {"Documents": ["readme.md", "schema.md"]}
 
@@ -807,7 +825,7 @@ class TestDocumentListAgentIntegration:
         # Metaset without docs
         metaset = Metaset(query="test", catalog={}, docs=None)
         context = {"metaset": metaset}
-        
+
         applies = await DocumentListAgent.applies(context)
         assert applies is False
 
@@ -1427,7 +1445,7 @@ def test_format_error_strips_ansi_codes():
 
 
 def test_exploration_tool_doc_quotes_every_name():
-    sources = {("src", "orders"): None, ("src", "customers"): None}
+    sources = {("src_b", "orders"): None, ("src_a", "customers"): None}
     doc = make_run_exploration_sql_tool(sources).function.__doc__
-    assert "Sources: `src`." in doc
-    assert "Tables: `customers`, `orders`." in doc
+    assert "one of `src_a`, `src_b`." in doc
+    assert doc.count("`") % 2 == 0

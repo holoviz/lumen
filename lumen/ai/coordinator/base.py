@@ -26,7 +26,7 @@ from panel_material_ui import (
 
 from ..actor import Actor
 from ..agents import (
-    Agent, AnalysisAgent, ChatAgent, SourceAgent,
+    Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
@@ -621,7 +621,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
                     elif "model_path" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
-            messages = fuse_messages(self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages, max_user_messages=self.history)
+            # Validation verdicts are about a previous plan, not part of the
+            # conversation, and read as instructions if left in the history.
+            exclude_users = ["help"] + [a.user for a in self.agents if isinstance(a, ValidationAgent)]
+            serialized = self.interface.serialize(
+                exclude_users=exclude_users, custom_serializer=self._serialize, limit=10
+            )
+            messages = fuse_messages(serialized or messages, max_user_messages=self.history)
 
             # the master dict of agents / tools to be used downstream
             # change this for filling models' literals
