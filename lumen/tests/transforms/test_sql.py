@@ -397,12 +397,18 @@ def test_sql_filter_range_list_open_ends():
 
 @pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
 @pytest.mark.parametrize(
-    "value", [(None, 2), (2, None), [(None, 0), (4, None)], [(None, 0), (None, None), (4, None)]]
+    "value",
+    [
+        (None, 2), (2, None), [(None, 0), (4, None)], [(None, 0), (None, None), (4, None)],
+        slice(None, 2), slice(2, None), slice(1, 3),
+    ],
 )
 def test_sql_filter_open_range_matches_pandas_filter(value):
     df = pd.DataFrame({"A": [0, 1, 2, 3, 4]})
     source = DuckDBSource.from_df({"df": df})
     result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("A", value)]))
+    if isinstance(value, slice):
+        value = (value.start, value.stop)
     expected = lm.transforms.Filter.apply_to(df, conditions=[("A", value)])
     assert result["A"].tolist() == expected["A"].tolist()
 
@@ -422,6 +428,31 @@ def test_sql_filter_slice_date():
     )
     expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
+
+
+def test_sql_filter_slice_open_start():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(None, 5))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'5\''
+    assert result == expected
+
+
+def test_sql_filter_slice_open_end():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(2, None))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'2\''
+    assert result == expected
+
+
+def test_sql_filter_slice_date_open_start():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", slice(None, dt.date(2017, 4, 14)))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'2017-04-14 23:59:59\''
+    assert result == expected
+
+
+def test_sql_filter_slice_unbounded():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(None, None))])
+    assert result == "SELECT * FROM TABLE"
 
 
 def test_sql_filter_slice_datetime():
