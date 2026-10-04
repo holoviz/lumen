@@ -26,6 +26,7 @@ from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
 from lumen.ai.coordinator import Coordinator, Plan, Planner
+from lumen.ai.coordinator.base import Checklist
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import SQLEditor
 from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
@@ -825,3 +826,13 @@ async def test_planner_multimodal_user_message(llm):
     assert isinstance(plan, Plan)
     assert plan.title == "Image Q&A"
     assert len(plan) == 1
+
+
+def test_checklist_renders_status_indicators():
+    todos = "- 🟢 Done\n- 🟡 Current\n- ⚪ Pending\n- 🔴 Failed"
+    checklist = Checklist(todos)
+    html = checklist._transform_object(todos)["object"]
+    assert checklist.object == todos
+    for status in ("done", "current", "pending", "failed"):
+        assert f"todo-status todo-{status}" in html
+    assert not any(emoji in html for emoji in "🟢🟡⚪🔴")

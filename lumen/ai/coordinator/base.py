@@ -238,7 +238,7 @@ class Plan(Section):
                 # Update todos to show retry
                 if self.steps_layout is not None:
                     todos = "\n".join(
-                        f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
+                        f"- {'🟢' if tidx < idx else '🟡' if tidx == idx else '⚪'} {t.instruction}"
                         for tidx, t in enumerate(self)
                     )
                     self.steps_layout.header[1].object = todos
@@ -269,6 +269,58 @@ class Plan(Section):
             self.steps_layout.collapsed = True
         log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         return outputs, out_context
+
+
+_TODO_STATUS = {"🟢": "done", "🟡": "current", "⚪": "pending", "🔴": "failed"}
+
+_TODO_PATTERN = re.compile(rf"^(\s*[-*] )({'|'.join(_TODO_STATUS)}) ", re.MULTILINE)
+
+_TODO_SX = {
+    "& ul": {"listStyle": "none", "pl": 0, "my": 0.5},
+    "& li": {"display": "flex", "alignItems": "flex-start", "gap": "10px", "py": "2px"},
+    "& li:has(> .todo-done)": {"color": "text.secondary"},
+    "& .todo-status": {
+        "flex": "0 0 auto", "position": "relative", "boxSizing": "border-box",
+        "width": "14px", "height": "14px", "mt": "0.3em", "borderRadius": "50%",
+    },
+    "& .todo-pending": {"border": "1.5px solid", "borderColor": "text.disabled"},
+    "& .todo-current": {
+        "border": "2px solid", "borderColor": "primary.main", "borderTopColor": "transparent",
+        "animation": "lumen-todo-spin 0.9s linear infinite",
+        "@media (prefers-reduced-motion: reduce)": {"animation": "none"},
+    },
+    "@keyframes lumen-todo-spin": {"to": {"transform": "rotate(360deg)"}},
+    "& .todo-done": {"bgcolor": "success.main"},
+    "& .todo-done::after": {
+        "content": '""', "position": "absolute", "left": "5px", "top": "2.5px", "width": "3px", "height": "6px",
+        "border": "solid white", "borderWidth": "0 1.5px 1.5px 0", "transform": "rotate(45deg)",
+    },
+    "& .todo-failed": {"bgcolor": "error.main"},
+    "& .todo-failed::after": {
+        "content": '"\\00d7"', "position": "absolute", "inset": 0, "display": "flex", "alignItems": "center",
+        "justifyContent": "center", "color": "white", "fontSize": "12px", "lineHeight": 1,
+    },
+}
+
+
+class Checklist(Typography):
+    """
+    Renders the status emoji of a checklist, as produced by
+    `Plan.render_task_history`, as themed status indicators.
+
+    The object stays the plain markdown checklist the LLM sees in its roadmap.
+    """
+
+    def __init__(self, object=None, **params):
+        params.setdefault("sx", _TODO_SX)
+        super().__init__(object, **params)
+
+    def _transform_object(self, obj):
+        if isinstance(obj, str):
+            obj = _TODO_PATTERN.sub(
+                lambda m: f'{m.group(1)}<span class="todo-status todo-{_TODO_STATUS[m.group(2)]}"></span>', obj
+            )
+        return super()._transform_object(obj)
 
 
 class Coordinator(Viewer, VectorLookupToolUser):
@@ -569,9 +621,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
             self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
-            todos = Typography(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
+            todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
             todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
-            self.steps_layout = Card(header=todos_layout, collapsed=not self.verbose, elevation=2)
+            self.steps_layout = Card(
+                header=todos_layout, collapsed=not self.verbose, variant="outlined",
+                sx={"bgcolor": "transparent"},
+            )
             self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
