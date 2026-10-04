@@ -7,7 +7,9 @@ import time
 from pydantic_evals import Dataset
 
 from lumen.ai.evals.bird import BirdExecution, bird_source, database_path
-from lumen.ai.evals.harness import CheckResult, EvalOpenAI, evaluate
+from lumen.ai.evals.harness import (
+    CheckResult, EvalOpenAI, decision_params, evaluate,
+)
 
 
 def run_bird_case(args):
@@ -24,8 +26,10 @@ def run_bird_case(args):
     one = Dataset(name="bird_case", cases=[case], evaluators=[CheckResult(), BirdExecution(databases)])
     part = output.with_name(f"{output.stem}.{index}.current.json")
     try:
+        params = decision_params(settings)
         report = asyncio.run(asyncio.wait_for(evaluate(llm, one, source_factory, part,
                                                      instruction_version=instruction_version,
+                                                     ui_params=params, agent_params=params,
                                                      settings=settings), timeout=240))
         result = json.loads(part.read_text(encoding="utf-8"))
         if not result["cases"]:

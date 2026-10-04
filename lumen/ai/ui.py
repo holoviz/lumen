@@ -56,6 +56,7 @@ from .controls import (
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .controls.ingest.utils import read_geo_file
 from .coordinator import Coordinator, Plan, Planner
+from .decisions import DecisionModel
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import Llm, OpenAI, get_available_llm
@@ -399,6 +400,10 @@ class UI(Viewer):
     )
 
     context = param.Dict(default={})
+
+    decision_model = param.ClassSelector(default=None, class_=DecisionModel, doc="Optional model for planner decisions.")
+
+    decision_thresholds = param.Dict(default={}, doc="Minimum certainty for decision-model routing by site.")
 
     coordinator = param.ClassSelector(
         class_=Coordinator, default=Planner, is_instance=False, doc="""
@@ -768,6 +773,8 @@ class UI(Viewer):
         session_context: SessionContext
             The session context.
         """
+        if self._coordinator.decision_model is not None:
+            state.execute(self._coordinator.decision_model.aclose)
 
     def _configure_session(self):
         """
@@ -1209,6 +1216,7 @@ class UI(Viewer):
         if self.llm_tools:
             llm_tools.extend(self.llm_tools)
 
+        coordinator_params = {"decision_model": self.decision_model, "decision_thresholds": self.decision_thresholds, **self.coordinator_params}
         self._coordinator = self.coordinator(
             agents=agents,
             context=self.context,
@@ -1219,7 +1227,7 @@ class UI(Viewer):
             tools=self.tools,
             within_ui=True,
             vector_store=self.vector_store,
-            **self.coordinator_params
+            **coordinator_params
         )
         if self.vector_store is None:
             self.vector_store = self._coordinator.vector_store
@@ -2421,6 +2429,7 @@ class ExplorerUI(UI):
         """
         Cleanup on session destroy
         """
+        super()._destroy(session_context)
         for c in self._explorations.items[1:]:
             c['view'].context.clear()
 
