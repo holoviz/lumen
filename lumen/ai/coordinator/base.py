@@ -119,7 +119,7 @@ class Plan(Section):
             return task.views, task.out_context
 
         outputs = []
-        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout) as step:
+        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout, context_exception="raise") as step:
             history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
             if self.steps_layout is not None:
