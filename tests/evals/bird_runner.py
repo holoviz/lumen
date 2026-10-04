@@ -54,7 +54,7 @@ def run_bird_case_process(args, sender):
 def simulated_bird_case_process(args, sender):
     index, case, *_ = args
     if index == 2:
-        time.sleep(8)
+        time.sleep(600)
     else:
         time.sleep(0.1)
     try:

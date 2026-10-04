@@ -40,6 +40,13 @@ def load_runs(paths):
     return runs
 
 
+def case_passed(case, failures):
+    # A recorded error covers evaluator failures such as an unscorable BIRD gold
+    # query, whose remaining assertions can all be true.
+    return (case["name"] not in failures and not case.get("error")
+            and bool(case.get("assertions")) and all(case["assertions"].values()))
+
+
 def summarize(run):
     cases = run["cases"]
     failures = {failure["name"] for failure in run.get("failures", [])}
@@ -47,7 +54,7 @@ def summarize(run):
     input_tokens = sum(item["input_tokens"] for item in usage)
     costs = [item.get("cost_usd") for item in usage]
     return {
-        "passed": sum(case["name"] not in failures and bool(case["assertions"]) and all(case["assertions"].values()) for case in cases),
+        "passed": sum(case_passed(case, failures) for case in cases),
         "cases": len(cases),
         "seconds": sum(case.get("duration") or 0 for case in cases),
         "input": input_tokens if usage else None,
@@ -63,8 +70,11 @@ def group_runs(runs, suite):
         meta = report["run"]
         if meta.get("dataset") != suite:
             continue
-        signature = meta.get("case_fingerprint") or tuple(sorted(case["name"] for case in report["cases"]))
-        key = (meta.get("provider"), meta.get("model"), meta.get("commit"), meta.get("api"), signature,
+        # A partial BIRD run keeps the full suite's fingerprint, so only runs that
+        # also recorded the same cases are attempts of one another.
+        names = tuple(sorted(case["name"] for case in report["cases"]))
+        key = (meta.get("provider"), meta.get("model"), meta.get("commit"), meta.get("api"),
+               meta.get("case_fingerprint"), names,
                run_id if meta.get("dirty") else None)
         grouped.setdefault(key, []).append((run_id, report))
     result = {}
@@ -108,7 +118,7 @@ def case_table(groups):
             costs = [item.get("cost_usd") for item in usage]
             inputs = [item.get("input_tokens") for item in usage]
             outputs = [item.get("output_tokens") for item in usage]
-            passing = sum(case["name"] not in {failure["name"] for failure in report.get("failures", [])} and bool(case.get("assertions")) and all(case["assertions"].values())
+            passing = sum(case_passed(case, {failure["name"] for failure in report.get("failures", [])})
                           for case, (_, report) in zip(cases, attempts, strict=True))
             rows.append({
                 "Run": run_id, "Model": meta.get("model", "Unknown"), "Commit": (meta.get("commit") or "")[:8],

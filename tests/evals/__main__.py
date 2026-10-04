@@ -192,7 +192,8 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                 checkpoint.write_text(json.dumps(previous, indent=2), encoding="utf-8")
                 checkpoint.replace(output)
                 last = result["cases"][0]
-                status = "pass" if last["assertions"].get("execution_accuracy") else "unscorable" if not last["assertions"] else "fail"
+                status = ("unscorable" if "execution_accuracy" not in last["assertions"]
+                          else "pass" if last["assertions"]["execution_accuracy"] else "fail")
                 LOG.warning("BIRD %s/%s: %s %s", index, len(dataset.cases), last["name"], status)
     finally:
         for process, receiver, _ in active.values():
@@ -206,7 +207,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
     cases = previous["cases"] if previous else []
     return {"completed": len(cases), "total": len(dataset.cases),
             "correct": sum(case["assertions"].get("execution_accuracy", False) for case in cases),
-            "unscorable": sum(not case["assertions"] for case in cases),
+            "unscorable": sum("execution_accuracy" not in case["assertions"] for case in cases),
              "failed": len(previous["failures"]) if previous else 0}
 
 

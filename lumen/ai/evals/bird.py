@@ -118,7 +118,12 @@ class BirdExecution(Evaluator[Inputs, Output, Expected]):
         if not sql:
             return {"execution_accuracy": False}
         path = database_path(self.root, ctx.inputs.fixture.removeprefix("bird:"))
-        reference = execute_read_only(path, gold)
+        try:
+            reference = execute_read_only(path, gold)
+        except (sqlite3.Error, ValueError, TimeoutError) as exc:
+            # Raising records an evaluator failure and leaves the case without an
+            # execution_accuracy result, so it counts as unscorable, not as a model miss.
+            raise RuntimeError(f"Gold SQL failed: {type(exc).__name__}: {exc}") from exc
         try:
             predicted = execute_read_only(path, sql)
         except (sqlite3.Error, ValueError, TimeoutError):

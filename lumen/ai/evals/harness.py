@@ -37,6 +37,7 @@ MAX_ANSWER_LENGTH = 4000
 MAX_TOOL_RESULT_LENGTH = 4000
 EVALUATOR_VERSION = 2
 PRICING_PER_MILLION = {
+    "gpt-4.1-mini": {"input": 0.40, "cached": 0.10, "output": 1.60},
     "gpt-4.1-nano": {"input": 0.10, "cached": 0.025, "output": 0.40},
     "gpt-5-nano": {"input": 0.05, "cached": 0.005, "output": 0.40},
     "gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
@@ -470,9 +471,13 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", "lumen/ai/evals", "lumen/ai/agents/sql.py", "lumen/ai/agents/vega_lite.py", "lumen/ai/coordinator", "lumen/ai/llm.py", "lumen/ai/llm_dialog.py", "tests/evals", "pixi.toml"], capture_output=True, text=True, check=False).stdout.strip())
+        # Any change to the package can move results, prompts and agents included.
+        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", "lumen", "tests/evals", "pixi.toml", "pixi.lock", "pyproject.toml"], capture_output=True, text=True, check=False).stdout.strip())
         completed = {case.name: case for case in report.cases}
         failures = {failure.name: failure.error_message for failure in report.failures}
+        for case in report.cases:
+            if case.evaluator_failures:
+                failures[case.name] = "; ".join(f"{failure.name}: {failure.error_message}" for failure in case.evaluator_failures)
         output.write_text(json.dumps({
             "run": {"timestamp": datetime.now(UTC).isoformat(), "commit": commit, "dirty": dirty, "dataset": selected.name, "case_fingerprint": case_fingerprint(cases, fixtures, getattr(llm, "suite_instructions", ""), instruction_version), "evaluator_version": EVALUATOR_VERSION, "suite_instructions": getattr(llm, "suite_instructions", ""), "instruction_version": instruction_version, "model": llm.model_kwargs.get("default", {}).get("model"), "api": getattr(llm, "api", None), "provider": "openrouter" if getattr(llm, "endpoint", None) == "https://openrouter.ai/api/v1" else "openai"},
             "cases": [

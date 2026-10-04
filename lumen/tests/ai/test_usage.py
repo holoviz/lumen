@@ -41,6 +41,12 @@ def test_unknown_model_does_not_infer_price():
     assert usage.cost_usd is None
 
 
+def test_dated_snapshot_uses_alias_price():
+    usage = parse_usage(Obj(model="m-2025-04-14", usage=Obj(prompt_tokens=100, completion_tokens=20)), "openai", "m", PRICING)
+    assert usage.model == "m-2025-04-14"
+    assert usage.cost_usd == pytest.approx((100 * 2 + 20 * 10) / 1e6)
+
+
 def test_llm_usage_survives_param_deepcopy():
     llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}})
     llm.usage.add(parse_usage(Obj(model="m", usage=Obj(prompt_tokens=2, completion_tokens=3)), "openai", "m", {}))

@@ -151,18 +151,19 @@ def test_parallel_bird_runner_checkpoints_in_order_and_times_out(tmp_path):
     questions.write_text("[]")
     output = tmp_path / "result.json"
     started = time.monotonic()
+    # The limit includes worker startup, and importing lumen in a spawned
+    # worker takes several seconds on a loaded machine.
     summary = run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", False, 2,
-                           worker=simulated_bird_case_process, case_timeout=6)
+                           worker=simulated_bird_case_process, case_timeout=30)
     saved = json.loads(output.read_text())
-    # Spawned workers import lumen, which alone takes about 3s.
-    assert time.monotonic() - started < 14
+    assert time.monotonic() - started < 120
     assert [case["name"] for case in saved["cases"]] == [case.name for case in cases]
     assert saved["cases"][1]["assertions"] == {}
     assert "wall-clock limit" in saved["cases"][1]["error"]
     assert summary["completed"] == 3
     assert summary["unscorable"] == 1
     assert run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", True, 2,
-                        worker=simulated_bird_case_process, case_timeout=6) == summary
+                        worker=simulated_bird_case_process, case_timeout=30) == summary
 
 
 def test_parallel_bird_runner_reads_result_sent_before_worker_exit(tmp_path, monkeypatch):
@@ -577,6 +578,55 @@ def test_bird_execution_accuracy_and_read_only_source(tmp_path):
 
     assert asyncio.run(evaluate_prediction("SELECT SUM(spent) FROM budget WHERE category = 'Food'"))
     assert not asyncio.run(evaluate_prediction("SELECT SUM(spent) FROM budget"))
+
+
+def test_bird_gold_failure_is_unscorable(tmp_path):
+    """A gold query that cannot run is recorded as an error, not as a model miss."""
+    db_dir = tmp_path / "dev_databases" / "student_club"
+    db_dir.mkdir(parents=True)
+    path = db_dir / "student_club.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE budget (spent INTEGER)")
+    questions = tmp_path / "questions.json"
+    questions.write_text(json.dumps([{
+        "question_id": 1, "db_id": "student_club", "question": "Total spent?", "evidence": "",
+        "SQL": "SELECT SUM(missing) FROM budget", "difficulty": "simple",
+    }]))
+    dataset = bird_dataset(questions, tmp_path, (1,))
+
+    class SQLMockLLM(MockLLM):
+        async def invoke(self, *args, **kwargs):
+            if kwargs.get("response_model") is SQLCleanup:
+                return SQLCleanup(chain_of_thought="No edit needed.", query="SELECT SUM(spent) FROM budget")
+            if kwargs.get("response_model"):
+                query = make_sql_model([("student_club", "budget")])
+                return query(query="SELECT SUM(spent) FROM budget", table_slug="total", tables=["budget"])
+            return await super().invoke(*args, **kwargs)
+
+    import asyncio
+
+    output = tmp_path / "result.json"
+    asyncio.run(evaluate(SQLMockLLM(), dataset, lambda inputs: bird_source(path), output))
+    case = json.loads(output.read_text())["cases"][0]
+
+    assert "execution_accuracy" not in case["assertions"]
+    assert "Gold SQL failed" in case["error"]
+
+
+def test_dashboard_keeps_partial_run_out_of_complete_group():
+    from tests.evals.dashboard import case_table, group_runs
+
+    def report(names, timestamp):
+        return {"run": {"dataset": "bird", "model": "m", "commit": "c", "api": "responses", "provider": "openai",
+                        "case_fingerprint": "full-suite", "timestamp": timestamp},
+                "cases": [{"name": name, "turns": [], "usage": None, "assertions": {"execution_accuracy": True},
+                           "duration": 1, "error": None} for name in names],
+                "failures": []}
+
+    groups = group_runs({"complete": report(["a", "b"], "2"), "partial": report(["a"], "1")}, "bird")
+
+    assert len(groups) == 2
+    assert sorted(case_table(groups)["Case"]) == ["a", "a", "b"]
 
 
 def test_bird_scorer_times_out_inside_the_child(tmp_path):
