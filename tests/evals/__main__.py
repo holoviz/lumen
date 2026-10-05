@@ -14,7 +14,9 @@ from multiprocessing.connection import wait
 from pathlib import Path
 
 from lumen.ai.evals.bird import bird_source, database_path, download_questions
-from lumen.ai.evals.harness import EvalOpenAI, case_fingerprint, evaluate
+from lumen.ai.evals.harness import (
+    DECISION_MODELS, EvalOpenAI, case_fingerprint, decision_params, evaluate,
+)
 
 from .bird_runner import run_bird_case_process
 from .cases import (
@@ -41,6 +43,9 @@ def main():
     parser.add_argument("--no-sql-cleanup", action="store_true", help="Disable automatic SQL cleanup in evaluation cases")
     parser.add_argument("--output", type=Path, help="Result file (defaults to a timestamped file in tests/evals/results)")
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted parallel BIRD run using --output")
+    parser.add_argument("--decision-model", choices=sorted(DECISION_MODELS), help="Route closed-choice decisions through a decision model")
+    parser.add_argument("--decision-threshold", action="append", default=[], metavar="SITE=VALUE",
+                        help="Override a decision site's minimum certainty, e.g. planner.clarification=0.6")
     parser.add_argument("--workers", type=int, default=18, help="Concurrent isolated BIRD workers (default: 18)")
     args = parser.parse_args()
     if args.download_bird_questions:
@@ -54,6 +59,18 @@ def main():
         parser.error("--resume requires parallel BIRD case selection and --output")
     if not 1 <= args.workers <= 64:
         parser.error("--workers must be between 1 and 64")
+    if args.decision_threshold and not args.decision_model:
+        parser.error("--decision-threshold requires --decision-model")
+    settings = {}
+    if args.decision_model:
+        thresholds = {}
+        for item in args.decision_threshold:
+            site, _, value = item.partition("=")
+            try:
+                thresholds[site] = float(value)
+            except ValueError:
+                parser.error(f"--decision-threshold expects SITE=VALUE, got {item!r}")
+        settings = {"decision_model": args.decision_model, "decision_thresholds": thresholds}
 
     instructions, instruction_version = SUITE_INSTRUCTIONS[args.suite]
     if args.no_sql_cleanup:
@@ -100,13 +117,15 @@ def main():
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
                                args.model, args.provider, key, args.resume, args.workers,
                                instructions=instructions, instruction_version=instruction_version,
-                               disable_sql_cleanup=args.no_sql_cleanup)
+                               disable_sql_cleanup=args.no_sql_cleanup, settings=settings)
         LOG.warning("BIRD run summary: %s", summary)
         if summary["failed"] or summary["unscorable"]:
             raise SystemExit(1)
         return
+    params = decision_params(settings)
     report = asyncio.run(evaluate(llm, dataset, source_factory, output, args.case, documents_factory,
-                                  fixtures, instruction_version=instruction_version))
+                                  fixtures, instruction_version=instruction_version, ui_params=params,
+                                  agent_params=params, settings=settings))
     report.print()
     if report.failures or any(not all(result.value for result in case.assertions.values()) for case in report.cases):
         raise SystemExit(1)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import re
 import traceback
 
@@ -30,6 +31,8 @@ from ..agents import (
 )
 from ..config import PROMPTS_DIR, MissingContextError
 from ..context import TContext
+from ..decision_gate import DecisionUser
+from ..decisions import Noul
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
 from ..report import ActorTask, Section, TaskGroup
@@ -341,7 +344,7 @@ class Checklist(Typography):
         return super()._transform_object(obj)
 
 
-class Coordinator(Viewer, VectorLookupToolUser):
+class Coordinator(Viewer, VectorLookupToolUser, DecisionUser):
     """
     A Coordinator is responsible for coordinating the actions
     of a number of agents towards the user defined query by
@@ -423,6 +426,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
+        thresholds = params.get("decision_thresholds") or {}
+        for site, threshold in thresholds.items():
+            if isinstance(threshold, bool) or not isinstance(threshold, (int, float)) or not math.isfinite(threshold) or not 0 <= threshold <= 1:
+                raise ValueError(f"Decision threshold for {site!r} must be between 0 and 1.")
+
         if interface is None:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
@@ -457,6 +465,11 @@ class Coordinator(Viewer, VectorLookupToolUser):
             # must use the same interface or else nothing shows
             if agent.llm is None:
                 agent.llm = llm
+            if agent.decision_model is None and params.get("decision_model") is not None:
+                agent.param.update(
+                    decision_model=params["decision_model"], decision_thresholds=thresholds,
+                    **({"decision_timeout": params["decision_timeout"]} if "decision_timeout" in params else {}),
+                )
 
             for tool in llm_tools:
                 if tool not in agent.llm_tools:
@@ -661,19 +674,38 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return plan
 
     async def _check_tool_relevance(self, tool: Tool, tool_output: str, actor: Actor, actor_task: str, messages: list[Message], context: TContext) -> bool:
-        result = await self._invoke_prompt(
-            "tool_relevance",
-            messages,
-            context,
-            tool_name=tool.name,
-            tool_purpose=getattr(tool, "purpose", ""),
-            tool_output=tool_output,
-            actor_name=actor.name,
-            actor_purpose=getattr(actor, "purpose", actor.__doc__),
-            actor_task=actor_task,
-        )
+        async def fallback():
+            result = await self._invoke_prompt(
+                "tool_relevance",
+                messages,
+                context,
+                tool_name=tool.name,
+                tool_purpose=getattr(tool, "purpose", ""),
+                tool_output=tool_output,
+                actor_name=actor.name,
+                actor_purpose=getattr(actor, "purpose", actor.__doc__),
+                actor_task=actor_task,
+            )
+            return result.yes
 
-        return result.yes
+        if self.decision_model is None:
+            return await fallback()
+        user_content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+        user_text = user_content if isinstance(user_content, str) else ""
+        if not user_text:
+            return await fallback()
+        tool_purpose = getattr(tool, "purpose", "")
+        actor_purpose = getattr(actor, "purpose", "")
+        if not isinstance(tool_purpose, str) or not isinstance(actor_purpose, str) or not isinstance(tool_output, str) or not isinstance(actor_task, str):
+            return await fallback()
+        return await self._decide_or_fallback(
+            "coordinator.tool_relevance",
+            {"user_request": user_text, "task": actor_task, "actor": actor.name,
+             "actor_purpose": actor_purpose, "tool": tool.name,
+             "tool_purpose": tool_purpose, "tool_output": tool_output or ""},
+            Noul(instructions="Will this tool help the actor complete its task? Consider its purpose, output, and user request."),
+            fallback,
+        )
 
     def __panel__(self):
         return self.interface

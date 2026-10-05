@@ -22,11 +22,12 @@ from lumen.ai.agents.document_summarizer import DocumentSummarizerAgent
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.validation import ValidationAgent
 from lumen.ai.coordinator import Plan
+from lumen.ai.decisions import Jev, OpenRouterDecisionModel
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.llm import OpenAI
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
-from lumen.ai.tool_trace import ToolCall
+from lumen.ai.tool_trace import DecisionCall, ToolCall
 from lumen.ai.ui import ExplorerUI
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.pipeline import Pipeline
@@ -157,6 +158,7 @@ class Turn:
     document_summary: str | None = None
     validation_correct: bool | None = None
     validation_missing: list[str] | None = None
+    decisions: list[DecisionCall] | None = None
 
 
 @dataclass
@@ -260,6 +262,17 @@ def _snapshot(prompt: str, plan: Any, messages: list[Any], previous_tasks: tuple
     )
 
 
+DECISION_MODELS = {"jev": Jev, "openrouter": OpenRouterDecisionModel}
+
+
+def decision_params(settings: dict[str, Any] | None) -> dict[str, Any]:
+    """UI and agent parameters that route decisions through the model named in run ``settings``."""
+    if not settings or not settings.get("decision_model"):
+        return {}
+    return {"decision_model": DECISION_MODELS[settings["decision_model"]](),
+            "decision_thresholds": dict(settings.get("decision_thresholds", {}))}
+
+
 def _direct_plan(inputs: Inputs, llm: Any, context: dict, interface: ChatInterface, prompt: str,
                  agent_params: dict[str, Any] | None = None) -> Plan:
     agents = {
@@ -351,6 +364,7 @@ async def run_case(inputs: Inputs, llm: Any, source: Any, documents: list[Any] |
             finally:
                 calls = scope.records
                 turn.tool_calls = [ToolCall(call.name, call.arguments, call.result[:MAX_TOOL_RESULT_LENGTH]) for call in tool_calls if isinstance(call, ToolCall)]
+                turn.decisions = [call for call in tool_calls if isinstance(call, DecisionCall)] or None
                 if calls:
                     costs = [call.cost_usd for call in calls]
                     turn.usage = Usage(sum(call.input_tokens for call in calls), sum(call.output_tokens for call in calls), sum(call.cached_tokens for call in calls), sum(costs) if all(cost is not None for cost in costs) else None)

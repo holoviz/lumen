@@ -25,6 +25,7 @@ from ..config import (
 )
 from ..context import ContextModel, TContext
 from ..data_quality import lint_data
+from ..decisions import Noul
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message, SubmitTool
 from ..models import RetrySpec
@@ -60,6 +61,8 @@ SOURCE_PROFILE_MAX_TABLES = 3
 # catalog browsing tool is only worth offering when the catalog exceeds both.
 PROMPT_OTHER_TABLES = 25
 DISTINCT_VALUES_LIMIT = 50
+# Wider results are rarely a projection mistake and make the decision request large.
+PROJECTION_MAX_COLUMNS = 12
 # Accuracy falls as exploration grows (74% with 1-2 tool calls, 37% with 11+
 # on BIRD), so a small budget the model is told about beats a large one.
 MAIN_TOOL_ROUNDS = 6
@@ -517,6 +520,11 @@ def build_distinct_values_sql(
     return query.sql(dialect=read)
 
 
+def _latest_user_text(messages: list[Message]) -> str:
+    content = next((m.get("content") for m in reversed(messages) if m.get("role") == "user"), None)
+    return content if isinstance(content, str) else ""
+
+
 def _format_value(value: t.Any) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "NULL"
@@ -669,6 +677,63 @@ def make_load_table_schemas_tool(metaset: Metaset, stats_timeout: float | None =
             "with names and types only or not at all. Pass `columns` to fetch just those."
         ),
     )
+
+
+def _refers_to_projections(node: sqlglot.exp.Expression) -> bool:
+    """Whether a GROUP BY or ORDER BY item means projections by position (``1``) or as a whole (``ALL``)."""
+    if isinstance(node, sqlglot.exp.Literal):
+        return True
+    # DuckDB parses ORDER BY ALL to a Var, other dialects to an unquoted column.
+    if isinstance(node, sqlglot.exp.Var):
+        return node.name.upper() == "ALL"
+    if isinstance(node, sqlglot.exp.Column):
+        return not node.table and not node.this.quoted and node.name.upper() == "ALL"
+    return False
+
+
+def drop_projections(sql_query: str, dialect: str, drop: set[int], n_columns: int | None = None) -> str | None:
+    """
+    Remove the output columns at positions ``drop`` from the outermost SELECT.
+
+    Aliases the dropped columns define are inlined into ORDER BY, HAVING and
+    QUALIFY, so ranking by a dropped count still works. Returns None when the
+    rewrite would not preserve the query: set operations, stars, DISTINCT
+    (fewer columns would merge rows), positional or ``ALL`` references in
+    GROUP BY and ORDER BY, dropping every column, or a SELECT list that does
+    not match ``n_columns``.
+    """
+    read = None if dialect == "any" else dialect
+    try:
+        tree = sqlglot.parse_one(sql_query, read=read)
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
+        return None
+    if not isinstance(tree, sqlglot.exp.Select) or tree.args.get("distinct"):
+        return None
+    projections = list(tree.expressions)
+    if n_columns is not None and len(projections) != n_columns:
+        return None
+    if not drop or len(drop) >= len(projections) or max(drop) >= len(projections):
+        return None
+    if any(p.find(sqlglot.exp.Star) is not None and not p.find(sqlglot.exp.AggFunc) for p in projections):
+        return None
+    group, order = tree.args.get("group"), tree.args.get("order")
+    if group is not None and (group.args.get("all") or any(_refers_to_projections(e) for e in group.expressions)):
+        return None
+    if order is not None and any(_refers_to_projections(e.this) for e in order.expressions):
+        return None
+    for i in drop:
+        projection = projections[i]
+        if not isinstance(projection, sqlglot.exp.Alias):
+            continue
+        for clause in ("order", "having", "qualify"):
+            node = tree.args.get(clause)
+            if node is None:
+                continue
+            for column in list(node.find_all(sqlglot.exp.Column)):
+                if not column.table and column.name == projection.alias:
+                    column.replace(projection.this.copy())
+    tree.set("expressions", [p for i, p in enumerate(projections) if i not in drop])
+    return tree.sql(dialect=read)
 
 
 def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
@@ -1136,6 +1201,107 @@ class SQLAgent(BaseLumenAgent):
             )
         return findings
 
+    async def _prune_projection(
+        self,
+        messages: list[Message],
+        sql_query: str,
+        preview: t.Any,
+        source: BaseSQLSource,
+        step: ChatStep,
+    ) -> tuple[str, t.Any]:
+        """
+        Drop result columns the decision model is confident the question did
+        not ask for, e.g. the count a query ranked by. Columns are only ever
+        removed, the rewrite is deterministic, and the query is kept whenever
+        the rewrite does not parse or run.
+        """
+        if self.decision_model is None:
+            return sql_query, preview
+        frame = as_pandas(preview)
+        question = _latest_user_text(messages)
+        if not question or not 1 < len(frame.columns) <= PROJECTION_MAX_COLUMNS:
+            return sql_query, preview
+        # By position: a join can return duplicate names, and frame[name] is then a DataFrame.
+        columns = [
+            {"name": str(col), "sample_values": [_format_value(v) for v in frame.iloc[:3, i].tolist()]}
+            for i, col in enumerate(frame.columns)
+        ]
+        questions = {
+            str(i): Noul(
+                instructions=f"Does the question ask for the result column `{col['name']}` in its answer?",
+                criteria={
+                    "true": "The question asks for this value, or names it among the outputs.",
+                    "false": ("The value only helps compute the answer, e.g. a count or total used to "
+                              "rank, sort or filter, and the question does not ask to see it."),
+                },
+            )
+            for i, col in enumerate(columns)
+        }
+        state = {"question": question, "sql": sql_query, "result_columns": columns}
+        outcomes = await self._decide("sql.projection", state, questions)
+        drop = {int(key) for key, outcome in outcomes.items() if outcome.accepted and outcome.value is False}
+        pruned = drop_projections(sql_query, source.dialect, drop, len(frame.columns)) if drop else None
+        if pruned is None:
+            return sql_query, preview
+        try:
+            pruned = clean_sql(pruned, source.dialect, prettify=True)
+            limited = SQLLimit(limit=VALIDATION_MAX_ROWS, write=source.dialect).apply(pruned)
+            pruned_preview = await source.execute_with_timeout(limited, self.query_timeout)
+        except Exception as e:
+            log_debug(f"Projection pruning failed, keeping the query: {e}")
+            return sql_query, preview
+        dropped = ", ".join(f"`{columns[i]['name']}`" for i in sorted(drop))
+        step.stream(f"\n\n✂️ Removed result columns the question did not ask for: {dropped}\n```sql\n{pruned}\n```")
+        return pruned, pruned_preview
+
+    async def _empty_result_plausible(self, question: str, sql_query: str) -> bool:
+        """
+        Whether the decision model is confident an empty result answers the
+        question, which saves the round that asks the model to double-check.
+        """
+        if self.decision_model is None or not question:
+            return False
+        outcome = (await self._decide("sql.empty_result", {"question": question, "sql": sql_query}, {
+            "sql.empty_result": Noul(
+                instructions="The query returned no rows. Is no rows a plausible correct answer to the question?",
+                criteria={
+                    "true": "The filters are exactly what the question asks for, so no matching rows is a valid answer.",
+                    "false": "The filters look mistyped, too strict or not what the question asks, so rows probably exist.",
+                },
+            ),
+        }))["sql.empty_result"]
+        return outcome.accepted and outcome.value is True
+
+    async def _gate_cleanup(
+        self, messages: list[Message], sql_query: str, findings: list[str], step: ChatStep
+    ) -> list[str]:
+        """
+        Keep the findings that could change the answer. Cleaning costs an LLM
+        call and was accuracy-neutral overall, so a finding the decision model
+        is confident cannot affect the answer does not trigger it.
+        """
+        if self.decision_model is None:
+            return findings
+        question = _latest_user_text(messages)
+        if not question:
+            return findings
+        questions = {
+            str(i): Noul(
+                instructions=("Could correcting this data-quality finding change the answer the query "
+                              f"returns for the question?\nFinding: {finding}"),
+                criteria={
+                    "true": "The affected values feed the requested result or its filters and would change it.",
+                    "false": "The finding concerns values the answer does not depend on, or cleaning would not change it.",
+                },
+            )
+            for i, finding in enumerate(findings)
+        }
+        outcomes = await self._decide("sql.cleanup_gate", {"question": question, "sql": sql_query}, questions)
+        kept = [f for i, f in enumerate(findings) if not (outcomes[str(i)].accepted and outcomes[str(i)].value is False)]
+        if len(kept) < len(findings):
+            step.stream(f"\n\nSkipped {len(findings) - len(kept)} data-quality finding(s) that cannot change the answer")
+        return kept
+
     async def _clean_data_pass(
         self,
         sql_query: str,
@@ -1433,7 +1599,7 @@ class SQLAgent(BaseLumenAgent):
         return source, tables
 
     def _submit_sql_tool(
-        self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any]
+        self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any], question: str = ""
     ) -> SubmitTool:
         """
         Offer the SQL response model as ``submit_sql``, executing each submission.
@@ -1477,11 +1643,12 @@ class SQLAgent(BaseLumenAgent):
                 # Asked once, since an empty answer is often correct and a model
                 # pushed to find rows tends to loosen the filters the user asked for.
                 checked["empty"] = sql_query
-                raise ValueError(
-                    "The query returned no rows. If its filters match the question, submit "
-                    "it again unchanged; an empty result is a valid answer. Otherwise check "
-                    "the literal values (distinct_values) and fix the filters."
-                )
+                if not await self._empty_result_plausible(question, sql_query):
+                    raise ValueError(
+                        "The query returned no rows. If its filters match the question, submit "
+                        "it again unchanged; an empty result is a valid answer. Otherwise check "
+                        "the literal values (distinct_values) and fix the filters."
+                    )
             checked.update(output=output, source=source, tables=tables, sql=sql_query, preview=preview)
 
         return SubmitTool("submit_sql", SUBMIT_SQL_DESCRIPTION, check)
@@ -1534,7 +1701,7 @@ class SQLAgent(BaseLumenAgent):
                         previous_attempt=previous_attempt,
                         tools=tool_list,
                         max_tool_rounds=MAIN_TOOL_ROUNDS,
-                        submit_tool=self._submit_sql_tool(sources, checked),
+                        submit_tool=self._submit_sql_tool(sources, checked, _latest_user_text(messages)),
                     )
                 finally:
                     attempt["tools"] = summarize_tool_calls(events)
@@ -1562,6 +1729,11 @@ class SQLAgent(BaseLumenAgent):
                     step, discovery_context=discovery_context, tools=tool_list,
                 )
             attempt["sql"] = validated_sql
+            if preview is not None:
+                validated_sql, preview = await self._prune_projection(
+                    messages, validated_sql, preview, source, step
+                )
+                attempt["sql"] = validated_sql
 
             # Profile the bounded validation sample without loading the full result.
             findings: list[str] = []
@@ -1591,6 +1763,8 @@ class SQLAgent(BaseLumenAgent):
                     "\n".join(f"- {finding}" for finding in findings),
                     step, title="Data quality findings", auto=False
                 )
+            if actionable:
+                actionable = await self._gate_cleanup(messages, validated_sql, actionable, step)
             if actionable:
                 validated_sql = await self._clean_data_pass(
                     validated_sql, actionable, 0 if preview is None else len(preview),

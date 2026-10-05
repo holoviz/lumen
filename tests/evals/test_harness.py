@@ -14,14 +14,15 @@ from pydantic_evals import Case, Dataset
 
 from lumen.ai.agents.sql import SQLAgent, SQLCleanup, make_sql_model
 from lumen.ai.coordinator import Plan
+from lumen.ai.decisions import OpenRouterDecisionModel
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.evals.bird import bird_source, database_path, execute_read_only
 from lumen.ai.evals.harness import (
     CheckResult, EvalOpenAI, Expected, Inputs, Output, Turn, _snapshot,
-    case_fingerprint, evaluate, run_case,
+    case_fingerprint, decision_params, evaluate, run_case,
 )
 from lumen.ai.report import ActorTask
-from lumen.ai.tool_trace import ToolCall
+from lumen.ai.tool_trace import DecisionCall, ToolCall, record_trace
 from lumen.ai.usage import Usage as LlmUsage, record_usage
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -503,6 +504,25 @@ async def test_run_case_passes_constructor_params(monkeypatch):
 
     assert created[0][0] == "ExplorerUI" and created[0][1]["log_level"] == "INFO"
     assert created[1][0] == "TableListAgent" and created[1][1]["debug"] is True
+
+
+def test_decision_params_build_the_named_model():
+    assert decision_params({}) == {}
+    params = decision_params({"decision_model": "openrouter", "decision_thresholds": {"planner.clarification": 0.6}})
+    assert isinstance(params["decision_model"], OpenRouterDecisionModel)
+    assert params["decision_thresholds"] == {"planner.clarification": 0.6}
+
+
+@pytest.mark.asyncio
+async def test_run_case_records_decisions(monkeypatch):
+    llm = MockLLM()
+
+    async def respond(self, messages, context):
+        record_trace(llm, DecisionCall("planner.clarification", "accepted", False, 0.98))
+
+    monkeypatch.setattr("lumen.ai.coordinator.planner.Planner.respond", respond)
+    result = await run_case(Inputs(["What data is available?"]), llm, source(Inputs([])))
+    assert [(call.site, call.route) for call in result.turns[0].decisions] == [("planner.clarification", "accepted")]
 
 
 @pytest.mark.asyncio
