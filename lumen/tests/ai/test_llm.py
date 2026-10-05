@@ -62,6 +62,14 @@ for line in sys.stdin:
         send({"id": request["id"], "result": {"stopReason": stop}})
 """
 
+FAKE_AGY = r"""
+import json, os, sys
+
+prompt = json.loads(sys.stdin.readline())["message"]["content"].splitlines()[-1]
+response = f"{os.getpid()} {os.getcwd()} {prompt}"
+print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": response}}), flush=True)
+"""
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -296,6 +304,31 @@ async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
 
     with pytest.raises(RuntimeError, match="stopped early"):
         await llm.run_client("default", [{"role": "user", "content": "REFUSE"}])
+
+
+async def test_antigravity_cli_uses_a_prestarted_process(monkeypatch):
+    spawned = []
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def fake_agy(*command, **kwargs):
+        process = await create_subprocess(sys.executable, "-c", FAKE_AGY, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_agy)
+    llm = AntigravityCli()
+
+    first = (await llm.run_client("default", [{"role": "user", "content": "first"}])).split()
+    second = (await llm.run_client("default", [{"role": "user", "content": "second"}])).split()
+
+    # The first request starts its own process plus a spare; the second uses that spare.
+    assert len(spawned) == 3
+    assert first[0] == str(spawned[0].pid) and first[2] == "first"
+    assert second[0] == str(spawned[1].pid) and second[2] == "second"
+    assert first[1] != second[1]
+    assert not Path(first[1]).exists() and not Path(second[1]).exists()
+    spawned[2].kill()
+    await spawned[2].wait()
 
 
 def test_copilot_cli_decodes_last_assistant_message():
