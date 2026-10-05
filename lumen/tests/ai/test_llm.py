@@ -17,8 +17,8 @@ try:
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
-        CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
-        MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
+        CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli,
+        Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -195,6 +195,20 @@ def test_claude_code_command_defaults_to_plan_mode():
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
         "--max-turns", "3", "--permission-mode", "plan", "--model", "sonnet",
     ]
+
+
+def test_copilot_cli_command_disables_all_tools():
+    llm = CopilotCli()
+
+    command = llm._build_command("gpt-5.4")
+
+    assert command == [
+        "copilot", "--output-format", "json", "--stream", "off", "--no-ask-user",
+        "--no-custom-instructions", "--disable-builtin-mcps", "--no-remote-export", "--no-auto-update",
+        "--available-tools=none", "--deny-tool=shell", "--deny-tool=write", "--deny-tool=read",
+        "--deny-tool=url", "--deny-tool=memory", "--model", "gpt-5.4",
+    ]
+    assert "-p" not in command
 
 
 def test_cli_output_decoders():
