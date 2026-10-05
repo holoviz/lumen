@@ -1725,13 +1725,16 @@ class LlmCli(Llm):
     async def _run_command(self, command: list[str], prompt: str) -> str:
         if self.working_dir and not Path(self.working_dir).is_dir():
             raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        return await self._run_process(command, prompt, self.working_dir)
+
+    async def _run_process(self, command: list[str], prompt: str, cwd: str | None) -> str:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self.working_dir,
+                cwd=cwd,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
