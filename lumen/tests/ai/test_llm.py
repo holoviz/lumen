@@ -17,7 +17,7 @@ try:
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
         CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
-        MistralAI, Ollama, OpenAI, WebLLM,
+        MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -558,6 +558,11 @@ def test_openai_default_model_is_selectable():
     default_model = OpenAI.param.model_kwargs.default["default"]["model"]
     assert default_model == "gpt-5.6-luna"
     assert default_model in OpenAI.param.select_models.default
+
+
+def test_openrouter_default_model_is_selectable():
+    default_model = OpenRouter.param.model_kwargs.default["default"]["model"]
+    assert default_model in OpenRouter.param.select_models.default
 
 
 async def test_rejected_temperature_is_dropped_and_retried(monkeypatch):

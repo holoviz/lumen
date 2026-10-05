@@ -2034,12 +2034,9 @@ class OpenAI(Llm, OpenAIMixin):
 
     select_models = param.List(default=[
         "gpt-5.6-luna",
-        "gpt-5.2",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.4-nano"
+        "gpt-6-luna",
+        "gpt-6-sol",
+        "gpt-5.4-nano",
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
@@ -3943,19 +3940,20 @@ class OpenRouter(OpenAI):
     )
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "openai/gpt-4o-mini"},
+        "default": {"model": "openai/gpt-6-luna"},
     })
 
     select_models = param.List(default=[
-        "openai/gpt-4o-mini",
-        "openai/gpt-4o",
-        "anthropic/claude-3.5-sonnet",
-        "anthropic/claude-3.5-haiku",
-        "google/gemini-2.5-flash",
-        "google/gemini-2.5-pro",
-        "mistralai/mistral-large",
-        "mistralai/mistral-small",
-        "meta-llama/llama-3.3-70b-instruct",
+        "openai/gpt-6-luna",
+        "openai/gpt-6-sol",
+        "qwen/qwen3.8-flash",
+        "qwen/qwen3.7-plus",
+        "z-ai/glm-5.3-flash",
+        "z-ai/glm-5.3-flashx",
+        "deepseek/deepseek-v4.1-flash",
+        "deepseek/deepseek-v4-pro-0813",
+        "anthropic/claude-haiku-4.5",
+        "google/gemini-3.8-flash",
     ], constant=True, doc="Available OpenRouter models for selection dropdowns.")
 
     def models(self) -> set[str]:

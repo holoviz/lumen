@@ -344,9 +344,9 @@ Use a unified interface to access multiple LLM providers and models.
 
     llm = lmai.llm.OpenRouter(
         model_kwargs={
-            "default": {"model": "openai/gpt-4o-mini"},
-            "edit": {"model": "anthropic/claude-3.5-sonnet"},
-            "sql": {"model": "google/gemini-2.5-flash"},
+            "default": {"model": "openai/gpt-6-luna"},
+            "edit": {"model": "deepseek/deepseek-v4-pro-0813"},
+            "sql": {"model": "qwen/qwen3.8-flash"},
         }
     )
     ui = lmai.ExplorerUI(data='data.csv', llm=llm)

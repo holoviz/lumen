@@ -121,7 +121,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-5.6-luna` | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` |
+| **OpenAI** | `gpt-5.6-luna` | `gpt-6-luna`, `gpt-6-sol`, `gpt-5.4-nano` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-5` |
 | **Google** | `gemini-3-flash-preview` | `gemini-3-pro-preview`, `gemini-2.5-flash`, `gemini-2.0-flash` |
 | **Mistral** | `mistral-small-latest` | `mistral-large-latest`, `ministral-8b-latest` |
@@ -131,7 +131,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
-    The OpenAI default, `gpt-5.6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`.
+    The OpenAI default, `gpt-5.6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`. Some models, such as `gpt-6.1-sol`, cannot disable reasoning and only work with the responses API.
 
 ### Local providers
 
@@ -212,7 +212,7 @@ lumen-ai serve penguins.csv --provider claude-code
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
 | **Kilo** | `kilo-auto/free` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
-| **OpenRouter** | `openai/gpt-4o-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
+| **OpenRouter** | `openai/gpt-6-luna` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
@@ -250,9 +250,9 @@ import lumen.ai as lmai
 
 llm = lmai.llm.OpenRouter(
     model_kwargs={
-        "default": {"model": "openai/gpt-4o-mini"},
-        "sql": {"model": "anthropic/claude-3.5-sonnet"},
-        "vega_lite": {"model": "google/gemini-2.5-flash"},
+        "default": {"model": "openai/gpt-6-luna"},
+        "sql": {"model": "deepseek/deepseek-v4-pro-0813"},
+        "vega_lite": {"model": "qwen/qwen3.8-flash"},
     }
 )
 
@@ -336,7 +336,7 @@ print(lmai.llm.Anthropic.models())
 # {'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', ...}
 
 print(lmai.llm.OpenRouter.models())
-# {'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', ...}
+# {'openai/gpt-6-luna', 'qwen/qwen3.8-flash', 'z-ai/glm-5.3-flash', ...}
 ```
 
 Providers that don't support listing models (e.g. `AzureOpenAI`, `LiteLLM`) return
@@ -548,9 +548,9 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-5.6-luna"`, `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`
+- **OpenAI**: `"gpt-5.6-luna"`, `"gpt-6-luna"`, `"gpt-6-sol"`, `"gpt-5.4-nano"`
 - **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
-- **OpenRouter**: `"openai/gpt-4o-mini"`, `"anthropic/claude-3.5-sonnet"`, `"google/gemini-2.5-flash"`
+- **OpenRouter**: `"openai/gpt-6-luna"`, `"qwen/qwen3.8-flash"`, `"z-ai/glm-5.3-flash"`, `"deepseek/deepseek-v4.1-flash"`
 - **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
 - **Azure**: `"your-deployment-name"` (use your Azure deployment name)
