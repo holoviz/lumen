@@ -1750,8 +1750,10 @@ class JoinedSource(Source):
                 if not schema:
                     schema.update(table_schema)
                 else:
+                    schema.pop('__len__', None)
                     for column, col_schema in table_schema.items():
-                        schema[column] = merge_schemas(col_schema, schema.get(column))
+                        if column != '__len__':
+                            schema[column] = merge_schemas(col_schema, schema.get(column))
         return schemas if table is None else schemas[table]
 
     @cached
