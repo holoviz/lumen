@@ -2146,6 +2146,26 @@ class AntigravityCli(LlmCli):
             command.extend(["--model", model])
         return command
 
+    def _decode_output(self, output: str) -> str:
+        result = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("event") == "result":
+                result = event.get("result") or {}
+        if result is None:
+            raise ValueError("Antigravity CLI did not return a result.")
+        if result.get("status") != "SUCCESS":
+            raise RuntimeError(str(result.get("error") or f"Antigravity CLI finished with status {result.get('status')}."))
+        response = str(result.get("response") or "").strip()
+        if not response:
+            # A tool that headless mode blocks ends the turn with SUCCESS and no answer.
+            denied = ", ".join(action.get("display_name", "") for action in result.get("denied_actions") or [])
+            raise RuntimeError(f"Antigravity CLI returned no answer. Tools blocked in headless mode: {denied or 'none'}.")
+        return response
+
 
 class LlamaCpp(Llm, LlamaCppMixin):
     """
