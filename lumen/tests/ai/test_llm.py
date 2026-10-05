@@ -346,11 +346,9 @@ def test_groq_api_key_env_var():
     assert Groq.api_key_env_var == "GROQ_API_KEY"
 
 
-def test_groq_defaults():
-    """Test that Groq has the correct default endpoint and model."""
+def test_groq_endpoint():
     groq = Groq(api_key="test-key")
     assert groq.endpoint == "https://api.groq.com/openai/v1"
-    assert groq.model_kwargs["default"]["model"] == "llama-3.3-70b-versatile"
 
 
 def test_get_available_llm_selects_groq(monkeypatch):
@@ -551,18 +549,24 @@ def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
     return calls
 
 
-def test_openai_default_model_is_selectable():
-    """The default has to appear in select_models: opening the settings dialog
-    rewrites model_kwargs to select_models[0] when the current model is missing
-    from the list, silently downgrading the default."""
-    default_model = OpenAI.param.model_kwargs.default["default"]["model"]
-    assert default_model == "gpt-5.6-luna"
-    assert default_model in OpenAI.param.select_models.default
+@pytest.mark.parametrize("provider", [
+    OpenAI, OpenRouter, AzureOpenAI, MistralAI, Anthropic, AnthropicBedrock,
+    Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
+], ids=lambda cls: cls.__name__)
+def test_default_model_is_selectable(provider):
+    """Opening the settings dialog rewrites model_kwargs to select_models[0]
+    when the current model is missing from the list, silently swapping the
+    default."""
+    default_model = provider.param.model_kwargs.default["default"]["model"]
+    assert default_model in provider.param.select_models.default
 
 
-def test_openrouter_default_model_is_selectable():
-    default_model = OpenRouter.param.model_kwargs.default["default"]["model"]
-    assert default_model in OpenRouter.param.select_models.default
+@pytest.mark.parametrize("model", LlamaCpp.param.select_models.default)
+def test_llamacpp_select_models_resolve_to_gguf_file(model):
+    resolved = LlamaCpp().resolve_model_spec(model, {})
+    assert resolved["repo_id"].count("/") == 1
+    assert resolved["filename"].endswith(".gguf")
+    assert resolved["chat_format"]
 
 
 async def test_rejected_temperature_is_dropped_and_retried(monkeypatch):

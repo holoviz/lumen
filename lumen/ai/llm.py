@@ -1925,18 +1925,22 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo_id": "unsloth/Qwen3-32B-GGUF",
-            "filename": "Qwen3-32B-Q5_K_M.gguf",
-            "chat_format": "qwen",
+            "repo_id": "unsloth/Qwen3.6-35B-A3B-GGUF",
+            "filename": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            # The embedded Qwen3.5+ template opens a <think> block that the
+            # JSON grammar would then have to fill.
+            "chat_format": "chatml",
+            # n_ctx=0 would allocate the full 262k-token KV cache.
+            "n_ctx": 32768,
         },
     })
 
+    # Entries are "<repo_id>/<filename>:<chat_format>"; see resolve_model_spec.
     select_models = param.List(default=[
-        "unsloth/Qwen3-32B-GGUF",
-        "unsloth/Qwen3-Coder-32B-A3B-Instruct-GGUF",
-        "unsloth/Qwen2.5-Coder-32B-Instruct-GGUF",
-        "meta-llama/Llama-3.3-70B-Instruct-GGUF",
-        "nvidia/Nemotron-3-Nano-30B-GGUF"
+        "unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf:chatml",
+        "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf:chatml",
+        "unsloth/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q5_K_M.gguf:chatml",
+        "unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf:chat_template.default",
     ], constant=True)
 
     temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True)
@@ -2400,15 +2404,16 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4o-mini"},
-        "edit": {"model": "gpt-4o"},
+        "default": {"model": "gpt-5.4-mini"},
+        "edit": {"model": "gpt-5.4"},
     })
 
+    # GPT-5.6 and GPT-6 reject function tools on chat completions unless
+    # reasoning_effort is "none", and only OpenAI applies that fix adaptively.
     select_models = param.List(default=[
-        "gpt-35-turbo",
-        "gpt-4-turbo",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "gpt-5.4-mini",
+        "gpt-5.4",
+        "gpt-5.4-nano",
     ], constant=True)
 
     temperature = param.Number(default=1, bounds=(0, None), allow_None=True, constant=True)
@@ -2455,15 +2460,13 @@ class MistralAI(Llm, MistralAIMixin):
     })
 
     select_models = param.List(default=[
-        "mistral-medium-latest",
-        "magistral-medium-latest",
-        "mistral-large-latest",
-        "magistral-small-latest",
         "mistral-small-latest",
-        "codestral-latest",
+        "mistral-medium-latest",
+        "mistral-large-latest",
+        "ministral-14b-latest",
         "ministral-8b-latest",
         "ministral-3b-latest",
-        "devstral-small-latest"
+        "codestral-latest",
     ], constant=True)
 
     temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
@@ -2553,13 +2556,15 @@ class Anthropic(Llm, AnthropicMixin):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "claude-haiku-4-5"},
-        "edit": {"model": "claude-sonnet-4-5"},
+        "edit": {"model": "claude-sonnet-4-6"},
     })
 
+    # Claude 4.7+ rejects a non-default temperature and Sonnet/Opus 5.5 reject
+    # the forced tool_choice instructor sends, so newer models fail here.
     select_models = param.List(default=[
-        "claude-sonnet-4-5",
         "claude-haiku-4-5",
-        "claude-opus-4-5"
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
     ], constant=True)
 
     temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
@@ -2839,10 +2844,16 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
     _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+        "default": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+        "ui": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+        "edit": {"model": "us.anthropic.claude-sonnet-4-6"},
     })
+
+    select_models = param.List(default=[
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "us.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-4-6-v1",
+    ], constant=True, doc="Available Claude models on Bedrock")
 
     def _create_base_client(self, **kwargs) -> Any:
         from anthropic.lib.bedrock import AsyncAnthropicBedrock
@@ -2872,25 +2883,20 @@ class Bedrock(Llm, BedrockMixin):
     mode = param.Selector(default=Mode.BEDROCK_TOOLS, objects=[Mode.BEDROCK_JSON, Mode.BEDROCK_TOOLS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+        "default": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+        "ui": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+        "edit": {"model": "us.anthropic.claude-sonnet-4-6"},
     })
 
     select_models = param.List(default=[
-        # Inference profiles (cross-region) - recommended for Claude 4+
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        # Claude is only served through cross-region inference profiles
         "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-        "us.anthropic.claude-opus-4-5-20251101-v1:0",
-        "us.anthropic.claude-opus-4-1-20250805-v1:0",
-        "us.anthropic.claude-sonnet-4-20250514-v1:0",
-        # Claude 3.5 with inference profile
-        "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        # Direct model IDs (if inference profiles don't work)
-        "anthropic.claude-3-haiku-20240307-v1:0",
-        "anthropic.claude-3-sonnet-20240229-v1:0",
-    ], constant=True, doc="Available Claude models on Bedrock")
+        "us.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-4-6-v1",
+        "us.amazon.nova-2-lite-v1:0",
+        "qwen.qwen3-next-80b-a3b",
+        "deepseek.v3.2",
+    ], constant=True, doc="Available models on Bedrock")
 
     temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
@@ -3040,20 +3046,16 @@ class Google(Llm, GenAIMixin):
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gemini-3-flash-preview"},
+        "default": {"model": "gemini-3.8-flash"},
     })
 
+    # gemini-3.5-flash-lite and gemini-3.1-pro-preview reject the
+    # thinking_budget=0 that run_client always sends.
     select_models = param.List(default=[
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
         "gemini-3.5-flash",
-        "gemini-3-flash-preview",
-        "gemini-3-pro-preview",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
+        "gemini-3.1-flash-lite",
     ], constant=True)
 
     temperature = param.Number(default=1, bounds=(0, 1), allow_None=True, constant=True)
@@ -3390,14 +3392,16 @@ class Ollama(OpenAI):
     mode = param.Selector(default=Mode.JSON)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "qwen3:32b"},
+        "default": {"model": "qwen3.6:35b-a3b"},
     })
 
     select_models = param.List(default=[
-        "qwen3:32b",
-        "qwen3-coder:32b",
-        "nemotron-3-nano:30b",
-        "mistral-small3.2:24b",
+        "qwen3.6:35b-a3b",
+        "qwen3.8:27b",
+        "qwen3.5:9b",
+        "gemma4:26b",
+        "gpt-oss:20b",
+        "nemotron-3.5-lightning:30b",
     ], constant=True)
 
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
@@ -3450,8 +3454,9 @@ class MLX(Llm):
 
     select_models = param.List(default=[
         "mlx-community/Qwen3.5-9B-MLX-4bit",
-        "mlx-community/Qwen3.5-27B-4bit",
         "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "mlx-community/Qwen3.8-27B-4bit",
+        "mlx-community/gemma-4-26b-a4b-it-4bit",
     ], constant=True, doc="""
         Available MLX models for selection dropdowns.""")
 
@@ -3658,17 +3663,13 @@ class Groq(OpenAI):
     )
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "llama-3.3-70b-versatile"},
+        "default": {"model": "openai/gpt-oss-120b"},
     })
 
     select_models = param.List(default=[
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "llama-4-scout-17b-16e-instruct",
-        "meta-llama/llama-4-maverick-17b-128e-instruct",
-        "gemma2-9b-it",
-        "mistral-saba-24b",
-        "qwen-qwq-32b",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
     ], constant=True, doc="Available Groq models for selection dropdowns.")
 
 
@@ -3807,7 +3808,7 @@ class LiteLLM(Llm):
 
     fallback_models = param.List(default=[], doc="""
         List of fallback models to try if the primary model fails.
-        Example: ["gpt-4o-mini", "claude-3-haiku", "gemini/gemini-1.5-flash"]""")
+        Example: ["gpt-5.4-nano", "anthropic/claude-haiku-4-5", "gemini/gemini-3.8-flash"]""")
 
     litellm_params = param.Dict(default={}, doc="""
         Additional parameters to pass to litellm.acompletion().
@@ -3817,13 +3818,13 @@ class LiteLLM(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-5.4-mini"},
-        "edit": {"model": "anthropic/claude-sonnet-4-5"},
+        "edit": {"model": "anthropic/claude-sonnet-4-6"},
         "sql": {"model": "gpt-5.4-mini"},
     }, doc="""
         Model configurations by type. LiteLLM supports model strings like:
-        - OpenAI: "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5-mini"
-        - Anthropic: "anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-4-5"
-        - Google: "gemini/gemini-2.0-flash", "gemini/gemini-2.5-flash"
+        - OpenAI: "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4"
+        - Anthropic: "anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-4-5"
+        - Google: "gemini/gemini-3.8-flash", "gemini/gemini-3.1-flash-lite"
         - Mistral: "mistral/mistral-medium-latest", "mistral/mistral-small-latest"
         - And many more with format: "provider/model" or just "model" for defaults
     """)
@@ -3835,15 +3836,13 @@ class LiteLLM(Llm):
     select_models = param.List(default=[
         "gpt-5.4-mini",
         "gpt-5.4-nano",
-        "gpt-5-mini",
-        "anthropic/claude-sonnet-4-5",
+        "gpt-5.4",
         "anthropic/claude-haiku-4-5",
-        "anthropic/claude-opus-4-1",
-        "gemini/gemini-2.0-flash",
-        "gemini/gemini-2.5-flash",
-        "mistral/mistral-medium-latest",
+        "anthropic/claude-sonnet-4-6",
+        "gemini/gemini-3.8-flash",
+        "gemini/gemini-3.1-flash-lite",
         "mistral/mistral-small-latest",
-        "mistral/codestral-latest"
+        "mistral/mistral-medium-latest",
     ], constant=True)
 
     temperature = param.Number(default=0.7, bounds=(0, 2), allow_None=True, constant=True)

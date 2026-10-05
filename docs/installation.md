@@ -187,7 +187,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
     3. Pull a model:
     
     ```bash
-    ollama pull qwen3:32b
+    ollama pull qwen3.6:35b-a3b
     ```
     
     4. (Optional) Set custom endpoint if not using default:
@@ -422,8 +422,8 @@ Use a unified interface to access multiple LLM providers and models.
     llm = lmai.llm.LiteLLM(
         model_kwargs={
             "default": {"model": "gpt-5.4-mini"},                    # OpenAI
-            "edit": {"model": "anthropic/claude-sonnet-4-5"},        # Anthropic
-            "sql": {"model": "gemini/gemini-2.5-flash"}             # Google
+            "edit": {"model": "anthropic/claude-sonnet-4-6"},        # Anthropic
+            "sql": {"model": "gemini/gemini-3.8-flash"}             # Google
         }
     )
     ui = lmai.ExplorerUI(data='data.csv', llm=llm)
@@ -489,7 +489,7 @@ Use a unified interface to access multiple LLM providers and models.
         
         llm = lmai.llm.Bedrock(
             model_kwargs={
-                "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
+                "default": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
             }
         )
         ui = lmai.ExplorerUI(data='data.csv', llm=llm)
@@ -498,8 +498,8 @@ Use a unified interface to access multiple LLM providers and models.
 
         **Available models:**
         
-        - Anthropic (Claude), Meta (Llama), Mistral, Amazon (Titan), Cohere, AI21
-        - Model IDs: `us.anthropic.claude-*`, `meta.llama3-*`, `mistral.*`, `amazon.titan-*`
+        - Anthropic (Claude), Amazon (Nova), Qwen, DeepSeek, Mistral, Meta (Llama), and more
+        - Model IDs: `us.anthropic.claude-*`, `us.amazon.nova-*`, `qwen.*`, `deepseek.*`, `mistral.*`
         - [Full model list](https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html)
 
     **IAM Permissions:**
