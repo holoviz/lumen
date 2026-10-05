@@ -331,6 +331,26 @@ async def test_antigravity_cli_uses_a_prestarted_process(monkeypatch):
     await spawned[2].wait()
 
 
+def test_antigravity_cli_decodes_result():
+    antigravity = AntigravityCli()
+    init = '{"event":"init","init":{"cwd":"/tmp"}}\n'
+    delta = '{"event":"step_update","step_update":{"text_delta":"READY"}}\n'
+
+    assert antigravity._decode_output(
+        init + delta + '{"event":"result","result":{"status":"SUCCESS","response":"READY\\n"}}'
+    ) == "READY"
+
+    with pytest.raises(RuntimeError, match="WriteToFile"):
+        antigravity._decode_output(
+            '{"event":"result","result":{"status":"SUCCESS","response":"",'
+            '"denied_actions":[{"action":"write_file","display_name":"WriteToFile"}]}}'
+        )
+    with pytest.raises(RuntimeError, match="invalid model"):
+        antigravity._decode_output('{"event":"result","result":{"status":"ERROR","error":"invalid model"}}')
+    with pytest.raises(ValueError, match="did not return a result"):
+        antigravity._decode_output(init + delta)
+
+
 def test_copilot_cli_decodes_last_assistant_message():
     copilot = CopilotCli()
     output = (
