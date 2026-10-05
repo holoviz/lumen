@@ -171,8 +171,12 @@ def test_cli_providers_are_registered():
     """CLI-backed subscription providers can be selected explicitly by the command line."""
     assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCli"
     assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCode"
+    assert lmai.llm.LLM_PROVIDERS["copilot-cli"] == "CopilotCli"
     assert issubclass(CodexCli, LlmCli)
     assert issubclass(ClaudeCode, LlmCli)
+    assert issubclass(CopilotCli, LlmCli)
+    # Last, so CLI providers are never auto-selected ahead of a configured one.
+    assert list(lmai.llm.LLM_PROVIDERS)[-1] == "copilot-cli"
 
 
 def test_codex_cli_command_defaults_to_read_only():
