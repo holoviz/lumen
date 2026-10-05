@@ -2099,6 +2099,24 @@ class CopilotCli(LlmCli):
         return final_message.strip()
 
 
+class AntigravityCli(LlmCli):
+    """Use the locally authenticated Google Antigravity CLI as a Lumen provider."""
+
+    display_name = param.String(default="Antigravity CLI", constant=True)
+
+    executable = param.String(default="agy", constant=True)
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        # stream-json input is the only way to pass the prompt on stdin
+        # instead of the command line, and it requires stream-json output.
+        command = [self.executable, "--input-format", "stream-json", "--output-format", "stream-json"]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+
 class LlamaCpp(Llm, LlamaCppMixin):
     """
     A LLM implementation using Llama.cpp Python wrapper together with huggingface_hub to fetch the models.
