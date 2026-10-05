@@ -2029,7 +2029,7 @@ class OpenAI(Llm, OpenAIMixin):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-5.6-luna"},  # Runs with reasoning disabled; see _reasoning_models
-        "ui": {"model": "gpt-5.4-nano"},
+"default": {"model": "gpt-6-luna},  # Runs with reasoning disabled; see _reasoning_models
     })
 
     select_models = param.List(default=[
