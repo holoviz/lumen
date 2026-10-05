@@ -205,6 +205,18 @@ def test_sql_limit_higher_than_original():
     assert result == expected
 
 
+def test_sql_limit_wraps_duckdb_pivot_statement():
+    result = SQLLimit.apply_to("PIVOT t ON k USING SUM(v)", limit=10, read="duckdb", write="duckdb")
+    expected = "SELECT * FROM (PIVOT t ON k USING SUM(v)) AS subquery LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_ignores_comment_after_final_semicolon():
+    result = SQLLimit.apply_to("SELECT * FROM TABLE; -- note", limit=10)
+    expected = "SELECT * FROM TABLE LIMIT 10"
+    assert result == expected
+
+
 def test_sql_limit_mssql_aliases_derived_table():
     """SQL Server rejects a derived table in FROM unless it carries an alias."""
     result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=1, write="mssql")

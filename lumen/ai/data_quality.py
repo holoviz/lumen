@@ -153,7 +153,7 @@ def _lint_outliers(df: pd.DataFrame) -> list[str]:
     return [f"IQR outliers in {_format_column_hits(hits)}."]
 
 
-def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
+def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = False) -> list[str]:
     """
     Report data-quality problems in a query result, phrased so an LLM can fix them in SQL.
 
@@ -167,6 +167,11 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
         Report only problems a SQL rewrite should act on, omitting constant
         columns and outliers. Use this to decide whether a rewrite is worth
         requesting, and to choose what the rewriting prompt is shown.
+    capped : bool
+        ``df`` holds only the first rows of a longer result, in query order.
+        Constant columns and outliers are not checked, since an ordered
+        prefix is often constant in its sort key and need not be
+        representative of the rest.
 
     Returns
     -------
@@ -177,14 +182,15 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
         return []
 
     checks = (_lint_nulls, _lint_duplicates, _lint_sentinels, _lint_whitespace, _lint_numeric_text)
-    if not actionable_only:
+    if not (actionable_only or capped):
         # Reported for the reader but never worth rewriting a query for: a
         # constant column is the normal shape of a result filtered to one value,
         # so dropping it deletes something the user asked for, and an outlier is
         # data, so filtering it changes the answer rather than cleaning it.
         checks += (_lint_constant, _lint_outliers)
 
-    sampled = len(df) > PROFILE_SAMPLE_ROWS
+    n_rows = len(df)
+    sampled = n_rows > PROFILE_SAMPLE_ROWS
     if sampled:
         # Fixed seed so the same result always yields the same findings; a
         # profiler that reported different problems on each run would be noise.
@@ -200,7 +206,12 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False) -> list[str]:
             # pandas operations above raise rather than return.
             log_debug(f"lint_data check {check.__name__} skipped: {e}")
 
-    if findings and sampled:
+    if findings and capped:
+        findings.append(
+            f"Counts above come from only the first {n_rows} rows of the result in query order, "
+            "not the full result."
+        )
+    elif findings and sampled:
         findings.append(
             f"Counts above come from a random {PROFILE_SAMPLE_ROWS}-row sample of the result, not the full table."
         )

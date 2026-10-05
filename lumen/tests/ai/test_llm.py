@@ -19,6 +19,7 @@ try:
         CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
         MistralAI, Ollama, OpenAI, WebLLM,
     )
+    from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
 
 except ModuleNotFoundError:
@@ -1499,6 +1500,44 @@ def test_model_card_offers_user_supplied_select_models():
     llm = OpenAI(model_kwargs={"default": {"model": "m"}}, select_models=["my-model", "other"])
     card = LLMModelCard(llm=llm, model_type="default", llm_choices=[], description="")
     assert card._get_default_models() == ["m", "my-model", "other"]
+
+
+@pytest.mark.parametrize("action", ["_apply_changes", "_cancel_changes", "_reset_to_defaults"])
+def test_llm_dialog_keeps_omitted_temperature(action):
+    """An LLM with temperature=None omits it from requests (some models reject
+    any), so the placeholder the slider shows must not be written back."""
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI})
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+    getattr(dialog, action)(None)
+
+    assert dialog.llm.temperature is None
+
+
+def test_llm_dialog_provider_change_keeps_omitted_temperature():
+    dialog = LLMConfigDialog(
+        llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI, "Mistral": MistralAI}
+    )
+
+    dialog._provider_select.value = MistralAI
+
+    assert isinstance(dialog.llm, MistralAI)
+    assert dialog.llm.temperature is None
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+
+@pytest.mark.parametrize("initial", [None, 0.2])
+def test_llm_dialog_applies_and_cancels_moved_temperature(initial):
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=initial), provider_choices={"OpenAI": OpenAI})
+
+    dialog._temperature_slider.value = 0.5
+    dialog._apply_changes(None)
+    assert dialog.llm.temperature == 0.5
+
+    dialog._temperature_slider.value = 0.9
+    dialog._cancel_changes(None)
+    assert dialog.llm.temperature == 0.5
+    assert dialog._temperature_slider.value == 0.5
 
 
 # ---------------------------------------------------------------------------

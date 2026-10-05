@@ -11,6 +11,7 @@ import param
 try:
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.engine.url import URL, make_url
+    from sqlalchemy.pool import SingletonThreadPool
 except ImportError as e:
     raise ImportError(
         "SQLAlchemySource requires the 'sqlalchemy' package. "
@@ -205,6 +206,15 @@ class SQLAlchemySource(BaseSQLSource):
         return self._engine.connect()
 
     @property
+    def _thread_bound(self) -> bool:
+        """
+        Whether each thread gets its own connection, so a query run in a worker
+        thread does not see the caller's data (e.g. an in-memory SQLite
+        database, which SQLAlchemy pools per thread).
+        """
+        return not self._driver_is_async and isinstance(self._engine.pool, SingletonThreadPool)
+
+    @property
     def _inspector(self):
         """Get or create a SQLAlchemy inspector for metadata operations."""
         if self._engine is None:
@@ -321,6 +331,8 @@ class SQLAlchemySource(BaseSQLSource):
         pd.DataFrame
             The result as a pandas DataFrame
         """
+        if self._thread_bound:
+            return self.execute(sql_query, params, *args, **kwargs)
         if not self._driver_is_async:
             # Fall back to running sync in thread
             return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
@@ -332,6 +344,14 @@ class SQLAlchemySource(BaseSQLSource):
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
             return df
+
+    async def execute_with_timeout(
+        self, sql_query: str, timeout: float | None, fetch: bool = False
+    ) -> DataFrame:
+        if self._thread_bound:
+            # Running inline is the only way to reach the data, so the timeout cannot apply.
+            return self.fetch(sql_query) if fetch else self.execute(sql_query)
+        return await super().execute_with_timeout(sql_query, timeout, fetch)
 
     def get_tables(self) -> list[str]:
         """Return the list of available tables."""

@@ -14,8 +14,9 @@ from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
-    Limit, Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
-    TableSample, and_, func, or_, replace_placeholders, select,
+    Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV, Select,
+    Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_, func, or_,
+    replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
@@ -158,6 +159,8 @@ class SQLTransform(Transform):
                 error_level=self.error_level,
             )
 
+        # A comment after the final ";" parses as an empty Semicolon statement.
+        expressions = [expr for expr in expressions if not isinstance(expr, Semicolon)]
         if len(expressions) > 1:
             raise ValueError(
                 "Multiple SQL statements found. Please provide only a single SQL statement."
@@ -209,6 +212,9 @@ class SQLTransform(Transform):
         if isinstance(expression, Alias):
             # Alias expressions are already suitable for use as subqueries
             return expression
+        if isinstance(expression, Pivot):
+            # DuckDB's top-level PIVOT/UNPIVOT statement is not a Query and has no .subquery().
+            return Subquery(this=expression, alias=TableAlias(this=to_identifier(alias)))
         return expression.subquery(alias)
 
     def to_sql(self, expression: Expression) -> str:
