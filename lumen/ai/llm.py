@@ -2108,6 +2108,36 @@ class AntigravityCli(LlmCli):
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._spares: dict[tuple[str, ...], tuple] = {}
+
+    async def _start(self, command: list[str]) -> tuple:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so the agent never sees the files of the directory Lumen runs in.
+        tmp = None if self.working_dir else tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        process = await self._spawn(command, self.working_dir or tmp.name)
+        return asyncio.get_running_loop(), process, tmp
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        key = tuple(command)
+        spare = self._spares.pop(key, None)
+        if spare is None or spare[0] is not asyncio.get_running_loop() or spare[1].returncode is not None:
+            spare = await self._start(command)
+        # agy spends about ten seconds starting up before it reads stdin, so
+        # start the process for the next request now. A process serves only
+        # one request because every turn it reads shares one conversation.
+        self._spares[key] = await self._start(command)
+        _, process, tmp = spare
+        message = json.dumps({"event": "user", "message": {"content": prompt}})
+        try:
+            return await self._communicate(process, message + "\n")
+        finally:
+            if tmp is not None:
+                tmp.cleanup()
+
     def _build_command(self, model: str | None) -> list[str]:
         # stream-json input is the only way to pass the prompt on stdin
         # instead of the command line, and it requires stream-json output.
