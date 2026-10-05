@@ -2040,18 +2040,44 @@ class CopilotCli(LlmCli):
 
     _isolate_cwd = True
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._acp_processes: dict[tuple[str, ...], _AcpProcess] = {}
+
     def _build_command(self, model: str | None) -> list[str]:
         # An allowlist naming no real tool disables every tool, including user
         # MCP tools that deny rules cannot match; the deny rules are a backstop.
         command = [
-            self.executable, "--output-format", "json", "--stream", "off", "--no-ask-user",
-            "--no-custom-instructions", "--disable-builtin-mcps", "--no-remote-export", "--no-auto-update",
-            "--available-tools=none", "--deny-tool=shell", "--deny-tool=write", "--deny-tool=read",
-            "--deny-tool=url", "--deny-tool=memory",
+            self.executable, "--no-ask-user", "--no-custom-instructions", "--disable-builtin-mcps",
+            "--no-remote-export", "--no-auto-update", "--available-tools=none", "--deny-tool=shell",
+            "--deny-tool=write", "--deny-tool=read", "--deny-tool=url", "--deny-tool=memory",
         ]
-        if model:
-            command.extend(["--model", model])
-        return command
+        if model and model != "auto":
+            # ACP mode silently ignores --model, so a chosen model runs one CLI per request.
+            return [*command, "--output-format", "json", "--stream", "off", "--model", model]
+        return [*command, "--acp", "--stdio"]
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if "--acp" not in command:
+            return await super()._run_command(command, prompt)
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        key = tuple(command)
+        acp = self._acp_processes.get(key)
+        if acp is None or not acp.alive:
+            acp = self._acp_processes[key] = _AcpProcess(command)
+        try:
+            with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+                text = await asyncio.wait_for(acp.prompt(prompt, self.working_dir or tmp), timeout=self.timeout)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+        except TimeoutError as exc:
+            raise TimeoutError(f"{self.display_name} did not finish within {self.timeout:g} seconds.") from exc
+        # Same event shape as the one-shot JSON output, so one decoder serves both.
+        return json.dumps({"type": "assistant.message", "data": {"content": text}})
 
     def _decode_output(self, output: str) -> str:
         final_message = None
