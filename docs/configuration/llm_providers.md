@@ -220,17 +220,20 @@ lumen-ai serve --provider copilot-cli
 lumen-ai serve penguins.csv --provider copilot-cli
 ```
 
-Copilot picks the model by default. If your plan lets you choose one, pass a
-name listed by `copilot help config` with `--model`. Plans limited to automatic
-model selection, such as Copilot Free, only accept `--model auto`; any other
-name fails with `Model ... from --model flag is not available`.
+Copilot picks the model by default. Lumen then keeps one Copilot process
+running and sends every request to it, which avoids several seconds of CLI
+startup per request. If your plan lets you choose a model, pass a name listed
+by `copilot help config` with `--model`; Lumen then starts the CLI once per
+request, which is slower. Plans limited to automatic model selection, such as
+Copilot Free, only accept `--model auto`; any other name fails with
+`Model ... from --model flag is not available`.
 
 !!! warning "Local development only"
     Lumen runs each request in a fresh temporary directory and starts Copilot
     with every tool disabled, so it can only answer in text: it cannot run shell
     commands, read or write files, fetch URLs, or call MCP servers, and it skips
     instruction files such as `AGENTS.md`. Each Lumen question makes several
-    Copilot requests (eight to ten for a query and a chart), and each one counts
+    Copilot requests (seven to ten for a query and a chart), and each one counts
     against your plan's Copilot usage allowance, which is small on Copilot
     Free. Copilot keeps a copy of every prompt
     under `~/.copilot/session-state`, and Lumen does not disable any hooks or
