@@ -1948,6 +1948,20 @@ class CopilotCli(LlmCli):
             command.extend(["--model", model])
         return command
 
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            data = event.get("data") if isinstance(event, dict) and event.get("type") == "assistant.message" else None
+            if isinstance(data, dict) and data.get("content"):
+                final_message = str(data["content"])
+        if final_message is None:
+            raise ValueError("GitHub Copilot CLI did not return a final assistant message.")
+        return final_message.strip()
+
 
 class LlamaCpp(Llm, LlamaCppMixin):
     """
