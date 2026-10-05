@@ -131,7 +131,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
-    The OpenAI default, `gpt-5.6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`. Some models, such as `gpt-6.1-sol`, cannot disable reasoning and only work with the responses API.
+    The OpenAI default, `gpt-6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`. Some models, such as `gpt-6.1-sol`, cannot disable reasoning and only work with the responses API.
 
 ### Local providers
 
