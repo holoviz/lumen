@@ -224,6 +224,22 @@ def test_cli_output_decoders():
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
 
 
+def test_copilot_cli_decodes_last_assistant_message():
+    copilot = CopilotCli()
+    output = (
+        '{"type":"session.tools_updated","data":{"model":"claude-haiku-4.5"}}\n'
+        '{"type":"user.message","data":{"content":"Private prompt"}}\n'
+        '{"type":"assistant.message","data":{"content":"","toolRequests":[{"name":"bash"}]}}\n'
+        'not json\n'
+        '{"type":"assistant.message","data":{"content":"READY\\n","toolRequests":[]}}\n'
+        '{"type":"result","exitCode":0}'
+    )
+    assert copilot._decode_output(output) == "READY"
+
+    with pytest.raises(ValueError, match="final assistant message"):
+        copilot._decode_output('{"type":"user.message","data":{"content":"Private prompt"}}')
+
+
 async def test_cli_provider_validates_structured_output(monkeypatch):
     class Reply(BaseModel):
         ready: bool
