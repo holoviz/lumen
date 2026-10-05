@@ -364,9 +364,8 @@ async def test_cli_provider_isolates_cwd(monkeypatch, tmp_path):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
     await ClaudeCode()._run_command(["claude"], "Hi")
-    monkeypatch.setattr(ClaudeCode, "_isolate_cwd", True)
-    await ClaudeCode()._run_command(["claude"], "Hi")
-    await ClaudeCode(working_dir=str(tmp_path))._run_command(["claude"], "Hi")
+    await CopilotCli()._run_command(["copilot"], "Hi")
+    await CopilotCli(working_dir=str(tmp_path))._run_command(["copilot"], "Hi")
 
     (default_cwd, _), (isolated_cwd, existed), (override_cwd, _) = seen
     assert default_cwd is None

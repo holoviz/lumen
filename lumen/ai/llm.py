@@ -1657,10 +1657,6 @@ class LlmCli(Llm):
     _supports_model_stream = False
     _supports_vision = False
 
-    # Run each request in a fresh empty directory unless working_dir is set,
-    # for CLIs that may write files or read project instructions from cwd.
-    _isolate_cwd = False
-
     def _create_base_client(self, **kwargs) -> Any:
         raise NotImplementedError("CLI-backed providers do not create an SDK client.")
 
@@ -1732,9 +1728,6 @@ class LlmCli(Llm):
     async def _run_command(self, command: list[str], prompt: str) -> str:
         if self.working_dir and not Path(self.working_dir).is_dir():
             raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
-        if self._isolate_cwd and not self.working_dir:
-            with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as cwd:
-                return await self._run_process(command, prompt, cwd)
         return await self._run_process(command, prompt, self.working_dir)
 
     async def _run_process(self, command: list[str], prompt: str, cwd: str | None) -> str:
@@ -1948,6 +1941,8 @@ class _AcpProcess:
         )
 
     async def _start(self):
+        # Both are held for the life of the process: the directory must outlive
+        # it, and an unreferenced reader task could be garbage collected.
         self._cwd = tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
         self.process = await asyncio.create_subprocess_exec(
             *self.command,
@@ -2014,6 +2009,8 @@ class _AcpProcess:
                 "session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]}
             )
         except BaseException:
+            # A timeout or cancellation would otherwise leave Copilot generating
+            # an answer nobody reads, still counting against the user's quota.
             if self.process.returncode is None:
                 self._send({"method": "session/cancel", "params": {"sessionId": session_id}})
             raise
@@ -2038,8 +2035,6 @@ class CopilotCli(LlmCli):
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
 
-    _isolate_cwd = True
-
     def __init__(self, **params):
         super().__init__(**params)
         self._acp_processes: dict[tuple[str, ...], _AcpProcess] = {}
@@ -2058,17 +2053,23 @@ class CopilotCli(LlmCli):
         return [*command, "--acp", "--stdio"]
 
     async def _run_command(self, command: list[str], prompt: str) -> str:
-        if "--acp" not in command:
-            return await super()._run_command(command, prompt)
         if self.working_dir and not Path(self.working_dir).is_dir():
             raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Copilot never sees the files of the directory Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            cwd = self.working_dir or tmp
+            if "--acp" not in command:
+                return await self._run_process(command, prompt, cwd)
+            return await self._run_acp(command, prompt, cwd)
+
+    async def _run_acp(self, command: list[str], prompt: str, cwd: str) -> str:
         key = tuple(command)
         acp = self._acp_processes.get(key)
         if acp is None or not acp.alive:
             acp = self._acp_processes[key] = _AcpProcess(command)
         try:
-            with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
-                text = await asyncio.wait_for(acp.prompt(prompt, self.working_dir or tmp), timeout=self.timeout)
+            text = await asyncio.wait_for(acp.prompt(prompt, cwd), timeout=self.timeout)
         except FileNotFoundError as exc:
             raise RuntimeError(
                 f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
