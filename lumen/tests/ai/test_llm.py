@@ -17,8 +17,9 @@ try:
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
         CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
-        MistralAI, Ollama, OpenAI, WebLLM,
+        MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
+    from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
 
 except ModuleNotFoundError:
@@ -345,11 +346,9 @@ def test_groq_api_key_env_var():
     assert Groq.api_key_env_var == "GROQ_API_KEY"
 
 
-def test_groq_defaults():
-    """Test that Groq has the correct default endpoint and model."""
+def test_groq_endpoint():
     groq = Groq(api_key="test-key")
     assert groq.endpoint == "https://api.groq.com/openai/v1"
-    assert groq.model_kwargs["default"]["model"] == "llama-3.3-70b-versatile"
 
 
 def test_get_available_llm_selects_groq(monkeypatch):
@@ -550,13 +549,24 @@ def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
     return calls
 
 
-def test_openai_default_model_is_selectable():
-    """The default has to appear in select_models: opening the settings dialog
-    rewrites model_kwargs to select_models[0] when the current model is missing
-    from the list, silently downgrading the default."""
-    default_model = OpenAI.param.model_kwargs.default["default"]["model"]
-    assert default_model == "gpt-5.6-luna"
-    assert default_model in OpenAI.param.select_models.default
+@pytest.mark.parametrize("provider", [
+    OpenAI, OpenRouter, AzureOpenAI, MistralAI, Anthropic, AnthropicBedrock,
+    Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
+], ids=lambda cls: cls.__name__)
+def test_default_model_is_selectable(provider):
+    """Opening the settings dialog rewrites model_kwargs to select_models[0]
+    when the current model is missing from the list, silently swapping the
+    default."""
+    default_model = provider.param.model_kwargs.default["default"]["model"]
+    assert default_model in provider.param.select_models.default
+
+
+@pytest.mark.parametrize("model", LlamaCpp.param.select_models.default)
+def test_llamacpp_select_models_resolve_to_gguf_file(model):
+    resolved = LlamaCpp().resolve_model_spec(model, {})
+    assert resolved["repo_id"].count("/") == 1
+    assert resolved["filename"].endswith(".gguf")
+    assert resolved["chat_format"]
 
 
 async def test_rejected_temperature_is_dropped_and_retried(monkeypatch):
@@ -1499,6 +1509,44 @@ def test_model_card_offers_user_supplied_select_models():
     llm = OpenAI(model_kwargs={"default": {"model": "m"}}, select_models=["my-model", "other"])
     card = LLMModelCard(llm=llm, model_type="default", llm_choices=[], description="")
     assert card._get_default_models() == ["m", "my-model", "other"]
+
+
+@pytest.mark.parametrize("action", ["_apply_changes", "_cancel_changes", "_reset_to_defaults"])
+def test_llm_dialog_keeps_omitted_temperature(action):
+    """An LLM with temperature=None omits it from requests (some models reject
+    any), so the placeholder the slider shows must not be written back."""
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI})
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+    getattr(dialog, action)(None)
+
+    assert dialog.llm.temperature is None
+
+
+def test_llm_dialog_provider_change_keeps_omitted_temperature():
+    dialog = LLMConfigDialog(
+        llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI, "Mistral": MistralAI}
+    )
+
+    dialog._provider_select.value = MistralAI
+
+    assert isinstance(dialog.llm, MistralAI)
+    assert dialog.llm.temperature is None
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+
+@pytest.mark.parametrize("initial", [None, 0.2])
+def test_llm_dialog_applies_and_cancels_moved_temperature(initial):
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=initial), provider_choices={"OpenAI": OpenAI})
+
+    dialog._temperature_slider.value = 0.5
+    dialog._apply_changes(None)
+    assert dialog.llm.temperature == 0.5
+
+    dialog._temperature_slider.value = 0.9
+    dialog._cancel_changes(None)
+    assert dialog.llm.temperature == 0.5
+    assert dialog._temperature_slider.value == 0.5
 
 
 # ---------------------------------------------------------------------------

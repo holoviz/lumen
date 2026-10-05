@@ -205,6 +205,18 @@ def test_sql_limit_higher_than_original():
     assert result == expected
 
 
+def test_sql_limit_wraps_duckdb_pivot_statement():
+    result = SQLLimit.apply_to("PIVOT t ON k USING SUM(v)", limit=10, read="duckdb", write="duckdb")
+    expected = "SELECT * FROM (PIVOT t ON k USING SUM(v)) AS subquery LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_ignores_comment_after_final_semicolon():
+    result = SQLLimit.apply_to("SELECT * FROM TABLE; -- note", limit=10)
+    expected = "SELECT * FROM TABLE LIMIT 10"
+    assert result == expected
+
+
 def test_sql_limit_mssql_aliases_derived_table():
     """SQL Server rejects a derived table in FROM unless it carries an alias."""
     result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=1, write="mssql")
@@ -374,6 +386,57 @@ def test_sql_filter_datetime_range():
     assert result == expected
 
 
+def test_sql_filter_range_open_start():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (None, 3))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'3\''
+    assert result == expected
+
+
+def test_sql_filter_range_open_end():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (1, None))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'1\''
+    assert result == expected
+
+
+def test_sql_filter_date_range_open_end():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", (dt.date(2017, 2, 22), None))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'2017-02-22 00:00:00\''
+    assert result == expected
+
+
+def test_sql_filter_range_unbounded():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (None, None))])
+    assert result == "SELECT * FROM TABLE"
+
+
+def test_sql_filter_range_list_open_ends():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", [(None, 0), (None, None), (4, None)])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'0\' OR "A" >= \'4\''
+    assert result == expected
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize(
+    "value",
+    [
+        (None, 2), (2, None), [(None, 0), (4, None)], [(None, 0), (None, None), (4, None)],
+        slice(None, 2), slice(2, None), slice(1, 3),
+    ],
+)
+def test_sql_filter_open_range_matches_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4]})
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("A", value)]))
+    if isinstance(value, slice):
+        value = (value.start, value.stop)
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("A", value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
 def test_sql_filter_slice_numeric():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", slice(20.0, 40.0))]
@@ -389,6 +452,31 @@ def test_sql_filter_slice_date():
     )
     expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
+
+
+def test_sql_filter_slice_open_start():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(None, 5))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'5\''
+    assert result == expected
+
+
+def test_sql_filter_slice_open_end():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(2, None))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'2\''
+    assert result == expected
+
+
+def test_sql_filter_slice_date_open_start():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", slice(None, dt.date(2017, 4, 14)))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'2017-04-14 23:59:59\''
+    assert result == expected
+
+
+def test_sql_filter_slice_unbounded():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(None, None))])
+    assert result == "SELECT * FROM TABLE"
 
 
 def test_sql_filter_slice_datetime():
