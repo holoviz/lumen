@@ -49,8 +49,11 @@ PRICING_PER_MILLION = {
     "moonshotai/kimi-k2.6": {"input": 0.95, "cached": 0.16, "output": 4.00},
     "google/gemini-3.8-flash": {"input": 0.75, "cached": 0.075, "output": 3.75},
     "xiaomi/mimo-v2.6-flash": {"input": 0.14, "cached": 0.0028, "output": 0.28},
-    "z-ai/glm-5.3-flash": {"input": 0.04, "cached": 0.015, "output": 0.50},
+    "z-ai/glm-5.3-flash": {"input": 0.15, "cached": 0.03, "output": 0.50},
     "anthropic/claude-sonnet-5": {"input": 2.00, "cached": 0.20, "output": 10.00},
+    "anthropic/claude-haiku-4.5": {"input": 1.00, "cached": 0.10, "output": 5.00},
+    "openai/gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
+    "deepseek/deepseek-v4.1-flash": {"input": 0.003, "cached": 0.003, "output": 2.40},
 }
 
 
@@ -81,47 +84,49 @@ class EvalOpenAI(OpenAI):
 
     def _create_base_client(self, **kwargs):
         client = super()._create_base_client(**kwargs)
-        if self.api != "responses":
-            create = client.chat.completions.create
+        target = client.responses if self.api == "responses" else client.chat.completions
+        create = target.create
 
-            async def eval_create(*args, **params):
-                if self.model_kwargs["default"]["model"].startswith("qwen/qwen3.8-"):
-                    params["extra_body"] = {**params.get("extra_body", {}), "reasoning": {"enabled": False}}
+        async def eval_create(*args, **params):
+            # Thinking runs go through the Responses API; chat completions keep
+            # Qwen 3.8 comparable with earlier non-thinking results.
+            if self.api != "responses" and self.model_kwargs["default"]["model"].startswith("qwen/qwen3.8-"):
+                params["extra_body"] = {**params.get("extra_body", {}), "reasoning": {"enabled": False}}
 
-                async def wait_for_retry(exc, attempt):
-                    retry_after = exc.response.headers.get("retry-after") if exc.response else None
+            async def wait_for_retry(exc, attempt):
+                retry_after = exc.response.headers.get("retry-after") if exc.response else None
+                try:
+                    delay = float(retry_after) if retry_after is not None else 2 ** (attempt + 1)
+                except ValueError:
+                    delay = 2 ** (attempt + 1)
+                await asyncio.sleep(min(30, max(0, delay)))
+
+            if not params.get("stream"):
+                for attempt in range(5):
                     try:
-                        delay = float(retry_after) if retry_after is not None else 2 ** (attempt + 1)
-                    except ValueError:
-                        delay = 2 ** (attempt + 1)
-                    await asyncio.sleep(min(30, max(0, delay)))
+                        return await create(*args, **params)
+                    except RateLimitError as exc:
+                        if attempt == 4:
+                            raise
+                        await wait_for_retry(exc, attempt)
 
-                if not params.get("stream"):
-                    for attempt in range(5):
-                        try:
-                            return await create(*args, **params)
-                        except RateLimitError as exc:
-                            if attempt == 4:
-                                raise
-                            await wait_for_retry(exc, attempt)
+            async def events():
+                for attempt in range(5):
+                    yielded = False
+                    try:
+                        response = await create(*args, **params)
+                        async for chunk in response:
+                            yielded = True
+                            yield chunk
+                        return
+                    except RateLimitError as exc:
+                        if yielded or attempt == 4:
+                            raise
+                        await wait_for_retry(exc, attempt)
 
-                async def events():
-                    for attempt in range(5):
-                        yielded = False
-                        try:
-                            response = await create(*args, **params)
-                            async for chunk in response:
-                                yielded = True
-                                yield chunk
-                            return
-                        except RateLimitError as exc:
-                            if yielded or attempt == 4:
-                                raise
-                            await wait_for_retry(exc, attempt)
+            return events()
 
-                return events()
-
-            client.chat.completions.create = eval_create
+        target.create = eval_create
         return client
 
 

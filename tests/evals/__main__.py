@@ -14,9 +14,9 @@ from multiprocessing.connection import wait
 from pathlib import Path
 
 from lumen.ai.evals.bird import bird_source, database_path, download_questions
-from lumen.ai.evals.harness import EvalOpenAI, case_fingerprint, evaluate
+from lumen.ai.evals.harness import case_fingerprint, evaluate
 
-from .bird_runner import run_bird_case_process
+from .bird_runner import default_api, eval_llm, run_bird_case_process
 from .cases import (
     BIRD_STRATIFIED_IDS, DATASET, QUESTION_IDS, QUESTION_URL,
     SUITE_INSTRUCTIONS, bird_dataset, documents, source,
@@ -30,6 +30,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run Lumen's AI evaluations")
     parser.add_argument("--model", default="gpt-4.1-mini")
     parser.add_argument("--provider", choices=["openai", "openrouter"], default="openai")
+    parser.add_argument("--api", choices=["chat_completions", "responses"],
+                        help="API primitive (default: responses for openai, chat_completions for openrouter)")
     parser.add_argument("--suite", choices=["local", "bird"], default="local")
     parser.add_argument("--bird-questions", type=Path, help="Pinned BIRD Mini-Dev SQLite JSON file")
     parser.add_argument("--bird-databases", type=Path, help="Extracted BIRD Mini-Dev database directory")
@@ -87,20 +89,14 @@ def main():
     if not key:
         parser.error(f"A {args.provider} API key is required for live evaluations")
 
-    llm = EvalOpenAI(
-        suite_instructions=instructions,
-        api="chat_completions" if args.provider == "openrouter" else "responses",
-        temperature=None, api_key=key,
-        endpoint="https://openrouter.ai/api/v1" if args.provider == "openrouter" else None,
-        model_kwargs={"default": {"model": args.model}, "ui": {"model": args.model}},
-    )
+    llm = eval_llm(args.model, args.provider, key, args.api, instructions)
     llm.disable_sql_cleanup = args.no_sql_cleanup
     output = args.output or RESULTS / f"{args.model.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     if args.bird_all or args.bird_stratified or args.bird_ids:
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
                                args.model, args.provider, key, args.resume, args.workers,
                                instructions=instructions, instruction_version=instruction_version,
-                               disable_sql_cleanup=args.no_sql_cleanup)
+                               disable_sql_cleanup=args.no_sql_cleanup, api=args.api)
         LOG.warning("BIRD run summary: %s", summary)
         if summary["failed"] or summary["unscorable"]:
             raise SystemExit(1)
@@ -114,13 +110,14 @@ def main():
 
 def run_all_bird(dataset, output, questions, databases, model, provider, key, resume, workers,
                  worker=run_bird_case_process, case_timeout=240, instructions="", instruction_version="",
-                 disable_sql_cleanup=False, settings=None):
+                 disable_sql_cleanup=False, settings=None, api=None):
     """
     Checkpoint a contiguous prefix while evaluating cases in separate workers.
 
     ``settings`` is passed to each worker and is part of the fingerprint, so a
     resumed run cannot mix results produced with different settings.
     """
+    api = api or default_api(provider)
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},
                                    instructions, instruction_version, settings)
     previous = None
@@ -129,7 +126,6 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
             raise FileExistsError(f"Result exists: {output}; pass --resume to continue")
         previous = json.loads(output.read_text(encoding="utf-8"))
         meta = previous["run"]
-        api = "chat_completions" if provider == "openrouter" else "responses"
         if meta["case_fingerprint"] != fingerprint or meta["model"] != model or meta["api"] != api or meta.get("provider") != provider:
             raise ValueError("Existing result has a different case set, settings, model, or API")
         expected = [case.name for case in dataset.cases]
@@ -149,7 +145,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                 receiver, sender = context.Pipe(duplex=False)
                 case = dataset.cases[next_start - 1]
                 args = (next_start, case, databases, model, provider, key, output, instructions, instruction_version,
-                        disable_sql_cleanup, settings or {})
+                        disable_sql_cleanup, settings or {}, api)
                 process = context.Process(target=worker, args=(args, sender))
                 process.start()
                 sender.close()
@@ -188,8 +184,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                     previous["run"].update(dataset=dataset.name, case_fingerprint=fingerprint,
                                            question_count=len(dataset.cases), suite_instructions=instructions,
                                            instruction_version=instruction_version, model=model,
-                                           api="chat_completions" if provider == "openrouter" else "responses",
-                                           provider=provider, settings=settings or {})
+                                           api=api, provider=provider, settings=settings or {})
                 previous["cases"].extend(result["cases"])
                 previous["failures"].extend(result["failures"])
                 output.parent.mkdir(parents=True, exist_ok=True)

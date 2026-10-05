@@ -9,16 +9,29 @@ from pydantic_evals import Dataset
 from lumen.ai.evals.bird import BirdExecution, bird_source, database_path
 from lumen.ai.evals.harness import CheckResult, EvalOpenAI, evaluate
 
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
 
-def run_bird_case(args):
-    index, case, databases, model, provider, key, output, instructions, instruction_version, disable_sql_cleanup, settings = args
-    llm = EvalOpenAI(
+
+def default_api(provider):
+    return "chat_completions" if provider == "openrouter" else "responses"
+
+
+def eval_llm(model, provider, key, api=None, instructions=""):
+    openrouter = provider == "openrouter"
+    return EvalOpenAI(
         suite_instructions=instructions,
-        api="chat_completions" if provider == "openrouter" else "responses",
+        api=api or default_api(provider),
         temperature=None, api_key=key,
-        endpoint="https://openrouter.ai/api/v1" if provider == "openrouter" else None,
+        endpoint=OPENROUTER_ENDPOINT if openrouter else None,
+        stateless_responses=openrouter,
         model_kwargs={"default": {"model": model}, "ui": {"model": model}},
     )
+
+
+def run_bird_case(args):
+    (index, case, databases, model, provider, key, output, instructions, instruction_version,
+     disable_sql_cleanup, settings, api) = args
+    llm = eval_llm(model, provider, key, api, instructions)
     llm.disable_sql_cleanup = disable_sql_cleanup
     source_factory = lambda inputs: bird_source(database_path(databases, inputs.fixture.removeprefix("bird:")))
     one = Dataset(name="bird_case", cases=[case], evaluators=[CheckResult(), BirdExecution(databases)])
