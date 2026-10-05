@@ -2,6 +2,7 @@ import datetime as dt
 import io
 import json
 
+from types import SimpleNamespace
 from typing import get_args
 from unittest.mock import patch
 
@@ -22,7 +23,7 @@ from panel_material_ui import (
 from pydantic import ValidationError
 
 from lumen.ai.agents import (
-    ChatAgent, SourceAgent, SQLAgent, ValidationAgent,
+    Agent, ChatAgent, SourceAgent, SQLAgent, ValidationAgent,
 )
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.config import PROMPTS_DIR
@@ -37,6 +38,7 @@ from lumen.ai.models import ReplaceLine, RetrySpec, ThinkingYesNo
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.tools import FunctionTool, define_tool
+from lumen.ai.ui import UI
 from lumen.ai.utils import content_to_text, render_template
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
@@ -830,6 +832,75 @@ async def test_planner_multimodal_user_message(llm):
     assert isinstance(plan, Plan)
     assert plan.title == "Image Q&A"
     assert len(plan) == 1
+
+
+class RecordingAgent(Agent):
+
+    async def respond(self, messages, context, step_title=None):
+        self.calls.append(step_title)
+        return [], {}
+
+
+@pytest.fixture
+def recording_plan(llm):
+    agent = RecordingAgent(llm=llm)
+    agent.calls = calls = []
+    plan = Plan(ActorTask(agent, title="Record"), context={}, history=[], llm=llm)
+    return plan, calls
+
+
+async def test_coordinator_run_executes_plan(llm, recording_plan, monkeypatch):
+    plan, calls = recording_plan
+    planner = Planner(llm=llm)
+
+    async def respond(messages, context, **kwargs):
+        return plan
+
+    monkeypatch.setattr(planner, "respond", respond)
+    assert await planner.run("Record this") is plan
+    assert len(calls) == 1
+
+
+async def test_coordinator_chat_invoke_executes_plan_without_returning_it(llm, recording_plan, monkeypatch):
+    plan, calls = recording_plan
+    planner = Planner(llm=llm)
+
+    async def respond(messages, context, **kwargs):
+        return plan
+
+    monkeypatch.setattr(planner, "respond", respond)
+    assert await planner._chat_invoke("Record this", "User", planner.interface) is None
+    assert len(calls) == 1
+
+
+async def test_ui_chat_invoke_executes_plan(llm, recording_plan, monkeypatch):
+    plan, calls = recording_plan
+    planner = Planner(llm=llm)
+
+    async def respond(messages, context, **kwargs):
+        return plan
+
+    monkeypatch.setattr(planner, "respond", respond)
+    await UI._chat_invoke(SimpleNamespace(context={}, _coordinator=planner), "Record this", "User", planner.interface)
+    assert len(calls) == 1
+
+
+async def test_planner_without_chat_agent_resolves_tool_plan(llm):
+    PlanModel = make_plan_model(["SQLAgent"], ["_add_one"])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Needs the tool", yes=False),
+        PlanModel(
+            chain_of_thought="Use the tool",
+            title="Add one",
+            steps=[StepModel(actor="_add_one", instruction="Add one to 1", title="Adding")],
+        ),
+    ])
+    planner = Planner(llm=llm, agents=[SQLAgent()], tools=[_add_one])
+
+    plan = await planner.respond([{'role': 'user', 'content': 'Add one to 1'}], {})
+
+    assert [task.title for task in plan] == ["Adding"]
 
 
 def test_checklist_renders_status_indicators():

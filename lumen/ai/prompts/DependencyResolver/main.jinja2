@@ -11,7 +11,7 @@ Here's the choice of experts and their uses:
 {% for agent in agents %}
 - `{{ agent.name[:-5] }}`
   Provides: {{ agent.provides }}
-  Info: {{ agent.purpose.strip().split() | join(' ') }}
+  Info: {{ agent.routing_purpose(memory).strip().split() | join(' ') }}
 {% endfor %}
 {% if tools -%}
 Here's a list of tools:
@@ -19,7 +19,7 @@ Here's a list of tools:
 - `{{ tool.name }}`
   Requires: {{ tool.requires }}
   Provides: {{ tool.provides }}
-  Info: {{ tool.purpose.strip().split() | join(' ') }}
+  Info: {{ tool.routing_purpose(memory).strip().split() | join(' ') }}
 {% endfor %}
 {%- endif %}
 {% if primary %}

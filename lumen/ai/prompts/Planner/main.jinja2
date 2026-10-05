@@ -155,7 +155,7 @@ Context: No local weather table; `SourceLookup`, `SourceAgent`, and `ChatAgent` 
 ### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
 {%- else %} — Ready
 {%- endif %}
-{{ ' '.join(dedent(tool.purpose).strip().split()) }}
+{{ ' '.join(dedent(tool.routing_purpose(memory)).strip().split()) }}
 {% if tool.output_schema.__annotations__ -%}Provides: `{{ tool.output_schema.__annotations__ | join('`, `') }}`{%- endif %}
 Conditions for use:
 {%- for condition in tool.conditions %}
@@ -188,7 +188,7 @@ Conditions for use:
   {%- endfor %}
 {%- else %} — Ready
 {%- endif %}
-{{ dedent(agent.purpose).strip() }}
+{{ dedent(agent.routing_purpose(memory)).strip() }}
 {% if agent.output_schema.__annotations__ -%}Provides: `{{ agent.output_schema.__annotations__ | join('`, `') or 'None' }}`{%- endif %}
 Conditions:
 {%- for condition in agent.conditions %}
