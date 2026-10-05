@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import re
+import tempfile
 import time
 import traceback
 
@@ -1654,6 +1655,10 @@ class LlmCli(Llm):
     _supports_model_stream = False
     _supports_vision = False
 
+    # Run each request in a fresh empty directory unless working_dir is set,
+    # for CLIs that may write files or read project instructions from cwd.
+    _isolate_cwd = False
+
     def _create_base_client(self, **kwargs) -> Any:
         raise NotImplementedError("CLI-backed providers do not create an SDK client.")
 
@@ -1725,6 +1730,9 @@ class LlmCli(Llm):
     async def _run_command(self, command: list[str], prompt: str) -> str:
         if self.working_dir and not Path(self.working_dir).is_dir():
             raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        if self._isolate_cwd and not self.working_dir:
+            with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as cwd:
+                return await self._run_process(command, prompt, cwd)
         return await self._run_process(command, prompt, self.working_dir)
 
     async def _run_process(self, command: list[str], prompt: str, cwd: str | None) -> str:
