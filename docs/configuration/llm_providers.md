@@ -202,6 +202,41 @@ lumen-ai serve penguins.csv --provider claude-code
     rather than streaming tokens, and do not yet expose Lumen function tools to
     the coding CLIs.
 
+### GitHub Copilot CLI
+
+Use a locally authenticated GitHub Copilot CLI as Lumen's LLM provider, billed
+to an existing Copilot subscription.
+
+Install the CLI, make sure `copilot` is on your `PATH`, and sign in once:
+
+``` bash
+copilot login
+```
+
+Start Lumen with it, with or without a dataset:
+
+``` bash
+lumen-ai serve --provider copilot-cli
+lumen-ai serve penguins.csv --provider copilot-cli
+```
+
+Copilot picks the model unless you select one. The model names you can select
+depend on your Copilot plan, and `auto` always lets Copilot decide:
+
+``` bash
+lumen-ai serve --provider copilot-cli --model auto
+```
+
+!!! warning "Local development only"
+    Lumen runs each request in a fresh temporary directory and starts Copilot
+    with every tool disabled, so it can only answer in text: it cannot run shell
+    commands, read or write files, fetch URLs, or call MCP servers, and it skips
+    instruction files such as `AGENTS.md`. Each Lumen question makes several
+    Copilot requests (about eight for a query and a chart), and each one counts
+    against your Copilot premium requests. Copilot keeps a copy of every prompt
+    under `~/.copilot/session-state`, and Lumen does not disable any hooks or
+    plugins you have configured for Copilot.
+
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
 
