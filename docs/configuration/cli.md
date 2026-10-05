@@ -115,6 +115,7 @@ If not specified, Lumen auto-detects from environment variables.
 - `litellm` - Multi-provider
 - `codex-cli` - Locally authenticated Codex CLI
 - `claude-code` - Locally authenticated Claude Code CLI
+- `copilot-cli` - Locally authenticated GitHub Copilot CLI
 
 ### Set API key
 
