@@ -185,6 +185,7 @@ LLM_PROVIDERS = {
     'codex-cli': 'CodexCli',
     'claude-code': 'ClaudeCode',
     'copilot-cli': 'CopilotCli',
+    'antigravity-cli': 'AntigravityCli',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
