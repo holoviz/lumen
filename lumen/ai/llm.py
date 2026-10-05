@@ -1731,8 +1731,11 @@ class LlmCli(Llm):
         return await self._run_process(command, prompt, self.working_dir)
 
     async def _run_process(self, command: list[str], prompt: str, cwd: str | None) -> str:
+        return await self._communicate(await self._spawn(command, cwd), prompt)
+
+    async def _spawn(self, command: list[str], cwd: str | None) -> asyncio.subprocess.Process:
         try:
-            process = await asyncio.create_subprocess_exec(
+            return await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -1745,6 +1748,7 @@ class LlmCli(Llm):
                 f"using the {self.display_name} provider."
             ) from exc
 
+    async def _communicate(self, process: asyncio.subprocess.Process, prompt: str) -> str:
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(prompt.encode("utf-8")), timeout=self.timeout
