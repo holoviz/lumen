@@ -2032,13 +2032,12 @@ class OpenAI(Llm, OpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-5.6-luna"},  # Runs with reasoning disabled; see _reasoning_models
-"default": {"model": "gpt-6-luna},  # Runs with reasoning disabled; see _reasoning_models
+        "default": {"model": "gpt-6-luna"},  # Runs with reasoning disabled; see ADAPTIVE_KWARGS
     })
 
     select_models = param.List(default=[
-        "gpt-5.6-luna",
         "gpt-6-luna",
+        "gpt-5.6-luna",
         "gpt-6-sol",
         "gpt-5.4-nano",
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")

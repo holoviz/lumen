@@ -38,7 +38,7 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.6-luna"},  # Cheap for most agents
+    "default": {"model": "gpt-6-luna"},  # Cheap for most agents
     "sql": {"model": "gpt-4.1"},           # Powerful for SQL
     "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
     "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
@@ -121,7 +121,7 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-5.6-luna` | `gpt-6-luna`, `gpt-6-sol`, `gpt-5.4-nano` |
+| **OpenAI** | `gpt-6-luna` | `gpt-5.6-luna`, `gpt-6-sol`, `gpt-5.4-nano` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-6` |
 | **Google** | `gemini-3.8-flash` | `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.1-flash-lite` |
 | **Mistral** | `mistral-small-latest` | `mistral-medium-latest`, `mistral-large-latest`, `ministral-14b-latest` |
@@ -549,7 +549,7 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-5.6-luna"`, `"gpt-6-luna"`, `"gpt-6-sol"`, `"gpt-5.4-nano"`
+- **OpenAI**: `"gpt-6-luna"`, `"gpt-5.6-luna"`, `"gpt-6-sol"`, `"gpt-5.4-nano"`
 - **Anthropic**: `"claude-haiku-4-5"`, `"claude-sonnet-4-6"`, `"claude-opus-4-6"`
 - **OpenRouter**: `"openai/gpt-6-luna"`, `"qwen/qwen3.8-flash"`, `"z-ai/glm-5.3-flash"`, `"deepseek/deepseek-v4.1-flash"`
 - **Google**: `"gemini-3.8-flash"`, `"gemini-3.1-flash-lite"`
