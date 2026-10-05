@@ -517,7 +517,8 @@ class Llm(param.Parameterized):
             system_parts.append(system)
         non_system_messages = []
         for msg in messages:
-            if msg["role"] == "system":
+            # Responses API items such as function_call_output have no role.
+            if msg.get("role") == "system":
                 content = msg.get("content", "")
                 if content:
                     system_parts.append(content if isinstance(content, str) else str(content))
@@ -1565,7 +1566,9 @@ class Llm(param.Parameterized):
                 ):
                     next_messages = self._tool_messages_to_response_inputs(tool_messages)
                     next_kwargs = dict(kwargs)
-                    if response_id:
+                    if getattr(self, "stateless_responses", False):
+                        next_messages = messages + self._tool_calls_to_response_inputs(tool_calls) + next_messages
+                    elif response_id:
                         next_kwargs["previous_response_id"] = response_id
                     async for chunk in self.stream(
                         next_messages,  # type: ignore[arg-type]
@@ -2027,6 +2030,11 @@ class OpenAI(Llm, OpenAIMixin):
         - ``chat_completions``: Uses ``/v1/chat/completions`` (default)
         - ``responses``: Uses ``/v1/responses``""")
 
+    stateless_responses = param.Boolean(default=False, doc="""
+        Resend the full conversation on each Responses API request instead of
+        chaining ``previous_response_id``, for providers such as OpenRouter
+        that do not store responses.""")
+
     display_name = param.String(default="OpenAI", constant=True)
 
     mode = param.Selector(default=Mode.TOOLS)
@@ -2094,6 +2102,25 @@ class OpenAI(Llm, OpenAIMixin):
                 "output": message["content"],
             })
         return inputs
+
+    @classmethod
+    def _response_output_items(cls, response: Any) -> list[dict[str, Any]]:
+        items = getattr(response, "output", None) or []
+        return [
+            item if isinstance(item, dict)
+            else item.model_dump(exclude_none=True) if hasattr(item, "model_dump")
+            else dict(vars(item))
+            for item in items
+        ]
+
+    @classmethod
+    def _tool_calls_to_response_inputs(cls, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{
+            "type": "function_call",
+            "call_id": call["id"],
+            "name": call["function"]["name"],
+            "arguments": call["function"]["arguments"],
+        } for call in tool_calls]
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
@@ -2282,6 +2309,7 @@ class OpenAI(Llm, OpenAIMixin):
         # Outputs for the calls of the last response, which a request chained
         # onto it through previous_response_id must include.
         pending_outputs: list[dict[str, Any]] = []
+        history = list(messages)
         while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
@@ -2292,27 +2320,33 @@ class OpenAI(Llm, OpenAIMixin):
             if state.answer is not None:
                 return state.answer
             tool_outputs = self._tool_messages_to_response_inputs(tool_messages)
+            if self.stateless_responses:
+                history += self._response_output_items(output) + tool_outputs
             if stop or not tool_outputs:
                 pending_outputs = tool_outputs
                 break
             next_kwargs = dict(kwargs)
-            response_id = getattr(output, "id", None)
+            response_id = None if self.stateless_responses else getattr(output, "id", None)
             if response_id:
                 next_kwargs["previous_response_id"] = response_id
-            output = await self._traced_run_client(model_spec, tool_outputs, **next_kwargs)
+            next_inputs = history if self.stateless_responses else tool_outputs
+            output = await self._traced_run_client(model_spec, next_inputs, **next_kwargs)
 
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
             if max_retries is not None:
                 final_kwargs["max_retries"] = max_retries
-            response_id = getattr(output, "id", None)
+            response_id = None if self.stateless_responses else getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            final_messages = list(pending_outputs) if response_id else list(messages)
+            if self.stateless_responses and not tool_calls:
+                history += self._response_output_items(output)
+            final_messages = list(pending_outputs) if response_id else list(history)
             if submit is not None:
-                # The previous response already holds the model's text reply.
-                final_messages += self._submit_nudge(None if response_id else output, submit)
+                # The previous response or the history already holds the model's text reply.
+                replied = response_id or self.stateless_responses
+                final_messages += self._submit_nudge(None if replied else output, submit)
             output = await self._traced_run_client(model_spec, final_messages, **final_kwargs)
             output = await self._check_fallback_answer(state, output)
         return output
@@ -3936,6 +3970,9 @@ class OpenRouter(OpenAI):
         default="https://openrouter.ai/api/v1",
         doc="The OpenRouter API endpoint.",
     )
+
+    # OpenRouter rejects previous_response_id.
+    stateless_responses = param.Boolean(default=True)
 
     model_kwargs = param.Dict(default={
         "default": {"model": "openai/gpt-6-luna"},
