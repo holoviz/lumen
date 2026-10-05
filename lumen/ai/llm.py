@@ -1935,6 +1935,19 @@ class CopilotCli(LlmCli):
 
     _isolate_cwd = True
 
+    def _build_command(self, model: str | None) -> list[str]:
+        # An allowlist naming no real tool disables every tool, including user
+        # MCP tools that deny rules cannot match; the deny rules are a backstop.
+        command = [
+            self.executable, "--output-format", "json", "--stream", "off", "--no-ask-user",
+            "--no-custom-instructions", "--disable-builtin-mcps", "--no-remote-export", "--no-auto-update",
+            "--available-tools=none", "--deny-tool=shell", "--deny-tool=write", "--deny-tool=read",
+            "--deny-tool=url", "--deny-tool=memory",
+        ]
+        if model:
+            command.extend(["--model", model])
+        return command
+
 
 class LlamaCpp(Llm, LlamaCppMixin):
     """
