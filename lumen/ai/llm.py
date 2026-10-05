@@ -1925,6 +1925,110 @@ class ClaudeCode(LlmCli):
         return str(response["result"]).strip()
 
 
+class _AcpProcess:
+    """A long-running `copilot --acp --stdio` process that answers many prompts.
+
+    Starting the CLI takes several seconds, so reusing one process makes each
+    request much faster than launching the CLI per request.
+    """
+
+    def __init__(self, command: list[str]):
+        self.command = command
+        self.loop = asyncio.get_running_loop()
+        self.process = None
+        self._lock = asyncio.Lock()
+        self._next_id = 0
+        self._pending: dict[int, asyncio.Future] = {}
+        self._chunks: dict[str, list[str]] = {}
+
+    @property
+    def alive(self) -> bool:
+        return self.loop is asyncio.get_running_loop() and (
+            self.process is None or self.process.returncode is None
+        )
+
+    async def _start(self):
+        self._cwd = tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        self.process = await asyncio.create_subprocess_exec(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=self._cwd.name,
+            limit=2**26,
+        )
+        self._reader = asyncio.create_task(self._read())
+        await self._request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+
+    def _send(self, message: dict):
+        self.process.stdin.write((json.dumps({"jsonrpc": "2.0", **message}) + "\n").encode("utf-8"))
+
+    async def _request(self, method: str, params: dict) -> dict:
+        self._next_id += 1
+        request_id = self._next_id
+        future = self.loop.create_future()
+        self._pending[request_id] = future
+        self._send({"id": request_id, "method": method, "params": params})
+        try:
+            response = await future
+        finally:
+            self._pending.pop(request_id, None)
+        if "error" in response:
+            raise RuntimeError(f"GitHub Copilot CLI {method} failed: {response['error'].get('message')}")
+        return response["result"]
+
+    async def _read(self):
+        async for line in self.process.stdout:
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "method" in message and "id" in message:
+                # Every tool is disabled, so refuse any permission or client request.
+                result = {"outcome": {"outcome": "cancelled"}}
+                self._send({"id": message["id"], "result": result})
+            elif "id" in message:
+                future = self._pending.get(message["id"])
+                if future and not future.done():
+                    future.set_result(message)
+            elif message.get("method") == "session/update":
+                update = message["params"]["update"]
+                chunks = self._chunks.get(message["params"]["sessionId"])
+                if chunks is not None and update.get("sessionUpdate") == "agent_message_chunk":
+                    chunks.append(update["content"].get("text", ""))
+        await self.process.wait()
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(RuntimeError(
+                    f"GitHub Copilot CLI exited with status {self.process.returncode}."
+                ))
+
+    async def prompt(self, prompt: str, cwd: str) -> str:
+        async with self._lock:
+            if self.process is None:
+                await self._start()
+        session_id = (await self._request("session/new", {"cwd": cwd, "mcpServers": []}))["sessionId"]
+        self._chunks[session_id] = []
+        try:
+            result = await self._request(
+                "session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]}
+            )
+        except BaseException:
+            if self.process.returncode is None:
+                self._send({"method": "session/cancel", "params": {"sessionId": session_id}})
+            raise
+        finally:
+            chunks = self._chunks.pop(session_id)
+        # Copilot reports session notices as whole "Info: " or "Warning: "
+        # chunks ahead of the answer; drop those before the first answer text.
+        while chunks and re.match(r"(Info|Warning): ", chunks[0]):
+            chunks.pop(0)
+        text = "".join(chunks)
+        if result.get("stopReason") != "end_turn":
+            raise RuntimeError(f"GitHub Copilot CLI stopped early ({result.get('stopReason')}): {text}")
+        return text
+
+
 class CopilotCli(LlmCli):
     """Use the locally authenticated GitHub Copilot CLI as a Lumen provider."""
 
