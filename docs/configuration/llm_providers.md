@@ -235,9 +235,9 @@ Copilot Free, only accept `--model auto`; any other name fails with
     instruction files such as `AGENTS.md`. Each Lumen question makes several
     Copilot requests (seven to ten for a query and a chart), and each one counts
     against your plan's Copilot usage allowance, which is small on Copilot
-    Free. Copilot keeps a copy of every prompt
-    under `~/.copilot/session-state`, and Lumen does not disable any hooks or
-    plugins you have configured for Copilot.
+    Free. Copilot keeps a copy of every prompt under `~/.copilot/session-state`,
+    and Lumen does not disable any hooks or plugins you have configured for
+    Copilot.
 
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
