@@ -3,6 +3,7 @@
 import asyncio
 import base64
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -251,6 +252,34 @@ async def test_cli_provider_sends_prompt_over_stdin(monkeypatch, tmp_path):
     assert captured["command"] == ("claude", "--print")
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
     assert captured["kwargs"]["cwd"] == str(tmp_path)
+
+
+async def test_cli_provider_isolates_cwd(monkeypatch, tmp_path):
+    seen = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, data):
+            return b"", b""
+
+    async def create_subprocess(*command, **kwargs):
+        cwd = kwargs["cwd"]
+        seen.append((cwd, cwd is not None and Path(cwd).is_dir()))
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
+    await ClaudeCode()._run_command(["claude"], "Hi")
+    monkeypatch.setattr(ClaudeCode, "_isolate_cwd", True)
+    await ClaudeCode()._run_command(["claude"], "Hi")
+    await ClaudeCode(working_dir=str(tmp_path))._run_command(["claude"], "Hi")
+
+    (default_cwd, _), (isolated_cwd, existed), (override_cwd, _) = seen
+    assert default_cwd is None
+    assert existed
+    assert Path(isolated_cwd).name.startswith("lumen-cli-")
+    assert not Path(isolated_cwd).exists()
+    assert override_cwd == str(tmp_path)
 
 
 async def test_cli_provider_skips_unsupported_tool_loop(monkeypatch):
