@@ -27,6 +27,39 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+
+FAKE_ACP_SERVER = r"""
+import json, os, sys
+
+def send(message):
+    print(json.dumps({"jsonrpc": "2.0", **message}), flush=True)
+
+def chunk(session, text):
+    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+    send({"method": "session/update", "params": {"sessionId": session, "update": update}})
+
+cwds = {}
+for line in sys.stdin:
+    request = json.loads(line)
+    method, params = request["method"], request.get("params", {})
+    if method == "initialize":
+        send({"id": request["id"], "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        session = f"s{len(cwds)}"
+        cwds[session] = params["cwd"]
+        send({"id": request["id"], "result": {"sessionId": session}})
+    elif method == "session/prompt":
+        session = params["sessionId"]
+        prompt = params["prompt"][0]["text"]
+        chunk(session, "Info: Disabled tools: bash")
+        chunk(session, "Warning: something")
+        chunk(session, f"pid={os.getpid()} ")
+        chunk(session, f"cwd_exists={os.path.isdir(cwds[session])} ")
+        chunk(session, prompt.splitlines()[-1])
+        stop = "refusal" if "REFUSE" in prompt else "end_turn"
+        send({"id": request["id"], "result": {"stopReason": stop}})
+"""
+
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel, ValidationError
 
@@ -229,39 +262,6 @@ def test_cli_output_decoders():
 
     claude = ClaudeCode()
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
-
-
-FAKE_ACP_SERVER = r"""
-import json, os, sys
-
-def send(message):
-    print(json.dumps({"jsonrpc": "2.0", **message}), flush=True)
-
-def chunk(session, text):
-    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
-    send({"method": "session/update", "params": {"sessionId": session, "update": update}})
-
-cwds = {}
-for line in sys.stdin:
-    request = json.loads(line)
-    method, params = request["method"], request.get("params", {})
-    if method == "initialize":
-        send({"id": request["id"], "result": {"protocolVersion": 1}})
-    elif method == "session/new":
-        session = f"s{len(cwds)}"
-        cwds[session] = params["cwd"]
-        send({"id": request["id"], "result": {"sessionId": session}})
-    elif method == "session/prompt":
-        session = params["sessionId"]
-        prompt = params["prompt"][0]["text"]
-        chunk(session, "Info: Disabled tools: bash")
-        chunk(session, "Warning: something")
-        chunk(session, f"pid={os.getpid()} ")
-        chunk(session, f"cwd_exists={os.path.isdir(cwds[session])} ")
-        chunk(session, prompt.splitlines()[-1])
-        stop = "refusal" if "REFUSE" in prompt else "end_turn"
-        send({"id": request["id"], "result": {"stopReason": stop}})
-"""
 
 
 async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
