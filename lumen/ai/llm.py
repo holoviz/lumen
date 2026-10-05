@@ -1649,7 +1649,8 @@ class LlmCli(Llm):
 
     working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
         Working directory for CLI subprocesses. By default, the CLI inherits the
-        directory from which Lumen was launched.""")
+        directory from which Lumen was launched, or runs in a fresh temporary
+        directory for providers that isolate each request.""")
 
     _supports_stream = False
     _supports_model_stream = False
