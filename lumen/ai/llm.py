@@ -184,6 +184,7 @@ LLM_PROVIDERS = {
     'kilo': 'Kilo',
     'codex-cli': 'CodexCli',
     'claude-code': 'ClaudeCode',
+    'copilot-cli': 'CopilotCli',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
