@@ -17,9 +17,9 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
-        CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli,
-        Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm,
+        LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -205,11 +205,13 @@ def test_cli_providers_are_registered():
     assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCli"
     assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCode"
     assert lmai.llm.LLM_PROVIDERS["copilot-cli"] == "CopilotCli"
+    assert lmai.llm.LLM_PROVIDERS["antigravity-cli"] == "AntigravityCli"
     assert issubclass(CodexCli, LlmCli)
     assert issubclass(ClaudeCode, LlmCli)
     assert issubclass(CopilotCli, LlmCli)
+    assert issubclass(AntigravityCli, LlmCli)
     # Last, so CLI providers are never auto-selected ahead of a configured one.
-    assert list(lmai.llm.LLM_PROVIDERS)[-1] == "copilot-cli"
+    assert list(lmai.llm.LLM_PROVIDERS)[-2:] == ["copilot-cli", "antigravity-cli"]
 
 
 def test_codex_cli_command_defaults_to_read_only():
