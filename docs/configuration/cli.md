@@ -136,13 +136,13 @@ lumen-ai serve
 For simple cases, use `--model` to set the default model:
 
 ``` bash title="Set default model"
-lumen-ai serve --provider ollama --model 'qwen3:32b'
+lumen-ai serve --provider ollama --model 'qwen3.6:35b-a3b'
 ```
 
 ``` bash title="Different providers"
 lumen-ai serve --provider openai --model 'gpt-4o-mini'
-lumen-ai serve --provider anthropic --model 'claude-sonnet-4-5'
-lumen-ai serve --provider google --model 'gemini-2.0-flash'
+lumen-ai serve --provider anthropic --model 'claude-sonnet-4-6'
+lumen-ai serve --provider google --model 'gemini-3.8-flash'
 ```
 
 The `--model` argument automatically sets `model_kwargs['default']['model']` for you.
@@ -161,11 +161,11 @@ lumen-ai serve --model-kwargs '{
 
 ``` bash title="Combine --model with --model-kwargs"
 lumen-ai serve --provider ollama \
-  --model 'qwen3:32b' \
-  --model-kwargs '{"edit": {"model": "mistral-small3.2:24b"}}'
+  --model 'qwen3.6:35b-a3b' \
+  --model-kwargs '{"edit": {"model": "qwen3.8:27b"}}'
 ```
 
-This sets `qwen3:32b` as the default model and `mistral-small3.2:24b` for editing tasks.
+This sets `qwen3.6:35b-a3b` as the default model and `qwen3.8:27b` for editing tasks.
 
 !!! warning "Escape JSON properly"
     The JSON string must be properly quoted. Use single quotes around the entire JSON, double quotes inside.
@@ -201,7 +201,7 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 | `--code-execution` | [Code execution mode](../getting_started/using_lumen_ai.md#code-execution-for-visualizations) | `--code-execution prompt` |
 | `--provider` | LLM provider | `--provider anthropic` |
 | `--api-key` | API key | `--api-key sk-...` |
-| `--model` | Default model | `--model 'qwen3:32b'` |
+| `--model` | Default model | `--model 'qwen3.6:35b-a3b'` |
 | `--model-kwargs` | Advanced model config | `--model-kwargs '{"sql": {"model": "gpt-4o"}}'` |
 | `--temperature` | Randomness | `--temperature 0.5` |
 | `--agents` | Active agents | `--agents SQLAgent ChatAgent` |
@@ -232,7 +232,7 @@ lumen-ai serve penguins.csv \
 ``` bash title="Using Ollama locally"
 lumen-ai serve data/*.csv \
   --provider ollama \
-  --model 'qwen3:32b' \
+  --model 'qwen3.6:35b-a3b' \
   --temperature 0.4 \
   --log-level debug \
   --show
