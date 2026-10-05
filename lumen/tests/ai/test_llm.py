@@ -252,6 +252,15 @@ def test_copilot_cli_command_disables_all_tools():
     ]
 
 
+def test_antigravity_cli_command_reads_prompt_from_stdin():
+    llm = AntigravityCli()
+
+    stream = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
+
+    assert llm._build_command(None) == stream
+    assert llm._build_command("gemini-3.8-flash-low") == [*stream, "--model", "gemini-3.8-flash-low"]
+
+
 def test_cli_output_decoders():
     codex = CodexCli()
     codex_output = (
