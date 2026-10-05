@@ -1924,6 +1924,18 @@ class ClaudeCode(LlmCli):
         return str(response["result"]).strip()
 
 
+class CopilotCli(LlmCli):
+    """Use the locally authenticated GitHub Copilot CLI as a Lumen provider."""
+
+    display_name = param.String(default="GitHub Copilot CLI", constant=True)
+
+    executable = param.String(default="copilot", constant=True)
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    _isolate_cwd = True
+
+
 class LlamaCpp(Llm, LlamaCppMixin):
     """
     A LLM implementation using Llama.cpp Python wrapper together with huggingface_hub to fetch the models.
