@@ -204,15 +204,17 @@ def test_claude_code_command_defaults_to_plan_mode():
 def test_copilot_cli_command_disables_all_tools():
     llm = CopilotCli()
 
-    command = llm._build_command("gpt-5.4")
-
-    assert command == [
-        "copilot", "--output-format", "json", "--stream", "off", "--no-ask-user",
-        "--no-custom-instructions", "--disable-builtin-mcps", "--no-remote-export", "--no-auto-update",
-        "--available-tools=none", "--deny-tool=shell", "--deny-tool=write", "--deny-tool=read",
-        "--deny-tool=url", "--deny-tool=memory", "--model", "gpt-5.4",
+    lockdown = [
+        "copilot", "--no-ask-user", "--no-custom-instructions", "--disable-builtin-mcps",
+        "--no-remote-export", "--no-auto-update", "--available-tools=none", "--deny-tool=shell",
+        "--deny-tool=write", "--deny-tool=read", "--deny-tool=url", "--deny-tool=memory",
     ]
-    assert "-p" not in command
+
+    assert llm._build_command(None) == [*lockdown, "--acp", "--stdio"]
+    assert llm._build_command("auto") == [*lockdown, "--acp", "--stdio"]
+    assert llm._build_command("gpt-5.4") == [
+        *lockdown, "--output-format", "json", "--stream", "off", "--model", "gpt-5.4",
+    ]
 
 
 def test_cli_output_decoders():
