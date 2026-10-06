@@ -267,6 +267,7 @@ def test_antigravity_cli_command_reads_prompt_from_stdin():
 
     assert llm._build_command(None) == stream
     assert llm._build_command("gemini-3.8-flash-low") == [*stream, "--model", "gemini-3.8-flash-low"]
+    assert llm._get_model_kwargs("default")["model"] == "gemini-3.8-flash-low"
 
 
 def test_cli_output_decoders():
