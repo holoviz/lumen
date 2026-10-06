@@ -258,14 +258,10 @@ lumen-ai serve --provider antigravity-cli
 lumen-ai serve penguins.csv --provider antigravity-cli
 ```
 
-Lumen uses `gemini-3.8-flash-low` by default because it was the fastest model
-in testing: a penguins query and chart took about 40 seconds, compared with
-about 90 seconds using Antigravity's own default. Run `agy models` to list the
-models you can pass with `--model` instead:
-
-``` bash
-lumen-ai serve --provider antigravity-cli --model gemini-3.1-pro-high
-```
+Lumen uses `gemini-3.8-flash-low` by default, a low-cost Flash model and the
+fastest one in testing: a penguins query and chart took about 40 seconds,
+compared with about 90 seconds using Antigravity's own default. Run
+`agy models` to list the other models you can pass with `--model`.
 
 !!! warning "Local development only"
     Each request runs in a fresh temporary directory, and Lumen keeps one `agy`
