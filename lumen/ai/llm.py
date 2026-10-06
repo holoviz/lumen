@@ -1919,8 +1919,10 @@ class ClaudeCode(LlmCli):
 class _AcpProcess:
     """A long-running `copilot --acp --stdio` process that answers many prompts.
 
-    Starting the CLI takes several seconds, so reusing one process makes each
-    request much faster than launching the CLI per request.
+    ACP is the Agent Client Protocol, JSON-RPC over stdin and stdout that lets
+    a program drive a coding agent. Starting the CLI takes several seconds, so
+    reusing one process makes each request much faster than launching the CLI
+    per request.
     """
 
     def __init__(self, command: list[str]):
