@@ -242,7 +242,7 @@ Copilot Free, only accept `--model auto`; any other name fails with
 ### Antigravity CLI
 
 Use a locally authenticated Google Antigravity CLI (`agy`) as Lumen's LLM
-provider, billed to your existing Antigravity plan.
+provider. Requests count against your Antigravity account's usage limits.
 
 Install the CLI, then run `agy` once and sign in with your Google account:
 
