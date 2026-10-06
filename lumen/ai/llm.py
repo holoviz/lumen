@@ -2114,6 +2114,14 @@ class AntigravityCli(LlmCli):
         super().__init__(**params)
         self._spares: dict[tuple[str, ...], tuple] = {}
 
+    def _build_command(self, model: str | None) -> list[str]:
+        # stream-json input is the only way to pass the prompt on stdin
+        # instead of the command line, and it requires stream-json output.
+        command = [self.executable, "--input-format", "stream-json", "--output-format", "stream-json"]
+        if model:
+            command.extend(["--model", model])
+        return command
+
     async def _start(self, command: list[str]) -> tuple:
         # Each request gets a fresh empty directory unless working_dir is set,
         # so the agent never sees the files of the directory Lumen runs in.
@@ -2139,14 +2147,6 @@ class AntigravityCli(LlmCli):
         finally:
             if tmp is not None:
                 tmp.cleanup()
-
-    def _build_command(self, model: str | None) -> list[str]:
-        # stream-json input is the only way to pass the prompt on stdin
-        # instead of the command line, and it requires stream-json output.
-        command = [self.executable, "--input-format", "stream-json", "--output-format", "stream-json"]
-        if model:
-            command.extend(["--model", model])
-        return command
 
     def _decode_output(self, output: str) -> str:
         result = None
