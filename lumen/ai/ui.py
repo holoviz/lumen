@@ -20,7 +20,9 @@ from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
-from panel.pane import SVG, Image, Markdown, Str
+from panel.pane import (
+    SVG, Image, Markdown, Str,
+)
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
