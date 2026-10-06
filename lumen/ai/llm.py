@@ -1726,12 +1726,10 @@ class LlmCli(Llm):
             f"JSON Schema:\n{schema}"
         )
 
-    async def _run_command(self, command: list[str], prompt: str) -> str:
-        if self.working_dir and not Path(self.working_dir).is_dir():
-            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
-        return await self._run_process(command, prompt, self.working_dir)
-
-    async def _run_process(self, command: list[str], prompt: str, cwd: str | None) -> str:
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        cwd = cwd or self.working_dir
+        if cwd and not Path(cwd).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {cwd!r}")
         return await self._communicate(await self._spawn(command, cwd), prompt)
 
     async def _spawn(self, command: list[str], cwd: str | None) -> asyncio.subprocess.Process:
@@ -1926,8 +1924,10 @@ class ClaudeCode(LlmCli):
 class _AcpProcess:
     """A long-running `copilot --acp --stdio` process that answers many prompts.
 
-    Starting the CLI takes several seconds, so reusing one process makes each
-    request much faster than launching the CLI per request.
+    ACP is the Agent Client Protocol, JSON-RPC over stdin and stdout that lets
+    a program drive a coding agent. Starting the CLI takes several seconds, so
+    reusing one process makes each request much faster than launching the CLI
+    per request.
     """
 
     def __init__(self, command: list[str]):
@@ -2057,15 +2057,15 @@ class CopilotCli(LlmCli):
             return [*command, "--output-format", "json", "--stream", "off", "--model", model]
         return [*command, "--acp", "--stdio"]
 
-    async def _run_command(self, command: list[str], prompt: str) -> str:
-        if self.working_dir and not Path(self.working_dir).is_dir():
-            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
         # Each request gets a fresh empty directory unless working_dir is set,
         # so Copilot never sees the files of the directory Lumen runs in.
         with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
             cwd = self.working_dir or tmp
             if "--acp" not in command:
-                return await self._run_process(command, prompt, cwd)
+                return await super()._run_command(command, prompt, cwd)
+            if not Path(cwd).is_dir():
+                raise ValueError(f"CLI working directory does not exist: {cwd!r}")
             return await self._run_acp(command, prompt, cwd)
 
     async def _run_acp(self, command: list[str], prompt: str, cwd: str) -> str:
