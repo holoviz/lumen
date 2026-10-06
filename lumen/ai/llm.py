@@ -2133,14 +2133,13 @@ class AntigravityCli(LlmCli):
         if self.working_dir and not Path(self.working_dir).is_dir():
             raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
         key = tuple(command)
-        spare = self._spares.pop(key, None)
-        if spare is None or spare[0] is not asyncio.get_running_loop() or spare[1].returncode is not None:
-            spare = await self._start(command)
+        loop, process, tmp = self._spares.pop(key, None) or await self._start(command)
+        if loop is not asyncio.get_running_loop() or process.returncode is not None:
+            loop, process, tmp = await self._start(command)
         # agy spends about ten seconds starting up before it reads stdin, so
         # start the process for the next request now. A process serves only
         # one request because every turn it reads shares one conversation.
         self._spares[key] = await self._start(command)
-        _, process, tmp = spare
         message = json.dumps({"event": "user", "message": {"content": prompt}})
         try:
             return await self._communicate(process, message + "\n")
