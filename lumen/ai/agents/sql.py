@@ -4,13 +4,12 @@ import narwhals.stable.v2 as nw
 import pandas as pd
 import param
 import sqlglot
-import yaml
-from sqlglot import exp
-from sqlglot.lineage import lineage
 
 from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
+from sqlglot import exp
+from sqlglot.lineage import lineage
 
 from ...filters import ConstantFilter
 from ...pipeline import Pipeline
@@ -862,7 +861,7 @@ class SQLAgent(BaseLumenAgent):
             return []
 
         provenance_list = []
-        
+
         main_select = parsed.find(exp.Select)
         if not main_select:
             return []
@@ -886,13 +885,13 @@ class SQLAgent(BaseLumenAgent):
             try:
                 # 1. Lineage API ka tree
                 node = lineage(target_column, parsed, dialect=dialect)
-                
+
                 # 2. Expression (Formula) lineage node se nikalte hain
                 if isinstance(node.expression, exp.Alias):
                     formula = node.expression.this.sql(dialect=dialect)
                 else:
                     formula = node.expression.sql(dialect=dialect)
-                
+
                 # 3. Source Columns aur Unka Relation (Table) lineage API se
                 source_columns = []
                 for leaf in node.walk():
@@ -904,12 +903,12 @@ class SQLAgent(BaseLumenAgent):
                             full_col_name = f"{relation_name}.{leaf.name}"
                         else:
                             full_col_name = leaf.name
-                            
+
                         source_columns.append(full_col_name)
-                        
+
                 # Duplicates remove karo
                 source_columns = list(dict.fromkeys(source_columns))
-                
+
                 provenance_list.append({
                     "column": target_column,
                     "expression": formula,
