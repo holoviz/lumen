@@ -1291,7 +1291,6 @@ class SQLAgent(BaseLumenAgent):
         step_title: str | None,
     ) -> SQLEditor:
         """Finalize execution for final step."""
-        
         dialect = pipeline.source.dialect if pipeline and pipeline.source else None
         provenance = self._extract_provenance(sql, dialect)
 
