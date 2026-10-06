@@ -2107,7 +2107,8 @@ class AntigravityCli(LlmCli):
 
     executable = param.String(default="agy", constant=True)
 
-    model_kwargs = param.Dict(default={"default": {"model": None}})
+    # The fastest model measured; Antigravity's own default is far slower.
+    model_kwargs = param.Dict(default={"default": {"model": "gemini-3.8-flash-low"}})
 
     def __init__(self, **params):
         super().__init__(**params)
