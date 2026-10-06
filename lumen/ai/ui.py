@@ -20,7 +20,7 @@ from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
-from panel.pane import SVG, Image, Markdown
+from panel.pane import SVG, Image, Markdown, Str
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
@@ -2643,8 +2643,37 @@ class ExplorerUI(UI):
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
+        # Build provenance pane if view has lineage data (SQLEditor only)
+        provenance = getattr(view, "provenance", [])
+        if provenance:
+            lines = []
+            for item in provenance:
+                src = ", ".join(item["source_columns"]) if item["source_columns"] else "—"
+                grp = item["grouped_by"] or "—"
+                lines.append(
+                    f"Column: {item['column']}  |  "
+                    f"Expression: {item['expression']}  |  "
+                    f"Source: {src}  |  "
+                    f"Grouped by: {grp}"
+                )
+            provenance_str = "\n".join(lines)
+            provenance_pane = Str(
+                provenance_str,
+                sizing_mode="stretch_width",
+                margin=(5, 10),
+                styles={"white-space": "pre", "font-size": "12px"}
+            )
+            editor_col = Column(
+                view.editor,
+                provenance_pane,
+                width_policy="max",
+                scroll="y-auto"
+            )
+        else:
+            editor_col = Column(view.editor, width_policy="max", scroll="y-auto")
+
         vsplit = VSplit(
-            Column(view.editor, width_policy="max", scroll="y-auto"),
+            editor_col,
             view,
             expanded_sizes=(20, 80),
             sizes=(20, 80),

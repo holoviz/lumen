@@ -803,9 +803,12 @@ class SQLAgent(BaseLumenAgent):
         step_title: str | None,
     ) -> SQLEditor:
         """Finalize execution for final step."""
+        
+        dialect = pipeline.source.dialect if pipeline and pipeline.source else None
+        provenance = self._extract_provenance(sql, dialect)
 
         view = self._editor_type(
-            component=pipeline, title=step_title, spec=sql
+            component=pipeline, title=step_title, spec=sql, provenance=provenance
         )
         return view
 
@@ -845,6 +848,81 @@ class SQLAgent(BaseLumenAgent):
                 condition = f"= {query!r}"
             conditions.append(f"{filt.field} {condition}")
         return conditions or None
+
+    @staticmethod
+    def _extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]:
+        """
+        Extracts lineage information (expression, source columns with relations, grouped by)
+        using SQLGlot's lineage API entirely.
+        """
+        import sqlglot
+        from sqlglot import exp
+        from sqlglot.lineage import lineage
+        
+        try:
+            parsed = sqlglot.parse_one(sql_query, read=dialect)
+        except Exception:
+            return []
+
+        provenance_list = []
+        
+        main_select = parsed.find(exp.Select)
+        if not main_select:
+            return []
+
+        # GROUP BY query ke level pe hota hai, isiliye usko parsed object se lete hain
+        group_by_cols = []
+        if main_select.args.get("group"):
+            for group_expr in main_select.args["group"].expressions:
+                group_by_cols.append(group_expr.sql(dialect=dialect))
+        group_by_str = ", ".join(group_by_cols) if group_by_cols else None
+
+        # Hum sirf target_column ka naam parsed se nikalte hain taaki lineage API ko bata sakein kisko trace karna hai
+        for expression in main_select.expressions:
+            if isinstance(expression, exp.Alias):
+                target_column = expression.alias
+            elif isinstance(expression, exp.Column):
+                target_column = expression.name
+            else:
+                continue
+
+            try:
+                # 1. Lineage API ka tree
+                node = lineage(target_column, parsed, dialect=dialect)
+                
+                # 2. Expression (Formula) lineage node se nikalte hain
+                if isinstance(node.expression, exp.Alias):
+                    formula = node.expression.this.sql(dialect=dialect)
+                else:
+                    formula = node.expression.sql(dialect=dialect)
+                
+                # 3. Source Columns aur Unka Relation (Table) lineage API se
+                source_columns = []
+                for leaf in node.walk():
+                    # Jab koi downstream nahi hai toh yeh root/base table ka column hai
+                    if not leaf.downstream:
+                        # leaf.source humein table/relation deta hai
+                        if isinstance(leaf.source, exp.Table):
+                            relation_name = leaf.source.name
+                            full_col_name = f"{relation_name}.{leaf.name}"
+                        else:
+                            full_col_name = leaf.name
+                            
+                        source_columns.append(full_col_name)
+                        
+                # Duplicates remove karo
+                source_columns = list(dict.fromkeys(source_columns))
+                
+                provenance_list.append({
+                    "column": target_column,
+                    "expression": formula,
+                    "source_columns": source_columns,
+                    "grouped_by": group_by_str
+                })
+            except Exception:
+                pass
+
+        return provenance_list
 
     @retry_llm_output()
     async def _render_execute_query(

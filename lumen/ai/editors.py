@@ -594,6 +594,8 @@ class SQLEditor(LumenEditor):
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
+    provenance = param.List(default=[])
+
     # Icon shown in the "Add Filter" menu for each schema type.
     _filter_icons = {
         "number": "calculate",
