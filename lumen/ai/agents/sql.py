@@ -5,6 +5,8 @@ import pandas as pd
 import param
 import sqlglot
 import yaml
+from sqlglot import exp
+from sqlglot.lineage import lineage
 
 from panel.chat import ChatStep
 from pydantic import BaseModel, Field, create_model
@@ -854,10 +856,6 @@ class SQLAgent(BaseLumenAgent):
         Extracts lineage information (expression, source columns with relations, grouped by)
         using SQLGlot's lineage API entirely.
         """
-        import sqlglot
-        from sqlglot import exp
-        from sqlglot.lineage import lineage
-        
         try:
             parsed = sqlglot.parse_one(sql_query, read=dialect)
         except Exception:
