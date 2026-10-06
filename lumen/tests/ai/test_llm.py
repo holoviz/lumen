@@ -27,6 +27,8 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor.processing.multimodal import Image
+from pydantic import BaseModel, ValidationError
 
 FAKE_ACP_SERVER = r"""
 import json, os, sys
@@ -59,9 +61,6 @@ for line in sys.stdin:
         stop = "refusal" if "REFUSE" in prompt else "end_turn"
         send({"id": request["id"], "result": {"stopReason": stop}})
 """
-
-from instructor.processing.multimodal import Image
-from pydantic import BaseModel, ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
