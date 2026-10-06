@@ -1725,12 +1725,10 @@ class LlmCli(Llm):
             f"JSON Schema:\n{schema}"
         )
 
-    async def _run_command(self, command: list[str], prompt: str) -> str:
-        if self.working_dir and not Path(self.working_dir).is_dir():
-            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
-        return await self._run_process(command, prompt, self.working_dir)
-
-    async def _run_process(self, command: list[str], prompt: str, cwd: str | None) -> str:
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        cwd = cwd or self.working_dir
+        if cwd and not Path(cwd).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {cwd!r}")
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -2052,15 +2050,15 @@ class CopilotCli(LlmCli):
             return [*command, "--output-format", "json", "--stream", "off", "--model", model]
         return [*command, "--acp", "--stdio"]
 
-    async def _run_command(self, command: list[str], prompt: str) -> str:
-        if self.working_dir and not Path(self.working_dir).is_dir():
-            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
         # Each request gets a fresh empty directory unless working_dir is set,
         # so Copilot never sees the files of the directory Lumen runs in.
         with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
             cwd = self.working_dir or tmp
             if "--acp" not in command:
-                return await self._run_process(command, prompt, cwd)
+                return await super()._run_command(command, prompt, cwd)
+            if not Path(cwd).is_dir():
+                raise ValueError(f"CLI working directory does not exist: {cwd!r}")
             return await self._run_acp(command, prompt, cwd)
 
     async def _run_acp(self, command: list[str], prompt: str, cwd: str) -> str:
