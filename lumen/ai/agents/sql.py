@@ -900,7 +900,10 @@ class SQLAgent(BaseLumenAgent):
                         # leaf.source humein table/relation deta hai
                         if isinstance(leaf.source, exp.Table):
                             relation_name = leaf.source.name
-                            full_col_name = f"{relation_name}.{leaf.name}"
+                            if leaf.name.startswith(f"{relation_name}."):
+                                full_col_name = leaf.name
+                            else:
+                                full_col_name = f"{relation_name}.{leaf.name}"
                         else:
                             full_col_name = leaf.name
 
