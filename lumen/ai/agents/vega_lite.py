@@ -1132,10 +1132,14 @@ class VegaLiteAgent(BaseCodeAgent):
                 # each get their own independent background task with no
                 # shared state to race on.
                 if not self._spec_has_aggregation(spec):
-                    state.execute(partial(
-                        self._generate_ai_explanations,
-                        editor.component, messages, context,
-                    ))
+                    pipeline_data = editor.component.pipeline.data
+                    is_data_small = pipeline_data is not None and len(pipeline_data) <= 800
+
+                    if is_data_small:
+                        state.execute(partial(
+                            self._generate_ai_explanations,
+                            editor.component, messages, context,
+                        ))
 
         out_context = await editors[-1].render_context()
         return outs, out_context
