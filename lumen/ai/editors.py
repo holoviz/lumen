@@ -75,6 +75,8 @@ class LumenEditor(Viewer):
 
     loading = param.Boolean()
 
+    wanting_ai_explanation = param.Boolean(default=False, doc="Track if AI explanation is requested")
+
     footer = param.List(default=[])
 
     spec = param.String(allow_None=True)
@@ -147,6 +149,17 @@ class LumenEditor(Viewer):
         name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', cls.__name__)
         return re.sub(r'([a-z\d])([A-Z])', r'\1_\2', name).lower() + f'.{fmt}'
 
+    def _toggle_ai_explanation(self, event):
+        self.wanting_ai_explanation = not self.wanting_ai_explanation
+        if self.wanting_ai_explanation:
+            event.obj.color = "primary"
+            event.obj.label = "AI Enabled"
+            event.obj.icon = "auto_awesome"
+        else:
+            event.obj.color = "default"
+            event.obj.label = "Explain AI"
+            event.obj.icon = "auto_awesome_outline"
+
     def render_controls(self, task: Task, interface: ChatFeed):
         export_menu = MenuButton(
             label=f"Export {self._label} as", variant='text', icon="file_download", margin=0,
@@ -171,8 +184,18 @@ class LumenEditor(Viewer):
         )
         export_menu.attached.append(file_download)
 
+        ai_button = Button(
+            label="Explain AI" if not self.wanting_ai_explanation else "AI Enabled",
+            icon="auto_awesome_outline" if not self.wanting_ai_explanation else "auto_awesome",
+            color="default" if not self.wanting_ai_explanation else "primary",
+            variant="text",
+            margin=0,
+            on_click=self._toggle_ai_explanation
+        )
+
         return Row(
             *(control(interface=interface, task=task, view=self) for control in self._controls),
+            ai_button,
             export_menu,
             sizing_mode="stretch_width",
             margin=(0, 10)
@@ -729,7 +752,7 @@ class SQLEditor(LumenEditor):
             variant="text",
             on_click=self._add_filter,
         )
-        controls.insert(-1, filter_controls)
+        controls.insert(-2, filter_controls)
         return controls
 
     def export(self, fmt: str) -> StringIO | BytesIO:

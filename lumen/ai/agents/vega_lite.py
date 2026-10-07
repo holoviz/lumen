@@ -1133,14 +1133,22 @@ class VegaLiteAgent(BaseCodeAgent):
                 # shared state to race on.
                 if not self._spec_has_aggregation(spec):
                     pipeline_data = editor.component.pipeline.data
-                    is_data_small = pipeline_data is not None and len(pipeline_data) <= 800
+                    is_data_small = pipeline_data is not None and len(pipeline_data) <= 1000000
 
                     if is_data_small:
-                        state.execute(partial(
-                            self._generate_ai_explanations,
-                            editor.component, messages, context,
-                        ))
+                        # Watcher for when user clicks the "Explain AI" button on this specific chart
+                        def _trigger_ai_explanation(event, comp=editor.component, msgs=messages, ctx=context):
+                            if event.new:  # Only trigger when turned ON (True)
+                                state.execute(partial(self._generate_ai_explanations, comp, msgs, ctx))
 
+                        editor.param.watch(_trigger_ai_explanation, 'wanting_ai_explanation')
+
+                        # If it was already True (enabled previously), run it immediately
+                        if editor.wanting_ai_explanation:
+                            state.execute(partial(
+                                self._generate_ai_explanations,
+                                editor.component, messages, context,
+                            ))
         out_context = await editors[-1].render_context()
         return outs, out_context
 
