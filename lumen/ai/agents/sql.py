@@ -909,12 +909,20 @@ class SQLAgent(BaseLumenAgent):
                 # Duplicates remove karo
                 source_columns = list(dict.fromkeys(source_columns))
 
-                provenance_list.append({
-                    "column": target_column,
-                    "expression": formula,
-                    "source_columns": source_columns,
-                    "grouped_by": group_by_str
-                })
+                # Agar column aur source column same hai, toh iska matlab yeh direct selection hai (pass-through)
+                is_same = False
+                if len(source_columns) == 1:
+                    src_col = source_columns[0].split('.')[-1].strip('"').strip("'")
+                    if target_column == src_col or target_column == source_columns[0]:
+                        is_same = True
+
+                if not is_same:
+                    provenance_list.append({
+                        "column": target_column,
+                        "expression": formula,
+                        "source_columns": source_columns,
+                        "grouped_by": group_by_str
+                    })
             except Exception:
                 pass
 
