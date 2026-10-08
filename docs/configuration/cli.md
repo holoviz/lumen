@@ -217,6 +217,10 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 
     !!! warning "Security"
         Setting `--code-execution` uses Python's `exec` function to run LLM-generated code locally. **This is insecure** as the model could generate and execute malicious code. Only use this with trusted models and in secure environments.
+!!! warning "Security: Session Persistence and Bearer URLs"
+      When running `lumen-ai serve` without authentication configured (the default local exploration mode), persisted sessions are not scoped to an authenticated user (`state.user`).
+
+      In this mode, the session URL functions as a **bearer credential** with full read and write access. Anyone with the session URL can view and modify the session. Do not share session URLs or expose the server on public/untrusted networks without configuring OAuth or authentication.        
 
 ## Full example
 
