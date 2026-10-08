@@ -7,6 +7,7 @@ import inspect
 import json
 import os
 import re
+import tempfile
 import time
 import traceback
 
@@ -183,6 +184,8 @@ LLM_PROVIDERS = {
     'kilo': 'Kilo',
     'codex-cli': 'CodexCli',
     'claude-code': 'ClaudeCode',
+    'copilot-cli': 'CopilotCli',
+    'antigravity-cli': 'AntigravityCli',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
@@ -1648,7 +1651,8 @@ class LlmCli(Llm):
 
     working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
         Working directory for CLI subprocesses. By default, the CLI inherits the
-        directory from which Lumen was launched.""")
+        directory from which Lumen was launched, or runs in a fresh temporary
+        directory for providers that isolate each request.""")
 
     _supports_stream = False
     _supports_model_stream = False
@@ -1722,16 +1726,20 @@ class LlmCli(Llm):
             f"JSON Schema:\n{schema}"
         )
 
-    async def _run_command(self, command: list[str], prompt: str) -> str:
-        if self.working_dir and not Path(self.working_dir).is_dir():
-            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        cwd = cwd or self.working_dir
+        if cwd and not Path(cwd).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {cwd!r}")
+        return await self._communicate(await self._spawn(command, cwd), prompt)
+
+    async def _spawn(self, command: list[str], cwd: str | None) -> asyncio.subprocess.Process:
         try:
-            process = await asyncio.create_subprocess_exec(
+            return await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=self.working_dir,
+                cwd=cwd,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(
@@ -1739,6 +1747,7 @@ class LlmCli(Llm):
                 f"using the {self.display_name} provider."
             ) from exc
 
+    async def _communicate(self, process: asyncio.subprocess.Process, prompt: str) -> str:
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(prompt.encode("utf-8")), timeout=self.timeout
@@ -1910,6 +1919,253 @@ class ClaudeCode(LlmCli):
         if "result" not in response:
             raise ValueError("Claude Code CLI response did not include a result.")
         return str(response["result"]).strip()
+
+
+class _AcpProcess:
+    """A long-running `copilot --acp --stdio` process that answers many prompts.
+
+    ACP is the Agent Client Protocol, JSON-RPC over stdin and stdout that lets
+    a program drive a coding agent. Starting the CLI takes several seconds, so
+    reusing one process makes each request much faster than launching the CLI
+    per request.
+    """
+
+    def __init__(self, command: list[str]):
+        self.command = command
+        self.loop = asyncio.get_running_loop()
+        self.process = None
+        self._lock = asyncio.Lock()
+        self._next_id = 0
+        self._pending: dict[int, asyncio.Future] = {}
+        self._chunks: dict[str, list[str]] = {}
+
+    @property
+    def alive(self) -> bool:
+        return self.loop is asyncio.get_running_loop() and (
+            self.process is None or self.process.returncode is None
+        )
+
+    async def _start(self):
+        # Both are held for the life of the process: the directory must outlive
+        # it, and an unreferenced reader task could be garbage collected.
+        self._cwd = tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        self.process = await asyncio.create_subprocess_exec(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=self._cwd.name,
+            limit=2**26,
+        )
+        self._reader = asyncio.create_task(self._read())
+        await self._request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+
+    def _send(self, message: dict):
+        self.process.stdin.write((json.dumps({"jsonrpc": "2.0", **message}) + "\n").encode("utf-8"))
+
+    async def _request(self, method: str, params: dict) -> dict:
+        self._next_id += 1
+        request_id = self._next_id
+        future = self.loop.create_future()
+        self._pending[request_id] = future
+        self._send({"id": request_id, "method": method, "params": params})
+        try:
+            response = await future
+        finally:
+            self._pending.pop(request_id, None)
+        if "error" in response:
+            raise RuntimeError(f"GitHub Copilot CLI {method} failed: {response['error'].get('message')}")
+        return response["result"]
+
+    async def _read(self):
+        async for line in self.process.stdout:
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "method" in message and "id" in message:
+                # Every tool is disabled, so refuse any permission or client request.
+                result = {"outcome": {"outcome": "cancelled"}}
+                self._send({"id": message["id"], "result": result})
+            elif "id" in message:
+                future = self._pending.get(message["id"])
+                if future and not future.done():
+                    future.set_result(message)
+            elif message.get("method") == "session/update":
+                update = message["params"]["update"]
+                chunks = self._chunks.get(message["params"]["sessionId"])
+                if chunks is not None and update.get("sessionUpdate") == "agent_message_chunk":
+                    chunks.append(update["content"].get("text", ""))
+        await self.process.wait()
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(RuntimeError(
+                    f"GitHub Copilot CLI exited with status {self.process.returncode}."
+                ))
+
+    async def prompt(self, prompt: str, cwd: str) -> str:
+        async with self._lock:
+            if self.process is None:
+                await self._start()
+        session_id = (await self._request("session/new", {"cwd": cwd, "mcpServers": []}))["sessionId"]
+        self._chunks[session_id] = []
+        try:
+            result = await self._request(
+                "session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]}
+            )
+        except BaseException:
+            # A timeout or cancellation would otherwise leave Copilot generating
+            # an answer nobody reads, still counting against the user's quota.
+            if self.process.returncode is None:
+                self._send({"method": "session/cancel", "params": {"sessionId": session_id}})
+            raise
+        finally:
+            chunks = self._chunks.pop(session_id)
+        # Copilot reports session notices as whole "Info: " or "Warning: "
+        # chunks ahead of the answer; drop those before the first answer text.
+        while chunks and re.match(r"(Info|Warning): ", chunks[0]):
+            chunks.pop(0)
+        text = "".join(chunks)
+        if result.get("stopReason") != "end_turn":
+            raise RuntimeError(f"GitHub Copilot CLI stopped early ({result.get('stopReason')}): {text}")
+        return text
+
+
+class CopilotCli(LlmCli):
+    """Use the locally authenticated GitHub Copilot CLI as a Lumen provider."""
+
+    display_name = param.String(default="GitHub Copilot CLI", constant=True)
+
+    executable = param.String(default="copilot", constant=True)
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._acp_processes: dict[tuple[str, ...], _AcpProcess] = {}
+
+    def _build_command(self, model: str | None) -> list[str]:
+        # An allowlist naming no real tool disables every tool, including user
+        # MCP tools that deny rules cannot match; the deny rules are a backstop.
+        command = [
+            self.executable, "--no-ask-user", "--no-custom-instructions", "--disable-builtin-mcps",
+            "--no-remote-export", "--no-auto-update", "--available-tools=none", "--deny-tool=shell",
+            "--deny-tool=write", "--deny-tool=read", "--deny-tool=url", "--deny-tool=memory",
+        ]
+        if model and model != "auto":
+            # ACP mode silently ignores --model, so a chosen model runs one CLI per request.
+            return [*command, "--output-format", "json", "--stream", "off", "--model", model]
+        return [*command, "--acp", "--stdio"]
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Copilot never sees the files of the directory Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            cwd = self.working_dir or tmp
+            if "--acp" not in command:
+                return await super()._run_command(command, prompt, cwd)
+            if not Path(cwd).is_dir():
+                raise ValueError(f"CLI working directory does not exist: {cwd!r}")
+            return await self._run_acp(command, prompt, cwd)
+
+    async def _run_acp(self, command: list[str], prompt: str, cwd: str) -> str:
+        key = tuple(command)
+        acp = self._acp_processes.get(key)
+        if acp is None or not acp.alive:
+            acp = self._acp_processes[key] = _AcpProcess(command)
+        try:
+            text = await asyncio.wait_for(acp.prompt(prompt, cwd), timeout=self.timeout)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+        except TimeoutError as exc:
+            raise TimeoutError(f"{self.display_name} did not finish within {self.timeout:g} seconds.") from exc
+        # Same event shape as the one-shot JSON output, so one decoder serves both.
+        return json.dumps({"type": "assistant.message", "data": {"content": text}})
+
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            data = event.get("data") if isinstance(event, dict) and event.get("type") == "assistant.message" else None
+            if isinstance(data, dict) and data.get("content"):
+                final_message = str(data["content"])
+        if final_message is None:
+            raise ValueError("GitHub Copilot CLI did not return a final assistant message.")
+        return final_message.strip()
+
+
+class AntigravityCli(LlmCli):
+    """Use the locally authenticated Google Antigravity CLI as a Lumen provider."""
+
+    display_name = param.String(default="Antigravity CLI", constant=True)
+
+    executable = param.String(default="agy", constant=True)
+
+    # The fastest model measured; Antigravity's own default is far slower.
+    model_kwargs = param.Dict(default={"default": {"model": "gemini-3.8-flash-low"}})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._spares: dict[tuple[str, ...], tuple] = {}
+
+    def _build_command(self, model: str | None) -> list[str]:
+        # stream-json input is the only way to pass the prompt on stdin
+        # instead of the command line, and it requires stream-json output.
+        command = [self.executable, "--input-format", "stream-json", "--output-format", "stream-json"]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    async def _start(self, command: list[str]) -> tuple:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so the agent never sees the files of the directory Lumen runs in.
+        tmp = None if self.working_dir else tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        process = await self._spawn(command, self.working_dir or tmp.name)
+        return asyncio.get_running_loop(), process, tmp
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        key = tuple(command)
+        loop, process, tmp = self._spares.pop(key, None) or await self._start(command)
+        if loop is not asyncio.get_running_loop() or process.returncode is not None:
+            loop, process, tmp = await self._start(command)
+        # agy spends about ten seconds starting up before it reads stdin, so
+        # start the process for the next request now. A process serves only
+        # one request because every turn it reads shares one conversation.
+        self._spares[key] = await self._start(command)
+        message = json.dumps({"event": "user", "message": {"content": prompt}})
+        try:
+            return await self._communicate(process, message + "\n")
+        finally:
+            if tmp is not None:
+                tmp.cleanup()
+
+    def _decode_output(self, output: str) -> str:
+        result = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("event") == "result":
+                result = event.get("result") or {}
+        if result is None:
+            raise ValueError("Antigravity CLI did not return a result.")
+        if result.get("status") != "SUCCESS":
+            raise RuntimeError(str(result.get("error") or f"Antigravity CLI finished with status {result.get('status')}."))
+        response = str(result.get("response") or "").strip()
+        if not response:
+            # A tool that headless mode blocks ends the turn with SUCCESS and no answer.
+            denied = ", ".join(action.get("display_name", "") for action in result.get("denied_actions") or [])
+            raise RuntimeError(f"Antigravity CLI returned no answer. Tools blocked in headless mode: {denied or 'none'}.")
+        return response
 
 
 class LlamaCpp(Llm, LlamaCppMixin):

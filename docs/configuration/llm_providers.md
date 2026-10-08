@@ -202,6 +202,77 @@ lumen-ai serve penguins.csv --provider claude-code
     rather than streaming tokens, and do not yet expose Lumen function tools to
     the coding CLIs.
 
+### GitHub Copilot CLI
+
+Use a locally authenticated GitHub Copilot CLI as Lumen's LLM provider. It
+works with any Copilot plan, including Copilot Free.
+
+Install the CLI, make sure `copilot` is on your `PATH`, and sign in once:
+
+``` bash
+copilot login
+```
+
+Start Lumen with it, with or without a dataset:
+
+``` bash
+lumen-ai serve --provider copilot-cli
+lumen-ai serve penguins.csv --provider copilot-cli
+```
+
+Copilot picks the model by default. Lumen then keeps one Copilot process
+running and sends every request to it, which avoids several seconds of CLI
+startup per request. If your plan lets you choose a model, pass a name listed
+by `copilot help config` with `--model`; Lumen then starts the CLI once per
+request, which is slower. Plans limited to automatic model selection, such as
+Copilot Free, only accept `--model auto`; any other name fails with
+`Model ... from --model flag is not available`.
+
+!!! warning "Local development only"
+    Lumen runs each request in a fresh temporary directory and starts Copilot
+    with every tool disabled, so it can only answer in text: it cannot run shell
+    commands, read or write files, fetch URLs, or call MCP servers, and it skips
+    instruction files such as `AGENTS.md`. Each Lumen question makes several
+    Copilot requests (seven to ten for a query and a chart), and each one counts
+    against your plan's Copilot usage allowance, which is small on Copilot
+    Free. Copilot keeps a copy of every prompt under `~/.copilot/session-state`,
+    and Lumen does not disable any hooks or plugins you have configured for
+    Copilot.
+
+### Antigravity CLI
+
+Use a locally authenticated Google Antigravity CLI (`agy`) as Lumen's LLM
+provider. Requests count against your Antigravity account's usage limits.
+
+Install the CLI, then run `agy` once and sign in with your Google account:
+
+``` bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy
+```
+
+Start Lumen with it, with or without a dataset:
+
+``` bash
+lumen-ai serve --provider antigravity-cli
+lumen-ai serve penguins.csv --provider antigravity-cli
+```
+
+Lumen uses `gemini-3.8-flash-low` by default, a low-cost Flash model and the
+fastest one in testing: a penguins query and chart took about 40 seconds,
+compared with about 90 seconds using Antigravity's own default. Run
+`agy models` to list the other models you can pass with `--model`.
+
+!!! warning "Local development only"
+    Each request runs in a fresh temporary directory, and Lumen keeps one `agy`
+    process started ahead of time so the next request does not wait for the CLI
+    to start. In this mode Antigravity blocks shell commands, reading and
+    writing files, fetching URLs and the browser, but it can still run web
+    searches, so text from your prompt or data may be sent to Google Search. If
+    the model reaches for a blocked tool, the request fails with an error that
+    names the tool. Any `permissions.allow` rules in
+    `~/.gemini/antigravity-cli/settings.json` also apply to Lumen's requests.
+
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
 
