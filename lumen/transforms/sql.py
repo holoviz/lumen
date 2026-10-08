@@ -7,6 +7,7 @@ import re
 from copy import deepcopy
 from typing import ClassVar
 
+import numpy as np
 import param  # type: ignore
 import sqlglot
 
@@ -684,13 +685,17 @@ class SQLFilterBase(SQLTransform):
         for col, val in conditions:
             column_expr = Column(this=Identifier(this=col, quoted=True))
 
+            # NumPy datetimes are filtered like Python datetimes
+            if isinstance(val, np.datetime64):
+                val = val.astype("datetime64[us]").item()
+
             # Skip boolean values - they are not supported
             if isinstance(val, bool):
                 self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
                 continue
             elif val is None:
                 filters.append(column_expr.is_(Null()))
-            elif isinstance(val, (int, float)):
+            elif isinstance(val, (int, float, np.integer, np.floating)):
                 filters.append(column_expr.eq(SQLLiteral.number(val)))
             elif isinstance(val, str):
                 filters.append(column_expr.eq(SQLLiteral.string(val)))

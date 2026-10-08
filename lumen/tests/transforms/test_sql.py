@@ -2,6 +2,7 @@ import datetime as dt
 
 from textwrap import dedent
 
+import numpy as np
 import pandas as pd
 import pytest
 import sqlglot
@@ -342,6 +343,43 @@ def test_sql_filter_scalar():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", 1)])
     expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = 1'
     assert result == expected
+
+
+def test_sql_filter_numpy_scalar():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.int64(1))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = 1'
+    assert result == expected
+
+
+def test_sql_filter_numpy_datetime():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", np.datetime64("2017-04-14T00:00:00"))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = \'2017-04-14 00:00:00\''
+    assert result == expected
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("A", np.int64(2)),
+        ("A", np.int32(3)),
+        ("B", np.float32(0.5)),
+        ("C", np.datetime64("2017-04-15")),
+    ],
+)
+def test_sql_filter_numpy_scalar_matches_pandas_filter(column, value):
+    df = pd.DataFrame({
+        "A": [0, 1, 2, 3, 4],
+        "B": [0.0, 0.5, 1.0, 1.5, 2.0],
+        "C": pd.date_range("2017-04-14", periods=5),
+    })
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[(column, value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
+    assert len(expected) == 1
+    assert result["A"].tolist() == expected["A"].tolist()
 
 
 def test_sql_filter_isin():
