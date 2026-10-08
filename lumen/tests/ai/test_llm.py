@@ -17,9 +17,9 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
-        CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli,
-        Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm,
+        LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -60,6 +60,14 @@ for line in sys.stdin:
         chunk(session, prompt.splitlines()[-1])
         stop = "refusal" if "REFUSE" in prompt else "end_turn"
         send({"id": request["id"], "result": {"stopReason": stop}})
+"""
+
+FAKE_AGY = r"""
+import json, os, sys
+
+prompt = json.loads(sys.stdin.readline())["message"]["content"].splitlines()[-1]
+response = f"{os.getpid()} {os.getcwd()} {prompt}"
+print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": response}}), flush=True)
 """
 
 # ---------------------------------------------------------------------------
@@ -205,11 +213,13 @@ def test_cli_providers_are_registered():
     assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCli"
     assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCode"
     assert lmai.llm.LLM_PROVIDERS["copilot-cli"] == "CopilotCli"
+    assert lmai.llm.LLM_PROVIDERS["antigravity-cli"] == "AntigravityCli"
     assert issubclass(CodexCli, LlmCli)
     assert issubclass(ClaudeCode, LlmCli)
     assert issubclass(CopilotCli, LlmCli)
+    assert issubclass(AntigravityCli, LlmCli)
     # Last, so CLI providers are never auto-selected ahead of a configured one.
-    assert list(lmai.llm.LLM_PROVIDERS)[-1] == "copilot-cli"
+    assert list(lmai.llm.LLM_PROVIDERS)[-2:] == ["copilot-cli", "antigravity-cli"]
 
 
 def test_codex_cli_command_defaults_to_read_only():
@@ -250,6 +260,16 @@ def test_copilot_cli_command_disables_all_tools():
     ]
 
 
+def test_antigravity_cli_command_reads_prompt_from_stdin():
+    llm = AntigravityCli()
+
+    stream = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
+
+    assert llm._build_command(None) == stream
+    assert llm._build_command("gemini-3.8-flash-low") == [*stream, "--model", "gemini-3.8-flash-low"]
+    assert llm._get_model_kwargs("default")["model"] == "gemini-3.8-flash-low"
+
+
 def test_cli_output_decoders():
     codex = CodexCli()
     codex_output = (
@@ -285,6 +305,51 @@ async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
 
     with pytest.raises(RuntimeError, match="stopped early"):
         await llm.run_client("default", [{"role": "user", "content": "REFUSE"}])
+
+
+async def test_antigravity_cli_uses_a_prestarted_process(monkeypatch):
+    spawned = []
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def fake_agy(*command, **kwargs):
+        process = await create_subprocess(sys.executable, "-c", FAKE_AGY, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_agy)
+    llm = AntigravityCli()
+
+    first = (await llm.run_client("default", [{"role": "user", "content": "first"}])).split()
+    second = (await llm.run_client("default", [{"role": "user", "content": "second"}])).split()
+
+    # The first request starts its own process plus a spare; the second uses that spare.
+    assert len(spawned) == 3
+    assert first[0] == str(spawned[0].pid) and first[2] == "first"
+    assert second[0] == str(spawned[1].pid) and second[2] == "second"
+    assert first[1] != second[1]
+    assert not Path(first[1]).exists() and not Path(second[1]).exists()
+    spawned[2].kill()
+    await spawned[2].wait()
+
+
+def test_antigravity_cli_decodes_result():
+    antigravity = AntigravityCli()
+    init = '{"event":"init","init":{"cwd":"/tmp"}}\n'
+    delta = '{"event":"step_update","step_update":{"text_delta":"READY"}}\n'
+
+    assert antigravity._decode_output(
+        init + delta + '{"event":"result","result":{"status":"SUCCESS","response":"READY\\n"}}'
+    ) == "READY"
+
+    with pytest.raises(RuntimeError, match="WriteToFile"):
+        antigravity._decode_output(
+            '{"event":"result","result":{"status":"SUCCESS","response":"",'
+            '"denied_actions":[{"action":"write_file","display_name":"WriteToFile"}]}}'
+        )
+    with pytest.raises(RuntimeError, match="invalid model"):
+        antigravity._decode_output('{"event":"result","result":{"status":"ERROR","error":"invalid model"}}')
+    with pytest.raises(ValueError, match="did not return a result"):
+        antigravity._decode_output(init + delta)
 
 
 def test_copilot_cli_decodes_last_assistant_message():

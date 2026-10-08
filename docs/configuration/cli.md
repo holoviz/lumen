@@ -116,6 +116,7 @@ If not specified, Lumen auto-detects from environment variables.
 - `codex-cli` - Locally authenticated Codex CLI
 - `claude-code` - Locally authenticated Claude Code CLI
 - `copilot-cli` - Locally authenticated GitHub Copilot CLI
+- `antigravity-cli` - Locally authenticated Google Antigravity CLI
 
 ### Set API key
 

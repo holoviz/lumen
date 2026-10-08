@@ -185,6 +185,7 @@ LLM_PROVIDERS = {
     'codex-cli': 'CodexCli',
     'claude-code': 'ClaudeCode',
     'copilot-cli': 'CopilotCli',
+    'antigravity-cli': 'AntigravityCli',
 }
 
 # Request parameters an OpenAI-compatible model may reject, and the value to
@@ -1729,8 +1730,11 @@ class LlmCli(Llm):
         cwd = cwd or self.working_dir
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"CLI working directory does not exist: {cwd!r}")
+        return await self._communicate(await self._spawn(command, cwd), prompt)
+
+    async def _spawn(self, command: list[str], cwd: str | None) -> asyncio.subprocess.Process:
         try:
-            process = await asyncio.create_subprocess_exec(
+            return await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -1743,6 +1747,7 @@ class LlmCli(Llm):
                 f"using the {self.display_name} provider."
             ) from exc
 
+    async def _communicate(self, process: asyncio.subprocess.Process, prompt: str) -> str:
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(prompt.encode("utf-8")), timeout=self.timeout
@@ -2093,6 +2098,74 @@ class CopilotCli(LlmCli):
         if final_message is None:
             raise ValueError("GitHub Copilot CLI did not return a final assistant message.")
         return final_message.strip()
+
+
+class AntigravityCli(LlmCli):
+    """Use the locally authenticated Google Antigravity CLI as a Lumen provider."""
+
+    display_name = param.String(default="Antigravity CLI", constant=True)
+
+    executable = param.String(default="agy", constant=True)
+
+    # The fastest model measured; Antigravity's own default is far slower.
+    model_kwargs = param.Dict(default={"default": {"model": "gemini-3.8-flash-low"}})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._spares: dict[tuple[str, ...], tuple] = {}
+
+    def _build_command(self, model: str | None) -> list[str]:
+        # stream-json input is the only way to pass the prompt on stdin
+        # instead of the command line, and it requires stream-json output.
+        command = [self.executable, "--input-format", "stream-json", "--output-format", "stream-json"]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    async def _start(self, command: list[str]) -> tuple:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so the agent never sees the files of the directory Lumen runs in.
+        tmp = None if self.working_dir else tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        process = await self._spawn(command, self.working_dir or tmp.name)
+        return asyncio.get_running_loop(), process, tmp
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        key = tuple(command)
+        loop, process, tmp = self._spares.pop(key, None) or await self._start(command)
+        if loop is not asyncio.get_running_loop() or process.returncode is not None:
+            loop, process, tmp = await self._start(command)
+        # agy spends about ten seconds starting up before it reads stdin, so
+        # start the process for the next request now. A process serves only
+        # one request because every turn it reads shares one conversation.
+        self._spares[key] = await self._start(command)
+        message = json.dumps({"event": "user", "message": {"content": prompt}})
+        try:
+            return await self._communicate(process, message + "\n")
+        finally:
+            if tmp is not None:
+                tmp.cleanup()
+
+    def _decode_output(self, output: str) -> str:
+        result = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("event") == "result":
+                result = event.get("result") or {}
+        if result is None:
+            raise ValueError("Antigravity CLI did not return a result.")
+        if result.get("status") != "SUCCESS":
+            raise RuntimeError(str(result.get("error") or f"Antigravity CLI finished with status {result.get('status')}."))
+        response = str(result.get("response") or "").strip()
+        if not response:
+            # A tool that headless mode blocks ends the turn with SUCCESS and no answer.
+            denied = ", ".join(action.get("display_name", "") for action in result.get("denied_actions") or [])
+            raise RuntimeError(f"Antigravity CLI returned no answer. Tools blocked in headless mode: {denied or 'none'}.")
+        return response
 
 
 class LlamaCpp(Llm, LlamaCppMixin):
