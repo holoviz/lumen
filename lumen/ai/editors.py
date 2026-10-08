@@ -35,7 +35,9 @@ from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..util import as_pandas
-from ..views.base import Panel, Table, View
+from ..views.base import (
+    MosaicView, Panel, Table, View,
+)
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
@@ -108,9 +110,11 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # ParamMethod may evaluate ``render`` immediately, so the render cache
+        # must exist before constructing it.
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
     def _code_editor(self) -> CodeEditor:
         """A CodeEditor two-way bound to this editor's spec."""
@@ -523,6 +527,195 @@ class DeckGLEditor(LumenEditor):
         DeckGL(spec, sizing_mode='stretch_both').save(html_buffer)
         html_buffer.seek(0)
         return html_buffer
+
+    def __str__(self):
+        return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
+
+
+class MosaicEditor(LumenEditor):
+    """Editor for Mosaic/vgplot declarative specifications.
+
+    Handles serialization/deserialization of mosaic-specs and validates their
+    top-level structure before the view is (re)built.
+    """
+
+    export_formats = ("yaml", "json")
+
+    _controls = [RetryControls, ExplainControls, CopyControls]
+    _label = "Chart"
+
+    _auto_retry_limit = 2
+
+    def __init__(self, **params):
+        self._auto_retry_attempts = 0
+        self._auto_retry_control = None
+        self._mosaic_component = None
+        self._mosaic_status_watchers = []
+        super().__init__(**params)
+        # Mosaic can resize its plots to the space Panel assigns it, but the
+        # base editor's reactive view only stretches horizontally. Inside the
+        # Explorer's vertical split that leaves the reactive host at the
+        # specification's original height and turns the rest of the output
+        # pane into blank space. Give the host the full split-pane height so
+        # panel-mosaic's responsive layout can measure and fill it.
+        self.view.sizing_mode = "stretch_both"
+        self.param.watch(self._watch_mosaic_component, 'component')
+        self._watch_mosaic_component()
+
+    def _watch_mosaic_component(self, *_events) -> None:
+        if self._mosaic_component is not None:
+            for watcher in self._mosaic_status_watchers:
+                self._mosaic_component.param.unwatch(watcher)
+
+        self._mosaic_component = self.component
+        self._mosaic_status_watchers = []
+        if not isinstance(self.component, MosaicView):
+            return
+        self._mosaic_status_watchers = [
+            self.component.param.watch(self._handle_render_error, 'error'),
+            self.component.param.watch(self._handle_render_ready, 'ready'),
+        ]
+
+    def _handle_render_error(self, event) -> None:
+        error = event.new.strip()
+        if (
+            not error or self._auto_retry_control is None
+            or self._auto_retry_attempts >= self._auto_retry_limit
+        ):
+            return
+        self._auto_retry_attempts += 1
+        self._auto_retry_control.instruction = (
+            f"Mosaic browser rendering failed: {error}. Correct the complete "
+            f"Mosaic specification. Automatic retry "
+            f"{self._auto_retry_attempts}/{self._auto_retry_limit}."
+        )
+
+    def _handle_render_ready(self, event) -> None:
+        if event.new:
+            self._auto_retry_attempts = 0
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        # Browser rendering happens after the agent has returned its output.
+        # Reuse the normal revision path so a browser-side Mosaic error can be
+        # corrected with the same task history and context as a manual retry.
+        self._auto_retry_control = RetryControls(
+            interface=interface, task=task, view=self
+        )
+        return controls
+
+    @classmethod
+    def _serialize_component(cls, component: Component, spec_dict: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+        component_spec = spec_dict or component.to_spec()
+        mosaic_spec = component_spec['spec']
+        return dump_yaml(mosaic_spec), component_spec
+
+    @classmethod
+    def _deserialize_component(
+        cls, component: Component, yaml_spec: str, spec_dict: dict[str, Any], pipeline: Pipeline | None = None
+    ) -> Component:
+        spec = load_yaml(yaml_spec)
+        cls.validate_spec(spec)
+        spec_dict = dict(spec_dict, spec=spec)
+        if pipeline is not None:
+            spec_dict.pop('pipeline', None)
+        return type(component).from_spec(spec_dict, pipeline=pipeline)
+
+    # Top-level keys that introduce a renderable plot/layout container.
+    _containers = frozenset({"plot", "vconcat", "hconcat"})
+    # Selection modes are declared in top-level ``params``. Interval names
+    # such as ``intervalX`` belong to a plot interactor, not here.
+    _selection_modes = frozenset({"crossfilter", "intersect", "single", "union", "value"})
+
+    @classmethod
+    def _validate_interactions(cls, spec: dict[str, Any]) -> None:
+        """Catch common Mosaic selection and table-specification mistakes.
+
+        Mosaic's JavaScript parser remains the authority for the full grammar,
+        but these errors are both easy for an LLM to make and actionable enough
+        to correct during Lumen's retry loop.
+        """
+        params = spec.get("params", {})
+        if not isinstance(params, dict):
+            raise ValueError("Mosaic `params:` must be a mapping of parameter names to definitions.")
+
+        for name, definition in params.items():
+            if not isinstance(definition, dict) or "select" not in definition:
+                continue
+            selection_mode = definition["select"]
+            if selection_mode not in cls._selection_modes:
+                choices = ", ".join(sorted(cls._selection_modes))
+                raise ValueError(
+                    f"Mosaic selection `{name}` has invalid mode {selection_mode!r}. "
+                    f"Use one of {choices} under `params:`; put `intervalX`, "
+                    "`intervalY`, or `intervalXY` in a separate `- select:` "
+                    "entry inside a plot."
+                )
+
+        def visit(value: Any) -> None:
+            if isinstance(value, dict):
+                if value.get("mark") == "table":
+                    raise ValueError(
+                        "Mosaic tables use `input: table` as a layout component, "
+                        "not `mark: table` inside a plot."
+                    )
+                if "input" in value and "as" in value:
+                    binding = value["as"]
+                    if not isinstance(binding, str) or not binding.startswith("$"):
+                        raise ValueError(
+                            f"Mosaic `{value['input']}` input binding `as:` must be "
+                            "a parameter reference beginning with `$`, for example "
+                            "`as: $filter`. A plain name causes a browser rendering error."
+                        )
+                if "filterBy" in value:
+                    selection = value["filterBy"]
+                    if not isinstance(selection, str) or not selection.startswith("$"):
+                        raise ValueError(
+                            "Mosaic `filterBy:` must be a selection reference beginning "
+                            "with `$`, for example `filterBy: $filter`."
+                        )
+                for item in value.values():
+                    visit(item)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(spec)
+
+    @classmethod
+    def validate_spec(cls, spec: dict[str, Any]) -> dict[str, Any]:
+        """Validate the Mosaic spec's top-level structure.
+
+        Full grammar validation is Mosaic's own ``parseSpec`` in the browser;
+        here we catch the structural mistakes LLMs commonly make so the
+        ``retry_llm_output`` loop can regenerate with a corrective message,
+        rather than shipping an unrenderable spec that silently draws nothing.
+        """
+        if isinstance(spec, dict) and "spec" in spec:
+            spec = spec["spec"]
+        if not isinstance(spec, dict) or not spec:
+            raise ValueError("Mosaic spec must be a non-empty mapping.")
+        if "marks" in spec and "plot" not in spec:
+            raise ValueError(
+                "Use `plot:` (a list of marks), not `marks:`. Each mark is "
+                "`- mark: <type>` with its channels (x, y, fill, ...) as siblings."
+            )
+        if not (cls._containers & set(spec)):
+            raise ValueError(
+                "Mosaic spec must contain a plot container: one of "
+                f"{', '.join(sorted(cls._containers))}. A single chart uses "
+                "`plot:` as a list of marks, e.g. `- mark: dot`."
+            )
+        cls._validate_interactions(spec)
+        return super().validate_spec(spec)
+
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        ret = super().export(fmt)
+        if ret is not None:
+            return ret
+        if fmt == "json":
+            return StringIO(json.dumps(load_yaml(self.spec), indent=2))
+        raise ValueError(f"Unknown export format {fmt!r}")
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"

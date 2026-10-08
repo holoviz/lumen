@@ -130,8 +130,8 @@ class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
         default=[
-            "Use for publication-ready visualizations or when user specifically requests Vega-Lite charts",
-            "Use for polished charts intended for presentation or sharing",
+            "Use when the user explicitly requests a Vega-Lite chart",
+            "Use for a polished, static chart explicitly intended for publication, presentation, or sharing",
             "Use for a choropleth whose table names places (states, countries) but holds no geometry or coordinates, since the boundaries can be looked up and joined by name",
         ]
     )
