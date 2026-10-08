@@ -16,15 +16,16 @@ from typing import Any
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
-from panel.config import panel_extension
+from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.state import state
-from panel.layout import Column, FlexBox
+from panel.layout import Card, Column, FlexBox
 from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
 )
+from panel.widgets import CodeEditor
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, Divider, Drawer, FileDownload, IconButton,
@@ -2639,8 +2640,50 @@ class ExplorerUI(UI):
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
+        # Build provenance pane if view has lineage data (SQLEditor only)
+        provenance = getattr(view, "provenance", [])
+        if provenance:
+            lines = []
+            for item in provenance:
+                src = ", ".join(item["source_columns"]) if item["source_columns"] else "—"
+                grp = item["grouped_by"] or "—"
+                lines.append(
+                    f"Column: {item['column']}\n"
+                    f"Expression: {item['expression']}\n"
+                    f"Source: {src}\n"
+                    f"Grouped by: {grp}"
+                )
+            provenance_str = "\n\n".join(lines)
+
+            provenance_editor = CodeEditor(
+                value=provenance_str,
+                language="text",
+                theme="github_dark" if config.theme == "dark" else "github_light_default",
+                readonly=True,
+                height=200,
+                sizing_mode="stretch_width",
+                margin=(0, 10),
+                styles={"border": "1px solid var(--border-color)"}
+            )
+
+            provenance_pane = Card(
+                provenance_editor,
+                title="View Data Provenance",
+                collapsed=True,
+                sizing_mode="stretch_width",
+                margin=(10, 10)
+            )
+            editor_col = Column(
+                view.editor,
+                provenance_pane,
+                width_policy="max",
+                scroll="y-auto"
+            )
+        else:
+            editor_col = Column(view.editor, width_policy="max", scroll="y-auto")
+
         vsplit = VSplit(
-            Column(view.editor, width_policy="max", scroll="y-auto"),
+            editor_col,
             view,
             expanded_sizes=(20, 80),
             sizes=(20, 80),
