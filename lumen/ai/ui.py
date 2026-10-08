@@ -16,17 +16,16 @@ from typing import Any
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
-from panel.config import panel_extension
+from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.state import state
-from panel.layout import Column, FlexBox
-from panel.pane import (
-    SVG, Image, Markdown, Str,
-)
+from panel.layout import Card, Column, FlexBox
+from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
 )
+from panel.widgets import CodeEditor
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, Divider, Drawer, FileDownload, IconButton,
@@ -2653,17 +2652,30 @@ class ExplorerUI(UI):
                 src = ", ".join(item["source_columns"]) if item["source_columns"] else "—"
                 grp = item["grouped_by"] or "—"
                 lines.append(
-                    f"Column: {item['column']}  |  "
-                    f"Expression: {item['expression']}  |  "
-                    f"Source: {src}  |  "
+                    f"Column: {item['column']}\n"
+                    f"Expression: {item['expression']}\n"
+                    f"Source: {src}\n"
                     f"Grouped by: {grp}"
                 )
-            provenance_str = "\n".join(lines)
-            provenance_pane = Str(
-                provenance_str,
+            provenance_str = "\n\n".join(lines)
+
+            provenance_editor = CodeEditor(
+                value=provenance_str,
+                language="text",
+                theme="github_dark" if config.theme == "dark" else "github_light_default",
+                readonly=True,
+                height=200,
                 sizing_mode="stretch_width",
-                margin=(5, 10),
-                styles={"white-space": "pre", "font-size": "12px"}
+                margin=(0, 10),
+                styles={"border": "1px solid var(--border-color)"}
+            )
+
+            provenance_pane = Card(
+                provenance_editor,
+                title="View Data Provenance",
+                collapsed=True,
+                sizing_mode="stretch_width",
+                margin=(10, 10)
             )
             editor_col = Column(
                 view.editor,
