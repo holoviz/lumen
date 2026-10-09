@@ -359,6 +359,18 @@ def test_sql_filter_numpy_datetime():
     assert result == expected
 
 
+def test_sql_filter_numpy_nat():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.datetime64("NaT", "ns"))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = NULL'
+    assert result == expected
+
+
+@pytest.mark.parametrize("value", [True, np.bool_(True)])
+def test_sql_filter_bool_not_applied(value):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == "SELECT * FROM TABLE"
+
+
 @pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
 @pytest.mark.parametrize(
     "column,value",
@@ -380,6 +392,16 @@ def test_sql_filter_numpy_scalar_matches_pandas_filter(column, value):
     expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
     assert len(expected) == 1
     assert result["A"].tolist() == expected["A"].tolist()
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_filter_numpy_nat_matches_pandas_filter():
+    df = pd.DataFrame({"A": [0, 1], "C": [pd.Timestamp("2017-04-14"), pd.NaT]})
+    source = DuckDBSource.from_df({"df": df})
+    conditions = [("C", np.datetime64("NaT", "ns"))]
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=conditions))
+    expected = lm.transforms.Filter.apply_to(df, conditions=conditions)
+    assert len(result) == len(expected) == 0
 
 
 def test_sql_filter_isin():

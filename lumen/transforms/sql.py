@@ -685,9 +685,15 @@ class SQLFilterBase(SQLTransform):
         for col, val in conditions:
             column_expr = Column(this=Identifier(this=col, quoted=True))
 
-            # NumPy datetimes are filtered like Python datetimes
+            # NumPy scalars are filtered like the equivalent Python values
             if isinstance(val, np.datetime64):
-                val = val.astype("datetime64[us]").item()
+                if np.isnat(val):
+                    # NaT never compares equal, so it matches no rows (like Filter)
+                    filters.append(column_expr.eq(Null()))
+                    continue
+                val = val.astype("datetime64[us]")
+            if isinstance(val, np.generic):
+                val = val.item()
 
             # Skip boolean values - they are not supported
             if isinstance(val, bool):
@@ -695,7 +701,7 @@ class SQLFilterBase(SQLTransform):
                 continue
             elif val is None:
                 filters.append(column_expr.is_(Null()))
-            elif isinstance(val, (int, float, np.integer, np.floating)):
+            elif isinstance(val, (int, float)):
                 filters.append(column_expr.eq(SQLLiteral.number(val)))
             elif isinstance(val, str):
                 filters.append(column_expr.eq(SQLLiteral.string(val)))
