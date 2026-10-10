@@ -516,8 +516,7 @@ class SourceAgent(Agent):
                     if s and len(s) <= 30:
                         items.append(s)
             items.sort(key=len)
-            parts = items[:MAX_PARTS]
-            parts.append(action_name)
+            parts = [action_name] + items[:MAX_PARTS]
             base = normalize_table_name("_".join(parts))
         elif source_actions and len(source_actions) == 1:
             name = next(iter(source_actions))
