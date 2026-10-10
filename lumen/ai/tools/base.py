@@ -1,3 +1,4 @@
+import asyncio
 
 from types import FunctionType
 from typing import Any, TypedDict
@@ -110,6 +111,12 @@ class FunctionTool(Tool):
         to a read-only tool within one LLM request reuse the earlier result
         instead of running again.""")
 
+    run_in_thread = param.Boolean(default=False, doc="""
+        Whether to run a synchronous function in a worker thread so that it
+        does not block the event loop. Leave disabled for functions that
+        interact with Panel objects, which may rely on running on the
+        event loop thread.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -152,6 +159,8 @@ class FunctionTool(Tool):
         arguments = dict(model_kwargs, **{k: context[k] for k in self.requires}, **kwargs)
         if param.parameterized.iscoroutinefunction(self.function):
             result = await self.function(**arguments)
+        elif self.run_in_thread:
+            result = await asyncio.to_thread(self.function, **arguments)
         else:
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
