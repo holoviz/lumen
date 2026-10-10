@@ -91,6 +91,23 @@ async def test_function_tool_define_tool_render_output():
     assert isinstance(views[0], Viewable)
 
 
+async def test_function_tool_ignores_step_title():
+    tool = FunctionTool(add, requires=["a", "b"])
+    context = {"a": 1, "b": 3}
+    views, _ = await tool.respond([], context, step_title="Add numbers")
+    assert views[0] == "add(a=1, b=3) returned: 4"
+
+
+async def test_function_tool_forwards_step_title_when_accepted():
+    def titled(step_title: str) -> str:
+        """Echo the step title."""
+        return step_title
+
+    tool = FunctionTool(titled)
+    views, _ = await tool.respond([], {}, step_title="My step")
+    assert views[0] == "titled(step_title='My step') returned: My step"
+
+
 async def test_function_tool_provides():
     tool = FunctionTool(add, requires=["a", "b"], provides=["c"])
     context = {"a": 1, "b": 3}
