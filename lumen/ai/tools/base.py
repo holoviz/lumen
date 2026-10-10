@@ -166,7 +166,7 @@ class FunctionTool(Tool):
             if len(self.provides) == 1 and not isinstance(result, dict):
                 out_model[self.provides[0]] = result
             else:
-                out_model.update({result[key] for key in self.provides})
+                out_model.update({key: result[key] for key in self.provides})
         return [self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
