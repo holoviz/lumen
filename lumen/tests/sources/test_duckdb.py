@@ -15,7 +15,7 @@ from lumen.transforms.sql import SQLGroupBy
 try:
     import duckdb
 
-    from lumen.sources.base import QueryTimeoutError
+    from lumen.sources.base import JoinedSource, QueryTimeoutError
     from lumen.sources.duckdb import DuckDBSource
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
@@ -273,6 +273,24 @@ def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
 def test_duckdb_source_mirrors_source(duckdb_source):
     mirrored = DuckDBSource(uri=':memory:', mirrors={'mixed': (duckdb_source, 'test_sql')})
     pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'), check_dtype=False)
+
+
+def test_joined_source_get_schema_merges_sql_tables():
+    lhs = DuckDBSource.from_df({'lhs': pd.DataFrame({'id': [1, 2, 3], 'x': [0.5, 1.5, 2.5]})})
+    rhs = DuckDBSource.from_df({'rhs': pd.DataFrame({'id': [2, 3, 4], 'y': [10, 20, 30]})})
+    source = JoinedSource(
+        sources={'lhs': lhs, 'rhs': rhs},
+        tables={'joined': [
+            {'source': 'lhs', 'table': 'lhs', 'index': 'id'},
+            {'source': 'rhs', 'table': 'rhs', 'index': 'id'},
+        ]},
+    )
+    schema = source.get_schema('joined')
+    assert schema == {
+        'id': {'type': 'integer', 'inclusiveMinimum': 1, 'inclusiveMaximum': 4},
+        'x': {'type': 'number', 'inclusiveMinimum': 0.5, 'inclusiveMaximum': 2.5},
+        'y': {'type': 'integer', 'inclusiveMinimum': 10, 'inclusiveMaximum': 30},
+    }
 
 
 @pytest.fixture
