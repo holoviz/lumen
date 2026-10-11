@@ -19,7 +19,7 @@ from panel.chat.feed import PLACEHOLDER_SVG
 from panel.config import config, panel_extension
 from panel.io.document import hold
 from panel.io.state import state
-from panel.layout import Card, Column, FlexBox
+from panel.layout import Column, FlexBox
 from panel.pane import SVG, Image, Markdown
 from panel.util import edit_readonly
 from panel.viewable import (
@@ -2662,20 +2662,14 @@ class ExplorerUI(UI):
                 readonly=True,
                 height=200,
                 sizing_mode="stretch_width",
-                margin=(0, 10),
+                margin=(10, 10),
+                visible=view.param.view_provenance,
                 styles={"border": "1px solid var(--border-color)"}
             )
 
-            provenance_pane = Card(
-                provenance_editor,
-                title="View Data Provenance",
-                collapsed=True,
-                sizing_mode="stretch_width",
-                margin=(10, 10)
-            )
             editor_col = Column(
                 view.editor,
-                provenance_pane,
+                provenance_editor,
                 width_policy="max",
                 scroll="y-auto"
             )
