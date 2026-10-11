@@ -192,6 +192,35 @@ def cached_schema(method, locks=None):
     return wrapped
 
 
+def _is_empty_metadata(value) -> bool:
+    return value is None or (isinstance(value, str) and not value)
+
+
+def _merge_user_metadata(generated: dict, user: dict) -> None:
+    """
+    Merges user supplied table metadata into the generated metadata,
+    filling keys that are missing or empty, including per-column entries.
+    """
+    for key, value in user.items():
+        current = generated.get(key)
+        if key == 'columns' and isinstance(current, dict) and isinstance(value, dict):
+            for column, column_value in value.items():
+                if column not in current:
+                    continue
+                generated_column = current[column]
+                if isinstance(generated_column, dict):
+                    if isinstance(column_value, str):
+                        column_value = {'description': column_value}
+                    if isinstance(column_value, dict):
+                        for ckey, cvalue in column_value.items():
+                            if _is_empty_metadata(generated_column.get(ckey)):
+                                generated_column[ckey] = cvalue
+                elif _is_empty_metadata(generated_column):
+                    current[column] = column_value
+        elif _is_empty_metadata(current):
+            generated[key] = value
+
+
 def cached_metadata(method, locks=None):
     if locks is None:
         locks = weakref.WeakKeyDictionary()
@@ -716,9 +745,7 @@ class Source(MultiTypeComponent):
 
         # Merge source.metadata with metadata_func output
         for table_name in tables:
-            for key, value in self.metadata.get(table_name, {}).items():
-                if key not in metadata[table_name]:
-                    metadata[table_name][key] = value
+            _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
 
         return metadata
 
