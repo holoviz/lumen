@@ -2115,6 +2115,23 @@ def _spec_has_aggregate(spec: Any) -> bool:
     return False
 
 
+def _pin_value(value: Any) -> Any:
+    """
+    Convert a gridded coord value to the dtype of its materialized column.
+
+    xarray-sql >= 0.6 restores cftime coords on the dataset from the source,
+    while the SQL column holds datetime64, so a cftime value would never
+    match it. Dates a non-standard calendar can't express (e.g. 30 February)
+    are returned unchanged.
+    """
+    if getattr(value, 'calendar', None) is None or not hasattr(value, 'isoformat'):
+        return value
+    try:
+        return pd.Timestamp(value.isoformat())
+    except ValueError:
+        return value
+
+
 def subset_gridded_to_2d(
     pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
 ) -> Pipeline:
@@ -2129,9 +2146,9 @@ def subset_gridded_to_2d(
     not gridded or the spec already references every dimension.
     """
     # The compact gridded dataset (lazy, coords only -- never the long-form
-    # frame) carries just this variable's dims and, crucially, its coords in the
-    # materialized column's dtype (e.g. cftime coords become datetime64 there),
-    # so both the dims to collapse and the pin values come from it. Pinning from
+    # frame) carries just this variable's dims and its coords, so both the dims
+    # to collapse and the pin values come from it; _pin_value converts cftime
+    # coords to the materialized column's datetime64. Pinning from
     # the raw dataset would leave cftime dims uncollapsed (the object value can't
     # match the datetime64 column).
     # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
@@ -2150,7 +2167,8 @@ def subset_gridded_to_2d(
     if not collapse:
         return pipeline
     filters = [
-        ConstantFilter(field=dim, value=grid[dim].values[0]) for dim in collapse
+        ConstantFilter(field=dim, value=_pin_value(grid[dim].values[0]))
+        for dim in collapse
     ]
     return pipeline.chain(filters=filters)
 

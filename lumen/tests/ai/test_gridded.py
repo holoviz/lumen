@@ -13,7 +13,7 @@ pytest.importorskip("xarray_sql")
 
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import (
-    _spec_field_references, get_gridded_metadata, render_template,
+    _pin_value, _spec_field_references, get_gridded_metadata, render_template,
     subset_gridded_to_2d,
 )
 from lumen.pipeline import Pipeline
@@ -360,6 +360,15 @@ def test_subset_collapses_cftime_dim():
     sub = subset_gridded_to_2d(pipeline, spec, "vega-lite")
     assert len(sub.data) < len(pipeline.data)
     assert sub.data["time"].nunique() == 1
+
+
+def test_pin_value_converts_cftime_to_timestamp():
+    cftime = pytest.importorskip("cftime")
+    assert _pin_value(cftime.DatetimeGregorian(2026, 1, 1)) == pd.Timestamp("2026-01-01")
+    # 30 February only exists in the 360-day calendar, so it can't be converted
+    feb30 = cftime.Datetime360Day(2026, 2, 30)
+    assert _pin_value(feb30) is feb30
+    assert _pin_value(1.5) == 1.5
 
 
 def test_subset_noop_when_spec_uses_all_dims(xarray_pipeline):
