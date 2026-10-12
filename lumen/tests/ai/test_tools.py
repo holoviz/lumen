@@ -1,4 +1,6 @@
 import asyncio
+import threading
+import time
 
 import pytest
 
@@ -89,6 +91,59 @@ async def test_function_tool_define_tool_render_output():
     assert tool.render_output is True
     assert out_context == {}
     assert isinstance(views[0], Viewable)
+
+
+async def test_function_tool_run_in_thread_keeps_event_loop_responsive():
+    """Verify that run_in_thread=True does not block the asyncio event loop."""
+    concurrent_task_ran = False
+
+    def blocking_sync_fn():
+        time.sleep(0.06)
+        return "done"
+
+    async def concurrent_task():
+        nonlocal concurrent_task_ran
+        await asyncio.sleep(0.01)
+        concurrent_task_ran = True
+
+    tool = FunctionTool(blocking_sync_fn, run_in_thread=True)
+
+    await asyncio.gather(
+        tool.respond([], {}),
+        concurrent_task()
+    )
+
+    assert concurrent_task_ran is True
+
+
+async def test_function_tool_run_in_thread_propagates_exceptions():
+    """Verify that exceptions inside worker thread propagate correctly."""
+    def failing_fn():
+        raise ValueError("Error in thread")
+
+    tool = FunctionTool(failing_fn, run_in_thread=True)
+
+    with pytest.raises(ValueError, match="Error in thread"):
+        await tool.respond([], {})
+
+
+async def test_function_tool_default_run_in_thread_is_false():
+    """Verify default run_in_thread is False and executes on current event loop thread."""
+    main_thread = threading.get_ident()
+    executed_thread = None
+
+    def sync_fn():
+        nonlocal executed_thread
+        executed_thread = threading.get_ident()
+        return "done"
+
+    tool = FunctionTool(sync_fn)
+
+    assert tool.run_in_thread is False
+
+    # Thread check: should run on caller/main thread
+    await tool.respond([], {})
+    assert executed_thread == main_thread
 
 
 async def test_function_tool_provides():
