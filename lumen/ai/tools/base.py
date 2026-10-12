@@ -153,6 +153,10 @@ class FunctionTool(Tool):
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
     ) -> tuple[list[Any], ContextModel]:
+        # step_title is passed to every actor in a plan; only forward it
+        # if the wrapped function actually accepts it
+        if "step_title" not in self._model.model_fields:
+            kwargs.pop("step_title", None)
         model_kwargs = {}
         if any(field not in self.requires and field not in kwargs for field in self._model.model_fields):
             model_kwargs = await self._invoke_prompt("main", messages, context, response_model=self._model, max_retries=3)
@@ -175,7 +179,7 @@ class FunctionTool(Tool):
             if len(self.provides) == 1 and not isinstance(result, dict):
                 out_model[self.provides[0]] = result
             else:
-                out_model.update({result[key] for key in self.provides})
+                out_model.update({key: result[key] for key in self.provides})
         return [self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
