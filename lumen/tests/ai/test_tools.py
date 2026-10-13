@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import time
 
 import pytest
 
@@ -94,26 +93,18 @@ async def test_function_tool_define_tool_render_output():
 
 
 async def test_function_tool_run_in_thread_keeps_event_loop_responsive():
-    """Verify that run_in_thread=True does not block the asyncio event loop."""
-    concurrent_task_ran = False
+    loop_ran = threading.Event()
 
-    def blocking_sync_fn():
-        time.sleep(0.06)
-        return "done"
+    def wait_for_loop() -> bool:
+        # Times out unless the event loop keeps running while this blocks
+        return loop_ran.wait(timeout=1)
 
-    async def concurrent_task():
-        nonlocal concurrent_task_ran
-        await asyncio.sleep(0.01)
-        concurrent_task_ran = True
+    async def set_from_loop():
+        loop_ran.set()
 
-    tool = FunctionTool(blocking_sync_fn, run_in_thread=True)
-
-    await asyncio.gather(
-        tool.respond([], {}),
-        concurrent_task()
-    )
-
-    assert concurrent_task_ran is True
+    tool = FunctionTool(wait_for_loop, provides=["loop_ran"], run_in_thread=True)
+    (_, out_context), _ = await asyncio.gather(tool.respond([], {}), set_from_loop())
+    assert out_context["loop_ran"] is True
 
 
 async def test_function_tool_run_in_thread_propagates_exceptions():
