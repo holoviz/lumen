@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import decimal
 import fnmatch
@@ -1103,28 +1104,29 @@ class BaseSQLSource(Source):
 
     def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
         """
-        Convert decimal.Decimal to float in a pandas DataFrame, as
-        Bokeh ColumnDataSource does not support decimal.Decimal.
-        Samples only a subset of the DataFrame to check for decimal.Decimal
-        Arguments
-        ---------
-        df (pd.DataFrame):
-        the DataFrame to convert
-        sample (int):
-        number of rows to sample to check for decimal.Decimal
+        Convert decimal.Decimal values to float, as Bokeh's ColumnDataSource
+        cannot serialize them, and date/datetime object columns to datetime64.
+
+        Each object column is checked on its first ``sample`` non-null values,
+        so a mostly-NULL column is still detected and the result does not
+        depend on a random draw. Values of any other type are kept as is.
         """
         df = df.copy()
-        for col in df.select_dtypes(include=["object", "string"]).columns:
-            df_col_sample = df[col].sample(min(sample, len(df)))
-            try:
-                if df_col_sample.apply(lambda x: isinstance(x, decimal.Decimal)).any():
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                if df_col_sample.apply(
-                    lambda x: isinstance(x, (datetime.datetime, datetime.date))
-                ).any():
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
-            except Exception:
-                df[col] = df[col].astype(str)
+        # Positional access, as SQL results may repeat a column name
+        for i in np.flatnonzero(df.dtypes == "object"):
+            column = df.iloc[:, i]
+            values = column.dropna().head(sample)
+            if values.map(lambda v: isinstance(v, decimal.Decimal)).any():
+                df.isetitem(i, column.map(
+                    lambda v: float(v) if isinstance(v, decimal.Decimal) else v
+                ).infer_objects())
+            elif len(values) and values.map(
+                lambda v: isinstance(v, (datetime.datetime, datetime.date))
+            ).all():
+                # Mixed time zones or non-date values past the sample cannot be
+                # converted; leave the column unchanged rather than lose data
+                with contextlib.suppress(ValueError, TypeError):
+                    df.isetitem(i, pd.to_datetime(column))
         return df
 
     def normalize_table(self, table: str) -> str:
