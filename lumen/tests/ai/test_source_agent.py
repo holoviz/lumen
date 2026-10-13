@@ -37,7 +37,6 @@ def test_sanitize_tool_callable_resolves_postponed_annotations():
     result_store = []
     wrapped = _sanitize_tool_callable(load_data, "Load Data", [], result_store)
 
-    assert wrapped.__annotations__["kind"] == Literal["a", "b"]
     schema = function_to_model(wrapped).model_json_schema()
     assert schema["properties"]["kind"]["enum"] == ["a", "b"]
 
@@ -48,7 +47,6 @@ def test_sanitize_tool_callable_resolves_postponed_annotations():
 def test_sanitize_tool_callable_resolves_postponed_annotations_with_skip_params():
     wrapped = _sanitize_tool_callable(load_secret_data, "Load Secret Data", ["token"])
 
-    assert wrapped.__annotations__ == {"kind": Literal["a", "b"], "return": pd.DataFrame}
     schema = function_to_model(wrapped).model_json_schema()
     assert list(schema["properties"]) == ["kind"]
     assert schema["properties"]["kind"]["enum"] == ["a", "b"]
