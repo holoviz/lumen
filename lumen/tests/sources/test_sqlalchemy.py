@@ -421,18 +421,14 @@ def test_sqlalchemy_execute(memory_source):
     assert result.iloc[0]['name'] == 'Alice'
 
 
-def test_cast_decimal_columns_to_float():
-    """_cast_decimal_columns must convert a Decimal-bearing column to numeric
-    and leave everything else untouched (#1177)."""
-    from lumen.sources.sqlalchemy import _cast_decimal_columns
-
+def test_cast_to_supported_dtypes_casts_decimal_to_float(memory_source):
     df = pd.DataFrame({
         'amount': [decimal.Decimal('1.50'), decimal.Decimal('2.25'), None],
         'name': ['a', 'b', 'c'],
         'count': [1, 2, 3],
     })
 
-    out = _cast_decimal_columns(df)
+    out = memory_source._cast_to_supported_dtypes(df)
 
     assert out['amount'].dtype.kind == 'f'
     assert list(out['amount'][:2]) == [1.5, 2.25]
@@ -442,8 +438,8 @@ def test_cast_decimal_columns_to_float():
 
 def test_sqlalchemy_execute_casts_decimal_to_float(memory_source, monkeypatch):
     """NUMERIC/DECIMAL columns surface as decimal.Decimal through drivers like
-    psycopg2, pyodbc and cx_Oracle. Bokeh's ColumnDataSource cannot serialize
-    decimal.Decimal, so execute() must cast it away (#1177)."""
+    psycopg2, pyodbc and cx_Oracle, which Bokeh's ColumnDataSource cannot
+    serialize."""
     from bokeh.core.serialization import Serializer
     from bokeh.models import ColumnDataSource
 
@@ -472,16 +468,14 @@ def test_sqlalchemy_execute_casts_decimal_to_float(memory_source, monkeypatch):
 
     assert not df['amount'].apply(lambda v: isinstance(v, decimal.Decimal)).any()
 
-    # Positive control: Bokeh really cannot serialize decimal.Decimal, so a
-    # DataFrame that still carried one would fail exactly as reported.
+    # Raises on decimal.Decimal, which is the error users hit
     Serializer().encode(ColumnDataSource(data=df).data)
 
 
 @pytest.mark.asyncio
 async def test_sqlalchemy_execute_async_casts_decimal_to_float(memory_source):
-    """The truly-async branch of execute_async() must not skip the cast either
-    (#1177); it builds its DataFrame the same way execute() does, from a
-    separate code path."""
+    """The async-driver branch of execute_async() builds its own DataFrame
+    and must cast too."""
     class FakeAsyncResult:
         def fetchall(self):
             return [(decimal.Decimal('3.00'),)]
