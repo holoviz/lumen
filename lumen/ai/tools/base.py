@@ -131,17 +131,7 @@ class FunctionTool(Tool):
     )
 
     def __init__(self, function, **params):
-        annotations = getattr(function, _TOOL_ANNOTATIONS_ATTR, {})
-        if "requires" not in params and "requires" in annotations:
-            params["requires"] = annotations["requires"]
-        if "provides" not in params and "provides" in annotations:
-            params["provides"] = annotations["provides"]
-        if "purpose" not in params and "purpose" in annotations:
-            params["purpose"] = annotations["purpose"]
-        if "render_output" not in params and "render_output" in annotations:
-            params["render_output"] = annotations["render_output"]
-        if "run_in_thread" not in params and "run_in_thread" in annotations:
-            params["run_in_thread"] = annotations["run_in_thread"]
+        params = {**getattr(function, _TOOL_ANNOTATIONS_ATTR, {}), **params}
         requires = list(params.get("requires", []))
         model = function_to_model(function, skipped=requires)
         if "purpose" not in params:
