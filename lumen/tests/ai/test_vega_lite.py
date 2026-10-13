@@ -292,3 +292,63 @@ class TestGeoshapeGeometryValidation:
             },
         }
         VegaLiteEditor.validate_spec(spec)
+
+
+def test_with_explanation_tooltip_appends_to_existing_tooltip():
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "x", "type": "nominal"},
+            "y": {"field": "y", "type": "quantitative"},
+            "tooltip": [{"field": "x", "type": "nominal"}, {"field": "y", "type": "quantitative"}],
+        },
+    }
+    patched = VegaLiteAgent._with_explanation_tooltip(spec)
+    tooltips = patched["encoding"]["tooltip"]
+    assert len(tooltips) == 3
+    assert tooltips[-1] == {"field": "ai_explanation", "type": "nominal", "title": "AI Insight"}
+    assert patched["mark"]["tooltip"] is True
+
+
+def test_with_explanation_tooltip_seeds_when_none():
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "x", "type": "nominal"},
+            "y": {"field": "y", "type": "quantitative"},
+        },
+    }
+    patched = VegaLiteAgent._with_explanation_tooltip(spec)
+    tooltips = patched["encoding"]["tooltip"]
+    assert any(t["field"] == "ai_explanation" for t in tooltips)
+    assert any(t["field"] == "x" for t in tooltips)
+    assert any(t["field"] == "y" for t in tooltips)
+
+
+def test_with_explanation_tooltip_does_not_duplicate():
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "tooltip": [{"field": "ai_explanation", "type": "nominal", "title": "AI Insight"}],
+        },
+    }
+    patched = VegaLiteAgent._with_explanation_tooltip(spec)
+    assert len(patched["encoding"]["tooltip"]) == 1
+
+
+def test_with_explanation_tooltip_patches_layers():
+    spec = {
+        "layer": [
+            {
+                "mark": "bar",
+                "encoding": {"x": {"field": "x"}, "y": {"field": "y"}},
+            },
+            {
+                "mark": "line",
+                "encoding": {"x": {"field": "x"}, "y": {"field": "y"}},
+            },
+        ],
+    }
+    patched = VegaLiteAgent._with_explanation_tooltip(spec)
+    for layer in patched["layer"]:
+        assert any(t["field"] == "ai_explanation" for t in layer["encoding"]["tooltip"])

@@ -1,4 +1,5 @@
 import base64
+import copy
 
 from collections import Counter
 from functools import partial
@@ -935,7 +936,7 @@ class VegaLiteAgent(BaseCodeAgent):
     @retry_llm_output()
     async def _generate_ai_explanations(
         self,
-        view: VegaLiteView,
+        editor: VegaLiteEditor,
         messages: list[Message],
         context: TContext,
     ) -> bool:
@@ -955,7 +956,7 @@ class VegaLiteAgent(BaseCodeAgent):
         # get_data handles lazy frames (narwhals/polars) correctly and runs
         # off-thread — pd.DataFrame(lazyframe) would raise. Same pattern
         # used elsewhere in this file (e.g. _generate_altair_spec).
-        df = await get_data(view.pipeline)
+        df = await get_data(editor.component.pipeline)
 
         # 2. Build prompt variables — cap rows to avoid blowing the context window.
         # We use PROFILE_SAMPLE_ROWS (same cap as the rest of the file) but take
@@ -1007,10 +1008,56 @@ class VegaLiteAgent(BaseCodeAgent):
         # rerender/selection_expr/name and calls update() on change, so
         # assigning this triggers the same update/rerender path pipeline.data
         # would have, with no separate call needed.
-        view._ai_explanations = explanations
+        # Write the tooltip into the editor's YAML: this re-deserializes a
+        # new component, so explanations go on editor.component afterwards.
+        patched = self._with_explanation_tooltip(load_yaml(editor.spec))
+        editor.spec = dump_yaml(patched)
+        editor.component._ai_explanations = explanations
         # Signal success to @retry_llm_output — falsy return (None) would
         # be treated as failure and trigger unnecessary retries.
         return True
+
+    @classmethod
+    def _with_explanation_tooltip(cls, spec: dict) -> dict:
+        """
+        Return a copy of ``spec`` whose encoding(s) include the ai_explanation
+        tooltip field. The LLM only sometimes adds it when generating the
+        chart, and without it the stored explanations are never displayed.
+        """
+        field = {"field": "ai_explanation", "type": "nominal", "title": "AI Insight"}
+        spec = copy.deepcopy(spec)
+
+        def patch(node: dict) -> None:
+            layers = node.get("layer")
+            if isinstance(layers, list):
+                for layer in layers:
+                    if isinstance(layer, dict) and "mark" in layer:
+                        patch(layer)
+                return
+            if "mark" not in node:
+                return
+            mark = node["mark"]
+            if isinstance(mark, str):
+                node["mark"] = mark = {"type": mark}
+            mark["tooltip"] = True
+            encoding = node.setdefault("encoding", {})
+            tooltip = encoding.get("tooltip")
+            if tooltip is None:
+                tooltip = [
+                    {k: v for k, v in encoding[ch].items() if k in ("field", "type", "title", "format")}
+                    for ch in ("x", "y")
+                    if isinstance(encoding.get(ch), dict) and "field" in encoding[ch]
+                ]
+            elif isinstance(tooltip, dict):
+                tooltip = [tooltip]
+            else:
+                tooltip = list(tooltip)
+            if not any(isinstance(t, dict) and t.get("field") == "ai_explanation" for t in tooltip):
+                tooltip.append(field)
+            encoding["tooltip"] = tooltip
+
+        patch(spec)
+        return spec
 
     @classmethod
     def _spec_has_aggregation(cls, spec: dict) -> bool:
@@ -1137,9 +1184,9 @@ class VegaLiteAgent(BaseCodeAgent):
 
                     if is_data_small:
                         # Watcher for when user clicks the "Explain AI" button on this specific chart
-                        def _trigger_ai_explanation(event, comp=editor.component, msgs=messages, ctx=context):
+                        def _trigger_ai_explanation(event, ed=editor, msgs=messages, ctx=context):
                             if event.new:  # Only trigger when turned ON (True)
-                                state.execute(partial(self._generate_ai_explanations, comp, msgs, ctx))
+                                state.execute(partial(self._generate_ai_explanations, ed, msgs, ctx))
 
                         editor.param.watch(_trigger_ai_explanation, 'wanting_ai_explanation')
 
@@ -1147,7 +1194,7 @@ class VegaLiteAgent(BaseCodeAgent):
                         if editor.wanting_ai_explanation:
                             state.execute(partial(
                                 self._generate_ai_explanations,
-                                editor.component, messages, context,
+                                editor, messages, context,
                             ))
         out_context = await editors[-1].render_context()
         return outs, out_context
