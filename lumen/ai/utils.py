@@ -2127,13 +2127,12 @@ def _pin_value(grid: Any, dim: str) -> Any:
     from xarray_sql import cftime as xsql_cftime
 
     value = grid[dim].values[:1]
-    if xsql_cftime.is_cftime(value):
-        units, calendar = xsql_cftime.encoding(grid, dim)
-        if xsql_cftime.is_gregorian_like(calendar):
-            value = xsql_cftime.to_microseconds(value).astype('datetime64[us]')
-        else:
-            value = xsql_cftime.to_offsets(value, units, calendar)
-    return value[0]
+    if not xsql_cftime.is_cftime(value):
+        return value[0]
+    units, calendar = xsql_cftime.encoding(grid, dim)
+    if xsql_cftime.is_gregorian_like(calendar):
+        return xsql_cftime.to_microseconds(value).astype('datetime64[us]')[0]
+    return xsql_cftime.to_offsets(value, units, calendar)[0]
 
 
 def subset_gridded_to_2d(
