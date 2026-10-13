@@ -108,35 +108,24 @@ async def test_function_tool_run_in_thread_keeps_event_loop_responsive():
 
 
 async def test_function_tool_run_in_thread_propagates_exceptions():
-    """Verify that exceptions inside worker thread propagate correctly."""
     def failing_fn():
         raise ValueError("Error in thread")
 
     tool = FunctionTool(failing_fn, run_in_thread=True)
-
     with pytest.raises(ValueError, match="Error in thread"):
         await tool.respond([], {})
 
 
-async def test_function_tool_default_run_in_thread_is_false():
-    """Verify default run_in_thread is False and executes on current event loop thread."""
-    main_thread = threading.get_ident()
-    executed_thread = None
+async def test_function_tool_runs_sync_function_on_loop_thread_by_default():
+    def thread_id() -> int:
+        return threading.get_ident()
 
-    def sync_fn():
-        nonlocal executed_thread
-        executed_thread = threading.get_ident()
-        return "done"
-
-    tool = FunctionTool(sync_fn)
-
+    tool = FunctionTool(thread_id, provides=["thread_id"])
+    _, out_context = await tool.respond([], {})
     assert tool.run_in_thread is False
+    assert out_context["thread_id"] == threading.get_ident()
 
-    # Thread check: should run on caller/main thread
-    await tool.respond([], {})
-    assert executed_thread == main_thread
 
-    
 async def test_function_tool_ignores_step_title():
     tool = FunctionTool(add, requires=["a", "b"])
     context = {"a": 1, "b": 3}
