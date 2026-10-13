@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import decimal
 import re
 
 from typing import TYPE_CHECKING, Any
@@ -34,18 +33,6 @@ MISSING_TABLE_PATTERNS = {
     "postgresql": re.compile(r"relation\s+\"([^\"]+)\"\s+does not exist"),
     "mysql": re.compile(r"Table\s+'(?:[^'.]+\.)?([^'.]+)'\s+doesn't exist"),
 }
-
-
-def _cast_decimal_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Cast decimal.Decimal values to float, as Bokeh's ColumnDataSource cannot
-    serialize decimal.Decimal. NUMERIC/DECIMAL columns surface this way
-    through drivers such as psycopg2, pyodbc and cx_Oracle.
-    """
-    for col in df.select_dtypes(include='object', exclude='str').columns:
-        if df[col].apply(lambda v: isinstance(v, decimal.Decimal)).any():
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    return df
 
 
 class SQLAlchemySource(BaseSQLSource):
@@ -315,7 +302,7 @@ class SQLAlchemySource(BaseSQLSource):
         with self._connection as connection:
             result = connection.execute(text(sql_query), params, *args, **kwargs)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            return _cast_decimal_columns(df)
+            return self._cast_to_supported_dtypes(df)
 
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
@@ -356,7 +343,7 @@ class SQLAlchemySource(BaseSQLSource):
             result = await connection.execute(text(sql_query), params, *args, **kwargs)
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
-            return _cast_decimal_columns(df)
+            return self._cast_to_supported_dtypes(df)
 
     async def execute_with_timeout(
         self, sql_query: str, timeout: float | None, fetch: bool = False
