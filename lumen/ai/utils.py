@@ -2115,6 +2115,26 @@ def _spec_has_aggregate(spec: Any) -> bool:
     return False
 
 
+def _pin_value(grid: Any, dim: str) -> Any:
+    """
+    Return the first coord value of ``dim`` encoded like its SQL column.
+
+    xarray-sql >= 0.6 restores cftime coords on the dataset, while the SQL
+    column holds them encoded: microseconds counted in the calendar for
+    Gregorian-like calendars, int64 offsets for 360_day and julian. The pin
+    must use the same encoding or the filter never matches.
+    """
+    from xarray_sql import cftime as xsql_cftime
+
+    value = grid[dim].values[:1]
+    if not xsql_cftime.is_cftime(value):
+        return value[0]
+    units, calendar = xsql_cftime.encoding(grid, dim)
+    if xsql_cftime.is_gregorian_like(calendar):
+        return xsql_cftime.to_microseconds(value).astype('datetime64[us]')[0]
+    return xsql_cftime.to_offsets(value, units, calendar)[0]
+
+
 def subset_gridded_to_2d(
     pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
 ) -> Pipeline:
@@ -2129,11 +2149,9 @@ def subset_gridded_to_2d(
     not gridded or the spec already references every dimension.
     """
     # The compact gridded dataset (lazy, coords only -- never the long-form
-    # frame) carries just this variable's dims and, crucially, its coords in the
-    # materialized column's dtype (e.g. cftime coords become datetime64 there),
-    # so both the dims to collapse and the pin values come from it. Pinning from
-    # the raw dataset would leave cftime dims uncollapsed (the object value can't
-    # match the datetime64 column).
+    # frame) carries just this variable's dims and its coords, so both the dims
+    # to collapse and the pin values come from it; _pin_value encodes cftime
+    # coords the way xarray-sql stores them in the SQL column.
     # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
     # a temporal mean) reduces over every dim it does not plot. Pinning those
     # dims to one slice would make the aggregate run on a single slice and
@@ -2150,7 +2168,7 @@ def subset_gridded_to_2d(
     if not collapse:
         return pipeline
     filters = [
-        ConstantFilter(field=dim, value=grid[dim].values[0]) for dim in collapse
+        ConstantFilter(field=dim, value=_pin_value(grid, dim)) for dim in collapse
     ]
     return pipeline.chain(filters=filters)
 

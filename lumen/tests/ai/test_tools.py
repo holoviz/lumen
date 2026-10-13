@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 
@@ -89,6 +90,68 @@ async def test_function_tool_define_tool_render_output():
     assert tool.render_output is True
     assert out_context == {}
     assert isinstance(views[0], Viewable)
+
+
+async def test_function_tool_run_in_thread_keeps_event_loop_responsive():
+    loop_ran = threading.Event()
+
+    def wait_for_loop() -> bool:
+        # Times out unless the event loop keeps running while this blocks
+        return loop_ran.wait(timeout=1)
+
+    async def set_from_loop():
+        loop_ran.set()
+
+    tool = FunctionTool(wait_for_loop, provides=["loop_ran"], run_in_thread=True)
+    (_, out_context), _ = await asyncio.gather(tool.respond([], {}), set_from_loop())
+    assert out_context["loop_ran"] is True
+
+
+async def test_function_tool_run_in_thread_propagates_exceptions():
+    def failing_fn():
+        raise ValueError("Error in thread")
+
+    tool = FunctionTool(failing_fn, run_in_thread=True)
+    with pytest.raises(ValueError, match="Error in thread"):
+        await tool.respond([], {})
+
+
+async def test_function_tool_define_tool_run_in_thread():
+    @define_tool(provides=["thread_id"], run_in_thread=True)
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    tool = FunctionTool(thread_id)
+    _, out_context = await tool.respond([], {})
+    assert tool.run_in_thread is True
+    assert out_context["thread_id"] != threading.get_ident()
+
+
+async def test_function_tool_runs_sync_function_on_loop_thread_by_default():
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    tool = FunctionTool(thread_id, provides=["thread_id"])
+    _, out_context = await tool.respond([], {})
+    assert tool.run_in_thread is False
+    assert out_context["thread_id"] == threading.get_ident()
+
+
+async def test_function_tool_ignores_step_title():
+    tool = FunctionTool(add, requires=["a", "b"])
+    context = {"a": 1, "b": 3}
+    views, _ = await tool.respond([], context, step_title="Add numbers")
+    assert views[0] == "add(a=1, b=3) returned: 4"
+
+
+async def test_function_tool_forwards_step_title_when_accepted():
+    def titled(step_title: str) -> str:
+        """Echo the step title."""
+        return step_title
+
+    tool = FunctionTool(titled)
+    views, _ = await tool.respond([], {}, step_title="My step")
+    assert views[0] == "titled(step_title='My step') returned: My step"
 
 
 async def test_function_tool_provides():
