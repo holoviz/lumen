@@ -344,15 +344,14 @@ def test_subset_skips_collapse_when_spec_aggregates(simple_dataset_3d_pipeline):
     assert sub.data["lon"].nunique() > 1
 
 
-@pytest.mark.parametrize(
-    "calendar", ["DatetimeGregorian", "DatetimeNoLeap", "Datetime360Day", "DatetimeJulian"]
-)
+@pytest.mark.parametrize("calendar", ["standard", "noleap", "360_day", "julian"])
 def test_subset_collapses_cftime_dim(calendar):
     """A cftime time dim must collapse to exactly one slice in every calendar:
     the pin has to match how xarray-sql encodes the column."""
     cftime = pytest.importorskip("cftime")
-    date = getattr(cftime, calendar)
-    times = np.array([date(2026, m, 1) for m in (1, 2, 3)], dtype=object)
+    times = np.array(
+        [cftime.datetime(2026, m, 1, calendar=calendar) for m in (1, 2, 3)], dtype=object
+    )
     ds = xr.Dataset(
         {"air": (["time", "lat", "lon"], np.arange(3 * 3 * 4, dtype=float).reshape(3, 3, 4))},
         coords={"time": times, "lat": [0.0, 1.0, 2.0], "lon": [10.0, 20.0, 30.0, 40.0]},
