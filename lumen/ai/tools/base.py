@@ -18,7 +18,10 @@ from ..translate import function_to_model
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
 
 
-def define_tool(_func=None, *, requires=None, provides=None, purpose=None, render_output=None):
+def define_tool(
+    _func=None, *, requires=None, provides=None, purpose=None, render_output=None,
+    run_in_thread=None
+):
     """
     Annotate a function so FunctionTool can read tool metadata.
     """
@@ -32,6 +35,8 @@ def define_tool(_func=None, *, requires=None, provides=None, purpose=None, rende
             annotations["purpose"] = purpose
         if render_output is not None:
             annotations["render_output"] = render_output
+        if run_in_thread is not None:
+            annotations["run_in_thread"] = run_in_thread
         setattr(function, _TOOL_ANNOTATIONS_ATTR, annotations)
         return function
     if _func is not None and callable(_func):
@@ -135,6 +140,8 @@ class FunctionTool(Tool):
             params["purpose"] = annotations["purpose"]
         if "render_output" not in params and "render_output" in annotations:
             params["render_output"] = annotations["render_output"]
+        if "run_in_thread" not in params and "run_in_thread" in annotations:
+            params["run_in_thread"] = annotations["run_in_thread"]
         requires = list(params.get("requires", []))
         model = function_to_model(function, skipped=requires)
         if "purpose" not in params:

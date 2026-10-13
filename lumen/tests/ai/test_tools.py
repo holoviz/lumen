@@ -116,6 +116,17 @@ async def test_function_tool_run_in_thread_propagates_exceptions():
         await tool.respond([], {})
 
 
+async def test_function_tool_define_tool_run_in_thread():
+    @define_tool(provides=["thread_id"], run_in_thread=True)
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    tool = FunctionTool(thread_id)
+    _, out_context = await tool.respond([], {})
+    assert tool.run_in_thread is True
+    assert out_context["thread_id"] != threading.get_ident()
+
+
 async def test_function_tool_runs_sync_function_on_loop_thread_by_default():
     def thread_id() -> int:
         return threading.get_ident()
