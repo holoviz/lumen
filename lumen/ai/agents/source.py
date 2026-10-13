@@ -120,23 +120,6 @@ def _sanitize_tool_callable(
 
     sig = inspect.signature(func)
 
-    # Resolve postponed (string) annotations in the module that defines
-    # ``func``; the wrapper lives in this module, where they cannot be
-    # resolved later.
-    try:
-        type_hints = t.get_type_hints(func, include_extras=True)
-    except Exception:
-        type_hints = {}
-    if type_hints:
-        sig = sig.replace(
-            parameters=[
-                p.replace(annotation=type_hints.get(name, p.annotation))
-                for name, p in sig.parameters.items()
-            ],
-            return_annotation=type_hints.get("return", sig.return_annotation),
-        )
-    func_annotations = {**getattr(func, "__annotations__", {}), **type_hints}
-
     if needs_skip:
         filtered_params = [
             parameter
@@ -146,7 +129,7 @@ def _sanitize_tool_callable(
         filtered_signature = inspect.Signature(filtered_params)
         kept_param_names = {parameter.name for parameter in filtered_params}
 
-        annotations = dict(func_annotations)
+        annotations = dict(getattr(func, "__annotations__", {}))
         for p in sig.parameters.values():
             if p.annotation is not inspect.Parameter.empty and p.name not in annotations:
                 annotations[p.name] = p.annotation
@@ -168,7 +151,7 @@ def _sanitize_tool_callable(
         filtered_doc = "\n".join(filtered_doc_lines) or getattr(func, "__doc__", None)
     else:
         filtered_signature = sig
-        filtered_annotations = dict(func_annotations)
+        filtered_annotations = dict(getattr(func, "__annotations__", {}))
         for p in sig.parameters.values():
             if p.annotation is not inspect.Parameter.empty and p.name not in filtered_annotations:
                 filtered_annotations[p.name] = p.annotation
@@ -193,6 +176,9 @@ def _sanitize_tool_callable(
     wrapped_any = t.cast(t.Any, wrapped_func)
     wrapped_any.__name__ = wrapped_name
     wrapped_any.__qualname__ = wrapped_name
+    # String annotations (from ``from __future__ import annotations``) are
+    # resolved against __module__, so point it at the module defining func
+    wrapped_any.__module__ = func.__module__
     wrapped_any.__doc__ = filtered_doc
     wrapped_any.__signature__ = filtered_signature
     wrapped_any.__annotations__ = filtered_annotations
