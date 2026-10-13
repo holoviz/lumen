@@ -292,6 +292,27 @@ def test_sqlalchemy_excluded_tables(memory_source):
     assert 'test_data' not in tables
 
 
+@pytest.mark.parametrize('schema', ['information_schema', 'INFORMATION_SCHEMA'])
+def test_sqlalchemy_get_tables_skips_information_schema(memory_source, schema):
+    # PostgreSQL, MySQL and others report information_schema alongside the
+    # user schemas, attaching a database under that name mimics it in SQLite
+    with memory_source._engine.begin() as conn:
+        conn.execute(text(f"ATTACH DATABASE ':memory:' AS {schema}"))
+        conn.execute(text(f'CREATE TABLE {schema}.sql_parts (id INTEGER)'))
+        conn.execute(text('CREATE TABLE orders (id INTEGER)'))
+
+    assert memory_source.get_tables() == ['orders']
+
+
+def test_sqlalchemy_get_tables_explicit_information_schema(memory_source):
+    with memory_source._engine.begin() as conn:
+        conn.execute(text("ATTACH DATABASE ':memory:' AS information_schema"))
+        conn.execute(text('CREATE TABLE information_schema.sql_parts (id INTEGER)'))
+    memory_source.schema = 'information_schema'
+
+    assert memory_source.get_tables() == ['information_schema.sql_parts']
+
+
 def test_sqlalchemy_metadata_extraction(memory_source):
     """Test metadata extraction using SQLAlchemy inspector."""
     df = pd.DataFrame({
