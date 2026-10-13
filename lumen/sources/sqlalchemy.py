@@ -378,7 +378,7 @@ class SQLAlchemySource(BaseSQLSource):
         else:
             # Get tables from all schemas
             for schema in inspector.get_schema_names():
-                if schema and schema.lower() in self._system_schemas:
+                if schema.lower() in self._system_schemas:
                     continue
                 table_names = inspector.get_table_names(schema=schema)
                 for table in table_names:
