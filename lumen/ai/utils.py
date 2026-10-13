@@ -2115,21 +2115,25 @@ def _spec_has_aggregate(spec: Any) -> bool:
     return False
 
 
-def _pin_value(value: Any) -> Any:
+def _pin_value(grid: Any, dim: str) -> Any:
     """
-    Convert a gridded coord value to the dtype of its materialized column.
+    Return the first coord value of ``dim`` encoded like its SQL column.
 
-    xarray-sql >= 0.6 restores cftime coords on the dataset from the source,
-    while the SQL column holds datetime64, so a cftime value would never
-    match it. Dates a non-standard calendar can't express (e.g. 30 February)
-    are returned unchanged.
+    xarray-sql >= 0.6 restores cftime coords on the dataset, while the SQL
+    column holds them encoded: microseconds counted in the calendar for
+    Gregorian-like calendars, int64 offsets for 360_day and julian. The pin
+    must use the same encoding or the filter never matches.
     """
-    if getattr(value, 'calendar', None) is None or not hasattr(value, 'isoformat'):
-        return value
-    try:
-        return pd.Timestamp(value.isoformat())
-    except ValueError:
-        return value
+    from xarray_sql import cftime as xsql_cftime
+
+    value = grid[dim].values[:1]
+    if xsql_cftime.is_cftime(value):
+        units, calendar = xsql_cftime.encoding(grid, dim)
+        if xsql_cftime.is_gregorian_like(calendar):
+            value = xsql_cftime.to_microseconds(value).astype('datetime64[us]')
+        else:
+            value = xsql_cftime.to_offsets(value, units, calendar)
+    return value[0]
 
 
 def subset_gridded_to_2d(
@@ -2147,10 +2151,8 @@ def subset_gridded_to_2d(
     """
     # The compact gridded dataset (lazy, coords only -- never the long-form
     # frame) carries just this variable's dims and its coords, so both the dims
-    # to collapse and the pin values come from it; _pin_value converts cftime
-    # coords to the materialized column's datetime64. Pinning from
-    # the raw dataset would leave cftime dims uncollapsed (the object value can't
-    # match the datetime64 column).
+    # to collapse and the pin values come from it; _pin_value encodes cftime
+    # coords the way xarray-sql stores them in the SQL column.
     # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
     # a temporal mean) reduces over every dim it does not plot. Pinning those
     # dims to one slice would make the aggregate run on a single slice and
@@ -2167,8 +2169,7 @@ def subset_gridded_to_2d(
     if not collapse:
         return pipeline
     filters = [
-        ConstantFilter(field=dim, value=_pin_value(grid[dim].values[0]))
-        for dim in collapse
+        ConstantFilter(field=dim, value=_pin_value(grid, dim)) for dim in collapse
     ]
     return pipeline.chain(filters=filters)
 
