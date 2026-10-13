@@ -109,7 +109,7 @@ class SQLAlchemySource(BaseSQLSource):
 
     # Catalog schemas that describe the database itself, skipped when
     # discovering tables across all schemas
-    _system_schemas = {'information_schema'}
+    _system_schemas = frozenset({'information_schema'})
 
     def __init__(self, **params):
         engine = params.pop('engine', None)
