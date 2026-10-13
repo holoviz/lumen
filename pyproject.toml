@@ -82,6 +82,7 @@ dev = [
 sql = ['sqlalchemy']
 ai-local = ['huggingface_hub', 'hf_xet']
 ai-openai = ['openai']
+ai-typesafe = ['typesafe-sdk']
 ai-openrouter = ['lumen[ai-openai]']
 ai-mistralai = ['mistralai']
 ai-monty = ['pydantic-monty>=1.0.0']

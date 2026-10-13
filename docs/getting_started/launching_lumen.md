@@ -138,7 +138,7 @@ ui.servable()
 | Flag | Purpose | Example |
 |------|---------|---------|
 | `--provider` | Specify LLM provider | `--provider anthropic` |
-| `--model-kwargs` | Configure models | `--model-kwargs '{"default": {"model": "claude-sonnet-4-5"}}'` |
+| `--model-kwargs` | Configure models | `--model-kwargs '{"default": {"model": "claude-sonnet-4-6"}}'` |
 | `--temperature` | Control randomness | `--temperature 0.5` |
 | `--port` | Custom port | `--port 8080` |
 | `--address` | Network address | `--address 0.0.0.0` |

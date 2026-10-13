@@ -498,7 +498,7 @@ class VegaLiteAgent(BaseCodeAgent):
         """Generate one or more VegaLite specs via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
         gridded = get_gridded_metadata(pipeline)
-        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout, context_exception="raise") as step:
             response = self._stream_prompt(
                 "main",
                 messages,
@@ -554,7 +554,7 @@ class VegaLiteAgent(BaseCodeAgent):
         errors_context = self._build_errors_context(pipeline, context, errors)
         gridded = get_gridded_metadata(pipeline)
 
-        with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout, context_exception="raise") as step:
             response = self._stream_prompt(
                 "main_altair",
                 messages,

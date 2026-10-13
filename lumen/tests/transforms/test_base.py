@@ -3,6 +3,7 @@ import pathlib
 
 import pandas as pd
 import param  # type: ignore
+import pytest
 
 from lumen.transforms.base import (
     Aggregate, Columns, Count, DropNA, Eval, Filter, SetIndex, Sort, Sum,
@@ -111,6 +112,25 @@ def test_filter_invalid_condition_warns(caplog):
         "Condition {'unexpected': True} on 'A' column not understood. "
         "Filter query will not be applied."
     ) in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("ranges", "expected"),
+    [
+        ([(None, 0), (None, None), (4, None)], [0, 4]),
+        ([(None, None), (4, None)], [4]),
+        ([(None, 1), (3, None)], [0, 1, 3, 4]),
+        ([(None, None)], [0, 1, 2, 3, 4]),
+    ],
+    ids=["unbounded_in_middle", "unbounded_first", "half_open", "only_unbounded"],
+)
+def test_filter_range_list_with_open_bounds(ranges, expected):
+    """A None bound leaves that side of a range open and (None, None) adds no range."""
+    df = pd.DataFrame({'A': [0, 1, 2, 3, 4]})
+
+    result = Filter.apply_to(df, conditions=[('A', ranges)])
+
+    assert result['A'].tolist() == expected
 
 
 def test_requires_columns_defaults_to_unknown():

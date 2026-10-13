@@ -104,6 +104,21 @@ class TestLintData:
         assert findings
         assert findings[-1].startswith(f"Counts above come from a random {PROFILE_SAMPLE_ROWS}-row sample")
 
+    def test_capped_prefix_skips_order_sensitive_checks_and_notes_it(self):
+        """The first rows of a sorted result are often constant in the sort key
+        and need not resemble the rest, so a capped preview cannot support a
+        constant-column or outlier verdict."""
+        df = pd.DataFrame({
+            "region": ["a"] * 50,
+            "revenue": [float(i) for i in range(49)] + [100000.0],
+            "flag": [None] * 50,
+        })
+        assert any("Constant column" in f for f in lint_data(df))
+        findings = lint_data(df, capped=True)
+        assert not any("Constant column" in f or "IQR outliers" in f for f in findings)
+        assert any("Missing values" in f for f in findings)
+        assert findings[-1].startswith("Counts above come from only the first 50 rows of the result in query order")
+
     def test_constant_and_outlier_findings_are_not_actionable(self):
         """Filtering to one region then grouping is an ordinary query, not a defect:
         it must be reported without provoking a rewrite that drops the column."""

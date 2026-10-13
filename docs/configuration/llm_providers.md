@@ -22,9 +22,9 @@ To use a specific provider, pass the `--provider` flag:
 
 ``` bash
 lumen-ai serve penguins.csv --provider anthropic
-lumen-ai serve penguins.csv --provider google --model 'gemini-2.5-flash'
+lumen-ai serve penguins.csv --provider google --model 'gemini-3.8-flash'
 lumen-ai serve penguins.csv --provider kilo --model 'openai/gpt-4o-mini'
-lumen-ai serve penguins.csv --provider ollama --model 'qwen3:32b'
+lumen-ai serve penguins.csv --provider ollama --model 'qwen3.6:35b-a3b'
 lumen-ai serve penguins.csv --provider mlx
 ```
 
@@ -38,7 +38,7 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.6-luna"},  # Cheap for most agents
+    "default": {"model": "gpt-6-luna"},  # Cheap for most agents
     "sql": {"model": "gpt-4.1"},           # Powerful for SQL
     "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
     "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
@@ -121,32 +121,33 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Popular Models |
 |----------|---------------|----------------|
-| **OpenAI** | `gpt-5.6-luna` | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano` |
-| **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-5` |
-| **Google** | `gemini-3-flash-preview` | `gemini-3-pro-preview`, `gemini-2.5-flash`, `gemini-2.0-flash` |
-| **Mistral** | `mistral-small-latest` | `mistral-large-latest`, `ministral-8b-latest` |
+| **OpenAI** | `gpt-6-luna` | `gpt-5.6-luna`, `gpt-6-sol`, `gpt-5.4-nano` |
+| **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-6` |
+| **Google** | `gemini-3.8-flash` | `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.1-flash-lite` |
+| **Mistral** | `mistral-small-latest` | `mistral-medium-latest`, `mistral-large-latest`, `ministral-14b-latest` |
 | **Azure OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
 | **Azure Mistral** | `azureai` | `mistral-large`, `mistral-small` |
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
-    The OpenAI default, `gpt-5.6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`.
+    The OpenAI default, `gpt-6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`. Some models, such as `gpt-6.1-sol`, cannot disable reasoning and only work with the responses API.
 
 ### Local providers
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
-| **Ollama** | `qwen3:32b` | External service; requires `ollama pull` to manage and run models. |
-| **Llama.cpp** | `unsloth/Qwen3-32B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
+| **Ollama** | `qwen3.6:35b-a3b` | External service; requires `ollama pull` to manage and run models. |
+| **Llama.cpp** | `unsloth/Qwen3.6-35B-A3B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
 | **MLX** | `mlx-community/Qwen3.5-9B-MLX-4bit` | Apple Silicon native; runs models in-process via Metal GPU or connects to `mlx_lm.server`. |
 | **AI Navigator** | `server-model` | Desktop GUI; provides a local OpenAI-compatible API once the API server is started. |
 
 **Recommended local models:**
 
-- **General purpose:** `qwen3:32b`, `llama3.3:70b`, `qwen3:30b-a3b`, `nemotron-3-nano:30b`
-- **Coding:** `qwen3-coder:32b`, `qwen2.5-coder:32b`
-- **Reasoning:** `nemotron-3-nano:30b`
+- **General purpose:** `qwen3.6:35b-a3b`, `qwen3.8:27b`, `gemma4:26b`, `gpt-oss:20b`
+- **Smaller machines:** `qwen3.5:9b`
+- **Coding:** `qwen3-coder:30b`
+- **Reasoning:** `nemotron-3.5-lightning:30b`
 
 ### Codex CLI and Claude Code
 
@@ -201,6 +202,77 @@ lumen-ai serve penguins.csv --provider claude-code
     rather than streaming tokens, and do not yet expose Lumen function tools to
     the coding CLIs.
 
+### GitHub Copilot CLI
+
+Use a locally authenticated GitHub Copilot CLI as Lumen's LLM provider. It
+works with any Copilot plan, including Copilot Free.
+
+Install the CLI, make sure `copilot` is on your `PATH`, and sign in once:
+
+``` bash
+copilot login
+```
+
+Start Lumen with it, with or without a dataset:
+
+``` bash
+lumen-ai serve --provider copilot-cli
+lumen-ai serve penguins.csv --provider copilot-cli
+```
+
+Copilot picks the model by default. Lumen then keeps one Copilot process
+running and sends every request to it, which avoids several seconds of CLI
+startup per request. If your plan lets you choose a model, pass a name listed
+by `copilot help config` with `--model`; Lumen then starts the CLI once per
+request, which is slower. Plans limited to automatic model selection, such as
+Copilot Free, only accept `--model auto`; any other name fails with
+`Model ... from --model flag is not available`.
+
+!!! warning "Local development only"
+    Lumen runs each request in a fresh temporary directory and starts Copilot
+    with every tool disabled, so it can only answer in text: it cannot run shell
+    commands, read or write files, fetch URLs, or call MCP servers, and it skips
+    instruction files such as `AGENTS.md`. Each Lumen question makes several
+    Copilot requests (seven to ten for a query and a chart), and each one counts
+    against your plan's Copilot usage allowance, which is small on Copilot
+    Free. Copilot keeps a copy of every prompt under `~/.copilot/session-state`,
+    and Lumen does not disable any hooks or plugins you have configured for
+    Copilot.
+
+### Antigravity CLI
+
+Use a locally authenticated Google Antigravity CLI (`agy`) as Lumen's LLM
+provider. Requests count against your Antigravity account's usage limits.
+
+Install the CLI, then run `agy` once and sign in with your Google account:
+
+``` bash
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+agy
+```
+
+Start Lumen with it, with or without a dataset:
+
+``` bash
+lumen-ai serve --provider antigravity-cli
+lumen-ai serve penguins.csv --provider antigravity-cli
+```
+
+Lumen uses `gemini-3.8-flash-low` by default, a low-cost Flash model and the
+fastest one in testing: a penguins query and chart took about 40 seconds,
+compared with about 90 seconds using Antigravity's own default. Run
+`agy models` to list the other models you can pass with `--model`.
+
+!!! warning "Local development only"
+    Each request runs in a fresh temporary directory, and Lumen keeps one `agy`
+    process started ahead of time so the next request does not wait for the CLI
+    to start. In this mode Antigravity blocks shell commands, reading and
+    writing files, fetching URLs and the browser, but it can still run web
+    searches, so text from your prompt or data may be sent to Google Search. If
+    the model reaches for a blocked tool, the request fails with an error that
+    names the tool. Any `permissions.allow` rules in
+    `~/.gemini/antigravity-cli/settings.json` also apply to Lumen's requests.
+
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need [`--code-execution prompt`](cli.md#common-flags) to successfully create reliable Vega-Lite specifications.
 
@@ -212,8 +284,8 @@ lumen-ai serve penguins.csv --provider claude-code
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
 | **Kilo** | `kilo-auto/free` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
-| **OpenRouter** | `openai/gpt-4o-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
-| **AWS Bedrock** | `us.anthropic.claude-sonnet-4-6-20250929-v1:0` | Enterprise gateway providing access to models from Anthropic, Meta, Mistral, and more. |
+| **OpenRouter** | `openai/gpt-6-luna` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
+| **AWS Bedrock** | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Enterprise gateway providing access to models from Anthropic, Amazon, Qwen, DeepSeek, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
 
@@ -250,9 +322,9 @@ import lumen.ai as lmai
 
 llm = lmai.llm.OpenRouter(
     model_kwargs={
-        "default": {"model": "openai/gpt-4o-mini"},
-        "sql": {"model": "anthropic/claude-3.5-sonnet"},
-        "vega_lite": {"model": "google/gemini-2.5-flash"},
+        "default": {"model": "openai/gpt-6-luna"},
+        "sql": {"model": "deepseek/deepseek-v4-pro-0813"},
+        "vega_lite": {"model": "qwen/qwen3.8-flash"},
     }
 )
 
@@ -333,10 +405,10 @@ print(lmai.llm.OpenAI.models())
 # {'gpt-5.4-mini', 'gpt-4.1', 'gpt-4.1-nano', ...}
 
 print(lmai.llm.Anthropic.models())
-# {'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', ...}
+# {'claude-haiku-4-5', 'claude-sonnet-4-6', 'claude-opus-4-6', ...}
 
 print(lmai.llm.OpenRouter.models())
-# {'openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', ...}
+# {'openai/gpt-6-luna', 'qwen/qwen3.8-flash', 'z-ai/glm-5.3-flash', ...}
 ```
 
 Providers that don't support listing models (e.g. `AzureOpenAI`, `LiteLLM`) return
@@ -419,9 +491,9 @@ llm = lmai.llm.LiteLLM(
         "default": {"model": "gpt-5.4-mini"}
     },
     fallback_models=[
-        "gpt-5.4-mini",
-        "claude-haiku-4-5",
-        "gemini/gemini-2.5-flash"
+        "gpt-5.4-nano",
+        "anthropic/claude-haiku-4-5",
+        "gemini/gemini-3.8-flash"
     ]
 )
 ```
@@ -433,7 +505,7 @@ Connect to Ollama running on another machine:
 ``` py title="Remote Ollama"
 llm = lmai.llm.Ollama(
     endpoint='http://your-server:11434/v1',
-    model_kwargs={"default": {"model": "qwen3:32b"}}
+    model_kwargs={"default": {"model": "qwen3.6:35b-a3b"}}
 )
 ```
 
@@ -500,7 +572,7 @@ Run models natively on Apple Silicon Macs using the [MLX](https://github.com/ml-
 | Memory | Model | Size |
 |--------|-------|------|
 | 16 GB | `mlx-community/Qwen3.5-9B-MLX-4bit` | ~5 GB |
-| 32 GB | `mlx-community/Qwen3.5-27B-4bit` | ~15 GB |
+| 32 GB | `mlx-community/Qwen3.8-27B-4bit` | ~16 GB |
 | 64 GB+ | `mlx-community/Qwen3.6-35B-A3B-4bit` | ~20 GB |
 
 !!! tip "Server mode vs in-process"
@@ -548,14 +620,14 @@ Additional model types:
 
 Different providers use different model string formats:
 
-- **OpenAI**: `"gpt-5.6-luna"`, `"gpt-5.4"`, `"gpt-5.4-mini"`, `"gpt-5.4-nano"`
-- **Anthropic**: `"claude-sonnet-4-6"`, `"claude-haiku-4-5"`, `"claude-opus-4-5"`
-- **OpenRouter**: `"openai/gpt-4o-mini"`, `"anthropic/claude-3.5-sonnet"`, `"google/gemini-2.5-flash"`
-- **Google**: `"gemini-3-flash-preview"`, `"gemini-2.5-flash"`
+- **OpenAI**: `"gpt-6-luna"`, `"gpt-5.6-luna"`, `"gpt-6-sol"`, `"gpt-5.4-nano"`
+- **Anthropic**: `"claude-haiku-4-5"`, `"claude-sonnet-4-6"`, `"claude-opus-4-6"`
+- **OpenRouter**: `"openai/gpt-6-luna"`, `"qwen/qwen3.8-flash"`, `"z-ai/glm-5.3-flash"`, `"deepseek/deepseek-v4.1-flash"`
+- **Google**: `"gemini-3.8-flash"`, `"gemini-3.1-flash-lite"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
 - **Azure**: `"your-deployment-name"` (use your Azure deployment name)
-- **Bedrock**: `"us.anthropic.claude-sonnet-4-6-20250929-v1:0"`, `"meta.llama3-70b-instruct-v1:0"`
-- **LiteLLM**: `"gpt-5.4-mini"` (OpenAI), `"anthropic/claude-sonnet-4-6"` (Anthropic), `"gemini/gemini-2.5-flash"` (Google)
+- **Bedrock**: `"us.anthropic.claude-haiku-4-5-20251001-v1:0"`, `"us.anthropic.claude-sonnet-4-6"`, `"us.amazon.nova-2-lite-v1:0"`
+- **LiteLLM**: `"gpt-5.4-mini"` (OpenAI), `"anthropic/claude-sonnet-4-6"` (Anthropic), `"gemini/gemini-3.8-flash"` (Google)
 
 For OpenRouter and LiteLLM, use the `provider/model` format for routed models.
 

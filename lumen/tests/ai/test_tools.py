@@ -91,6 +91,23 @@ async def test_function_tool_define_tool_render_output():
     assert isinstance(views[0], Viewable)
 
 
+async def test_function_tool_ignores_step_title():
+    tool = FunctionTool(add, requires=["a", "b"])
+    context = {"a": 1, "b": 3}
+    views, _ = await tool.respond([], context, step_title="Add numbers")
+    assert views[0] == "add(a=1, b=3) returned: 4"
+
+
+async def test_function_tool_forwards_step_title_when_accepted():
+    def titled(step_title: str) -> str:
+        """Echo the step title."""
+        return step_title
+
+    tool = FunctionTool(titled)
+    views, _ = await tool.respond([], {}, step_title="My step")
+    assert views[0] == "titled(step_title='My step') returned: My step"
+
+
 async def test_function_tool_provides():
     tool = FunctionTool(add, requires=["a", "b"], provides=["c"])
     context = {"a": 1, "b": 3}
@@ -393,3 +410,20 @@ async def test_invoke_prompt_forwards_max_retries(llm, monkeypatch):
     await actor._invoke_prompt("main", [{"role": "user", "content": "hi"}], {}, max_retries=3)
 
     assert seen["max_retries"] == 3
+
+
+async def test_metadata_lookup_does_not_consume_shared_column_descriptions():
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 as id"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+    context = {"sources": [source], "provenance_chain": ["global"], "tables_metadata": {}}
+    await tool.sync(context)
+    slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}orders"
+    context["tables_metadata"][slug] = {"columns": {"id": {"description": "Order id", "data_type": "INTEGER"}}}
+
+    messages = [{"role": "user", "content": "Show orders"}]
+    for _ in range(2):
+        _, outputs = await tool.respond(messages, context)
+        (column,) = outputs["metaset"].catalog[slug].columns
+        assert column.description == "Order id"
+        assert column.metadata == {"data_type": "INTEGER"}
+    assert context["tables_metadata"][slug]["columns"]["id"]["description"] == "Order id"

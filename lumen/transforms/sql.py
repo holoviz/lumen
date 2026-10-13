@@ -7,6 +7,7 @@ import re
 from copy import deepcopy
 from typing import ClassVar
 
+import numpy as np
 import param  # type: ignore
 import sqlglot
 
@@ -14,8 +15,9 @@ from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
-    Literal as SQLLiteral, Max, Min, Null, ReadCSV, Select, Star, Table,
-    TableSample, and_, func, or_, replace_placeholders, select,
+    Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV, Select,
+    Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_, func, or_,
+    replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
@@ -158,6 +160,8 @@ class SQLTransform(Transform):
                 error_level=self.error_level,
             )
 
+        # A comment after the final ";" parses as an empty Semicolon statement.
+        expressions = [expr for expr in expressions if not isinstance(expr, Semicolon)]
         if len(expressions) > 1:
             raise ValueError(
                 "Multiple SQL statements found. Please provide only a single SQL statement."
@@ -209,6 +213,9 @@ class SQLTransform(Transform):
         if isinstance(expression, Alias):
             # Alias expressions are already suitable for use as subqueries
             return expression
+        if isinstance(expression, Pivot):
+            # DuckDB's top-level PIVOT/UNPIVOT statement is not a Query and has no .subquery().
+            return Subquery(this=expression, alias=TableAlias(this=to_identifier(alias)))
         return expression.subquery(alias)
 
     def to_sql(self, expression: Expression) -> str:
@@ -226,7 +233,11 @@ class SQLTransform(Transform):
             SQL string representation
         """
         if self.optimize:
-            expression = optimize(expression, dialect=self.read)
+            # No schema is available here, and sqlglot >= 30.22 raises on any
+            # column it cannot resolve without one.
+            expression = optimize(
+                expression, dialect=self.read, validate_qualify_columns=False
+            )
 
         expression = self._add_encoding_to_read_csv(expression=expression)
 
@@ -453,6 +464,11 @@ class SQLLimit(SQLTransform):
                 # do not modify the original query
                 return sql_in
 
+        # Limiting in place keeps the query engines quote in error messages
+        # identical to the one that was written.
+        if isinstance(parsed_expression, Select) and (existing_limit is None or isinstance(existing_limit, Limit)):
+            return self.to_sql(parsed_expression.limit(self.limit))
+
         subquery = self._to_subquery(parsed_expression)
         expression = select("*").from_(subquery).limit(self.limit)
         return self.to_sql(expression)
@@ -639,6 +655,21 @@ class SQLFilterBase(SQLTransform):
     Base class for SQL filtering transforms that provides common filtering logic.
     """
 
+    @staticmethod
+    def _range_condition(column_expr: Column, start, end) -> Expression | None:
+        """Build a range condition where a None bound leaves that side open."""
+        if start is None and end is None:
+            return None
+        if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+            start = f"{start} 00:00:00"
+        if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+            end = f"{end} 23:59:59"
+        if start is None:
+            return column_expr <= SQLLiteral.string(str(end))
+        if end is None:
+            return column_expr >= SQLLiteral.string(str(start))
+        return column_expr.between(SQLLiteral.string(str(start)), SQLLiteral.string(str(end)))
+
     def _build_filter_conditions(self, conditions: list) -> list:
         """
         Build sqlglot filter expressions from condition tuples.
@@ -658,6 +689,16 @@ class SQLFilterBase(SQLTransform):
         for col, val in conditions:
             column_expr = Column(this=Identifier(this=col, quoted=True))
 
+            # NumPy scalars are filtered like the equivalent Python values
+            if isinstance(val, np.datetime64):
+                if np.isnat(val):
+                    # NaT never compares equal, so it matches no rows (like Filter)
+                    filters.append(column_expr.eq(Null()))
+                    continue
+                val = val.astype("datetime64[us]")
+            if isinstance(val, np.generic):
+                val = val.item()
+
             # Skip boolean values - they are not supported
             if isinstance(val, bool):
                 self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
@@ -675,18 +716,9 @@ class SQLFilterBase(SQLTransform):
                 end = SQLLiteral.string(f"{val} 23:59:59")
                 filters.append(column_expr.between(start, end))
             elif isinstance(val, tuple) and len(val) == 2:
-                start, end = val
-                if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
-                    start_str = f"{start} 00:00:00"
-                else:
-                    start_str = str(start)
-
-                if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-                    end_str = f"{end} 23:59:59"
-                else:
-                    end_str = str(end)
-
-                filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
+                range_filter = self._range_condition(column_expr, *val)
+                if range_filter is not None:
+                    filters.append(range_filter)
             elif isinstance(val, list):
                 # Check for boolean values in list and skip them
                 if any(isinstance(v, bool) for v in val):
@@ -694,19 +726,10 @@ class SQLFilterBase(SQLTransform):
                     continue
 
                 if all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                    range_filters = []
-                    for v1, v2 in val:
-                        if isinstance(v1, dt.date) and not isinstance(v1, dt.datetime):
-                            v1_str = f"{v1} 00:00:00"
-                        else:
-                            v1_str = str(v1)
-
-                        if isinstance(v2, dt.date) and not isinstance(v2, dt.datetime):
-                            v2_str = f"{v2} 23:59:59"
-                        else:
-                            v2_str = str(v2)
-
-                        range_filters.append(column_expr.between(SQLLiteral.string(v1_str), SQLLiteral.string(v2_str)))
+                    range_filters = [
+                        f for f in (self._range_condition(column_expr, v1, v2) for v1, v2 in val)
+                        if f is not None
+                    ]
                     if range_filters:
                         filters.append(or_(*range_filters))
                 else:
@@ -725,19 +748,10 @@ class SQLFilterBase(SQLTransform):
                     else:
                         # No None values
                         filters.append(column_expr.isin(*[SQLLiteral.string(str(v)) for v in val]))
-            elif isinstance(val, slice) and val.start is not None and val.stop is not None:
-                start, end = val.start, val.stop
-                if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
-                    start_str = f"{start} 00:00:00"
-                else:
-                    start_str = str(start)
-
-                if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-                    end_str = f"{end} 23:59:59"
-                else:
-                    end_str = str(end)
-
-                filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
+            elif isinstance(val, slice):
+                range_filter = self._range_condition(column_expr, val.start, val.stop)
+                if range_filter is not None:
+                    filters.append(range_filter)
             else:
                 self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
                 continue
