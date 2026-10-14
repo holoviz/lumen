@@ -2,6 +2,7 @@ import CssBaseline from '@mui/material/CssBaseline'
 import InitColorSchemeScript from '@mui/material/InitColorSchemeScript'
 import {ThemeProvider} from '@mui/material/styles'
 
+import {BeyondTables} from './sections/BeyondTables'
 import {Footer} from './sections/Footer'
 import {Header} from './sections/Header'
 import {Hero} from './sections/Hero'
@@ -17,6 +18,7 @@ export function App() {
       <main>
         <Hero />
         <HowItWorks wash />
+        <BeyondTables />
       </main>
       <Footer />
     </ThemeProvider>

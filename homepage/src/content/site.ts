@@ -69,7 +69,7 @@ export const footerColumns = [
 export const hero = {
   title: 'Chat with your data.',
   lede:
-    'Lumen is an open-source Python framework for AI data applications. Ask a question in plain English and Lumen plans the steps, writes the SQL, runs it against your own sources and draws the chart. Use any LLM, connect any database, and change every step in Python or YAML.',
+    'Lumen is an open-source Python framework for AI data applications. Ask a question in plain English and Lumen plans the steps, writes the SQL, runs it against your own sources and draws the chart, whether the data is a CSV file, a warehouse table, a NetCDF grid or a GeoJSON map. Use any LLM, connect any database, and change every step in Python or YAML.',
   install: "pip install 'lumen[ai-openai]'",
   installConda: 'conda install -c conda-forge lumen openai',
   primary: getStarted,
@@ -172,4 +172,42 @@ export const howItWorks = {
     },
   ],
   link: {label: 'How coordinators and agents work', href: `${DOCS}/configuration/coordinators/`},
+}
+
+/**
+ * Lumen is not limited to flat tables: XArraySQLSource exposes xarray datasets as SQL tables,
+ * and geometry columns flow through to map charts.
+ */
+export const beyondTables = {
+  title: 'Query grids and maps, not only tables',
+  lede:
+    'Scientific and geospatial data work the same way as a spreadsheet. Ask about temperature across time, latitude and longitude, or about shapes on a map, and Lumen writes the query and draws the result.',
+  items: [
+    {
+      title: 'N-dimensional arrays',
+      body:
+        'Open NetCDF, Zarr, HDF5 and GRIB files lazily with xarray. Each variable becomes a SQL table with its dimensions as columns, so a question can slice, group and average across time, latitude, longitude or any other dimension. Results plot as grids, maps or lines.',
+      formats: ['NetCDF', 'Zarr', 'HDF5', 'GRIB'],
+      code: ["pip install 'lumen[ai-openai,xarray]'", 'lumen-ai serve air_temperature.nc --show'].join('\n'),
+      question: 'What was the mean air temperature over North America each month of 2013?',
+      sql: [
+        "SELECT date_trunc('month', time) AS month, AVG(air) AS mean_air",
+        'FROM air',
+        'WHERE lat BETWEEN 15 AND 75 AND lon BETWEEN 200 AND 310',
+        "  AND time < '2014-01-01'",
+        'GROUP BY month ORDER BY month',
+      ].join('\n'),
+      link: {label: 'Scientific data sources', href: `${DOCS}/configuration/sources/#xarray-for-scientific-data`},
+    },
+    {
+      title: 'Geospatial data',
+      body:
+        'Load GeoJSON, WKT and zipped shapefiles, or any GeoDataFrame. Geometry columns keep their coordinate reference system and render as maps with Vega-Lite or Deck.gl, so a question about places comes back as a map.',
+      formats: ['GeoJSON', 'WKT', 'Shapefile', 'GeoDataFrame'],
+      code: ["pip install 'lumen[ai-openai,geo]'", 'lumen-ai serve countries.geojson --show'].join('\n'),
+      question: 'Map each country, coloured by population.',
+      sql: ['SELECT name, pop_est, geometry', 'FROM countries'].join('\n'),
+      link: {label: 'Data sources', href: `${DOCS}/configuration/sources/`},
+    },
+  ],
 }
