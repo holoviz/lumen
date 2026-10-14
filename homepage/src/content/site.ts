@@ -211,3 +211,43 @@ export const beyondTables = {
     },
   ],
 }
+
+/**
+ * Every provider here is a key of LLM_PROVIDERS in lumen/ai/llm.py, the list
+ * `lumen-ai serve --provider` accepts. Grouped the way docs/configuration/llm_providers.md is.
+ */
+export const providers = {
+  title: 'Bring your own LLM',
+  lede:
+    'Lumen works with hosted APIs, local models, gateways and the coding CLIs you already sign in to. Lumen finds the provider from your environment, or you can name one with `--provider`. Each agent can use a different model, and Lumen tracks token usage and cost as it goes.',
+  groups: [
+    {
+      title: 'Cloud APIs',
+      names: ['OpenAI', 'Anthropic', 'Google Gemini', 'Mistral', 'Azure OpenAI', 'Azure Mistral', 'AWS Bedrock', 'Groq'],
+    },
+    {
+      title: 'Local models',
+      names: ['Ollama', 'Llama.cpp', 'MLX on Apple Silicon', 'AI Navigator'],
+    },
+    {
+      title: 'Gateways',
+      names: ['OpenRouter', 'Kilo', 'LiteLLM', 'AI Catalyst'],
+    },
+    {
+      title: 'Coding CLIs, no API key',
+      names: ['Codex CLI', 'Claude Code', 'GitHub Copilot CLI', 'Antigravity CLI'],
+    },
+  ],
+  cli: {
+    title: 'Use the subscription you already have',
+    body:
+      'Sign in to Codex, Claude Code, GitHub Copilot or Antigravity once, and Lumen sends its requests through that CLI. Copilot works on any plan, including Copilot Free. These providers are for local use, not shared deployments.',
+    code: [
+      'lumen-ai serve penguins.csv --provider claude-code',
+      'lumen-ai serve penguins.csv --provider codex-cli',
+      'lumen-ai serve penguins.csv --provider copilot-cli',
+      'lumen-ai serve penguins.csv --provider antigravity-cli',
+    ].join('\n'),
+  },
+  link: {label: 'All LLM providers', href: `${DOCS}/configuration/llm_providers/`},
+}

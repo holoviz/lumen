@@ -7,6 +7,7 @@ import {Footer} from './sections/Footer'
 import {Header} from './sections/Header'
 import {Hero} from './sections/Hero'
 import {HowItWorks} from './sections/HowItWorks'
+import {Providers} from './sections/Providers'
 import {theme} from './theme'
 
 export function App() {
@@ -19,6 +20,7 @@ export function App() {
         <Hero />
         <HowItWorks wash />
         <BeyondTables />
+        <Providers wash />
       </main>
       <Footer />
     </ThemeProvider>

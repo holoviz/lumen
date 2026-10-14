@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography'
 import type {ReactNode} from 'react'
 
 import {surfaces} from '../theme'
+import {Prose} from './Prose'
 
 /**
  * Whether a section sits on a washed band. Decided by the page order in App.tsx rather than
@@ -56,7 +57,7 @@ export function Section({
             </Typography>
             {lede && (
               <Typography variant="body1" sx={{mt: 2, color: 'text.secondary', maxWidth: '38rem'}}>
-                {lede}
+                <Prose text={lede} />
               </Typography>
             )}
           </Box>
