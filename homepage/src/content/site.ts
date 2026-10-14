@@ -388,3 +388,44 @@ export const paths = {
     },
   ],
 }
+
+/** Features beyond a single answer, each verified against lumen/ai on main. */
+export const capabilities = {
+  title: 'More than one answer at a time',
+  lede: 'Collect analyses into reports, run real calculations and keep an eye on what the model costs.',
+  items: [
+    {
+      title: 'Reports and stories',
+      body: 'Gather every chart and table into a report, rerun it on new data, and let Lumen write an editable story around it. Export as a notebook, HTML or Word document.',
+      href: `${DOCS}/configuration/reports/`,
+    },
+    {
+      title: 'Python calculations',
+      body: 'Install the Monty integration and agents get a sandboxed `run_python` tool for exact arithmetic instead of guesses.',
+      href: `${DOCS}/configuration/tools/`,
+    },
+    {
+      title: 'Table statistics and documents',
+      body: 'Lumen describes each table to the model with types, keys, value ranges and frequent values. Upload documentation as metadata and vector stores retrieve the relevant parts for each question.',
+      href: `${DOCS}/configuration/vector_stores/`,
+    },
+    {
+      title: 'Token usage and cost',
+      body: 'Every LLM records the tokens it uses. Add your per-million-token prices and Lumen estimates the cost of each request.',
+      href: `${DOCS}/configuration/llm_providers/#track-token-usage-and-cost`,
+    },
+  ],
+}
+
+export const adoption = {
+  title: 'Open source, part of HoloViz',
+  body:
+    'Lumen is built on Panel, hvPlot and the rest of the HoloViz tools and developed in the open. Ask questions on Discourse or Discord, and report bugs on GitHub.',
+  // Checked against the GitHub API and PyPI on 2026-10-14; nothing here reads them live.
+  stats: [
+    {value: '1.3', label: 'Latest release'},
+    {value: '2020', label: 'First release'},
+    {value: '40', label: 'Contributors'},
+    {value: 'BSD-3', label: 'License'},
+  ],
+}

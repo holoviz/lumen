@@ -2,7 +2,9 @@ import CssBaseline from '@mui/material/CssBaseline'
 import InitColorSchemeScript from '@mui/material/InitColorSchemeScript'
 import {ThemeProvider} from '@mui/material/styles'
 
+import {Adoption} from './sections/Adoption'
 import {BeyondTables} from './sections/BeyondTables'
+import {Capabilities} from './sections/Capabilities'
 import {Extend} from './sections/Extend'
 import {Footer} from './sections/Footer'
 import {Gallery} from './sections/Gallery'
@@ -29,6 +31,8 @@ export function App() {
         <Sources wash />
         <Extend />
         <Paths wash />
+        <Capabilities />
+        <Adoption wash />
       </main>
       <Footer />
     </ThemeProvider>
