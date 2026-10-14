@@ -5,6 +5,7 @@ import {ThemeProvider} from '@mui/material/styles'
 import {Footer} from './sections/Footer'
 import {Header} from './sections/Header'
 import {Hero} from './sections/Hero'
+import {HowItWorks} from './sections/HowItWorks'
 import {theme} from './theme'
 
 export function App() {
@@ -15,6 +16,7 @@ export function App() {
       <Header />
       <main>
         <Hero />
+        <HowItWorks wash />
       </main>
       <Footer />
     </ThemeProvider>

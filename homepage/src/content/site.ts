@@ -143,3 +143,33 @@ export const heroChat = {
     {agent: 'ValidationAgent', text: 'Check the question was answered'},
   ],
 }
+
+/** One question, four steps. Each step names the part of Lumen that does it. */
+export const howItWorks = {
+  title: 'From a question to a chart you can edit',
+  lede:
+    'Lumen splits every question into steps and gives each step to an agent built for it. You see the plan, the SQL and the chart spec, and you can change any of them by hand or by asking again.',
+  steps: [
+    {
+      title: 'Ask',
+      body: 'Type a question in plain English, or upload a file and ask about it.',
+      code: 'Which islands have the most penguins?',
+    },
+    {
+      title: 'Plan',
+      body: 'The coordinator picks which of the eight built-in agents to use and in what order.',
+      code: 'Planner',
+    },
+    {
+      title: 'Query',
+      body: 'SQLAgent writes SQL for your source and runs it there, so the work happens in your database.',
+      code: 'SQLAgent',
+    },
+    {
+      title: 'Answer',
+      body: 'VegaLiteAgent draws the chart and ValidationAgent checks it answers the question. SQL and chart specs open in an editor.',
+      code: 'VegaLiteAgent',
+    },
+  ],
+  link: {label: 'How coordinators and agents work', href: `${DOCS}/configuration/coordinators/`},
+}
