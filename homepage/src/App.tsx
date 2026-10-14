@@ -8,6 +8,7 @@ import {Header} from './sections/Header'
 import {Hero} from './sections/Hero'
 import {HowItWorks} from './sections/HowItWorks'
 import {Providers} from './sections/Providers'
+import {Sources} from './sections/Sources'
 import {theme} from './theme'
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
         <HowItWorks wash />
         <BeyondTables />
         <Providers wash />
+        <Sources />
       </main>
       <Footer />
     </ThemeProvider>

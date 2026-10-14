@@ -251,3 +251,27 @@ export const providers = {
   },
   link: {label: 'All LLM providers', href: `${DOCS}/configuration/llm_providers/`},
 }
+
+/** Sources Lumen ships, from lumen/sources/ and the supported-sources table in the docs. */
+export const sources = {
+  title: 'Connect to the data you have',
+  lede:
+    'Start from a file or point Lumen at a warehouse. Mix local files and remote databases in one session.',
+  items: [
+    {name: 'Files', note: 'CSV, Parquet, JSON and Excel, uploaded or read from a URL'},
+    {name: 'DuckDB', note: 'Fast local SQL over files and in-memory tables'},
+    {name: 'PostgreSQL, MySQL and more', note: 'SQLite, Oracle and SQL Server through SQLAlchemy'},
+    {name: 'Snowflake', note: 'Cloud warehouse, with SSO sign-in'},
+    {name: 'BigQuery', note: "Google's data warehouse"},
+    {name: 'xarray', note: 'NetCDF, Zarr, HDF5 and GRIB as SQL tables'},
+    {name: 'Geospatial files', note: 'GeoJSON, WKT and zipped shapefiles'},
+    {name: 'Intake catalogs', note: 'Catalogs of datasets described in YAML'},
+    {name: 'Documentation', note: 'Upload files as metadata the agents read for context'},
+  ],
+  code: [
+    'lumen-ai serve penguins.csv earthquakes.parquet',
+    'lumen-ai serve postgresql://user:password@localhost:5432/mydb',
+    'lumen-ai serve data.csv postgresql://localhost/mydb',
+  ].join('\n'),
+  link: {label: 'All data sources', href: `${DOCS}/configuration/sources/`},
+}
