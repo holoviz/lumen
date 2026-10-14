@@ -133,10 +133,13 @@ toolz = "*"
 zensical = "<0.0.17"
 mkdocstrings = "*"
 mkdocstrings-python = "*"
+nodejs = ">=20" # builds the homepage copied over the docs root
 
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs
-docs-build = { cmd = 'zensical build --clean', depends-on = ['install'] }
+_docs-site = { cmd = 'zensical build --clean', depends-on = ['install'] }
+_docs-homepage = { cmd = 'npm ci && npm run build', cwd = 'homepage' }
+docs-build = { cmd = 'cp -R homepage/dist/. builtdocs/', depends-on = ['_docs-site', '_docs-homepage'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
