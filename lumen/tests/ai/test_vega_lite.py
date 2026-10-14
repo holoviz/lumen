@@ -141,6 +141,22 @@ async def test_palette_not_reapplied_once_the_chart_exists(llm):
     assert "range" not in spec.get("config", {})
 
 
+async def test_default_number_format_avoids_scientific_notation(llm):
+    """Axis labels read 4,000 rather than 4e+3, and decimals survive."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+    chart = {
+        "data": {"values": [{"c": "a", "v": 4000}, {"c": "b", "v": 6000.5}]},
+        "mark": "bar",
+        "encoding": {"x": {"field": "c", "type": "nominal"}, "y": {"field": "v", "type": "quantitative"}},
+    }
+
+    spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(chart)}))["spec"]
+    svg = vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))
+
+    assert ">4,000<" in svg
+    assert "e+" not in svg
+
+
 def test_palette_reaches_the_compiled_vega_scale():
     """The palette is only useful if Vega resolves it, which it does through the
     named 'category' range rather than by inlining the colors in the scale."""
