@@ -2268,7 +2268,7 @@ def _thin_band_labels(spec: Any) -> None:
 
     Vega-Lite prints one label per band on discrete axes, so a rect heatmap of
     a gridded dataset with 50 longitudes gets 50 labels rotated into an
-    unreadable strip. Parity thinning keeps every other label until they fit.
+    unreadable strip. Parity thinning drops every other label until they fit.
     Only rect marks are touched: on a bar chart each label names a bar.
     """
     if isinstance(spec, list):
@@ -2279,18 +2279,23 @@ def _thin_band_labels(spec: Any) -> None:
         return
     mark = spec.get("mark")
     if (mark.get("type") if isinstance(mark, dict) else mark) == "rect":
-        for channel in ("x", "y"):
-            enc = spec.get("encoding", {}).get(channel)
-            if not isinstance(enc, dict) or enc.get("type") not in ("ordinal", "nominal"):
-                continue
-            if "axis" in enc and not isinstance(enc["axis"], dict):
-                continue  # axis: null hides the axis entirely
-            axis = enc.setdefault("axis", {})
-            axis.setdefault("labelOverlap", "parity")
-            if channel == "x":
-                axis.setdefault("labelAngle", 0)
+        _thin_rect_axes(spec.get("encoding", {}))
     for value in spec.values():
         _thin_band_labels(value)
+
+
+def _thin_rect_axes(encodings: dict) -> None:
+    """Set parity label thinning on the discrete x/y axes of a rect mark."""
+    for channel in ("x", "y"):
+        encoding = encodings.get(channel)
+        if not isinstance(encoding, dict) or encoding.get("type") not in ("ordinal", "nominal"):
+            continue
+        if "axis" in encoding and not isinstance(encoding["axis"], dict):
+            continue  # axis: null hides the axis entirely
+        axis = encoding.setdefault("axis", {})
+        axis.setdefault("labelOverlap", "parity")
+        if channel == "x":
+            axis.setdefault("labelAngle", 0)
 
 
 def _add_zoom_params(vega_spec: dict) -> None:
