@@ -1,0 +1,154 @@
+"""Playwright checks for the built homepage.
+
+These run against dist/, not the dev server, because the prerendered HTML has to hydrate
+without React complaining and the interactive parts have to keep working after it does.
+
+    pixi run -e homepage homepage-build
+    pixi run -e homepage homepage-test
+"""
+
+from __future__ import annotations
+
+import http.server
+import socket
+import threading
+
+from pathlib import Path
+
+import pytest
+
+from playwright.sync_api import ConsoleMessage, Page, expect
+
+HOMEPAGE = Path(__file__).resolve().parent.parent
+DIST = HOMEPAGE / 'dist'
+DOCS = HOMEPAGE.parent / 'docs'
+
+
+@pytest.fixture(scope='session')
+def site() -> str:
+    if not (DIST / 'index.html').exists():
+        pytest.skip(f'{DIST} has not been built')
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(DIST), **kwargs)
+
+        def log_message(self, *args):
+            pass
+
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f'http://127.0.0.1:{port}'
+    finally:
+        server.shutdown()
+
+
+@pytest.fixture
+def home(page: Page, site: str) -> Page:
+    page.goto(site, wait_until='networkidle')
+    return page
+
+
+def test_prerendered_without_javascript(page: Page, site: str) -> None:
+    """The headline must be in the HTML the server sends, not painted in by the bundle."""
+    page.route('**/*.js', lambda route: route.abort())
+    page.goto(site, wait_until='domcontentloaded')
+    expect(page.get_by_role('heading', level=1)).to_contain_text('Chat with your data')
+
+
+def test_hydrates_without_console_errors(page: Page, site: str) -> None:
+    problems: list[str] = []
+
+    def record(msg: ConsoleMessage) -> None:
+        if msg.type in ('error', 'warning'):
+            problems.append(msg.text)
+
+    page.on('console', record)
+    page.on('pageerror', lambda e: problems.append(str(e)))
+    page.goto(site, wait_until='networkidle')
+    # A hydration mismatch is reported after the first commit, so give React a beat.
+    page.wait_for_timeout(600)
+    assert not problems, problems
+
+
+def test_hero_chat_swaps_the_answer(home: Page) -> None:
+    caption = home.locator('figure figcaption').first
+    expect(caption).to_have_text('Penguins by island')
+    home.get_by_role('radio', name='Which species is the heaviest on average?').click()
+    expect(caption).to_have_text('Average body mass (g)')
+    expect(home.get_by_label('Generated SQL')).to_contain_text('AVG(body_mass_g)')
+
+
+def test_every_picture_loads_from_the_hashed_prefix(home: Page) -> None:
+    # Lazy tiles only fetch near the viewport, so make them all eager and wait for each.
+    images = home.evaluate("""async () => {
+        const imgs = [...document.querySelectorAll('main img')]
+        imgs.forEach((i) => { i.loading = 'eager' })
+        await Promise.all(imgs.map((i) => i.decode().catch(() => null)))
+        return imgs.map((i) => [i.getAttribute('src'), i.naturalWidth])
+    }""")
+    assert len(images) == 8
+    assert not [src for src, width in images if not width], 'broken pictures'
+    assert all(src.startswith(('/_home/', 'data:image/')) for src, _ in images), images
+
+
+def test_internal_links_point_at_docs_pages(home: Page) -> None:
+    """The homepage sits on top of the Zensical build, so every internal link needs a source page."""
+    hrefs = home.eval_on_selector_all('a[href]', 'els => els.map(e => e.getAttribute("href"))')
+    internal = {h.split('#')[0] for h in hrefs if h.startswith('/') and h != '/'}
+    assert internal, 'expected some docs links'
+    missing = [
+        h for h in internal
+        if not (DOCS / f'{h.strip("/")}.md').exists() and not (DOCS / h.strip('/') / 'index.md').exists()
+    ]
+    assert not missing, missing
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_no_code_scrolls_sideways(page: Page, site: str, width: int) -> None:
+    """Snippets wrap rather than hiding the ends of their lines."""
+    page.set_viewport_size({'width': width, 'height': 900})
+    page.goto(site, wait_until='networkidle')
+    clipped = page.eval_on_selector_all(
+        'main pre',
+        'els => els.filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.textContent.slice(0, 40))',
+    )
+    assert not clipped, clipped
+
+
+def test_install_command_copies(home: Page) -> None:
+    home.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+    home.get_by_role('button', name='Copy').click()
+    expect(home.get_by_role('button', name='Copied')).to_be_visible()
+    assert home.evaluate('navigator.clipboard.readText()') == 'pip install lumen'
+
+
+def test_every_focusable_element_shows_a_ring(home: Page) -> None:
+    """MUI's ButtonBase sets `outline: 0`, so a missing override would hide keyboard focus."""
+    seen = []
+    for _ in range(20):
+        home.keyboard.press('Tab')
+        seen.append(
+            home.evaluate("""() => {
+                const e = document.activeElement;
+                const s = getComputedStyle(e);
+                return [(e.getAttribute('aria-label') || e.textContent || '').slice(0, 30),
+                        parseFloat(s.outlineWidth)];
+            }""")
+        )
+    ringless = [label for label, width in seen if width < 1]
+    assert not ringless, ringless
+
+
+def test_no_horizontal_overflow_on_a_phone(page: Page, site: str) -> None:
+    page.set_viewport_size({'width': 390, 'height': 844})
+    page.goto(site, wait_until='networkidle')
+    scroll_width, client_width = page.evaluate(
+        '() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]'
+    )
+    assert scroll_width <= client_width + 1
