@@ -92,3 +92,54 @@ export const heroCode = [
     ].join('\n'),
   },
 ]
+
+/**
+ * The hero chat replays three real answers rather than calling an LLM. Every number is the
+ * result of the SQL beside it on the penguins dataset the quick start uses (344 rows).
+ */
+export const heroChat = {
+  dataset: 'penguins.csv',
+  questions: [
+    {
+      prompt: 'Which islands have the most penguins?',
+      sql: ['SELECT island, COUNT(*) AS penguins', 'FROM penguins', 'GROUP BY island', 'ORDER BY penguins DESC'].join('\n'),
+      title: 'Penguins by island',
+      bars: [
+        {label: 'Biscoe', value: 168},
+        {label: 'Dream', value: 124},
+        {label: 'Torgersen', value: 52},
+      ],
+    },
+    {
+      prompt: 'Which species is the heaviest on average?',
+      sql: [
+        'SELECT species, AVG(body_mass_g) AS body_mass',
+        'FROM penguins',
+        'GROUP BY species',
+        'ORDER BY body_mass DESC',
+      ].join('\n'),
+      title: 'Average body mass (g)',
+      bars: [
+        {label: 'Gentoo', value: 5076},
+        {label: 'Chinstrap', value: 3733},
+        {label: 'Adelie', value: 3701},
+      ],
+    },
+    {
+      prompt: 'How many of each species are there?',
+      sql: ['SELECT species, COUNT(*) AS penguins', 'FROM penguins', 'GROUP BY species', 'ORDER BY penguins DESC'].join('\n'),
+      title: 'Penguins by species',
+      bars: [
+        {label: 'Adelie', value: 152},
+        {label: 'Gentoo', value: 124},
+        {label: 'Chinstrap', value: 68},
+      ],
+    },
+  ],
+  /** The plan Lumen shows for a charting question: query, chart, then check the answer. */
+  steps: [
+    {agent: 'SQLAgent', text: 'Query the table'},
+    {agent: 'VegaLiteAgent', text: 'Chart the result'},
+    {agent: 'ValidationAgent', text: 'Check the question was answered'},
+  ],
+}

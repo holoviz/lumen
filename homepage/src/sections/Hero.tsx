@@ -7,6 +7,7 @@ import {CodeBlock} from '../components/CodeBlock'
 import {InstallCommand} from '../components/InstallCommand'
 import {hero, heroCode} from '../content/site'
 import {surfaces} from '../theme'
+import {HeroChat} from './HeroChat'
 
 export function Hero() {
   return (
@@ -48,9 +49,13 @@ export function Hero() {
           </Box>
         </Box>
 
+        <Box sx={{mt: {xs: 6, md: 8}}}>
+          <HeroChat />
+        </Box>
+
         <Box
           sx={{
-            mt: {xs: 6, md: 8},
+            mt: 3,
             bgcolor: surfaces.code,
             border: '1px solid',
             borderColor: 'divider',
