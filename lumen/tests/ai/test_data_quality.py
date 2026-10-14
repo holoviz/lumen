@@ -45,6 +45,19 @@ class TestLintData:
         findings = lint_data(df)
         assert any("Placeholder numbers" in f and '"temp" (2 rows)' in f for f in findings)
 
+    def test_sentinel_inside_value_range_not_reported(self):
+        # Customer 9999 is an ordinary id among ids 12 to 21390, not a placeholder
+        df = pd.DataFrame({
+            "customer_id": [12, 845, 9999, 9999, 15020, 21390],
+            "revenue": [80.0, 35.5, 60.0, 67.36, 20.0, 41.0],
+        })
+        assert not any("Placeholder numbers" in f for f in lint_data(df))
+
+    def test_sentinel_only_column_reported(self):
+        df = pd.DataFrame({"reading": [-9999.0, -9999.0, None]})
+        findings = lint_data(df)
+        assert any("Placeholder numbers" in f and '"reading" (2 rows)' in f for f in findings)
+
     def test_untrimmed_and_empty_text_reported(self):
         df = pd.DataFrame({"name": ["alice", " bob ", "", "dave"]})
         findings = lint_data(df)

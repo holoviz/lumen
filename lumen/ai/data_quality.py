@@ -70,8 +70,18 @@ def _lint_sentinels(df: pd.DataFrame) -> list[str]:
     numeric = df.select_dtypes(include="number")
     if numeric.empty:
         return []
-    counts = numeric.isin(LINT_SENTINELS).sum()
-    hits = {col: f"{int(count)} rows" for col, count in counts.items() if count}
+    hits = {}
+    for col, values in numeric.items():
+        sentinel = values.isin(LINT_SENTINELS)
+        if not sentinel.any():
+            continue
+        # A placeholder sits outside the range of the real values; one inside
+        # it is ordinary data, e.g. customer 9999 among ids 1 to 21,390.
+        others = values[~sentinel].dropna()
+        if not others.empty:
+            sentinel &= (values < others.min()) | (values > others.max())
+        if count := int(sentinel.sum()):
+            hits[col] = f"{count} rows"
     if not hits:
         return []
     return [
