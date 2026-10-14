@@ -1,0 +1,59 @@
+name: homepage
+
+# Checks that homepage/ typechecks, builds and passes its Playwright tests. Publishing is
+# left to docs.yaml, whose docs-build task copies homepage/dist over the Zensical root.
+
+on:
+  pull_request:
+    paths:
+      - "homepage/**"
+      - ".github/workflows/homepage.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - "homepage/**"
+      - ".github/workflows/homepage.yaml"
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -e {0}
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pixi_lock:
+    name: Pixi lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: holoviz-dev/holoviz_tasks/pixi-lock@ffddda04b2894fea39b407f64d3622d2f19e5a9f # v1
+
+  homepage_build:
+    name: Build homepage
+    needs: [pixi_lock]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: holoviz-dev/holoviz_tasks/pixi-install@ffddda04b2894fea39b407f64d3622d2f19e5a9f # v1
+        with:
+          environments: homepage
+          install: false
+          download-data: false
+      - name: Typecheck
+        run: pixi run -e homepage homepage-typecheck
+      - name: Build
+        run: pixi run -e homepage homepage-build
+      - name: Test
+        run: |
+          pixi run -e homepage playwright install --with-deps chromium
+          pixi run -e homepage homepage-test
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: homepage
+          if-no-files-found: error
+          path: homepage/dist
