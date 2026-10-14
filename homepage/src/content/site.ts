@@ -65,3 +65,30 @@ export const footerColumns = [
     ],
   },
 ]
+
+export const hero = {
+  title: 'Chat with your data.',
+  lede:
+    'Lumen is an open-source Python framework for AI data applications. Ask a question in plain English and Lumen plans the steps, writes the SQL, runs it against your own sources and draws the chart. Use any LLM, connect any database, and change every step in Python or YAML.',
+  install: "pip install 'lumen[ai-openai]'",
+  installConda: 'conda install -c conda-forge lumen openai',
+  primary: getStarted,
+  secondary: {label: 'See examples', href: `${DOCS}/examples/gallery/`},
+}
+
+/** The two ways to start the app shown above it, both from the quick start. */
+export const heroCode = [
+  {
+    label: 'Point it at a file or database.',
+    source: 'lumen-ai serve https://datasets.holoviz.org/penguins/v1/penguins.csv --show',
+  },
+  {
+    label: 'Or start it from Python.',
+    source: [
+      'from lumen.ai import ExplorerUI',
+      '',
+      "ui = ExplorerUI(data='https://datasets.holoviz.org/penguins/v1/penguins.csv')",
+      'ui.servable()',
+    ].join('\n'),
+  },
+]

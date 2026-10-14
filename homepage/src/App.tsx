@@ -4,6 +4,7 @@ import {ThemeProvider} from '@mui/material/styles'
 
 import {Footer} from './sections/Footer'
 import {Header} from './sections/Header'
+import {Hero} from './sections/Hero'
 import {theme} from './theme'
 
 export function App() {
@@ -12,7 +13,9 @@ export function App() {
       <InitColorSchemeScript attribute="data-color-scheme" defaultMode="system" />
       <CssBaseline />
       <Header />
-      <main />
+      <main>
+        <Hero />
+      </main>
       <Footer />
     </ThemeProvider>
   )
