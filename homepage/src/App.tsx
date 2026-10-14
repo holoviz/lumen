@@ -3,6 +3,7 @@ import InitColorSchemeScript from '@mui/material/InitColorSchemeScript'
 import {ThemeProvider} from '@mui/material/styles'
 
 import {BeyondTables} from './sections/BeyondTables'
+import {Extend} from './sections/Extend'
 import {Footer} from './sections/Footer'
 import {Gallery} from './sections/Gallery'
 import {Header} from './sections/Header'
@@ -25,6 +26,7 @@ export function App() {
         <Gallery wash />
         <Providers />
         <Sources wash />
+        <Extend />
       </main>
       <Footer />
     </ThemeProvider>

@@ -308,3 +308,60 @@ export const gallery = {
   ].map((g) => ({...g, items: g.items.map((i) => ({...i, image: asset(`${i.image}.webp`)}))})),
   link: {label: 'Browse all examples', href: `${DOCS}/examples/gallery/`},
 }
+
+/** Three ways to make Lumen yours, each from docs/index.md's "Designed for extension" tabs. */
+export const extend = {
+  title: 'Change any step in Python or YAML',
+  lede:
+    'Lumen is plain Python on top of Panel. Teach the agents your terms, give them your own functions and MCP servers, add deterministic analyses, and keep what the AI builds as a reproducible YAML spec.',
+  items: [
+    {
+      title: 'Teach it your domain',
+      body: 'Add your business rules and terminology to any agent’s prompt.',
+      code: [
+        'context = """',
+        '{{ super() }}',
+        '"Active" means logged in within 30 days.',
+        'Q1 is January to March.',
+        '"""',
+        '',
+        'agent = lmai.agents.ChatAgent(',
+        '    template_overrides={"main": {"context": context}}',
+        ')',
+      ].join('\n'),
+      link: {label: 'Prompts', href: `${DOCS}/configuration/prompts/`},
+    },
+    {
+      title: 'Give it your own tools',
+      body: 'Wrap any Python function, or connect an MCP server with `MCPTool`, and agents call it when they need it.',
+      code: [
+        'def customer_ltv(customer_id: str, table) -> dict:',
+        '    """Calculate customer lifetime value."""',
+        '    rows = table[table["customer_id"] == customer_id]',
+        '    return {"ltv": rows["revenue"].sum()}',
+        '',
+        'tool = lmai.tools.FunctionTool(',
+        '    function=customer_ltv, requires=["table"], provides=["ltv"]',
+        ')',
+      ].join('\n'),
+      link: {label: 'Tools', href: `${DOCS}/configuration/tools/`},
+    },
+    {
+      title: 'Keep it as a spec',
+      body: 'Every dashboard is a Lumen YAML spec, so you can edit it, version it and serve it without the AI.',
+      code: [
+        'sources:',
+        '  penguins:',
+        '    type: file',
+        '    tables:',
+        '      penguins: penguins.csv',
+        'layouts:',
+        '  - title: Plots',
+        '    pipeline: penguins',
+        '    views:',
+        '      scatter: {type: hvplot, kind: points}',
+      ].join('\n'),
+      link: {label: 'YAML specs', href: `${DOCS}/configuration/spec/`},
+    },
+  ],
+}
