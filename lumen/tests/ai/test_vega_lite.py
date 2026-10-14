@@ -63,6 +63,41 @@ def test_normalize_vegalite_spec_strips_sizing_for_compound_charts():
     assert spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
 
 
+def test_normalize_vegalite_spec_thins_band_labels_on_heatmaps():
+    """Ordinal rect axes drop overlapping labels instead of printing one per band."""
+    raw = {
+        "layer": [{
+            "mark": {"type": "rect"},
+            "encoding": {
+                "x": {"field": "lon", "type": "ordinal"},
+                "y": {"field": "lat", "type": "ordinal", "axis": {"labelOverlap": False}},
+                "color": {"field": "air", "type": "quantitative"},
+            },
+        }],
+    }
+
+    encoding = normalize_vegalite_spec(raw)["spec"]["layer"][0]["encoding"]
+
+    assert encoding["x"]["axis"] == {"labelOverlap": "parity", "labelAngle": 0}
+    assert encoding["y"]["axis"] == {"labelOverlap": False}
+    assert "axis" not in encoding["color"]
+
+
+def test_normalize_vegalite_spec_keeps_bar_labels():
+    """Every category label stays on a bar chart, where each one names a bar."""
+    raw = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "island", "type": "nominal"},
+            "y": {"field": "count", "type": "quantitative"},
+        },
+    }
+
+    encoding = normalize_vegalite_spec(raw)["spec"]["encoding"]
+
+    assert "axis" not in encoding["x"]
+
+
 def test_normalize_vegalite_spec_adds_geographic_interactivity():
     """Specs with lat/long encodings gain a projection, zoom params and map layer."""
     raw = {

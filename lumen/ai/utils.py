@@ -2249,6 +2249,7 @@ def normalize_vegalite_spec(
             vega_spec["height"] = "container"
 
     editor_type.validate_spec(vega_spec)
+    _thin_band_labels(vega_spec)
 
     # using string comparison because these keys could be in different nested levels
     vega_spec_str = dump_yaml(vega_spec)
@@ -2260,6 +2261,36 @@ def normalize_vegalite_spec(
     #     # because those result in an blank plot without error
     #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
     return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
+
+
+def _thin_band_labels(spec: Any) -> None:
+    """Let heatmap axes drop overlapping labels.
+
+    Vega-Lite prints one label per band on discrete axes, so a rect heatmap of
+    a gridded dataset with 50 longitudes gets 50 labels rotated into an
+    unreadable strip. Parity thinning keeps every other label until they fit.
+    Only rect marks are touched: on a bar chart each label names a bar.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _thin_band_labels(item)
+        return
+    if not isinstance(spec, dict):
+        return
+    mark = spec.get("mark")
+    if (mark.get("type") if isinstance(mark, dict) else mark) == "rect":
+        for channel in ("x", "y"):
+            enc = spec.get("encoding", {}).get(channel)
+            if not isinstance(enc, dict) or enc.get("type") not in ("ordinal", "nominal"):
+                continue
+            if "axis" in enc and not isinstance(enc["axis"], dict):
+                continue  # axis: null hides the axis entirely
+            axis = enc.setdefault("axis", {})
+            axis.setdefault("labelOverlap", "parity")
+            if channel == "x":
+                axis.setdefault("labelAngle", 0)
+    for value in spec.values():
+        _thin_band_labels(value)
 
 
 def _add_zoom_params(vega_spec: dict) -> None:
