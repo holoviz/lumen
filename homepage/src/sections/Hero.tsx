@@ -16,7 +16,7 @@ export function Hero() {
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: {xs: '1fr', md: '1.1fr 0.9fr'},
+            gridTemplateColumns: {xs: 'minmax(0, 1fr)', md: '1.1fr 0.9fr'},
             columnGap: {md: 8},
             rowGap: 3.5,
             alignItems: 'start',

@@ -23,7 +23,7 @@ export function HeroChat() {
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: {xs: '1fr', md: 'minmax(260px, 22rem) 1fr'},
+        gridTemplateColumns: {xs: 'minmax(0, 1fr)', md: 'minmax(260px, 22rem) 1fr'},
         borderRadius: 3.5,
         overflow: 'hidden',
         bgcolor: tokens.lumen,

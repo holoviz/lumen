@@ -65,7 +65,7 @@ export function Paths({wash}: Band) {
               <Prose text={path.body} />
             </Typography>
             <Box sx={{mt: 'auto'}}>
-              <CodeBlock source={path.code} sx={{pt: 2, borderTop: '1px solid', borderColor: 'divider'}} />
+              <CodeBlock wrap source={path.code} sx={{pt: 2, borderTop: '1px solid', borderColor: 'divider'}} />
             </Box>
           </Box>
         ))}
