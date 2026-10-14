@@ -8,6 +8,7 @@ import {Footer} from './sections/Footer'
 import {Gallery} from './sections/Gallery'
 import {Header} from './sections/Header'
 import {Hero} from './sections/Hero'
+import {Paths} from './sections/Paths'
 import {HowItWorks} from './sections/HowItWorks'
 import {Providers} from './sections/Providers'
 import {Sources} from './sections/Sources'
@@ -27,6 +28,7 @@ export function App() {
         <Providers />
         <Sources wash />
         <Extend />
+        <Paths wash />
       </main>
       <Footer />
     </ThemeProvider>

@@ -365,3 +365,26 @@ export const extend = {
     },
   ],
 }
+
+/** Laptop to team, the one real sequence on the page. Commands from docs/configuration/cli.md and spec/deployment.md. */
+export const paths = {
+  title: 'From your laptop to your team',
+  lede: 'Explore on your own machine, keep what works, then serve it for everyone else.',
+  steps: [
+    {
+      title: 'Explore',
+      body: 'Point `lumen-ai serve` at files, URLs or database connection strings and start asking questions in the browser.',
+      code: 'lumen-ai serve data/*.csv --show',
+    },
+    {
+      title: 'Build',
+      body: 'Wrap the explorer in a Python app with your own agents, tools and context, or keep a dashboard as a YAML spec.',
+      code: 'lumen serve dashboard.yaml --autoreload',
+    },
+    {
+      title: 'Share',
+      body: "Lumen apps are Panel apps, so they deploy the same way, behind Panel's authentication providers on your own infrastructure.",
+      code: 'panel serve app.py --address 0.0.0.0',
+    },
+  ],
+}
