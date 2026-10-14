@@ -4,7 +4,7 @@ import type {ReactNode} from 'react'
 
 import {tokens} from '../theme'
 
-/** A linked 4:3 picture with a title and a caption, as used by the pane and component grids. */
+/** A linked 16:9 screenshot with a title and a caption, as used by the gallery. */
 export function Tile({
   href,
   image,
@@ -36,9 +36,9 @@ export function Tile({
         component="img"
         src={image}
         alt={alt}
-        // Matches the 960x720 renders, so the box is reserved before the image arrives.
+        // Matches the 960px wide renders, so the box is reserved before the image arrives.
         width={960}
-        height={720}
+        height={540}
         loading="lazy"
         decoding="async"
         sx={{
@@ -46,9 +46,10 @@ export function Tile({
           width: '100%',
           // The attributes above would otherwise win over the aspect ratio.
           height: 'auto',
-          aspectRatio: '4 / 3',
+          aspectRatio: '16 / 9',
+          objectPosition: 'top',
           objectFit: 'cover',
-          // Rendered against a light page, so the plate stays white in dark mode too.
+          // Screenshots of light apps, so the plate stays white in dark mode too.
           backgroundColor: tokens.white,
           border: '1px solid',
           borderColor: 'divider',

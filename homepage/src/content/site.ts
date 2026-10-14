@@ -6,6 +6,8 @@
  * relative directory URLs. `homepage-serve` points them at the live site instead.
  */
 
+import {asset} from './assets'
+
 export const DOCS = import.meta.env.VITE_DOCS_PATH ?? ''
 export const GITHUB = 'https://github.com/holoviz/lumen'
 const DISCOURSE = 'https://discourse.holoviz.org/c/lumen/'
@@ -274,4 +276,35 @@ export const sources = {
     'lumen-ai serve data.csv postgresql://localhost/mydb',
   ].join('\n'),
   link: {label: 'All data sources', href: `${DOCS}/configuration/sources/`},
+}
+
+const tutorial = (name: string) => `${DOCS}/examples/tutorials/${name}/`
+const galleryPage = (name: string) => `${DOCS}/examples/gallery/${name}/`
+
+/** Screenshots come from docs/assets, the same pictures the tutorial and gallery pages use. */
+export const gallery = {
+  title: 'Built with Lumen',
+  lede:
+    'Domain-specific AI explorers from the tutorials, and dashboards written as YAML specs. Each one comes with the full code.',
+  groups: [
+    {
+      title: 'AI explorers',
+      items: [
+        {image: 'tutorials/skew_t', href: tutorial('weather_data_ai_explorer'), title: 'Weather data explorer', note: 'Custom agents that draw Skew-T diagrams from soundings'},
+        {image: 'tutorials/census', href: tutorial('census_data_ai_explorer'), title: 'Census data explorer', note: 'Fetch U.S. Census data from a custom control'},
+        {image: 'tutorials/mesonet', href: tutorial('mesonet_weather_explorer'), title: 'Mesonet weather explorer', note: 'Daily observations from a REST API'},
+        {image: 'tutorials/massive', href: tutorial('massive_stock_explorer'), title: 'Stock market explorer', note: 'Controls generated from an SDK’s method signatures'},
+      ],
+    },
+    {
+      title: 'YAML dashboards',
+      items: [
+        {image: 'gallery/nyc_taxi', href: galleryPage('nyc_taxi'), title: 'NYC taxi', note: 'Million-row trip analysis'},
+        {image: 'gallery/earthquakes', href: galleryPage('earthquakes'), title: 'Earthquakes', note: 'Magnitude and depth around the globe'},
+        {image: 'gallery/windturbines', href: galleryPage('windturbines'), title: 'Wind turbines', note: 'Performance and location of US turbines'},
+        {image: 'gallery/bikes', href: galleryPage('bikes'), title: 'London bike points', note: 'Live bike sharing on a map'},
+      ],
+    },
+  ].map((g) => ({...g, items: g.items.map((i) => ({...i, image: asset(`${i.image}.webp`)}))})),
+  link: {label: 'Browse all examples', href: `${DOCS}/examples/gallery/`},
 }

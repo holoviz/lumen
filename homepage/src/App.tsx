@@ -4,6 +4,7 @@ import {ThemeProvider} from '@mui/material/styles'
 
 import {BeyondTables} from './sections/BeyondTables'
 import {Footer} from './sections/Footer'
+import {Gallery} from './sections/Gallery'
 import {Header} from './sections/Header'
 import {Hero} from './sections/Hero'
 import {HowItWorks} from './sections/HowItWorks'
@@ -21,8 +22,9 @@ export function App() {
         <Hero />
         <HowItWorks wash />
         <BeyondTables />
-        <Providers wash />
-        <Sources />
+        <Gallery wash />
+        <Providers />
+        <Sources wash />
       </main>
       <Footer />
     </ThemeProvider>
