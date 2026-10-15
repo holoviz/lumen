@@ -42,6 +42,37 @@ vector_store = NumpyVectorStore()
 - ⚠️ Data lost on restart
 - Best for: Development, testing, small datasets
 
+### ChromaDBVectorStore
+
+ChromaDB provides vector storage with support for in-memory and persistent collections.
+
+**Install ChromaDB:**
+
+```bash
+pip install "lumen[chromadb]"
+```
+
+**In-memory storage:**
+
+```python
+from lumen.ai.vector_store import ChromaDBVectorStore
+
+vector_store = ChromaDBVectorStore()
+vector_store.add_file('https://lumen.holoviz.org')
+results = vector_store.query('LLM', threshold=0.1)
+```
+
+**Persistent storage:**
+
+```python
+from lumen.ai.vector_store import ChromaDBVectorStore
+
+vector_store = ChromaDBVectorStore(uri='./chromadb_data')
+vector_store.add_file('https://lumen.holoviz.org')
+```
+
+Set `uri` to the directory where ChromaDB should store its data. If `uri` is omitted, ChromaDB uses ephemeral in-memory storage.
+
 ### DuckDBVectorStore
 
 Persistent storage with HNSW indexing.
