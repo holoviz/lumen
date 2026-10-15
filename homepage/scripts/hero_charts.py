@@ -61,11 +61,11 @@ def main() -> None:
         # Lumen writes v5; the page embeds Vega-Lite 6, which reads the same spec but warns about v5.
         spec['$schema'] = 'https://vega.github.io/schema/vega-lite/v6.json'
         spec['width'], spec['height'] = 520, 190
-        (OUT / f'{capture.stem}.json').write_text(json.dumps(spec, default=str, separators=(',', ':')))
+        (OUT / f'{capture.stem}.json').write_text(json.dumps(spec, default=str, separators=(',', ':')) + '\n')
         svg = vlc.vegalite_to_svg(json.dumps(spec, default=str))
         # Drop the fixed size so the SVG scales with the plate it sits on; its viewBox stays.
         svg = re.sub(r'(<svg[^>]*?) width="[\d.]+" height="[\d.]+"', r'\1', svg, count=1)
-        (OUT / f'{capture.stem}.svg').write_text(svg)
+        (OUT / f'{capture.stem}.svg').write_text(svg + '\n')
         print(f'{capture.stem}.svg  {len(svg) / 1024:.0f} kB')  # noqa: T201
 
 

@@ -73,7 +73,7 @@ def main(url: str = 'http://localhost:5006/lumen_ai') -> None:
             for attempt in range(1, 4):
                 result = capture(browser, name, url)
                 if result and result['sql'] and result['spec'] and has_axes(result['spec']):
-                    (OUT / f'{name}.json').write_text(json.dumps(result, indent=1))
+                    (OUT / f'{name}.json').write_text(json.dumps(result, indent=1) + '\n')
                     print(f'{name}: ok on attempt {attempt}')  # noqa: T201
                     break
             else:

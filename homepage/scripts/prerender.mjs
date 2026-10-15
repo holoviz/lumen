@@ -18,4 +18,3 @@ const page = template.replace('<!--app-head-->', head).replace('<!--app-html-->'
 
 await writeFile(resolve(root, 'dist/index.html'), page)
 console.log(`prerendered dist/index.html (${(page.length / 1024).toFixed(1)} kB)`)
-
