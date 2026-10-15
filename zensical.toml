@@ -28,8 +28,7 @@ nav = [
       {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"},
       {"Weather API Explorer (OpenAPI)" = "examples/tutorials/weather_openapi_explorer.md"},
       {"Stock Market Explorer" = "examples/tutorials/massive_stock_explorer.md"},
-      {"Build Dashboard with Spec" = "examples/tutorials/penguins_dashboard_spec.md"},
-      {"SaaS Executive Dashboard" = "examples/tutorials/saas_metrics_reports.md"}
+      {"Build Dashboard with Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},
