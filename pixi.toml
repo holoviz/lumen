@@ -165,6 +165,7 @@ homepage-preview = { cmd = 'npm run preview', cwd = 'homepage', description = "P
 homepage-typecheck = { cmd = 'npm run typecheck', cwd = 'homepage', depends-on = ['_homepage-install'], description = "Type check the homepage" }
 homepage-build = { cmd = 'npm run build', cwd = 'homepage', depends-on = ['_homepage-install'], description = "Build the homepage" }
 homepage-test = { cmd = 'pytest homepage/tests --browser chromium', description = "Run the homepage tests" }
+homepage-og-image = { cmd = 'python homepage/scripts/og-image.py', description = "Render the homepage social preview image" }
 
 # =============================================
 # ================== BUILD ====================
