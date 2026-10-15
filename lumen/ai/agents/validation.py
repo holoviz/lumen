@@ -42,6 +42,8 @@ class ValidationInputs(ContextModel):
 
     view: NotRequired[Any]
 
+    views: NotRequired[list[Any]]
+
 
 class ValidationOutputs(ContextModel):
 
@@ -100,7 +102,7 @@ class ValidationAgent(Agent):
                 if task.actor is not self:
                     required_keys |= input_dependency_keys(task.input_schema)
             produced = {k for task in plan for k in task.out_context}
-            for key in ("chat", "sql", "view", "listing"):
+            for key in ("chat", "sql", "view", "views", "listing"):
                 if key in context and key not in produced:
                     if key in required_keys:
                         continue

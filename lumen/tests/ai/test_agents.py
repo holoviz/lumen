@@ -695,6 +695,9 @@ async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
     assert out[-1].editor._names == ["A vs B", "A vs C"]
     assert isinstance(out[-1].component, Panel)
     assert len(out[-1].component.object) == 2  # both plots stacked in the overview
+    # Validation has to see every chart, not just the last one.
+    assert [view["spec"]["mark"] for view in out_context["views"]] == ["bar", "line"]
+    assert out_context["view"]["spec"]["mark"] == "line"
 
 
 async def test_vegalite_agent_skips_unparseable_chart(llm, duckdb_source, test_messages):

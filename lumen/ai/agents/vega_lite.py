@@ -1007,6 +1007,10 @@ class VegaLiteAgent(BaseCodeAgent):
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
 
         out_context = await editors[-1].render_context()
+        if len(editors) > 1:
+            # `view` stays a single spec for the prompts that read it that way;
+            # validation needs every chart or it reports the others as missing.
+            out_context["views"] = [(await editor.render_context())["view"] for editor in editors]
         return outs, out_context
 
     async def annotate(
