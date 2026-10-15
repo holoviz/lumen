@@ -154,8 +154,8 @@ source = SnowflakeSource(
 
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        'default': {'model': 'gpt-4o-mini'},
-        'sql': {'model': 'gpt-4o'},
+        'default': {'model': 'gpt-5.4-nano'},
+        'sql': {'model': 'gpt-6-luna'},
     }
 )
 
