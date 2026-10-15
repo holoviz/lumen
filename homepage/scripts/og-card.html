@@ -1,0 +1,127 @@
+<!doctype html>
+<!--
+  Source for public/og-image.png. Rendered to PNG by scripts/og-image.py, which injects the
+  logo, the headline and the first hero question from the built page so the card cannot drift
+  away from the page it advertises. Not part of the Vite build.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        width: 1200px;
+        height: 630px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 64px 72px 0;
+        /* The wash rather than white, so the card keeps an edge in white link previews. */
+        background: #f3f6f9;
+        color: #000000;
+        font-family: Inter, system-ui, sans-serif;
+        font-synthesis: none;
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      .logo {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 44px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+      .logo svg {
+        width: 56px;
+        height: 56px;
+      }
+      h1 {
+        margin-top: 36px;
+        font-size: 76px;
+        line-height: 1.02;
+        font-weight: 700;
+        letter-spacing: -0.032em;
+        font-variation-settings: 'opsz' 32;
+      }
+      .lede {
+        margin-top: 18px;
+        font-size: 28px;
+        color: #5f6368;
+        letter-spacing: -0.01em;
+      }
+      /* The hero's chat panel, cropped by the bottom edge. */
+      .app {
+        margin-top: 36px;
+        display: grid;
+        grid-template-columns: 330px 1fr;
+        height: 168px;
+        border-radius: 26px 26px 0 0;
+        overflow: hidden;
+        background: #1976d2;
+        color: #eeeeee;
+      }
+      .ask {
+        background: #1565c0;
+        padding: 30px 28px;
+      }
+      .question {
+        background: #eeeeee;
+        color: #1565c0;
+        border-radius: 14px;
+        padding: 14px 18px;
+        font-size: 21px;
+        font-weight: 600;
+        line-height: 1.3;
+      }
+      .bars {
+        padding: 30px 40px;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        column-gap: 18px;
+        row-gap: 14px;
+        align-items: center;
+        font-size: 21px;
+      }
+      .track {
+        height: 22px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.14);
+        overflow: hidden;
+      }
+      .fill {
+        height: 100%;
+        border-radius: 6px;
+        background: #eeeeee;
+      }
+      .value {
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <div class="logo" role="img" aria-label="Lumen">__LOGO__<span>Lumen</span></div>
+      <h1>__TITLE__</h1>
+      <p class="lede">__TAGLINE__</p>
+    </div>
+    <div class="app">
+      <div class="ask"><div class="question">__QUESTION__</div></div>
+      <!-- Penguin counts per island, the answer the hero shows for its first question. -->
+      <div class="bars">
+        <span>Biscoe</span><div class="track"><div class="fill" style="width: 100%"></div></div><span class="value">168</span>
+        <span>Dream</span><div class="track"><div class="fill" style="width: 73.8%"></div></div><span class="value">124</span>
+        <span>Torgersen</span><div class="track"><div class="fill" style="width: 31%"></div></div><span class="value">52</span>
+      </div>
+    </div>
+  </body>
+</html>
