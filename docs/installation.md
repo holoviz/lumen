@@ -5,13 +5,21 @@ Lumen works with Python 3.11+ on Linux, Windows, and Mac.
 !!! tip "Already installed?"
     Jump to the [Quick Start](quick_start.md) to start chatting with your data.
 
+!!! info "Using conda?"
+    Lumen is on conda-forge. Install it together with the client library of your LLM provider, for example:
+
+    ```bash
+    conda install -c conda-forge lumen openai
+    ```
+
 ## Bring Your Own LLM
 
 Lumen works with any LLM provider. Choose the approach that fits your needs:
 
-- ☁️ **Cloud providers** — OpenAI, Anthropic, Google, Mistral, Azure (easiest to get started)
-- 🖥️ **Locally hosted** — Ollama, Llama.cpp (free, runs on your machine, no API keys)
-- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, LiteLLM (unified interface, many providers and models)
+- ☁️ **Cloud providers** — OpenAI, Anthropic, Google, Mistral, Azure, Groq (easiest to get started)
+- 🖥️ **Locally hosted** — Ollama, Llama.cpp, MLX (free, runs on your machine, no API keys)
+- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, LiteLLM, AWS Bedrock (unified interface, many providers and models)
+- 💻 **Coding CLIs** — Codex, Claude Code, GitHub Copilot, Antigravity (use a CLI you are already signed in to, no API key)
 
 ---
 
@@ -168,6 +176,21 @@ Use hosted LLM APIs from major providers. Fastest to set up, pay-per-use pricing
     4. Copy KEY 1 or KEY 2 and your endpoint URL
     5. Set environment variables (same as Azure OpenAI above)
 
+=== "Groq"
+
+    ```bash
+    pip install 'lumen[ai-openai]'
+    export GROQ_API_KEY=gsk_...
+    ```
+
+    [Groq](https://groq.com/) serves open models through an OpenAI-compatible API. Lumen uses `openai/gpt-oss-120b` by default.
+
+    **Get your API key:**
+
+    1. Visit [console.groq.com/keys](https://console.groq.com/keys)
+    2. Click "Create API Key"
+    3. Set the `GROQ_API_KEY` environment variable, then start Lumen with `--provider groq` or let it auto-detect the key
+
 ---
 
 ## Locally Hosted
@@ -212,6 +235,14 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
     lumen-ai serve data.csv --provider llama-cpp \
       --llm-model-url 'https://huggingface.co/unsloth/Qwen2.5-7B-Instruct-GGUF/blob/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf'
     ```
+
+=== "MLX (Apple Silicon)"
+
+    ```bash
+    pip install 'lumen[ai-openai]' mlx-lm
+    ```
+
+    Runs models natively on Apple Silicon, either in-process or through a local `mlx_lm.server`. Start Lumen with `--provider mlx`. See [MLX](configuration/llm_providers.md#mlx-apple-silicon) for both modes.
 
 === "AI Navigator"
 
@@ -271,7 +302,7 @@ Use a unified interface to access multiple LLM providers and models.
 === "Kilo"
 
     ```bash
-    pip install 'lumen[ai]'
+    pip install 'lumen[ai-openai]'
     export KILO_API_KEY=...
     ```
 
@@ -435,9 +466,9 @@ Use a unified interface to access multiple LLM providers and models.
     AWS Bedrock is a managed gateway that provides access to foundation models from Anthropic, Meta, Mistral, Amazon, Cohere, and AI21 through a unified API.
 
     ```bash
-    pip install 'lumen[ai-anthropic]'  # For AnthropicBedrock
+    pip install 'lumen[ai-anthropic,ai-bedrock]'  # For AnthropicBedrock
     # OR
-    pip install boto3  # For Bedrock
+    pip install 'lumen[ai-bedrock]'  # For Bedrock
     ```
 
     **Authentication:**
@@ -514,6 +545,45 @@ Use a unified interface to access multiple LLM providers and models.
 
 ---
 
+## Coding CLIs
+
+Run Lumen through a command-line coding agent you are already signed in to, so no API key is needed. These providers are meant for local use, not shared deployments.
+
+```bash
+pip install lumen
+lumen-ai serve penguins.csv --provider claude-code      # Claude Code
+lumen-ai serve penguins.csv --provider codex-cli        # Codex CLI
+lumen-ai serve penguins.csv --provider copilot-cli      # GitHub Copilot CLI, any plan
+lumen-ai serve penguins.csv --provider antigravity-cli  # Antigravity CLI
+```
+
+Install and sign in to the CLI first; see [Codex CLI and Claude Code](configuration/llm_providers.md#codex-cli-and-claude-code), [GitHub Copilot CLI](configuration/llm_providers.md#github-copilot-cli) and [Antigravity CLI](configuration/llm_providers.md#antigravity-cli) for setup and limits.
+
+---
+
+## Optional extras
+
+Add extras for data sources and features beyond the LLM provider:
+
+| Extra | Adds |
+|-------|------|
+| `sql` | SQLAlchemy, for PostgreSQL, MySQL, SQLite, Oracle and SQL Server |
+| `snowflake` | Snowflake connector |
+| `bigquery` | Google BigQuery |
+| `xarray` | NetCDF, Zarr and HDF5 through xarray |
+| `xarray-grib` | GRIB files, on top of `xarray` |
+| `geo` | GeoJSON, WKT and shapefiles through GeoPandas |
+| `chromadb` | ChromaDB vector store |
+| `ai-transformers` | Local sentence-transformers embeddings |
+| `ai-monty` | Sandboxed Python calculations for agents |
+| `mcp` | `MCPTool`, to give agents tools from MCP servers |
+
+```bash
+pip install 'lumen[ai-openai,sql,xarray]'
+```
+
+---
+
 ## Making Environment Variables Persistent
 
 Set variables permanently so you don't have to export them every session:
@@ -551,7 +621,7 @@ Set variables permanently so you don't have to export them every session:
 ## Verify Installation
 
 ```bash
-lumen-ai --version
+python -c "import lumen; print(lumen.__version__)"
 ```
 
 Test your LLM connection:
@@ -561,7 +631,7 @@ Test your LLM connection:
 import lumen.ai as lmai
 
 llm = lmai.llm.OpenAI()  # or Anthropic(), Google(), etc.
-ui = lmai.ExplorerUI(data='test.csv')
+ui = lmai.ExplorerUI(data='test.csv', llm=llm)
 ui.servable()
 ```
 
