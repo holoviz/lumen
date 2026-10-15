@@ -2,7 +2,7 @@ import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
 import type {ReactNode} from 'react'
 
-import {tokens} from '../theme'
+import {glow, tokens} from '../theme'
 
 /** A linked 16:9 screenshot with a title and a caption, as used by the gallery. */
 export function Tile({
@@ -29,7 +29,9 @@ export function Tile({
         display: 'flex',
         flexDirection: 'column',
         '&:hover .tile-title': {color: 'primary.main'},
-        '&:hover img': {borderColor: 'primary.main'},
+        '@media (hover: hover)': {
+          '&:hover img': {borderColor: 'primary.main', boxShadow: glow.hover, transform: 'translateY(-3px)'},
+        },
       }}
     >
       <Box
@@ -54,7 +56,7 @@ export function Tile({
           border: '1px solid',
           borderColor: 'divider',
           borderRadius: 1,
-          transition: 'border-color 160ms ease',
+          transition: 'transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease',
         }}
       />
       <Typography

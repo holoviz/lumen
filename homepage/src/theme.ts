@@ -67,6 +67,26 @@ const FOCUS_RING = 'var(--focus-ring, var(--mui-palette-primary-main))'
 const fontFamily = 'Inter, system-ui, Arial, Helvetica, sans-serif'
 const monoFamily = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
 
+/**
+ * Glow and lift for cards. The colour is the scheme's own primary, read from the CSS variable MUI
+ * exposes, so the same rule glows light blue on the dark page and deep blue on the white one.
+ * The lift only runs where hover exists, so touch screens never get a stuck raised card.
+ */
+const PRIMARY = 'var(--mui-palette-primary-mainChannel)'
+
+export const glow = {
+  hover: `0 0 0 1px rgb(${PRIMARY} / 0.5), 0 14px 38px rgb(${PRIMARY} / 0.28)`,
+  ambient: `0 24px 70px rgb(${PRIMARY} / 0.24)`,
+  soft: `0 10px 40px rgb(${PRIMARY} / 0.14)`,
+} as const
+
+export const lift = {
+  transition: 'transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease',
+  '@media (hover: hover)': {
+    '&:hover': {transform: 'translateY(-3px)', borderColor: 'primary.main', boxShadow: glow.hover},
+  },
+} as const
+
 export const theme = createTheme({
   cssVariables: {colorSchemeSelector: 'data-color-scheme'},
   colorSchemes: {
@@ -162,7 +182,18 @@ export const theme = createTheme({
     MuiButton: {
       defaultProps: {disableElevation: true},
       styleOverrides: {
-        root: {borderRadius: 6, paddingInline: 20, paddingBlock: 9},
+        root: {
+          borderRadius: 6,
+          paddingInline: 20,
+          paddingBlock: 9,
+          transition: 'box-shadow 200ms ease, background-color 200ms ease, border-color 200ms ease',
+        },
+        // Raised only where hover exists, in the scheme's own primary.
+        contained: {
+          '@media (hover: hover)': {
+            '&:hover': {boxShadow: `0 8px 26px rgb(${PRIMARY} / 0.5)`},
+          },
+        },
         sizeLarge: {fontSize: '1rem', paddingInline: 26, paddingBlock: 12},
       },
     },

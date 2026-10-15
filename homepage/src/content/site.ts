@@ -160,7 +160,7 @@ export const howItWorks = {
     },
     {
       title: 'Plan',
-      body: 'The coordinator picks which of the eight built-in agents to use and in what order.',
+      body: 'The coordinator picks which of the nine built-in agents to use and in what order.',
       code: 'Planner',
     },
     {

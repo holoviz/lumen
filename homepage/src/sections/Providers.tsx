@@ -5,7 +5,7 @@ import Typography from '@mui/material/Typography'
 import {CodeBlock} from '../components/CodeBlock'
 import {Section, type Band} from '../components/Section'
 import {providers} from '../content/site'
-import {surfaces} from '../theme'
+import {lift, surfaces} from '../theme'
 
 export function Providers({wash}: Band) {
   return (
@@ -40,6 +40,7 @@ export function Providers({wash}: Band) {
           gridTemplateColumns: {xs: '1fr', md: '1fr 1.3fr'},
           gap: {xs: 2.5, md: 5},
           alignItems: 'center',
+          ...lift,
           backgroundColor: 'background.paper',
           border: '1px solid',
           borderColor: 'divider',

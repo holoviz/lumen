@@ -6,7 +6,7 @@ import Typography from '@mui/material/Typography'
 import {CodeBlock} from '../components/CodeBlock'
 import {Section, type Band} from '../components/Section'
 import {beyondTables} from '../content/site'
-import {surfaces} from '../theme'
+import {lift, surfaces} from '../theme'
 
 /** N-dimensional and geospatial data, side by side, each with the question and SQL it answers. */
 export function BeyondTables({wash}: Band) {
@@ -17,6 +17,7 @@ export function BeyondTables({wash}: Band) {
           <Box
             key={item.title}
             sx={{
+              ...lift,
               backgroundColor: 'background.paper',
               border: '1px solid',
               borderColor: 'divider',

@@ -4,7 +4,7 @@ import Typography from '@mui/material/Typography'
 
 import {Section, type Band} from '../components/Section'
 import {howItWorks} from '../content/site'
-import {kites, monoFamily} from '../theme'
+import {kites, lift, monoFamily} from '../theme'
 
 const ACCENTS = [kites.blue, kites.purple, kites.red, kites.orange]
 
@@ -28,6 +28,7 @@ export function HowItWorks({wash}: Band) {
             component="li"
             key={step.title}
             sx={{
+              ...lift,
               backgroundColor: 'background.paper',
               border: '1px solid',
               borderColor: 'divider',

@@ -6,7 +6,7 @@ import {CodeBlock} from '../components/CodeBlock'
 import {Prose} from '../components/Prose'
 import {Section, type Band} from '../components/Section'
 import {extend} from '../content/site'
-import {surfaces} from '../theme'
+import {lift, surfaces} from '../theme'
 
 export function Extend({wash}: Band) {
   return (
@@ -22,6 +22,7 @@ export function Extend({wash}: Band) {
             </Typography>
             <Box
               sx={{
+                ...lift,
                 flex: 1,
                 bgcolor: surfaces.code,
                 border: '1px solid',

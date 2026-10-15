@@ -6,7 +6,7 @@ import {useState} from 'react'
 
 import {CodeBlock} from '../components/CodeBlock'
 import {heroChat} from '../content/site'
-import {monoFamily, tokens} from '../theme'
+import {glow, monoFamily, tokens} from '../theme'
 
 const KNOCKOUT = tokens.mist
 
@@ -27,6 +27,8 @@ export function HeroChat() {
         borderRadius: 3.5,
         overflow: 'hidden',
         bgcolor: tokens.lumen,
+        // A wide soft glow so the panel reads as the lit part of the page.
+        boxShadow: glow.ambient,
         // Both panes are saturated blue, so focus rings use the knockout grey instead.
         '--focus-ring': KNOCKOUT,
       }}
@@ -54,7 +56,8 @@ export function HeroChat() {
                 bgcolor: i === index ? KNOCKOUT : 'transparent',
                 color: i === index ? tokens.lumenDeep : KNOCKOUT,
                 fontWeight: i === index ? 600 : 400,
-                transition: 'background-color 160ms ease, color 160ms ease',
+                transition: 'background-color 160ms ease, color 160ms ease, box-shadow 200ms ease, border-color 200ms ease',
+                '@media (hover: hover)': {'&:hover': {borderColor: KNOCKOUT, boxShadow: '0 0 18px rgba(238, 238, 238, 0.35)'}},
               }}
             >
               {item.prompt}

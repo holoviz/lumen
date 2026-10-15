@@ -5,7 +5,7 @@ import {useEffect, useRef, useState} from 'react'
 
 import {Section, type Band} from '../components/Section'
 import {showcase} from '../content/site'
-import {tokens} from '../theme'
+import {glow, tokens} from '../theme'
 
 const FRAME = {
   display: 'block',
@@ -16,6 +16,7 @@ const FRAME = {
   border: '1px solid',
   borderColor: 'divider',
   borderRadius: 2,
+  boxShadow: glow.soft,
 } as const
 
 /**
@@ -83,6 +84,8 @@ export function Showcase({wash}: Band) {
               bgcolor: i === index ? 'primary.main' : 'background.paper',
               color: i === index ? 'primary.contrastText' : 'text.primary',
               fontWeight: i === index ? 600 : 400,
+              transition: 'box-shadow 200ms ease, border-color 200ms ease',
+              '@media (hover: hover)': {'&:hover': {borderColor: 'primary.main', boxShadow: glow.hover}},
             }}
           >
             {item.title}

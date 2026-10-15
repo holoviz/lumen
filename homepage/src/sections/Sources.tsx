@@ -5,7 +5,7 @@ import Typography from '@mui/material/Typography'
 import {CodeBlock} from '../components/CodeBlock'
 import {Section, type Band} from '../components/Section'
 import {sources} from '../content/site'
-import {surfaces} from '../theme'
+import {lift, surfaces} from '../theme'
 
 export function Sources({wash}: Band) {
   return (
@@ -21,6 +21,7 @@ export function Sources({wash}: Band) {
           <Box
             key={item.name}
             sx={{
+              ...lift,
               backgroundColor: 'background.paper',
               border: '1px solid',
               borderColor: 'divider',
