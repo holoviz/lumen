@@ -42,7 +42,7 @@ def fetch_sales(region: str = "US", year: int = 2024):
 # LLM with per-agent model overrides
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        "default": {"model": "gpt-5.4-nano", "temperature": 0.2},
+        "default": {"model": "gpt-6-luna", "temperature": 0.2},
         "sql": {"model": "gpt-6-luna", "temperature": 0.1},
     }
 )
@@ -116,9 +116,9 @@ Set different models per agent type:
 ```py
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        "default": {"model": "gpt-5.4-nano", "temperature": 0.2},
+        "default": {"model": "gpt-6-luna", "temperature": 0.2},
         "sql": {"model": "gpt-6-luna", "temperature": 0.1},
-        "vega_lite": {"model": "gpt-6-luna"},
+        "ui": {"model": "gpt-5.4-nano"},
     }
 )
 ```
@@ -287,7 +287,7 @@ ui = lmai.ExplorerUI(
 ```bash
 lumen-ai serve data.csv                           # Basic
 lumen-ai serve data.csv --provider anthropic      # Change provider
-lumen-ai serve data.csv --model gpt-5.4-nano      # Change model
+lumen-ai serve data.csv --model gpt-5.6-luna      # Change model
 lumen-ai serve data.csv --provider openrouter --model openai/gpt-6-luna
 lumen-ai serve data.csv --agents sql vega_lite    # Limit agents
 lumen-ai serve data.csv --code-execution prompt   # Enable code execution

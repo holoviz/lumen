@@ -44,7 +44,7 @@ lumen-ai serve --provider openai
 ```
 
 ``` bash title="Specify model"
-lumen-ai serve --model-kwargs '{"default": {"model": "gpt-5.4-nano"}}'
+lumen-ai serve --model-kwargs '{"default": {"model": "gpt-5.6-luna"}}'
 ```
 
 ``` bash title="Adjust temperature"
@@ -56,7 +56,7 @@ lumen-ai serve --temperature 0.5  # (1)!
 ``` bash title="Combine options"
 lumen-ai serve penguins.csv \
   --provider openai \
-  --model-kwargs '{"default": {"model": "gpt-5.4-nano"}}' \
+  --model-kwargs '{"default": {"model": "gpt-5.6-luna"}}' \
   --temperature 0.7
 ```
 
@@ -100,8 +100,8 @@ import lumen.ai as lmai
 # Configure your LLM
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        'default': {'model': 'gpt-5.4-nano'},
-        'sql': {'model': 'gpt-6-luna'}
+        'default': {'model': 'gpt-6-luna'},
+        'ui': {'model': 'gpt-5.4-nano'}
     },
     temperature=0.7
 )
