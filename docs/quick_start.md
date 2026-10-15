@@ -10,7 +10,7 @@ Get up and running with Lumen in under 30 seconds.
 === "OpenAI"
 
     ```bash
-    pip install 'lumen[ai-openai]'
+    pip install lumen
     
     export OPENAI_API_KEY=sk-...
     ```
@@ -18,7 +18,7 @@ Get up and running with Lumen in under 30 seconds.
 === "OpenRouter"
 
     ```bash
-    pip install 'lumen[ai-openrouter]'
+    pip install lumen
    
     export OPENROUTER_API_KEY=sk-or-...
     ```
