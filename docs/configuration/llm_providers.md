@@ -128,9 +128,6 @@ For installation and API key setup instructions, see the [Installation guide](..
 | **Azure OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
 | **Azure Mistral** | `azureai` | `mistral-large`, `mistral-small` |
 
-!!! note "Claude versions"
-    Lumen supports Claude models up to 4.6. Claude 4.7 and later reject the non-default `temperature` Lumen sends, and Sonnet and Opus 5.5 reject the forced tool choice it uses for structured output, so they are not in the model list yet.
-
 !!! warning "Reasoning Models Not Suitable for Dialog"
     Reasoning models that cannot turn reasoning off, such as `gpt-6.1-sol` and `gemini-3.1-pro-preview`, are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
