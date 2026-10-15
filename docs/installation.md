@@ -6,11 +6,13 @@ Lumen works with Python 3.11+ on Linux, Windows, and Mac.
     Jump to the [Quick Start](quick_start.md) to start chatting with your data.
 
 !!! info "Using conda?"
-    Lumen is on conda-forge. Install it together with the client library of your LLM provider, for example:
+    Lumen is on conda-forge, and the plain install is all you need for OpenAI and every OpenAI-compatible provider:
 
     ```bash
-    conda install -c conda-forge lumen openai
+    conda install -c conda-forge lumen
     ```
+
+    Providers with their own client library, such as Anthropic or Google, need that package too, for example `conda install -c conda-forge anthropic`.
 
 ## Bring Your Own LLM
 
