@@ -92,7 +92,7 @@ def test_every_picture_loads_from_the_hashed_prefix(home: Page) -> None:
         await Promise.all(imgs.map((i) => i.decode().catch(() => null)))
         return imgs.map((i) => [i.getAttribute('src'), i.naturalWidth])
     }""")
-    assert len(images) == 8
+    assert len(images) == 9
     assert not [src for src, width in images if not width], 'broken pictures'
     assert all(src.startswith(('/_home/', 'data:image/')) for src, _ in images), images
 

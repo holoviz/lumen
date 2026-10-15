@@ -13,6 +13,7 @@ import {Hero} from './sections/Hero'
 import {HowItWorks} from './sections/HowItWorks'
 import {Paths} from './sections/Paths'
 import {Providers} from './sections/Providers'
+import {Showcase} from './sections/Showcase'
 import {Sources} from './sections/Sources'
 import {theme} from './theme'
 
@@ -24,15 +25,16 @@ export function App() {
       <Header />
       <main>
         <Hero />
-        <HowItWorks wash />
-        <BeyondTables />
-        <Gallery wash />
-        <Providers />
-        <Sources wash />
-        <Extend />
-        <Paths wash />
-        <Capabilities />
-        <Adoption wash />
+        <Showcase wash />
+        <HowItWorks />
+        <BeyondTables wash />
+        <Gallery />
+        <Providers wash />
+        <Sources />
+        <Extend wash />
+        <Paths />
+        <Capabilities wash />
+        <Adoption />
       </main>
       <Footer />
     </ThemeProvider>

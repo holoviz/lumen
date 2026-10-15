@@ -429,3 +429,30 @@ export const adoption = {
     {value: 'BSD-3', label: 'License'},
   ],
 }
+
+/**
+ * Screenshots of real Lumen answers, taken by scripts/showcase.py against a live server. The
+ * caption is the exact question that produced each one.
+ */
+export const showcase = {
+  title: 'Real answers, straight from the app',
+  lede:
+    'Each picture is one question typed into Lumen and the answer it drew: a climate grid from a NetCDF file, a live earthquake feed on a map, and three linked charts from a single request.',
+  items: [
+    {
+      name: 'penguins',
+      title: 'Three charts from one request',
+      question: 'Make three charts of the penguins: body mass by species, flipper length against body mass coloured by species, and penguin counts by island.',
+    },
+    {
+      name: 'heatmap',
+      title: 'A NetCDF climate grid',
+      question: 'Using the air table, map the average air temperature over the whole period on a lat/lon grid as a heatmap, with north at the top.',
+    },
+    {
+      name: 'earthquakes',
+      title: 'A year of earthquakes on a map',
+      question: 'Map every earthquake on a Deck.gl world map, sized and coloured by magnitude.',
+    },
+  ].map((s) => ({...s, image: asset(`showcase/${s.name}.webp`)})),
+}
