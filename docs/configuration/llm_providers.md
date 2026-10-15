@@ -61,9 +61,9 @@ from lumen.ai.llm import OpenAI
 
 async def main():
     llm = OpenAI(
-        model_kwargs={"default": {"model": "gpt-4o-mini"}},
+        model_kwargs={"default": {"model": "gpt-6-luna"}},
         usage_pricing={
-            "gpt-4o-mini": {"input": 0.15, "cached": 0.075, "output": 0.60},
+            "gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
         },
     )
     with llm.capture_usage() as request_usage:
@@ -120,14 +120,14 @@ For installation and API key setup instructions, see the [Installation guide](..
 |----------|---------------|----------------|
 | **OpenAI** | `gpt-6-luna` | `gpt-5.6-luna`, `gpt-6-sol`, `gpt-5.4-nano` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-6` |
-| **Google** | `gemini-3.8-flash` | `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.1-flash-lite` |
+| **Google** | `gemini-3.8-flash` | `gemini-3.6-flash`, `gemini-3.1-flash-lite` |
 | **Mistral** | `mistral-small-latest` | `mistral-medium-latest`, `mistral-large-latest`, `ministral-14b-latest` |
 | **Azure OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
 | **Azure Mistral** | `azureai` | `mistral-large`, `mistral-small` |
 | **Groq** | `openai/gpt-oss-120b` | `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` |
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
-    Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
+    Reasoning models that cannot turn reasoning off, such as `gpt-6.1-sol` and `gemini-3.1-pro-preview`, are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
     The OpenAI default, `gpt-6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`. Some models, such as `gpt-6.1-sol`, cannot disable reasoning and only work with the responses API.
 
