@@ -20,7 +20,7 @@ from panel.io.application import Application
 try:
     from ..ai.config import THIS_DIR
 except ImportError as e:
-    print(f'You need to install Lumen AI with "pip install \'lumen[ai-openai]\'": {e}')  # noqa: T201
+    print(f'You need to install Lumen AI with "pip install lumen": {e}')  # noqa: T201
     sys.exit(1)
 
 from .. import __version__
