@@ -2,14 +2,16 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import Box from '@mui/material/Box'
 import ButtonBase from '@mui/material/ButtonBase'
 import Typography from '@mui/material/Typography'
-import {useState} from 'react'
+import {useEffect, useRef, useState} from 'react'
 
 import {CodeBlock} from '../components/CodeBlock'
-import {chart} from '../content/assets'
+import {chart, chartSpec} from '../content/assets'
 import {heroChat} from '../content/site'
 import {glow, monoFamily, tokens} from '../theme'
 
 const KNOCKOUT = tokens.mist
+// The chart's own background, from scripts/hero_charts.py, so the plate and the chart agree.
+const DARK_PLATE = '#0c2340'
 
 /**
  * A replay of Lumen answering a question, built from MUI and an inline SVG rather than an
@@ -81,7 +83,7 @@ export function HeroChat() {
       </Box>
 
       <Box sx={{color: KNOCKOUT, px: {xs: 2.5, md: 4}, py: {xs: 3, md: 3.5}, display: 'grid', gap: 2.5, alignContent: 'start', minWidth: 0}}>
-        <Chart svg={chart(q.chart)} alt={q.alt} />
+        <Chart key={q.chart} name={q.chart} alt={q.alt} />
         <Box
           aria-label="Generated SQL"
           sx={{
@@ -108,20 +110,57 @@ function compact(sql: string): string {
   return sql.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim()
 }
 
-/** The Vega-Lite chart Lumen drew, as inline SVG on the white plate the app itself uses. */
-function Chart({svg, alt}: {svg: string; alt: string}) {
+/**
+ * The Vega-Lite chart Lumen drew. The static SVG paints at once, so the hero is never empty and
+ * works without scripts. Once the page is interactive, vega-embed is loaded on demand and
+ * replaces it with the live chart, whose tooltips show each bar's value on hover.
+ */
+function Chart({name, alt}: {name: string; alt: string}) {
+  const host = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = host.current
+    if (!el) return
+    let cancelled = false
+    let finalize: (() => void) | undefined
+    import('vega-embed').then(async ({default: embed}) => {
+      const target = document.createElement('div')
+      const result = await embed(target, chartSpec(name) as never, {
+        actions: false,
+        renderer: 'svg',
+        tooltip: {theme: 'dark'},
+      })
+      if (cancelled) return result.finalize()
+      finalize = result.finalize
+      // Vega draws at a fixed size; a viewBox lets the plate scale it, as it does the static SVG.
+      const svg = target.querySelector('svg')
+      if (svg) {
+        svg.setAttribute('viewBox', `0 0 ${svg.getAttribute('width')} ${svg.getAttribute('height')}`)
+        svg.removeAttribute('width')
+        svg.removeAttribute('height')
+      }
+      el.replaceChildren(target)
+    })
+    return () => {
+      cancelled = true
+      finalize?.()
+    }
+  }, [name])
+
   return (
     <Box
+      ref={host}
       role="img"
       aria-label={alt}
       // Rendered from a spec this page ships, not from user input, so the markup is trusted.
-      dangerouslySetInnerHTML={{__html: svg}}
+      dangerouslySetInnerHTML={{__html: chart(name)}}
       sx={{
-        bgcolor: tokens.white,
+        bgcolor: DARK_PLATE,
+        border: '1px solid rgba(238, 238, 238, 0.14)',
         borderRadius: 2,
-        px: 1.5,
-        py: 1,
+        overflow: 'hidden',
         '& svg': {display: 'block', width: '100%', height: 'auto'},
+        '& .vega-embed': {display: 'block', width: '100%'},
       }}
     />
   )

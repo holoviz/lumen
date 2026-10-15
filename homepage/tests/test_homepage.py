@@ -87,6 +87,16 @@ def test_hero_chat_swaps_the_answer(home: Page) -> None:
     expect(home.get_by_label('Generated SQL')).to_contain_text('AVG(')
 
 
+def test_hero_chart_shows_the_value_on_hover(home: Page) -> None:
+    """The live Vega-Lite chart replaces the static one and its tooltips name each bar's value."""
+    home.locator('[aria-label*="penguins per island"] .vega-embed').wait_for(timeout=15_000)
+    home.locator('[aria-label*="penguins per island"] .mark-rect path').first.hover()
+    tooltip = home.locator('#vg-tooltip-element')
+    expect(tooltip).to_be_visible()
+    expect(tooltip).to_contain_text('Biscoe')
+    expect(tooltip).to_contain_text('168')
+
+
 def test_every_picture_loads_from_the_hashed_prefix(home: Page) -> None:
     # Lazy tiles only fetch near the viewport, so make them all eager and wait for each.
     images = home.evaluate("""async () => {

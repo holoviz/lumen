@@ -29,3 +29,12 @@ export function chart(name: string): string {
   if (!svg) throw new Error(`No chart at src/assets/hero/${name}.svg; run scripts/hero_charts.py`)
   return svg
 }
+
+const specs = import.meta.glob<Record<string, unknown>>('../assets/hero/*.json', {eager: true, import: 'default'})
+
+/** The finished Vega-Lite spec behind a hero chart, data included, for the browser to embed. */
+export function chartSpec(name: string): Record<string, unknown> {
+  const spec = specs[`../assets/hero/${name}.json`]
+  if (!spec) throw new Error(`No spec at src/assets/hero/${name}.json; run scripts/hero_charts.py`)
+  return spec
+}
