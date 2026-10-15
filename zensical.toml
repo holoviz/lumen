@@ -191,7 +191,6 @@ emoji_generator = "zensical.extensions.emoji.to_svg"
 [project.plugins]
 search = {}
 typeset = {}
-literate_nav = {}
 
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["."]
