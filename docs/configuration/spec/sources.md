@@ -26,6 +26,13 @@ sources:
 | `intake` | Intake catalog entries | Data catalogs |
 | `rest` | REST API endpoints | API data |
 | `live` | Live website status checks | Website monitoring |
+| `json` | JSON files, local or remote | JSON data |
+| `sqlalchemy` | Any database SQLAlchemy supports | PostgreSQL, MySQL, SQLite, Oracle, SQL Server |
+| `xarray` | NetCDF, Zarr, HDF5 and GRIB as SQL tables | Scientific grids |
+| `prometheus` | Prometheus metrics | Monitoring data |
+| `join` | Joins tables from two or more sources | Combining sources |
+| `derived` | Tables built from other sources, with filters and transforms | Reusing a filtered view |
+| `session_info` | Information about active sessions | Admin dashboards |
 
 This guide focuses on `file` sources (most common). See Lumen's source reference for other types.
 
