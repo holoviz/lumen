@@ -152,11 +152,11 @@ Configure which LLM model each agent uses:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-4o-mini"},  # Cheap model for most agents
-    "sql": {"model": "gpt-4o"},           # Powerful model for SQL
-    "vega_lite": {"model": "gpt-4o"},     # Powerful model for charts
-    "deck_gl": {"model": "gpt-4o"},       # Powerful model for 3D maps
-    "chat": {"model": "gpt-4o"},          # Powerful model for analysis
+    "default": {"model": "gpt-5.4-nano"},  # Cheap model for most agents
+    "sql": {"model": "gpt-6-sol"},         # Powerful model for SQL
+    "vega_lite": {"model": "gpt-6-sol"},   # Powerful model for charts
+    "deckgl": {"model": "gpt-6-sol"},      # Powerful model for 3D maps
+    "chat": {"model": "gpt-6-luna"},       # Conversational answers
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
@@ -169,10 +169,10 @@ ui.servable()
 
 - SQLAgent uses the `"sql"` model
 - VegaLiteAgent uses the `"vega_lite"` model
-- DeckGLAgent uses the `"deck_gl"` model
+- DeckGLAgent uses the `"deckgl"` model
 - ChatAgent uses the `"chat"` model (falls back to `"default"` if not specified)
 
-Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deck_gl"`).
+Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deckgl"`, `hvPlotAgent` → `"hv_plot"`).
 
 See [LLM Providers](llm_providers.md) for complete details.
 
