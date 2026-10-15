@@ -167,8 +167,8 @@ For multiple models or additional parameters, use `--model-kwargs` with JSON:
 ``` bash title="Multiple models for different tasks"
 lumen-ai serve --model-kwargs '{
   "default": {"model": "gpt-5.4-nano"},
-  "sql": {"model": "gpt-6-sol"},
-  "edit": {"model": "gpt-6-sol"}
+  "sql": {"model": "gpt-6-luna"},
+  "edit": {"model": "gpt-6-luna"}
 }'
 ```
 
@@ -215,7 +215,7 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 | `--provider` | LLM provider | `--provider anthropic` |
 | `--api-key` | API key | `--api-key sk-...` |
 | `--model` | Default model | `--model 'qwen3.6:35b-a3b'` |
-| `--model-kwargs` | Advanced model config | `--model-kwargs '{"sql": {"model": "gpt-6-sol"}}'` |
+| `--model-kwargs` | Advanced model config | `--model-kwargs '{"sql": {"model": "gpt-6-luna"}}'` |
 | `--temperature` | Randomness | `--temperature 0.5` |
 | `--agents` | Active agents | `--agents SQLAgent ChatAgent` |
 | `--port` | Server port | `--port 8080` |
@@ -239,7 +239,7 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 lumen-ai serve penguins.csv \
   --provider openai \
   --model 'gpt-5.4-nano' \
-  --model-kwargs '{"sql": {"model": "gpt-6-sol"}}' \
+  --model-kwargs '{"sql": {"model": "gpt-6-luna"}}' \
   --temperature 0.5 \
   --agents SQLAgent ChatAgent VegaLiteAgent \
   --port 8080 \
