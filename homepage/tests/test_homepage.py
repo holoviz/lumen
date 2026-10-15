@@ -125,7 +125,7 @@ def test_install_command_copies(home: Page) -> None:
     home.context.grant_permissions(['clipboard-read', 'clipboard-write'])
     home.get_by_role('button', name='Copy').click()
     expect(home.get_by_role('button', name='Copied')).to_be_visible()
-    assert home.evaluate('navigator.clipboard.readText()') == 'pip install lumen'
+    assert home.evaluate('navigator.clipboard.readText()') == "pip install 'lumen[ai-openai]'"
 
 
 def test_every_focusable_element_shows_a_ring(home: Page) -> None:
