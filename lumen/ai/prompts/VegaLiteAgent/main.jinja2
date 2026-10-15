@@ -47,6 +47,15 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
   - Use size only with single color: `color: {value: '#1f77b4'}`
   - Or disable one legend: `color: {field: value, scale: {scheme: blues}, legend: null}`
 
+{%- if code_execution_enabled is defined and not code_execution_enabled %}
+## Tooltips
+
+If the chart does NOT use aggregation (no `aggregate` on any encoding channel — every mark stays one row of the underlying data), include a `tooltip` encoding array containing this exact field definition to display the AI-generated explanation, alongside other relevant data fields (like the x and y axes values):
+`- {field: "ai_explanation", type: "nominal", title: "AI Insight"}`
+
+If the chart DOES aggregate (mean/sum/count bar charts, etc.), do NOT add `ai_explanation` to the tooltip — the explanation is generated per underlying row and does not apply to an aggregated mark.
+{%- endif %}
+
 ## Key Patterns
 
 **Sort rankings**: `sort: "-x"` (horizontal) or `sort: "-y"` (vertical) on categorical axis. In a layered spec where layers bind different fields to that axis, `"-x"` cannot resolve and silently falls back to alphabetical — use an explicit sort field instead, and repeat it identically on every layer sharing that axis or the merge drops it:
