@@ -27,9 +27,10 @@ ui.servable()
 
 | Source | Use for |
 |--------|---------|
-| Files | CSV, Parquet, JSON (local or URL) |
+| Files | CSV, TSV, Parquet, JSON, JSONL and NDJSON (local or URL); Excel and HTML tables when uploaded in the UI |
 | DuckDB | Local SQL queries on files |
-| xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5) |
+| xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5, GRIB) |
+| Geospatial files | GeoJSON, WKT and zipped shapefiles |
 | Snowflake | Cloud data warehouse |
 | BigQuery | Google's data warehouse |
 | PostgreSQL | PostgreSQL via SQLAlchemy |
@@ -176,10 +177,16 @@ source = DuckDBSource(
 
 ### xarray for scientific data
 
-Query N-dimensional scientific datasets (NetCDF, Zarr, HDF5) with SQL via Apache DataFusion:
+Query N-dimensional scientific datasets (NetCDF, Zarr, HDF5, GRIB) with SQL via Apache DataFusion:
 
 ``` bash title="Install dependencies"
-pip install lumen[xarray]
+pip install 'lumen[ai-openai,xarray]'
+pip install 'lumen[ai-openai,xarray-grib]'  # GRIB files too
+```
+
+``` bash title="From the command line"
+lumen-ai serve air_temperature.nc
+lumen-ai serve forecast.zarr
 ```
 
 ``` py title="Query a NetCDF file"
@@ -212,6 +219,21 @@ source = XArraySQLSource(
     variables=['temperature', 'pressure']
 )
 ```
+
+### Geospatial files
+
+Load GeoJSON, WKT and zipped shapefiles. Their geometry column is kept, along with its coordinate reference system, and charts of it render as maps with Vega-Lite or Deck.gl.
+
+``` bash title="Install dependencies"
+pip install 'lumen[ai-openai,geo]'
+```
+
+``` bash title="From the command line"
+lumen-ai serve countries.geojson
+lumen-ai serve parcels.zip  # a zipped shapefile
+```
+
+You can also upload these files in the UI. From the command line they have to be local paths.
 
 ### Multiple sources
 
