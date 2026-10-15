@@ -19,7 +19,7 @@ Most users never customize agents. The eight default agents handle typical data 
 
 ## Default agents
 
-Lumen includes eight agents automatically. You don't need to configure anything.
+Lumen includes nine agents automatically. You don't need to configure anything.
 
 | Agent | What it does |
 |-------|-------------|
@@ -29,10 +29,29 @@ Lumen includes eight agents automatically. You don't need to configure anything.
 | **ChatAgent** | Answers questions and provides guidance |
 | **SourceAgent** | Fetches data from configured source controls |
 | **TableListAgent** | Lists available tables and columns |
-| **DocumentListAgent** | Manages uploaded documents |
+| **DocumentListAgent** | Lists uploaded documents |
+| **DocumentSummarizerAgent** | Answers questions from uploaded documentation and metadata files |
 | **ValidationAgent** | Checks if results answer the question |
 
 These agents work together automatically. The coordinator picks which agents to use for each question.
+
+## Optional agents
+
+These agents ship with Lumen but are not on by default. Add them with `agents=`, which extends the defaults:
+
+| Agent | What it does |
+|-------|-------------|
+| **hvPlotAgent** | Interactive hvPlot charts for exploration, including choropleths of geometry columns without a basemap |
+| **AnalysisAgent** | Runs your own deterministic [analyses](analyses.md) |
+| **DbtslAgent** | Answers metric questions through a dbt Semantic Layer |
+
+``` py title="Add optional agents"
+import lumen.ai as lmai
+from lumen.ai.agents import hvPlotAgent
+
+ui = lmai.ExplorerUI(data='penguins.csv', agents=[hvPlotAgent])
+ui.servable()
+```
 
 ## Use specific agents only
 
