@@ -153,6 +153,7 @@ python = "3.12.*"
 pytest = "*"
 pytest-asyncio = "*" # the shared pytest config sets asyncio options
 pytest-playwright = "*"
+pillow = "*" # scripts/showcase.py writes webp
 
 [feature.homepage.tasks]
 _homepage-install = { cmd = 'npm ci', cwd = 'homepage', inputs = [
