@@ -75,7 +75,7 @@ embeddings = HuggingFaceEmbeddings(
 **Install:**
 
 ``` bash
-pip install sentence-transformers
+pip install 'lumen[ai-transformers]'
 ```
 
 ### Llama.cpp
