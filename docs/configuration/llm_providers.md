@@ -38,11 +38,11 @@ Use cheap models for simple tasks, powerful models for complex tasks:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-6-luna"},  # Cheap for most agents
-    "sql": {"model": "gpt-6-sol"},         # Powerful for SQL
-    "vega_lite": {"model": "gpt-6-sol"},   # Powerful for charts
-    "deckgl": {"model": "gpt-6-sol"},      # Powerful for 3D maps
-    "analysis": {"model": "gpt-6-sol"},    # Powerful for analysis
+    "default": {"model": "gpt-5.4-nano"},  # Cheapest for most agents
+    "sql": {"model": "gpt-6-luna"},        # Stronger for SQL
+    "vega_lite": {"model": "gpt-6-luna"},  # Stronger for charts
+    "deckgl": {"model": "gpt-6-luna"},     # Stronger for 3D maps
+    "analysis": {"model": "gpt-6-luna"},   # Stronger for analysis
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)

@@ -152,11 +152,10 @@ Configure which LLM model each agent uses:
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.4-nano"},  # Cheap model for most agents
-    "sql": {"model": "gpt-6-sol"},         # Powerful model for SQL
-    "vega_lite": {"model": "gpt-6-sol"},   # Powerful model for charts
-    "deckgl": {"model": "gpt-6-sol"},      # Powerful model for 3D maps
-    "chat": {"model": "gpt-6-luna"},       # Conversational answers
+    "default": {"model": "gpt-5.4-nano"},  # Cheapest model for most agents
+    "sql": {"model": "gpt-6-luna"},        # Lumen's default model for SQL
+    "vega_lite": {"model": "gpt-6-luna"},  # and for charts
+    "deckgl": {"model": "gpt-6-luna"},     # and for 3D maps
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
