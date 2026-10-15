@@ -2250,6 +2250,7 @@ def normalize_vegalite_spec(
 
     editor_type.validate_spec(vega_spec)
     _thin_band_labels(vega_spec)
+    _fix_comma_number_formats(vega_spec)
 
     # using string comparison because these keys could be in different nested levels
     vega_spec_str = dump_yaml(vega_spec)
@@ -2261,6 +2262,26 @@ def normalize_vegalite_spec(
     #     # because those result in an blank plot without error
     #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
     return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
+
+
+def _fix_comma_number_formats(spec: Any) -> None:
+    """Rewrite a bare ``,`` number format to ``,~r`` wherever the spec has one.
+
+    Vega pairs ``,`` with a precision of its own and prints 6000 as 6e+3, while
+    ``,~r`` rounds to significant digits and trims zeros. The model writes the
+    bare form on axes, legends, tooltips and config however deep they sit, so
+    every nesting is walked. Only the exact string is touched, so time formats
+    and a ``data.format`` object are left alone.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _fix_comma_number_formats(item)
+    elif isinstance(spec, dict):
+        for key, value in spec.items():
+            if key in ("format", "numberFormat") and value == ",":
+                spec[key] = ",~r"
+            else:
+                _fix_comma_number_formats(value)
 
 
 def _thin_band_labels(spec: Any) -> None:
