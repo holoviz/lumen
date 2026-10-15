@@ -306,7 +306,7 @@ class SQLAlchemySource(BaseSQLSource):
         with self._connection as connection:
             result = connection.execute(text(sql_query), params, *args, **kwargs)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
-            return df
+            return self._cast_to_supported_dtypes(df)
 
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
@@ -347,7 +347,7 @@ class SQLAlchemySource(BaseSQLSource):
             result = await connection.execute(text(sql_query), params, *args, **kwargs)
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
-            return df
+            return self._cast_to_supported_dtypes(df)
 
     async def execute_with_timeout(
         self, sql_query: str, timeout: float | None, fetch: bool = False
