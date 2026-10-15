@@ -641,7 +641,7 @@ For OpenRouter and LiteLLM, use the `provider/model` format for routed models.
 
 **Slow responses** - Local models are slower than cloud APIs. Use cloud providers when speed matters.
 
-**AWS credentials not found** - For Bedrock, ensure AWS credentials are configured. See [Installation guide](../installation.md#aws-bedrock-gateway).
+**AWS credentials not found** - For Bedrock, ensure AWS credentials are configured. See [Installation guide](../installation.md#router-multi-provider).
 
 ## Best practices
 

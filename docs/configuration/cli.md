@@ -200,7 +200,7 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 
 | Flag | Purpose | Example |
 |------|---------|---------|
-| `--code-execution` | [Code execution mode](../getting_started/using_lumen_ai.md#code-execution-for-visualizations) | `--code-execution prompt` |
+| `--code-execution` | [Code execution mode](../getting_started/building_lumen_apps.md#enable-code-execution) | `--code-execution prompt` |
 | `--provider` | LLM provider | `--provider anthropic` |
 | `--api-key` | API key | `--api-key sk-...` |
 | `--model` | Default model | `--model 'qwen3.6:35b-a3b'` |
