@@ -5,6 +5,7 @@ import Typography from '@mui/material/Typography'
 import {useState} from 'react'
 
 import {CodeBlock} from '../components/CodeBlock'
+import {chart} from '../content/assets'
 import {heroChat} from '../content/site'
 import {glow, monoFamily, tokens} from '../theme'
 
@@ -79,7 +80,8 @@ export function HeroChat() {
         </Box>
       </Box>
 
-      <Box sx={{color: KNOCKOUT, px: {xs: 2.5, md: 4}, py: {xs: 3, md: 3.5}, display: 'grid', gap: 3, minWidth: 0}}>
+      <Box sx={{color: KNOCKOUT, px: {xs: 2.5, md: 4}, py: {xs: 3, md: 3.5}, display: 'grid', gap: 2.5, alignContent: 'start', minWidth: 0}}>
+        <Chart svg={chart(q.chart)} alt={q.alt} />
         <Box
           aria-label="Generated SQL"
           sx={{
@@ -94,42 +96,28 @@ export function HeroChat() {
             '& pre': {color: KNOCKOUT},
           }}
         >
-          <CodeBlock source={q.sql} fontSize="0.8125rem" wrap />
+          <CodeBlock source={q.sql} fontSize="0.75rem" wrap />
         </Box>
-        <BarChart title={q.title} bars={q.bars} />
       </Box>
     </Box>
   )
 }
 
-function BarChart({title, bars}: {title: string; bars: {label: string; value: number}[]}) {
-  const max = Math.max(...bars.map((b) => b.value))
+/** The Vega-Lite chart Lumen drew, as inline SVG on the white plate the app itself uses. */
+function Chart({svg, alt}: {svg: string; alt: string}) {
   return (
-    <Box component="figure" sx={{m: 0}}>
-      <Typography component="figcaption" sx={{fontWeight: 600, mb: 1.5}}>
-        {title}
-      </Typography>
-      <Box sx={{display: 'grid', gridTemplateColumns: 'auto 1fr auto', columnGap: 1.5, rowGap: 1.25, alignItems: 'center'}}>
-        {bars.map((b) => (
-          <Box key={b.label} sx={{display: 'contents'}}>
-            <Typography variant="body2">{b.label}</Typography>
-            <Box sx={{height: 22, borderRadius: 1, bgcolor: 'rgba(0, 0, 0, 0.12)', overflow: 'hidden'}}>
-              <Box
-                sx={{
-                  height: '100%',
-                  width: `${(b.value / max) * 100}%`,
-                  bgcolor: KNOCKOUT,
-                  borderRadius: 1,
-                  transition: 'width 320ms ease',
-                }}
-              />
-            </Box>
-            <Typography variant="body2" sx={{fontFamily: monoFamily, textAlign: 'right'}}>
-              {b.value.toLocaleString('en-US')}
-            </Typography>
-          </Box>
-        ))}
-      </Box>
-    </Box>
+    <Box
+      role="img"
+      aria-label={alt}
+      // Rendered from a spec this page ships, not from user input, so the markup is trusted.
+      dangerouslySetInnerHTML={{__html: svg}}
+      sx={{
+        bgcolor: tokens.white,
+        borderRadius: 2,
+        px: 1.5,
+        py: 1,
+        '& svg': {display: 'block', width: '100%', height: 'auto'},
+      }}
+    />
   )
 }

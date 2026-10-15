@@ -20,3 +20,12 @@ export function video(name: string): {mp4: string; webm: string} {
   if (!mp4 || !webm) throw new Error(`Need both src/assets/${name}.mp4 and .webm`)
   return {mp4, webm}
 }
+
+const charts = import.meta.glob<string>('../assets/hero/*.svg', {eager: true, query: '?raw', import: 'default'})
+
+/** A chart rendered from a real Vega-Lite spec, as inline SVG markup. */
+export function chart(name: string): string {
+  const svg = charts[`../assets/hero/${name}.svg`]
+  if (!svg) throw new Error(`No chart at src/assets/hero/${name}.svg; run scripts/hero_charts.py`)
+  return svg
+}

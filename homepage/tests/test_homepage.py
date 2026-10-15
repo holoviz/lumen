@@ -10,6 +10,7 @@ without React complaining and the interactive parts have to keep working after i
 from __future__ import annotations
 
 import http.server
+import re
 import socket
 import threading
 
@@ -77,11 +78,13 @@ def test_hydrates_without_console_errors(page: Page, site: str) -> None:
 
 
 def test_hero_chat_swaps_the_answer(home: Page) -> None:
-    caption = home.locator('figure figcaption').first
-    expect(caption).to_have_text('Penguins by island')
+    """Each question shows the SQL Lumen wrote and the Vega-Lite chart it drew."""
+    chart = home.get_by_role('img', name=re.compile('penguins per island'))
+    expect(chart).to_be_visible()
+    expect(chart.locator('svg')).to_have_count(1)
     home.get_by_role('radio', name='Which species is the heaviest on average?').click()
-    expect(caption).to_have_text('Average body mass (g)')
-    expect(home.get_by_label('Generated SQL')).to_contain_text('AVG(body_mass_g)')
+    expect(home.get_by_role('img', name=re.compile('average body mass by species'))).to_be_visible()
+    expect(home.get_by_label('Generated SQL')).to_contain_text('AVG(')
 
 
 def test_every_picture_loads_from_the_hashed_prefix(home: Page) -> None:

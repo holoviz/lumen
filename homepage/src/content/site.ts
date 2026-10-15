@@ -97,46 +97,64 @@ export const heroCode = [
 ]
 
 /**
- * The hero chat replays three real answers rather than calling an LLM. Every number is the
- * result of the SQL beside it on the penguins dataset the quick start uses (344 rows).
+ * The hero chat replays three real answers rather than calling an LLM. The SQL is what Lumen
+ * wrote and the charts are the Vega-Lite specs it produced, rendered by scripts/hero_charts.py.
  */
 export const heroChat = {
   dataset: 'penguins.csv',
   questions: [
     {
       prompt: 'Which islands have the most penguins?',
-      sql: ['SELECT island, COUNT(*) AS penguins', 'FROM penguins', 'GROUP BY island', 'ORDER BY penguins DESC'].join('\n'),
-      title: 'Penguins by island',
-      bars: [
-        {label: 'Biscoe', value: 168},
-        {label: 'Dream', value: 124},
-        {label: 'Torgersen', value: 52},
-      ],
+      chart: 'islands',
+      alt: 'A bar chart of penguins per island, with Biscoe highlighted at 168.',
+      sql: `SELECT
+  "island",
+  COUNT(*) AS penguin_count
+FROM (
+  SELECT DISTINCT
+    *
+  FROM penguins_csv
+) AS deduped
+GROUP BY
+  "island"
+ORDER BY
+  penguin_count DESC`,
     },
     {
       prompt: 'Which species is the heaviest on average?',
-      sql: [
-        'SELECT species, AVG(body_mass_g) AS body_mass',
-        'FROM penguins',
-        'GROUP BY species',
-        'ORDER BY body_mass DESC',
-      ].join('\n'),
-      title: 'Average body mass (g)',
-      bars: [
-        {label: 'Gentoo', value: 5076},
-        {label: 'Chinstrap', value: 3733},
-        {label: 'Adelie', value: 3701},
-      ],
+      chart: 'mass',
+      alt: 'A bar chart of average body mass by species, with Gentoo highlighted at about 5,076 grams.',
+      sql: `SELECT
+  "species",
+  AVG(TRY_CAST("body_mass_g" AS DOUBLE)) AS avg_body_mass_g
+FROM (
+  SELECT DISTINCT
+    *
+  FROM penguins_csv
+) AS "penguins_csv"
+WHERE
+  NOT "body_mass_g" IS NULL AND TRIM("body_mass_g") <> ''
+GROUP BY
+  "species"
+ORDER BY
+  avg_body_mass_g DESC`,
     },
     {
       prompt: 'How many of each species are there?',
-      sql: ['SELECT species, COUNT(*) AS penguins', 'FROM penguins', 'GROUP BY species', 'ORDER BY penguins DESC'].join('\n'),
-      title: 'Penguins by species',
-      bars: [
-        {label: 'Adelie', value: 152},
-        {label: 'Gentoo', value: 124},
-        {label: 'Chinstrap', value: 68},
-      ],
+      chart: 'species',
+      alt: 'A bar chart of penguin counts by species: Adelie 152, Gentoo 124, Chinstrap 68.',
+      sql: `SELECT
+  "species",
+  COUNT(*) AS "count"
+FROM (
+  SELECT DISTINCT
+    *
+  FROM penguins_csv
+) AS "deduped"
+GROUP BY
+  "species"
+ORDER BY
+  "count" DESC`,
     },
   ],
   /** The plan Lumen shows for a charting question: query, chart, then check the answer. */
