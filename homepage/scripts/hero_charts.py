@@ -58,6 +58,8 @@ def main() -> None:
         spec['config'] = {**spec.get('config', {}), **{k: {**spec.get('config', {}).get(k, {}), **v} if isinstance(v, dict) else v for k, v in DARK.items()}}
         # Lumen sizes charts to their container and feeds the data in separately.
         spec['data'] = {'values': rows}
+        # Lumen writes v5; the page embeds Vega-Lite 6, which reads the same spec but warns about v5.
+        spec['$schema'] = 'https://vega.github.io/schema/vega-lite/v6.json'
         spec['width'], spec['height'] = 520, 190
         (OUT / f'{capture.stem}.json').write_text(json.dumps(spec, default=str, separators=(',', ':')))
         svg = vlc.vegalite_to_svg(json.dumps(spec, default=str))
