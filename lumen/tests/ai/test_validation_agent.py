@@ -90,3 +90,27 @@ async def test_validation_agent_uses_prior_plan_dependencies(
     )
 
     assert prompt_context["previous_keys"] == expected_previous_keys
+
+
+def test_validation_agent_sees_every_chart_of_a_multi_chart_answer(jinja_env):
+    """A request for several charts is answered by several views; showing only the
+    last one makes validation report the others as missing."""
+    template = jinja_env.get_template("ValidationAgent/main.jinja2")
+    views = [{"spec": {"mark": "bar"}}, {"spec": {"mark": "point"}}]
+
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"view": views[-1], "views": views},
+        previous_keys=set(),
+    )
+    assert "'mark': 'bar'" in rendered
+    assert "'mark': 'point'" in rendered
+
+    # A multi-chart answer from an earlier plan must not stand in for this plan's view.
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"view": {"spec": {"mark": "line"}}, "views": views},
+        previous_keys={"views"},
+    )
+    assert "'mark': 'line'" in rendered
+    assert "'mark': 'bar'" not in rendered
