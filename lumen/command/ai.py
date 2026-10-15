@@ -20,9 +20,10 @@ from panel.io.application import Application
 try:
     from ..ai.config import THIS_DIR
 except ImportError as e:
-    print(f'You need to install lumen-ai with "pip install lumen[ai]": {e}')  # noqa: T201
+    print(f'You need to install Lumen AI with "pip install lumen": {e}')  # noqa: T201
     sys.exit(1)
 
+from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.llm import LLM_PROVIDERS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
@@ -83,7 +84,7 @@ class LumenAIServe(Serve):
         )
         group.add_argument(
             "--code-execution",
-            choices=["hidden", "disabled", "prompt", "llm", "bypass"],
+            choices=["hidden", "disabled", "prompt", "llm", "allow"],
             default="hidden",
             help="""
             Code execution mode for generating Vega-Lite specs via Altair code.
@@ -329,7 +330,7 @@ def main(args=None):
             To start the application without any data, simply run 'lumen-ai' with no additional arguments.
 
             First time running Lumen AI take a look at getting started documentation:
-            https://lumen.holoviz.org/lumen_ai/getting_started/
+            https://lumen.holoviz.org/getting_started/launching_lumen/
 
             Found a Bug or Have a Feature Request?
             Open an issue at: https://github.com/holoviz/lumen/issues
@@ -344,7 +345,7 @@ def main(args=None):
         epilog="See '<command> --help' to read about a specific subcommand.",
     )
 
-    parser.add_argument("-v", "--version", action="version", version="Lumen AI 1.0.0")
+    parser.add_argument("-v", "--version", action="version", version=f"Lumen AI {__version__}")
 
     subs = parser.add_subparsers(help="Sub-commands", dest="command")
 

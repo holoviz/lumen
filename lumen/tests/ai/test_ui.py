@@ -35,6 +35,7 @@ from panel.util import edit_readonly
 from panel_material_ui import Container
 from panel_splitjs import VSplit
 
+from lumen import __version__
 from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.agents.vega_lite import (
@@ -47,7 +48,7 @@ from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
-from lumen.command.ai import LumenAIServe
+from lumen.command.ai import LumenAIServe, main
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -2101,3 +2102,21 @@ def test_ensure_model_label_skips_when_no_model(explorer_ui):
     message = type('Message', (), {'timestamp_format': '%H:%M'})()
     ui._ensure_model_label(message)
     assert message.timestamp_format == '%H:%M'
+
+
+def test_cli_code_execution_choices_match_explorer_ui():
+    """Every --code-execution value the CLI accepts has to be one ExplorerUI accepts."""
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser)
+    choices = next(a.choices for a in parser._actions if a.dest == "code_execution")
+
+    assert choices == ExplorerUI.param.code_execution.objects
+    assert parser.parse_args(["--code-execution", "allow"]).code_execution == "allow"
+
+
+def test_cli_version_reports_the_installed_version(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["lumen-ai", "--version"])
+    with pytest.raises(SystemExit):
+        main()
+
+    assert capsys.readouterr().out.strip() == f"Lumen AI {__version__}"
