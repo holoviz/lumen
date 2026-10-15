@@ -180,8 +180,8 @@ source = DuckDBSource(
 Query N-dimensional scientific datasets (NetCDF, Zarr, HDF5, GRIB) with SQL via Apache DataFusion:
 
 ``` bash title="Install dependencies"
-pip install 'lumen[ai-openai,xarray]'
-pip install 'lumen[ai-openai,xarray-grib]'  # GRIB files too
+pip install 'lumen[xarray]'
+pip install 'lumen[xarray-grib]'  # GRIB files too
 ```
 
 ``` bash title="From the command line"
@@ -225,7 +225,7 @@ source = XArraySQLSource(
 Load GeoJSON, WKT and zipped shapefiles. Their geometry column is kept, along with its coordinate reference system, and charts of it render as maps with Vega-Lite or Deck.gl.
 
 ``` bash title="Install dependencies"
-pip install 'lumen[ai-openai,geo]'
+pip install 'lumen[geo]'
 ```
 
 ``` bash title="From the command line"
