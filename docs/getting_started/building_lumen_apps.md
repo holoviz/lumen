@@ -118,7 +118,6 @@ llm = lmai.llm.OpenAI(
     model_kwargs={
         "default": {"model": "gpt-6-luna", "temperature": 0.2},
         "sql": {"model": "gpt-6-luna", "temperature": 0.1},
-        "ui": {"model": "gpt-5.4-nano"},
     }
 )
 ```

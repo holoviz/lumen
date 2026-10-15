@@ -101,7 +101,7 @@ import lumen.ai as lmai
 llm = lmai.llm.OpenAI(
     model_kwargs={
         'default': {'model': 'gpt-6-luna'},
-        'ui': {'model': 'gpt-5.4-nano'}
+        'sql': {'model': 'gpt-5.6-luna'}
     },
     temperature=0.7
 )
