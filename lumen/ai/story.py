@@ -290,7 +290,10 @@ class StoryReport(Report):
             elif value.include_in_export:
                 cards.append((
                     value.title,
-                    Column(*self._selected_views(value, include_header=False), sizing_mode="stretch_width"),
+                    Column(
+                        *self._selected_views(value, include_header=False, include_calls=False),
+                        sizing_mode="stretch_width",
+                    ),
                 ))
         return Accordion(
             *cards, active=list(range(len(cards))), sizing_mode="stretch_width",

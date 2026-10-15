@@ -1,6 +1,9 @@
+import ast
 import base64
+import inspect
 import os
 import re
+import sys
 
 from io import BytesIO
 from textwrap import dedent
@@ -18,6 +21,7 @@ from ..pipeline import Pipeline
 from ..util import as_pandas
 from ..views import View
 from .editors import LumenEditor
+from .tools.base import FunctionCall
 
 
 def make_md_cell(text: str):
@@ -113,10 +117,84 @@ def format_output(output: Any):
         ])
     return nbformat.v4.new_code_cell(source='\n'.join(code)), ext
 
+def _literal_repr(value: Any) -> str | None:
+    """Return repr(value) if it evaluates back to a Python literal."""
+    try:
+        text = repr(value)
+        ast.literal_eval(text)
+    except Exception:
+        return None
+    return text
+
+def _function_definition(function) -> list[str]:
+    """
+    Return the lines that make ``function`` available in the notebook,
+    either an import or, for functions that cannot be imported, their
+    source without decorators.
+    """
+    name = getattr(function, '__name__', None) or repr(function)
+    module = getattr(function, '__module__', None)
+    qualname = getattr(function, '__qualname__', name)
+    importable = (
+        module not in (None, '__main__') and qualname == name and
+        getattr(sys.modules.get(module), name, None) is function
+    )
+    if importable:
+        return [f'from {module} import {name}']
+    if inspect.isfunction(function) and name != '<lambda>':
+        try:
+            source = dedent(inspect.getsource(function))
+            node = ast.parse(source).body[0]
+        except (OSError, TypeError, SyntaxError, IndexError):
+            node = None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            # Drop decorators, e.g. @define_tool, which only matter to Lumen
+            return source.splitlines()[node.lineno-1:]
+    return [f'# {name} could not be imported or its source found; define it before running this cell.']
+
+def format_function_call(call: FunctionCall):
+    """
+    Render a FunctionTool call as a code cell that repeats the call,
+    assigning the returned values to the context keys it provides.
+    """
+    function = call.function
+    name = getattr(function, '__name__', 'function')
+    lines = _function_definition(function)
+    lines.append('')
+
+    args, context_args = [], []
+    for key, value in call.arguments.items():
+        literal = _literal_repr(value)
+        if literal is None:
+            context_args.append(key)
+            args.append(f'{key}={key}')
+        else:
+            args.append(f'{key}={literal}')
+    if context_args:
+        names = ', '.join(context_args)
+        lines.append(f'# Expects {names} from the Lumen context, e.g. defined by an earlier cell')
+
+    is_async = inspect.iscoroutinefunction(function)
+    call_str = f"{'await ' if is_async else ''}{name}({', '.join(args)})"
+    if len(call_str) > 80 and args:
+        arg_lines = ''.join(f'\n    {arg},' for arg in args)
+        call_str = f"{'await ' if is_async else ''}{name}({arg_lines}\n)"
+
+    if not call.provides:
+        lines.append(call_str)
+    elif not call.unpack:
+        lines.append(f'{call.provides[0]} = {call_str}')
+    else:
+        lines.append(f'result = {call_str}')
+        lines.extend(f'{key} = result[{key!r}]' for key in call.provides)
+    return nbformat.v4.new_code_cell(source='\n'.join(lines))
+
 def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
     for out in outputs:
-        if isinstance(out, Markdown):
+        if isinstance(out, FunctionCall):
+            cells.append(format_function_call(out))
+        elif isinstance(out, Markdown):
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)

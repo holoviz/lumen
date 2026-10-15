@@ -40,11 +40,12 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    docx_add_chart, docx_add_markdown, docx_add_table, format_output,
-    make_md_cell, make_preamble, write_notebook,
+    docx_add_chart, docx_add_markdown, docx_add_table, format_function_call,
+    format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
-from .tools import FunctionTool, Tool
+from .tools import FunctionCall, FunctionTool, Tool
+from .tools.base import FunctionToolOutput
 from .utils import (
     content_to_text, extract_block_source, get_block_names, set_content_text,
     wrap_logfire_on_method,
@@ -1134,17 +1135,26 @@ class Report(TaskGroup):
             return
         views += self._selected_views(section)
 
-    def _selected_views(self, group, include_header=True):
+    def _selected_views(self, group, include_header=True, include_calls=True):
         """
         The views of a task group, skipping sections discarded from the export.
         Walks the tasks rather than reading ``group.views`` so that a nested
         section's selection is honoured, not just a top level one's.
+
+        ``include_calls=False`` leaves out FunctionTool call records, which
+        only the notebook export renders.
         """
         views = list(group._header) if include_header else []
         for task in group:
             if not task.include_in_export:
                 continue
-            views += self._selected_views(task) if isinstance(task, TaskGroup) else list(task.views)
+            if isinstance(task, TaskGroup):
+                views += self._selected_views(task, include_calls=include_calls)
+            else:
+                views += [
+                    view for view in task.views
+                    if include_calls or not isinstance(view, FunctionCall)
+                ]
         return views
 
     def _export_view(self):
@@ -1157,7 +1167,10 @@ class Report(TaskGroup):
         cards = [
             (
                 section.title,
-                Column(*self._selected_views(section, include_header=False), sizing_mode="stretch_width"),
+                Column(
+                    *self._selected_views(section, include_header=False, include_calls=False),
+                    sizing_mode="stretch_width",
+                ),
             )
             for section in self if section.include_in_export
         ]
@@ -1192,6 +1205,8 @@ class Report(TaskGroup):
                 cell = make_md_cell(out.object)
             elif isinstance(out, LumenEditor):
                 cell, ext = format_output(out)
+            elif isinstance(out, FunctionCall):
+                cell = format_function_call(out)
             elif isinstance(out, str):
                 cell = make_md_cell(out)
             elif isinstance(out, ChatMessage):
@@ -1499,6 +1514,12 @@ class ActorTask(ExecutableTask):
             # Handle View/Viewable results regardless of agent type
             rendered = []
             for o in views:
+                if isinstance(o, FunctionToolOutput) and o.call is not None:
+                    o = o.call
+                if isinstance(o, FunctionCall):
+                    # Not rendered, but kept in order so exports can repeat the call
+                    rendered.append(o)
+                    continue
                 if not isinstance(o, (View, Viewable)):
                     continue
                 if isinstance(o, Viewable):
