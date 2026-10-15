@@ -3305,11 +3305,13 @@ class Google(Llm, GenAIMixin):
     })
 
     # gemini-3.5-flash-lite and gemini-3.1-pro-preview reject the
-    # thinking_budget=0 that run_client always sends.
+    # thinking_budget=0 that run_client always sends, so 3.1-flash-lite stays
+    # the lite option until it is shut down. gemini-3.7-flash and
+    # gemini-3.5-flash are served by 3.8-flash and 3.6-flash, so only the
+    # latter are listed.
     select_models = param.List(default=[
         "gemini-3.8-flash",
-        "gemini-3.7-flash",
-        "gemini-3.5-flash",
+        "gemini-3.6-flash",
         "gemini-3.1-flash-lite",
     ], constant=True)
 
