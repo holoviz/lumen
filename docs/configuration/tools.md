@@ -23,7 +23,7 @@ You don't need to configure these. Agents use them when needed.
 Install the optional Monty integration alongside an LLM provider, for example:
 
 ```bash
-pip install 'lumen[ai-monty,ai-openai]'
+pip install 'lumen[ai-monty]'
 ```
 
 When `pydantic-monty` is installed, Lumen automatically makes the `run_python` tool available to the coordinator and its agents. Without it, the tool is omitted. The LLM decides whether to call the tool; requesting Python explicitly helps distinguish a calculation from a question it can answer directly.
