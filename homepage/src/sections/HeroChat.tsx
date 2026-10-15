@@ -96,11 +96,16 @@ export function HeroChat() {
             '& pre': {color: KNOCKOUT},
           }}
         >
-          <CodeBlock source={q.sql} fontSize="0.75rem" wrap />
+          <CodeBlock source={compact(q.sql)} fontSize="0.75rem" wrap />
         </Box>
       </Box>
     </Box>
   )
+}
+
+/** Lumen formats its SQL over a dozen lines; the same text on one wrapped line takes a third of the room. */
+function compact(sql: string): string {
+  return sql.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')').trim()
 }
 
 /** The Vega-Lite chart Lumen drew, as inline SVG on the white plate the app itself uses. */
