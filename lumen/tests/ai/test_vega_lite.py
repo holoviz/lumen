@@ -314,3 +314,31 @@ class TestGeoshapeGeometryValidation:
             },
         }
         VegaLiteEditor.validate_spec(spec)
+
+
+def test_normalize_vegalite_spec_rewrites_the_comma_number_format():
+    """A bare ',' format makes Vega print 6000 as 6e+3, however deep in the spec the model wrote it."""
+    raw = {
+        "config": {"numberFormat": ","},
+        "data": {"values": [{"c": "a", "v": 4000}, {"c": "b", "v": 6000}], "format": {"type": "json"}},
+        "layer": [{
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "c", "type": "nominal"},
+                "y": {"field": "v", "type": "quantitative", "axis": {"format": ","}},
+                "tooltip": [{"field": "v", "type": "quantitative", "format": ","}],
+                "color": {"field": "c", "type": "nominal", "legend": {"format": "%Y"}},
+            },
+        }],
+    }
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+    layer = spec["layer"][0]["encoding"]
+
+    assert spec["config"]["numberFormat"] == ",~r"
+    assert layer["y"]["axis"]["format"] == ",~r"
+    assert layer["tooltip"][0]["format"] == ",~r"
+    # Other formats, and a data format that is not a number format, are left alone.
+    assert layer["color"]["legend"]["format"] == "%Y"
+    assert spec["data"]["format"] == {"type": "json"}
+    assert "e+" not in vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))
