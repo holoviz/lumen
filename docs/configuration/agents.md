@@ -148,14 +148,13 @@ See [Creating custom agents](#creating-custom-agents) below for complete example
 
 Configure which LLM model each agent uses:
 
-``` py title="Different models per agent" hl_lines="4-7"
+``` py title="Different models per agent" hl_lines="4-6"
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.4-nano"},  # Cheapest model for most agents
-    "sql": {"model": "gpt-6-luna"},        # Lumen's default model for SQL
-    "vega_lite": {"model": "gpt-6-luna"},  # and for charts
-    "deckgl": {"model": "gpt-6-luna"},     # and for 3D maps
+    "default": {"model": "gpt-6-luna"},      # Lumen's default: planner, SQL, charts
+    "ui": {"model": "gpt-5.4-nano"},         # Cheapest model for quick UI calls
+    "table_list": {"model": "gpt-5.4-nano"}, # TableListAgent only lists tables
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
@@ -169,6 +168,7 @@ ui.servable()
 - SQLAgent uses the `"sql"` model
 - VegaLiteAgent uses the `"vega_lite"` model
 - DeckGLAgent uses the `"deckgl"` model
+- TableListAgent uses the `"table_list"` model
 - ChatAgent uses the `"chat"` model (falls back to `"default"` if not specified)
 
 Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deckgl"`, `hvPlotAgent` → `"hv_plot"`).

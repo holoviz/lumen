@@ -34,15 +34,13 @@ For more CLI options, see the [CLI guide](../configuration/cli.md#configure-llm)
 
 Use cheap models for simple tasks, powerful models for complex tasks:
 
-``` py title="Cost-optimized configuration" hl_lines="4-7"
+``` py title="Cost-optimized configuration" hl_lines="4-6"
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-5.4-nano"},  # Cheapest for most agents
-    "sql": {"model": "gpt-6-luna"},        # Stronger for SQL
-    "vega_lite": {"model": "gpt-6-luna"},  # Stronger for charts
-    "deckgl": {"model": "gpt-6-luna"},     # Stronger for 3D maps
-    "analysis": {"model": "gpt-6-luna"},   # Stronger for analysis
+    "default": {"model": "gpt-6-luna"},      # Lumen's default: planner, SQL, charts
+    "ui": {"model": "gpt-5.4-nano"},         # Cheapest model for quick UI calls
+    "table_list": {"model": "gpt-5.4-nano"}, # Listing tables needs little reasoning
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
