@@ -426,7 +426,7 @@ export const adoption = {
   stats: [
     {value: '1.3', label: 'Latest release'},
     {value: '2020', label: 'First release'},
-    {value: '40', label: 'Contributors'},
+    {value: '40+', label: 'Contributors'},
     {value: 'BSD-3', label: 'License'},
   ],
 }
