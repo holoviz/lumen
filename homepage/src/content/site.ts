@@ -437,8 +437,18 @@ export const adoption = {
 export const showcase = {
   title: 'Real answers, straight from the app',
   lede:
-    'Each picture is one question typed into Lumen and the answer it drew: a climate grid from a NetCDF file, a live earthquake feed on a map, and three linked charts from a single request.',
+    'Each picture is one question typed into Lumen and the answer it drew: earthquakes binned into 3D hexagons, the busiest US flight routes as arcs, three linked charts from a single request, a climate grid from a NetCDF file and world cities as towers.',
   items: [
+    {
+      name: 'hexagons',
+      title: 'Earthquakes in 3D',
+      question: 'Aggregate the earthquakes into large 3D hexagons on a Deck.gl map, each about 300 km across, extruded tall by the number of quakes with a big elevation scale, coloured yellow to red by count, with the camera tilted 50 degrees over the Pacific Ring of Fire.',
+    },
+    {
+      name: 'arcs',
+      title: 'Flight routes as arcs',
+      question: 'Join flights_airport_csv to airports_csv on origin and destination, and draw the 150 busiest routes as arcs on a Deck.gl map of the United States, with arc width by flight count.',
+    },
     {
       name: 'penguins',
       title: 'Three charts from one request',
@@ -450,9 +460,9 @@ export const showcase = {
       question: 'Using the air table, map the average air temperature over the whole period on a lat/lon grid as a heatmap, with north at the top.',
     },
     {
-      name: 'earthquakes',
-      title: 'A year of earthquakes on a map',
-      question: 'Map every earthquake on a Deck.gl world map, sized and coloured by magnitude.',
+      name: 'cities',
+      title: 'Cities as towers',
+      question: 'Show the world cities as glowing 3D columns on a dark Deck.gl map, each column as tall as the city population (pop_max) with the tallest about 1,500 km high, coloured from teal to magenta by population, with the camera tilted 50 degrees over Asia.',
     },
   ].map((s) => ({...s, image: asset(`showcase/${s.name}.webp`)})),
 }
