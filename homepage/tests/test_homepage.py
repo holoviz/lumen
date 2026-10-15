@@ -92,7 +92,7 @@ def test_every_picture_loads_from_the_hashed_prefix(home: Page) -> None:
         await Promise.all(imgs.map((i) => i.decode().catch(() => null)))
         return imgs.map((i) => [i.getAttribute('src'), i.naturalWidth])
     }""")
-    assert len(images) == 9
+    assert len(images) == 8
     assert not [src for src, width in images if not width], 'broken pictures'
     assert all(src.startswith(('/_home/', 'data:image/')) for src, _ in images), images
 
@@ -152,3 +152,22 @@ def test_no_horizontal_overflow_on_a_phone(page: Page, site: str) -> None:
         '() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]'
     )
     assert scroll_width <= client_width + 1
+
+
+def test_showcase_video_is_silent_and_has_a_poster(home: Page) -> None:
+    """The recording autoplays only because it is muted, and needs a still for slow connections."""
+    video = home.locator('#showcase video')
+    expect(video).to_have_attribute('poster', '/_home/' + (video.get_attribute('poster') or '').split('/_home/')[-1])
+    assert video.evaluate('v => v.muted && v.loop && v.playsInline')
+    sources = video.locator('source').evaluate_all('els => els.map(e => e.getAttribute("src"))')
+    assert len(sources) == 2
+    assert all(src.startswith('/_home/') for src in sources), sources
+
+
+def test_showcase_video_waits_until_visible(home: Page) -> None:
+    home.evaluate('window.scrollTo(0, 0)')
+    home.wait_for_timeout(500)
+    assert home.locator('#showcase video').evaluate('v => v.paused')
+    home.locator('#showcase').scroll_into_view_if_needed()
+    home.wait_for_timeout(1500)
+    assert not home.locator('#showcase video').evaluate('v => v.paused')

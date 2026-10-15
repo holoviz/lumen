@@ -6,7 +6,7 @@
  * relative directory URLs. `homepage-serve` points them at the live site instead.
  */
 
-import {asset} from './assets'
+import {asset, video} from './assets'
 
 export const DOCS = import.meta.env.VITE_DOCS_PATH ?? ''
 export const GITHUB = 'https://github.com/holoviz/lumen'
@@ -437,32 +437,48 @@ export const adoption = {
 export const showcase = {
   title: 'Real answers, straight from the app',
   lede:
-    'Each picture is one question typed into Lumen and the answer it drew: earthquakes binned into 3D hexagons, the busiest US flight routes as arcs, three linked charts from a single request, a climate grid from a NetCDF file and world cities as towers.',
+    'Everything here is a real question typed into Lumen and the answer it drew: earthquakes binned into 3D hexagons, the busiest US flight routes as arcs, three linked charts from one request, a climate grid from a NetCDF file and world cities as towers.',
   items: [
+    {
+      name: 'geo-video',
+      title: 'Watch: maps in 3D',
+      caption: 'Earthquakes stacked into 3D towers, then the busiest US flight routes drawn as arcs, from two questions in plain English.',
+      video: true,
+    },
+    {
+      name: 'charts-video',
+      title: 'Watch: charts and analysis',
+      caption: 'Ask for a map and a trend line of every earthquake, and Lumen draws both and explains what they show.',
+      video: true,
+    },
     {
       name: 'hexagons',
       title: 'Earthquakes in 3D',
-      question: 'Aggregate the earthquakes into large 3D hexagons on a Deck.gl map, each about 300 km across, extruded tall by the number of quakes with a big elevation scale, coloured yellow to red by count, with the camera tilted 50 degrees over the Pacific Ring of Fire.',
+      caption: 'A year of earthquakes as 3D towers, taller where more of them struck along the Pacific Ring of Fire.',
     },
     {
       name: 'arcs',
       title: 'Flight routes as arcs',
-      question: 'Join flights_airport_csv to airports_csv on origin and destination, and draw the 150 busiest routes as arcs on a Deck.gl map of the United States, with arc width by flight count.',
+      caption: 'The 150 busiest flight routes across the US as glowing arcs, thicker where more planes fly.',
     },
     {
       name: 'penguins',
       title: 'Three charts from one request',
-      question: 'Make three charts of the penguins: body mass by species, flipper length against body mass coloured by species, and penguin counts by island.',
+      caption: 'Three linked charts of penguins from a single question: body mass, flipper length and where they live.',
     },
     {
       name: 'heatmap',
       title: 'A NetCDF climate grid',
-      question: 'Using the air table, map the average air temperature over the whole period on a lat/lon grid as a heatmap, with north at the top.',
+      caption: 'Two years of air temperature over North America as a colour map, from a scientific data file.',
     },
     {
       name: 'cities',
       title: 'Cities as towers',
-      question: 'Show the world cities as glowing 3D columns on a dark Deck.gl map, each column as tall as the city population (pop_max) with the tallest about 1,500 km high, coloured from teal to magenta by population, with the camera tilted 50 degrees over Asia.',
+      caption: 'The world\'s cities as towers, taller for bigger populations.',
     },
-  ].map((s) => ({...s, image: asset(`showcase/${s.name}.webp`)})),
+  ].map((s) =>
+    s.video
+      ? {...s, image: asset(`showcase/${s.name}-poster.webp`), clip: video(`showcase/${s.name}`)}
+      : {...s, image: asset(`showcase/${s.name}.webp`), clip: undefined},
+  ),
 }
