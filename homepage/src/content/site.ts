@@ -69,9 +69,10 @@ export const footerColumns = [
 ]
 
 export const hero = {
-  title: 'Chat with your data.',
+  title: 'Illuminate your data.',
+  tagline: 'Agent framework turning natural language into SQL, charts, dashboards and reports.',
   lede:
-    'Lumen is an open-source Python framework for AI data applications. Ask a question in plain English and Lumen plans the steps, writes the SQL, runs it against your own sources and draws the chart, whether the data is a CSV file, a warehouse table, a NetCDF grid or a GeoJSON map. Use any LLM, connect any database, and change every step in Python or YAML.',
+    'Ask a question in plain English and Lumen plans the steps, writes the SQL, runs it against your own sources and draws the chart, whether the data is a CSV file, a warehouse table, a NetCDF grid or a GeoJSON map. Open source, with any LLM and any database, and every step can be changed in Python or YAML.',
   install: 'pip install lumen',
   installConda: 'conda install -c conda-forge lumen openai',
   primary: getStarted,
@@ -450,16 +451,6 @@ export const showcase = {
       title: 'Watch: charts and analysis',
       caption: 'Ask for a map and a trend line of every earthquake, and Lumen draws both and explains what they show.',
       video: true,
-    },
-    {
-      name: 'hexagons',
-      title: 'Earthquakes in 3D',
-      caption: 'A year of earthquakes as 3D towers, taller where more of them struck along the Pacific Ring of Fire.',
-    },
-    {
-      name: 'arcs',
-      title: 'Flight routes as arcs',
-      caption: 'The 150 busiest flight routes across the US as glowing arcs, thicker where more planes fly.',
     },
     {
       name: 'penguins',

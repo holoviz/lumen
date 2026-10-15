@@ -22,9 +22,25 @@ export function Hero() {
             alignItems: 'start',
           }}
         >
-          <Typography variant="h1" component="h1" sx={{maxWidth: '24ch'}}>
-            {hero.title}
-          </Typography>
+          <Box>
+            <Typography variant="h1" component="h1" sx={{maxWidth: '24ch'}}>
+              {hero.title}
+            </Typography>
+            <Typography
+              data-hero-tagline=""
+              sx={{
+                mt: 2.5,
+                maxWidth: '30ch',
+                fontSize: 'clamp(1.25rem, 1rem + 1.1vw, 1.75rem)',
+                lineHeight: 1.35,
+                fontWeight: 500,
+                letterSpacing: '-0.015em',
+                color: 'text.secondary',
+              }}
+            >
+              {hero.tagline}
+            </Typography>
+          </Box>
           {/* Nudged down so the lede's first line sits on the headline's optical edge. */}
           <Box sx={{pt: {md: 1.25}}}>
             <Typography variant="body1" sx={{color: 'text.secondary', maxWidth: '38rem'}}>

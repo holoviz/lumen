@@ -1,7 +1,7 @@
 """Render public/og-image.png from scripts/og-card.html.
 
 Run once and commit the result; nothing in the Vite build calls this. The card takes the
-headline and the hero's first question from the prerendered dist/index.html, so the social
+headline, the tagline and the hero's first question from the prerendered dist/index.html, so the social
 preview cannot keep advertising copy the page no longer has:
 
     pixi run -e homepage homepage-build
@@ -34,11 +34,16 @@ def from_prerender() -> dict[str, str]:
     page = PRERENDERED.read_text()
     title = re.search(r'<h1[^>]*>(.*?)</h1>', page, re.DOTALL)
     question = re.search(r'role="radio"[^>]*>(.*?)<', page, re.DOTALL)
-    if not title or not question:
-        sys.exit('No h1 or hero question in the prerendered output; did the markup change?')
+    tagline = re.search(r'data-hero-tagline=""[^>]*>(.*?)</p>', page, re.DOTALL)
+    if not title or not question or not tagline:
+        sys.exit('No h1, tagline or hero question in the prerendered output; did the markup change?')
     # React splits text around interpolations with comment markers, which have to come out.
     clean = lambda s: html.unescape(re.sub(r'<!--.*?-->', '', s)).strip()
-    return {'__TITLE__': clean(title.group(1)), '__QUESTION__': clean(question.group(1))}
+    return {
+        '__TITLE__': clean(title.group(1)),
+        '__TAGLINE__': clean(tagline.group(1)),
+        '__QUESTION__': clean(question.group(1)),
+    }
 
 
 def main() -> None:

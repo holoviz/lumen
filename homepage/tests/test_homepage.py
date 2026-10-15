@@ -58,7 +58,7 @@ def test_prerendered_without_javascript(page: Page, site: str) -> None:
     """The headline must be in the HTML the server sends, not painted in by the bundle."""
     page.route('**/*.js', lambda route: route.abort())
     page.goto(site, wait_until='domcontentloaded')
-    expect(page.get_by_role('heading', level=1)).to_contain_text('Chat with your data')
+    expect(page.get_by_role('heading', level=1)).to_contain_text('Illuminate your data')
 
 
 def test_hydrates_without_console_errors(page: Page, site: str) -> None:
