@@ -148,13 +148,12 @@ See [Creating custom agents](#creating-custom-agents) below for complete example
 
 Configure which LLM model each agent uses:
 
-``` py title="Different models per agent" hl_lines="4-6"
+``` py title="Different models per agent" hl_lines="4-5"
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-6-luna"},      # Lumen's default: planner, SQL, charts
-    "ui": {"model": "gpt-5.4-nano"},         # Cheapest model for quick UI calls
-    "table_list": {"model": "gpt-5.4-nano"}, # TableListAgent only lists tables
+    "default": {"model": "gpt-6-luna"},   # Lumen's default and its cheapest OpenAI model
+    "sql": {"model": "gpt-5.6-luna"},     # A different model just for SQLAgent
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)

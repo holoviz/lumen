@@ -32,15 +32,14 @@ For more CLI options, see the [CLI guide](../configuration/cli.md#configure-llm)
 
 ## Different models per agent
 
-Use cheap models for simple tasks, powerful models for complex tasks:
+Give any agent its own model by adding its model type to `model_kwargs`:
 
-``` py title="Cost-optimized configuration" hl_lines="4-6"
+``` py title="Different models per agent" hl_lines="4-5"
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-6-luna"},      # Lumen's default: planner, SQL, charts
-    "ui": {"model": "gpt-5.4-nano"},         # Cheapest model for quick UI calls
-    "table_list": {"model": "gpt-5.4-nano"}, # Listing tables needs little reasoning
+    "default": {"model": "gpt-6-luna"},   # Lumen's default and its cheapest OpenAI model
+    "sql": {"model": "gpt-5.6-luna"},     # A different model just for SQLAgent
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
