@@ -780,7 +780,10 @@ def normalize_table_name(name: str) -> str:
     >>> normalize_table_name("table__name")
     'table_name'
     """
-    return re.sub(r'\W+', '_', name).strip('_').lower()
+    normalized = re.sub(r'\W+', '_', name).strip('_').lower()
+    if normalized and normalized[0].isdigit():
+        normalized = f"t_{normalized}"
+    return normalized
 
 
 def try_import(module_name, load=True):
