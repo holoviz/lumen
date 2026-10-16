@@ -1,5 +1,6 @@
 import base64
 
+from collections import Counter
 from functools import partial
 from typing import Any
 
@@ -27,7 +28,6 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
-from ..retrieval import rerank_documents
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
@@ -648,8 +648,8 @@ class VegaLiteAgent(BaseCodeAgent):
                 return text
         return step_title or ""
 
-    def _rerank_doc_pages(self, user_query: str, candidates: list[dict]) -> list[dict]:
-        """Blend vector relevance with intent, canonicality, and diversity.
+    def _diversify_doc_pages(self, candidates: list[dict]) -> list[dict]:
+        """Cap how many sections any single documentation page contributes.
 
         Similarity alone collapses onto one page. A "bar chart of athlete count
         by country" query returned five mark-bar variants -- stacked, normalized
@@ -657,19 +657,36 @@ class VegaLiteAgent(BaseCodeAgent):
         similarity, none of them a plain bar chart, while nothing about
         transforms or sorting made the cut.
 
-        Vector similarity supplies a useful candidate pool, but its top scores
-        are often too close to distinguish the canonical chart form from verbose
-        variants. The shared reranker adds exact intent/capability matches and a
-        small near-duplicate penalty while retaining semantic relevance as the
-        strongest signal.
+        Candidates arrive sorted by similarity, so taking them in order keeps
+        the ranking intact within each page. When `reserve_base_form` is set, the
+        best-matching base-form section is admitted first and the remaining slots
+        filled around it; the result is still returned in similarity order, since
+        the reservation is about inclusion rather than position.
         """
-        return rerank_documents(
-            user_query,
-            candidates,
-            limit=self.n_doc_pages,
-            max_per_group=self.doc_pages_per_slug,
-            reserve_base_form=self.reserve_base_form,
-        )
+        if not self.n_doc_pages:
+            return []
+        reserved = None
+        if self.reserve_base_form:
+            reserved = next(
+                (c for c in candidates if (c.get("metadata") or {}).get("base_form")), None
+            )
+        kept: list[dict] = []
+        seen: Counter = Counter()
+        if reserved is not None:
+            kept.append(reserved)
+            seen[(reserved.get("metadata") or {}).get("slug")] += 1
+        for candidate in candidates:
+            if len(kept) >= self.n_doc_pages:
+                break
+            if candidate is reserved:
+                continue
+            slug = (candidate.get("metadata") or {}).get("slug")
+            if slug is not None and seen[slug] >= self.doc_pages_per_slug:
+                continue
+            seen[slug] += 1
+            kept.append(candidate)
+        position = {id(c): i for i, c in enumerate(candidates)}
+        return sorted(kept, key=lambda c: position[id(c)])
 
     def _dedupe_examples(self, doc_pages: list[dict]) -> list[dict]:
         """Drop example specs already carried by an earlier retrieved section.
@@ -753,13 +770,12 @@ class VegaLiteAgent(BaseCodeAgent):
         except Exception as e:
             log_debug(f"Vega-Lite docs lookup failed for {user_query!r}: {e!r}")
             return []
-        before = sum(len(page.get("metadata", {}).get("examples") or ()) for page in candidates)
-        candidates = self._drop_forbidden_examples(candidates)
-        compatible = sum(len(page.get("metadata", {}).get("examples") or ()) for page in candidates)
-        doc_pages = self._rerank_doc_pages(user_query, candidates)
+        doc_pages = self._diversify_doc_pages(candidates)
+        before = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
         doc_pages = self._dedupe_examples(doc_pages)
         deduped = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
-        specs = deduped
+        doc_pages = self._drop_forbidden_examples(doc_pages)
+        specs = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
         sources = len({page.get("metadata", {}).get("slug") for page in doc_pages})
         base_forms = sum(1 for page in doc_pages if (page.get("metadata") or {}).get("base_form"))
         # Similarity of what was kept, against the pool it was drawn from. Ranking
@@ -778,8 +794,8 @@ class VegaLiteAgent(BaseCodeAgent):
             )
         dropped = "".join([
             f", {base_forms} base-form section(s)" if base_forms else "",
-            f", {before - compatible} spec(s) dropped on forbidden constructs" if before != compatible else "",
-            f", {compatible - deduped} unselected or duplicate spec(s) dropped" if compatible != deduped else "",
+            f", {before - deduped} duplicate spec(s) dropped" if before != deduped else "",
+            f", {deduped - specs} spec(s) dropped on forbidden constructs" if deduped != specs else "",
         ])
         log_debug(
             f"Vega-Lite docs lookup returned {len(doc_pages)} section(s) from "
