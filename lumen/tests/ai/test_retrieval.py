@@ -1,4 +1,4 @@
-from lumen.ai.retrieval import rerank_documents
+from lumen.ai.retrieval import rerank_documents, targeted_document_queries
 
 
 def candidate(
@@ -82,6 +82,57 @@ def test_rerank_preserves_similarity_for_contentless_query():
     result = rerank_documents("visualize the data", items, limit=2)
 
     assert [item["metadata"]["section_title"] for item in result] == ["First", "Second"]
+
+
+def test_rerank_reserves_input_binding_for_a_slider_request():
+    items = [
+        candidate("Ranged Area", 0.95),
+        candidate("Input Element Binding", 0.60, slug="parameter-bind"),
+    ]
+
+    result = rerank_documents("Create a chart controlled by a slider", items, limit=1)
+
+    assert result[0]["metadata"]["section_title"] == "Input Element Binding"
+
+
+def test_targeted_document_queries_follow_requested_capabilities():
+    queries = targeted_document_queries(
+        "Make a scatter plot with a brush selection, tooltip, and slider"
+    )
+
+    assert queries == [
+        "Vega-Lite scatterplot circle mark",
+        "Vega-Lite interval selection brush",
+        "Vega-Lite tooltip channel",
+        "Vega-Lite input element binding slider",
+    ]
+
+
+def test_rerank_covers_each_requested_interactive_capability():
+    items = [
+        candidate("Common Selection Properties", 0.99, slug="parameter-select"),
+        candidate("Scatterplot with Circle", 0.70, slug="mark-circle"),
+        candidate("Interval Selection", 0.65, slug="parameter-select"),
+        candidate("Tooltip Channel", 0.60, slug="tooltip"),
+    ]
+
+    result = rerank_documents(
+        "Make a scatter plot with a brush selection and tooltip", items, limit=3
+    )
+
+    titles = {item["metadata"]["section_title"] for item in result}
+    assert titles == {"Scatterplot with Circle", "Interval Selection", "Tooltip Channel"}
+
+
+def test_rerank_does_not_choose_disable_tooltips_as_tooltip_guidance():
+    items = [
+        candidate("Disable Tooltips", 0.99, slug="tooltip"),
+        candidate("Tooltip Channel", 0.60, slug="tooltip"),
+    ]
+
+    result = rerank_documents("Add a tooltip", items, limit=1)
+
+    assert result[0]["metadata"]["section_title"] == "Tooltip Channel"
 
 
 def test_rerank_does_not_group_documents_without_a_slug():

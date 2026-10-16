@@ -27,7 +27,7 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
-from ..retrieval import rerank_documents
+from ..retrieval import rerank_documents, targeted_document_searches
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
@@ -196,7 +196,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
     # Over-fetch multiplier: the per-slug cap needs alternatives below the cut
     # to promote, otherwise capping just returns fewer results.
-    _doc_page_pool = 6
+    _doc_page_pool = 12
 
     # Marks that annotate an existing view rather than plot data in their own
     # right. A tooltip on a value label is noise, so their absence must not force
@@ -750,6 +750,32 @@ class VegaLiteAgent(BaseCodeAgent):
             candidates = await vector_store.query(
                 user_query, top_k=self.n_doc_pages * self._doc_page_pool
             )
+            candidate_keys = {
+                (
+                    (candidate.get("metadata") or {}).get("slug"),
+                    (candidate.get("metadata") or {}).get("section_title"),
+                )
+                for candidate in candidates
+            }
+            for capability, targeted_query in targeted_document_searches(user_query):
+                targeted = await vector_store.query(targeted_query, top_k=1)
+                for candidate in targeted:
+                    metadata = candidate.get("metadata") or {}
+                    key = (metadata.get("slug"), metadata.get("section_title"))
+                    if key not in candidate_keys:
+                        # Similarities from a focused query are not comparable
+                        # with the original query. Coverage selection can still
+                        # reserve the candidate, but it cannot dominate general
+                        # ranking solely because it came from a narrower query.
+                        candidates.append({
+                            **candidate,
+                            "similarity": 0.0,
+                            "metadata": {
+                                **metadata,
+                                "_retrieval_capability": capability,
+                            },
+                        })
+                        candidate_keys.add(key)
         except Exception as e:
             log_debug(f"Vega-Lite docs lookup failed for {user_query!r}: {e!r}")
             return []
