@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -91,6 +93,16 @@ def _field(value: Any, name: str, default: Any = None) -> Any:
     return getattr(value, name, default)
 
 
+_DATE_SUFFIX = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+
+def _rates(pricing: dict, model: str) -> dict | None:
+    # OpenAI reports the dated snapshot (gpt-4.1-nano-2025-04-14) behind an alias.
+    if model in pricing:
+        return pricing[model]
+    return pricing.get(_DATE_SUFFIX.sub("", model))
+
+
 def parse_usage(response: Any, provider: str, requested_model: str, pricing: dict) -> Usage | None:
     """Normalize provider totals; never infer token counts from generated text."""
     if provider == "mistral":
@@ -123,7 +135,7 @@ def parse_usage(response: Any, provider: str, requested_model: str, pricing: dic
     if provider == "anthropic":
         input_tokens += cached + cache_write
     model = _field(response, "model") or _field(response, "model_version") or requested_model
-    rates = pricing.get(model)
+    rates = _rates(pricing, model)
     cost = None
     if rates is not None:
         cost = ((input_tokens - cached - cache_write) * rates["input"]

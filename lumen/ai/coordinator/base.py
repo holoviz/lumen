@@ -70,7 +70,17 @@ class Plan(Section):
 
     is_followup = param.Boolean(default=False)
 
+    follow_up_type = param.Selector(default="new", objects=["new", "direct", "derived"])
+
+    planner_actors = param.List(item_type=str, default=[])
+
     _tasks = param.List(item_type=ActorTask)
+
+    def merge(self, other):
+        super().merge(other)
+        self.follow_up_type = other.follow_up_type
+        self.planner_actors = list(other.planner_actors)
+        return self
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
