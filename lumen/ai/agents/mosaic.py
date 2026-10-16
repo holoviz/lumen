@@ -111,8 +111,8 @@ class MosaicAgent(BaseViewAgent):
                 value.setdefault("yGrid", True)
             if value.get("mark") == "dot":
                 radius = value.get("r")
-                if not isinstance(radius, (int, float)) or radius < 6:
-                    value["r"] = 6
+                if not isinstance(radius, (int, float)) or radius < 5:
+                    value["r"] = 5
             for child in value.values():
                 cls._apply_visual_defaults(child)
         elif isinstance(value, list):

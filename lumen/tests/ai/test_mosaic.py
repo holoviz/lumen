@@ -230,7 +230,7 @@ async def test_extract_spec_uses_readable_dot_radius(llm):
 
     result = await agent._extract_spec({}, {"yaml_spec": dump_yaml(spec)})
 
-    assert result["spec"]["plot"][0]["r"] == 6
+    assert result["spec"]["plot"][0]["r"] == 5
 
 
 def test_mosaic_editor_stretches_rendered_view():
@@ -331,7 +331,7 @@ async def test_generate_spec_revises_invalid_interaction_before_full_retry(llm):
     revised_mark = revised_plot["plot"][0]
     corrected_mark = corrected["vconcat"][1]["plot"][0]
     assert {key: value for key, value in revised_mark.items() if key != "r"} == corrected_mark
-    assert revised_mark["r"] == 6
+    assert revised_mark["r"] == 5
     assert revised_plot["colorScheme"] == "tableau10"
 
 
