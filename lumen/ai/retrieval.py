@@ -9,49 +9,37 @@ from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 _STOP_WORDS = frozenset({
-    "a", "an", "and", "by", "chart", "create", "data", "for", "from",
-    "in", "make", "of", "on", "plot", "show", "the", "to", "use", "with",
+    "a", "an", "and", "by", "controlled", "create", "data", "for", "from",
+    "in", "make", "of", "on", "show", "the", "to", "use", "with",
 })
-_INTENT_ALIASES = {
-    "area chart": ({"area"},),
-    "bar chart": ({"bar"},),
-    "box plot": ({"box", "boxplot", "quartile", "whisker"},),
-    "brush selection": ({"brush", "interval"}, {"selection"}),
-    "heat map": ({"heatmap", "rect"},),
-    "heatmap": ({"heatmap", "rect"},),
-    "histogram": ({"bin", "binned", "histogram"},),
-    "line chart": ({"line"},),
-    "linked views": ({"crossfilter", "linked"}, {"filter", "selection"}),
-    "scatter plot": ({"circle", "point", "scatter"},),
-    "slider": ({"input", "range", "slider"},),
-    "tooltip": ({"hover", "tooltip"},),
-}
-_COVERAGE_REQUIREMENTS = {
-    "slider": (frozenset({"input", "binding"}),),
-    "brush selection": (frozenset({"interval", "selection"}),),
-    "tooltip": (frozenset({"tooltip", "channel"}),),
-    "scatter plot": (
-        frozenset({"scatterplot"}),
-        frozenset({"scatter", "plot"}),
-        frozenset({"point", "plot"}),
-    ),
-}
-_TARGETED_DOCUMENT_QUERIES = {
-    "slider": "Vega-Lite input element binding slider",
-    "brush selection": "Vega-Lite interval selection brush",
-    "tooltip": "Vega-Lite tooltip channel",
-    "scatter plot": "Vega-Lite scatterplot circle mark",
-}
-_COVERAGE_SLUGS = {
-    "slider": frozenset({"parameter-bind"}),
-    "brush selection": frozenset({"parameter-select"}),
-    "tooltip": frozenset({"tooltip"}),
-    "scatter plot": frozenset({"mark-circle", "mark-point"}),
-}
+_CLAUSE_SPLIT_RE = re.compile(r"[,;]|\b(?:and|with|plus|including|using)\b")
+
+
+def normalize_retrieval_token(token: str) -> str:
+    """Apply lightweight English inflection normalization for retrieval."""
+    if len(token) > 4 and token.endswith("ies"):
+        return f"{token[:-3]}y"
+    for suffix in ("ing", "ed"):
+        if len(token) > len(suffix) + 3 and token.endswith(suffix):
+            stem = token[:-len(suffix)]
+            if len(stem) > 2 and stem[-1] == stem[-2]:
+                stem = stem[:-1]
+            return stem
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def retrieval_tokens(value: Any) -> list[str]:
+    """Tokenize text consistently for reranking and lexical retrieval."""
+    return [
+        normalize_retrieval_token(token)
+        for token in _TOKEN_RE.findall(str(value).lower())
+    ]
 
 
 def _tokens(value: Any) -> set[str]:
-    return set(_TOKEN_RE.findall(str(value).lower()))
+    return set(retrieval_tokens(value))
 
 
 def _candidate_text(document: dict) -> str:
@@ -70,18 +58,8 @@ def _candidate_text(document: dict) -> str:
 
 
 def _query_concepts(query: str) -> list[set[str]]:
-    """Return independently matchable concepts, including phrase aliases."""
-    lowered = query.lower().replace("-", " ")
-    concepts: list[set[str]] = []
-    consumed: set[str] = set()
-    for phrase, aliases in _INTENT_ALIASES.items():
-        if phrase in lowered:
-            concepts.extend(aliases)
-            consumed.update(_tokens(phrase))
-    concepts.extend(
-        {token} for token in _tokens(lowered) - consumed - _STOP_WORDS
-    )
-    return concepts
+    """Return independently matchable terms from a natural-language request."""
+    return [{token} for token in _tokens(query) - _STOP_WORDS]
 
 
 def _intent_score(concepts: list[set[str]], candidate_tokens: set[str]) -> float:
@@ -95,59 +73,92 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     return len(left & right) / len(union) if union else 0
 
 
-def _requested_capabilities(query: str) -> list[str]:
-    """Return explicitly requested capabilities in the order they appear."""
-    lowered = query.lower().replace("-", " ")
-    requested = [
-        (lowered.index(phrase), phrase)
-        for phrase in _COVERAGE_REQUIREMENTS
-        if phrase in lowered
-    ]
-    return [phrase for _, phrase in sorted(requested)]
+def focused_document_queries(query: str, limit: int = 4) -> list[str]:
+    """Break a request into focused, document-searchable clauses.
 
-
-def targeted_document_queries(query: str) -> list[str]:
-    """Return focused retrieval queries for explicit chart capabilities.
-
-    A broad natural-language request can rank the exact interaction page far
-    below the normal candidate pool. These small follow-up queries retrieve one
-    strong candidate for each capability; reranking still decides whether and
-    where to include it in the final context.
+    The clauses come entirely from the user's words. Each one is queried
+    separately so that a specific requirement is not lost behind a broader
+    chart request. This works for any documented feature rather than a fixed
+    list of chart types or interaction names.
     """
-    return [
-        _TARGETED_DOCUMENT_QUERIES[capability]
-        for capability in _requested_capabilities(query)
-    ]
+    clauses = []
+    for clause in _CLAUSE_SPLIT_RE.split(query.lower().replace("-", " ")):
+        terms = [term for term in _TOKEN_RE.findall(clause) if term not in _STOP_WORDS]
+        # ``chart`` and ``plot`` add little when a clause already names a more
+        # specific feature, but retain them for a request that contains nothing
+        # else (for example, "make a chart").
+        if len(terms) > 1:
+            terms = [term for term in terms if term not in {"chart", "plot"}]
+        # Long clauses usually contain dataset fields and values rather than a
+        # separable documentation need. The broad semantic + lexical searches
+        # already handle those; focused searches are for concise sub-requests.
+        if terms and len(terms) <= 3:
+            clauses.append(" ".join(terms))
+
+    # De-duplicate without changing the order in which the user stated needs.
+    return list(dict.fromkeys(clauses))[:limit]
 
 
-def targeted_document_searches(query: str) -> list[tuple[str, str]]:
-    """Return capability labels paired with their focused retrieval queries."""
-    return [
-        (capability, _TARGETED_DOCUMENT_QUERIES[capability])
-        for capability in _requested_capabilities(query)
-    ]
+def fuse_ranked_documents(
+    searches: list[tuple[str | None, list[dict]]],
+    *,
+    rank_constant: int = 60,
+) -> list[dict]:
+    """Combine incomparable semantic and lexical rankings using RRF.
 
+    ``query`` is ``None`` for semantic retrieval and a focused user clause for
+    lexical retrieval. The latter is retained as transient metadata so the
+    final selection can preserve requirements supported by exact textual
+    evidence, without knowing anything about individual visualization features.
+    """
+    fused: dict[tuple, dict] = {}
+    for query, documents in searches:
+        for rank, document in enumerate(documents, start=1):
+            metadata = document.get("metadata") or {}
+            key = (
+                ("id", document["id"])
+                if document.get("id") is not None
+                else (
+                    "document",
+                    metadata.get("slug"),
+                    metadata.get("section_title"),
+                    document.get("text", ""),
+                )
+            )
+            if key not in fused:
+                fused[key] = {
+                    "document": {
+                        **document,
+                        "metadata": {**metadata},
+                    },
+                    "score": 0.0,
+                    "queries": [],
+                    "query_scores": {},
+                }
+            entry = fused[key]
+            contribution = 1 / (rank_constant + rank)
+            entry["score"] += contribution
+            if query and query not in entry["queries"]:
+                entry["queries"].append(query)
+            if query:
+                entry["query_scores"][query] = (
+                    entry["query_scores"].get(query, 0) + contribution
+                )
 
-def _requested_coverage(query: str) -> list[tuple[frozenset[str], ...]]:
-    return [_COVERAGE_REQUIREMENTS[capability] for capability in _requested_capabilities(query)]
-
-
-def _matches_requirement(
-    document: dict,
-    capability: str,
-    alternatives: tuple[frozenset[str], ...],
-) -> bool:
-    metadata = document.get("metadata") or {}
-    if metadata.get("_retrieval_capability") == capability:
-        return True
-    if metadata.get("slug") not in _COVERAGE_SLUGS[capability]:
-        return False
-    title_tokens = _tokens(metadata.get("section_title", ""))
-    if capability == "tooltip" and "disable" in title_tokens:
-        return False
-    values = [metadata.get("slug", ""), metadata.get("section_title", "")]
-    structured_tokens = _tokens(" ".join(str(value) for value in values if value))
-    return any(alternative <= structured_tokens for alternative in alternatives)
+    if not fused:
+        return []
+    maximum = max(entry["score"] for entry in fused.values())
+    ranked = sorted(fused.values(), key=lambda entry: entry["score"], reverse=True)
+    results = []
+    for entry in ranked:
+        document = entry["document"]
+        metadata = document["metadata"]
+        if entry["queries"]:
+            metadata["_retrieval_queries"] = entry["queries"]
+            metadata["_retrieval_query_scores"] = entry["query_scores"]
+        document["similarity"] = entry["score"] / maximum
+        results.append(document)
+    return results
 
 
 def rerank_documents(
@@ -192,6 +203,7 @@ def rerank_documents(
 
     selected: list[tuple[float, int, dict, set[str]]] = []
     groups: Counter = Counter()
+    covered_queries: set[str] = set()
     remaining = ranked.copy()
 
     def eligible_items():
@@ -208,25 +220,50 @@ def rerank_documents(
         )
         return item[0] - diversity_weight * redundancy, -item[1]
 
+    def focused_selection_score(item, focused_query):
+        metadata = item[2].get("metadata") or {}
+        focused_relevance = (metadata.get("_retrieval_query_scores") or {}).get(
+            focused_query, 0
+        )
+        focused_concepts = _query_concepts(focused_query)
+        literal_match = _intent_score(focused_concepts, item[3])
+        title_tokens = _tokens(" ".join(str(metadata.get(key, "")) for key in (
+            "page_title", "section_title", "slug",
+        )))
+        title_match = _intent_score(focused_concepts, title_tokens)
+        return (
+            focused_relevance + literal_match + 0.5 * title_match,
+            selection_score(item),
+        )
+
     def select(item):
         selected.append(item)
         remaining.remove(item)
-        group = (item[2].get("metadata") or {}).get(group_key)
+        metadata = item[2].get("metadata") or {}
+        covered_queries.update(metadata.get("_retrieval_queries") or ())
+        group = metadata.get(group_key)
         if group is not None:
             groups[group] += 1
 
-    # A request with multiple explicit capabilities needs documentation for each
-    # of them. Without this pass, several high-scoring selection pages can evict
-    # the scatter or tooltip example that makes the final specification usable.
-    for capability, requirement in zip(_requested_capabilities(query), _requested_coverage(query), strict=True):
+    # Preserve one result for each focused clause. A candidate only receives
+    # this marker after a separate keyword lookup for words the user supplied;
+    # it is not tied to a predefined list of visualization features.
+    focused_queries = list(dict.fromkeys(
+        focused_query
+        for item in ranked
+        for focused_query in (item[2].get("metadata") or {}).get("_retrieval_queries", ())
+    ))
+    for focused_query in focused_queries:
         if len(selected) >= limit:
             break
+        if focused_query in covered_queries:
+            continue
         matching = [
             item for item in eligible_items()
-            if _matches_requirement(item[2], capability, requirement)
+            if focused_query in (item[2].get("metadata") or {}).get("_retrieval_queries", ())
         ]
         if matching:
-            select(max(matching, key=selection_score))
+            select(max(matching, key=lambda item: focused_selection_score(item, focused_query)))
 
     while remaining and len(selected) < limit:
         eligible = eligible_items()

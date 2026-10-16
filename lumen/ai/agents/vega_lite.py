@@ -27,7 +27,9 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
-from ..retrieval import rerank_documents, targeted_document_searches
+from ..retrieval import (
+    focused_document_queries, fuse_ranked_documents, rerank_documents,
+)
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
@@ -747,35 +749,26 @@ class VegaLiteAgent(BaseCodeAgent):
         if not vector_store:
             return []
         try:
-            candidates = await vector_store.query(
-                user_query, top_k=self.n_doc_pages * self._doc_page_pool
-            )
-            candidate_keys = {
-                (
-                    (candidate.get("metadata") or {}).get("slug"),
-                    (candidate.get("metadata") or {}).get("section_title"),
-                )
-                for candidate in candidates
-            }
-            for capability, targeted_query in targeted_document_searches(user_query):
-                targeted = await vector_store.query(targeted_query, top_k=1)
-                for candidate in targeted:
-                    metadata = candidate.get("metadata") or {}
-                    key = (metadata.get("slug"), metadata.get("section_title"))
-                    if key not in candidate_keys:
-                        # Similarities from a focused query are not comparable
-                        # with the original query. Coverage selection can still
-                        # reserve the candidate, but it cannot dominate general
-                        # ranking solely because it came from a narrower query.
-                        candidates.append({
-                            **candidate,
-                            "similarity": 0.0,
-                            "metadata": {
-                                **metadata,
-                                "_retrieval_capability": capability,
-                            },
-                        })
-                        candidate_keys.add(key)
+            broad_pool = self.n_doc_pages * self._doc_page_pool
+            searches = [
+                (None, await vector_store.query(user_query, top_k=broad_pool)),
+                (None, await vector_store.query_lexical(user_query, top_k=broad_pool)),
+            ]
+            focused_pool = max(self.n_doc_pages * 3, 4)
+            for focused_query in focused_document_queries(user_query, self.n_doc_pages):
+                searches.extend([
+                    (
+                        None,
+                        await vector_store.query(focused_query, top_k=focused_pool),
+                    ),
+                    (
+                        focused_query,
+                        await vector_store.query_lexical(
+                            focused_query, top_k=focused_pool
+                        ),
+                    ),
+                ])
+            candidates = fuse_ranked_documents(searches)
         except Exception as e:
             log_debug(f"Vega-Lite docs lookup failed for {user_query!r}: {e!r}")
             return []

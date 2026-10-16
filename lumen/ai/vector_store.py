@@ -3,10 +3,12 @@ import hashlib
 import importlib
 import io
 import json
+import math
 import os
 import typing as t
 
 from abc import abstractmethod
+from collections import Counter
 from collections.abc import Callable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -26,6 +28,7 @@ from .actor import PROMPTS_DIR, LLMUser
 from .config import get_markitdown
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
+from .retrieval import retrieval_tokens
 from .utils import log_debug
 
 
@@ -1449,6 +1452,86 @@ class DuckDBVectorStore(VectorStore):
         except duckdb.Error as e:
             log_debug(f"Error during query: {e}")
             return []
+
+    async def query_lexical(self, text: str, top_k: int = 5) -> list[dict]:
+        """Rank documents with BM25-style lexical relevance.
+
+        Vector search captures semantic similarity but can overlook an exact
+        property or control name. Lexical retrieval complements it using the
+        stored document text and descriptive metadata, with a small title boost.
+        """
+        if not self._initialized:
+            return []
+        terms = set(retrieval_tokens(text))
+        if not terms:
+            return []
+        phrase = " ".join(text.lower().split())
+        rows = self.connection.execute("SELECT id, text, metadata FROM documents").fetchall()
+        prepared = []
+        document_frequency = {term: 0 for term in terms}
+        for identifier, document, metadata_json in rows:
+            metadata = json.loads(metadata_json)
+            title = " ".join(str(metadata.get(key, "")) for key in (
+                "page_title", "section_title", "slug",
+            )).lower()
+            description = str(metadata.get("description", "")).lower()
+            body = f"{document}\n{description}".lower()
+            searchable = f"{title}\n{body}"
+            title_tokens = Counter(retrieval_tokens(title))
+            body_tokens = Counter(retrieval_tokens(body))
+            tokens = body_tokens + title_tokens
+            for term in terms:
+                document_frequency[term] += term in tokens
+            prepared.append((
+                identifier, document, metadata, searchable, body_tokens,
+                title_tokens, sum(tokens.values()),
+            ))
+
+        document_count = len(prepared)
+        average_length = (
+            sum(item[-1] for item in prepared) / document_count
+            if document_count else 1
+        )
+        inverse_document_frequency = {
+            term: math.log(
+                1 + (document_count - frequency + 0.5) / (frequency + 0.5)
+            )
+            for term, frequency in document_frequency.items()
+        }
+        k1, length_normalization = 1.5, 0.75
+        matches = []
+        for (
+            identifier, document, metadata, searchable, body_tokens,
+            title_tokens, document_length,
+        ) in prepared:
+            term_score = 0.0
+            for term in terms:
+                # Titles identify a section more precisely than prose, while
+                # body occurrences still provide the bulk of the evidence.
+                frequency = body_tokens[term] + 2 * title_tokens[term]
+                if not frequency:
+                    continue
+                denominator = frequency + k1 * (
+                    1 - length_normalization
+                    + length_normalization * document_length / average_length
+                )
+                term_score += (
+                    inverse_document_frequency[term]
+                    * frequency * (k1 + 1)
+                    / denominator
+                )
+            if not term_score:
+                continue
+            phrase_score = 0.25 * sum(inverse_document_frequency.values()) * (
+                phrase in searchable
+            )
+            matches.append({
+                "id": identifier,
+                "text": document,
+                "metadata": metadata,
+                "similarity": term_score + phrase_score,
+            })
+        return sorted(matches, key=lambda item: item["similarity"], reverse=True)[:top_k]
 
     def filter_by(
         self, filters: dict, limit: int | None = None, offset: int = 0

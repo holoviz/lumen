@@ -1,4 +1,6 @@
-from lumen.ai.retrieval import rerank_documents, targeted_document_queries
+from lumen.ai.retrieval import (
+    focused_document_queries, fuse_ranked_documents, rerank_documents,
+)
 
 
 def candidate(
@@ -9,6 +11,7 @@ def candidate(
     base_form=False,
     capabilities=(),
     examples=(),
+    retrieval_query=None,
 ):
     return {
         "text": f"Documentation for {title}",
@@ -20,6 +23,7 @@ def candidate(
             "base_form": base_form,
             "capabilities": list(capabilities),
             "examples": list(examples),
+            **({"_retrieval_queries": [retrieval_query]} if retrieval_query else {}),
         },
     }
 
@@ -84,55 +88,85 @@ def test_rerank_preserves_similarity_for_contentless_query():
     assert [item["metadata"]["section_title"] for item in result] == ["First", "Second"]
 
 
-def test_rerank_reserves_input_binding_for_a_slider_request():
+def test_rerank_reserves_a_document_retrieved_for_a_focused_clause():
     items = [
-        candidate("Ranged Area", 0.95),
-        candidate("Input Element Binding", 0.60, slug="parameter-bind"),
+        candidate("Overview", 0.95),
+        candidate(
+            "Widget Binding", 0.60, slug="widget-bind",
+            retrieval_query="controlled dial",
+        ),
     ]
 
-    result = rerank_documents("Create a chart controlled by a slider", items, limit=1)
+    result = rerank_documents("Create a chart controlled by a dial", items, limit=1)
 
-    assert result[0]["metadata"]["section_title"] == "Input Element Binding"
+    assert result[0]["metadata"]["section_title"] == "Widget Binding"
 
 
-def test_targeted_document_queries_follow_requested_capabilities():
-    queries = targeted_document_queries(
-        "Make a scatter plot with a brush selection, tooltip, and slider"
+def test_focused_document_queries_follow_user_clauses():
+    queries = focused_document_queries(
+        "Make a chart with a range control, threshold line, and data labels"
     )
 
     assert queries == [
-        "Vega-Lite scatterplot circle mark",
-        "Vega-Lite interval selection brush",
-        "Vega-Lite tooltip channel",
-        "Vega-Lite input element binding slider",
+        "chart",
+        "range control",
+        "threshold line",
+        "labels",
     ]
 
 
-def test_rerank_covers_each_requested_interactive_capability():
+def test_rank_fusion_combines_semantic_and_lexical_evidence():
+    semantic = [
+        {**candidate("Overview", 0.9), "id": 1},
+        {**candidate("Input Binding", 0.8), "id": 2},
+    ]
+    lexical = [
+        {**candidate("Input Binding", 4.2), "id": 2},
+        {**candidate("Reference", 3.1), "id": 3},
+    ]
+
+    result = fuse_ranked_documents([
+        (None, semantic),
+        ("slider", lexical),
+    ])
+
+    assert result[0]["metadata"]["section_title"] == "Input Binding"
+    assert result[0]["metadata"]["_retrieval_queries"] == ["slider"]
+
+
+def test_rerank_covers_each_focused_clause():
     items = [
-        candidate("Common Selection Properties", 0.99, slug="parameter-select"),
-        candidate("Scatterplot with Circle", 0.70, slug="mark-circle"),
-        candidate("Interval Selection", 0.65, slug="parameter-select"),
-        candidate("Tooltip Channel", 0.60, slug="tooltip"),
+        candidate("Overview", 0.99, slug="overview"),
+        candidate(
+            "Range Control", 0.70, slug="range-control",
+            retrieval_query="range control",
+        ),
+        candidate(
+            "Threshold Line", 0.65, slug="threshold-line",
+            retrieval_query="threshold line",
+        ),
+        candidate(
+            "Data Labels", 0.60, slug="data-labels", retrieval_query="labels"
+        ),
     ]
 
     result = rerank_documents(
-        "Make a scatter plot with a brush selection and tooltip", items, limit=3
+        "Make a chart with a range control, threshold line, and data labels", items, limit=3
     )
 
     titles = {item["metadata"]["section_title"] for item in result}
-    assert titles == {"Scatterplot with Circle", "Interval Selection", "Tooltip Channel"}
+    assert titles == {"Range Control", "Threshold Line", "Data Labels"}
 
 
-def test_rerank_does_not_choose_disable_tooltips_as_tooltip_guidance():
+def test_rerank_preserves_a_focused_result_over_a_better_broad_match():
     items = [
-        candidate("Disable Tooltips", 0.99, slug="tooltip"),
-        candidate("Tooltip Channel", 0.60, slug="tooltip"),
+        candidate("Disable Widgets", 0.99, slug="widgets"),
+        candidate("Widget Binding", 0.60, slug="widgets", retrieval_query="widget control"),
     ]
 
-    result = rerank_documents("Add a tooltip", items, limit=1)
+    result = rerank_documents("Add a widget control", items, limit=1)
 
-    assert result[0]["metadata"]["section_title"] == "Tooltip Channel"
+    assert result[0]["metadata"]["section_title"] == "Widget Binding"
 
 
 def test_rerank_does_not_group_documents_without_a_slug():
