@@ -82,6 +82,9 @@ class LumenEditor(Viewer):
 
     title = param.String(allow_None=True)
 
+    view_provenance = param.Boolean(default=False, doc="""
+        Whether to display data provenance.""")
+
     _context_updated = param.Event(doc="""
         Triggered when the output's context changes after render (e.g. an
         interactive selection) so watchers can refresh the out-context without
@@ -148,6 +151,17 @@ class LumenEditor(Viewer):
         name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', cls.__name__)
         return re.sub(r'([a-z\d])([A-Z])', r'\1_\2', name).lower() + f'.{fmt}'
 
+    def _toggle_provenance(self, event):
+        self.view_provenance = not self.view_provenance
+        if self.view_provenance:
+            event.obj.color = "primary"
+            event.obj.label = "Provenance Enabled"
+            event.obj.icon = "account_tree"
+        else:
+            event.obj.color = "default"
+            event.obj.label = "View Provenance"
+            event.obj.icon = "account_tree"
+
     def render_controls(self, task: Task, interface: ChatFeed):
         export_menu = MenuButton(
             label=f"Export {self._label} as", variant='text', icon="file_download", margin=0,
@@ -172,8 +186,18 @@ class LumenEditor(Viewer):
         )
         export_menu.attached.append(file_download)
 
+        provenance_button = Button(
+            label="View Provenance" if not self.view_provenance else "Provenance Enabled",
+            icon="account_tree",
+            color="default" if not self.view_provenance else "primary",
+            variant="text",
+            margin=0,
+            on_click=self._toggle_provenance,
+        )
+
         return Row(
             *(control(interface=interface, task=task, view=self) for control in self._controls),
+            provenance_button,
             export_menu,
             sizing_mode="stretch_width",
             margin=(0, 10)
@@ -595,6 +619,8 @@ class SQLEditor(LumenEditor):
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
+    provenance = param.List(default=[])
+
     # Icon shown in the "Add Filter" menu for each schema type.
     _filter_icons = {
         "number": "calculate",
@@ -730,7 +756,7 @@ class SQLEditor(LumenEditor):
             variant="text",
             on_click=self._add_filter,
         )
-        controls.insert(-1, filter_controls)
+        controls.insert(-2, filter_controls)
         return controls
 
     def export(self, fmt: str) -> StringIO | BytesIO:
