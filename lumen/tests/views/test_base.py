@@ -881,3 +881,30 @@ def test_mosaic_view_reports_an_empty_pipeline_on_the_pushdown_path():
 
     with pytest.raises(ValueError, match='empty result'):
         MosaicView(pipeline=pipeline, spec=MOSAIC_DOT_SPEC).get_panel()
+def test_vega_point_map_layers_get_the_table(set_root):
+    """The basemap layer added to lat/lon maps brings its own url; the point
+    layers beside it have no data and must inherit the table, or they draw nothing."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "projection": {"type": "mercator"},
+        "layer": [
+            {
+                "data": {"url": "https://vega.github.io/vega-datasets/data/world-110m.json",
+                         "format": {"type": "topojson", "feature": "countries"}},
+                "mark": {"type": "geoshape", "fill": None},
+            },
+            {
+                "mark": "circle",
+                "encoding": {
+                    "longitude": {"field": "A", "type": "quantitative"},
+                    "latitude": {"field": "B", "type": "quantitative"},
+                },
+            },
+        ],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["data"] == {"name": "test"}
+    assert "test" in final_spec["datasets"]

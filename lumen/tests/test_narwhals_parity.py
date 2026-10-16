@@ -93,6 +93,7 @@ CASES = [
     (Filter, {'conditions': [('g', ['a', 'b'])]}, 'nulls'),
     (Filter, {'conditions': [('v', (1.0, 3.0))]}, 'nulls'),
     (Filter, {'conditions': [('v', [(1.0, 1.0), (4.0, 4.0)])]}, 'nulls'),
+    (Filter, {'conditions': [('v', [(None, 1.0), (None, None), (4.0, None)])]}, 'nulls'),
     (Filter, {'conditions': [('i', 3), ('g', ['a'])]}, 'plain'),
     (DropNA, {'how': 'all'}, 'nullable'),
     (Sort, {'by': []}, 'nullable'),

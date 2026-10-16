@@ -231,8 +231,23 @@ class TestColumnRendering:
         schemas = {slug: {"price": {"type": "num", "min": 1, "max": 100}, "__len__": 50}}
         ms = _metaset([e], schemas=schemas)
         output = ms.compact_context()
-        assert "price" in output
-        assert "n_rows" in output
+        assert output == "t (50 rows)\n  price DOUBLE 1..100"
+
+    def test_compact_context_renders_column_description(self):
+        slug = f"S{SEP}t"
+        e = _entry(slug, columns=[_col("price", "Unit price in EUR")])
+        ms = _metaset([e], schemas={slug: {"price": {"type": "num", "min": 1, "max": 100}}})
+        assert "price DOUBLE 1..100 -- Unit price in EUR" in ms.compact_context()
+
+    def test_compact_context_catalog_types_without_stats(self):
+        slug = f"S{SEP}t"
+        e = _entry(slug, columns=[
+            Column(name="id", metadata={"data_type": "INTEGER"}),
+            Column(name="label", metadata={"data_type": "object"}),
+        ])
+        output = _metaset([e]).compact_context()
+        assert output.startswith("t\n  id INTEGER\n  label\n")
+        assert "load_table_schemas" in output
 
 
 # ---------------------------------------------------------------
@@ -241,17 +256,13 @@ class TestColumnRendering:
 
 class TestRowCount:
 
-    def test_n_rows_shown_when_schema_has_len(self):
+    def test_row_count_shown_when_schema_has_len(self):
         slug = f"S{SEP}t"
         e = _entry(slug)
-        # n_rows is computed as len(schema_dict) which counts keys
-        # (column entries + __len__), not the __len__ value itself.
         schemas = {slug: {"col": {"type": "int"}, "__len__": 42}}
         ms = _metaset([e], schemas=schemas)
         output = ms.compact_context()
-        parsed = yaml.safe_load(output)
-        assert "n_rows" in parsed["t"]
-        assert parsed["t"]["n_rows"] == schemas[slug]["__len__"]
+        assert output.startswith("t (42 rows)\n  col INTEGER")
 
     def test_n_rows_absent_without_schema(self):
         e = _entry(f"S{SEP}t")
@@ -627,42 +638,31 @@ class TestRealisticOutput:
         }
         return _metaset([raw, derived], schemas=schemas)
 
-    def test_compact_context_derived_table_structure(self, oni_metaset):
-        output = oni_metaset.compact_context()
-        parsed = yaml.safe_load(output)
-        derived = parsed["aggregated_metrics_by_season"]
+    @staticmethod
+    def _block(output, name):
+        return next(block for block in output.split("\n\n") if block.startswith(f"{name} "))
 
-        assert derived["derived_from"] == ["data_oni_csv"]
-        assert derived["step"] == 1
-        assert derived["latest"] is True
-        assert "season" in derived["columns"]
-        assert "avg_sst_c" in derived["columns"]
-        assert "count_records" in derived["columns"]
+    def test_compact_context_derived_table_structure(self, oni_metaset):
+        derived = self._block(oni_metaset.compact_context(), "aggregated_metrics_by_season")
+        assert derived.splitlines()[:2] == [
+            "aggregated_metrics_by_season (7 rows)",
+            "  derived_from: data_oni_csv (step 1, latest)",
+        ]
+        for col in ("season", "count_records", "avg_sst_c"):
+            assert f"\n  {col} " in derived
 
     def test_compact_context_original_table_has_no_lineage(self, oni_metaset):
-        output = oni_metaset.compact_context()
-        parsed = yaml.safe_load(output)
-        raw = parsed["data_oni_csv"]
-
+        raw = self._block(oni_metaset.compact_context(), "data_oni_csv")
+        assert raw.startswith("data_oni_csv (900 rows)\n")
         assert "derived_from" not in raw
-        assert "step" not in raw
-        assert "latest" not in raw
-        assert "season" in raw["columns"]
-        assert "year" in raw["columns"]
+        assert "\n  season " in raw
+        assert "\n  year " in raw
 
     def test_compact_context_column_schemas_present(self, oni_metaset):
-        output = oni_metaset.compact_context()
-        parsed = yaml.safe_load(output)
-        derived_cols = parsed["aggregated_metrics_by_season"]["columns"]
-
-        # Numeric range columns should have min/max
-        assert derived_cols["avg_sst_c"]["min"] == 26.5
-        assert derived_cols["avg_sst_c"]["max"] == 27.6
-        assert derived_cols["count_records"]["min"] == 74
-        assert derived_cols["count_records"]["max"] == 75
-
-        # Enum column should have enum list
-        assert "enum" in derived_cols["season"]
+        derived = self._block(oni_metaset.compact_context(), "aggregated_metrics_by_season")
+        assert "  avg_sst_c 26.5..27.6" in derived
+        assert "  count_records 74..75" in derived
+        assert "  season VARCHAR {AMJ, OND, ASO, SON, DJF, NDJ, FMA, JFM, ...}" in derived
 
     def test_table_list_with_lineage_shows_derivation(self, oni_metaset):
         output = oni_metaset.table_list(include_lineage=True)
@@ -690,11 +690,5 @@ class TestRealisticOutput:
 
     def test_full_context_includes_all_details(self, oni_metaset):
         output = oni_metaset.full_context()
-        parsed = yaml.safe_load(output)
-
-        # Both tables present with columns and lineage
-        assert "data_oni_csv" in parsed
-        assert "aggregated_metrics_by_season" in parsed
-        assert "columns" in parsed["data_oni_csv"]
-        assert "columns" in parsed["aggregated_metrics_by_season"]
-        assert parsed["aggregated_metrics_by_season"]["derived_from"] == ["data_oni_csv"]
+        assert "data_oni_csv (900 rows)\n  season VARCHAR" in output
+        assert "aggregated_metrics_by_season (7 rows)\n  derived_from: data_oni_csv" in output

@@ -19,7 +19,7 @@ Every visualization must:
   - OR switch to a form built for high cardinality: bin the measure into a histogram, or use `mark: rect`
 
   Text labels on every mark count as overcrowding: only add them to a chart already reduced to 25 marks or fewer. When every mark carries its value as a label, the quantitative axis is redundant — set `axis: null` on that channel instead of showing both.
-- Axis ticks: set `axis: {format: ','}` on quantitative axes (never scientific notation), plus `tickMinStep: 1` when the value is a count, so ticks cannot land on half of something countable. In a layered spec set these on every layer sharing the axis, or the merge drops them.
+- Axis ticks: set `axis: {format: ',~r'}` on quantitative axes (never scientific notation), plus `tickMinStep: 1` when the value is a count, so ticks cannot land on half of something countable. In a layered spec set these on every layer sharing the axis, or the merge drops them.
 - When n_rows > 10000:
   - Use aggregation and/or binning either in encoding fields or as distinct transforms
   - OR enable canvas rendering using `{config: {render: {renderer: "canvas"}}}` (up to 50k rows)
@@ -188,7 +188,7 @@ layer:
   - mark: bar
     encoding:
       y: {field: state, type: nominal, sort: {field: turbine_count, order: descending}, axis: {title: null}}
-      x: {field: turbine_count, type: quantitative, axis: {title: "Number of Turbines", format: ","}}
+      x: {field: turbine_count, type: quantitative, axis: {title: "Number of Turbines", format: ",~r"}}
       color:
         condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
         value: '#aec7e8'
@@ -292,6 +292,6 @@ layer:
       color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
       tooltip:
         - {field: "properties.name", type: nominal, title: "State"}
-        - {field: <VALUE_COLUMN>, type: quantitative, format: ","}
+        - {field: <VALUE_COLUMN>, type: quantitative, format: ",~r"}
 ```
 {% endblock %}

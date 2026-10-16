@@ -4,11 +4,11 @@ The AI module provides AI-powered agents, analysis tools, and related functional
 
 ## Submodules
 
-- [Agents](agents.md) - AI agent implementations
-- [Coordinator](coordinator.md) - Coordination and orchestration
-- [Models](models.md) - LLM models and interfaces
-- [Tools](tools.md) - AI tools and utilities
-- [Core Components](core.md) - Core AI functionality
+- [Agents](ai/agents.md) - AI agent implementations
+- [Coordinator](ai/coordinator.md) - Coordination and orchestration
+- [Models](ai/models.md) - LLM models and interfaces
+- [Tools](ai/tools.md) - AI tools and utilities
+- [Core Components](ai/core.md) - Core AI functionality
 
 ## How-To Guides
 

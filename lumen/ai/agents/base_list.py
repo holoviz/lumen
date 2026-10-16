@@ -105,6 +105,6 @@ class BaseListAgent(Agent):
                 pn.Column(
                     listing,
                     self._tabs
-                ), user=self.__class__.__name__
+                ), user=self.user
             )
         return [self._tabs], {"listing": listing}

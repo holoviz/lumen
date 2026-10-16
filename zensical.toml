@@ -74,13 +74,18 @@ nav = [
   {"Reference" = [
     {"API" = [
       {"AI" = [
+        {"User Interface" = "reference/api/ai/ui.md"},
         {"Agents" = "reference/api/ai/agents.md"},
         {"Coordinator" = "reference/api/ai/coordinator.md"},
         {"Models" = "reference/api/ai/models.md"},
         {"Tools" = "reference/api/ai/tools.md"},
+        {"Analyses" = "reference/api/ai/analyses.md"},
+        {"Reports" = "reference/api/ai/reports.md"},
         {"Core" = "reference/api/ai/core.md"}
       ]},
       {"Pipeline" = "reference/api/pipeline.md"},
+      {"Filters" = "reference/api/filters.md"},
+      {"Variables" = "reference/api/variables.md"},
       {"Sources" = "reference/api/sources.md"},
       {"Transforms" = "reference/api/transforms.md"},
       {"Views" = "reference/api/views.md"}
@@ -186,7 +191,6 @@ emoji_generator = "zensical.extensions.emoji.to_svg"
 [project.plugins]
 search = {}
 typeset = {}
-literate_nav = {}
 
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["."]

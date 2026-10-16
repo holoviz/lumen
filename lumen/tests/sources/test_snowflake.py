@@ -6,6 +6,9 @@ import pytest
 try:
     import snowflake.connector  # noqa: F401
 
+    from snowflake.connector.constants import QueryStatus
+
+    from lumen.sources.base import QueryTimeoutError
     from lumen.sources.snowflake import SnowflakeSource
     pytestmark = pytest.mark.xdist_group("snowflake")
 except ImportError:
@@ -333,3 +336,15 @@ def test_get_tables_with_nested_wildcard_exclusions(mock_snowflake_connection):
         'TEST_DB.TPCDS_SF100TCL.STATISTICS'
     ]
     assert set(tables) == set(expected_tables)
+
+
+async def test_execute_with_timeout_cancels_the_query(mock_snowflake_connection):
+    _, mock_conn, mock_cursor = mock_snowflake_connection
+    mock_cursor.sfqid = "01b2"
+    mock_conn.get_query_status.return_value = QueryStatus.RUNNING
+    source = SnowflakeSource(database='TEST_DB')
+
+    with pytest.raises(QueryTimeoutError):
+        await source.execute_with_timeout("SELECT 1", 0.1)
+
+    mock_cursor.execute.assert_called_with("SELECT SYSTEM$CANCEL_QUERY('01b2')")

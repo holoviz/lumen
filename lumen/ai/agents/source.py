@@ -176,6 +176,9 @@ def _sanitize_tool_callable(
     wrapped_any = t.cast(t.Any, wrapped_func)
     wrapped_any.__name__ = wrapped_name
     wrapped_any.__qualname__ = wrapped_name
+    # String annotations (from ``from __future__ import annotations``) are
+    # resolved against __module__, so point it at the module defining func
+    wrapped_any.__module__ = func.__module__
     wrapped_any.__doc__ = filtered_doc
     wrapped_any.__signature__ = filtered_signature
     wrapped_any.__annotations__ = filtered_annotations
@@ -362,6 +365,14 @@ class SourceAgent(Agent):
                     status="success",
                     success_title=f"Loaded {len(df):,} rows into '{table_name}'",
                 )
+
+        if tool_results:
+            # Lets the follow-up classifier tell fetched tables, whose rows are
+            # limited to the parameters used, from tables it can re-query.
+            source.metadata = dict(source.metadata or {})
+            entry = dict(source.metadata.get(table_name) or {})
+            entry["source_action"] = tool_results[0]["action"]
+            source.metadata[table_name] = entry
 
         out_context: SourceOutputs = {
             "source": source,

@@ -4,24 +4,12 @@ Get up and running with Lumen in under 30 seconds.
 
 ## Installation
 
-!!! info "Other LLM Providers"
-    For OpenRouter, Anthropic, Google Gemini, Mistral, AWS Bedrock, LlamaCpp, and more, see the [Installation guide](installation.md).
+```bash
+pip install lumen
+export OPENAI_API_KEY=sk-...
+```
 
-=== "OpenAI"
-
-    ```bash
-    pip install 'lumen[ai-openai]'
-    
-    export OPENAI_API_KEY=sk-...
-    ```
-
-=== "OpenRouter"
-
-    ```bash
-    pip install 'lumen[ai-openrouter]'
-   
-    export OPENROUTER_API_KEY=sk-or-...
-    ```
+Using Anthropic, Gemini, Mistral, OpenRouter, a local model or a coding CLI you are already signed in to? The [Installation guide](installation.md) covers every provider.
 
 ## Start Chatting with Data
 

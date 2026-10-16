@@ -204,7 +204,7 @@ class TestRevisionControls:
         
         # Verify message was streamed
         assert len(interface.messages) == 1
-        assert interface.messages[0]["user"] == "Assistant"
+        assert interface.messages[0]["user"] == "Lumen"
         
     def test_report_status_empty_output(self):
         """Test _report_status with empty output does nothing."""

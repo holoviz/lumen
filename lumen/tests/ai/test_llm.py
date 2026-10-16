@@ -2,7 +2,9 @@
 
 import asyncio
 import base64
+import sys
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -15,10 +17,11 @@ try:
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
-        CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
-        MistralAI, Ollama, OpenAI, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm,
+        LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
+    from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
 
 except ModuleNotFoundError:
@@ -26,6 +29,46 @@ except ModuleNotFoundError:
 
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel, ValidationError
+
+FAKE_ACP_SERVER = r"""
+import json, os, sys
+
+def send(message):
+    print(json.dumps({"jsonrpc": "2.0", **message}), flush=True)
+
+def chunk(session, text):
+    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+    send({"method": "session/update", "params": {"sessionId": session, "update": update}})
+
+cwds = {}
+for line in sys.stdin:
+    request = json.loads(line)
+    method, params = request["method"], request.get("params", {})
+    if method == "initialize":
+        send({"id": request["id"], "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        session = f"s{len(cwds)}"
+        cwds[session] = params["cwd"]
+        send({"id": request["id"], "result": {"sessionId": session}})
+    elif method == "session/prompt":
+        session = params["sessionId"]
+        prompt = params["prompt"][0]["text"]
+        chunk(session, "Info: Disabled tools: bash")
+        chunk(session, "Warning: something")
+        chunk(session, f"pid={os.getpid()} ")
+        chunk(session, f"cwd_exists={os.path.isdir(cwds[session])} ")
+        chunk(session, prompt.splitlines()[-1])
+        stop = "refusal" if "REFUSE" in prompt else "end_turn"
+        send({"id": request["id"], "result": {"stopReason": stop}})
+"""
+
+FAKE_AGY = r"""
+import json, os, sys
+
+prompt = json.loads(sys.stdin.readline())["message"]["content"].splitlines()[-1]
+response = f"{os.getpid()} {os.getcwd()} {prompt}"
+print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": response}}), flush=True)
+"""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -169,8 +212,14 @@ def test_cli_providers_are_registered():
     """CLI-backed subscription providers can be selected explicitly by the command line."""
     assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCli"
     assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCode"
+    assert lmai.llm.LLM_PROVIDERS["copilot-cli"] == "CopilotCli"
+    assert lmai.llm.LLM_PROVIDERS["antigravity-cli"] == "AntigravityCli"
     assert issubclass(CodexCli, LlmCli)
     assert issubclass(ClaudeCode, LlmCli)
+    assert issubclass(CopilotCli, LlmCli)
+    assert issubclass(AntigravityCli, LlmCli)
+    # Last, so CLI providers are never auto-selected ahead of a configured one.
+    assert list(lmai.llm.LLM_PROVIDERS)[-2:] == ["copilot-cli", "antigravity-cli"]
 
 
 def test_codex_cli_command_defaults_to_read_only():
@@ -195,6 +244,32 @@ def test_claude_code_command_defaults_to_plan_mode():
     ]
 
 
+def test_copilot_cli_command_disables_all_tools():
+    llm = CopilotCli()
+
+    lockdown = [
+        "copilot", "--no-ask-user", "--no-custom-instructions", "--disable-builtin-mcps",
+        "--no-remote-export", "--no-auto-update", "--available-tools=none", "--deny-tool=shell",
+        "--deny-tool=write", "--deny-tool=read", "--deny-tool=url", "--deny-tool=memory",
+    ]
+
+    assert llm._build_command(None) == [*lockdown, "--acp", "--stdio"]
+    assert llm._build_command("auto") == [*lockdown, "--acp", "--stdio"]
+    assert llm._build_command("gpt-5.4") == [
+        *lockdown, "--output-format", "json", "--stream", "off", "--model", "gpt-5.4",
+    ]
+
+
+def test_antigravity_cli_command_reads_prompt_from_stdin():
+    llm = AntigravityCli()
+
+    stream = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
+
+    assert llm._build_command(None) == stream
+    assert llm._build_command("gemini-3.8-flash-low") == [*stream, "--model", "gemini-3.8-flash-low"]
+    assert llm._get_model_kwargs("default")["model"] == "gemini-3.8-flash-low"
+
+
 def test_cli_output_decoders():
     codex = CodexCli()
     codex_output = (
@@ -206,6 +281,91 @@ def test_cli_output_decoders():
 
     claude = ClaudeCode()
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
+
+
+async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
+    spawned = []
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def fake_copilot(*command, **kwargs):
+        spawned.append(command)
+        return await create_subprocess(sys.executable, "-c", FAKE_ACP_SERVER, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_copilot)
+    llm = CopilotCli()
+
+    first = await llm.run_client("default", [{"role": "user", "content": "first"}])
+    second = await llm.run_client("default", [{"role": "user", "content": "second"}])
+
+    assert len(spawned) == 1
+    assert spawned[0][-2:] == ("--acp", "--stdio")
+    pid = first.split()[0]
+    assert first == f"{pid} cwd_exists=True first"
+    assert second == f"{pid} cwd_exists=True second"
+
+    with pytest.raises(RuntimeError, match="stopped early"):
+        await llm.run_client("default", [{"role": "user", "content": "REFUSE"}])
+
+
+async def test_antigravity_cli_uses_a_prestarted_process(monkeypatch):
+    spawned = []
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def fake_agy(*command, **kwargs):
+        process = await create_subprocess(sys.executable, "-c", FAKE_AGY, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_agy)
+    llm = AntigravityCli()
+
+    first = (await llm.run_client("default", [{"role": "user", "content": "first"}])).split()
+    second = (await llm.run_client("default", [{"role": "user", "content": "second"}])).split()
+
+    # The first request starts its own process plus a spare; the second uses that spare.
+    assert len(spawned) == 3
+    assert first[0] == str(spawned[0].pid) and first[2] == "first"
+    assert second[0] == str(spawned[1].pid) and second[2] == "second"
+    assert first[1] != second[1]
+    assert not Path(first[1]).exists() and not Path(second[1]).exists()
+    spawned[2].kill()
+    await spawned[2].wait()
+
+
+def test_antigravity_cli_decodes_result():
+    antigravity = AntigravityCli()
+    init = '{"event":"init","init":{"cwd":"/tmp"}}\n'
+    delta = '{"event":"step_update","step_update":{"text_delta":"READY"}}\n'
+
+    assert antigravity._decode_output(
+        init + delta + '{"event":"result","result":{"status":"SUCCESS","response":"READY\\n"}}'
+    ) == "READY"
+
+    with pytest.raises(RuntimeError, match="WriteToFile"):
+        antigravity._decode_output(
+            '{"event":"result","result":{"status":"SUCCESS","response":"",'
+            '"denied_actions":[{"action":"write_file","display_name":"WriteToFile"}]}}'
+        )
+    with pytest.raises(RuntimeError, match="invalid model"):
+        antigravity._decode_output('{"event":"result","result":{"status":"ERROR","error":"invalid model"}}')
+    with pytest.raises(ValueError, match="did not return a result"):
+        antigravity._decode_output(init + delta)
+
+
+def test_copilot_cli_decodes_last_assistant_message():
+    copilot = CopilotCli()
+    output = (
+        '{"type":"session.tools_updated","data":{"model":"claude-haiku-4.5"}}\n'
+        '{"type":"user.message","data":{"content":"Private prompt"}}\n'
+        '{"type":"assistant.message","data":{"content":"","toolRequests":[{"name":"bash"}]}}\n'
+        'not json\n'
+        '{"type":"assistant.message","data":{"content":"READY\\n","toolRequests":[]}}\n'
+        '{"type":"result","exitCode":0}'
+    )
+    assert copilot._decode_output(output) == "READY"
+
+    with pytest.raises(ValueError, match="final assistant message"):
+        copilot._decode_output('{"type":"user.message","data":{"content":"Private prompt"}}')
 
 
 async def test_cli_provider_validates_structured_output(monkeypatch):
@@ -250,6 +410,33 @@ async def test_cli_provider_sends_prompt_over_stdin(monkeypatch, tmp_path):
     assert captured["command"] == ("claude", "--print")
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
     assert captured["kwargs"]["cwd"] == str(tmp_path)
+
+
+async def test_cli_provider_isolates_cwd(monkeypatch, tmp_path):
+    seen = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, data):
+            return b"", b""
+
+    async def create_subprocess(*command, **kwargs):
+        cwd = kwargs["cwd"]
+        seen.append((cwd, cwd is not None and Path(cwd).is_dir()))
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
+    await ClaudeCode()._run_command(["claude"], "Hi")
+    await CopilotCli()._run_command(["copilot"], "Hi")
+    await CopilotCli(working_dir=str(tmp_path))._run_command(["copilot"], "Hi")
+
+    (default_cwd, _), (isolated_cwd, existed), (override_cwd, _) = seen
+    assert default_cwd is None
+    assert existed
+    assert Path(isolated_cwd).name.startswith("lumen-cli-")
+    assert not Path(isolated_cwd).exists()
+    assert override_cwd == str(tmp_path)
 
 
 async def test_cli_provider_skips_unsupported_tool_loop(monkeypatch):
@@ -345,11 +532,9 @@ def test_groq_api_key_env_var():
     assert Groq.api_key_env_var == "GROQ_API_KEY"
 
 
-def test_groq_defaults():
-    """Test that Groq has the correct default endpoint and model."""
+def test_groq_endpoint():
     groq = Groq(api_key="test-key")
     assert groq.endpoint == "https://api.groq.com/openai/v1"
-    assert groq.model_kwargs["default"]["model"] == "llama-3.3-70b-versatile"
 
 
 def test_get_available_llm_selects_groq(monkeypatch):
@@ -550,13 +735,24 @@ def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
     return calls
 
 
-def test_openai_default_model_is_selectable():
-    """The default has to appear in select_models: opening the settings dialog
-    rewrites model_kwargs to select_models[0] when the current model is missing
-    from the list, silently downgrading the default."""
-    default_model = OpenAI.param.model_kwargs.default["default"]["model"]
-    assert default_model == "gpt-5.6-luna"
-    assert default_model in OpenAI.param.select_models.default
+@pytest.mark.parametrize("provider", [
+    OpenAI, OpenRouter, AzureOpenAI, MistralAI, Anthropic, AnthropicBedrock,
+    Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
+], ids=lambda cls: cls.__name__)
+def test_default_model_is_selectable(provider):
+    """Opening the settings dialog rewrites model_kwargs to select_models[0]
+    when the current model is missing from the list, silently swapping the
+    default."""
+    default_model = provider.param.model_kwargs.default["default"]["model"]
+    assert default_model in provider.param.select_models.default
+
+
+@pytest.mark.parametrize("model", LlamaCpp.param.select_models.default)
+def test_llamacpp_select_models_resolve_to_gguf_file(model):
+    resolved = LlamaCpp().resolve_model_spec(model, {})
+    assert resolved["repo_id"].count("/") == 1
+    assert resolved["filename"].endswith(".gguf")
+    assert resolved["chat_format"]
 
 
 async def test_rejected_temperature_is_dropped_and_retried(monkeypatch):
@@ -1501,6 +1697,44 @@ def test_model_card_offers_user_supplied_select_models():
     assert card._get_default_models() == ["m", "my-model", "other"]
 
 
+@pytest.mark.parametrize("action", ["_apply_changes", "_cancel_changes", "_reset_to_defaults"])
+def test_llm_dialog_keeps_omitted_temperature(action):
+    """An LLM with temperature=None omits it from requests (some models reject
+    any), so the placeholder the slider shows must not be written back."""
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI})
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+    getattr(dialog, action)(None)
+
+    assert dialog.llm.temperature is None
+
+
+def test_llm_dialog_provider_change_keeps_omitted_temperature():
+    dialog = LLMConfigDialog(
+        llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI, "Mistral": MistralAI}
+    )
+
+    dialog._provider_select.value = MistralAI
+
+    assert isinstance(dialog.llm, MistralAI)
+    assert dialog.llm.temperature is None
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+
+@pytest.mark.parametrize("initial", [None, 0.2])
+def test_llm_dialog_applies_and_cancels_moved_temperature(initial):
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=initial), provider_choices={"OpenAI": OpenAI})
+
+    dialog._temperature_slider.value = 0.5
+    dialog._apply_changes(None)
+    assert dialog.llm.temperature == 0.5
+
+    dialog._temperature_slider.value = 0.9
+    dialog._cancel_changes(None)
+    assert dialog.llm.temperature == 0.5
+    assert dialog._temperature_slider.value == 0.5
+
+
 # ---------------------------------------------------------------------------
 # Resolved model name (issue #2043)
 # ---------------------------------------------------------------------------
@@ -1565,3 +1799,39 @@ async def test_stream_sets_resolved_model(monkeypatch):
     chunks = [c async for c in llm.stream([{"role": "user", "content": "hi"}])]
     assert chunks[-1] == "ok"
     assert llm._resolved_model == "gpt-stream"
+
+
+@pytest.mark.parametrize("cache, cached", [("5m", True), (None, False)])
+async def test_anthropic_system_prompt_sets_cache_control(monkeypatch, cache, cached):
+    llm = Anthropic(model_kwargs={"default": {"model": "m"}}, cache=cache)
+    captured = {}
+
+    async def client(messages, **kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    async def get_client(model_spec, **kwargs):
+        return client
+
+    monkeypatch.setattr(llm, "get_client", get_client)
+    await llm.run_client("default", [{"role": "system", "content": "Static"}, {"role": "user", "content": "hi"}])
+
+    if cached:
+        assert captured["system"] == [{"type": "text", "text": "Static", "cache_control": {"type": "ephemeral"}}]
+    else:
+        assert captured["system"] == "Static"
+
+
+async def test_invoke_keeps_single_blank_lines_in_system(monkeypatch):
+    llm = Llm(model_kwargs={"default": {"model": "m"}})
+    captured = {}
+
+    async def run_tool_loop(messages, *args, **kwargs):
+        captured["messages"] = messages
+        return "ok"
+
+    monkeypatch.setattr(llm, "_run_tool_loop", run_tool_loop)
+    monkeypatch.setattr(llm, "_create_base_client", lambda **kwargs: None, raising=False)
+    await llm.invoke([{"role": "user", "content": "hi"}], system="## A\n\nText\n\n\n\n## B")
+    system = next(m["content"] for m in captured["messages"] if m["role"] == "system")
+    assert system == "## A\n\nText\n\n## B"

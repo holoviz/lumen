@@ -44,7 +44,7 @@ lumen-ai serve --provider openai
 ```
 
 ``` bash title="Specify model"
-lumen-ai serve --model-kwargs '{"default": {"model": "gpt-4o"}}'
+lumen-ai serve --model-kwargs '{"default": {"model": "gpt-5.6-luna"}}'
 ```
 
 ``` bash title="Adjust temperature"
@@ -56,7 +56,7 @@ lumen-ai serve --temperature 0.5  # (1)!
 ``` bash title="Combine options"
 lumen-ai serve penguins.csv \
   --provider openai \
-  --model-kwargs '{"default": {"model": "gpt-4o"}}' \
+  --model-kwargs '{"default": {"model": "gpt-5.6-luna"}}' \
   --temperature 0.7
 ```
 
@@ -100,8 +100,8 @@ import lumen.ai as lmai
 # Configure your LLM
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        'default': {'model': 'gpt-4o-mini'},
-        'sql': {'model': 'gpt-4o'}
+        'default': {'model': 'gpt-6-luna'},
+        'sql': {'model': 'gpt-5.6-luna'}
     },
     temperature=0.7
 )
@@ -138,7 +138,7 @@ ui.servable()
 | Flag | Purpose | Example |
 |------|---------|---------|
 | `--provider` | Specify LLM provider | `--provider anthropic` |
-| `--model-kwargs` | Configure models | `--model-kwargs '{"default": {"model": "claude-sonnet-4-5"}}'` |
+| `--model-kwargs` | Configure models | `--model-kwargs '{"default": {"model": "claude-sonnet-4-6"}}'` |
 | `--temperature` | Control randomness | `--temperature 0.5` |
 | `--port` | Custom port | `--port 8080` |
 | `--address` | Network address | `--address 0.0.0.0` |
