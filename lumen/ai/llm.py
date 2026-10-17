@@ -234,15 +234,14 @@ def find_bad_request(error: BaseException | None) -> openai.BadRequestError | No
     return None
 
 
-def _ollama_has_default_model() -> bool:
-    """Whether a local Ollama server is running with Ollama's default model pulled."""
-    base_url = Ollama.param.endpoint.default.removesuffix("/v1")
-    model = Ollama.param.model_kwargs.default["default"]["model"]
+def ollama_models(endpoint: str | None = None) -> list[str] | None:
+    """The models pulled on an Ollama server, or None if it is not reachable."""
+    base_url = (endpoint or Ollama.param.endpoint.default).rstrip("/").removesuffix("/v1")
     try:
         tags = requests.get(f"{base_url}/api/tags", timeout=0.5).json()
     except requests.RequestException:
-        return False
-    return any(m.get("name") == model for m in tags.get("models", []))
+        return None
+    return [model["name"] for model in tags.get("models", [])]
 
 
 def get_available_llm() -> type[Llm] | None:
@@ -262,7 +261,8 @@ def get_available_llm() -> type[Llm] | None:
         env_var = PROVIDER_ENV_VARS.get(provider)
         if env_var and os.environ.get(env_var):
             return globals()[class_name]
-    return Ollama if _ollama_has_default_model() else None
+    default_model = Ollama.param.model_kwargs.default["default"]["model"]
+    return Ollama if default_model in (ollama_models() or []) else None
 
 
 class Llm(param.Parameterized):

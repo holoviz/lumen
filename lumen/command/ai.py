@@ -26,7 +26,9 @@ except ImportError as e:
 
 from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
-from ..ai.llm import LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm
+from ..ai.llm import (
+    LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, ollama_models,
+)
 from ..ai.utils import parse_huggingface_url, render_template
 from . import YAML_SUFFIXES
 
@@ -144,12 +146,19 @@ class LumenAIServe(Serve):
                 if clis else ""
             )
             ollama_model = lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
+            pulled = ollama_models()
+            if pulled:
+                ollama_option = f"- Use a model you pulled in Ollama: --provider ollama --model {pulled[0]}\n"
+            elif pulled is None:
+                ollama_option = f"- Run models locally: install Ollama, then `ollama pull {ollama_model}`\n"
+            else:
+                ollama_option = f"- Ollama is running with no models: `ollama pull {ollama_model}`\n"
             die(
                 "No LLM provider found: no API key is set and Ollama is not running with its default model.\n"
                 "Pick one of these to get started:\n\n"
                 "- Free models, no signup: --provider kilo\n"
                 f"{cli_option}"
-                f"- Run models locally: install Ollama, then `ollama pull {ollama_model}`\n"
+                f"{ollama_option}"
                 "- Set an API key, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY\n"
                 "- Use an OpenAI-compatible server: --provider openai --provider-endpoint URL\n\n"
                 "Docs: https://lumen.holoviz.org/configuration/llm_providers/"

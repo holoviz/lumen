@@ -1554,13 +1554,19 @@ def test_serve_llm_model_url_uses_llama_cpp():
     assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
 
 
-def test_serve_without_provider_lists_keyless_options(capsys):
+@pytest.mark.parametrize("pulled, ollama_hint", [
+    (None, "install Ollama, then `ollama pull"),
+    ([], "Ollama is running with no models: `ollama pull"),
+    (["qwen3.5:9b"], "--provider ollama --model qwen3.5:9b"),
+])
+def test_serve_without_provider_lists_keyless_options(capsys, pulled, ollama_hint):
     parser = argparse.ArgumentParser()
     LumenAIServe(parser.add_subparsers().add_parser("serve"))
     args = parser.parse_args(["serve", "data.csv"])
     which = lambda name: f"/usr/bin/{name}" if name == "claude" else None
     with (
         patch("lumen.command.ai.get_available_llm", return_value=None),
+        patch("lumen.command.ai.ollama_models", return_value=pulled),
         patch("lumen.command.ai.shutil.which", side_effect=which),
         pytest.raises(SystemExit),
     ):
@@ -1569,7 +1575,7 @@ def test_serve_without_provider_lists_keyless_options(capsys):
     assert "--provider kilo" in message
     assert "--provider claude-code" in message
     assert "--provider codex-cli" not in message
-    assert "ollama pull" in message
+    assert ollama_hint in message
     assert "OPENAI_API_KEY" in message
 
 
