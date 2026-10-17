@@ -15,6 +15,7 @@ import bokeh.command.subcommands.serve as bokeh_serve
 import duckdb
 import numpy as np
 import pytest
+import requests
 
 try:
     import lumen.ai  # noqa
@@ -46,7 +47,7 @@ from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.llm import (
-    PROVIDER_ENV_VARS, Groq, LlamaCpp, OpenAI,
+    PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
 )
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
@@ -182,6 +183,26 @@ async def test_llm_failure_alert_points_to_ai_model_settings(explorer_ui):
     message = explorer_ui._error_alert.object
     assert "Settings > Configure AI Models" in message
     assert "Kilo" in message
+
+
+async def test_ui_without_provider_explains_options_instead_of_failing(monkeypatch):
+    for env_var in PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr("lumen.ai.llm.requests.get", MagicMock(side_effect=requests.ConnectionError))
+    monkeypatch.setattr("lumen.ai.ui.local_cli_providers", lambda: {ClaudeCode: True})
+    ui = ExplorerUI()
+    ui.llm.initialize = AsyncMock()
+    await ui._initialize_new_llm()
+
+    ui.llm.initialize.assert_not_called()
+    assert ui._chat_input.disabled
+    message = ui._error_alert.object
+    assert "No LLM provider found" in message
+    assert "Kilo" in message and "Claude Code CLI" in message
+    assert "no LLM provider is configured" in ui._get_status_text()
+
+    ui._on_llm_change(Kilo())
+    assert ui._no_llm_message is None
 
 
 async def test_sync_sources_survives_partial_init(explorer_ui):
@@ -1567,6 +1588,16 @@ def test_serve_cli_provider_missing_from_path_exits(capsys):
     assert "`claude` was not found on your PATH" in capsys.readouterr().err
 
 
+def test_serve_cli_provider_signed_out_exits(capsys):
+    with (
+        patch("lumen.command.ai.shutil.which", return_value="/usr/bin/claude"),
+        patch.object(ClaudeCode, "signed_in", return_value=False),
+        pytest.raises(SystemExit),
+    ):
+        _invoke_serve("--provider", "claude-code")
+    assert "Claude Code CLI reports no signed-in user" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("pulled, argv, warning", [
     (None, [], "Could not reach Ollama at http://localhost:11434"),
     (None, ["--provider-endpoint", "http://gpu:11434/v1"], "Could not reach Ollama at http://gpu:11434/v1"),
@@ -1591,18 +1622,17 @@ def test_serve_ollama_preflight_warns(capsys, pulled, argv, warning):
     (["qwen3.5:9b"], "--provider ollama --model qwen3.5:9b"),
 ])
 def test_serve_without_provider_lists_keyless_options(capsys, pulled, ollama_hint):
-    which = lambda name: f"/usr/bin/{name}" if name == "claude" else None
     with (
         patch("lumen.command.ai.get_available_llm", return_value=None),
         patch("lumen.command.ai.ollama_models", return_value=pulled),
-        patch("lumen.command.ai.shutil.which", side_effect=which),
+        patch("lumen.command.ai.local_cli_providers", return_value={ClaudeCode: True, CopilotCli: None}),
         pytest.raises(SystemExit),
     ):
         _invoke_serve()
     message = capsys.readouterr().err
     assert "--provider kilo" in message
-    assert "--provider claude-code" in message
-    assert "--provider codex-cli" not in message
+    assert "signed in to: --provider claude-code" in message
+    assert "Sign in to one of these coding CLIs first: --provider copilot-cli" in message
     assert ollama_hint in message
     assert "OPENAI_API_KEY" in message
 
