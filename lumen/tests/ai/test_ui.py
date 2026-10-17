@@ -1534,6 +1534,26 @@ def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
     assert "llm = lmai.llm.Groq()" in out
 
 
+def test_serve_llm_model_url_uses_llama_cpp():
+    from lumen.ai.llm import LlamaCpp
+
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args([
+        "serve", "data.csv", "--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf"
+    ])
+    original = bokeh_serve.build_single_handler_applications
+    try:
+        with (
+            patch.object(LlamaCpp, "warmup") as warmup,
+            patch.object(Serve, "invoke", return_value=True),
+        ):
+            LumenAIServe(argparse.ArgumentParser()).invoke(args)
+    finally:
+        bokeh_serve.build_single_handler_applications = original
+    assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
+
+
 def test_serve_without_provider_lists_keyless_options(capsys):
     parser = argparse.ArgumentParser()
     LumenAIServe(parser.add_subparsers().add_parser("serve"))

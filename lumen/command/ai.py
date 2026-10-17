@@ -117,13 +117,13 @@ class LumenAIServe(Serve):
         provider = args.provider
         llm_model_url = args.llm_model_url
         provider_cls = None
-        if llm_model_url and provider and provider != "llama":
+        if llm_model_url and provider and provider != "llama-cpp":
             raise ValueError(
                 f"Cannot specify both --llm-model-url and --provider {provider!r}. "
                 f"Use --llm-model-url to load a model from HuggingFace."
             )
         elif llm_model_url:
-            provider = "llama"
+            provider = "llama-cpp"
         elif not provider:
             provider_cls = get_available_llm()
             if provider_cls is not None:
