@@ -1,5 +1,6 @@
 import asyncio
 
+from dataclasses import dataclass, field
 from types import FunctionType
 from typing import Any, TypedDict
 
@@ -16,6 +17,34 @@ from ..llm import Message
 from ..translate import function_to_model
 
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
+
+
+@dataclass(eq=False, repr=False)
+class FunctionCall:
+    """
+    Record of a single FunctionTool invocation, kept so the call can be
+    reproduced, e.g. as a code cell when exporting to a notebook.
+
+    Compared by identity, since the arguments may hold objects such as
+    DataFrames that do not support equality checks.
+    """
+
+    # The function that was called
+    function: FunctionType
+
+    # The keyword arguments it was called with, including context values
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+    # The context keys the call provided
+    provides: list[str] = field(default_factory=list)
+
+    # Whether the provided values were looked up by key in the returned dict
+    unpack: bool = False
+
+    def __repr__(self) -> str:
+        # Leave out the argument values, which may be large or sensitive
+        name = getattr(self.function, '__name__', repr(self.function))
+        return f"FunctionCall({name}({', '.join(self.arguments)}))"
 
 
 def define_tool(
@@ -177,11 +206,19 @@ class FunctionTool(Tool):
                 out_model[self.provides[0]] = result
             else:
                 out_model.update({key: result[key] for key in self.provides})
-        return [self.formatter.format(
+        output = self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
-        )], out_model
+        )
+        # Returned alongside the text so exports can repeat the call
+        call = FunctionCall(
+            function=self.function,
+            arguments=arguments,
+            provides=list(self.provides),
+            unpack=bool(self.provides) and not (len(self.provides) == 1 and not isinstance(result, dict)),
+        )
+        return [output, call], out_model
 
 
 class ToolUser(Actor):
