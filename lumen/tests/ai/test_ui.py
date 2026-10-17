@@ -45,7 +45,7 @@ from lumen.ai.agents.vega_lite import (
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import MultiChartEditor, SQLEditor
-from lumen.ai.llm import OpenAI
+from lumen.ai.llm import PROVIDER_ENV_VARS, Groq, LlamaCpp, OpenAI
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
@@ -1510,10 +1510,23 @@ class TestLumenAIServeYamlRouting:
             bokeh_serve.build_single_handler_applications = original
 
 
+def _invoke_serve(*argv, data="data.csv", build=False):
+    """Run ``lumen-ai serve`` without starting a server, optionally building the app."""
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args(["serve", data, *argv])
+    original = bokeh_serve.build_single_handler_applications
+    try:
+        with patch.object(Serve, "invoke", return_value=True):
+            LumenAIServe(argparse.ArgumentParser()).invoke(args)
+        if build:
+            bokeh_serve.build_single_handler_applications([data])
+    finally:
+        bokeh_serve.build_single_handler_applications = original
+
+
 def test_ui_detects_llm_when_created_not_when_imported(monkeypatch):
     """A key set after ``import lumen.ai`` is still picked up, as in a notebook."""
-    from lumen.ai.llm import PROVIDER_ENV_VARS, Groq
-
     for env_var in PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
@@ -1521,58 +1534,19 @@ def test_ui_detects_llm_when_created_not_when_imported(monkeypatch):
 
 
 def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
-    from lumen.ai.llm import Groq
-
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     data = str(Path(__file__).parents[1] / "sources" / "test.csv")
-    parser = argparse.ArgumentParser()
-    LumenAIServe(parser.add_subparsers().add_parser("serve"))
-    args = parser.parse_args(["serve", data])
-    original = bokeh_serve.build_single_handler_applications
-    try:
-        with (
-            patch("lumen.command.ai.get_available_llm", return_value=Groq),
-            patch.object(Serve, "invoke", return_value=True),
-        ):
-            LumenAIServe(argparse.ArgumentParser()).invoke(args)
-        bokeh_serve.build_single_handler_applications([data])
-    finally:
-        bokeh_serve.build_single_handler_applications = original
+    with patch("lumen.command.ai.get_available_llm", return_value=Groq):
+        _invoke_serve(data=data, build=True)
     out = capsys.readouterr().out
     assert "Using Groq because GROQ_API_KEY is set" in out
     assert "llm = lmai.llm.Groq()" in out
 
 
 def test_serve_llm_model_url_uses_llama_cpp():
-    from lumen.ai.llm import LlamaCpp
-
-    parser = argparse.ArgumentParser()
-    LumenAIServe(parser.add_subparsers().add_parser("serve"))
-    args = parser.parse_args([
-        "serve", "data.csv", "--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf"
-    ])
-    original = bokeh_serve.build_single_handler_applications
-    try:
-        with (
-            patch.object(LlamaCpp, "warmup") as warmup,
-            patch.object(Serve, "invoke", return_value=True),
-        ):
-            LumenAIServe(argparse.ArgumentParser()).invoke(args)
-    finally:
-        bokeh_serve.build_single_handler_applications = original
+    with patch.object(LlamaCpp, "warmup") as warmup:
+        _invoke_serve("--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf")
     assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
-
-
-def _invoke_serve(*argv):
-    parser = argparse.ArgumentParser()
-    LumenAIServe(parser.add_subparsers().add_parser("serve"))
-    args = parser.parse_args(["serve", "data.csv", *argv])
-    original = bokeh_serve.build_single_handler_applications
-    try:
-        with patch.object(Serve, "invoke", return_value=True):
-            LumenAIServe(argparse.ArgumentParser()).invoke(args)
-    finally:
-        bokeh_serve.build_single_handler_applications = original
 
 
 @pytest.mark.parametrize("argv, quiet", [([], True), (["--log-level", "debug"], False)])
@@ -1615,9 +1589,6 @@ def test_serve_ollama_preflight_warns(capsys, pulled, argv, warning):
     (["qwen3.5:9b"], "--provider ollama --model qwen3.5:9b"),
 ])
 def test_serve_without_provider_lists_keyless_options(capsys, pulled, ollama_hint):
-    parser = argparse.ArgumentParser()
-    LumenAIServe(parser.add_subparsers().add_parser("serve"))
-    args = parser.parse_args(["serve", "data.csv"])
     which = lambda name: f"/usr/bin/{name}" if name == "claude" else None
     with (
         patch("lumen.command.ai.get_available_llm", return_value=None),
@@ -1625,7 +1596,7 @@ def test_serve_without_provider_lists_keyless_options(capsys, pulled, ollama_hin
         patch("lumen.command.ai.shutil.which", side_effect=which),
         pytest.raises(SystemExit),
     ):
-        LumenAIServe(argparse.ArgumentParser()).invoke(args)
+        _invoke_serve()
     message = capsys.readouterr().err
     assert "--provider kilo" in message
     assert "--provider claude-code" in message
