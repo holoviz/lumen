@@ -11,7 +11,11 @@ from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..schemas import (
-    Column, DocumentChunk, Metaset, TableCatalogEntry,
+    Column,
+    DocumentChunk,
+    Metaset,
+    TableCatalogEntry,
+    TablesMetadata,
 )
 from ..table_stats import get_stats_store
 from ..utils import log_debug
@@ -204,9 +208,9 @@ class MetadataLookup(VectorLookupTool):
         # IMPORTANT: re-insert using table slug
         # we need to store a copy of tables_vector_data so it can be used to inject context into the LLM
         table_slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}{table_name}"
-        context["tables_metadata"][table_slug] = vector_info.copy()
-        context["tables_metadata"][table_slug]["source_name"] = source.name  # need this to rebuild the slug
-
+        tables_metadata: TablesMetadata = context["tables_metadata"]
+        tables_metadata[table_slug] = vector_info.copy()
+        tables_metadata[table_slug]["source_name"] = source.name
         # Create column schema objects
         columns = []
         if self.include_columns and (vector_columns := vector_info.get("columns", {})):
