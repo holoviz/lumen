@@ -4244,12 +4244,15 @@ class Kilo(OpenAI):
     An LLM implementation using the Kilo API.
 
     Kilo provides an OpenAI-compatible endpoint that routes requests to
-    models from multiple providers. Kilo has a free tier, but for other models,
-    optionally set the ``KILO_API_KEY`` environment variable or pass ``api_key``
+    models from multiple providers. Its free tier needs no account; for other
+    models, set the ``KILO_API_KEY`` environment variable or pass ``api_key``
     directly. The provider is auto-detected when
     ``KILO_API_KEY`` is present, or can be selected explicitly with
     ``--provider kilo``.
     """
+
+    api_key = param.String(default="anonymous", doc="""
+        The Kilo API key. The free tier accepts any placeholder value.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
 

@@ -572,6 +572,17 @@ def test_groq_endpoint():
     assert groq.endpoint == "https://api.groq.com/openai/v1"
 
 
+def test_kilo_uses_free_tier_without_api_key(monkeypatch):
+    """Kilo sends a placeholder key so its free tier works without signing up."""
+    monkeypatch.delenv("KILO_API_KEY", raising=False)
+    assert Kilo().api_key == "anonymous"
+
+
+def test_kilo_api_key_env_var_overrides_placeholder(monkeypatch):
+    monkeypatch.setenv("KILO_API_KEY", "test-key")
+    assert Kilo().api_key == "test-key"
+
+
 def test_get_available_llm_selects_groq(monkeypatch):
     """Test that get_available_llm() selects Groq when only GROQ_API_KEY is set."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
