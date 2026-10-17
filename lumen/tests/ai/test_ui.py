@@ -1500,6 +1500,25 @@ class TestLumenAIServeYamlRouting:
             bokeh_serve.build_single_handler_applications = original
 
 
+def test_serve_without_provider_lists_keyless_options(capsys):
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args(["serve", "data.csv"])
+    which = lambda name: f"/usr/bin/{name}" if name == "claude" else None
+    with (
+        patch("lumen.command.ai.get_available_llm", return_value=None),
+        patch("lumen.command.ai.shutil.which", side_effect=which),
+        pytest.raises(SystemExit),
+    ):
+        LumenAIServe(argparse.ArgumentParser()).invoke(args)
+    message = capsys.readouterr().err
+    assert "--provider kilo" in message
+    assert "--provider claude-code" in message
+    assert "--provider codex-cli" not in message
+    assert "ollama pull" in message
+    assert "OPENAI_API_KEY" in message
+
+
 @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
 class TestXarrayUploadHandler:
     """Tests for the xarray upload handler."""

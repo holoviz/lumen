@@ -4,6 +4,7 @@ import argparse
 import inspect
 import json
 import logging
+import shutil
 import sys
 import traceback
 
@@ -127,13 +128,25 @@ class LumenAIServe(Serve):
             provider_cls = get_available_llm()
 
         if provider is None and provider_cls is None:
-            raise RuntimeError(
-                "It looks like a Language Model provider isn't set up yet.\n"
-                "You have a few options to resolve this:\n\n"
-                "- Set environment variables with an API key: For example, OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"
-                "- Specify a provider and API key directly: For example, set `--provider openai` with your API key via --api-key.\n"
-                "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
-                "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
+            clis = [
+                name for name, class_name in LLM_PROVIDERS.items()
+                if issubclass(cls := getattr(lumen_llms, class_name), lumen_llms.LlmCli)
+                and shutil.which(cls.param.executable.default)
+            ]
+            cli_option = (
+                f"- Use a coding CLI found on your PATH: {', '.join(f'--provider {name}' for name in clis)}\n"
+                if clis else ""
+            )
+            ollama_model = lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
+            die(
+                "No LLM provider found: no API key is set and no local Ollama server has a model.\n"
+                "Pick one of these to get started:\n\n"
+                "- Free open models, no signup: --provider kilo\n"
+                f"{cli_option}"
+                f"- Run models locally: install Ollama, then `ollama pull {ollama_model}`\n"
+                "- Set an API key, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY\n"
+                "- Use an OpenAI-compatible server: --provider openai --provider-endpoint URL\n\n"
+                "Docs: https://lumen.holoviz.org/configuration/llm_providers/"
             )
 
         api_key = args.api_key
