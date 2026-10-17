@@ -2619,6 +2619,9 @@ class OpenAI(Llm, OpenAIMixin):
         are never overridden, so a deliberate choice still surfaces its error.
         """
         fixes = self._kwarg_fixes.setdefault(model, {})
+        # Some gateways (e.g. Kilo) report a dict here rather than a parameter name.
+        if not isinstance(error.param, str):
+            return False
         if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
             return False
         fixes[error.param] = ADAPTIVE_KWARGS[error.param]

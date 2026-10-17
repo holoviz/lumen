@@ -758,13 +758,13 @@ async def test_run_tool_loop_drops_max_retries_on_bare_client(monkeypatch):
 # Adaptive request kwargs
 # ---------------------------------------------------------------------------
 
-def _bad_request(param: str) -> openai.BadRequestError:
+def _bad_request(param: str | dict | None, message: str = "rejected") -> openai.BadRequestError:
     """The 400 OpenAI returns when a model rejects a request parameter."""
     request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
     return openai.BadRequestError(
-        "rejected",
+        message,
         response=httpx.Response(400, request=request),
-        body={"message": "rejected", "type": "invalid_request_error", "param": param},
+        body={"message": message, "type": "invalid_request_error", "param": param},
     )
 
 
@@ -826,6 +826,20 @@ async def test_rejected_reasoning_effort_is_disabled_and_retried(monkeypatch):
 
     assert "reasoning_effort" not in calls[1]
     assert calls[2]["reasoning_effort"] == "none"
+
+
+async def test_rejection_with_non_string_param_is_reraised(monkeypatch):
+    """Gateways such as Kilo put a dict in ``param``; the original error must
+    surface instead of a TypeError from the adaptive-kwargs lookup."""
+    llm = OpenAI(model_kwargs={"default": {"model": "m"}})
+    error = _bad_request({"error": "unsupported"})
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise error
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
 
 
 async def test_rejection_wrapped_by_instructor_is_still_adapted(monkeypatch):
