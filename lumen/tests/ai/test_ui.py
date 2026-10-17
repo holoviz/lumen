@@ -1554,6 +1554,42 @@ def test_serve_llm_model_url_uses_llama_cpp():
     assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
 
 
+def _invoke_serve(*argv):
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args(["serve", "data.csv", *argv])
+    original = bokeh_serve.build_single_handler_applications
+    try:
+        with patch.object(Serve, "invoke", return_value=True):
+            LumenAIServe(argparse.ArgumentParser()).invoke(args)
+    finally:
+        bokeh_serve.build_single_handler_applications = original
+
+
+def test_serve_cli_provider_missing_from_path_exits(capsys):
+    with patch("lumen.command.ai.shutil.which", return_value=None), pytest.raises(SystemExit):
+        _invoke_serve("--provider", "claude-code")
+    assert "`claude` was not found on your PATH" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("pulled, argv, warning", [
+    (None, [], "Could not reach Ollama at http://localhost:11434"),
+    (None, ["--provider-endpoint", "http://gpu:11434/v1"], "Could not reach Ollama at http://gpu:11434/v1"),
+    (["qwen3.5:9b"], ["--model", "gemma4:26b"], "`ollama pull gemma4:26b`, or use --model qwen3.5:9b"),
+    (["qwen3.5:latest"], ["--model", "qwen3.5"], None),
+    (["qwen3.5:9b"], ["--model", "qwen3.5:9b"], None),
+])
+def test_serve_ollama_preflight_warns(capsys, pulled, argv, warning):
+    with patch("lumen.command.ai.ollama_models", return_value=pulled) as models:
+        _invoke_serve("--provider", "ollama", *argv)
+    out = capsys.readouterr().out
+    if warning:
+        assert warning in out
+    else:
+        assert "Warning" not in out
+    assert models.call_args.args[0] == (argv[1] if argv[:1] == ["--provider-endpoint"] else None)
+
+
 @pytest.mark.parametrize("pulled, ollama_hint", [
     (None, "install Ollama, then `ollama pull"),
     ([], "Ollama is running with no models: `ollama pull"),

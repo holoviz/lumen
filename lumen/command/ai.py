@@ -212,6 +212,15 @@ class LumenAIServe(Serve):
                     })
                 except ValueError as e:
                     die(str(e))
+        if issubclass(provider_cls, lumen_llms.LlmCli):
+            executable = provider_cls.param.executable.default
+            if not shutil.which(executable):
+                die(
+                    f"`{executable}` was not found on your PATH. Install "
+                    f"{provider_cls.display_name} and sign in, or choose another --provider."
+                )
+        elif provider_cls is lumen_llms.Ollama:
+            _warn_if_ollama_not_ready(endpoint, model_kwargs)
         provider_cls.warmup(model_kwargs)
 
         agent_classes = [
@@ -257,6 +266,20 @@ class LumenAIServe(Serve):
         )
 
         return super().invoke(args)
+
+
+def _warn_if_ollama_not_ready(endpoint: str | None, model_kwargs: dict | None) -> None:
+    """Warn when the Ollama server is unreachable or lacks the requested model."""
+    model = (model_kwargs or {}).get("default", {}).get("model") or (
+        lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
+    )
+    pulled = ollama_models(endpoint)
+    if pulled is None:
+        url = endpoint or lumen_llms.Ollama.param.endpoint.default
+        print(f"Warning: Could not reach Ollama at {url}. Start it with `ollama serve`.")  # noqa: T201
+    elif model not in pulled and f"{model}:latest" not in pulled:
+        alternative = f", or use --model {pulled[0]}" if pulled else ""
+        print(f"Warning: Ollama has no model {model!r}. Run `ollama pull {model}`{alternative}.")  # noqa: T201
 
 
 class AIHandler(CodeHandler):
