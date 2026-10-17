@@ -21,6 +21,7 @@ try:
         MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
         ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM, LlamaCpp,
         Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
+        is_image_rejection,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -840,6 +841,68 @@ async def test_rejection_with_non_string_param_is_reraised(monkeypatch):
     monkeypatch.setattr(OpenAI, "_send", fake_send)
     with pytest.raises(openai.BadRequestError):
         await llm.run_client("default", [{"role": "user", "content": "hi"}])
+
+
+KILO_TEXT_ONLY = (
+    "Beam supports text input only. This conversation contains an image. "
+    "Remove the image from the conversation and try again."
+)
+
+
+@pytest.mark.parametrize("error", [
+    _bad_request({"error": KILO_TEXT_ONLY}, KILO_TEXT_ONLY),
+    openai.NotFoundError(
+        "No endpoints found that support image input",
+        response=httpx.Response(404, request=httpx.Request("POST", "https://api.kilo.ai/api/gateway")),
+        body=None,
+    ),
+], ids=["kilo-400", "openrouter-404"])
+async def test_rejected_image_is_dropped_and_vision_disabled(monkeypatch, error):
+    """A text-only model rejects image content; the text is still answerable,
+    so retry without the image and stop sending images to this LLM."""
+    llm = OpenAI(model_kwargs={"default": {"model": "text-only"}})
+    sent: list[list] = []
+
+    async def fake_send(self, _model_spec, messages, **kwargs):
+        sent.append([m["content"] for m in messages])
+        if any(isinstance(c, list) and any(isinstance(p, Image) for p in c) for c in sent[-1]):
+            raise RuntimeError("instructor gave up") from error
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    await llm.run_client("default", [{"role": "user", "content": ["describe", _make_test_image()]}])
+
+    assert sent[1] == [["describe"]]
+    assert llm._supports_vision is False
+    assert OpenAI._supports_vision is True
+
+
+@pytest.mark.parametrize("message", [
+    "Invalid image: exceeds the 20MB limit",
+    "unsupported image format: image/tiff",
+    "Could not process image",
+])
+async def test_bad_image_on_vision_model_is_raised(monkeypatch, message):
+    """A vision model complaining about one image keeps vision on; only a
+    model that cannot read images at all loses it."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise _bad_request(None, message)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": ["describe", _make_test_image()]}])
+    assert llm._supports_vision is True
+
+
+@pytest.mark.parametrize("message", [
+    KILO_TEXT_ONLY,
+    "No endpoints found that support image input",
+    "Invalid content type. image_url is only supported by certain models.",
+    "This model does not support image input",
+])
+def test_image_capability_errors_are_recognised(message):
+    assert is_image_rejection(_bad_request(None, message))
 
 
 async def test_rejection_wrapped_by_instructor_is_still_adapted(monkeypatch):

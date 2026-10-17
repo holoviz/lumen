@@ -200,6 +200,12 @@ ADAPTIVE_KWARGS = {
 # _check_for_image normalises it.
 IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
 
+# How OpenAI-compatible APIs and gateways say a model cannot read images at all.
+IMAGE_CAPABILITY_ERROR = re.compile(
+    r"(not|n't|endpoints found that) support images?\b|image_url is only supported|supports text(?: input)? only",
+    re.IGNORECASE,
+)
+
 # model_kwargs entries that configure routing rather than the provider client,
 # and so must never reach an SDK constructor.
 ROUTING_KEYS = ("routing", "description")
@@ -223,6 +229,36 @@ def build_route_spec_model(spec_keys: tuple[str, ...]) -> type[BaseModel]:
     re-derives the JSON schema per class, and routing runs on every call.
     """
     return create_model("RouteSpec", model_spec=(Literal[*spec_keys], ...))
+
+
+def strip_images(messages: list[Message]) -> list[Message]:
+    """Copy of messages with every image shape removed, keeping all text."""
+    stripped = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [
+                item for item in content
+                if not isinstance(item, IMAGE_TYPES)
+                and not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, IMAGE_TYPES):
+            content = ""
+        stripped.append({**message, "content": content})
+    return stripped
+
+
+def is_image_rejection(error: BaseException | None) -> bool:
+    """Whether a text-only model rejected image content somewhere on the cause chain.
+
+    Only capability errors count; a vision model rejecting one bad image
+    (too large, wrong format) keeps vision enabled.
+    """
+    while error is not None:
+        if isinstance(error, (openai.BadRequestError, openai.NotFoundError)) and IMAGE_CAPABILITY_ERROR.search(str(error)):
+            return True
+        error = error.__cause__
+    return False
 
 
 def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
@@ -673,19 +709,7 @@ class Llm(param.Parameterized):
         be dropped here, not just the OpenAI-native content-part dicts.
         """
         user_msgs = [m for m in messages if m.get("role") == "user"]
-        if not user_msgs:
-            return []
-        last = dict(user_msgs[-1])
-        content = last.get("content")
-        if isinstance(content, list):
-            last["content"] = [
-                item for item in content
-                if not isinstance(item, IMAGE_TYPES)
-                and not (isinstance(item, dict) and item.get("type") == "image_url")
-            ]
-        elif isinstance(content, IMAGE_TYPES):
-            last["content"] = ""
-        return [last]
+        return strip_images(user_msgs[-1:])
 
     def _routing_config(self, model_spec: str) -> dict | None:
         """The ``routing`` config governing *model_spec*, or None if it is not routed.
@@ -2635,6 +2659,13 @@ class OpenAI(Llm, OpenAIMixin):
             try:
                 return await self._send(model_spec, messages, **kwargs)
             except Exception as e:
+                # A text-only model can still answer the text, and later
+                # requests should not render images it cannot read.
+                if self._supports_vision and is_image_rejection(e):
+                    log_debug(f"Disabling vision: \033[96m{model!r}\033[0m rejected image input")
+                    self._supports_vision = False
+                    messages = strip_images(messages)
+                    continue
                 # instructor re-raises provider errors wrapped in its own
                 # retry exception, so the 400 is found on the cause chain.
                 error = find_bad_request(e)
