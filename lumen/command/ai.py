@@ -170,6 +170,10 @@ class LumenAIServe(Serve):
         temperature = args.temperature
         agents = args.agents
         log_level = args.log_level
+        if (log_level or "").lower() not in ("debug", "trace"):
+            # Lumen sends a single attempt and reports or recovers from the
+            # error itself, so instructor's per-attempt log only duplicates it.
+            logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
         logfire_tags = getattr(args, 'logfire_tags', None)
         model = getattr(args, 'model', None)
         code_execution = getattr(args, 'code_execution', 'hide')

@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import inspect
 import io
+import logging
 import sqlite3
 import sys
 import tempfile
@@ -1572,6 +1573,16 @@ def _invoke_serve(*argv):
             LumenAIServe(argparse.ArgumentParser()).invoke(args)
     finally:
         bokeh_serve.build_single_handler_applications = original
+
+
+@pytest.mark.parametrize("argv, quiet", [([], True), (["--log-level", "debug"], False)])
+def test_serve_quiets_instructor_retry_log(monkeypatch, argv, quiet):
+    """Lumen sends one attempt and handles the error itself, so instructor's
+    per-attempt error log only duplicates it, except when debugging."""
+    logger = logging.getLogger("instructor.v2.retry")
+    monkeypatch.setattr(logger, "level", logging.NOTSET)
+    _invoke_serve("--provider", "openai", *argv)
+    assert (logger.level == logging.CRITICAL) is quiet
 
 
 def test_serve_cli_provider_missing_from_path_exits(capsys):
