@@ -26,7 +26,7 @@ except ImportError as e:
 
 from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
-from ..ai.llm import LLM_PROVIDERS, get_available_llm
+from ..ai.llm import LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm
 from ..ai.utils import parse_huggingface_url, render_template
 from . import YAML_SUFFIXES
 
@@ -126,8 +126,14 @@ class LumenAIServe(Serve):
             provider = "llama"
         elif not provider:
             provider_cls = get_available_llm()
+            if provider_cls is not None:
+                # Name the provider so every session uses it instead of detecting again.
+                provider = next(name for name, cls_name in LLM_PROVIDERS.items() if cls_name == provider_cls.__name__)
+                env_var = PROVIDER_ENV_VARS.get(provider)
+                reason = f"{env_var} is set" if env_var else "a local Ollama server is running"
+                print(f"Using {provider_cls.display_name} because {reason}; pass --provider to choose another.")  # noqa: T201
 
-        if provider is None and provider_cls is None:
+        if provider is None:
             clis = [
                 name for name, class_name in LLM_PROVIDERS.items()
                 if issubclass(cls := getattr(lumen_llms, class_name), lumen_llms.LlmCli)

@@ -44,6 +44,7 @@ from lumen.ai.agents.vega_lite import (
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import MultiChartEditor, SQLEditor
+from lumen.ai.llm import OpenAI
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
@@ -1456,7 +1457,7 @@ class TestLumenAIServeYamlRouting:
         original = bokeh_serve.build_single_handler_applications
         try:
             with patch.object(Serve, "invoke", return_value=True):
-                with patch("lumen.command.ai.get_available_llm", return_value=MagicMock()):
+                with patch("lumen.command.ai.get_available_llm", return_value=OpenAI):
                     LumenAIServe(argparse.ArgumentParser()).invoke(args)
             # A real data file must still go through the AIHandler-backed
             # build_single_handler_applications override.
@@ -1487,7 +1488,7 @@ class TestLumenAIServeYamlRouting:
         try:
             data_args = self._build_args("data.csv")
             with patch.object(Serve, "invoke", return_value=True):
-                with patch("lumen.command.ai.get_available_llm", return_value=MagicMock()):
+                with patch("lumen.command.ai.get_available_llm", return_value=OpenAI):
                     LumenAIServe(argparse.ArgumentParser()).invoke(data_args)
             stale_closure = bokeh_serve.build_single_handler_applications
             assert stale_closure is not original
@@ -1508,6 +1509,29 @@ def test_ui_detects_llm_when_created_not_when_imported(monkeypatch):
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     assert isinstance(ExplorerUI().llm, Groq)
+
+
+def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
+    from lumen.ai.llm import Groq
+
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    data = str(Path(__file__).parents[1] / "sources" / "test.csv")
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args(["serve", data])
+    original = bokeh_serve.build_single_handler_applications
+    try:
+        with (
+            patch("lumen.command.ai.get_available_llm", return_value=Groq),
+            patch.object(Serve, "invoke", return_value=True),
+        ):
+            LumenAIServe(argparse.ArgumentParser()).invoke(args)
+        bokeh_serve.build_single_handler_applications([data])
+    finally:
+        bokeh_serve.build_single_handler_applications = original
+    out = capsys.readouterr().out
+    assert "Using Groq because GROQ_API_KEY is set" in out
+    assert "llm = lmai.llm.Groq()" in out
 
 
 def test_serve_without_provider_lists_keyless_options(capsys):
