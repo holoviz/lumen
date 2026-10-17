@@ -329,6 +329,22 @@ def test_duckdb_get_metadata_fills_empty_generated_columns():
     assert meta['columns']['count'] == {'description': 'Number of cells'}
 
 
+def test_duckdb_get_metadata_normalizes_columns_without_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})},
+        metadata_func=lambda tables: {t: {'description': 'Generated'} for t in tables},
+    )
+    user_area = {'description': 'Area in um^2'}
+    source.metadata = {'cells': {'columns': {'area': user_area, 'label': 'Cell label'}}}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns'] == {
+        'area': {'description': 'Area in um^2'},
+        'label': {'description': 'Cell label'},
+    }
+    assert meta['columns']['area'] is not user_area
+
+
 def test_duckdb_get_metadata_applies_user_descriptions_to_multiple_tables():
     source = DuckDBSource.from_df(tables={
         'cells': pd.DataFrame({'area': [1.0]}),
