@@ -101,7 +101,7 @@ See [SQLAlchemy documentation](https://docs.sqlalchemy.org/en/20/core/engines.ht
 lumen-ai serve --provider anthropic
 ```
 
-If not specified, Lumen auto-detects from environment variables.
+If not specified, Lumen auto-detects from environment variables, then a local Ollama server with its default model. When nothing is found it lists the options that work without a key.
 
 **Supported providers:**
 

@@ -312,6 +312,8 @@ Use a unified interface to access multiple LLM providers and models.
 
     [Kilo](https://kilo.ai/) provides an OpenAI-compatible API for accessing models from multiple providers through a single API key or its free tier.
 
+    The free tier needs no API key: run `lumen-ai serve --provider kilo` and skip the steps below. Get a key to use paid models.
+
     **Get your API key:**
     
     1. Visit [app.kilo.ai/profile](https://app.kilo.ai/profile)
