@@ -139,9 +139,9 @@ class LumenAIServe(Serve):
             )
             ollama_model = lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
             die(
-                "No LLM provider found: no API key is set and no local Ollama server has a model.\n"
+                "No LLM provider found: no API key is set and Ollama is not running with its default model.\n"
                 "Pick one of these to get started:\n\n"
-                "- Free open models, no signup: --provider kilo\n"
+                "- Free models, no signup: --provider kilo\n"
                 f"{cli_option}"
                 f"- Run models locally: install Ollama, then `ollama pull {ollama_model}`\n"
                 "- Set an API key, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY\n"
