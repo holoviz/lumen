@@ -19,7 +19,7 @@ from ..translate import function_to_model
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
 
 
-@dataclass(eq=False)
+@dataclass(eq=False, repr=False)
 class FunctionCall:
     """
     Record of a single FunctionTool invocation, kept so the call can be
@@ -41,14 +41,10 @@ class FunctionCall:
     # Whether the provided values were looked up by key in the returned dict
     unpack: bool = False
 
-
-class FunctionToolOutput(str):
-    """
-    The formatted text a FunctionTool returns, carrying the call that
-    produced it. It behaves exactly like the plain string.
-    """
-
-    call: FunctionCall | None = None
+    def __repr__(self) -> str:
+        # Leave out the argument values, which may be large or sensitive
+        name = getattr(self.function, '__name__', repr(self.function))
+        return f"FunctionCall({name}({', '.join(self.arguments)}))"
 
 
 def define_tool(
@@ -210,18 +206,19 @@ class FunctionTool(Tool):
                 out_model[self.provides[0]] = result
             else:
                 out_model.update({key: result[key] for key in self.provides})
-        output = FunctionToolOutput(self.formatter.format(
+        output = self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
-        ))
-        output.call = FunctionCall(
+        )
+        # Returned alongside the text so exports can repeat the call
+        call = FunctionCall(
             function=self.function,
             arguments=arguments,
             provides=list(self.provides),
             unpack=bool(self.provides) and not (len(self.provides) == 1 and not isinstance(result, dict)),
         )
-        return [output], out_model
+        return [output, call], out_model
 
 
 class ToolUser(Actor):

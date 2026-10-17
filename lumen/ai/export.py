@@ -1,6 +1,7 @@
 import ast
 import base64
 import inspect
+import keyword
 import os
 import re
 import sys
@@ -117,6 +118,14 @@ def format_output(output: Any):
         ])
     return nbformat.v4.new_code_cell(source='\n'.join(code)), ext
 
+# Argument names whose values are left out of exported code, since they
+# may hold credentials
+_SECRET_NAME = re.compile(
+    r'(?:^|_)(?:pass(?:word|wd)?|pwd|secret|credentials?|auth)(?:_|$)'
+    r'|(?:api|access|private|secret)_?key$|token$',
+    re.IGNORECASE,
+)
+
 def _literal_repr(value: Any) -> str | None:
     """Return repr(value) if it evaluates back to a Python literal."""
     try:
@@ -126,53 +135,100 @@ def _literal_repr(value: Any) -> str | None:
         return None
     return text
 
-def _function_definition(function) -> list[str]:
-    """
-    Return the lines that make ``function`` available in the notebook,
-    either an import or, for functions that cannot be imported, their
-    source without decorators.
-    """
-    name = getattr(function, '__name__', None) or repr(function)
-    module = getattr(function, '__module__', None)
-    qualname = getattr(function, '__qualname__', name)
-    importable = (
-        module not in (None, '__main__') and qualname == name and
-        getattr(sys.modules.get(module), name, None) is function
-    )
-    if importable:
-        return [f'from {module} import {name}']
-    if inspect.isfunction(function) and name != '<lambda>':
-        try:
-            source = dedent(inspect.getsource(function))
-            node = ast.parse(source).body[0]
-        except (OSError, TypeError, SyntaxError, IndexError):
-            node = None
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            # Drop decorators, e.g. @define_tool, which only matter to Lumen
-            return source.splitlines()[node.lineno-1:]
-    return [f'# {name} could not be imported or its source found; define it before running this cell.']
+def assigned_names(source: str) -> set[str]:
+    """Return the top level names a code cell assigns or imports."""
+    try:
+        tree = compile(
+            source, '<cell>', 'exec',
+            flags=ast.PyCF_ONLY_AST | ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
+        )
+    except SyntaxError:
+        return set()
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                names.update(
+                    sub.id for sub in ast.walk(target)
+                    if isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store)
+                )
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update((alias.asname or alias.name).split('.')[0] for alias in node.names)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+    return names
 
-def format_function_call(call: FunctionCall):
+def _function_name(function) -> str | None:
+    """The name ``function`` can be called by, if it has a usable one."""
+    name = getattr(function, '__name__', None)
+    if isinstance(name, str) and name.isidentifier() and not keyword.iskeyword(name):
+        return name
+    return None
+
+def _function_import(function, name: str) -> str | None:
+    """An import statement for ``function``, if it can be imported by name."""
+    module = getattr(function, '__module__', None)
+    if module in (None, '__main__') or getattr(function, '__qualname__', name) != name:
+        return None
+    if getattr(sys.modules.get(module), name, None) is not function:
+        return None
+    return f'from {module} import {name}'
+
+def format_function_call(call: FunctionCall, defined: set[str] | None = None):
     """
     Render a FunctionTool call as a code cell that repeats the call,
     assigning the returned values to the context keys it provides.
-    """
-    function = call.function
-    name = getattr(function, '__name__', 'function')
-    lines = _function_definition(function)
-    lines.append('')
 
-    args, context_args = [], []
+    Arguments
+    ---------
+    call: FunctionCall
+        The recorded call.
+    defined: set[str] | None
+        Names defined by earlier cells of the notebook. Arguments that are
+        not Python literals are passed by name, and any name not defined
+        earlier is reported by a placeholder that stops the cell with a
+        clear error instead of a bare NameError.
+    """
+    defined = set(defined or ())
+    function = call.function
+    name = _function_name(function)
+    if name is None:
+        # e.g. a functools.partial, which has no name to call it by
+        return nbformat.v4.new_code_cell(source=(
+            f'# The call to {function!r} cannot be repeated here, since it has no name to call it by.'
+        ))
+
+    lines, notes, missing = [], [], []
+    import_line = _function_import(function, name)
+    if import_line:
+        lines.append(import_line)
+    elif name not in defined:
+        # The source is not copied, since that would drop its imports and closures
+        missing.append(name)
+        notes.append(f'# {name} cannot be imported, so it must be defined before this cell.')
+
+    args = []
     for key, value in call.arguments.items():
         literal = _literal_repr(value)
-        if literal is None:
-            context_args.append(key)
-            args.append(f'{key}={key}')
-        else:
+        if literal is not None and not (isinstance(value, str) and _SECRET_NAME.search(key)):
             args.append(f'{key}={literal}')
-    if context_args:
-        names = ', '.join(context_args)
-        lines.append(f'# Expects {names} from the Lumen context, e.g. defined by an earlier cell')
+            continue
+        args.append(f'{key}={key}')
+        if key in defined:
+            continue
+        missing.append(key)
+        if literal is None:
+            notes.append(f'# {key} came from the Lumen context and is not defined by an earlier cell.')
+        else:
+            notes.append(f'# {key} was left out because it may hold a secret.')
+
+    if missing:
+        names = ', '.join(missing)
+        lines.extend(notes)
+        lines.append(f'raise NameError("Define {names} before running this cell")')
+    if lines:
+        lines.append('')
 
     is_async = inspect.iscoroutinefunction(function)
     call_str = f"{'await ' if is_async else ''}{name}({', '.join(args)})"
@@ -190,10 +246,10 @@ def format_function_call(call: FunctionCall):
     return nbformat.v4.new_code_cell(source='\n'.join(lines))
 
 def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
-    cells, extensions = [], []
+    cells, extensions, defined = [], [], set()
     for out in outputs:
         if isinstance(out, FunctionCall):
-            cells.append(format_function_call(out))
+            cells.append(format_function_call(out, defined))
         elif isinstance(out, Markdown):
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
@@ -202,6 +258,8 @@ def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
                 cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
+        if cells and cells[-1].cell_type == 'code':
+            defined |= assigned_names(cells[-1].source)
     return cells, extensions
 
 def write_notebook(cells):

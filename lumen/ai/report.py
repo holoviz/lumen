@@ -40,12 +40,12 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    docx_add_chart, docx_add_markdown, docx_add_table, format_function_call,
-    format_output, make_md_cell, make_preamble, write_notebook,
+    assigned_names, docx_add_chart, docx_add_markdown, docx_add_table,
+    format_function_call, format_output, make_md_cell, make_preamble,
+    write_notebook,
 )
 from .llm import Llm, Message
 from .tools import FunctionCall, FunctionTool, Tool
-from .tools.base import FunctionToolOutput
 from .utils import (
     content_to_text, extract_block_source, get_block_names, set_content_text,
     wrap_logfire_on_method,
@@ -1193,6 +1193,8 @@ class Report(TaskGroup):
             )
         cells, extensions = [], ['tabulator']
         pending_headers = []
+        # Names defined by earlier code cells, which later calls can refer to
+        defined = set()
         for out in self._export_views:
             cell = ext = None
             if isinstance(out, Typography):
@@ -1206,7 +1208,7 @@ class Report(TaskGroup):
             elif isinstance(out, LumenEditor):
                 cell, ext = format_output(out)
             elif isinstance(out, FunctionCall):
-                cell = format_function_call(out)
+                cell = format_function_call(out, defined)
             elif isinstance(out, str):
                 cell = make_md_cell(out)
             elif isinstance(out, ChatMessage):
@@ -1223,6 +1225,8 @@ class Report(TaskGroup):
             cells.extend(pending_headers)
             pending_headers.clear()
             cells.append(cell)
+            if cell.cell_type == 'code':
+                defined |= assigned_names(cell.source)
             if ext and ext not in extensions:
                 extensions.append(ext)
         cells = make_preamble("", extensions=extensions) + cells
@@ -1514,8 +1518,6 @@ class ActorTask(ExecutableTask):
             # Handle View/Viewable results regardless of agent type
             rendered = []
             for o in views:
-                if isinstance(o, FunctionToolOutput) and o.call is not None:
-                    o = o.call
                 if isinstance(o, FunctionCall):
                     # Not rendered, but kept in order so exports can repeat the call
                     rendered.append(o)
