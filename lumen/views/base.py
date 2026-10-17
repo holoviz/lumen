@@ -1186,13 +1186,20 @@ class hvPlotUIView(hvPlotBaseView):
         return (data,), dict(params, **self.kwargs)
 
     def __panel__(self):
-        panel = self.get_panel()
+        explorer = self.get_panel()
+        layout = self._fit_explorer(explorer)
         def ui(*events):
             gridded = self._source_dataset()
-            panel._data = gridded if gridded is not None else self.get_data()
-            panel._plot()
-            return panel
+            explorer._data = gridded if gridded is not None else self.get_data()
+            explorer._plot()
+            return layout
         return pn.bind(ui, self.param.rerender)
+
+    def _fit_explorer(self, explorer):
+        layout = getattr(explorer, '_layout', None)
+        if layout is not None:
+            layout.param.update(height=None, min_height=500, sizing_mode='stretch_both')
+        return pn.Column(explorer, sizing_mode='stretch_both', scroll='y-auto')
 
     def get_panel(self):
         # An xarray-backed pipeline explores the compact gridded Dataset (via
