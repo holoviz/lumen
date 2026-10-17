@@ -274,11 +274,11 @@ def find_bad_request(error: BaseException | None) -> openai.BadRequestError | No
     return None
 
 
-def ollama_models(endpoint: str | None = None) -> list[str] | None:
+def ollama_models(endpoint: str | None = None, timeout: float = 0.5) -> list[str] | None:
     """The models pulled on an Ollama server, or None if it is not reachable."""
     base_url = (endpoint or Ollama.param.endpoint.default).rstrip("/").removesuffix("/v1")
     try:
-        tags = requests.get(f"{base_url}/api/tags", timeout=0.5).json()
+        tags = requests.get(f"{base_url}/api/tags", timeout=timeout).json()
     except requests.RequestException:
         return None
     return [model["name"] for model in tags.get("models", [])]
@@ -1216,7 +1216,6 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _extract_reasoning(cls, response: Any) -> dict[str, Any]:
-        """The reasoning fields a model returned alongside its tool calls."""
         if not getattr(response, "choices", None):
             return {}
         message = getattr(response.choices[0], "message", None)
@@ -1228,7 +1227,7 @@ class Llm(param.Parameterized):
         if not getattr(chunk, "choices", None):
             return
         delta = getattr(chunk.choices[0], "delta", None)
-        for key in ("reasoning_content", "reasoning"):
+        for key in REASONING_FIELDS:
             if isinstance(piece := getattr(delta, key, None), str):
                 reasoning[key] = reasoning.get(key, "") + piece
 
@@ -3734,11 +3733,7 @@ class Ollama(OpenAI):
 
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
-        base_url = (endpoint or self.endpoint).rstrip('/').removesuffix('/v1')
-        tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
-        if tags_response.status_code != 200:
-            return set()
-        return {m.get("name", "") for m in tags_response.json().get("models", [])}
+        return set(ollama_models(endpoint or self.endpoint, timeout=5) or ())
 
 
 class MLX(Llm):

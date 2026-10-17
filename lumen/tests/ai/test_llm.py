@@ -574,6 +574,11 @@ def test_groq_endpoint():
     assert groq.endpoint == "https://api.groq.com/openai/v1"
 
 
+def test_ollama_models_lists_pulled_models(monkeypatch):
+    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags([{"name": "qwen3.5:9b"}]))
+    assert Ollama().models() == {"qwen3.5:9b"}
+
+
 def test_kilo_uses_free_tier_without_api_key(monkeypatch):
     """Kilo sends a placeholder key so its free tier works without signing up."""
     monkeypatch.delenv("KILO_API_KEY", raising=False)
