@@ -14,7 +14,7 @@ export OPENAI_API_KEY="sk-..."
 lumen-ai serve penguins.csv
 ```
 
-Lumen auto-detects the provider from environment variables.
+Lumen auto-detects the provider from environment variables, falling back to a local Ollama server with a model pulled.
 
 ### Specify provider explicitly
 

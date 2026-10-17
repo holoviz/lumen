@@ -234,27 +234,33 @@ def find_bad_request(error: BaseException | None) -> openai.BadRequestError | No
     return None
 
 
+def _ollama_has_models() -> bool:
+    """Whether a local Ollama server is running with at least one model pulled."""
+    base_url = Ollama.param.endpoint.default.removesuffix("/v1")
+    try:
+        return bool(requests.get(f"{base_url}/api/tags", timeout=0.5).json().get("models"))
+    except requests.RequestException:
+        return False
+
+
 def get_available_llm() -> type[Llm] | None:
     """
-    Detect and instantiate an available LLM provider by checking environment variables
-    and attempting to instantiate each provider in order.
+    Detect an available LLM provider: the first one whose API key environment
+    variable is set, otherwise a local Ollama server with a model pulled.
+
+    Providers that need no key, such as the coding CLIs, are only used when
+    requested explicitly.
 
     Returns
     -------
     type[Llm] | None
-        The LLM class if successful, or None if no provider is available.
+        The LLM class, or None if no provider is available.
     """
     for provider, class_name in LLM_PROVIDERS.items():
         env_var = PROVIDER_ENV_VARS.get(provider)
-        if env_var and not os.environ.get(env_var):
-            continue
-
-        try:
-            provider_cls = globals()[class_name]
-            return provider_cls
-        except KeyError:
-            continue
-    return None
+        if env_var and os.environ.get(env_var):
+            return globals()[class_name]
+    return Ollama if _ollama_has_models() else None
 
 
 class Llm(param.Parameterized):

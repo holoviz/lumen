@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import openai
 import pytest
+import requests
 
 try:
     import lumen.ai as lmai
@@ -18,8 +19,8 @@ try:
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
-        ClaudeCode, CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm,
-        LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM, LlamaCpp,
+        Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -182,13 +183,47 @@ def test_api_key_from_modified_provider_env_vars(monkeypatch):
         OpenAI.api_key_env_var = original
 
 
-def test_get_available_llm_returns_local_provider_when_no_env_vars_set(monkeypatch):
-    """get_available_llm returns a local provider when no cloud API keys are set."""
+def _ollama_tags(models):
+    response = MagicMock(ok=True)
+    response.json.return_value = {"models": models}
+    return MagicMock(return_value=response)
+
+
+def test_get_available_llm_returns_none_without_keys_or_ollama(monkeypatch):
+    """With no API key and no Ollama server, nothing is detected."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    # Local providers (no env var required) should still be returned
-    result = lmai.llm.get_available_llm()
-    assert result is not None
+    monkeypatch.setattr(lmai.llm.requests, "get", MagicMock(side_effect=requests.ConnectionError))
+    assert lmai.llm.get_available_llm() is None
+
+
+def test_get_available_llm_returns_ollama_with_pulled_model(monkeypatch):
+    """A local Ollama server with a model is used when no API key is set."""
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    get = _ollama_tags([{"name": "qwen3.5:9b"}])
+    monkeypatch.setattr(lmai.llm.requests, "get", get)
+    assert lmai.llm.get_available_llm() is Ollama
+    assert get.call_args.kwargs["timeout"] == 0.5
+
+
+def test_get_available_llm_skips_ollama_without_models(monkeypatch):
+    """An Ollama server with nothing pulled cannot answer, so it is not detected."""
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags([]))
+    assert lmai.llm.get_available_llm() is None
+
+
+def test_get_available_llm_prefers_api_key_over_ollama(monkeypatch):
+    """An API key wins over a running Ollama server, without probing it."""
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("KILO_API_KEY", "test-key")
+    get = _ollama_tags([{"name": "qwen3.5:9b"}])
+    monkeypatch.setattr(lmai.llm.requests, "get", get)
+    assert lmai.llm.get_available_llm() is Kilo
+    get.assert_not_called()
 
 
 def test_get_available_llm_returns_correct_provider(monkeypatch):
