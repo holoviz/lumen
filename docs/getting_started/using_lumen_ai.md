@@ -75,7 +75,7 @@ Use the [navigation menu](navigating_the_ui.md#understanding-explorations) to mo
 - **Customize agents** — Edit underlying agent prompts to change behavior
 - **Choose what to export** — Untick any chart, table, or note to leave it out of the export
 - **Annotate as a story** — Turn the report into a readable, editable narrative.
-- **Export all** — Download everything as a single Jupyter notebook
+- **Export all** — Download everything as a Jupyter notebook, an HTML page or a Word document
 
 ### Annotate a report as a story
 
@@ -107,7 +107,7 @@ Export your session as a Jupyter notebook so you can reproduce, share, or build 
 Use **Export Notebook** in the navigation menu to download a notebook containing the current exploration's questions, queries, and visualizations.
 
 **Export all explorations:**
-Switch to **Report** mode (via the left sidebar), then use **Export Notebook** to download everything as a single notebook.
+Switch to **Report** mode (via the left sidebar), then use **Export** to download everything as a single notebook, HTML page or Word document. Word export needs `pip install python-docx`.
 
 The notebook includes:
 

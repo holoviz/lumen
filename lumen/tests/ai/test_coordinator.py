@@ -17,7 +17,7 @@ from instructor.dsl.partial import Partial
 from panel.pane import Image
 from panel.tests.util import async_wait_until
 from panel_material_ui import (
-    Card, ChatMessage, ChatStep, Column, Typography,
+    Card, ChatFeed, ChatMessage, ChatStep, Column, Typography,
 )
 from pydantic import ValidationError
 
@@ -961,3 +961,12 @@ async def test_planner_history_excludes_validation_messages(llm, monkeypatch):
         await planner.respond([{"role": "user", "content": "Now plot them"}], {})
     assert "Query Validation" not in str(captured["messages"])
     assert "Show totals" in str(captured["messages"])
+
+
+def test_chat_steps_shrink_with_a_narrow_chat_column():
+    """Steps line up by filling the chat column, so they shrink with it rather than overflow."""
+    with ChatFeed().add_step(title="Plan") as step:
+        pass
+
+    assert step.min_width is None
+    assert step.sizing_mode == "stretch_width"

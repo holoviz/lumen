@@ -250,7 +250,9 @@ def numpy_representer(dumper, data):
 
     return dumper.represent_data(data)
 
-pn.chat.ChatStep.min_width = 375
+# Steps fill the chat column so they line up, and shrink with it instead of
+# overflowing a fixed minimum width.
+pn.chat.ChatStep.sizing_mode = 'stretch_width'
 pn.chat.ChatStep.collapsed_on_success = False
 
 disable_pydantic_error_url()

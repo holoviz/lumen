@@ -2115,6 +2115,26 @@ def _spec_has_aggregate(spec: Any) -> bool:
     return False
 
 
+def _pin_value(grid: Any, dim: str) -> Any:
+    """
+    Return the first coord value of ``dim`` encoded like its SQL column.
+
+    xarray-sql >= 0.6 restores cftime coords on the dataset, while the SQL
+    column holds them encoded: microseconds counted in the calendar for
+    Gregorian-like calendars, int64 offsets for 360_day and julian. The pin
+    must use the same encoding or the filter never matches.
+    """
+    from xarray_sql import cftime as xsql_cftime
+
+    value = grid[dim].values[:1]
+    if not xsql_cftime.is_cftime(value):
+        return value[0]
+    units, calendar = xsql_cftime.encoding(grid, dim)
+    if xsql_cftime.is_gregorian_like(calendar):
+        return xsql_cftime.to_microseconds(value).astype('datetime64[us]')[0]
+    return xsql_cftime.to_offsets(value, units, calendar)[0]
+
+
 def subset_gridded_to_2d(
     pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
 ) -> Pipeline:
@@ -2129,11 +2149,9 @@ def subset_gridded_to_2d(
     not gridded or the spec already references every dimension.
     """
     # The compact gridded dataset (lazy, coords only -- never the long-form
-    # frame) carries just this variable's dims and, crucially, its coords in the
-    # materialized column's dtype (e.g. cftime coords become datetime64 there),
-    # so both the dims to collapse and the pin values come from it. Pinning from
-    # the raw dataset would leave cftime dims uncollapsed (the object value can't
-    # match the datetime64 column).
+    # frame) carries just this variable's dims and its coords, so both the dims
+    # to collapse and the pin values come from it; _pin_value encodes cftime
+    # coords the way xarray-sql stores them in the SQL column.
     # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
     # a temporal mean) reduces over every dim it does not plot. Pinning those
     # dims to one slice would make the aggregate run on a single slice and
@@ -2150,7 +2168,7 @@ def subset_gridded_to_2d(
     if not collapse:
         return pipeline
     filters = [
-        ConstantFilter(field=dim, value=grid[dim].values[0]) for dim in collapse
+        ConstantFilter(field=dim, value=_pin_value(grid, dim)) for dim in collapse
     ]
     return pipeline.chain(filters=filters)
 
@@ -2231,6 +2249,8 @@ def normalize_vegalite_spec(
             vega_spec["height"] = "container"
 
     editor_type.validate_spec(vega_spec)
+    _thin_band_labels(vega_spec)
+    _fix_comma_number_formats(vega_spec)
 
     # using string comparison because these keys could be in different nested levels
     vega_spec_str = dump_yaml(vega_spec)
@@ -2242,6 +2262,61 @@ def normalize_vegalite_spec(
     #     # because those result in an blank plot without error
     #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
     return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
+
+
+def _fix_comma_number_formats(spec: Any) -> None:
+    """Rewrite a bare ``,`` number format to ``,~r`` wherever the spec has one.
+
+    Vega pairs ``,`` with a precision of its own and prints 6000 as 6e+3, while
+    ``,~r`` rounds to significant digits and trims zeros. The model writes the
+    bare form on axes, legends, tooltips and config however deep they sit, so
+    every nesting is walked. Only the exact string is touched, so time formats
+    and a ``data.format`` object are left alone.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _fix_comma_number_formats(item)
+    elif isinstance(spec, dict):
+        for key, value in spec.items():
+            if key in ("format", "numberFormat") and value == ",":
+                spec[key] = ",~r"
+            else:
+                _fix_comma_number_formats(value)
+
+
+def _thin_band_labels(spec: Any) -> None:
+    """Let heatmap axes drop overlapping labels.
+
+    Vega-Lite prints one label per band on discrete axes, so a rect heatmap of
+    a gridded dataset with 50 longitudes gets 50 labels rotated into an
+    unreadable strip. Parity thinning drops every other label until they fit.
+    Only rect marks are touched: on a bar chart each label names a bar.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _thin_band_labels(item)
+        return
+    if not isinstance(spec, dict):
+        return
+    mark = spec.get("mark")
+    if (mark.get("type") if isinstance(mark, dict) else mark) == "rect":
+        _thin_rect_axes(spec.get("encoding", {}))
+    for value in spec.values():
+        _thin_band_labels(value)
+
+
+def _thin_rect_axes(encodings: dict) -> None:
+    """Set parity label thinning on the discrete x/y axes of a rect mark."""
+    for channel in ("x", "y"):
+        encoding = encodings.get(channel)
+        if not isinstance(encoding, dict) or encoding.get("type") not in ("ordinal", "nominal"):
+            continue
+        if "axis" in encoding and not isinstance(encoding["axis"], dict):
+            continue  # axis: null hides the axis entirely
+        axis = encoding.setdefault("axis", {})
+        axis.setdefault("labelOverlap", "parity")
+        if channel == "x":
+            axis.setdefault("labelAngle", 0)
 
 
 def _add_zoom_params(vega_spec: dict) -> None:

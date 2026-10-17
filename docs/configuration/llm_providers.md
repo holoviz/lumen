@@ -23,7 +23,7 @@ To use a specific provider, pass the `--provider` flag:
 ``` bash
 lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-3.8-flash'
-lumen-ai serve penguins.csv --provider kilo --model 'openai/gpt-4o-mini'
+lumen-ai serve penguins.csv --provider kilo --model 'openai/gpt-5.4-mini'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3.6:35b-a3b'
 lumen-ai serve penguins.csv --provider mlx
 ```
@@ -32,17 +32,14 @@ For more CLI options, see the [CLI guide](../configuration/cli.md#configure-llm)
 
 ## Different models per agent
 
-Use cheap models for simple tasks, powerful models for complex tasks:
+Give any agent its own model by adding its model type to `model_kwargs`:
 
-``` py title="Cost-optimized configuration" hl_lines="4-7"
+``` py title="Different models per agent" hl_lines="4-5"
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-6-luna"},  # Cheap for most agents
-    "sql": {"model": "gpt-4.1"},           # Powerful for SQL
-    "vega_lite": {"model": "gpt-4.1"},     # Powerful for charts
-    "deck_gl": {"model": "gpt-4.1"},       # Powerful for 3D maps
-    "analyst": {"model": "gpt-4.1"},       # Powerful for analysis
+    "default": {"model": "gpt-6-luna"},   # Lumen's default and its cheapest OpenAI model
+    "sql": {"model": "gpt-5.6-luna"},     # A different model just for SQLAgent
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
@@ -64,9 +61,9 @@ from lumen.ai.llm import OpenAI
 
 async def main():
     llm = OpenAI(
-        model_kwargs={"default": {"model": "gpt-4o-mini"}},
+        model_kwargs={"default": {"model": "gpt-6-luna"}},
         usage_pricing={
-            "gpt-4o-mini": {"input": 0.15, "cached": 0.075, "output": 0.60},
+            "gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
         },
     )
     with llm.capture_usage() as request_usage:
@@ -123,13 +120,14 @@ For installation and API key setup instructions, see the [Installation guide](..
 |----------|---------------|----------------|
 | **OpenAI** | `gpt-6-luna` | `gpt-5.6-luna`, `gpt-6-sol`, `gpt-5.4-nano` |
 | **Anthropic** | `claude-haiku-4-5` | `claude-sonnet-4-6`, `claude-opus-4-6` |
-| **Google** | `gemini-3.8-flash` | `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.1-flash-lite` |
+| **Google** | `gemini-3.8-flash` | `gemini-3.6-flash`, `gemini-3.1-flash-lite` |
 | **Mistral** | `mistral-small-latest` | `mistral-medium-latest`, `mistral-large-latest`, `ministral-14b-latest` |
 | **Azure OpenAI** | `gpt-5.4-mini` | `gpt-5.4`, `gpt-5.4-nano` |
 | **Azure Mistral** | `azureai` | `mistral-large`, `mistral-small` |
+| **Groq** | `openai/gpt-oss-120b` | `openai/gpt-oss-20b`, `qwen/qwen3.8-27b` |
 
 !!! warning "Reasoning Models Not Suitable for Dialog"
-    Reasoning models like `gpt-5`, `o4-mini`, and `gemini-2.0-flash-thinking` are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
+    Reasoning models that cannot turn reasoning off, such as `gpt-6.1-sol` and `gemini-3.1-pro-preview`, are **significantly slower** than standard models. They are designed for single, complex queries that require deep thinking, not interactive chat interfaces. For dialog-based applications like Lumen, use standard models for better user experience.
 
     The OpenAI default, `gpt-6-luna`, is a reasoning model. Chat completions rejects function tools while reasoning is active, so Lumen disables reasoning for it and keeps it as fast as a standard model. To use reasoning with function tools, switch to the responses API: `lmai.llm.OpenAI(api="responses")`. Some models, such as `gpt-6.1-sol`, cannot disable reasoning and only work with the responses API.
 
@@ -393,6 +391,8 @@ The default values for each provider are:
 | `AzureOpenAI` / `AzureMistralAI` | `AZUREAI_ENDPOINT_KEY` |
 | `Bedrock` / `AnthropicBedrock` | `AWS_ACCESS_KEY_ID` |
 | `AICatalyst` | `AI_CATALYST_API_KEY` |
+| `Groq` | `GROQ_API_KEY` |
+| `Kilo` | `KILO_API_KEY` |
 | `Ollama`, `LlamaCpp`, `MLX`, `AINavigator` | *(none required)* |
 
 ### Checking available models
@@ -604,7 +604,8 @@ Agent class names convert to model types automatically:
 |-------|------------|
 | SQLAgent | `sql` |
 | VegaLiteAgent | `vega_lite` |
-| DeckGLAgent | `deck_gl` |
+| DeckGLAgent | `deckgl` |
+| hvPlotAgent | `hv_plot` |
 | ChatAgent | `chat` |
 | AnalysisAgent | `analysis` |
 | (others) | `default` |
@@ -637,11 +638,11 @@ For OpenRouter and LiteLLM, use the `provider/model` format for routed models.
 
 **Wrong model used** - Model type names must be snake_case: `"sql"` not `"SQLAgent"`.
 
-**High costs** - Use `gpt-5.4-mini` or `claude-haiku-4-5` for `default`, reserve `gpt-5.4` or `claude-sonnet-4-6` for critical tasks (`sql`, `vega_lite`, `analyst`).
+**High costs** - Use `gpt-5.4-mini` or `claude-haiku-4-5` for `default`, reserve `gpt-5.4` or `claude-sonnet-4-6` for critical tasks (`sql`, `vega_lite`, `analysis`).
 
 **Slow responses** - Local models are slower than cloud APIs. Use cloud providers when speed matters.
 
-**AWS credentials not found** - For Bedrock, ensure AWS credentials are configured. See [Installation guide](../installation.md#aws-bedrock-gateway).
+**AWS credentials not found** - For Bedrock, ensure AWS credentials are configured. See [Installation guide](../installation.md#router-multi-provider).
 
 ## Best practices
 

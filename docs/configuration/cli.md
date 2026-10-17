@@ -105,18 +105,29 @@ If not specified, Lumen auto-detects from environment variables.
 
 **Supported providers:**
 
-- `openai` - Requires `OPENAI_API_KEY`
-- `anthropic` - Requires `ANTHROPIC_API_KEY`
-- `google` - Requires `GEMINI_API_KEY`
-- `mistral` - Requires `MISTRAL_API_KEY`
-- `azure-openai` - Requires `AZUREAI_ENDPOINT_KEY`
-- `ollama` - Local models
-- `llama-cpp` - Local models
-- `litellm` - Multi-provider
-- `codex-cli` - Locally authenticated Codex CLI
-- `claude-code` - Locally authenticated Claude Code CLI
-- `copilot-cli` - Locally authenticated GitHub Copilot CLI
-- `antigravity-cli` - Locally authenticated Google Antigravity CLI
+| Provider | Requires |
+|----------|----------|
+| `openai` | `OPENAI_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `google` | `GEMINI_API_KEY` |
+| `mistral` | `MISTRAL_API_KEY` |
+| `azure-openai` | `AZUREAI_ENDPOINT_KEY` |
+| `azure-mistral` | `AZUREAI_ENDPOINT_KEY` |
+| `groq` | `GROQ_API_KEY` |
+| `bedrock` | AWS credentials |
+| `anthropic-bedrock` | AWS credentials |
+| `openrouter` | `OPENROUTER_API_KEY` |
+| `kilo` | `KILO_API_KEY` |
+| `litellm` | Keys for the providers it routes to |
+| `ai-catalyst` | `AI_CATALYST_API_KEY` |
+| `ollama` | A running Ollama server |
+| `llama-cpp` | Nothing, downloads the model on first use |
+| `mlx` | Apple Silicon and `mlx-lm` |
+| `ai-navigator` | A running AI Navigator API server |
+| `codex-cli` | A signed-in Codex CLI |
+| `claude-code` | A signed-in Claude Code CLI |
+| `copilot-cli` | A signed-in GitHub Copilot CLI |
+| `antigravity-cli` | A signed-in Google Antigravity CLI |
 
 ### Set API key
 
@@ -142,7 +153,7 @@ lumen-ai serve --provider ollama --model 'qwen3.6:35b-a3b'
 ```
 
 ``` bash title="Different providers"
-lumen-ai serve --provider openai --model 'gpt-4o-mini'
+lumen-ai serve --provider openai --model 'gpt-6-luna'
 lumen-ai serve --provider anthropic --model 'claude-sonnet-4-6'
 lumen-ai serve --provider google --model 'gemini-3.8-flash'
 ```
@@ -155,9 +166,8 @@ For multiple models or additional parameters, use `--model-kwargs` with JSON:
 
 ``` bash title="Multiple models for different tasks"
 lumen-ai serve --model-kwargs '{
-  "default": {"model": "gpt-4o-mini"},
-  "sql": {"model": "gpt-4o"},
-  "edit": {"model": "gpt-4o"}
+  "default": {"model": "gpt-6-luna"},
+  "sql": {"model": "gpt-5.6-luna"}
 }'
 ```
 
@@ -200,17 +210,21 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 
 | Flag | Purpose | Example |
 |------|---------|---------|
-| `--code-execution` | [Code execution mode](../getting_started/using_lumen_ai.md#code-execution-for-visualizations) | `--code-execution prompt` |
+| `--code-execution` | [Code execution mode](../getting_started/building_lumen_apps.md#enable-code-execution): `hidden` (default), `disabled`, `prompt`, `llm` or `allow` | `--code-execution prompt` |
 | `--provider` | LLM provider | `--provider anthropic` |
 | `--api-key` | API key | `--api-key sk-...` |
 | `--model` | Default model | `--model 'qwen3.6:35b-a3b'` |
-| `--model-kwargs` | Advanced model config | `--model-kwargs '{"sql": {"model": "gpt-4o"}}'` |
+| `--model-kwargs` | Advanced model config | `--model-kwargs '{"sql": {"model": "gpt-5.6-luna"}}'` |
 | `--temperature` | Randomness | `--temperature 0.5` |
 | `--agents` | Active agents | `--agents SQLAgent ChatAgent` |
 | `--port` | Server port | `--port 8080` |
 | `--address` | Network address | `--address 0.0.0.0` |
 | `--show` | Auto-open browser | `--show` |
 | `--log-level` | Verbosity | `--log-level DEBUG` |
+| `--provider-endpoint` | Custom API endpoint, e.g. an OpenAI-compatible server | `--provider-endpoint http://localhost:8000/v1` |
+| `--llm-model-url` | GGUF model for `llama-cpp`, with model kwargs as query params | `--llm-model-url 'https://huggingface.co/.../model.gguf'` |
+| `--validation-mode` | Instructor mode for structured output | `--validation-mode tool_call` |
+| `--logfire-tags` | Enable Logfire logging with these tags | `--logfire-tags dev lumen` |
 
 !!! tip "Small models (<= 8B)"
     Models with 8B parameters or fewer likely need `--code-execution prompt` to successfully create reliable Vega-Lite specifications.
@@ -223,8 +237,8 @@ Agent names are case-insensitive. The "Agent" suffix is optional: `sql` = `sqlag
 ``` bash title="Complete configuration"
 lumen-ai serve penguins.csv \
   --provider openai \
-  --model 'gpt-4o-mini' \
-  --model-kwargs '{"sql": {"model": "gpt-4o"}}' \
+  --model 'gpt-6-luna' \
+  --model-kwargs '{"sql": {"model": "gpt-5.6-luna"}}' \
   --temperature 0.5 \
   --agents SQLAgent ChatAgent VegaLiteAgent \
   --port 8080 \

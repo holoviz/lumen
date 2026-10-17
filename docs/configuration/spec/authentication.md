@@ -2,8 +2,8 @@
 
 Restrict dashboard access to authorized users.
 
-!!! note "Documentation in progress"
-    Detailed authentication documentation is coming soon. For now, see the Panel authentication guide.
+!!! note "Built on Panel authentication"
+    Lumen dashboards use Panel's authentication. This page covers the common setups; the [Panel authentication guide](https://panel.holoviz.org/how_to/authentication/index.html) lists every OAuth provider and option.
 
 ## Quick start
 

@@ -1760,6 +1760,10 @@ class VegaLiteView(View):
             datasets = dict(self.spec.get('datasets', {}))
             datasets[self.pipeline.table] = df
             spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
+            # A lat/lon map's basemap layer brings its own url, but the point layers
+            # beside it carry no data and would draw nothing without the table.
+            if 'data' not in spec and any('data' not in layer for layer in spec.get('layer', [])):
+                spec['data'] = {'name': self.pipeline.table}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):

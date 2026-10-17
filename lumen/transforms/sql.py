@@ -233,7 +233,11 @@ class SQLTransform(Transform):
             SQL string representation
         """
         if self.optimize:
-            expression = optimize(expression, dialect=self.read)
+            # No schema is available here, and sqlglot >= 30.22 raises on any
+            # column it cannot resolve without one.
+            expression = optimize(
+                expression, dialect=self.read, validate_qualify_columns=False
+            )
 
         expression = self._add_encoding_to_read_csv(expression=expression)
 
