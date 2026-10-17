@@ -19,9 +19,9 @@ try:
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
-        ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM, LlamaCpp,
-        Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
-        is_image_rejection,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM,
+        LlamaCpp, Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter,
+        WebLLM, is_image_rejection,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool

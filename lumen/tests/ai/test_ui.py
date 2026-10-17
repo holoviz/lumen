@@ -45,7 +45,9 @@ from lumen.ai.agents.vega_lite import (
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import MultiChartEditor, SQLEditor
-from lumen.ai.llm import PROVIDER_ENV_VARS, Groq, LlamaCpp, OpenAI
+from lumen.ai.llm import (
+    PROVIDER_ENV_VARS, Groq, LlamaCpp, OpenAI,
+)
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
