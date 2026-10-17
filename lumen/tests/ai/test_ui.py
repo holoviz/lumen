@@ -1500,6 +1500,16 @@ class TestLumenAIServeYamlRouting:
             bokeh_serve.build_single_handler_applications = original
 
 
+def test_ui_detects_llm_when_created_not_when_imported(monkeypatch):
+    """A key set after ``import lumen.ai`` is still picked up, as in a notebook."""
+    from lumen.ai.llm import PROVIDER_ENV_VARS, Groq
+
+    for env_var in PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    assert isinstance(ExplorerUI().llm, Groq)
+
+
 def test_serve_without_provider_lists_keyless_options(capsys):
     parser = argparse.ArgumentParser()
     LumenAIServe(parser.add_subparsers().add_parser("serve"))

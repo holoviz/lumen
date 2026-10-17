@@ -53,10 +53,10 @@ def test_llm_usage_survives_param_deepcopy():
     assert (llm.usage.input_tokens, copied.usage.input_tokens) == (2, 7)
 
 
-def test_default_llm_can_be_copied_by_param():
-    from lumen.ai.ui import UI
+def test_default_llm_can_be_copied():
+    from lumen.ai.ui import _get_default_llm
 
-    original = UI.param["llm"].default
+    original = _get_default_llm()
     copied = deepcopy(original)
     assert copied.usage is not original.usage
 

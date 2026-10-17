@@ -423,8 +423,9 @@ class UI(Viewer):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
-        The LLM provider to be used by default""")
+    llm = param.ClassSelector(class_=Llm, default=None, doc="""
+        The LLM provider to use. Detected from the environment when the UI
+        is created if not provided.""")
 
     llm_tools = param.List(default=[], doc="""
         Extra tools for the coordinator's :attr:`~lumen.ai.actor.LLMUser.llm_tools`
@@ -504,6 +505,8 @@ class UI(Viewer):
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
+        if self.llm is None:
+            self.llm = _get_default_llm()
         self._current_mode = "Exploration"
         self._report = None
         self._report_plans = None
