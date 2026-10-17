@@ -579,6 +579,39 @@ def test_ollama_models_lists_pulled_models(monkeypatch):
     assert Ollama().models() == {"qwen3.5:9b"}
 
 
+@pytest.mark.parametrize("returncode, stdout, expected", [
+    (0, '{"loggedIn": true, "authMethod": "claude.ai"}', True),
+    (0, '{"loggedIn": false}', False),
+    (1, "", False),
+])
+def test_claude_code_signed_in_reads_auth_status(monkeypatch, returncode, stdout, expected):
+    run = MagicMock(return_value=SimpleNamespace(returncode=returncode, stdout=stdout))
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert ClaudeCode.signed_in() is expected
+    assert run.call_args.args[0] == ["claude", "auth", "status"]
+
+
+@pytest.mark.parametrize("returncode, expected", [(0, True), (1, False)])
+def test_codex_signed_in_reads_login_status(monkeypatch, returncode, expected):
+    run = MagicMock(return_value=SimpleNamespace(returncode=returncode, stdout=""))
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert CodexCli.signed_in() is expected
+    assert run.call_args.args[0] == ["codex", "login", "status"]
+
+
+def test_cli_without_status_command_cannot_say(monkeypatch):
+    run = MagicMock()
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert CopilotCli.signed_in() is None
+    run.assert_not_called()
+
+
+def test_local_cli_providers_only_lists_installed(monkeypatch):
+    monkeypatch.setattr(lmai.llm.shutil, "which", lambda exe: "/usr/bin/claude" if exe == "claude" else None)
+    monkeypatch.setattr(ClaudeCode, "signed_in", classmethod(lambda cls: True))
+    assert lmai.llm.local_cli_providers() == {ClaudeCode: True}
+
+
 def test_kilo_uses_free_tier_without_api_key(monkeypatch):
     """Kilo sends a placeholder key so its free tier works without signing up."""
     monkeypatch.delenv("KILO_API_KEY", raising=False)

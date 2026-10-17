@@ -27,7 +27,8 @@ except ImportError as e:
 from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.llm import (
-    LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, ollama_models,
+    LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, local_cli_providers,
+    ollama_models, provider_name,
 )
 from ..ai.utils import parse_huggingface_url, render_template
 from . import YAML_SUFFIXES
@@ -130,20 +131,18 @@ class LumenAIServe(Serve):
             provider_cls = get_available_llm()
             if provider_cls is not None:
                 # Name the provider so every session uses it instead of detecting again.
-                provider = next(name for name, cls_name in LLM_PROVIDERS.items() if cls_name == provider_cls.__name__)
+                provider = provider_name(provider_cls)
                 env_var = PROVIDER_ENV_VARS.get(provider)
                 reason = f"{env_var} is set" if env_var else "a local Ollama server is running"
                 print(f"Using {provider_cls.display_name} because {reason}; pass --provider to choose another.")  # noqa: T201
 
         if provider is None:
-            clis = [
-                name for name, class_name in LLM_PROVIDERS.items()
-                if issubclass(cls := getattr(lumen_llms, class_name), lumen_llms.LlmCli)
-                and shutil.which(cls.param.executable.default)
-            ]
-            cli_option = (
-                f"- Use a coding CLI found on your PATH: {', '.join(f'--provider {name}' for name in clis)}\n"
-                if clis else ""
+            clis = local_cli_providers()
+            ready = ", ".join(f"--provider {provider_name(cls)}" for cls, signed_in in clis.items() if signed_in)
+            unready = ", ".join(f"--provider {provider_name(cls)}" for cls, signed_in in clis.items() if not signed_in)
+            cli_options = (
+                (f"- Use a coding CLI you are signed in to: {ready}\n" if ready else "")
+                + (f"- Sign in to one of these coding CLIs first: {unready}\n" if unready else "")
             )
             ollama_model = lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
             pulled = ollama_models()
@@ -157,7 +156,7 @@ class LumenAIServe(Serve):
                 "No LLM provider found: no API key is set and Ollama is not running with its default model.\n"
                 "Pick one of these to get started:\n\n"
                 "- Free models, no signup: --provider kilo\n"
-                f"{cli_option}"
+                f"{cli_options}"
                 f"{ollama_option}"
                 "- Set an API key, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY\n"
                 "- Use an OpenAI-compatible server: --provider openai --provider-endpoint URL\n\n"
@@ -222,6 +221,11 @@ class LumenAIServe(Serve):
                 die(
                     f"`{executable}` was not found on your PATH. Install "
                     f"{provider_cls.display_name} and sign in, or choose another --provider."
+                )
+            if provider_cls.signed_in() is False:
+                die(
+                    f"{provider_cls.display_name} reports no signed-in user. Sign in to "
+                    f"`{executable}` first, or choose another --provider."
                 )
         elif provider_cls is lumen_llms.Ollama:
             _warn_if_ollama_not_ready(endpoint, model_kwargs)

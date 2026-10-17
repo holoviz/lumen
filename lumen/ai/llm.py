@@ -7,6 +7,8 @@ import inspect
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import traceback
@@ -282,6 +284,20 @@ def ollama_models(endpoint: str | None = None, timeout: float = 0.5) -> list[str
     except requests.RequestException:
         return None
     return [model["name"] for model in tags.get("models", [])]
+
+
+def provider_name(llm_cls: type[Llm]) -> str:
+    """The ``LLM_PROVIDERS`` key, e.g. the ``--provider`` value, for an LLM class."""
+    return next(name for name, class_name in LLM_PROVIDERS.items() if class_name == llm_cls.__name__)
+
+
+def local_cli_providers() -> dict[type[LlmCli], bool | None]:
+    """Coding CLI providers installed on PATH, mapped to whether they report a signed-in user."""
+    return {
+        cls: cls.signed_in()
+        for class_name in LLM_PROVIDERS.values()
+        if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
+    }
 
 
 def get_available_llm() -> type[Llm] | None:
@@ -1716,6 +1732,27 @@ class LlmCli(Llm):
     _supports_model_stream = False
     _supports_vision = False
 
+    # Arguments that make the CLI report whether a user is signed in, if it has such a command.
+    _auth_status_args: tuple[str, ...] = ()
+
+    @classmethod
+    def _auth_status(cls) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                [cls.param.executable.default, *cls._auth_status_args],
+                capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    @classmethod
+    def signed_in(cls) -> bool | None:
+        """Whether the CLI reports a signed-in user, or None if it has no way to say."""
+        if not cls._auth_status_args:
+            return None
+        result = cls._auth_status()
+        return result is not None and result.returncode == 0
+
     def _create_base_client(self, **kwargs) -> Any:
         raise NotImplementedError("CLI-backed providers do not create an SDK client.")
 
@@ -1897,6 +1934,8 @@ class CodexCli(LlmCli):
 
     executable = param.String(default="codex", constant=True)
 
+    _auth_status_args = ("login", "status")
+
     sandbox = param.Selector(
         default="read-only",
         objects=["read-only", "workspace-write", "danger-full-access"],
@@ -1939,6 +1978,8 @@ class ClaudeCode(LlmCli):
 
     executable = param.String(default="claude", constant=True)
 
+    _auth_status_args = ("auth", "status")
+
     permission_mode = param.Selector(
         default="plan",
         objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
@@ -1954,6 +1995,17 @@ class ClaudeCode(LlmCli):
     )
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    @classmethod
+    def signed_in(cls) -> bool:
+        # `claude auth status` prints JSON whose loggedIn field is the answer.
+        result = cls._auth_status()
+        if result is None or result.returncode != 0:
+            return False
+        try:
+            return json.loads(result.stdout).get("loggedIn") is True
+        except json.JSONDecodeError:
+            return False
 
     def _build_command(self, model: str | None) -> list[str]:
         command = [
