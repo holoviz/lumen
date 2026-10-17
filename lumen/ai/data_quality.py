@@ -70,7 +70,7 @@ def _lint_sentinels(df: pd.DataFrame) -> list[str]:
     numeric = df.select_dtypes(include="number")
     if numeric.empty:
         return []
-    hits = {}
+    hits, found = {}, set()
     for col, values in numeric.items():
         sentinel = values.isin(LINT_SENTINELS)
         if not sentinel.any():
@@ -82,10 +82,11 @@ def _lint_sentinels(df: pd.DataFrame) -> list[str]:
             sentinel &= (values < others.min()) | (values > others.max())
         if count := int(sentinel.sum()):
             hits[col] = f"{count} rows"
+            found.update(values[sentinel].unique().tolist())
     if not hits:
         return []
     return [
-        f"Placeholder numbers {list(LINT_SENTINELS)} appear as data in "
+        f"Placeholder numbers {sorted(found)} appear as data in "
         f"{_format_column_hits(hits)}; they almost certainly encode missing values."
     ]
 
