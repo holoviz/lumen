@@ -173,6 +173,14 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     assert len(ui.interface) == 2
     assert len(ui.interface[1].footer_objects) == 2 # Rerun buttons
 
+async def test_llm_failure_alert_points_to_ai_model_settings(explorer_ui):
+    explorer_ui.llm.initialize = AsyncMock(side_effect=RuntimeError("no API key"))
+    await explorer_ui._initialize_new_llm()
+    message = explorer_ui._error_alert.object
+    assert "Settings > Configure AI Models" in message
+    assert "Kilo" in message
+
+
 async def test_sync_sources_survives_partial_init(explorer_ui):
     """_sync_sources can run before _render_page has set up _exploration/_cta,
     e.g. when __init__ aborted partway through _configure_context (#1780)."""

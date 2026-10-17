@@ -755,7 +755,10 @@ class UI(Viewer):
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
-                self._error_alert.object = "LLM connection failed; try another LLM under Preferences or check logs for more details."
+                self._error_alert.object = (
+                    "Could not connect to the LLM. Open Settings > Configure AI Models to pick another "
+                    "provider, such as Kilo for free models without an account, or check the logs for details."
+                )
                 self._error_alert.visible = True
                 self._chat_input.disabled = True
         finally:
