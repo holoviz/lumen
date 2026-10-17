@@ -196,6 +196,10 @@ ADAPTIVE_KWARGS = {
     "reasoning_effort": "none",
 }
 
+# Fields in which reasoning models return their reasoning. Some require it to be
+# sent back on each assistant tool-call message, under the name they used.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details")
+
 # Every content shape a message may carry an image in, before and after
 # _check_for_image normalises it.
 IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
@@ -924,7 +928,8 @@ class Llm(param.Parameterized):
             )
             if state.answer is not None:
                 return state.answer
-            messages_curr = messages_curr + [self._tool_calls_message(tool_calls)] + tool_messages
+            tool_calls_message = self._tool_calls_message(tool_calls, self._extract_reasoning(output))
+            messages_curr = messages_curr + [tool_calls_message] + tool_messages
             if stop:
                 break
             output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
@@ -1201,12 +1206,31 @@ class Llm(param.Parameterized):
         }
 
     @classmethod
-    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
+    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]], reasoning: dict[str, Any] | None = None) -> Message:
         return Message(
             role="assistant",
             content="",
             tool_calls=[cls._normalize_tool_call_for_message(call) for call in tool_calls],
+            **(reasoning or {}),
         )
+
+    @classmethod
+    def _extract_reasoning(cls, response: Any) -> dict[str, Any]:
+        """The reasoning fields a model returned alongside its tool calls."""
+        if not getattr(response, "choices", None):
+            return {}
+        message = getattr(response.choices[0], "message", None)
+        return {key: value for key in REASONING_FIELDS if (value := getattr(message, key, None))}
+
+    @classmethod
+    def _accumulate_reasoning(cls, reasoning: dict[str, str], chunk: Any) -> None:
+        """Join streamed reasoning text; structured reasoning_details deltas are not merged."""
+        if not getattr(chunk, "choices", None):
+            return
+        delta = getattr(chunk.choices[0], "delta", None)
+        for key in ("reasoning_content", "reasoning"):
+            if isinstance(piece := getattr(delta, key, None), str):
+                reasoning[key] = reasoning.get(key, "") + piece
 
     @classmethod
     def _format_tool_result(cls, result: Any) -> str:
@@ -1551,6 +1575,7 @@ class Llm(param.Parameterized):
 
         tool_call_accum: dict[int, dict[str, Any]] = {}
         tool_call_order: list[int] = []
+        reasoning: dict[str, str] = {}
         response_id: str | None = None
         try:
             async for chunk in chunks:
@@ -1561,6 +1586,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -1576,6 +1602,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -1613,7 +1640,7 @@ class Llm(param.Parameterized):
                     ):
                         yield chunk
                 else:
-                    tool_calls_message = self._tool_calls_message(tool_calls)
+                    tool_calls_message = self._tool_calls_message(tool_calls, reasoning)
                     async for chunk in self.stream(
                         messages + [tool_calls_message] + tool_messages,
                         system=system,
