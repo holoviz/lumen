@@ -234,19 +234,21 @@ def find_bad_request(error: BaseException | None) -> openai.BadRequestError | No
     return None
 
 
-def _ollama_has_models() -> bool:
-    """Whether a local Ollama server is running with at least one model pulled."""
+def _ollama_has_default_model() -> bool:
+    """Whether a local Ollama server is running with Ollama's default model pulled."""
     base_url = Ollama.param.endpoint.default.removesuffix("/v1")
+    model = Ollama.param.model_kwargs.default["default"]["model"]
     try:
-        return bool(requests.get(f"{base_url}/api/tags", timeout=0.5).json().get("models"))
+        tags = requests.get(f"{base_url}/api/tags", timeout=0.5).json()
     except requests.RequestException:
         return False
+    return any(m.get("name") == model for m in tags.get("models", []))
 
 
 def get_available_llm() -> type[Llm] | None:
     """
     Detect an available LLM provider: the first one whose API key environment
-    variable is set, otherwise a local Ollama server with a model pulled.
+    variable is set, otherwise a local Ollama server with its default model pulled.
 
     Providers that need no key, such as the coding CLIs, are only used when
     requested explicitly.
@@ -260,7 +262,7 @@ def get_available_llm() -> type[Llm] | None:
         env_var = PROVIDER_ENV_VARS.get(provider)
         if env_var and os.environ.get(env_var):
             return globals()[class_name]
-    return Ollama if _ollama_has_models() else None
+    return Ollama if _ollama_has_default_model() else None
 
 
 class Llm(param.Parameterized):

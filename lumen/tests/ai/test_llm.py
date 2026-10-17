@@ -197,21 +197,22 @@ def test_get_available_llm_returns_none_without_keys_or_ollama(monkeypatch):
     assert lmai.llm.get_available_llm() is None
 
 
-def test_get_available_llm_returns_ollama_with_pulled_model(monkeypatch):
-    """A local Ollama server with a model is used when no API key is set."""
+def test_get_available_llm_returns_ollama_with_default_model(monkeypatch):
+    """A local Ollama server with its default model is used when no API key is set."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    get = _ollama_tags([{"name": "qwen3.5:9b"}])
+    get = _ollama_tags([{"name": Ollama.param.model_kwargs.default["default"]["model"]}])
     monkeypatch.setattr(lmai.llm.requests, "get", get)
     assert lmai.llm.get_available_llm() is Ollama
     assert get.call_args.kwargs["timeout"] == 0.5
 
 
-def test_get_available_llm_skips_ollama_without_models(monkeypatch):
-    """An Ollama server with nothing pulled cannot answer, so it is not detected."""
+@pytest.mark.parametrize("models", [[], [{"name": "qwen3.5:9b"}]])
+def test_get_available_llm_skips_ollama_without_default_model(monkeypatch, models):
+    """Ollama would fail on its first call without its default model, so it is not detected."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags([]))
+    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags(models))
     assert lmai.llm.get_available_llm() is None
 
 
