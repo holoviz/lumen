@@ -53,6 +53,18 @@ class TestLintData:
         })
         assert not any("Placeholder numbers" in f for f in lint_data(df))
 
+    def test_sentinel_message_names_only_flagged_values(self):
+        # 9999 sits inside the range of the other values, so only -9999 is a placeholder
+        df = pd.DataFrame({"x": [-9999, 5, 9999, 20000, 30]})
+        findings = [f for f in lint_data(df) if "Placeholder numbers" in f]
+        assert len(findings) == 1
+        assert "[-9999]" in findings[0]
+        assert "9999," not in findings[0].replace("-9999", "")
+
+    def test_sentinel_nullable_dtype_reported(self):
+        df = pd.DataFrame({"a": pd.array([1, 2, None, -9999, 5], dtype="Int64")})
+        assert any('"a" (1 rows)' in f for f in lint_data(df))
+
     def test_sentinel_only_column_reported(self):
         df = pd.DataFrame({"reading": [-9999.0, -9999.0, None]})
         findings = lint_data(df)
