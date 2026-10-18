@@ -11,11 +11,7 @@ from ..config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from ..context import ContextModel, TContext
 from ..llm import Message
 from ..schemas import (
-    Column,
-    DocumentChunk,
-    Metaset,
-    TableCatalogEntry,
-    TablesMetadata,
+    Column, DocumentChunk, Metaset, TableCatalogEntry, TablesMetadata,
 )
 from ..table_stats import get_stats_store
 from ..utils import log_debug
