@@ -3123,7 +3123,7 @@ class Anthropic(Llm, AnthropicMixin):
             and self._uses_native_structured_output(model)
         ):
             native_result = await self._run_native_structured(
-                model, filtered_messages, response_model, **kwargs
+                model, filtered_messages, **kwargs
             )
             if native_result is not None:
                 return native_result
