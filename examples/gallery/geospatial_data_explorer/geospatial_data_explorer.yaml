@@ -1,0 +1,90 @@
+config:
+  title: Geospatial Data Explorer
+  theme: dark
+
+sources:
+  service_locations:
+    type: file
+    cache_per_query: false
+    tables:
+      locations: ["./city_service_locations.csv", "csv"]
+
+pipelines:
+  locations:
+    source: service_locations
+    table: locations
+    filters:
+      - type: widget
+        field: category
+      - type: widget
+        field: visitors_per_day
+      - type: widget
+        field: rating
+    transforms:
+      - type: columns
+        columns:
+          - name
+          - category
+          - city
+          - longitude
+          - latitude
+          - visitors_per_day
+          - rating
+      - type: project_lnglat
+        longitude: longitude
+        latitude: latitude
+
+  selected:
+    pipeline: locations
+    filters:
+      - type: param
+        parameter: service_map.selection_expr
+
+layouts:
+  - title: City Service Locations
+    views:
+      service_map:
+        type: hvplot
+        pipeline: locations
+        kind: points
+        x: longitude
+        y: latitude
+        c: category
+        tiles: ESRI
+        responsive: true
+        height: 500
+        xaxis: null
+        yaxis: null
+        selection_group: service_locations
+        streaming: true
+
+      service_table:
+        type: table
+        pipeline: selected
+        hidden_columns:
+          - longitude
+          - latitude
+        page_size: 10
+        sizing_mode: stretch_width
+        show_index: false
+        theme: midnight
+
+      visitors_hist:
+        type: hvplot
+        pipeline: locations
+        kind: hist
+        y: visitors_per_day
+        responsive: true
+        height: 250
+        selection_group: service_locations
+        streaming: true
+
+      rating_hist:
+        type: hvplot
+        pipeline: locations
+        kind: hist
+        y: rating
+        responsive: true
+        height: 250
+        selection_group: service_locations
+        streaming: true
