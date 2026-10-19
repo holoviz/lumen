@@ -50,6 +50,10 @@ Example dashboards built with Lumen YAML specifications.
 
     Wind turbine performance metrics and geographic distribution
 
+-   :material-map-marker-multiple: **[Geospatial Data Explorer](geospatial_data_explorer.md)**
+
+    Interactive map of city service locations with filters, linked selections, and histograms
+
 </div>
 
 ## How to use these examples
