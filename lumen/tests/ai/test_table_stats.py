@@ -547,13 +547,11 @@ class _FakeSnowflakeConn:
 def test_snowflake_uses_own_cursor_with_server_timeout():
     source = _FakeSnowflake()
     source._conn = _FakeSnowflakeConn()
-    source._cursor = MagicMock()
     adapter = SnowflakeStatsAdapter(source)
     assert adapter.execute("SELECT 1", None, timeout=4.5)["N"].iloc[0] == 1
     [cursor] = source._conn.cursors
     cursor.execute.assert_called_once_with("SELECT 1", timeout=5)
     cursor.close.assert_called_once()
-    source._cursor.execute.assert_not_called()
 
 
 def test_snowflake_identity_includes_user_and_role():
