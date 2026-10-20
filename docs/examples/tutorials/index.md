@@ -74,6 +74,17 @@ Turn recurring analytics requests into one-click reproducible reports. Build an 
 - Wrapping agents with ActorTask for narrative insights
 - Organizing reports with Sections and sharing context between tasks
 
+### [Geospatial Data Explorer](geospatial_data_explorer.md)
+Build an interactive geospatial dashboard using a local CSV dataset. Learn how to map coordinates, add filters, connect selections, and explore geographic data with multiple visualizations.
+
+**You'll learn:**
+
+- Loading geographic point data from CSV
+- Plotting longitude and latitude on a map
+- Adding interactive filters and pipeline transforms
+- Connecting map selections to tables and charts
+- Exploring visitor counts and ratings with histograms
+
 ## More Coming Soon
 
 We're constantly adding new tutorials. Check back regularly or [contribute your own](../../contributing.md)!
