@@ -303,10 +303,10 @@ def local_cli_providers() -> dict[type[LlmCli], bool | None]:
 def get_available_llm() -> type[Llm] | None:
     """
     Detect an available LLM provider: the first one whose API key environment
-    variable is set, otherwise a local Ollama server with its default model pulled.
+    variable is set.
 
-    Providers that need no key, such as the coding CLIs, are only used when
-    requested explicitly.
+    Providers that need no key, such as Ollama and the coding CLIs, are only
+    used when requested explicitly.
 
     Returns
     -------
@@ -317,8 +317,7 @@ def get_available_llm() -> type[Llm] | None:
         env_var = PROVIDER_ENV_VARS.get(provider)
         if env_var and os.environ.get(env_var):
             return globals()[class_name]
-    default_model = Ollama.param.model_kwargs.default["default"]["model"]
-    return Ollama if default_model in (ollama_models() or []) else None
+    return None
 
 
 class Llm(param.Parameterized):

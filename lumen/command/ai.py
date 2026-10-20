@@ -132,9 +132,10 @@ class LumenAIServe(Serve):
             if provider_cls is not None:
                 # Name the provider so every session uses it instead of detecting again.
                 provider = provider_name(provider_cls)
-                env_var = PROVIDER_ENV_VARS.get(provider)
-                reason = f"{env_var} is set" if env_var else "a local Ollama server is running"
-                print(f"Using {provider_cls.display_name} because {reason}; pass --provider to choose another.")  # noqa: T201
+                print(  # noqa: T201
+                    f"Using {provider_cls.display_name} because {PROVIDER_ENV_VARS[provider]} is set; "
+                    "pass --provider to choose another."
+                )
 
         if provider is None:
             clis = local_cli_providers()
@@ -153,13 +154,13 @@ class LumenAIServe(Serve):
             else:
                 ollama_option = f"- Ollama is running with no models: `ollama pull {ollama_model}`\n"
             die(
-                "No LLM provider found: no API key is set and Ollama is not running with its default model.\n"
+                "No LLM provider found: no API key is set.\n"
                 "Pick one of these to get started:\n\n"
                 "- Free models, no signup: --provider kilo\n"
                 f"{cli_options}"
-                f"{ollama_option}"
                 "- Set an API key, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY\n"
-                "- Use an OpenAI-compatible server: --provider openai --provider-endpoint URL\n\n"
+                "- Use an OpenAI-compatible server: --provider openai --provider-endpoint URL\n"
+                f"{ollama_option}\n"
                 "Docs: https://lumen.holoviz.org/configuration/llm_providers/"
             )
 

@@ -190,41 +190,14 @@ def _ollama_tags(models):
     return MagicMock(return_value=response)
 
 
-def test_get_available_llm_returns_none_without_keys_or_ollama(monkeypatch):
-    """With no API key and no Ollama server, nothing is detected."""
-    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
-        monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.setattr(lmai.llm.requests, "get", MagicMock(side_effect=requests.ConnectionError))
-    assert lmai.llm.get_available_llm() is None
-
-
-def test_get_available_llm_returns_ollama_with_default_model(monkeypatch):
-    """A local Ollama server with its default model is used when no API key is set."""
+def test_get_available_llm_returns_none_without_keys(monkeypatch):
+    """Without an API key nothing is detected, even a ready local Ollama server,
+    which is only suggested alongside the other keyless options."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
     get = _ollama_tags([{"name": Ollama.param.model_kwargs.default["default"]["model"]}])
     monkeypatch.setattr(lmai.llm.requests, "get", get)
-    assert lmai.llm.get_available_llm() is Ollama
-    assert get.call_args.kwargs["timeout"] == 0.5
-
-
-@pytest.mark.parametrize("models", [[], [{"name": "qwen3.5:9b"}]])
-def test_get_available_llm_skips_ollama_without_default_model(monkeypatch, models):
-    """Ollama would fail on its first call without its default model, so it is not detected."""
-    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
-        monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags(models))
     assert lmai.llm.get_available_llm() is None
-
-
-def test_get_available_llm_prefers_api_key_over_ollama(monkeypatch):
-    """An API key wins over a running Ollama server, without probing it."""
-    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
-        monkeypatch.delenv(env_var, raising=False)
-    monkeypatch.setenv("KILO_API_KEY", "test-key")
-    get = _ollama_tags([{"name": "qwen3.5:9b"}])
-    monkeypatch.setattr(lmai.llm.requests, "get", get)
-    assert lmai.llm.get_available_llm() is Kilo
     get.assert_not_called()
 
 
