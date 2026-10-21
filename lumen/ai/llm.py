@@ -15,10 +15,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
-from urllib.parse import urlsplit
 from typing import (
     TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
 )
+from urllib.parse import urlsplit
 
 import instructor
 import openai
