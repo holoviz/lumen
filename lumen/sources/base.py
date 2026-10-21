@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import datetime
+import decimal
 import fnmatch
 import hashlib
 import json
@@ -1145,6 +1148,33 @@ class BaseSQLSource(Source):
         for sql_transform in sql_transforms:
             sql_expr = sql_transform.apply(sql_expr)
         return type(source)(**dict(source._init_args, sql_expr=sql_expr))
+
+    def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
+        """
+        Convert decimal.Decimal values to float, as Bokeh's ColumnDataSource
+        cannot serialize them, and date/datetime object columns to datetime64.
+
+        Each object column is checked on its first ``sample`` non-null values,
+        so a mostly-NULL column is still detected and the result does not
+        depend on a random draw. Values of any other type are kept as is.
+        """
+        df = df.copy()
+        # Positional access, as SQL results may repeat a column name
+        for i in np.flatnonzero(df.dtypes == "object"):
+            column = df.iloc[:, i]
+            values = column.dropna().head(sample)
+            if values.map(lambda v: isinstance(v, decimal.Decimal)).any():
+                df.isetitem(i, column.map(
+                    lambda v: float(v) if isinstance(v, decimal.Decimal) else v
+                ).infer_objects())
+            elif len(values) and values.map(
+                lambda v: isinstance(v, (datetime.datetime, datetime.date))
+            ).all():
+                # Mixed time zones or non-date values past the sample cannot be
+                # converted; leave the column unchanged rather than lose data
+                with contextlib.suppress(ValueError, TypeError):
+                    df.isetitem(i, pd.to_datetime(column))
+        return df
 
     def normalize_table(self, table: str) -> str:
         """

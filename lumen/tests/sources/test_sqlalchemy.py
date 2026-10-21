@@ -1,5 +1,7 @@
 import datetime as dt
+import decimal
 import os
+import sqlite3
 
 from unittest.mock import PropertyMock, patch
 
@@ -439,6 +441,122 @@ def test_sqlalchemy_execute(memory_source):
     assert len(result) == 1
     assert result.iloc[0]['id'] == 1
     assert result.iloc[0]['name'] == 'Alice'
+
+
+def test_cast_to_supported_dtypes_casts_decimal_to_float(memory_source):
+    df = pd.DataFrame({
+        'amount': [decimal.Decimal('1.50'), decimal.Decimal('2.25'), None],
+        'name': ['a', 'b', 'c'],
+        'count': [1, 2, 3],
+    })
+
+    out = memory_source._cast_to_supported_dtypes(df)
+
+    assert out['amount'].dtype.kind == 'f'
+    assert list(out['amount'][:2]) == [1.5, 2.25]
+    assert list(out['name']) == ['a', 'b', 'c']
+    assert out['count'].dtype.kind == 'i'
+
+
+def test_cast_to_supported_dtypes_finds_decimal_in_mostly_null_column(memory_source):
+    df = pd.DataFrame({'amount': [None] * 500 + [decimal.Decimal('1.5')]})
+
+    out = memory_source._cast_to_supported_dtypes(df)
+
+    assert out['amount'].dtype.kind == 'f'
+    assert out['amount'].iloc[-1] == 1.5
+
+
+def test_cast_to_supported_dtypes_keeps_non_decimal_values(memory_source):
+    df = pd.DataFrame({'mixed': [decimal.Decimal('1.5'), 'n/a', None]})
+
+    out = memory_source._cast_to_supported_dtypes(df)
+
+    assert out['mixed'].tolist() == [1.5, 'n/a', None]
+
+
+def test_cast_to_supported_dtypes_handles_repeated_column_names(memory_source):
+    df = pd.DataFrame([[decimal.Decimal('1'), decimal.Decimal('2')]], columns=['id', 'id'])
+
+    out = memory_source._cast_to_supported_dtypes(df)
+
+    assert [dtype.kind for dtype in out.dtypes] == ['f', 'f']
+    assert out.iloc[0].tolist() == [1.0, 2.0]
+
+
+def test_cast_to_supported_dtypes_converts_only_all_date_columns(memory_source):
+    df = pd.DataFrame({
+        'day': [dt.date(2020, 1, 1), None],
+        'note': [dt.date(2020, 1, 1), 'n/a'],
+    })
+
+    out = memory_source._cast_to_supported_dtypes(df)
+
+    assert out['day'].dtype.kind == 'M'
+    assert out['note'].tolist() == [dt.date(2020, 1, 1), 'n/a']
+
+
+def test_sqlalchemy_execute_casts_driver_decimals(tmp_path, monkeypatch):
+    """NUMERIC/DECIMAL columns surface as decimal.Decimal through drivers like
+    psycopg2, pyodbc and cx_Oracle, which Bokeh's ColumnDataSource cannot
+    serialize. A sqlite3 converter makes the real driver return them too."""
+    from bokeh.core.serialization import Serializer
+    from bokeh.models import ColumnDataSource
+
+    monkeypatch.setitem(sqlite3.converters, 'DECIMAL', lambda b: decimal.Decimal(b.decode()))
+    source = SQLAlchemySource(
+        url=f'sqlite:///{tmp_path / "decimal.db"}',
+        connect_args={'detect_types': sqlite3.PARSE_DECLTYPES},
+    )
+    with source._connection as connection:
+        connection.execute(text('CREATE TABLE t (amount DECIMAL(10, 2))'))
+        connection.execute(text('INSERT INTO t VALUES (1.50), (NULL), (2.25)'))
+        connection.commit()
+        raw = connection.execute(text('SELECT amount FROM t')).fetchall()
+    assert isinstance(raw[0][0], decimal.Decimal)
+
+    df = source.execute('SELECT amount FROM t')
+    source.close()
+
+    assert df['amount'].dtype.kind == 'f'
+    assert df['amount'].tolist()[::2] == [1.5, 2.25]
+    # Raises on decimal.Decimal, which is the error users hit
+    Serializer().encode(ColumnDataSource(data=df).data)
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_execute_async_casts_decimal_to_float(memory_source):
+    """The async-driver branch of execute_async() builds its own DataFrame
+    and must cast too."""
+    class FakeAsyncResult:
+        def fetchall(self):
+            return [(decimal.Decimal('3.00'),)]
+
+        def keys(self):
+            return ['amount']
+
+    class FakeAsyncConnection:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, *args, **kwargs):
+            return FakeAsyncResult()
+
+    class FakeAsyncEngine:
+        def connect(self):
+            return FakeAsyncConnection()
+
+        def dispose(self):
+            pass
+
+    memory_source._driver_is_async = True
+    memory_source._engine = FakeAsyncEngine()
+
+    df = await memory_source.execute_async('SELECT amount FROM t')
+    assert not df['amount'].apply(lambda v: isinstance(v, decimal.Decimal)).any()
 
 
 def test_sqlalchemy_close():
