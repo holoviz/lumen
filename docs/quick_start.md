@@ -1,6 +1,6 @@
 # :material-rocket: Quick Start
 
-Install Lumen, set an API key, and start asking questions about your data in a few minutes.
+Install Lumen, set an API key, and start asking questions about your data in 30 seconds.
 
 ## Installation
 
