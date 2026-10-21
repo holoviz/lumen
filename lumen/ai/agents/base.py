@@ -91,11 +91,14 @@ class Agent(Viewer, ToolUser, ContextProvider):
             async for output_chunk in output:
                 if self.interface is None:
                     if message is None:
-                        message = ChatMessage(output_chunk, user=self.user)
+                        message = ChatMessage(output_chunk, user=self.user, show_avatar=True)
                     else:
                         message.object = output_chunk
                 else:
-                    message = self.interface.stream(output_chunk, replace=True, message=message, user=self.user, max_width=self._max_width)
+                    message = self.interface.stream(
+                        output_chunk, replace=True, message=message, user=self.user,
+                        max_width=self._max_width, show_avatar=True,
+                    )
         except Exception as e:
             traceback.print_exc()
             raise e
