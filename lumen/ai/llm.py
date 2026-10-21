@@ -2012,10 +2012,20 @@ class ClaudeCode(LlmCli):
             self.executable, "--print", "--output-format", "json",
             "--no-session-persistence", "--max-turns", str(self.max_turns),
             "--permission-mode", self.permission_mode,
+            # Lumen runs its own tool loop, so Claude Code's built-in tools and
+            # MCP servers only spend turns and hit --max-turns. User settings
+            # would add the user's own hooks and instructions to every answer.
+            "--tools", "", "--strict-mcp-config", "--setting-sources=",
         ]
         if model:
             command.extend(["--model", model])
         return command
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Claude Code never reads the project Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            return await super()._run_command(command, prompt, cwd or self.working_dir or tmp)
 
     def _decode_output(self, output: str) -> str:
         try:
