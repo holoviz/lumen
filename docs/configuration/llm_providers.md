@@ -135,15 +135,15 @@ For installation and API key setup instructions, see the [Installation guide](..
 
 | Provider | Default Model | Description |
 |----------|---------------|-------------|
-| **Ollama** | `qwen3.6:35b-a3b` | External service; requires `ollama pull` to manage and run models. |
-| **Llama.cpp** | `unsloth/Qwen3.6-35B-A3B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
+| **Ollama** | `qwen3.5:9b` | External service; requires `ollama pull` to manage and run models. |
+| **Llama.cpp** | `unsloth/Qwen3.5-9B-GGUF` | Embedded runner; automatically downloads GGUF models from HuggingFace. |
 | **MLX** | `mlx-community/Qwen3.5-9B-MLX-4bit` | Apple Silicon native; runs models in-process via Metal GPU or connects to `mlx_lm.server`. |
 | **AI Navigator** | `server-model` | Desktop GUI; provides a local OpenAI-compatible API once the API server is started. |
 
 **Recommended local models:**
 
-- **General purpose:** `qwen3.6:35b-a3b`, `qwen3.8:27b`, `gemma4:26b`, `gpt-oss:20b`
-- **Smaller machines:** `qwen3.5:9b`
+- **Default, runs on most machines:** `qwen3.5:9b`
+- **Larger machines:** `qwen3.6:35b-a3b`, `qwen3.8:27b`, `gemma4:26b`, `gpt-oss:20b`
 - **Coding:** `qwen3-coder:30b`
 - **Reasoning:** `nemotron-3.5-lightning:30b`
 
@@ -500,7 +500,7 @@ llm = lmai.llm.LiteLLM(
 
 ### Remote Ollama server
 
-Connect to Ollama running on another machine:
+Connect to Ollama running on another machine, either by setting `OLLAMA_HOST=your-server:11434` or by passing the endpoint:
 
 ``` py title="Remote Ollama"
 llm = lmai.llm.Ollama(
