@@ -117,6 +117,10 @@ def test_sqleditor_export_markdown(sql_editor):
     assert 'Alice' in content
 
 
+def test_code_editor_matches_body_font_size(sql_editor):
+    stylesheet = "\n".join(sql_editor._editor.stylesheets)
+    assert "font-size: 0.875rem" in stylesheet
+
 
 def test_vegalite_export_formats_includes_pillow_formats():
     assert {"webp", "tiff", "eps"} <= set(VegaLiteEditor.export_formats)
