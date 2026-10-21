@@ -1378,7 +1378,7 @@ class SQLAgent(BaseLumenAgent):
                 query_to_trace.find(exp.Select).expressions[i] = expression.as_(trace_target)
 
             try:
-                node = lineage(trace_target, query_to_trace, dialect=dialect)
+                node = lineage(trace_target, query_to_trace, schema=None, dialect=dialect)
             except sqlglot.errors.SqlglotError:
                 continue
 
