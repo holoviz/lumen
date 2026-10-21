@@ -3042,9 +3042,6 @@ class Anthropic(Llm, AnthropicMixin):
         """Run structured-only requests through Anthropic's native JSON API."""
         if self._base_client is None:
             self._base_client = self._create_base_client()
-        parse = getattr(self._base_client.messages, "parse", None)
-        if parse is None:
-            return None
 
         parse_kwargs = dict(kwargs)
         parse_kwargs.pop("response_model", None)
@@ -3052,13 +3049,13 @@ class Anthropic(Llm, AnthropicMixin):
         parse_kwargs.pop("stream", None)
         # The cache breakpoint is already embedded in the system content.
         parse_kwargs.pop("cache_control", None)
-        result = await parse(
+        result = await self._base_client.messages.parse(
             model=model,
             messages=messages,
             output_format=response_model,
             **parse_kwargs,
         )
-        return getattr(result, "parsed_output", result)
+        return result.parsed_output
 
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
@@ -3122,11 +3119,9 @@ class Anthropic(Llm, AnthropicMixin):
             and not kwargs.get("stream", False)
             and self._uses_native_structured_output(model)
         ):
-            native_result = await self._run_native_structured(
+            return await self._run_native_structured(
                 model, filtered_messages, **kwargs
             )
-            if native_result is not None:
-                return native_result
 
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
