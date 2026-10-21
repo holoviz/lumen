@@ -507,6 +507,3 @@ def test_sql_editor_render_controls_no_provenance_toggle(sql_pipeline_editor):
     ]
     controls = sql_pipeline_editor.render_controls(task=None, interface=None)
     assert not any(getattr(c, "label", None) == "View Provenance" for c in controls)
-
-
-

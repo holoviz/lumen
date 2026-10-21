@@ -478,4 +478,3 @@ async def test_submit_sql_ends_request_on_second_timeout():
 )
 def test_sql_agent_extract_provenance(sql, expected):
     assert SQLAgent._extract_provenance(sql) == expected
-

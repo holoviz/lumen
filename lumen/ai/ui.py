@@ -16,7 +16,7 @@ from typing import Any
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
-from panel.config import config, panel_extension
+from panel.config import panel_extension
 from panel.io.document import hold
 from panel.io.state import state
 from panel.layout import Column, FlexBox
@@ -25,7 +25,6 @@ from panel.util import edit_readonly
 from panel.viewable import (
     Child, Children, Viewable, Viewer,
 )
-from panel.widgets import CodeEditor
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
     Column as MuiColumn, Dialog, Divider, Drawer, FileDownload, IconButton,
