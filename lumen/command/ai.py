@@ -66,7 +66,7 @@ class LumenAIServe(Serve):
         group.add_argument(
             "--model",
             type=str,
-            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3:8b'",
+            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3.5:9b'",
         )
         group.add_argument(
             "--model-kwargs",

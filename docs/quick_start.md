@@ -1,6 +1,6 @@
 # :material-rocket: Quick Start
 
-Get up and running with Lumen in under 30 seconds.
+Install Lumen, set an API key, and start asking questions about your data in 30 seconds.
 
 ## Installation
 
@@ -37,7 +37,7 @@ Using Anthropic, Gemini, Mistral, OpenRouter, a local model or a coding CLI you 
     panel serve app.py --show
     ```
 
-If a browser tab doesn't automatically open, visit [https://localhost:5006](https://localhost:5006) and start chatting with your data.
+If a browser tab doesn't automatically open, visit [http://localhost:5006](http://localhost:5006) and start chatting with your data.
 
 **Try these questions:**
 
@@ -126,9 +126,9 @@ width: container
 
 All of this happens automatically when you just ask a question.
 
-## Your Work is Saved Automatically
+## Your Work is Kept During Your Session
 
-Behind the scenes, Lumen organizes your work into **Explorations** — think of them as saved workspaces for each dataset or analysis thread.
+Behind the scenes, Lumen organizes your work into **Explorations** — think of them as workspaces for each dataset or analysis thread. Explorations last for your browser session; they are not saved when you close or reload the page, so export anything you want to keep.
 
 When you ask your first question that queries data, Lumen creates an exploration to capture everything:
 
@@ -143,7 +143,7 @@ When you ask your first question that queries data, Lumen creates an exploration
 
 This means you can:
 
-- Return to any analysis later
+- Return to any earlier analysis in the same session
 - Export your work as a Jupyter notebook
 - Keep multiple investigations organized
 - Build on previous results without losing context
