@@ -1187,6 +1187,22 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
     assert OpenAI().api_key == "sk-from-env"
 
 
+@pytest.mark.parametrize("host, endpoint", [
+    ("remote:11500", "http://remote:11500/v1"),
+    ("0.0.0.0", "http://0.0.0.0:11434/v1"),
+    ("https://ollama.example.com:443/", "https://ollama.example.com:443/v1"),
+])
+def test_ollama_endpoint_reads_ollama_host(monkeypatch, host, endpoint):
+    monkeypatch.setenv("OLLAMA_HOST", host)
+    assert Ollama().endpoint == endpoint
+    assert Ollama(endpoint="http://explicit:1/v1").endpoint == "http://explicit:1/v1"
+
+
+def test_ollama_endpoint_default_without_ollama_host(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert Ollama().endpoint == "http://localhost:11434/v1"
+
+
 # ---------------------------------------------------------------------------
 # Model routing
 # ---------------------------------------------------------------------------
