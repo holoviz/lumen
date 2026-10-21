@@ -2810,13 +2810,16 @@ class Anthropic(Llm, AnthropicMixin):
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-haiku-4-5"},
-        "edit": {"model": "claude-sonnet-4-6"},
+        "default": {"model": "claude-haiku-5-5"},
+        "edit": {"model": "claude-sonnet-5-5"},
     })
 
     # Claude 4.7+ rejects a non-default temperature and Sonnet/Opus 5.5 reject
     # the forced tool_choice instructor sends, so newer models fail here.
     select_models = param.List(default=[
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
         "claude-haiku-4-5",
         "claude-sonnet-4-6",
         "claude-opus-4-6",
@@ -3000,6 +3003,58 @@ class Anthropic(Llm, AnthropicMixin):
             cache_control["ttl"] = "1h"
         return cache_control
 
+    @staticmethod
+    def _model_name(model: str) -> str:
+        """Return the Claude model name without a Bedrock inference prefix."""
+        return model.rsplit("anthropic.", maxsplit=1)[-1]
+
+    @classmethod
+    def _uses_native_structured_output(cls, model: str) -> bool:
+        """Whether the model supports Anthropic's native structured output API."""
+        name = cls._model_name(model)
+        return name.startswith((
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+        ))
+
+    @classmethod
+    def _omit_temperature(cls, model: str) -> bool:
+        """Whether Anthropic rejects a non-default sampling temperature."""
+        name = cls._model_name(model)
+        return name.startswith((
+            "claude-haiku-5",
+            "claude-sonnet-5",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-opus-5",
+        ))
+
+    async def _run_native_structured(
+        self,
+        model: str,
+        messages: list[Message],
+        response_model: type[BaseModel],
+        **kwargs,
+    ):
+        """Run structured-only requests through Anthropic's native JSON API."""
+        if self._base_client is None:
+            self._base_client = self._create_base_client()
+
+        parse_kwargs = dict(kwargs)
+        parse_kwargs.pop("response_model", None)
+        parse_kwargs.pop("max_retries", None)
+        parse_kwargs.pop("stream", None)
+        # A string system prompt already carries its own cache breakpoint.
+        parse_kwargs.pop("cache_control", None)
+        result = await self._base_client.messages.parse(
+            model=model,
+            messages=messages,
+            output_format=response_model,
+            **parse_kwargs,
+        )
+        return result.parsed_output
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -3051,6 +3106,21 @@ class Anthropic(Llm, AnthropicMixin):
                     {"type": "text", "text": kwargs["system"], "cache_control": cache_control}
                 ]
 
+        model = self._get_model_kwargs(model_spec)["model"]
+        if self._omit_temperature(model):
+            kwargs.pop("temperature", None)
+
+        response_model = kwargs.get("response_model")
+        if (
+            response_model is not None
+            and not tool_specs
+            and not kwargs.get("stream", False)
+            and self._uses_native_structured_output(model)
+        ):
+            return await self._run_native_structured(
+                model, filtered_messages, **kwargs
+            )
+
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
         if response_model := kwargs.get("response_model"):
@@ -3099,12 +3169,15 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
     _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
-        "ui": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
-        "edit": {"model": "us.anthropic.claude-sonnet-4-6"},
+        "default": {"model": "us.anthropic.claude-haiku-5-5"},
+        "ui": {"model": "us.anthropic.claude-haiku-5-5"},
+        "edit": {"model": "us.anthropic.claude-sonnet-5-5"},
     })
 
     select_models = param.List(default=[
+        "us.anthropic.claude-haiku-5-5",
+        "us.anthropic.claude-sonnet-5-5",
+        "us.anthropic.claude-opus-5-5",
         "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         "us.anthropic.claude-sonnet-4-6",
         "us.anthropic.claude-opus-4-6-v1",
