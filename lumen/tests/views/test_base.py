@@ -650,6 +650,27 @@ def test_vegalite_view_plain_frame_unchanged():
     assert data['values'].equals(df)
 
 
+def test_vegalite_view_escapes_dotted_column_fields():
+    df = pd.DataFrame({'date': [1, 2], 'nino3.4_anom': [0.5, 1.5]})
+    pipeline = Pipeline(source=InMemorySource(tables={'nino': df}), table='nino')
+    spec = {'transform': [{'fold': ['nino3.4_anom'], 'as': ['region', 'anomaly']}], 'layer': [{
+        'mark': 'line',
+        'encoding': {
+            'x': {'field': 'date'},
+            'y': {'field': 'nino3.4_anom'},
+            'tooltip': [{'field': 'nino3.4_anom'}, {'field': 'not.a.column'}],
+        },
+    }]}
+    view = VegaLiteView(pipeline=pipeline, spec=spec)
+    encoding = view._get_params()['object']['layer'][0]['encoding']
+
+    assert encoding['x']['field'] == 'date'
+    assert encoding['y']['field'] == 'nino3\\.4_anom'
+    assert encoding['tooltip'] == [{'field': 'nino3\\.4_anom'}, {'field': 'not.a.column'}]
+    assert view.spec['layer'][0]['encoding']['y']['field'] == 'nino3.4_anom'
+    assert view._get_params()['object']['transform'][0]['fold'] == ['nino3\\.4_anom']
+
+
 @requires_geopandas
 def test_deckgl_view_geometry_with_datetime_column():
     """A datetime column alongside geometry must not break serialization."""
