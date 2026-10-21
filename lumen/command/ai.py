@@ -67,7 +67,7 @@ class LumenAIServe(Serve):
         group.add_argument(
             "--model-kwargs",
             type=str,
-            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"default\": {\"repo\": \"abcdef\"}}'",
+            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"sql\": {\"model\": \"gpt-5.6-luna\"}}'",
         )
         group.add_argument(
             "--llm-model-url",
@@ -116,13 +116,13 @@ class LumenAIServe(Serve):
         provider = args.provider
         llm_model_url = args.llm_model_url
         provider_cls = None
-        if llm_model_url and provider and provider != "llama":
+        if llm_model_url and provider and provider != "llama-cpp":
             raise ValueError(
                 f"Cannot specify both --llm-model-url and --provider {provider!r}. "
                 f"Use --llm-model-url to load a model from HuggingFace."
             )
         elif llm_model_url:
-            provider = "llama"
+            provider = "llama-cpp"
         elif not provider:
             provider_cls = get_available_llm()
 
@@ -173,13 +173,13 @@ class LumenAIServe(Serve):
             # Handle huggingface URL if provided
             if llm_model_url:
                 try:
-                    repo, model_file, query_kwargs = parse_huggingface_url(llm_model_url)
+                    repo_id, filename, query_kwargs = parse_huggingface_url(llm_model_url)
                     # Initialize default dict if not exists
                     if 'default' not in model_kwargs:
                         model_kwargs['default'] = {}
                     model_kwargs['default'].update({
-                        'repo': repo,
-                        'model_file': model_file,
+                        'repo_id': repo_id,
+                        'filename': filename,
                         **query_kwargs
                     })
                 except ValueError as e:
