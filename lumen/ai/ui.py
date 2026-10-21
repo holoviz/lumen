@@ -2878,7 +2878,7 @@ class ExplorerUI(UI):
     async def _postprocess_exploration(
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
     ):
-        self._exploration['view'].conversation = self.interface.objects
+        exploration.conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
             # Propagate sources produced by the plan (out_context) into
             # the global UI context so the source catalog and CTA update.

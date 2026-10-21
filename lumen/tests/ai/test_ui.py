@@ -296,6 +296,48 @@ async def test_exploration_ui_error_replan(explorer_ui_with_error):
     tabs = exploration.view[0]
     assert len(tabs) == 2
 
+async def test_switching_exploration_mid_run_keeps_conversations(explorer_ui):
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    async def ask(text, title, slug):
+        ui.interface.send(text, user="User", respond=False)
+        ui.interface.send(f"Planning {title}", user="Planner", respond=False)
+        ui.llm.set_responses([
+            SQLQueryWithTables(query="SELECT * FROM test_table", table_slug=slug, tables=["test_table"]),
+            f"Answer {title}",
+        ])
+        exploration = ui._exploration["view"]
+        plan = Plan(
+            ActorTask(SQLAgent(llm=ui.llm)),
+            ActorTask(ChatAgent(llm=ui.llm)),
+            history=[{"content": text, "role": "user"}],
+            title=title,
+            context=ui.context if exploration is ui._home else dict(exploration.context),
+        )
+        with ui._busy():
+            await ui._execute_plan(plan)
+
+    await ask("read this", "Read CSV", "first")
+
+    invoke = ui.llm.invoke
+
+    async def slow_invoke(*args, **kwargs):
+        await asyncio.sleep(0.2)
+        return await invoke(*args, **kwargs)
+
+    ui.llm.invoke = slow_invoke
+    task = asyncio.ensure_future(ask("plot me", "SST Anomaly", "second"))
+    await async_wait_until(lambda: ui._explorations.value["label"] == "SST Anomaly")
+    ui._explorations.active = (1,)
+    await task
+
+    first, second = (item["view"] for item in ui._explorations.items[1:])
+    assert first.conversation[0].object == "read this"
+    assert second.conversation[0].object == "plot me"
+
+
 async def test_add_exploration_from_explorer(explorer_ui):
     """Test creating an exploration from the table explorer."""
     # Set up the explorer to have a table selected
