@@ -3016,8 +3016,6 @@ class Anthropic(Llm, AnthropicMixin):
             "claude-haiku-5-5",
             "claude-sonnet-5-5",
             "claude-opus-5-5",
-            "claude-opus-4-7",
-            "claude-opus-4-8",
         ))
 
     @classmethod
@@ -3047,7 +3045,7 @@ class Anthropic(Llm, AnthropicMixin):
         parse_kwargs.pop("response_model", None)
         parse_kwargs.pop("max_retries", None)
         parse_kwargs.pop("stream", None)
-        # The cache breakpoint is already embedded in the system content.
+        # A string system prompt already carries its own cache breakpoint.
         parse_kwargs.pop("cache_control", None)
         result = await self._base_client.messages.parse(
             model=model,
