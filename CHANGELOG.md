@@ -15,6 +15,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Read `OLLAMA_HOST` and default local providers to a 9B model ([#2202](https://github.com/holoviz/lumen/pull/2202))
 * `--llm-model-url` now loads the GGUF model via llama-cpp ([#2201](https://github.com/holoviz/lumen/pull/2201))
 * Fix Anthropic structured output for modern Claude models ([#2196](https://github.com/holoviz/lumen/pull/2196))
+* Run Claude Code CLI requests without its built-in tools, MCP servers or user settings, in a fresh directory ([#2214](https://github.com/holoviz/lumen/pull/2214))
 * Show which model answered in the chat message footer ([#2053](https://github.com/holoviz/lumen/pull/2053))
 
 ### Agents, Tools & Observability
@@ -75,6 +76,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Drop the unconditional multi-series split rule from the Vega-Lite prompt ([#2076](https://github.com/holoviz/lumen/pull/2076))
 * Thin crowded heatmap axis labels, stop scientific notation in labels, and rewrite comma number formats ([#2148](https://github.com/holoviz/lumen/pull/2148), [#2154](https://github.com/holoviz/lumen/pull/2154), [#2188](https://github.com/holoviz/lumen/pull/2188))
 * Stop awaiting the async generator that streams view specs ([#2034](https://github.com/holoviz/lumen/pull/2034))
+* Escape dotted column names such as `nino3.4_anom` in Vega-Lite specs, which drew no series or a blank chart ([#2215](https://github.com/holoviz/lumen/pull/2215))
 
 ### UX & CLI
 
@@ -82,6 +84,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Fix the Full data toggle overlap in explorations and let chat steps shrink with the column ([#2045](https://github.com/holoviz/lumen/pull/2045), [#2152](https://github.com/holoviz/lumen/pull/2152))
 * Fix `lumen serve <spec>.yaml` routing to the AI handler ([#2075](https://github.com/holoviz/lumen/pull/2075))
 * Correct the CLI version output and code execution ([#2166](https://github.com/holoviz/lumen/pull/2166))
+* Keep each exploration's chat when switching explorations while a plan runs ([#2213](https://github.com/holoviz/lumen/pull/2213))
 
 ### Deprecations
 
