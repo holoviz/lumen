@@ -82,9 +82,6 @@ class LumenEditor(Viewer):
 
     title = param.String(allow_None=True)
 
-    view_provenance = param.Boolean(default=False, doc="""
-        Whether to display data provenance.""")
-
     _context_updated = param.Event(doc="""
         Triggered when the output's context changes after render (e.g. an
         interactive selection) so watchers can refresh the out-context without
@@ -151,18 +148,7 @@ class LumenEditor(Viewer):
         name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', cls.__name__)
         return re.sub(r'([a-z\d])([A-Z])', r'\1_\2', name).lower() + f'.{fmt}'
 
-    def _toggle_provenance(self, event):
-        self.view_provenance = not self.view_provenance
-        if self.view_provenance:
-            event.obj.color = "primary"
-            event.obj.label = "Provenance Enabled"
-            event.obj.icon = "account_tree"
-        else:
-            event.obj.color = "default"
-            event.obj.label = "View Provenance"
-            event.obj.icon = "account_tree"
-
-    def render_controls(self, task: Task, interface: ChatFeed):
+    def _render_export_menu(self) -> MenuButton:
         export_menu = MenuButton(
             label=f"Export {self._label} as", variant='text', icon="file_download", margin=0,
             items=[
@@ -185,23 +171,12 @@ class LumenEditor(Viewer):
             filename=self.title or 'output', visible=False
         )
         export_menu.attached.append(file_download)
+        return export_menu
 
-        provenance_button = Button(
-            label="View Provenance" if not self.view_provenance else "Provenance Enabled",
-            icon="account_tree",
-            color="default" if not self.view_provenance else "primary",
-            variant="text",
-            margin=0,
-            on_click=self._toggle_provenance,
-        )
-
-        return Row(
-            *(control(interface=interface, task=task, view=self) for control in self._controls),
-            provenance_button,
-            export_menu,
-            sizing_mode="stretch_width",
-            margin=(0, 10)
-        )
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = [control(interface=interface, task=task, view=self) for control in self._controls]
+        controls.append(self._render_export_menu())
+        return Row(*controls, sizing_mode="stretch_width", margin=(0, 10))
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         if fmt not in self.export_formats:
@@ -251,10 +226,14 @@ class LumenEditor(Viewer):
             self.component, self.spec, self._spec_dict, pipeline=pipeline
         )
 
+    def _pipeline_table_kwargs(self) -> dict[str, Any]:
+        return {}
+
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote', min_height=200,
             sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
+            **self._pipeline_table_kwargs(),
         )
         layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
@@ -628,6 +607,20 @@ class SQLEditor(LumenEditor):
         "boolean": "toggle_on",
     }
 
+    def _pipeline_table_kwargs(self) -> dict[str, Any]:
+        kwargs = super()._pipeline_table_kwargs()
+        header_tooltips = {}
+        for item in self.provenance:
+            col = item.get("column")
+            expr = item.get("expression")
+            if not col or not expr:
+                continue
+            grp = item.get("grouped_by")
+            header_tooltips[col] = f"{expr}, grouped by {grp}" if grp else expr
+        if header_tooltips:
+            kwargs["header_tooltips"] = header_tooltips
+        return kwargs
+
     def _render_editor(self):
         editor = super()._render_editor()
         # Add top/bottom margin so the SQL code editor isn't clipped by the
@@ -746,9 +739,8 @@ class SQLEditor(LumenEditor):
         ]
         self._filter_paper.visible = bool(len(self._filter_area))
 
-    def render_controls(self, task: Task, interface: ChatFeed):
-        controls = super().render_controls(task, interface)
-        filter_controls = MenuToggle(
+    def _render_filter_menu(self) -> MenuToggle:
+        return MenuToggle(
             items=self._filter_items(),
             label="Add Filter",
             icon="filter_list",
@@ -756,8 +748,12 @@ class SQLEditor(LumenEditor):
             variant="text",
             on_click=self._add_filter,
         )
-        controls.insert(-2, filter_controls)
-        return controls
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = [control(interface=interface, task=task, view=self) for control in self._controls]
+        controls.append(self._render_filter_menu())
+        controls.append(self._render_export_menu())
+        return Row(*controls, sizing_mode="stretch_width", margin=(0, 10))
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)

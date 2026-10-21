@@ -472,3 +472,41 @@ def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor
     assert multi.export("yaml").getvalue().count("line0") == 3
     with pytest.raises(ValueError, match="Unknown export format"):
         multi.export("csv")
+
+
+def test_sql_editor_pipeline_table_kwargs_header_tooltips():
+    editor = SQLEditor(spec="SELECT SUM(a) FROM t")
+    assert "header_tooltips" not in editor._pipeline_table_kwargs()
+
+    editor.provenance = [
+        {"column": "x", "expression": "SUM(a)", "source_columns": ["t.a"], "grouped_by": None},
+        {"column": "y", "expression": "AVG(b)", "source_columns": ["t.b"], "grouped_by": "region"},
+    ]
+    kwargs = editor._pipeline_table_kwargs()
+    assert kwargs.get("header_tooltips") == {
+        "x": "SUM(a)",
+        "y": "AVG(b), grouped by region",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sql_editor_render_pipeline_header_tooltips(sql_pipeline_editor):
+    sql_pipeline_editor.provenance = [
+        {"column": "revenue", "expression": "SUM(price)", "source_columns": ["orders.price"], "grouped_by": "orders.region"}
+    ]
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+    table = layout[0]
+    assert table._pane.header_tooltips == {
+        "revenue": "SUM(price), grouped by orders.region"
+    }
+
+
+def test_sql_editor_render_controls_no_provenance_toggle(sql_pipeline_editor):
+    sql_pipeline_editor.provenance = [
+        {"column": "x", "expression": "SUM(a)", "source_columns": ["t.a"], "grouped_by": None}
+    ]
+    controls = sql_pipeline_editor.render_controls(task=None, interface=None)
+    assert not any(getattr(c, "label", None) == "View Provenance" for c in controls)
+
+
+

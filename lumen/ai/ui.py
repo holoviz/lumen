@@ -2640,41 +2640,7 @@ class ExplorerUI(UI):
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
-        # Build provenance pane if view has lineage data (SQLEditor only)
-        provenance = getattr(view, "provenance", [])
-        if provenance:
-            lines = []
-            for item in provenance:
-                src = ", ".join(item["source_columns"]) if item["source_columns"] else "—"
-                grp = item["grouped_by"] or "—"
-                lines.append(
-                    f"Column: {item['column']}\n"
-                    f"Expression: {item['expression']}\n"
-                    f"Source: {src}\n"
-                    f"Grouped by: {grp}"
-                )
-            provenance_str = "\n\n".join(lines)
-
-            provenance_editor = CodeEditor(
-                value=provenance_str,
-                language="text",
-                theme="github_dark" if config.theme == "dark" else "github_light_default",
-                readonly=True,
-                height=200,
-                sizing_mode="stretch_width",
-                margin=(10, 10),
-                visible=view.param.view_provenance,
-                styles={"border": "1px solid var(--border-color)"}
-            )
-
-            editor_col = Column(
-                view.editor,
-                provenance_editor,
-                width_policy="max",
-                scroll="y-auto"
-            )
-        else:
-            editor_col = Column(view.editor, width_policy="max", scroll="y-auto")
+        editor_col = Column(editor, width_policy="max", scroll="y-auto")
 
         vsplit = VSplit(
             editor_col,

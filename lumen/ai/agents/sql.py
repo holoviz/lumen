@@ -1348,7 +1348,7 @@ class SQLAgent(BaseLumenAgent):
     def _extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]:
         """
         Extracts lineage information (expression, source columns with relations, grouped by)
-        using SQLGlot's lineage API entirely.
+        using SQLGlot's lineage API.
         """
         try:
             parsed = sqlglot.parse_one(sql_query, read=dialect)
@@ -1361,68 +1361,60 @@ class SQLAgent(BaseLumenAgent):
         if not main_select:
             return []
 
-        # GROUP BY query ke level pe hota hai, isiliye usko parsed object se lete hain
         group_by_cols = []
         if main_select.args.get("group"):
             for group_expr in main_select.args["group"].expressions:
                 group_by_cols.append(group_expr.sql(dialect=dialect))
         group_by_str = ", ".join(group_by_cols) if group_by_cols else None
 
-        # Hum sirf target_column ka naam parsed se nikalte hain taaki lineage API ko bata sakein kisko trace karna hai
-        for expression in main_select.expressions:
-            if isinstance(expression, exp.Alias):
-                target_column = expression.alias
-            elif isinstance(expression, exp.Column):
-                target_column = expression.name
-            else:
-                continue
+        for i, expression in enumerate(main_select.expressions):
+            target_column = expression.alias_or_name or expression.sql(dialect=dialect)
+            trace_target = expression.alias_or_name
+            query_to_trace = parsed
+
+            if not trace_target:
+                trace_target = f"_col_{i}"
+                query_to_trace = parsed.copy()
+                query_to_trace.find(exp.Select).expressions[i] = expression.as_(trace_target)
 
             try:
-                # 1. Lineage API ka tree
-                node = lineage(target_column, parsed, dialect=dialect)
+                node = lineage(trace_target, query_to_trace, dialect=dialect)
+            except sqlglot.errors.SqlglotError:
+                continue
 
-                # 2. Expression (Formula) lineage node se nikalte hain
-                if isinstance(node.expression, exp.Alias):
-                    formula = node.expression.this.sql(dialect=dialect)
-                else:
-                    formula = node.expression.sql(dialect=dialect)
+            if isinstance(node.expression, exp.Alias):
+                formula = node.expression.this.sql(dialect=dialect)
+            else:
+                formula = node.expression.sql(dialect=dialect)
 
-                # 3. Source Columns aur Unka Relation (Table) lineage API se
-                source_columns = []
-                for leaf in node.walk():
-                    # Jab koi downstream nahi hai toh yeh root/base table ka column hai
-                    if not leaf.downstream:
-                        # leaf.source humein table/relation deta hai
-                        if isinstance(leaf.source, exp.Table):
-                            relation_name = leaf.source.name
-                            if leaf.name.startswith(f"{relation_name}."):
-                                full_col_name = leaf.name
-                            else:
-                                full_col_name = f"{relation_name}.{leaf.name}"
-                        else:
-                            full_col_name = leaf.name
+            source_columns = []
+            for leaf in node.walk():
+                if not leaf.downstream:
+                    if isinstance(leaf.source, exp.Table):
+                        relation_name = leaf.source.name
+                        col_name = leaf.name.split(".")[-1]
+                        full_col_name = f"{relation_name}.{col_name}"
+                    else:
+                        full_col_name = leaf.name
 
-                        source_columns.append(full_col_name)
+                    source_columns.append(full_col_name)
 
-                # Duplicates remove karo
-                source_columns = list(dict.fromkeys(source_columns))
+            source_columns = list(dict.fromkeys(source_columns))
 
-                # Agar column aur source column same hai, toh iska matlab yeh direct selection hai (pass-through)
-                is_same = False
-                if len(source_columns) == 1:
-                    src_col = source_columns[0].split('.')[-1].strip('"').strip("'")
-                    if target_column == src_col or target_column == source_columns[0]:
-                        is_same = True
+            # Skip direct pass-through columns
+            is_same = False
+            if len(source_columns) == 1:
+                src_col = source_columns[0].split('.')[-1].strip('"').strip("'")
+                if target_column == src_col or target_column == source_columns[0]:
+                    is_same = True
 
-                if not is_same:
-                    provenance_list.append({
-                        "column": target_column,
-                        "expression": formula,
-                        "source_columns": source_columns,
-                        "grouped_by": group_by_str
-                    })
-            except Exception:
-                pass
+            if not is_same:
+                provenance_list.append({
+                    "column": target_column,
+                    "expression": formula,
+                    "source_columns": source_columns,
+                    "grouped_by": group_by_str
+                })
 
         return provenance_list
 
