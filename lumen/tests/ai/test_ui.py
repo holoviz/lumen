@@ -1479,6 +1479,23 @@ class TestLumenAIServeYamlRouting:
         finally:
             bokeh_serve.build_single_handler_applications = original
 
+    def test_llm_model_url_configures_llamacpp(self):
+        url = "https://huggingface.co/org/repo-GGUF/blob/main/model.gguf?chat_format=chatml"
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        LumenAIServe(sub.add_parser("serve"))
+        args = parser.parse_args(["serve", "data.csv", "--llm-model-url", url])
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.ai.llm.LlamaCpp.warmup") as warmup:
+                    LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            warmup.assert_called_once_with({
+                "default": {"repo_id": "org/repo-GGUF", "filename": "model.gguf", "chat_format": "chatml"}
+            })
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
     def test_yaml_route_resets_stale_aihandler_override(self):
         """A prior in-process invoke() call for a data file leaves the
         AIHandler-backed closure installed; a later yaml-only invoke() call
