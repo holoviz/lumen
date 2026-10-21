@@ -76,7 +76,14 @@ Current context contains keys: {{ ", ".join(memory) }}
 Data Overview:
 {{ memory["data"] }}
 {%- endif -%}
-{% if memory.get('view') %}
+{% if memory.get('views') and 'views' not in previous_keys %}
+Generated Views ({{ memory["views"] | length }} charts):
+{% for view in memory["views"] %}
+```yaml
+{{ view | json_to_yaml }}
+```
+{% endfor %}
+{%- elif memory.get('view') %}
 {% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View:
 ```yaml
 {{ memory["view"] | json_to_yaml }}
