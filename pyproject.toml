@@ -91,7 +91,7 @@ ai-anthropic = ['anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
 ai-google = ['google-genai>=1.56.0', 'jsonref', 'opentelemetry-instrumentation-google-genai']
-ai-litellm = ['litellm']
+ai-litellm = ['litellm !=1.107.0']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
