@@ -102,6 +102,8 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 
 Many thanks to @ghostiee-11, @philippjfr, @ahuang11, @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @hoxbro, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @SuMayaBee, @Mr-Neutr0n, and @Coderambling for their contributions to this release.
 
+A special welcome to our new contributors: @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, and @Mr-Neutr0n.
+
 ## Version 1.3.0
 
 Lumen AI 1.3 expands support for geospatial and scientific data, makes AI-generated visualizations more capable, and improves the reliability of exploration, validation, reporting, and exports. This release also brings a number of UX improvements and makes Lumen more robust when working with optional dependencies and real-world datasets.
