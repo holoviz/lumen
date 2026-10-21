@@ -1893,6 +1893,46 @@ async def test_anthropic_keeps_instructor_for_native_tool_calls(monkeypatch):
     assert captured["tools"][0]["name"] == "lookup"
 
 
+async def test_anthropic_keeps_instructor_when_streaming(monkeypatch):
+    class Answer(BaseModel):
+        value: str
+
+    captured = {}
+
+    async def client(messages, **kwargs):
+        captured.update(kwargs)
+        return Answer(value="ok")
+
+    async def get_client(model_spec, **kwargs):
+        return client
+
+    llm = Anthropic(
+        model_kwargs={"default": {"model": "claude-sonnet-5-5"}},
+        cache=None,
+    )
+    monkeypatch.setattr(llm, "get_client", get_client)
+
+    await llm.run_client(
+        "default",
+        [{"role": "user", "content": "hi"}],
+        response_model=Answer,
+        stream=True,
+    )
+
+    assert captured["response_model"] is Answer
+
+
+@pytest.mark.parametrize("model, native, omit", [
+    ("claude-sonnet-5-5", True, True),
+    ("us.anthropic.claude-sonnet-5-5", True, True),
+    ("claude-sonnet-4-6", False, False),
+    ("us.anthropic.claude-haiku-4-5-20251001-v1:0", False, False),
+])
+def test_anthropic_model_capabilities_ignore_bedrock_prefix(model, native, omit):
+    assert Anthropic._uses_native_structured_output(model) is native
+    assert Anthropic._omit_temperature(model) is omit
+
+
 async def test_invoke_keeps_single_blank_lines_in_system(monkeypatch):
     llm = Llm(model_kwargs={"default": {"model": "m"}})
     captured = {}
