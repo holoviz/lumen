@@ -1,0 +1,6 @@
+order_id,customer_id,amount,status
+101,1,30,paid
+102,1,20,paid
+103,2,40,paid
+104,2,10,cancelled
+105,3,15,paid
