@@ -710,6 +710,12 @@ async def test_initial_state_shows_splash(explorer_ui):
     assert len(explorer_ui._explorations.items) == 1  # Only home
 
 
+async def test_closed_nav_drawer_reserves_toggle_gutter(explorer_ui):
+    """The closed drawer's 24px toggle tab must not float over the content."""
+    assert explorer_ui._nav_drawer.open is False
+    assert explorer_ui._nav_drawer.min_width == 24
+
+
 async def test_exploration_launch_transitions_to_split(explorer_ui):
     """Test 2: When an exploration is launched we switch from splash to split view."""
     # Initially showing splash
