@@ -1586,7 +1586,7 @@ def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
 def test_serve_llm_model_url_uses_llama_cpp():
     with patch.object(LlamaCpp, "warmup") as warmup:
         _invoke_serve("--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf")
-    assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
+    assert warmup.call_args.args[0]["default"]["filename"] == "model.gguf"
 
 
 @pytest.mark.parametrize("argv, quiet", [([], True), (["--log-level", "debug"], False)])
