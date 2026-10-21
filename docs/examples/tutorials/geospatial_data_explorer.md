@@ -180,5 +180,3 @@ In this tutorial, you learned how to:
 ## Next steps
 
 Try replacing the illustrative CSV with your own dataset containing longitude and latitude columns. You could also add more categories, numeric fields, or visualizations to explore a different geographic use case.
-
-
