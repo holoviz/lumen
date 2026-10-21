@@ -250,7 +250,8 @@ def test_claude_code_command_defaults_to_plan_mode():
 
     assert command == [
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
-        "--max-turns", "3", "--permission-mode", "plan", "--model", "sonnet",
+        "--max-turns", "3", "--permission-mode", "plan",
+        "--tools", "", "--strict-mcp-config", "--setting-sources=", "--model", "sonnet",
     ]
 
 
@@ -441,11 +442,11 @@ async def test_cli_provider_isolates_cwd(monkeypatch, tmp_path):
     await CopilotCli()._run_command(["copilot"], "Hi")
     await CopilotCli(working_dir=str(tmp_path))._run_command(["copilot"], "Hi")
 
-    (default_cwd, _), (isolated_cwd, existed), (override_cwd, _) = seen
-    assert default_cwd is None
-    assert existed
-    assert Path(isolated_cwd).name.startswith("lumen-cli-")
-    assert not Path(isolated_cwd).exists()
+    (claude_cwd, claude_existed), (isolated_cwd, existed), (override_cwd, _) = seen
+    for cwd, was_dir in ((claude_cwd, claude_existed), (isolated_cwd, existed)):
+        assert was_dir
+        assert Path(cwd).name.startswith("lumen-cli-")
+        assert not Path(cwd).exists()
     assert override_cwd == str(tmp_path)
 
 
