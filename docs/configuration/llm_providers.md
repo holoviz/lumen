@@ -14,7 +14,7 @@ export OPENAI_API_KEY="sk-..."
 lumen-ai serve penguins.csv
 ```
 
-Lumen auto-detects the provider from environment variables.
+Lumen auto-detects the provider from environment variables. Without a key it lists the options that need none, such as Kilo's free tier or a local Ollama server.
 
 ### Specify provider explicitly
 

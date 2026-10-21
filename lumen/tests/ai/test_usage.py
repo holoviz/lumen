@@ -53,14 +53,6 @@ def test_llm_usage_survives_param_deepcopy():
     assert (llm.usage.input_tokens, copied.usage.input_tokens) == (2, 7)
 
 
-def test_default_llm_can_be_copied_by_param():
-    from lumen.ai.ui import UI
-
-    original = UI.param["llm"].default
-    copied = deepcopy(original)
-    assert copied.usage is not original.usage
-
-
 async def test_concurrent_streams_keep_usage_in_request_scope():
     llm = OpenAI(api_key="unused", model_kwargs={"default": {"model": "m"}}, usage_pricing=PRICING)
 

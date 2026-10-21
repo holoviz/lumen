@@ -58,7 +58,9 @@ from .controls.ingest.utils import read_geo_file
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
-from .llm import Llm, OpenAI, get_available_llm
+from .llm import (
+    Llm, OpenAI, get_available_llm, local_cli_providers,
+)
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
@@ -376,13 +378,15 @@ LLM-generated code may be unpredictable. While validation layers reduce accident
 """
 
 
-def _get_default_llm():
-    """
-    Get the default LLM instance, trying to find an available one first,
-    falling back to OpenAI if none are available.
-    """
-    result = get_available_llm()
-    return result() if result is not None else OpenAI()
+def _keyless_options_message() -> str:
+    """Tell a user with no provider configured what works without an API key on this machine."""
+    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
+    cli_hint = f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
+    return (
+        "No LLM provider found, so chat is disabled. Open Settings > Configure AI Models and choose "
+        f"Kilo for free models without an account{cli_hint}. Or set an API key such as "
+        "OPENAI_API_KEY and restart, or pass llm=lmai.llm.Kilo() to the UI."
+    )
 
 
 class UI(Viewer):
@@ -423,8 +427,9 @@ class UI(Viewer):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
-        The LLM provider to be used by default""")
+    llm = param.ClassSelector(class_=Llm, default=None, doc="""
+        The LLM provider to use. Detected from the environment when the UI
+        is created if not provided.""")
 
     llm_tools = param.List(default=[], doc="""
         Extra tools for the coordinator's :attr:`~lumen.ai.actor.LLMUser.llm_tools`
@@ -492,6 +497,9 @@ class UI(Viewer):
 
     _cta = None  # Initialized in _render_main
     _error_alert = None  # Initialized in _render_main
+
+    # Set when no provider was found, until the user picks one in the LLM dialog.
+    _no_llm_message: str | None = None
     _success_alert = None  # Initialized in _render_main
 
     __abstract = True
@@ -504,6 +512,14 @@ class UI(Viewer):
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
+        if self.llm is None:
+            llm_cls = get_available_llm()
+            if llm_cls is None:
+                self._no_llm_message = _keyless_options_message()
+                self.param.warning(self._no_llm_message)
+            # Without a provider, OpenAI only stands in so the agents can be built;
+            # chat stays disabled until the user picks a provider.
+            self.llm = OpenAI() if llm_cls is None else llm_cls()
         self._current_mode = "Exploration"
         self._report = None
         self._report_plans = None
@@ -738,6 +754,15 @@ class UI(Viewer):
     @wrap_logfire(span_name="Initialize LLM")
     async def _initialize_new_llm(self):
         """Initialize the new LLM after provider change."""
+        if self._no_llm_message:
+            self._llm_status = 'missing'
+            if self._cta is not None:
+                self._cta.object = self._get_status_text()
+            if self._error_alert is not None:
+                self._error_alert.object = self._no_llm_message
+                self._error_alert.visible = True
+            self._chat_input.disabled = True
+            return
         self._llm_status = 'verifying'
         if self._cta is not None:
             self._cta.object = self._get_status_text()
@@ -752,7 +777,10 @@ class UI(Viewer):
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
-                self._error_alert.object = "LLM connection failed; try another LLM under Preferences or check logs for more details."
+                self._error_alert.object = (
+                    "Could not connect to the LLM. Open Settings > Configure AI Models to pick another "
+                    "provider, such as Kilo for free models without an account, or check the logs for details."
+                )
                 self._error_alert.visible = True
                 self._chat_input.disabled = True
         finally:
@@ -1261,6 +1289,8 @@ class UI(Viewer):
             llm_text = f"verifying {llm_label} connection"
         elif self._llm_status == 'connected':
             llm_text = f"using {llm_label} as the LLM provider"
+        elif self._llm_status == 'missing':
+            llm_text = "no LLM provider is configured"
         else:
             llm_text = f"connecting to {llm_label} failed"
 
@@ -1640,6 +1670,7 @@ class UI(Viewer):
         """Handle LLM provider change from the dialog."""
         # Update the UI's LLM reference
         self.llm = new_llm
+        self._no_llm_message = None
 
         # Reset status to verifying when provider changes
         self._llm_status = 'verifying'

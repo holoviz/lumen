@@ -7,6 +7,8 @@ import inspect
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import traceback
@@ -196,9 +198,19 @@ ADAPTIVE_KWARGS = {
     "reasoning_effort": "none",
 }
 
+# Fields in which reasoning models return their reasoning. Some require it to be
+# sent back on each assistant tool-call message, under the name they used.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details")
+
 # Every content shape a message may carry an image in, before and after
 # _check_for_image normalises it.
 IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
+
+# How OpenAI-compatible APIs and gateways say a model cannot read images at all.
+IMAGE_CAPABILITY_ERROR = re.compile(
+    r"(not|n't|endpoints found that) support images?\b|image_url is only supported|supports text(?: input)? only",
+    re.IGNORECASE,
+)
 
 # model_kwargs entries that configure routing rather than the provider client,
 # and so must never reach an SDK constructor.
@@ -225,6 +237,36 @@ def build_route_spec_model(spec_keys: tuple[str, ...]) -> type[BaseModel]:
     return create_model("RouteSpec", model_spec=(Literal[*spec_keys], ...))
 
 
+def strip_images(messages: list[Message]) -> list[Message]:
+    """Copy of messages with every image shape removed, keeping all text."""
+    stripped = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [
+                item for item in content
+                if not isinstance(item, IMAGE_TYPES)
+                and not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, IMAGE_TYPES):
+            content = ""
+        stripped.append({**message, "content": content})
+    return stripped
+
+
+def is_image_rejection(error: BaseException | None) -> bool:
+    """Whether a text-only model rejected image content somewhere on the cause chain.
+
+    Only capability errors count; a vision model rejecting one bad image
+    (too large, wrong format) keeps vision enabled.
+    """
+    while error is not None:
+        if isinstance(error, (openai.BadRequestError, openai.NotFoundError)) and IMAGE_CAPABILITY_ERROR.search(str(error)):
+            return True
+        error = error.__cause__
+    return False
+
+
 def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
     """Find a provider 400 on an exception's cause chain, if there is one."""
     while error is not None:
@@ -234,26 +276,47 @@ def find_bad_request(error: BaseException | None) -> openai.BadRequestError | No
     return None
 
 
+def ollama_models(endpoint: str | None = None, timeout: float = 0.5) -> list[str] | None:
+    """The models pulled on an Ollama server, or None if it is not reachable."""
+    base_url = (endpoint or Ollama.param.endpoint.default).rstrip("/").removesuffix("/v1")
+    try:
+        tags = requests.get(f"{base_url}/api/tags", timeout=timeout).json()
+    except requests.RequestException:
+        return None
+    return [model["name"] for model in tags.get("models", [])]
+
+
+def provider_name(llm_cls: type[Llm]) -> str:
+    """The ``LLM_PROVIDERS`` key, e.g. the ``--provider`` value, for an LLM class."""
+    return next(name for name, class_name in LLM_PROVIDERS.items() if class_name == llm_cls.__name__)
+
+
+def local_cli_providers() -> dict[type[LlmCli], bool | None]:
+    """Coding CLI providers installed on PATH, mapped to whether they report a signed-in user."""
+    return {
+        cls: cls.signed_in()
+        for class_name in LLM_PROVIDERS.values()
+        if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
+    }
+
+
 def get_available_llm() -> type[Llm] | None:
     """
-    Detect and instantiate an available LLM provider by checking environment variables
-    and attempting to instantiate each provider in order.
+    Detect an available LLM provider: the first one whose API key environment
+    variable is set.
+
+    Providers that need no key, such as Ollama and the coding CLIs, are only
+    used when requested explicitly.
 
     Returns
     -------
     type[Llm] | None
-        The LLM class if successful, or None if no provider is available.
+        The LLM class, or None if no provider is available.
     """
     for provider, class_name in LLM_PROVIDERS.items():
         env_var = PROVIDER_ENV_VARS.get(provider)
-        if env_var and not os.environ.get(env_var):
-            continue
-
-        try:
-            provider_cls = globals()[class_name]
-            return provider_cls
-        except KeyError:
-            continue
+        if env_var and os.environ.get(env_var):
+            return globals()[class_name]
     return None
 
 
@@ -665,19 +728,7 @@ class Llm(param.Parameterized):
         be dropped here, not just the OpenAI-native content-part dicts.
         """
         user_msgs = [m for m in messages if m.get("role") == "user"]
-        if not user_msgs:
-            return []
-        last = dict(user_msgs[-1])
-        content = last.get("content")
-        if isinstance(content, list):
-            last["content"] = [
-                item for item in content
-                if not isinstance(item, IMAGE_TYPES)
-                and not (isinstance(item, dict) and item.get("type") == "image_url")
-            ]
-        elif isinstance(content, IMAGE_TYPES):
-            last["content"] = ""
-        return [last]
+        return strip_images(user_msgs[-1:])
 
     def _routing_config(self, model_spec: str) -> dict | None:
         """The ``routing`` config governing *model_spec*, or None if it is not routed.
@@ -892,7 +943,8 @@ class Llm(param.Parameterized):
             )
             if state.answer is not None:
                 return state.answer
-            messages_curr = messages_curr + [self._tool_calls_message(tool_calls)] + tool_messages
+            tool_calls_message = self._tool_calls_message(tool_calls, self._extract_reasoning(output))
+            messages_curr = messages_curr + [tool_calls_message] + tool_messages
             if stop:
                 break
             output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
@@ -1169,12 +1221,30 @@ class Llm(param.Parameterized):
         }
 
     @classmethod
-    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
+    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]], reasoning: dict[str, Any] | None = None) -> Message:
         return Message(
             role="assistant",
             content="",
             tool_calls=[cls._normalize_tool_call_for_message(call) for call in tool_calls],
+            **(reasoning or {}),
         )
+
+    @classmethod
+    def _extract_reasoning(cls, response: Any) -> dict[str, Any]:
+        if not getattr(response, "choices", None):
+            return {}
+        message = getattr(response.choices[0], "message", None)
+        return {key: value for key in REASONING_FIELDS if (value := getattr(message, key, None))}
+
+    @classmethod
+    def _accumulate_reasoning(cls, reasoning: dict[str, str], chunk: Any) -> None:
+        """Join streamed reasoning text; structured reasoning_details deltas are not merged."""
+        if not getattr(chunk, "choices", None):
+            return
+        delta = getattr(chunk.choices[0], "delta", None)
+        for key in REASONING_FIELDS:
+            if isinstance(piece := getattr(delta, key, None), str):
+                reasoning[key] = reasoning.get(key, "") + piece
 
     @classmethod
     def _format_tool_result(cls, result: Any) -> str:
@@ -1519,6 +1589,7 @@ class Llm(param.Parameterized):
 
         tool_call_accum: dict[int, dict[str, Any]] = {}
         tool_call_order: list[int] = []
+        reasoning: dict[str, str] = {}
         response_id: str | None = None
         try:
             async for chunk in chunks:
@@ -1529,6 +1600,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -1544,6 +1616,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -1581,7 +1654,7 @@ class Llm(param.Parameterized):
                     ):
                         yield chunk
                 else:
-                    tool_calls_message = self._tool_calls_message(tool_calls)
+                    tool_calls_message = self._tool_calls_message(tool_calls, reasoning)
                     async for chunk in self.stream(
                         messages + [tool_calls_message] + tool_messages,
                         system=system,
@@ -1657,6 +1730,27 @@ class LlmCli(Llm):
     _supports_stream = False
     _supports_model_stream = False
     _supports_vision = False
+
+    # Arguments that make the CLI report whether a user is signed in, if it has such a command.
+    _auth_status_args: tuple[str, ...] = ()
+
+    @classmethod
+    def _auth_status(cls) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                [cls.param.executable.default, *cls._auth_status_args],
+                capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    @classmethod
+    def signed_in(cls) -> bool | None:
+        """Whether the CLI reports a signed-in user, or None if it has no way to say."""
+        if not cls._auth_status_args:
+            return None
+        result = cls._auth_status()
+        return result is not None and result.returncode == 0
 
     def _create_base_client(self, **kwargs) -> Any:
         raise NotImplementedError("CLI-backed providers do not create an SDK client.")
@@ -1839,6 +1933,8 @@ class CodexCli(LlmCli):
 
     executable = param.String(default="codex", constant=True)
 
+    _auth_status_args = ("login", "status")
+
     sandbox = param.Selector(
         default="read-only",
         objects=["read-only", "workspace-write", "danger-full-access"],
@@ -1881,6 +1977,8 @@ class ClaudeCode(LlmCli):
 
     executable = param.String(default="claude", constant=True)
 
+    _auth_status_args = ("auth", "status")
+
     permission_mode = param.Selector(
         default="plan",
         objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
@@ -1896,6 +1994,17 @@ class ClaudeCode(LlmCli):
     )
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    @classmethod
+    def signed_in(cls) -> bool:
+        # `claude auth status` prints JSON whose loggedIn field is the answer.
+        result = cls._auth_status()
+        if result is None or result.returncode != 0:
+            return False
+        try:
+            return json.loads(result.stdout).get("loggedIn") is True
+        except json.JSONDecodeError:
+            return False
 
     def _build_command(self, model: str | None) -> list[str]:
         command = [
@@ -2611,6 +2720,9 @@ class OpenAI(Llm, OpenAIMixin):
         are never overridden, so a deliberate choice still surfaces its error.
         """
         fixes = self._kwarg_fixes.setdefault(model, {})
+        # Some gateways (e.g. Kilo) report a dict here rather than a parameter name.
+        if not isinstance(error.param, str):
+            return False
         if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
             return False
         fixes[error.param] = ADAPTIVE_KWARGS[error.param]
@@ -2624,6 +2736,13 @@ class OpenAI(Llm, OpenAIMixin):
             try:
                 return await self._send(model_spec, messages, **kwargs)
             except Exception as e:
+                # A text-only model can still answer the text, and later
+                # requests should not render images it cannot read.
+                if self._supports_vision and is_image_rejection(e):
+                    log_debug(f"Disabling vision: \033[96m{model!r}\033[0m rejected image input")
+                    self._supports_vision = False
+                    messages = strip_images(messages)
+                    continue
                 # instructor re-raises provider errors wrapped in its own
                 # retry exception, so the 400 is found on the cause chain.
                 error = find_bad_request(e)
@@ -3738,11 +3857,7 @@ class Ollama(OpenAI):
 
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
-        base_url = (endpoint or self.endpoint).rstrip('/').removesuffix('/v1')
-        tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
-        if tags_response.status_code != 200:
-            return set()
-        return {m.get("name", "") for m in tags_response.json().get("models", [])}
+        return set(ollama_models(endpoint or self.endpoint, timeout=5) or ())
 
 
 class MLX(Llm):
@@ -4311,12 +4426,15 @@ class Kilo(OpenAI):
     An LLM implementation using the Kilo API.
 
     Kilo provides an OpenAI-compatible endpoint that routes requests to
-    models from multiple providers. Kilo has a free tier, but for other models,
-    optionally set the ``KILO_API_KEY`` environment variable or pass ``api_key``
+    models from multiple providers. Its free tier needs no account; for other
+    models, set the ``KILO_API_KEY`` environment variable or pass ``api_key``
     directly. The provider is auto-detected when
     ``KILO_API_KEY`` is present, or can be selected explicitly with
     ``--provider kilo``.
     """
+
+    api_key = param.String(default="anonymous", doc="""
+        The Kilo API key. The free tier accepts any placeholder value.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
 

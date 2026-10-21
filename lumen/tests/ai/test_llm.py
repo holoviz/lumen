@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import openai
 import pytest
+import requests
 
 try:
     import lumen.ai as lmai
@@ -18,8 +19,9 @@ try:
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
-        ClaudeCode, CodexCli, CopilotCli, Google, Groq, LiteLLM, LlamaCpp, Llm,
-        LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter, WebLLM,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM,
+        LlamaCpp, Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter,
+        WebLLM, is_image_rejection,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -182,13 +184,21 @@ def test_api_key_from_modified_provider_env_vars(monkeypatch):
         OpenAI.api_key_env_var = original
 
 
-def test_get_available_llm_returns_local_provider_when_no_env_vars_set(monkeypatch):
-    """get_available_llm returns a local provider when no cloud API keys are set."""
+def _ollama_tags(models):
+    response = MagicMock(ok=True)
+    response.json.return_value = {"models": models}
+    return MagicMock(return_value=response)
+
+
+def test_get_available_llm_returns_none_without_keys(monkeypatch):
+    """Without an API key nothing is detected, even a ready local Ollama server,
+    which is only suggested alongside the other keyless options."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    # Local providers (no env var required) should still be returned
-    result = lmai.llm.get_available_llm()
-    assert result is not None
+    get = _ollama_tags([{"name": Ollama.param.model_kwargs.default["default"]["model"]}])
+    monkeypatch.setattr(lmai.llm.requests, "get", get)
+    assert lmai.llm.get_available_llm() is None
+    get.assert_not_called()
 
 
 def test_get_available_llm_returns_correct_provider(monkeypatch):
@@ -537,6 +547,55 @@ def test_groq_endpoint():
     assert groq.endpoint == "https://api.groq.com/openai/v1"
 
 
+def test_ollama_models_lists_pulled_models(monkeypatch):
+    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags([{"name": "qwen3.5:9b"}]))
+    assert Ollama().models() == {"qwen3.5:9b"}
+
+
+@pytest.mark.parametrize("returncode, stdout, expected", [
+    (0, '{"loggedIn": true, "authMethod": "claude.ai"}', True),
+    (0, '{"loggedIn": false}', False),
+    (1, "", False),
+])
+def test_claude_code_signed_in_reads_auth_status(monkeypatch, returncode, stdout, expected):
+    run = MagicMock(return_value=SimpleNamespace(returncode=returncode, stdout=stdout))
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert ClaudeCode.signed_in() is expected
+    assert run.call_args.args[0] == ["claude", "auth", "status"]
+
+
+@pytest.mark.parametrize("returncode, expected", [(0, True), (1, False)])
+def test_codex_signed_in_reads_login_status(monkeypatch, returncode, expected):
+    run = MagicMock(return_value=SimpleNamespace(returncode=returncode, stdout=""))
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert CodexCli.signed_in() is expected
+    assert run.call_args.args[0] == ["codex", "login", "status"]
+
+
+def test_cli_without_status_command_cannot_say(monkeypatch):
+    run = MagicMock()
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert CopilotCli.signed_in() is None
+    run.assert_not_called()
+
+
+def test_local_cli_providers_only_lists_installed(monkeypatch):
+    monkeypatch.setattr(lmai.llm.shutil, "which", lambda exe: "/usr/bin/claude" if exe == "claude" else None)
+    monkeypatch.setattr(ClaudeCode, "signed_in", classmethod(lambda cls: True))
+    assert lmai.llm.local_cli_providers() == {ClaudeCode: True}
+
+
+def test_kilo_uses_free_tier_without_api_key(monkeypatch):
+    """Kilo sends a placeholder key so its free tier works without signing up."""
+    monkeypatch.delenv("KILO_API_KEY", raising=False)
+    assert Kilo().api_key == "anonymous"
+
+
+def test_kilo_api_key_env_var_overrides_placeholder(monkeypatch):
+    monkeypatch.setenv("KILO_API_KEY", "test-key")
+    assert Kilo().api_key == "test-key"
+
+
 def test_get_available_llm_selects_groq(monkeypatch):
     """Test that get_available_llm() selects Groq when only GROQ_API_KEY is set."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
@@ -711,13 +770,13 @@ async def test_run_tool_loop_drops_max_retries_on_bare_client(monkeypatch):
 # Adaptive request kwargs
 # ---------------------------------------------------------------------------
 
-def _bad_request(param: str) -> openai.BadRequestError:
+def _bad_request(param: str | dict | None, message: str = "rejected") -> openai.BadRequestError:
     """The 400 OpenAI returns when a model rejects a request parameter."""
     request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
     return openai.BadRequestError(
-        "rejected",
+        message,
         response=httpx.Response(400, request=request),
-        body={"message": "rejected", "type": "invalid_request_error", "param": param},
+        body={"message": message, "type": "invalid_request_error", "param": param},
     )
 
 
@@ -779,6 +838,82 @@ async def test_rejected_reasoning_effort_is_disabled_and_retried(monkeypatch):
 
     assert "reasoning_effort" not in calls[1]
     assert calls[2]["reasoning_effort"] == "none"
+
+
+async def test_rejection_with_non_string_param_is_reraised(monkeypatch):
+    """Gateways such as Kilo put a dict in ``param``; the original error must
+    surface instead of a TypeError from the adaptive-kwargs lookup."""
+    llm = OpenAI(model_kwargs={"default": {"model": "m"}})
+    error = _bad_request({"error": "unsupported"})
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise error
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
+
+
+KILO_TEXT_ONLY = (
+    "Beam supports text input only. This conversation contains an image. "
+    "Remove the image from the conversation and try again."
+)
+
+
+@pytest.mark.parametrize("error", [
+    _bad_request({"error": KILO_TEXT_ONLY}, KILO_TEXT_ONLY),
+    openai.NotFoundError(
+        "No endpoints found that support image input",
+        response=httpx.Response(404, request=httpx.Request("POST", "https://api.kilo.ai/api/gateway")),
+        body=None,
+    ),
+], ids=["kilo-400", "openrouter-404"])
+async def test_rejected_image_is_dropped_and_vision_disabled(monkeypatch, error):
+    """A text-only model rejects image content; the text is still answerable,
+    so retry without the image and stop sending images to this LLM."""
+    llm = OpenAI(model_kwargs={"default": {"model": "text-only"}})
+    sent: list[list] = []
+
+    async def fake_send(self, _model_spec, messages, **kwargs):
+        sent.append([m["content"] for m in messages])
+        if any(isinstance(c, list) and any(isinstance(p, Image) for p in c) for c in sent[-1]):
+            raise RuntimeError("instructor gave up") from error
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    await llm.run_client("default", [{"role": "user", "content": ["describe", _make_test_image()]}])
+
+    assert sent[1] == [["describe"]]
+    assert llm._supports_vision is False
+    assert OpenAI._supports_vision is True
+
+
+@pytest.mark.parametrize("message", [
+    "Invalid image: exceeds the 20MB limit",
+    "unsupported image format: image/tiff",
+    "Could not process image",
+])
+async def test_bad_image_on_vision_model_is_raised(monkeypatch, message):
+    """A vision model complaining about one image keeps vision on; only a
+    model that cannot read images at all loses it."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise _bad_request(None, message)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": ["describe", _make_test_image()]}])
+    assert llm._supports_vision is True
+
+
+@pytest.mark.parametrize("message", [
+    KILO_TEXT_ONLY,
+    "No endpoints found that support image input",
+    "Invalid content type. image_url is only supported by certain models.",
+    "This model does not support image input",
+])
+def test_image_capability_errors_are_recognised(message):
+    assert is_image_rejection(_bad_request(None, message))
 
 
 async def test_rejection_wrapped_by_instructor_is_still_adapted(monkeypatch):
