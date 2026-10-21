@@ -15,6 +15,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import (
     TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
 )
@@ -2181,8 +2182,8 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo_id": "unsloth/Qwen3.6-35B-A3B-GGUF",
-            "filename": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+            "filename": "Qwen3.5-9B-Q5_K_M.gguf",
             # The embedded Qwen3.5+ template opens a <think> block that the
             # JSON grammar would then have to fill.
             "chat_format": "chatml",
@@ -3644,12 +3645,13 @@ class Ollama(OpenAI):
 
     display_name = param.String(default="Ollama", constant=True)
 
-    endpoint = param.String(default="http://localhost:11434/v1", doc="The Ollama API endpoint.")
+    endpoint = param.String(default="http://localhost:11434/v1", doc="""
+        The Ollama API endpoint; read from OLLAMA_HOST when it is set.""")
 
     mode = param.Selector(default=Mode.JSON)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "qwen3.6:35b-a3b"},
+        "default": {"model": "qwen3.5:9b"},
     })
 
     select_models = param.List(default=[
@@ -3662,6 +3664,13 @@ class Ollama(OpenAI):
     ], constant=True)
 
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
+
+    def __init__(self, **params):
+        if "endpoint" not in params and (host := os.environ.get("OLLAMA_HOST")):
+            # Ollama accepts "host", "host:port" or a full URL here.
+            url = urlsplit(host if "://" in host else f"http://{host}")
+            params["endpoint"] = f"{url.scheme}://{url.hostname}:{url.port or 11434}/v1"
+        super().__init__(**params)
 
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
