@@ -616,8 +616,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
             if isinstance(self.llm, LlamaCpp):
                 with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
-                    if "repo" in default_kwargs and "model_file" in default_kwargs:
-                        step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
+                    if "repo_id" in default_kwargs and "filename" in default_kwargs:
+                        step.stream(f"Model: `{default_kwargs['repo_id']}/{default_kwargs['filename']}`")
                     elif "model_path" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
