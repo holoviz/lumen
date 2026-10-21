@@ -66,12 +66,12 @@ class LumenAIServe(Serve):
         group.add_argument(
             "--model",
             type=str,
-            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3:8b'",
+            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3.5:9b'",
         )
         group.add_argument(
             "--model-kwargs",
             type=str,
-            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"default\": {\"repo\": \"abcdef\"}}'",
+            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"sql\": {\"model\": \"gpt-5.6-luna\"}}'",
         )
         group.add_argument(
             "--llm-model-url",
@@ -205,13 +205,13 @@ class LumenAIServe(Serve):
             # Handle huggingface URL if provided
             if llm_model_url:
                 try:
-                    repo, model_file, query_kwargs = parse_huggingface_url(llm_model_url)
+                    repo_id, filename, query_kwargs = parse_huggingface_url(llm_model_url)
                     # Initialize default dict if not exists
                     if 'default' not in model_kwargs:
                         model_kwargs['default'] = {}
                     model_kwargs['default'].update({
-                        'repo': repo,
-                        'model_file': model_file,
+                        'repo_id': repo_id,
+                        'filename': filename,
                         **query_kwargs
                     })
                 except ValueError as e:

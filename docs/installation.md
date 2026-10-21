@@ -214,13 +214,13 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
     3. Pull a model:
     
     ```bash
-    ollama pull qwen3.6:35b-a3b
+    ollama pull qwen3.5:9b
     ```
     
-    4. (Optional) Set custom endpoint if not using default:
+    4. (Optional) Point Lumen at an Ollama server that is not on `localhost:11434`:
     
     ```bash
-    export OLLAMA_BASE_URL=http://localhost:11434
+    export OLLAMA_HOST=your-server:11434
     ```
     
     **No additional environment variables needed!** Ollama works out of the box.

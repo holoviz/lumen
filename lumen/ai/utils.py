@@ -1310,13 +1310,13 @@ def cast_value(value):
 
 
 def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
-    """Parse a HuggingFace URL to extract repo, model file, and model_kwargs.
+    """Parse a HuggingFace URL to extract repo_id, filename, and model_kwargs.
 
     Args:
         url: HuggingFace URL in format https://huggingface.co/org/repo/blob/main/file.gguf?param1=value1&param2=value2
 
     Returns:
-        tuple: (repo, model_file, model_kwargs)
+        tuple: (repo_id, filename, model_kwargs)
 
     Raises:
         ValueError: If URL format is invalid
@@ -1325,16 +1325,16 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
     hf_index = parts.index('huggingface.co')
     if len(parts) < hf_index + 4:  # Need at least org/repo after huggingface.co
         raise ValueError
-    repo = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
-    model_file = parts[-1]  # Last component is the filename
+    repo_id = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
+    filename = parts[-1]
 
     # Parse query parameters
     model_kwargs = {}
-    if "?" in model_file:
-        model_file, query_params = model_file.split('?')
+    if "?" in filename:
+        filename, query_params = filename.split('?')
         for key, value in parse_qs(query_params).items():
             model_kwargs[key] = cast_value(value)
-    return repo, model_file, model_kwargs
+    return repo_id, filename, model_kwargs
 
 
 def load_json(json_spec: str) -> dict:
