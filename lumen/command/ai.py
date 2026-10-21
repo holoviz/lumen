@@ -62,7 +62,7 @@ class LumenAIServe(Serve):
         group.add_argument(
             "--model",
             type=str,
-            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3:8b'",
+            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3.5:9b'",
         )
         group.add_argument(
             "--model-kwargs",
@@ -133,7 +133,7 @@ class LumenAIServe(Serve):
                 "- Set environment variables with an API key: For example, OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"
                 "- Specify a provider and API key directly: For example, set `--provider openai` with your API key via --api-key.\n"
                 "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
-                "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
+                "If you still need assistance visit the docs: https://lumen.holoviz.org/configuration/llm_providers/"
             )
 
         api_key = args.api_key
