@@ -1,7 +1,0 @@
-name,category,city,longitude,latitude,visitors_per_day,rating
-Central Health Centre,Healthcare,Mumbai,72.8777,19.0760,180,4.5
-South Public Library,Education,Mumbai,72.8562,19.0176,95,4.2
-Eastern Community Clinic,Healthcare,Mumbai,72.9081,19.1197,140,4.0
-West Learning Centre,Education,Mumbai,72.8311,19.0607,75,4.6
-Harbour Emergency Station,Emergency Services,Mumbai,72.9140,19.0430,60,4.3
-North Community Clinic,Healthcare,Mumbai,72.8697,19.1030,125,4.4

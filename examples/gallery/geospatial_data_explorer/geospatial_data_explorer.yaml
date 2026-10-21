@@ -1,62 +1,63 @@
 config:
-  title: Geospatial Data Explorer
+  title: NYC 311 Service Requests Explorer
   theme: dark
 
 sources:
-  service_locations:
+  service_requests:
     type: file
-    cache_per_query: false
     tables:
-      locations: ["./city_service_locations.csv", "csv"]
+      requests: ["./nyc_311_requests.csv", "csv"]
 
 pipelines:
-  locations:
-    source: service_locations
-    table: locations
+  requests:
+    source: service_requests
+    table: requests
     filters:
       - type: widget
-        field: category
+        field: borough
       - type: widget
-        field: visitors_per_day
+        field: complaint_type
       - type: widget
-        field: rating
+        field: resolution_hours
     transforms:
       - type: columns
         columns:
-          - name
-          - category
-          - city
+          - unique_key
+          - created_date
+          - closed_date
+          - complaint_type
+          - borough
+          - status
           - longitude
           - latitude
-          - visitors_per_day
-          - rating
+          - resolution_hours
       - type: project_lnglat
         longitude: longitude
         latitude: latitude
 
   selected:
-    pipeline: locations
+    pipeline: requests
     filters:
       - type: param
         parameter: service_map.selection_expr
 
 layouts:
-  - title: City Service Locations
+  - title: NYC 311 Service Requests
     views:
       service_map:
         type: hvplot
-        pipeline: locations
+        pipeline: requests
         kind: points
         x: longitude
         y: latitude
-        c: category
-        tiles: ESRI
+        c: borough
+        tiles: OSM
         responsive: true
         height: 500
         xaxis: null
         yaxis: null
-        selection_group: service_locations
-        streaming: true
+        padding: 0.1
+        selection_group: service_requests
 
       service_table:
         type: table
@@ -67,24 +68,12 @@ layouts:
         page_size: 10
         sizing_mode: stretch_width
         show_index: false
-        theme: midnight
 
-      visitors_hist:
+      resolution_hist:
         type: hvplot
-        pipeline: locations
+        pipeline: requests
         kind: hist
-        y: visitors_per_day
+        y: resolution_hours
         responsive: true
         height: 250
-        selection_group: service_locations
-        streaming: true
-
-      rating_hist:
-        type: hvplot
-        pipeline: locations
-        kind: hist
-        y: rating
-        responsive: true
-        height: 250
-        selection_group: service_locations
-        streaming: true
+        selection_group: service_requests
