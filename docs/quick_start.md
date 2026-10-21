@@ -11,6 +11,9 @@ export OPENAI_API_KEY=sk-...
 
 Using Anthropic, Gemini, Mistral, OpenRouter, a local model or a coding CLI you are already signed in to? The [Installation guide](installation.md) covers every provider.
 
+!!! tip "No API key?"
+    Skip the `export` and add `--provider kilo` to the command below. Kilo's free tier works without an account.
+
 ## Start Chatting with Data
 
 === "Command Line"

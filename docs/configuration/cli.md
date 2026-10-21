@@ -101,7 +101,7 @@ See [SQLAlchemy documentation](https://docs.sqlalchemy.org/en/20/core/engines.ht
 lumen-ai serve --provider anthropic
 ```
 
-If not specified, Lumen auto-detects from environment variables.
+If not specified, Lumen auto-detects from environment variables. When no key is set it lists the options that work without one, such as `--provider kilo` or `--provider ollama`.
 
 **Supported providers:**
 

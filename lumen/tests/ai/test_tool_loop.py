@@ -444,3 +444,40 @@ async def test_stream_tool_recursion_is_capped(llm, lookup, calls, monkeypatch):
     assert len(requests) == 4
     assert "Tool budget exhausted" in requests[2][-1]["content"]
     assert requests[3][-1]["content"].startswith("Not run")
+
+
+async def test_reasoning_is_sent_back_with_tool_calls(llm, lookup, monkeypatch):
+    """Reasoning models (e.g. behind Kilo's free tier) reject a follow-up whose
+    assistant tool-call message omits the reasoning they returned with it."""
+    first = _response(("lookup", {"key": "a"}))
+    first.choices[0].message.reasoning = "Need the lookup first."
+    first.choices[0].message.reasoning_details = [{"type": "reasoning.text", "text": "Need the lookup first."}]
+    script = Script(first, _response(content="done"))
+    monkeypatch.setattr(llm, "run_client", script)
+
+    await llm.invoke([{"role": "user", "content": "hi"}], tools=[lookup])
+
+    assistant = next(m for m in script.requests[1][0] if m.get("role") == "assistant")
+    assert assistant["reasoning"] == "Need the lookup first."
+    assert assistant["reasoning_details"][0]["text"] == "Need the lookup first."
+
+
+async def test_stream_reasoning_is_sent_back_with_tool_calls(llm, lookup, monkeypatch):
+    requests = []
+    call = {"index": 0, "id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": '{"key": "a"}'}}
+
+    async def first():
+        for piece in ("Need the ", "lookup first."):
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="", tool_calls=None, reasoning=piece))])
+        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="", tool_calls=[call]))])
+
+    async def run_client(model_spec, messages, **kwargs):
+        requests.append(messages)
+        return first() if len(requests) == 1 else _stream_chunks(text="done")
+
+    monkeypatch.setattr(llm, "run_client", run_client)
+    async for _ in llm.stream([{"role": "user", "content": "hi"}], tools=[lookup]):
+        pass
+
+    assistant = next(m for m in requests[1] if m.get("role") == "assistant")
+    assert assistant["reasoning"] == "Need the lookup first."

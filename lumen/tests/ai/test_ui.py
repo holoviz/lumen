@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import inspect
 import io
+import logging
 import sqlite3
 import sys
 import tempfile
@@ -14,6 +15,7 @@ import bokeh.command.subcommands.serve as bokeh_serve
 import duckdb
 import numpy as np
 import pytest
+import requests
 
 try:
     import lumen.ai  # noqa
@@ -44,6 +46,9 @@ from lumen.ai.agents.vega_lite import (
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import MultiChartEditor, SQLEditor
+from lumen.ai.llm import (
+    PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
+)
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
@@ -171,6 +176,34 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     # Check Interface contents
     assert len(ui.interface) == 2
     assert len(ui.interface[1].footer_objects) == 2 # Rerun buttons
+
+async def test_llm_failure_alert_points_to_ai_model_settings(explorer_ui):
+    explorer_ui.llm.initialize = AsyncMock(side_effect=RuntimeError("no API key"))
+    await explorer_ui._initialize_new_llm()
+    message = explorer_ui._error_alert.object
+    assert "Settings > Configure AI Models" in message
+    assert "Kilo" in message
+
+
+async def test_ui_without_provider_explains_options_instead_of_failing(monkeypatch):
+    for env_var in PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr("lumen.ai.llm.requests.get", MagicMock(side_effect=requests.ConnectionError))
+    monkeypatch.setattr("lumen.ai.ui.local_cli_providers", lambda: {ClaudeCode: True})
+    ui = ExplorerUI()
+    ui.llm.initialize = AsyncMock()
+    await ui._initialize_new_llm()
+
+    ui.llm.initialize.assert_not_called()
+    assert ui._chat_input.disabled
+    message = ui._error_alert.object
+    assert "No LLM provider found" in message
+    assert "Kilo" in message and "Claude Code CLI" in message
+    assert "no LLM provider is configured" in ui._get_status_text()
+
+    ui._on_llm_change(Kilo())
+    assert ui._no_llm_message is None
+
 
 async def test_sync_sources_survives_partial_init(explorer_ui):
     """_sync_sources can run before _render_page has set up _exploration/_cta,
@@ -1456,7 +1489,7 @@ class TestLumenAIServeYamlRouting:
         original = bokeh_serve.build_single_handler_applications
         try:
             with patch.object(Serve, "invoke", return_value=True):
-                with patch("lumen.command.ai.get_available_llm", return_value=MagicMock()):
+                with patch("lumen.command.ai.get_available_llm", return_value=OpenAI):
                     LumenAIServe(argparse.ArgumentParser()).invoke(args)
             # A real data file must still go through the AIHandler-backed
             # build_single_handler_applications override.
@@ -1487,7 +1520,7 @@ class TestLumenAIServeYamlRouting:
         try:
             data_args = self._build_args("data.csv")
             with patch.object(Serve, "invoke", return_value=True):
-                with patch("lumen.command.ai.get_available_llm", return_value=MagicMock()):
+                with patch("lumen.command.ai.get_available_llm", return_value=OpenAI):
                     LumenAIServe(argparse.ArgumentParser()).invoke(data_args)
             stale_closure = bokeh_serve.build_single_handler_applications
             assert stale_closure is not original
@@ -1498,6 +1531,110 @@ class TestLumenAIServeYamlRouting:
             assert bokeh_serve.build_single_handler_applications is original
         finally:
             bokeh_serve.build_single_handler_applications = original
+
+
+def _invoke_serve(*argv, data="data.csv", build=False):
+    """Run ``lumen-ai serve`` without starting a server, optionally building the app."""
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args(["serve", data, *argv])
+    original = bokeh_serve.build_single_handler_applications
+    try:
+        with patch.object(Serve, "invoke", return_value=True):
+            LumenAIServe(argparse.ArgumentParser()).invoke(args)
+        if build:
+            bokeh_serve.build_single_handler_applications([data])
+    finally:
+        bokeh_serve.build_single_handler_applications = original
+
+
+def test_ui_detects_llm_when_created_not_when_imported(monkeypatch):
+    """A key set after ``import lumen.ai`` is still picked up, as in a notebook."""
+    for env_var in PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    assert isinstance(ExplorerUI().llm, Groq)
+
+
+def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    data = str(Path(__file__).parents[1] / "sources" / "test.csv")
+    with patch("lumen.command.ai.get_available_llm", return_value=Groq):
+        _invoke_serve(data=data, build=True)
+    out = capsys.readouterr().out
+    assert "Using Groq because GROQ_API_KEY is set" in out
+    assert "llm = lmai.llm.Groq()" in out
+
+
+def test_serve_llm_model_url_uses_llama_cpp():
+    with patch.object(LlamaCpp, "warmup") as warmup:
+        _invoke_serve("--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf")
+    assert warmup.call_args.args[0]["default"]["model_file"] == "model.gguf"
+
+
+@pytest.mark.parametrize("argv, quiet", [([], True), (["--log-level", "debug"], False)])
+def test_serve_quiets_instructor_retry_log(monkeypatch, argv, quiet):
+    """Lumen sends one attempt and handles the error itself, so instructor's
+    per-attempt error log only duplicates it, except when debugging."""
+    logger = logging.getLogger("instructor.v2.retry")
+    monkeypatch.setattr(logger, "level", logging.NOTSET)
+    _invoke_serve("--provider", "openai", *argv)
+    assert (logger.level == logging.CRITICAL) is quiet
+
+
+def test_serve_cli_provider_missing_from_path_exits(capsys):
+    with patch("lumen.command.ai.shutil.which", return_value=None), pytest.raises(SystemExit):
+        _invoke_serve("--provider", "claude-code")
+    assert "`claude` was not found on your PATH" in capsys.readouterr().err
+
+
+def test_serve_cli_provider_signed_out_exits(capsys):
+    with (
+        patch("lumen.command.ai.shutil.which", return_value="/usr/bin/claude"),
+        patch.object(ClaudeCode, "signed_in", return_value=False),
+        pytest.raises(SystemExit),
+    ):
+        _invoke_serve("--provider", "claude-code")
+    assert "Claude Code CLI reports no signed-in user" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("pulled, argv, warning", [
+    (None, [], "Could not reach Ollama at http://localhost:11434"),
+    (None, ["--provider-endpoint", "http://gpu:11434/v1"], "Could not reach Ollama at http://gpu:11434/v1"),
+    (["qwen3.5:9b"], ["--model", "gemma4:26b"], "`ollama pull gemma4:26b`, or use --model qwen3.5:9b"),
+    (["qwen3.5:latest"], ["--model", "qwen3.5"], None),
+    (["qwen3.5:9b"], ["--model", "qwen3.5:9b"], None),
+])
+def test_serve_ollama_preflight_warns(capsys, pulled, argv, warning):
+    with patch("lumen.command.ai.ollama_models", return_value=pulled) as models:
+        _invoke_serve("--provider", "ollama", *argv)
+    out = capsys.readouterr().out
+    if warning:
+        assert warning in out
+    else:
+        assert "Warning" not in out
+    assert models.call_args.args[0] == (argv[1] if argv[:1] == ["--provider-endpoint"] else None)
+
+
+@pytest.mark.parametrize("pulled, ollama_hint", [
+    (None, "install Ollama, then `ollama pull"),
+    ([], "Ollama is running with no models: `ollama pull"),
+    (["qwen3.5:9b"], "--provider ollama --model qwen3.5:9b"),
+])
+def test_serve_without_provider_lists_keyless_options(capsys, pulled, ollama_hint):
+    with (
+        patch("lumen.command.ai.get_available_llm", return_value=None),
+        patch("lumen.command.ai.ollama_models", return_value=pulled),
+        patch("lumen.command.ai.local_cli_providers", return_value={ClaudeCode: True, CopilotCli: None}),
+        pytest.raises(SystemExit),
+    ):
+        _invoke_serve()
+    message = capsys.readouterr().err
+    assert "--provider kilo" in message
+    assert "signed in to: --provider claude-code" in message
+    assert "Sign in to one of these coding CLIs first: --provider copilot-cli" in message
+    assert ollama_hint in message
+    assert "OPENAI_API_KEY" in message
 
 
 @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
