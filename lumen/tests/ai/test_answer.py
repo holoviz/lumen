@@ -1,5 +1,8 @@
+import subprocess
+import sys
+
 from typing import get_args
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pandas as pd
 import pytest
@@ -13,7 +16,7 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _resolve, aask,
+    Answer, _default_agents, _resolve, aask, ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
@@ -116,3 +119,40 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
     assert visible is None
     assert source.get_tables() == ["tiny"]
     assert sorted(source.get("tiny")["value"]) == [7.5, 10.5]
+
+
+def _chat_only(llm):
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Clear question", yes=False),
+        _plan(("ChatAgent", "Explain")),
+        "Three rows.",
+    ])
+
+
+def test_ask_without_a_running_loop(llm, frame_source):
+    _chat_only(llm)
+    answer = ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.value == "Three rows."
+
+
+async def test_ask_inside_a_running_loop(llm, frame_source):
+    _chat_only(llm)
+    answer = ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.value == "Three rows."
+
+
+async def test_source_and_pipeline_methods_delegate(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    with patch("lumen.ai.answer.ask") as sync_ask, patch("lumen.ai.answer.aask", new_callable=AsyncMock) as async_ask:
+        frame_source.ask("q", llm="x")
+        pipeline.ask("q")
+        await frame_source.aask("q")
+        await pipeline.aask("q", llm="x")
+    assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x"}
+    assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
+
+
+def test_core_imports_do_not_load_lumen_ai():
+    code = "import sys, lumen, lumen.sources, lumen.pipeline; assert 'lumen.ai' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True)
