@@ -46,6 +46,7 @@ from lumen.ai.agents.vega_lite import (
 )
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
+from lumen.ai.data import read, resolve_data
 from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.llm import (
     PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
@@ -1101,16 +1102,15 @@ async def test_navigation_pane_always_mounted(explorer_ui):
 
 
 class TestResolveData:
-    """Tests for UI._resolve_data method."""
 
     def test_resolve_data_none(self):
         """Test that None returns an empty list."""
-        result = UI._resolve_data(None)
+        result = resolve_data(None)
         assert result == []
 
     def test_resolve_data_single_source(self, test_source):
         """Test resolving a single Source instance."""
-        result = UI._resolve_data(test_source)
+        result = resolve_data(test_source)
         assert len(result) == 1
         assert result[0] is test_source
 
@@ -1120,7 +1120,7 @@ class TestResolveData:
             uri=':memory:',
             tables={'other_table': 'SELECT 1 as id'}
         )
-        result = UI._resolve_data([test_source, source2])
+        result = resolve_data([test_source, source2])
         assert len(result) == 2
         assert result[0] is test_source
         assert result[1] is source2
@@ -1128,33 +1128,33 @@ class TestResolveData:
     def test_resolve_data_dataframe(self):
         """A DataFrame becomes a queryable table instead of being dropped."""
         df = pd.DataFrame({'a': [1, 2, 3]})
-        result = UI._resolve_data(df)
+        result = resolve_data(df)
         assert len(result) == 1
         assert result[0].get_tables() == ['data']
         pd.testing.assert_frame_equal(result[0].get('data'), df)
 
     def test_resolve_data_named_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
-        result = UI._resolve_data({'penguins': df, 'birds': df})
+        result = resolve_data({'penguins': df, 'birds': df})
         assert len(result) == 1
         assert result[0].get_tables() == ['penguins', 'birds']
         pd.testing.assert_frame_equal(result[0].get('birds'), df)
 
     def test_resolve_data_unnamed_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
-        result = UI._resolve_data([df, df])
+        result = resolve_data([df, df])
         assert result[0].get_tables() == ['data_0', 'data_1']
 
     def test_resolve_data_named_source(self, test_source):
-        assert UI._resolve_data({'sales': test_source}) == [test_source]
+        assert resolve_data({'sales': test_source}) == [test_source]
 
     def test_resolve_data_unsupported_type_raises(self):
         with pytest.raises(TypeError, match="Cannot load data of type object"):
-            UI._resolve_data(object())
+            resolve_data(object())
 
     def test_resolve_data_csv_file_string(self):
         """Test resolving a CSV file path string."""
-        result = UI._resolve_data('data.csv')
+        result = resolve_data('data.csv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1166,7 +1166,7 @@ class TestResolveData:
 
     def test_resolve_data_parquet_file_string(self):
         """Test resolving a Parquet file path string."""
-        result = UI._resolve_data('test_data.parquet')
+        result = resolve_data('test_data.parquet')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1176,7 +1176,7 @@ class TestResolveData:
 
     def test_resolve_data_json_file_string(self):
         """Test resolving a JSON file path string."""
-        result = UI._resolve_data('data.json')
+        result = resolve_data('data.json')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1185,7 +1185,7 @@ class TestResolveData:
 
     def test_resolve_data_jsonl_file_string(self):
         """Test resolving a JSONL (newline-delimited JSON) file path string."""
-        result = UI._resolve_data('data.jsonl')
+        result = resolve_data('data.jsonl')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1194,7 +1194,7 @@ class TestResolveData:
 
     def test_resolve_data_ndjson_file_string(self):
         """Test resolving a NDJSON file path string."""
-        result = UI._resolve_data('data.ndjson')
+        result = resolve_data('data.ndjson')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1203,7 +1203,7 @@ class TestResolveData:
 
     def test_resolve_data_tsv_file_string(self):
         """Test resolving a TSV file path string."""
-        result = UI._resolve_data('data.tsv')
+        result = resolve_data('data.tsv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1212,7 +1212,7 @@ class TestResolveData:
 
     def test_resolve_data_parq_file_string(self):
         """Test resolving a .parq file path string."""
-        result = UI._resolve_data('data.parq')
+        result = resolve_data('data.parq')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1220,7 +1220,7 @@ class TestResolveData:
 
     def test_resolve_data_tuple_with_alias(self):
         """Test resolving a tuple of (alias, path)."""
-        result = UI._resolve_data([('my_data', 'path/to/data.csv')])
+        result = resolve_data([('my_data', 'path/to/data.csv')])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1231,7 +1231,7 @@ class TestResolveData:
 
     def test_resolve_data_remote_http_url(self):
         """Test resolving a remote HTTP URL (enables httpfs)."""
-        result = UI._resolve_data('http://example.com/data.csv')
+        result = resolve_data('http://example.com/data.csv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1241,7 +1241,7 @@ class TestResolveData:
 
     def test_resolve_data_remote_https_url(self):
         """Test resolving a remote HTTPS URL (enables httpfs)."""
-        result = UI._resolve_data('https://example.com/data.parquet')
+        result = resolve_data('https://example.com/data.parquet')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1250,12 +1250,12 @@ class TestResolveData:
 
     def test_resolve_data_no_data_special_case(self):
         """Test that 'no_data' special case is handled correctly."""
-        result = UI._resolve_data('no_data')
+        result = resolve_data('no_data')
         assert result == []
 
     def test_resolve_data_no_data_in_list(self):
         """Test that 'no_data' in a list is skipped but other items are processed."""
-        result = UI._resolve_data(['no_data', 'data.csv'])
+        result = resolve_data(['no_data', 'data.csv'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1263,7 +1263,7 @@ class TestResolveData:
 
     def test_resolve_data_multiple_file_types(self):
         """Test resolving multiple file types creates single DuckDBSource."""
-        result = UI._resolve_data(['data1.csv', 'data2.parquet', 'data3.json'])
+        result = resolve_data(['data1.csv', 'data2.parquet', 'data3.json'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1274,7 +1274,7 @@ class TestResolveData:
 
     def test_resolve_data_mixed_sources_and_files(self, test_source):
         """Test resolving a mix of Source instances and file paths."""
-        result = UI._resolve_data([test_source, 'data.csv'])
+        result = resolve_data([test_source, 'data.csv'])
         assert len(result) == 2
         assert result[0] is test_source
         assert isinstance(result[1], DuckDBSource)
@@ -1289,7 +1289,7 @@ class TestResolveData:
         )
         pipeline = Pipeline(source=source, table='pipe_table')
 
-        result = UI._resolve_data(pipeline)
+        result = resolve_data(pipeline)
         assert len(result) == 1
         resolved_source = result[0]
         assert isinstance(resolved_source, DuckDBSource)
@@ -1299,7 +1299,7 @@ class TestResolveData:
     def test_resolve_data_path_object(self):
         """Test resolving a Path object."""
         path = Path('data/test.csv')
-        result = UI._resolve_data(path)
+        result = resolve_data(path)
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1315,7 +1315,7 @@ class TestResolveData:
             conn.execute('CREATE TABLE test (id INTEGER)')
             conn.close()
 
-            result = UI._resolve_data(f'duckdb:///{db_path}')
+            result = resolve_data(f'duckdb:///{db_path}')
             assert len(result) == 1
             source = result[0]
             assert isinstance(source, DuckDBSource)
@@ -1332,7 +1332,7 @@ class TestResolveData:
             conn.execute('CREATE TABLE test (id INTEGER)')
             conn.close()
 
-            result = UI._resolve_data(str(db_path))
+            result = resolve_data(str(db_path))
             assert len(result) == 1
             source = result[0]
             assert isinstance(source, DuckDBSource)
@@ -1343,16 +1343,16 @@ class TestResolveData:
     def test_resolve_data_db_file_not_found(self):
         """Test that resolving a non-existent .db file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="Database file not found"):
-            UI._resolve_data('/nonexistent/path/to/database.db')
+            resolve_data('/nonexistent/path/to/database.db')
 
     def test_resolve_data_unsupported_file_type(self):
         """Test that resolving an unsupported file type raises ValueError."""
         with pytest.raises(ValueError, match="Could not determine how to load"):
-            UI._resolve_data('data.xyz')
+            resolve_data('data.xyz')
 
     def test_resolve_data_dict_with_file_paths(self):
         """Test that dict with file paths uses keys as aliases."""
-        result = UI._resolve_data({'alias1': 'data1.csv', 'alias2': 'data2.parquet'})
+        result = resolve_data({'alias1': 'data1.csv', 'alias2': 'data2.parquet'})
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1365,7 +1365,7 @@ class TestResolveData:
 
     def test_resolve_data_local_files_no_httpfs(self):
         """Test that local files don't enable httpfs."""
-        result = UI._resolve_data(['data.csv', 'data.parquet'])
+        result = resolve_data(['data.csv', 'data.parquet'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1378,7 +1378,7 @@ class TestResolveData:
             # Skip on Windows due to httpfs extension file locking issues in CI
             pytest.skip("httpfs extension has file locking issues on Windows CI")
 
-        result = UI._resolve_data(['local.csv', 'https://example.com/remote.csv'])
+        result = resolve_data(['local.csv', 'https://example.com/remote.csv'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1391,31 +1391,31 @@ class TestResolveData:
 
     def test_resolve_data_db_file_sqlite(self, sqlite_db_path):
         """Test resolving a .db file that is actually SQLite."""
-        result = UI._resolve_data(str(sqlite_db_path))
+        result = resolve_data(str(sqlite_db_path))
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, SQLAlchemySource)
 
     def test_resolve_data_sqlite_connection_string(self, sqlite_db_path):
         """Test resolving a SQLite connection string."""
-        result = UI._resolve_data(f'sqlite:///{sqlite_db_path}')
+        result = resolve_data(f'sqlite:///{sqlite_db_path}')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, SQLAlchemySource)
 
     def test_resolve_data_empty_list(self):
         """Test that an empty list returns an empty list."""
-        result = UI._resolve_data([])
+        result = resolve_data([])
         assert result == []
 
     def test_resolve_data_empty_dict(self):
         """Test that an empty dict returns an empty list."""
-        result = UI._resolve_data({})
+        result = resolve_data({})
         assert result == []
 
     def test_resolve_data_source_memory_uri(self):
         """Test that the created DuckDBSource uses memory URI."""
-        result = UI._resolve_data('data.csv')
+        result = resolve_data('data.csv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1423,7 +1423,7 @@ class TestResolveData:
 
     def test_resolve_data_provided_source_name(self):
         """Test that created DuckDBSource has the PROVIDED_SOURCE_NAME."""
-        result = UI._resolve_data('data.csv')
+        result = resolve_data('data.csv')
         assert len(result) == 1
         source = result[0]
         assert source.name == PROVIDED_SOURCE_NAME
@@ -1441,7 +1441,7 @@ class TestResolveData:
         pipeline1 = Pipeline(source=source1, table='table1')
         pipeline2 = Pipeline(source=source2, table='table2')
 
-        result = UI._resolve_data([pipeline1, pipeline2])
+        result = resolve_data([pipeline1, pipeline2])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1456,7 +1456,7 @@ class TestResolveData:
         )
         pipeline = Pipeline(source=source, table='pipe_table')
 
-        result = UI._resolve_data([pipeline, 'data.csv'])
+        result = resolve_data([pipeline, 'data.csv'])
         assert len(result) == 1
         duckdb_source = result[0]
         assert isinstance(duckdb_source, DuckDBSource)
@@ -1474,7 +1474,7 @@ class TestResolveData:
                 ds.to_netcdf(nc_path)
             except Exception:
                 pytest.skip("NetCDF write backend unavailable")
-            result = UI._resolve_data(str(nc_path))
+            result = resolve_data(str(nc_path))
             assert len(result) == 1
             assert isinstance(result[0], XArraySQLSource)
             assert 'temperature' in result[0].get_tables()
@@ -1483,7 +1483,7 @@ class TestResolveData:
         """Test graceful error when xarray-sql not installed."""
         with patch('lumen.sources.xarray_sql.try_import_xarray', return_value=None):
             with pytest.raises(ImportError, match="xarray"):
-                UI._resolve_data('data.nc')
+                resolve_data('data.nc')
 
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_mixed_xarray_and_csv(self):
@@ -1495,12 +1495,63 @@ class TestResolveData:
                 ds.to_netcdf(nc_path)
             except Exception:
                 pytest.skip("NetCDF write backend unavailable")
-            result = UI._resolve_data([str(nc_path), 'data.csv'])
+            result = resolve_data([str(nc_path), 'data.csv'])
             assert len(result) == 2
             xarray_sources = [s for s in result if isinstance(s, XArraySQLSource)]
             duckdb_sources = [s for s in result if isinstance(s, DuckDBSource)]
             assert len(xarray_sources) == 1
             assert len(duckdb_sources) == 1
+
+
+def _frames():
+    data = {'a': [1, 2, 3]}
+    yield 'pandas', lambda: pd.DataFrame(data)
+    yield 'polars', lambda: pytest.importorskip('polars').DataFrame(data)
+    yield 'pyarrow', lambda: pytest.importorskip('pyarrow').table(data)
+    yield 'relation', lambda: duckdb.sql('SELECT * FROM range(1, 4) t(a)')
+
+
+@pytest.mark.parametrize('make', [m for _, m in _frames()], ids=[n for n, _ in _frames()])
+def test_read_frame(make):
+    source = read(make())
+    assert source.get_tables() == ['data']
+    assert list(source.get('data')['a']) == [1, 2, 3]
+
+
+def test_read_duckdb_connection():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE t AS SELECT * FROM range(3) r(a)')
+    source = read(conn)
+    assert source.get_tables() == ['t']
+    assert len(source.get('t')) == 3
+
+
+@pytest.mark.parametrize('as_array', [False, True], ids=['dataset', 'dataarray'])
+def test_read_xarray(as_array):
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    da = xr.DataArray(np.arange(3.0), dims='x', coords={'x': [0, 1, 2]}, name='temp')
+    source = read(da if as_array else da.to_dataset())
+    assert isinstance(source, XArraySQLSource)
+    assert source.get_tables() == ['temp']
+    assert list(source.get('temp').sort_values('x')['temp']) == [0.0, 1.0, 2.0]
+
+
+def test_read_names_a_dataarray_from_its_key():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    da = xr.DataArray(np.arange(3.0), dims='x', coords={'x': [0, 1, 2]})
+    assert read({'temp': da}).get_tables() == ['temp']
+
+
+def test_read_several_sources_raises():
+    with pytest.raises(ValueError, match='resolved to 2 sources'):
+        read([pd.DataFrame({'a': [1]}), duckdb.connect()])
+
+
+def test_lumen_read_is_exposed():
+    import lumen
+    assert lumen.read(pd.DataFrame({'a': [1]})).get_tables() == ['data']
 
 
 class TestCLIPathValidation:
@@ -1549,7 +1600,7 @@ class TestLumenAIServeYamlRouting:
             assert base_invoke.called
             # The AIHandler route must never have been installed for a pure
             # yaml spec, since it is what feeds the path into
-            # UI._resolve_data() and raises "Could not determine how to load".
+            # resolve_data() and raises "Could not determine how to load".
             assert bokeh_serve.build_single_handler_applications is original
         finally:
             bokeh_serve.build_single_handler_applications = original
@@ -2261,7 +2312,7 @@ def test_resolve_data_geojson_startup(tmp_path):
     path = tmp_path / "counties.geojson"
     gdf.to_file(path, driver="GeoJSON")
 
-    sources = UI._resolve_data([str(path)])
+    sources = resolve_data([str(path)])
 
     assert len(sources) == 1
     source = sources[0]
@@ -2286,7 +2337,7 @@ def test_resolve_data_geojson_startup_keeps_crs(tmp_path):
     path = tmp_path / "counties.geojson"
     gdf.to_file(path, driver="GeoJSON")
 
-    (source,) = UI._resolve_data([str(path)])
+    (source,) = resolve_data([str(path)])
 
     assert source.geometry_crs == "EPSG:4326"
     result = source.get("counties")
