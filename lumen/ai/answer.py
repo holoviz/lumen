@@ -7,6 +7,7 @@ import asyncio
 import base64
 
 from concurrent.futures import ThreadPoolExecutor
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import panel as pn
@@ -68,6 +69,9 @@ def _default_agents(source: Source) -> list:
     return agents
 
 
+# One instance for every ask, so its client and the request fixes it
+# learns from provider errors carry over from question to question
+@cache
 def _default_llm() -> Llm:
     llm_cls = get_available_llm()
     if llm_cls is None:
