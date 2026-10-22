@@ -73,7 +73,9 @@ nav = [
   {"Extending Lumen" = "extending.md"},
   {"Reference" = [
     {"API" = [
+      "reference/api.md",
       {"AI" = [
+        "reference/api/ai.md",
         {"User Interface" = "reference/api/ai/ui.md"},
         {"Agents" = "reference/api/ai/agents.md"},
         {"Coordinator" = "reference/api/ai/coordinator.md"},

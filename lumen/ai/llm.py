@@ -7,6 +7,8 @@ import inspect
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import traceback
@@ -18,6 +20,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
 )
+from urllib.parse import urlsplit
 
 import instructor
 import openai
@@ -196,9 +199,19 @@ ADAPTIVE_KWARGS = {
     "reasoning_effort": "none",
 }
 
+# Fields in which reasoning models return their reasoning. Some require it to be
+# sent back on each assistant tool-call message, under the name they used.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details")
+
 # Every content shape a message may carry an image in, before and after
 # _check_for_image normalises it.
 IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
+
+# How OpenAI-compatible APIs and gateways say a model cannot read images at all.
+IMAGE_CAPABILITY_ERROR = re.compile(
+    r"(not|n't|endpoints found that) support images?\b|image_url is only supported|supports text(?: input)? only",
+    re.IGNORECASE,
+)
 
 # model_kwargs entries that configure routing rather than the provider client,
 # and so must never reach an SDK constructor.
@@ -225,6 +238,36 @@ def build_route_spec_model(spec_keys: tuple[str, ...]) -> type[BaseModel]:
     return create_model("RouteSpec", model_spec=(Literal[*spec_keys], ...))
 
 
+def strip_images(messages: list[Message]) -> list[Message]:
+    """Copy of messages with every image shape removed, keeping all text."""
+    stripped = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [
+                item for item in content
+                if not isinstance(item, IMAGE_TYPES)
+                and not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, IMAGE_TYPES):
+            content = ""
+        stripped.append({**message, "content": content})
+    return stripped
+
+
+def is_image_rejection(error: BaseException | None) -> bool:
+    """Whether a text-only model rejected image content somewhere on the cause chain.
+
+    Only capability errors count; a vision model rejecting one bad image
+    (too large, wrong format) keeps vision enabled.
+    """
+    while error is not None:
+        if isinstance(error, (openai.BadRequestError, openai.NotFoundError)) and IMAGE_CAPABILITY_ERROR.search(str(error)):
+            return True
+        error = error.__cause__
+    return False
+
+
 def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
     """Find a provider 400 on an exception's cause chain, if there is one."""
     while error is not None:
@@ -234,26 +277,47 @@ def find_bad_request(error: BaseException | None) -> openai.BadRequestError | No
     return None
 
 
+def ollama_models(endpoint: str | None = None, timeout: float = 0.5) -> list[str] | None:
+    """The models pulled on an Ollama server, or None if it is not reachable."""
+    base_url = (endpoint or Ollama.param.endpoint.default).rstrip("/").removesuffix("/v1")
+    try:
+        tags = requests.get(f"{base_url}/api/tags", timeout=timeout).json()
+    except requests.RequestException:
+        return None
+    return [model["name"] for model in tags.get("models", [])]
+
+
+def provider_name(llm_cls: type[Llm]) -> str:
+    """The ``LLM_PROVIDERS`` key, e.g. the ``--provider`` value, for an LLM class."""
+    return next(name for name, class_name in LLM_PROVIDERS.items() if class_name == llm_cls.__name__)
+
+
+def local_cli_providers() -> dict[type[LlmCli], bool | None]:
+    """Coding CLI providers installed on PATH, mapped to whether they report a signed-in user."""
+    return {
+        cls: cls.signed_in()
+        for class_name in LLM_PROVIDERS.values()
+        if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
+    }
+
+
 def get_available_llm() -> type[Llm] | None:
     """
-    Detect and instantiate an available LLM provider by checking environment variables
-    and attempting to instantiate each provider in order.
+    Detect an available LLM provider: the first one whose API key environment
+    variable is set.
+
+    Providers that need no key, such as Ollama and the coding CLIs, are only
+    used when requested explicitly.
 
     Returns
     -------
     type[Llm] | None
-        The LLM class if successful, or None if no provider is available.
+        The LLM class, or None if no provider is available.
     """
     for provider, class_name in LLM_PROVIDERS.items():
         env_var = PROVIDER_ENV_VARS.get(provider)
-        if env_var and not os.environ.get(env_var):
-            continue
-
-        try:
-            provider_cls = globals()[class_name]
-            return provider_cls
-        except KeyError:
-            continue
+        if env_var and os.environ.get(env_var):
+            return globals()[class_name]
     return None
 
 
@@ -665,19 +729,7 @@ class Llm(param.Parameterized):
         be dropped here, not just the OpenAI-native content-part dicts.
         """
         user_msgs = [m for m in messages if m.get("role") == "user"]
-        if not user_msgs:
-            return []
-        last = dict(user_msgs[-1])
-        content = last.get("content")
-        if isinstance(content, list):
-            last["content"] = [
-                item for item in content
-                if not isinstance(item, IMAGE_TYPES)
-                and not (isinstance(item, dict) and item.get("type") == "image_url")
-            ]
-        elif isinstance(content, IMAGE_TYPES):
-            last["content"] = ""
-        return [last]
+        return strip_images(user_msgs[-1:])
 
     def _routing_config(self, model_spec: str) -> dict | None:
         """The ``routing`` config governing *model_spec*, or None if it is not routed.
@@ -892,7 +944,8 @@ class Llm(param.Parameterized):
             )
             if state.answer is not None:
                 return state.answer
-            messages_curr = messages_curr + [self._tool_calls_message(tool_calls)] + tool_messages
+            tool_calls_message = self._tool_calls_message(tool_calls, self._extract_reasoning(output))
+            messages_curr = messages_curr + [tool_calls_message] + tool_messages
             if stop:
                 break
             output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
@@ -1169,12 +1222,30 @@ class Llm(param.Parameterized):
         }
 
     @classmethod
-    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
+    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]], reasoning: dict[str, Any] | None = None) -> Message:
         return Message(
             role="assistant",
             content="",
             tool_calls=[cls._normalize_tool_call_for_message(call) for call in tool_calls],
+            **(reasoning or {}),
         )
+
+    @classmethod
+    def _extract_reasoning(cls, response: Any) -> dict[str, Any]:
+        if not getattr(response, "choices", None):
+            return {}
+        message = getattr(response.choices[0], "message", None)
+        return {key: value for key in REASONING_FIELDS if (value := getattr(message, key, None))}
+
+    @classmethod
+    def _accumulate_reasoning(cls, reasoning: dict[str, str], chunk: Any) -> None:
+        """Join streamed reasoning text; structured reasoning_details deltas are not merged."""
+        if not getattr(chunk, "choices", None):
+            return
+        delta = getattr(chunk.choices[0], "delta", None)
+        for key in REASONING_FIELDS:
+            if isinstance(piece := getattr(delta, key, None), str):
+                reasoning[key] = reasoning.get(key, "") + piece
 
     @classmethod
     def _format_tool_result(cls, result: Any) -> str:
@@ -1519,6 +1590,7 @@ class Llm(param.Parameterized):
 
         tool_call_accum: dict[int, dict[str, Any]] = {}
         tool_call_order: list[int] = []
+        reasoning: dict[str, str] = {}
         response_id: str | None = None
         try:
             async for chunk in chunks:
@@ -1529,6 +1601,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -1544,6 +1617,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -1581,7 +1655,7 @@ class Llm(param.Parameterized):
                     ):
                         yield chunk
                 else:
-                    tool_calls_message = self._tool_calls_message(tool_calls)
+                    tool_calls_message = self._tool_calls_message(tool_calls, reasoning)
                     async for chunk in self.stream(
                         messages + [tool_calls_message] + tool_messages,
                         system=system,
@@ -1657,6 +1731,27 @@ class LlmCli(Llm):
     _supports_stream = False
     _supports_model_stream = False
     _supports_vision = False
+
+    # Arguments that make the CLI report whether a user is signed in, if it has such a command.
+    _auth_status_args: tuple[str, ...] = ()
+
+    @classmethod
+    def _auth_status(cls) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                [cls.param.executable.default, *cls._auth_status_args],
+                capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    @classmethod
+    def signed_in(cls) -> bool | None:
+        """Whether the CLI reports a signed-in user, or None if it has no way to say."""
+        if not cls._auth_status_args:
+            return None
+        result = cls._auth_status()
+        return result is not None and result.returncode == 0
 
     def _create_base_client(self, **kwargs) -> Any:
         raise NotImplementedError("CLI-backed providers do not create an SDK client.")
@@ -1839,6 +1934,8 @@ class CodexCli(LlmCli):
 
     executable = param.String(default="codex", constant=True)
 
+    _auth_status_args = ("login", "status")
+
     sandbox = param.Selector(
         default="read-only",
         objects=["read-only", "workspace-write", "danger-full-access"],
@@ -1881,6 +1978,8 @@ class ClaudeCode(LlmCli):
 
     executable = param.String(default="claude", constant=True)
 
+    _auth_status_args = ("auth", "status")
+
     permission_mode = param.Selector(
         default="plan",
         objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
@@ -1897,15 +1996,36 @@ class ClaudeCode(LlmCli):
 
     model_kwargs = param.Dict(default={"default": {"model": None}})
 
+    @classmethod
+    def signed_in(cls) -> bool:
+        # `claude auth status` prints JSON whose loggedIn field is the answer.
+        result = cls._auth_status()
+        if result is None or result.returncode != 0:
+            return False
+        try:
+            return json.loads(result.stdout).get("loggedIn") is True
+        except json.JSONDecodeError:
+            return False
+
     def _build_command(self, model: str | None) -> list[str]:
         command = [
             self.executable, "--print", "--output-format", "json",
             "--no-session-persistence", "--max-turns", str(self.max_turns),
             "--permission-mode", self.permission_mode,
+            # Lumen runs its own tool loop, so Claude Code's built-in tools and
+            # MCP servers only spend turns and hit --max-turns. User settings
+            # would add the user's own hooks and instructions to every answer.
+            "--tools", "", "--strict-mcp-config", "--setting-sources=",
         ]
         if model:
             command.extend(["--model", model])
         return command
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Claude Code never reads the project Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            return await super()._run_command(command, prompt, cwd or self.working_dir or tmp)
 
     def _decode_output(self, output: str) -> str:
         try:
@@ -2181,8 +2301,8 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo_id": "unsloth/Qwen3.6-35B-A3B-GGUF",
-            "filename": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+            "filename": "Qwen3.5-9B-Q5_K_M.gguf",
             # The embedded Qwen3.5+ template opens a <think> block that the
             # JSON grammar would then have to fill.
             "chat_format": "chatml",
@@ -2611,6 +2731,9 @@ class OpenAI(Llm, OpenAIMixin):
         are never overridden, so a deliberate choice still surfaces its error.
         """
         fixes = self._kwarg_fixes.setdefault(model, {})
+        # Some gateways (e.g. Kilo) report a dict here rather than a parameter name.
+        if not isinstance(error.param, str):
+            return False
         if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
             return False
         fixes[error.param] = ADAPTIVE_KWARGS[error.param]
@@ -2624,6 +2747,13 @@ class OpenAI(Llm, OpenAIMixin):
             try:
                 return await self._send(model_spec, messages, **kwargs)
             except Exception as e:
+                # A text-only model can still answer the text, and later
+                # requests should not render images it cannot read.
+                if self._supports_vision and is_image_rejection(e):
+                    log_debug(f"Disabling vision: \033[96m{model!r}\033[0m rejected image input")
+                    self._supports_vision = False
+                    messages = strip_images(messages)
+                    continue
                 # instructor re-raises provider errors wrapped in its own
                 # retry exception, so the 400 is found on the cause chain.
                 error = find_bad_request(e)
@@ -2810,13 +2940,16 @@ class Anthropic(Llm, AnthropicMixin):
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-haiku-4-5"},
-        "edit": {"model": "claude-sonnet-4-6"},
+        "default": {"model": "claude-haiku-5-5"},
+        "edit": {"model": "claude-sonnet-5-5"},
     })
 
     # Claude 4.7+ rejects a non-default temperature and Sonnet/Opus 5.5 reject
     # the forced tool_choice instructor sends, so newer models fail here.
     select_models = param.List(default=[
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
         "claude-haiku-4-5",
         "claude-sonnet-4-6",
         "claude-opus-4-6",
@@ -3000,6 +3133,58 @@ class Anthropic(Llm, AnthropicMixin):
             cache_control["ttl"] = "1h"
         return cache_control
 
+    @staticmethod
+    def _model_name(model: str) -> str:
+        """Return the Claude model name without a Bedrock inference prefix."""
+        return model.rsplit("anthropic.", maxsplit=1)[-1]
+
+    @classmethod
+    def _uses_native_structured_output(cls, model: str) -> bool:
+        """Whether the model supports Anthropic's native structured output API."""
+        name = cls._model_name(model)
+        return name.startswith((
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+        ))
+
+    @classmethod
+    def _omit_temperature(cls, model: str) -> bool:
+        """Whether Anthropic rejects a non-default sampling temperature."""
+        name = cls._model_name(model)
+        return name.startswith((
+            "claude-haiku-5",
+            "claude-sonnet-5",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-opus-5",
+        ))
+
+    async def _run_native_structured(
+        self,
+        model: str,
+        messages: list[Message],
+        response_model: type[BaseModel],
+        **kwargs,
+    ):
+        """Run structured-only requests through Anthropic's native JSON API."""
+        if self._base_client is None:
+            self._base_client = self._create_base_client()
+
+        parse_kwargs = dict(kwargs)
+        parse_kwargs.pop("response_model", None)
+        parse_kwargs.pop("max_retries", None)
+        parse_kwargs.pop("stream", None)
+        # A string system prompt already carries its own cache breakpoint.
+        parse_kwargs.pop("cache_control", None)
+        result = await self._base_client.messages.parse(
+            model=model,
+            messages=messages,
+            output_format=response_model,
+            **parse_kwargs,
+        )
+        return result.parsed_output
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -3051,6 +3236,21 @@ class Anthropic(Llm, AnthropicMixin):
                     {"type": "text", "text": kwargs["system"], "cache_control": cache_control}
                 ]
 
+        model = self._get_model_kwargs(model_spec)["model"]
+        if self._omit_temperature(model):
+            kwargs.pop("temperature", None)
+
+        response_model = kwargs.get("response_model")
+        if (
+            response_model is not None
+            and not tool_specs
+            and not kwargs.get("stream", False)
+            and self._uses_native_structured_output(model)
+        ):
+            return await self._run_native_structured(
+                model, filtered_messages, **kwargs
+            )
+
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
         if response_model := kwargs.get("response_model"):
@@ -3099,12 +3299,15 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
     _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
-        "ui": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
-        "edit": {"model": "us.anthropic.claude-sonnet-4-6"},
+        "default": {"model": "us.anthropic.claude-haiku-5-5"},
+        "ui": {"model": "us.anthropic.claude-haiku-5-5"},
+        "edit": {"model": "us.anthropic.claude-sonnet-5-5"},
     })
 
     select_models = param.List(default=[
+        "us.anthropic.claude-haiku-5-5",
+        "us.anthropic.claude-sonnet-5-5",
+        "us.anthropic.claude-opus-5-5",
         "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         "us.anthropic.claude-sonnet-4-6",
         "us.anthropic.claude-opus-4-6-v1",
@@ -3644,12 +3847,13 @@ class Ollama(OpenAI):
 
     display_name = param.String(default="Ollama", constant=True)
 
-    endpoint = param.String(default="http://localhost:11434/v1", doc="The Ollama API endpoint.")
+    endpoint = param.String(default="http://localhost:11434/v1", doc="""
+        The Ollama API endpoint; read from OLLAMA_HOST when it is set.""")
 
     mode = param.Selector(default=Mode.JSON)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "qwen3.6:35b-a3b"},
+        "default": {"model": "qwen3.5:9b"},
     })
 
     select_models = param.List(default=[
@@ -3663,13 +3867,16 @@ class Ollama(OpenAI):
 
     temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
+    def __init__(self, **params):
+        if "endpoint" not in params and (host := os.environ.get("OLLAMA_HOST")):
+            # Ollama accepts "host", "host:port" or a full URL here.
+            url = urlsplit(host if "://" in host else f"http://{host}")
+            params["endpoint"] = f"{url.scheme}://{url.hostname}:{url.port or 11434}/v1"
+        super().__init__(**params)
+
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
-        base_url = (endpoint or self.endpoint).rstrip('/').removesuffix('/v1')
-        tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
-        if tags_response.status_code != 200:
-            return set()
-        return {m.get("name", "") for m in tags_response.json().get("models", [])}
+        return set(ollama_models(endpoint or self.endpoint, timeout=5) or ())
 
 
 class MLX(Llm):
@@ -4238,12 +4445,15 @@ class Kilo(OpenAI):
     An LLM implementation using the Kilo API.
 
     Kilo provides an OpenAI-compatible endpoint that routes requests to
-    models from multiple providers. Kilo has a free tier, but for other models,
-    optionally set the ``KILO_API_KEY`` environment variable or pass ``api_key``
+    models from multiple providers. Its free tier needs no account; for other
+    models, set the ``KILO_API_KEY`` environment variable or pass ``api_key``
     directly. The provider is auto-detected when
     ``KILO_API_KEY`` is present, or can be selected explicitly with
     ``--provider kilo``.
     """
+
+    api_key = param.String(default="anonymous", doc="""
+        The Kilo API key. The free tier accepts any placeholder value.""")
 
     api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
 
