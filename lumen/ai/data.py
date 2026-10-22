@@ -214,7 +214,8 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
             initializers=initializers,
             mirrors=mirrors,
             name=PROVIDED_SOURCE_NAME,
-            tables=tables,
+            # A mirror is only a view until it is listed as a table too
+            tables={**tables, **{table: f'SELECT * FROM "{table}"' for table in mirrors}},
             uri=':memory:'
         )
         sources.append(source)

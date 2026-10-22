@@ -1140,6 +1140,12 @@ class TestResolveData:
         assert result[0].get_tables() == ['penguins', 'birds']
         pd.testing.assert_frame_equal(result[0].get('birds'), df)
 
+    def test_resolve_data_pipeline_is_listed_as_a_table(self):
+        source = DuckDBSource.from_df({'tiny': pd.DataFrame({'a': [1, 2]})})
+        result = resolve_data({'tiny_copy': Pipeline(source=source, table='tiny')})
+        assert result[0].get_tables() == ['tiny_copy']
+        assert list(result[0].get('tiny_copy')['a']) == [1, 2]
+
     def test_resolve_data_unnamed_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
         result = resolve_data([df, df])
