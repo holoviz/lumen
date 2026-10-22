@@ -103,6 +103,29 @@ async def test_planner_empty_plan(llm):
     assert todos.object == ""
 
 
+async def test_planner_headless_answers_without_interface(llm):
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        PlanModel(
+            chain_of_thought="Just use ChatAgent",
+            title="Hello!",
+            steps=[StepModel(actor="ChatAgent", instruction="Say Hello!", title="Hello Reply")]
+        ),
+        "Hello there!",
+    ])
+
+    planner = Planner(llm=llm, headless=True)
+    plan = await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
+    outputs, _ = await plan.execute()
+
+    assert planner.interface is None
+    assert plan.status == "success"
+    assert outputs[-1].object == "Hello there!"
+
+
 async def test_planner_simple_plan(llm):
     PlanModel = make_plan_model(["ChatAgent"], [])
 
