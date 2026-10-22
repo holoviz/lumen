@@ -645,8 +645,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agents = {normalized_name(agent): agent for agent in self.agents}
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
+            # Planner reports planning failures on the title, headless or not
+            self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
             if not headless:
-                self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
                 todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
                 todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
                 self.steps_layout = Card(
