@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import yaml
 
+from lumen.pipeline import Pipeline
 from lumen.tests.utils import Polygon, gpd
 from lumen.transforms.sql import SQLGroupBy
 
@@ -1598,6 +1600,18 @@ def test_from_df_native_frame_keeps_dtypes(backend):
     fetched = nw.from_native(source.fetch("SELECT * FROM t"))
     assert fetched.collect_schema() == frame.collect_schema()
     assert fetched.rows() == frame.rows()
+
+
+def test_from_spec_restores_frame_and_pipeline_mirrors():
+    base = DuckDBSource.from_df({'base': pd.DataFrame({'x': [1, 2, 3]})})
+    source = DuckDBSource(
+        uri=':memory:',
+        mirrors={'people': pd.DataFrame({'name': ['a', 'b']}), 'piped': Pipeline(source=base, table='base')},
+        tables={'people': 'SELECT * FROM people', 'piped': 'SELECT * FROM piped'},
+    )
+    restored = DuckDBSource.from_spec(yaml.safe_load(yaml.dump(source.to_spec())))
+    assert list(restored.get('people')['name']) == ['a', 'b']
+    assert list(restored.get('piped')['x']) == [1, 2, 3]
 
 
 def _sql_geometry_source():

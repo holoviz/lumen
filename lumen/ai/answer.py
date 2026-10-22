@@ -10,6 +10,7 @@ import logging
 import weakref
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -17,13 +18,15 @@ import panel as pn
 import param
 
 from panel.config import panel_extension
+from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel_material_ui import Card, Column
 from panel_material_ui.chat import ChatMessage
 
-from ..config import SOURCE_TABLE_SEPARATOR
+from ..config import SOURCE_TABLE_SEPARATOR, config
 from ..pipeline import Pipeline
+from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
@@ -34,10 +37,12 @@ from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
 from .data import read
 from .editors import LumenEditor
+from .export import format_output, make_preamble
 from .llm import (
     Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
 )
 from .story import _prose_to_html
+from .ui import ExplorerUI
 
 if TYPE_CHECKING:
     from .data import DataT
@@ -113,7 +118,76 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
 
-def _build_answer(question: str, plan: Plan, outputs: list, context: dict[str, Any]) -> Answer:
+def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | None) -> dict[str, Any]:
+    # Starts from the Planner's own context (its vector stores) so nothing
+    # one question adds is seen by an unrelated one
+    context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
+    if visible_slugs is not None:
+        context["visible_slugs"] = visible_slugs
+    return context
+
+
+async def _respond(
+    planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any]
+) -> tuple[Answer, dict[str, Any]]:
+    """Run one question through the Planner, returning the Answer and the context it left."""
+    if log.getEffectiveLevel() > logging.DEBUG:
+        quiet_retry_log()
+    await planner.sync(context)
+    plan = await planner.respond(messages, context)
+    if plan is None:
+        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+    outputs, out_context = await plan.execute()
+    if plan.status == "error":
+        failed = next((task.title for task in plan if task.status == "error"), plan.title)
+        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
+    answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm)
+    return answer, out_context
+
+
+def _run(coro):
+    """Run a coroutine to completion from sync code, inside Jupyter or not."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop_running = False
+    else:
+        loop_running = True
+    # Run outside the except block, or every error raised by the question
+    # would also print a chained "no running event loop" traceback
+    if not loop_running:
+        return asyncio.run(coro)
+    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
+    # in a worker thread instead of patching the loop with nest_asyncio
+    with ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _write_tables(spec: Any, data_dir: Path) -> None:
+    """Swap each DataFrame serialized into a DuckDB source spec for a Parquet file."""
+    if isinstance(spec, list):
+        for item in spec:
+            _write_tables(item, data_dir)
+        return
+    if not isinstance(spec, dict):
+        return
+    if spec.get("type") == "duckdb":
+        tables = spec.setdefault("tables", {})
+        mirrors = spec.get("mirrors", {})
+        frames = {**{t: v for t, v in mirrors.items() if isinstance(v, dict) and "serializer" in v},
+                  **{t: v for t, v in tables.items() if isinstance(v, dict)}}
+        for table, serialized in frames.items():
+            Serializer.deserialize(serialized).to_parquet(data_dir / f"{table}.parquet")
+            # The script resolves $LUMEN_DATA to the data folder next to it
+            tables[table] = f"SELECT * FROM read_parquet('$LUMEN_DATA/{table}.parquet')"
+            mirrors.pop(table, None)
+    for value in spec.values():
+        _write_tables(value, data_dir)
+
+
+def _build_answer(
+    question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm
+) -> Answer:
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
     views = [
         out.component for out in outputs
@@ -121,10 +195,12 @@ def _build_answer(question: str, plan: Plan, outputs: list, context: dict[str, A
     ]
     view = views[-1] if views else None
     return Answer(
+        llm=llm,
         pipeline=context.get("pipeline"),
         plan=plan,
         question=question,
         spec=view.spec if view is not None and view.view_type == "vegalite" else None,
+        source=source,
         sql=context.get("sql"),
         status=plan.status,
         value=str(messages[-1].object) if messages else "",
@@ -155,24 +231,11 @@ async def aask(
     -------
     Answer
     """
-    if log.getEffectiveLevel() > logging.DEBUG:
-        quiet_retry_log()
     source, visible_slugs = _resolve(data)
     planner = _planner(source, llm or _default_llm(), agents)
-    # Each question starts from the Planner's own context (its vector stores)
-    # so nothing one question adds is seen by the next
-    context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
-    if visible_slugs is not None:
-        context["visible_slugs"] = visible_slugs
-    await planner.sync(context)
-    plan = await planner.respond([{"role": "user", "content": question}], context)
-    if plan is None:
-        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-    outputs, out_context = await plan.execute()
-    if plan.status == "error":
-        failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
-    return _build_answer(question, plan, outputs, out_context)
+    context = _fresh_context(planner, source, visible_slugs)
+    answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
+    return answer
 
 
 def ask(
@@ -184,21 +247,55 @@ def ask(
     Takes the same arguments as aask, and works whether or not an event
     loop is already running, e.g. in a Jupyter notebook.
     """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        loop_running = False
-    else:
-        loop_running = True
-    # Run outside the except block, or every error raised by the question
-    # would also print a chained "no running event loop" traceback
-    coro = aask(data, question, llm=llm, agents=agents)
-    if not loop_running:
-        return asyncio.run(coro)
-    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
-    # in a worker thread instead of patching the loop with nest_asyncio
-    with ThreadPoolExecutor(1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    return _run(aask(data, question, llm=llm, agents=agents))
+
+
+def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
+    """
+    Start a conversation with some data, where each question can follow up
+    on the answers before it. Takes the same arguments as aask.
+    """
+    return Chat(data, llm=llm, agents=agents)
+
+
+class Chat(param.Parameterized):
+    """
+    A conversation with a Source or Pipeline. Each question sees the earlier
+    questions and answers, and runs against the data the last answer left,
+    the way a follow-up in the chat UI does.
+    """
+
+    answers = param.List(doc="""
+        The answers so far, oldest first.""")
+
+    def __init__(self, data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None, **params):
+        super().__init__(**params)
+        self._source, self._visible_slugs = _resolve(data)
+        self._llm = llm
+        self._agents = agents
+        self._messages: list[dict[str, str]] = []
+        self._context: dict[str, Any] | None = None
+
+    def __repr__(self) -> str:
+        return f"Chat(answers={len(self.answers)})"
+
+    async def aask(self, question: str) -> Answer:
+        """Ask the next question and wait for the Answer."""
+        planner = _planner(self._source, self._llm or _default_llm(), self._agents)
+        if self._context is None:
+            context = _fresh_context(planner, self._source, self._visible_slugs)
+        else:
+            context = dict(self._context)
+        messages = [*self._messages, {"role": "user", "content": question}]
+        answer, out_context = await _respond(planner, question, messages, context)
+        self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
+        self._context = out_context
+        self.answers = [*self.answers, answer]
+        return answer
+
+    def ask(self, question: str) -> Answer:
+        """Ask the next question and return the Answer."""
+        return _run(self.aask(question))
 
 
 class Answer(param.Parameterized):
@@ -215,6 +312,9 @@ class Answer(param.Parameterized):
     question = param.String(doc="""
         The question that was asked.""")
 
+    source = param.ClassSelector(class_=Source, allow_None=True, doc="""
+        The Source the question was asked of.""")
+
     spec = param.Dict(default=None, allow_None=True, doc="""
         The Vega-Lite specification of the chart, if a Vega-Lite chart was made.""")
 
@@ -230,9 +330,73 @@ class Answer(param.Parameterized):
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
-    def __init__(self, **params):
+    def __init__(self, llm: Llm | None = None, **params):
         super().__init__(**params)
         self._card = None
+        self._llm = llm
+
+    def explore(self, **params) -> ExplorerUI:
+        """
+        Open this answer in the Lumen chat UI: an ExplorerUI on the same
+        Source and LLM, with the answer as its first exploration. Keyword
+        arguments go to ExplorerUI.
+        """
+        ui = ExplorerUI(data=self.source, llm=self._llm, **params)
+
+        async def seed():
+            ui.interface.send(self.question, respond=False)
+            await ui.add_plan_exploration(self.plan)
+
+        # onload runs it inside the served session once the page is up, so
+        # the browser receives the changes; state.execute ran it outside the
+        # session and the page stopped updating. In a notebook it runs now.
+        state.onload(seed)
+        return ui
+
+    def export(self, directory: str | Path) -> Path:
+        """
+        Write this answer as a script that reruns it without an LLM.
+
+        Writes ``answer.py`` and, for data held in memory, one Parquet file
+        per table under ``data/``, so the script stays small however large
+        the data is. Returns the path of the script.
+        """
+        component = self.view if self.view is not None else self.pipeline
+        if component is None:
+            raise ValueError("This answer has no chart or data to export.")
+        directory = Path(directory)
+        data_dir = directory / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with config.param.update(serializer="csv"):
+            spec = component.to_spec()
+        _write_tables(spec, data_dir)
+        cell, extension = format_output(
+            component, spec=spec,
+            load_spec='yaml.safe_load(yaml_spec.replace("$LUMEN_DATA", str(Path(__file__).parent / "data")))',
+        )
+        (preamble,) = make_preamble("from pathlib import Path\n", extensions=[extension] if extension else [])
+        script = directory / "answer.py"
+        script.write_text(f"{preamble.source}\n\n{cell.source}\n")
+        return script
+
+    @property
+    def code(self) -> str:
+        """
+        Python that rebuilds the chart, or else the data, with Lumen alone.
+
+        No LLM is called. In-memory data is embedded in the spec, so the
+        code runs anywhere Lumen is installed; for a large table use
+        ``export``, which keeps the data in Parquet files beside a small
+        script. File-based sources keep their absolute paths.
+        """
+        component = self.view if self.view is not None else self.pipeline
+        if component is None:
+            return ""
+        cell, extension = format_output(component)
+        if cell is None:
+            return ""
+        (preamble,) = make_preamble("", extensions=[extension] if extension else [])
+        return f"{preamble.source}\n\n{cell.source}"
 
     def __repr__(self) -> str:
         first_line = self.value.strip().splitlines()[0] if self.value.strip() else ""

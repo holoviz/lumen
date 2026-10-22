@@ -4,7 +4,9 @@ from . import (  # noqa
     actor, agents, embeddings, llm,
 )
 from .analysis import Analysis  # noqa
-from .answer import Answer, aask, ask  # noqa
+from .answer import (  # noqa
+    Answer, Chat, aask, ask, chat,
+)
 from .coordinator import Coordinator, DependencyResolver, Planner  # noqa
 from .decisions import (  # noqa
     Choice, DecisionModel, DecisionResult, Jev, Noul, OpenRouterDecisionModel,

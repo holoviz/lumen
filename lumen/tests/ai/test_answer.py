@@ -15,19 +15,21 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.config import panel_extension
+from panel.tests.util import async_wait_until
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     Answer, _default_agents, _default_llm, _planner, _planners, _resolve, aask,
-    ask,
+    ask, chat,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
+from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView
@@ -219,6 +221,65 @@ def chart_answer(frame_source):
     )
 
 
+def test_answer_code_rebuilds_the_chart_without_an_llm(chart_answer):
+    namespace = {}
+    exec(chart_answer.code, namespace)
+    view = namespace["view"]
+    assert view.spec["mark"] == "bar"
+    pd.testing.assert_frame_equal(view.pipeline.data, chart_answer.view.pipeline.data)
+
+
+async def test_answer_code_rebuilds_the_queried_data(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "38.", "38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    namespace = {}
+    exec(answer.code, namespace)
+    assert namespace["pipeline"].data.iloc[0, 0] == 38.0
+
+
+async def test_answer_export_keeps_large_data_out_of_the_script(llm, tmp_path):
+    big = read({"big": pd.DataFrame({"category": ["A", "B"] * 1000, "value": range(2000)})})
+    SQLModel = make_sql_model([(big.name, "big")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT category, SUM(value) AS total FROM big GROUP BY category", table_slug="totals", tables=["big"]),
+        "Done.", "Done.",
+    ])
+    answer = await aask(big, "Total per category?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    script = answer.export(tmp_path / "out")
+
+    assert script.stat().st_size < 5_000
+    assert sorted(p.name for p in (tmp_path / "out" / "data").iterdir()) == ["big.parquet", "totals.parquet"]
+    code = (
+        "import runpy, sys; g = runpy.run_path(sys.argv[1]); "
+        "print(sorted(map(tuple, g['pipeline'].data.values.tolist())))"
+    )
+    run = subprocess.run([sys.executable, "-c", code, str(script)], cwd=tmp_path, capture_output=True, text=True, check=True)
+    expected = sorted(map(tuple, answer.pipeline.data.values.tolist()))
+    assert run.stdout.strip() == str(expected)
+
+
+def test_answer_export_rebuilds_a_chart(chart_answer, tmp_path):
+    script = chart_answer.export(tmp_path)
+    code = "import runpy, sys; g = runpy.run_path(sys.argv[1]); print(g['view'].spec['mark'], len(g['view'].pipeline.data))"
+    run = subprocess.run([sys.executable, "-c", code, str(script)], cwd=tmp_path.parent, capture_output=True, text=True, check=True)
+    assert run.stdout.strip() == "bar 3"
+
+
+def test_answer_export_needs_data():
+    with pytest.raises(ValueError, match="no chart or data"):
+        Answer(question="q", value="Hi", status="success").export("unused")
+
+
+def test_answer_code_is_empty_without_data():
+    assert Answer(question="q", value="Hi", status="success").code == ""
+
+
 def test_answer_repr_is_one_line(chart_answer):
     assert repr(chart_answer) == "Answer(status='success', value='**B** is largest.')"
 
@@ -310,3 +371,75 @@ def test_importing_answer_does_not_load_the_panel_extension():
         "assert not panel_extension._loaded"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+async def test_chat_follow_up_sees_history_and_last_result(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT category, SUM(value) AS total FROM tiny GROUP BY category", table_slug="totals", tables=["tiny"]),
+        SQLModel(query="SELECT * FROM tiny WHERE category = 'A'", table_slug="only_a", tables=["tiny"]),
+    ])
+    conversation = frame_source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    first = await conversation.aask("Total value per category?")
+    second = await conversation.aask("Only A")
+
+    assert conversation.answers == [first, second]
+    history, latest = llm.plan_calls[-1]
+    assert "User: Total value per category?" in history["content"]
+    assert latest == {"role": "user", "content": "Only A"}
+    # The classifier only runs when the last answer's data is in context
+    assert llm.follow_up_checks == 1
+    assert "SUM(value)" in first.sql and "category = 'A'" in second.sql
+    assert repr(conversation) == "Chat(answers=2)"
+
+
+def test_chat_ask_works_from_sync_code(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT COUNT(*) AS n FROM tiny", table_slug="n", tables=["tiny"])])
+    answer = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()]).ask("How many rows?")
+    assert answer.pipeline.data.iloc[0, 0] == 3
+
+
+async def test_answer_explore_opens_the_ui_on_the_answer(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "38.", "38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.source is frame_source
+
+    ui = answer.explore()
+    await async_wait_until(lambda: len(ui._explorations.items) == 2)
+
+    assert ui.llm is llm
+    # The UI also adds the answer's derived table, as it does after a chat answer
+    assert ui.context["sources"][0] is frame_source
+    exploration = ui._explorations.items[1]["view"]
+    assert exploration.context["pipeline"] is answer.pipeline
+    assert ui.interface.objects[0].object == "Total value?"
+
+
+class FollowUpLLM(MockLLM):
+    """Replies by response model, and records what each Plan call was sent."""
+
+    def __init__(self, sql_models, **params):
+        super().__init__(**params)
+        self.sql_models = list(sql_models)
+        self.plan_calls = []
+        self.follow_up_checks = 0
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        name = getattr(response_model, "__name__", "")
+        if "Plan" in name:
+            self.plan_calls.append(messages)
+            return _plan(("SQLAgent", "Query"), ("ChatAgent", "Explain"))
+        if name == "FollowUpClassification":
+            self.follow_up_checks += 1
+            return response_model(chain_of_thought="Builds on the last result", follow_up_type="derived")
+        if "SQLQuery" in name:
+            return self.sql_models.pop(0)
+        if name:
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+        return "Done."
