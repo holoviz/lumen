@@ -15,6 +15,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.config import panel_extension
+from panel.tests.util import async_wait_until
 
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
@@ -387,3 +388,24 @@ def test_chat_ask_works_from_sync_code(frame_source):
     llm = FollowUpLLM([SQLModel(query="SELECT COUNT(*) AS n FROM tiny", table_slug="n", tables=["tiny"])])
     answer = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()]).ask("How many rows?")
     assert answer.pipeline.data.iloc[0, 0] == 3
+
+
+async def test_answer_explore_opens_the_ui_on_the_answer(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "38.", "38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.source is frame_source
+
+    ui = answer.explore()
+    await async_wait_until(lambda: len(ui._explorations.items) == 2)
+
+    assert ui.llm is llm
+    # The UI also adds the answer's derived table, as it does after a chat answer
+    assert ui.context["sources"][0] is frame_source
+    exploration = ui._explorations.items[1]["view"]
+    assert exploration.context["pipeline"] is answer.pipeline
+    assert ui.interface.objects[0].object == "Total value?"
