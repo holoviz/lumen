@@ -289,7 +289,7 @@ _TODO_SX = {
     "& li:has(> .todo-done)": {"color": "text.secondary"},
     "& .todo-status": {
         "flex": "0 0 auto", "position": "relative", "boxSizing": "border-box",
-        "width": "14px", "height": "14px", "mt": "0.3em", "borderRadius": "50%",
+        "width": "14px", "height": "14px", "mt": "calc((1lh - 14px) / 2)", "borderRadius": "50%",
     },
     "& .todo-pending": {"border": "1.5px solid", "borderColor": "text.disabled"},
     "& .todo-current": {
@@ -300,7 +300,7 @@ _TODO_SX = {
     "@keyframes lumen-todo-spin": {"to": {"transform": "rotate(360deg)"}},
     "& .todo-done": {"bgcolor": "success.main"},
     "& .todo-done::after": {
-        "content": '""', "position": "absolute", "left": "5px", "top": "2.5px", "width": "3px", "height": "6px",
+        "content": '""', "position": "absolute", "left": "5.5px", "top": "3.5px", "width": "3px", "height": "6px",
         "border": "solid white", "borderWidth": "0 1.5px 1.5px 0", "transform": "rotate(45deg)",
     },
     "& .todo-failed": {"bgcolor": "error.main"},

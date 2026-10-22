@@ -842,6 +842,13 @@ def test_checklist_renders_status_indicators():
     assert not any(emoji in html for emoji in "🟢🟡⚪🔴")
 
 
+def test_checklist_status_is_centered_on_first_line_of_label():
+    sx = Checklist().sx
+    status = sx["& .todo-status"]
+    # Half of the free space in the first line box, so it holds at any font size.
+    assert status["mt"] == f"calc((1lh - {status['height']}) / 2)"
+
+
 def test_checklist_ignores_status_markers_inside_instruction(llm):
     task = ActorTask(ChatAgent(), instruction="step one\n- 🟢 this is literal text", title="First")
     plan = Plan(task, history=[{"role": "user", "content": "go"}], llm=llm)
