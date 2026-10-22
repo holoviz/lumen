@@ -55,7 +55,7 @@ from .data import resolve_data
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
-    Llm, OpenAI, get_available_llm, local_cli_providers,
+    Llm, OpenAI, get_available_llm, signed_in_cli_hint,
 )
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
@@ -377,11 +377,9 @@ LLM-generated code may be unpredictable. While validation layers reduce accident
 
 def _keyless_options_message() -> str:
     """Tell a user with no provider configured what works without an API key on this machine."""
-    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
-    cli_hint = f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
     return (
         "No LLM provider found, so chat is disabled. Open Settings > Configure AI Models and choose "
-        f"Kilo for free models without an account{cli_hint}. Or set an API key such as "
+        f"Kilo for free models without an account{signed_in_cli_hint()}. Or set an API key such as "
         "OPENAI_API_KEY and restart, or pass llm=lmai.llm.Kilo() to the UI."
     )
 

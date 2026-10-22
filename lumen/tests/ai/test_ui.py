@@ -191,7 +191,7 @@ async def test_ui_without_provider_explains_options_instead_of_failing(monkeypat
     for env_var in PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setattr("lumen.ai.llm.requests.get", MagicMock(side_effect=requests.ConnectionError))
-    monkeypatch.setattr("lumen.ai.ui.local_cli_providers", lambda: {ClaudeCode: True})
+    monkeypatch.setattr("lumen.ai.llm.local_cli_providers", lambda: {ClaudeCode: True})
     ui = ExplorerUI()
     ui.llm.initialize = AsyncMock()
     await ui._initialize_new_llm()
@@ -1139,6 +1139,12 @@ class TestResolveData:
         assert len(result) == 1
         assert result[0].get_tables() == ['penguins', 'birds']
         pd.testing.assert_frame_equal(result[0].get('birds'), df)
+
+    def test_resolve_data_pipeline_is_listed_as_a_table(self):
+        source = DuckDBSource.from_df({'tiny': pd.DataFrame({'a': [1, 2]})})
+        result = resolve_data({'tiny_copy': Pipeline(source=source, table='tiny')})
+        assert result[0].get_tables() == ['tiny_copy']
+        assert list(result[0].get('tiny_copy')['a']) == [1, 2]
 
     def test_resolve_data_unnamed_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
