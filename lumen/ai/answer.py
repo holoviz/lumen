@@ -17,6 +17,7 @@ import panel as pn
 import param
 
 from panel.config import panel_extension
+from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel_material_ui import Card, Column
@@ -39,6 +40,7 @@ from .llm import (
     Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
 )
 from .story import _prose_to_html
+from .ui import ExplorerUI
 
 if TYPE_CHECKING:
     from .data import DataT
@@ -137,7 +139,8 @@ async def _respond(
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
-    return _build_answer(question, plan, outputs, out_context), out_context
+    answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm)
+    return answer, out_context
 
 
 def _run(coro):
@@ -158,7 +161,9 @@ def _run(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def _build_answer(question: str, plan: Plan, outputs: list, context: dict[str, Any]) -> Answer:
+def _build_answer(
+    question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm
+) -> Answer:
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
     views = [
         out.component for out in outputs
@@ -166,10 +171,12 @@ def _build_answer(question: str, plan: Plan, outputs: list, context: dict[str, A
     ]
     view = views[-1] if views else None
     return Answer(
+        llm=llm,
         pipeline=context.get("pipeline"),
         plan=plan,
         question=question,
         spec=view.spec if view is not None and view.view_type == "vegalite" else None,
+        source=source,
         sql=context.get("sql"),
         status=plan.status,
         value=str(messages[-1].object) if messages else "",
@@ -281,6 +288,9 @@ class Answer(param.Parameterized):
     question = param.String(doc="""
         The question that was asked.""")
 
+    source = param.ClassSelector(class_=Source, allow_None=True, doc="""
+        The Source the question was asked of.""")
+
     spec = param.Dict(default=None, allow_None=True, doc="""
         The Vega-Lite specification of the chart, if a Vega-Lite chart was made.""")
 
@@ -296,9 +306,26 @@ class Answer(param.Parameterized):
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
-    def __init__(self, **params):
+    def __init__(self, llm: Llm | None = None, **params):
         super().__init__(**params)
         self._card = None
+        self._llm = llm
+
+    def explore(self, **params) -> ExplorerUI:
+        """
+        Open this answer in the Lumen chat UI: an ExplorerUI on the same
+        Source and LLM, with the answer as its first exploration. Keyword
+        arguments go to ExplorerUI.
+        """
+        ui = ExplorerUI(data=self.source, llm=self._llm, **params)
+
+        async def seed():
+            ui.interface.send(self.question, respond=False)
+            await ui._add_plan_exploration(self.plan)
+
+        # Runs once the page is served, or on the notebook's running loop
+        state.execute(seed)
+        return ui
 
     @property
     def code(self) -> str:
