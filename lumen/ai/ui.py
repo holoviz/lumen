@@ -2174,10 +2174,19 @@ class ExplorerUI(UI):
         out_context = dict(self.context, **(await sql_out.render_context()))
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
-        await self._add_plan_exploration(plan)
+        await self.add_plan_exploration(plan)
 
-    async def _add_plan_exploration(self, plan: Plan):
-        """Show an executed Plan as a new exploration, with its views and context."""
+    async def add_plan_exploration(self, plan: Plan):
+        """
+        Show an executed Plan as a new exploration, with its views and its
+        output context, so follow-up questions continue from it.
+
+        Parameters
+        ----------
+        plan: Plan
+            A Plan that has already been executed, e.g. ``answer.plan``
+            from ``source.ask(...)``.
+        """
         prev = self._explorations.value
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)

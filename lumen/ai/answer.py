@@ -321,7 +321,7 @@ class Answer(param.Parameterized):
 
         async def seed():
             ui.interface.send(self.question, respond=False)
-            await ui._add_plan_exploration(self.plan)
+            await ui.add_plan_exploration(self.plan)
 
         # onload runs it inside the served session once the page is up, so
         # the browser receives the changes; state.execute ran it outside the
