@@ -226,6 +226,12 @@ def test_answer_static_spec_keeps_data_given_by_url(frame_source):
     assert answer._vega_lite_spec()["data"] == url
 
 
+def test_answer_chart_label_reads_a_title_object(chart_answer):
+    chart_answer.view.spec = dict(chart_answer.view.spec, title={"text": "Value by category"})
+    chart_answer.spec = chart_answer.view.spec
+    assert chart_answer._chart_bundle()["text/plain"] == "<Vega-Lite chart: Value by category>"
+
+
 def test_answer_static_bundle_without_a_chart():
     answer = Answer(question="q", value="Three rows.", status="success")
     bundle = answer._repr_mimebundle_()
@@ -249,13 +255,20 @@ def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
     extension.assert_called_once_with("vega")
 
 
-def test_answer_falls_back_when_panel_cannot_render(chart_answer):
+def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_answer):
     with (
         patch("lumen.ai.answer._in_kernel", return_value=True),
         patch.object(panel_extension, "_loaded_extensions", ["vega"]),
         patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
+        patch("IPython.display.display") as display,
     ):
-        assert "application/vnd.vegalite.v5+json" in chart_answer._repr_mimebundle_()
+        last = chart_answer._repr_mimebundle_()
+    (text,), (chart,) = (c.args for c in display.call_args_list)
+    assert text["text/markdown"].startswith("**B** is largest.")
+    # Its own output, so front-ends draw it as interactive Vega-Lite
+    assert chart["application/vnd.vegalite.v5+json"]["mark"] == "bar"
+    assert "image/png" in chart
+    assert "SELECT * FROM tiny" in last["text/html"]
 
 
 def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):

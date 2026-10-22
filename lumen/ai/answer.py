@@ -252,32 +252,65 @@ class Answer(param.Parameterized):
                 spec[dim] = size
         return spec
 
-    def _repr_mimebundle_(self, include=None, exclude=None):
-        if _in_kernel():
-            # Loaded on first display, not on import, so lumen.ai stays
-            # quiet in scripts and in front-ends that never show an Answer.
-            # Checked per extension: a plain pn.extension() leaves Vega out.
-            if "vega" not in panel_extension._loaded_extensions:
-                pn.extension("vega")
-            try:
-                bundle = self.__panel__()._repr_mimebundle_(include, exclude)
-            except ImportError:
-                # VS Code renders Panel through jupyter_bokeh, which may be missing
-                bundle = None
-            if bundle is not None:
-                return bundle
-        # A front-end shows one mime type per output, so the HTML carries the
+    def _chart_bundle(self) -> dict | None:
+        """The chart as interactive Vega-Lite, with a PNG for viewers that cannot run it."""
+        if (spec := self._vega_lite_spec()) is None:
+            return None
+        title = spec.get("title", "")
+        if isinstance(title, dict):
+            title = title.get("text", "")
+        return {
+            "application/vnd.vegalite.v5+json": spec,
+            "image/png": base64.b64encode(Vega(spec).export("png", scale=2)).decode(),
+            "text/plain": f"<Vega-Lite chart: {title}>",
+        }
+
+    def _sql_html(self) -> str:
+        return f"<details><summary>SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
+
+    def _static_bundle(self, chart: dict | None) -> dict:
+        # A viewer shows one mime type per output, so the HTML carries the
         # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
         bundle = {"text/plain": repr(self), "text/markdown": f"{self.value}{sql}"}
         card = [_prose_to_html(self.value)] if self.value else []
-        if (spec := self._vega_lite_spec()) is not None:
-            png = base64.b64encode(Vega(spec).export("png", scale=2)).decode()
-            bundle["application/vnd.vegalite.v5+json"] = spec
-            bundle["image/png"] = png
+        if chart is not None:
+            bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
+            width = chart["application/vnd.vegalite.v5+json"]["width"]
             # Rendered at twice the size for sharpness, shown at the spec width
-            card.append(f'<img src="data:image/png;base64,{png}" width="{spec["width"]}" style="max-width: 100%">')
+            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}" width="{width}" style="max-width: 100%">')
         if self.sql:
-            card.append(f"<details><summary>SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>")
+            card.append(self._sql_html())
         bundle["text/html"] = "\n".join(card)
         return bundle
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        if not _in_kernel():
+            return self._static_bundle(self._chart_bundle())
+        # Loaded on first display, not on import, so lumen.ai stays
+        # quiet in scripts and in front-ends that never show an Answer.
+        # Checked per extension: a plain pn.extension() leaves Vega out.
+        if "vega" not in panel_extension._loaded_extensions:
+            pn.extension("vega")
+        try:
+            bundle = self.__panel__()._repr_mimebundle_(include, exclude)
+        except ImportError:
+            # VS Code renders Panel through jupyter_bokeh, which may be missing
+            bundle = None
+        if bundle is not None:
+            return bundle
+        # Panel cannot render here, but notebook front-ends draw Vega-Lite
+        # themselves, so the chart goes out as its own output and keeps its
+        # tooltips. IPython is present, since this runs in a kernel.
+        from IPython.display import display
+        if self.value:
+            display({"text/markdown": self.value, "text/plain": self.value}, raw=True)
+        if (chart := self._chart_bundle()) is not None:
+            display(chart, raw=True)
+        if not self.sql:
+            return {"text/plain": ""}
+        return {
+            "text/markdown": f"```sql\n{self.sql}\n```",
+            "text/html": self._sql_html(),
+            "text/plain": self.sql,
+        }
