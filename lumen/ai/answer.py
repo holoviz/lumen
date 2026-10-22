@@ -219,7 +219,7 @@ class Answer(param.Parameterized):
                     Markdown(f"```sql\n{self.sql}\n```"), title="SQL", collapsed=True,
                     sizing_mode="stretch_width",
                 ))
-            self._card = Column(*parts, sizing_mode="stretch_width")
+            self._card = Column(*parts)
         return self._card
 
     def _vega_lite_spec(self) -> dict | None:
