@@ -19,11 +19,10 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _resolve, aask, ask,
+    Answer, _default_agents, _default_llm, _resolve, aask, ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
-from lumen.ai.models import ThinkingYesNo
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -51,7 +50,6 @@ def frame_source():
 async def test_aask_answers_with_sql_and_text(llm, frame_source):
     SQLModel = make_sql_model([(frame_source.name, "tiny")])
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Clear question", yes=False),
         _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
         SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
         "The total value is 38.",
@@ -72,7 +70,6 @@ async def test_aask_raises_when_the_plan_fails(llm, frame_source):
         raise RuntimeError("LLM unavailable")
 
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Clear question", yes=False),
         _plan(("ChatAgent", "Explain")),
         fail, fail, fail, fail,
     ])
@@ -81,9 +78,17 @@ async def test_aask_raises_when_the_plan_fails(llm, frame_source):
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
+    _default_llm.cache_clear()
     with patch("lumen.ai.answer.get_available_llm", return_value=None):
         with pytest.raises(RuntimeError, match="No LLM provider found"):
             await aask(frame_source, "Total value?")
+
+
+def test_default_llm_is_shared_between_questions(llm):
+    _default_llm.cache_clear()
+    with patch("lumen.ai.answer.get_available_llm", return_value=type(llm)):
+        assert _default_llm() is _default_llm()
+    _default_llm.cache_clear()
 
 
 def test_default_agents_plain_table(frame_source):
@@ -127,7 +132,6 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
 
 def _chat_only(llm):
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Clear question", yes=False),
         _plan(("ChatAgent", "Explain")),
         "Three rows.",
     ])
