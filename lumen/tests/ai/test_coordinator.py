@@ -134,6 +134,16 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
         planner.__panel__()
 
 
+async def test_planner_headless_raises_planning_errors(llm):
+    def fail():
+        raise RuntimeError("LLM unavailable")
+
+    llm.set_responses([ThinkingYesNo(chain_of_thought="Simple greeting", yes=False), fail])
+    planner = Planner(llm=llm, headless=True)
+    with pytest.raises(RuntimeError, match="LLM unavailable"):
+        await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+
 async def test_dependency_resolver_headless_raises_agent_errors(llm):
     resolver = DependencyResolver(llm=llm, agents=[ChatAgent(), SQLAgent()], headless=True)
     resolver._pre_plan = AsyncMock(side_effect=lambda m, c, agents, tools: (agents, tools, {}))
