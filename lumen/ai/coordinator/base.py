@@ -5,6 +5,7 @@ import re
 import traceback
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
@@ -249,7 +250,7 @@ class Plan(Section):
                 retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs, out_context
 
-    async def execute(self, context: TContext = None, **kwargs) -> list[Any]:
+    async def execute(self, context: TContext = None, **kwargs) -> tuple[list[Any], TContext]:
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
@@ -406,6 +407,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context: TContext | None = None,
         vector_store: VectorStore | None = None,
         document_vector_store: VectorStore | None = None,
+        headless: bool = False,
         **params,
     ):
         if context is None:
@@ -413,7 +415,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        if interface is None:
+        if interface is None and not headless:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
@@ -612,7 +614,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
         context = {"agent_tool_contexts": [], **context}
-        with self.interface.param.update(loading=True):
+        headless = self.interface is None
+        with nullcontext() if headless else self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
                 with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
@@ -624,7 +627,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             # Validation verdicts are about a previous plan, not part of the
             # conversation, and read as instructions if left in the history.
             exclude_users = ["help"] + [a.user for a in self.agents if isinstance(a, ValidationAgent)]
-            serialized = self.interface.serialize(
+            serialized = None if headless else self.interface.serialize(
                 exclude_users=exclude_users, custom_serializer=self._serialize, limit=10
             )
             messages = fuse_messages(serialized or messages, max_user_messages=self.history)
@@ -641,7 +644,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 header=todos_layout, collapsed=not self.verbose, variant="outlined",
                 sx={"bgcolor": "transparent"},
             )
-            self.interface.stream(self.steps_layout, user="Planner")
+            if not headless:
+                self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
         if plan is not None:
