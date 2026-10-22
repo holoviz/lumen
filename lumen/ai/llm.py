@@ -4126,6 +4126,11 @@ class Groq(OpenAI):
         doc="The Groq API endpoint.",
     )
 
+    # Groq validates tool call arguments and rejects any that miss the
+    # schema, which gpt-oss often does for nested models such as a chart
+    # spec. Structured outputs constrain decoding to the schema instead.
+    mode = param.Selector(default=Mode.JSON_SCHEMA, objects=BASE_MODES)
+
     model_kwargs = param.Dict(default={
         "default": {"model": "openai/gpt-oss-120b"},
     })
