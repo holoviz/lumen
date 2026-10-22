@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import bokeh.command.subcommands.serve as bokeh_serve
 import duckdb
 import numpy as np
+import pandas as pd
 import pytest
 import requests
 
@@ -1123,6 +1124,33 @@ class TestResolveData:
         assert len(result) == 2
         assert result[0] is test_source
         assert result[1] is source2
+
+    def test_resolve_data_dataframe(self):
+        """A DataFrame becomes a queryable table instead of being dropped."""
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = UI._resolve_data(df)
+        assert len(result) == 1
+        assert result[0].get_tables() == ['data']
+        pd.testing.assert_frame_equal(result[0].get('data'), df)
+
+    def test_resolve_data_named_dataframes(self):
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = UI._resolve_data({'penguins': df, 'birds': df})
+        assert len(result) == 1
+        assert result[0].get_tables() == ['penguins', 'birds']
+        pd.testing.assert_frame_equal(result[0].get('birds'), df)
+
+    def test_resolve_data_unnamed_dataframes(self):
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = UI._resolve_data([df, df])
+        assert result[0].get_tables() == ['data_0', 'data_1']
+
+    def test_resolve_data_named_source(self, test_source):
+        assert UI._resolve_data({'sales': test_source}) == [test_source]
+
+    def test_resolve_data_unsupported_type_raises(self):
+        with pytest.raises(TypeError, match="Cannot load data of type object"):
+            UI._resolve_data(object())
 
     def test_resolve_data_csv_file_string(self):
         """Test resolving a CSV file path string."""
