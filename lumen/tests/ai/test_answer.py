@@ -1,4 +1,5 @@
 import base64
+import logging
 import subprocess
 import sys
 
@@ -148,6 +149,14 @@ def test_ask_errors_do_not_chain_the_loop_check(frame_source):
         with pytest.raises(ValueError) as info:
             ask(frame_source, "q")
     assert info.value.__context__ is None
+
+
+async def test_aask_quiets_instructor_retry_log(llm, frame_source, monkeypatch):
+    logger = logging.getLogger("instructor.v2.retry")
+    monkeypatch.setattr(logger, "level", logging.NOTSET)
+    _chat_only(llm)
+    await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert logger.level == logging.CRITICAL
 
 
 async def test_ask_inside_a_running_loop(llm, frame_source):
