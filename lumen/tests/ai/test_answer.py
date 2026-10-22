@@ -339,30 +339,6 @@ def test_importing_answer_does_not_load_the_panel_extension():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-class FollowUpLLM(MockLLM):
-    """Replies by response model, and records what each Plan call was sent."""
-
-    def __init__(self, sql_models, **params):
-        super().__init__(**params)
-        self.sql_models = list(sql_models)
-        self.plan_calls = []
-        self.follow_up_checks = 0
-
-    async def invoke(self, messages, system="", response_model=None, **kwargs):
-        name = getattr(response_model, "__name__", "")
-        if "Plan" in name:
-            self.plan_calls.append(messages)
-            return _plan(("SQLAgent", "Query"), ("ChatAgent", "Explain"))
-        if name == "FollowUpClassification":
-            self.follow_up_checks += 1
-            return response_model(chain_of_thought="Builds on the last result", follow_up_type="derived")
-        if "SQLQuery" in name:
-            return self.sql_models.pop(0)
-        if name:
-            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
-        return "Done."
-
-
 async def test_chat_follow_up_sees_history_and_last_result(frame_source):
     SQLModel = make_sql_model([(frame_source.name, "tiny")])
     llm = FollowUpLLM([
@@ -409,3 +385,27 @@ async def test_answer_explore_opens_the_ui_on_the_answer(llm, frame_source):
     exploration = ui._explorations.items[1]["view"]
     assert exploration.context["pipeline"] is answer.pipeline
     assert ui.interface.objects[0].object == "Total value?"
+
+
+class FollowUpLLM(MockLLM):
+    """Replies by response model, and records what each Plan call was sent."""
+
+    def __init__(self, sql_models, **params):
+        super().__init__(**params)
+        self.sql_models = list(sql_models)
+        self.plan_calls = []
+        self.follow_up_checks = 0
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        name = getattr(response_model, "__name__", "")
+        if "Plan" in name:
+            self.plan_calls.append(messages)
+            return _plan(("SQLAgent", "Query"), ("ChatAgent", "Explain"))
+        if name == "FollowUpClassification":
+            self.follow_up_checks += 1
+            return response_model(chain_of_thought="Builds on the last result", follow_up_type="derived")
+        if "SQLQuery" in name:
+            return self.sql_models.pop(0)
+        if name:
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+        return "Done."
