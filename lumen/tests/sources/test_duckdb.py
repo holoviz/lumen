@@ -1581,6 +1581,25 @@ def test_native_fetch_keeps_date_a_date(backend):
     assert [dt.date(d.year, d.month, d.day) for d in days] == list(expected)
 
 
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_from_df_native_frame_keeps_dtypes(backend):
+    """A polars or Arrow frame goes in without a pandas detour."""
+    pytest.importorskip(backend)
+    import narwhals.stable.v2 as nw
+
+    data = {
+        'i': [1, 2, None], 'f': [0.5, None, 2.5], 's': ['a', None, 'c'],
+        'b': [True, False, None], 'd': [dt.date(2020, 1, d) for d in (1, 2, 3)],
+    }
+    frame = nw.from_dict(data, backend=backend)
+    source = DuckDBSource.from_df({'t': frame.to_native()})
+    source.dataframe_backend = backend
+
+    fetched = nw.from_native(source.fetch("SELECT * FROM t"))
+    assert fetched.collect_schema() == frame.collect_schema()
+    assert fetched.rows() == frame.rows()
+
+
 def _sql_geometry_source():
     """A GEOMETRY table built in SQL alone, so no geopandas is needed.
 

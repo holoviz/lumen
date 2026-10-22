@@ -32,6 +32,7 @@ from .base import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    import polars as pl
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
@@ -424,15 +425,17 @@ class DuckDBSource(BaseSQLSource):
         return spec
 
     @classmethod
-    def from_df(cls, tables: dict[str, pd.DataFrame], **kwargs):
+    def from_df(cls, tables: dict[str, pd.DataFrame | pa.Table | pl.DataFrame], **kwargs):
         """
         Creates an ephemeral, in-memory DuckDBSource containing the
         supplied dataframe.
 
         Arguments
         ---------
-        tables: dict[str, pandas.DataFrame]
-            A dictionary mapping from table names to DataFrames
+        tables: dict[str, pandas.DataFrame | pyarrow.Table | polars.DataFrame]
+            A dictionary mapping from table names to DataFrames. Frames
+            other than pandas are read through the Arrow stream, without
+            a conversion to pandas.
         kwargs: any
             Additional keyword arguments for the source
 
@@ -443,10 +446,13 @@ class DuckDBSource(BaseSQLSource):
         source = DuckDBSource(uri=':memory:', ephemeral=True, **kwargs)
         table_defs = {}
         for name, df in tables.items():
-            # DuckDB occasionally has issues with the new pandas string dtype
-            for col in df.select_dtypes(include=['string']).columns:
-                df[col] = df[col].astype(object)
-            source._ingest_table(name, df)
+            if isinstance(df, pd.DataFrame):
+                # DuckDB occasionally has issues with the new pandas string dtype
+                for col in df.select_dtypes(include=['string']).columns:
+                    df[col] = df[col].astype(object)
+                source._ingest_table(name, df)
+            else:
+                source._connection.from_arrow(df).to_view(name)
             table_defs[name] = source.sql_expr.format(table=name)
         source.tables = table_defs
         return source
