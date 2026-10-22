@@ -59,6 +59,21 @@ The `Answer` holds `value` (the text), `sql`, `spec` (the Vega-Lite spec), `pipe
 
 `ask` uses the first LLM provider with an API key set, or pass `llm=`. It only writes SQL and declarative chart specs, both shown to you; it never runs LLM-written Python.
 
+``` py title="Follow up, rerun, keep exploring"
+chat = source.chat()
+chat.ask("What is the average body mass per species?")
+chat.ask("Only the heaviest two")  # (1)!
+
+print(answer.code)  # (2)!
+answer.explore()    # (3)!
+```
+
+1. Each follow-up sees the earlier questions and runs on the data the last answer left.
+2. Lumen code that rebuilds the chart or data without an LLM. In-memory data is embedded; files keep their paths.
+3. Opens the chat UI on the same source and LLM, with the answer as its first exploration.
+
+A dict passed to `lumen.read` can mix DataFrames, files and Pipelines; they become named tables of one source, so a question can join them.
+
 ## Supported sources
 
 | Source | Use for |
