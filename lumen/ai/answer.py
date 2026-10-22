@@ -10,6 +10,7 @@ import logging
 import weakref
 
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -23,8 +24,9 @@ from panel.pane.vega import ds_to_records
 from panel_material_ui import Card, Column
 from panel_material_ui.chat import ChatMessage
 
-from ..config import SOURCE_TABLE_SEPARATOR
+from ..config import SOURCE_TABLE_SEPARATOR, config
 from ..pipeline import Pipeline
+from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
@@ -159,6 +161,28 @@ def _run(coro):
     # in a worker thread instead of patching the loop with nest_asyncio
     with ThreadPoolExecutor(1) as pool:
         return pool.submit(asyncio.run, coro).result()
+
+
+def _write_tables(spec: Any, data_dir: Path) -> None:
+    """Swap each DataFrame serialized into a DuckDB source spec for a Parquet file."""
+    if isinstance(spec, list):
+        for item in spec:
+            _write_tables(item, data_dir)
+        return
+    if not isinstance(spec, dict):
+        return
+    if spec.get("type") == "duckdb":
+        tables = spec.setdefault("tables", {})
+        mirrors = spec.get("mirrors", {})
+        frames = {**{t: v for t, v in mirrors.items() if isinstance(v, dict) and "serializer" in v},
+                  **{t: v for t, v in tables.items() if isinstance(v, dict)}}
+        for table, serialized in frames.items():
+            Serializer.deserialize(serialized).to_parquet(data_dir / f"{table}.parquet")
+            # The script resolves $LUMEN_DATA to the data folder next to it
+            tables[table] = f"SELECT * FROM read_parquet('$LUMEN_DATA/{table}.parquet')"
+            mirrors.pop(table, None)
+    for value in spec.values():
+        _write_tables(value, data_dir)
 
 
 def _build_answer(
@@ -329,15 +353,41 @@ class Answer(param.Parameterized):
         state.onload(seed)
         return ui
 
+    def export(self, directory: str | Path) -> Path:
+        """
+        Write this answer as a script that reruns it without an LLM.
+
+        Writes ``answer.py`` and, for data held in memory, one Parquet file
+        per table under ``data/``, so the script stays small however large
+        the data is. Returns the path of the script.
+        """
+        component = self.view if self.view is not None else self.pipeline
+        if component is None:
+            raise ValueError("This answer has no chart or data to export.")
+        directory = Path(directory)
+        data_dir = directory / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with config.param.update(serializer="csv"):
+            spec = component.to_spec()
+        _write_tables(spec, data_dir)
+        cell, extension = format_output(
+            component, spec=spec,
+            load_spec='yaml.safe_load(yaml_spec.replace("$LUMEN_DATA", str(Path(__file__).parent / "data")))',
+        )
+        (preamble,) = make_preamble("from pathlib import Path\n", extensions=[extension] if extension else [])
+        script = directory / "answer.py"
+        script.write_text(f"{preamble.source}\n\n{cell.source}\n")
+        return script
+
     @property
     def code(self) -> str:
         """
         Python that rebuilds the chart, or else the data, with Lumen alone.
 
-        No LLM is called. In-memory data is embedded in the spec, so that
-        code runs anywhere Lumen is installed, but a large table makes it
-        large. File-based sources keep their absolute paths, so those
-        files have to be reachable where the code runs.
+        No LLM is called. In-memory data is embedded in the spec, so the
+        code runs anywhere Lumen is installed; for a large table use
+        ``export``, which keeps the data in Parquet files beside a small
+        script. File-based sources keep their absolute paths.
         """
         component = self.view if self.view is not None else self.pipeline
         if component is None:

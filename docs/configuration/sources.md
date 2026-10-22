@@ -64,15 +64,17 @@ chat = source.chat()
 chat.ask("What is the average body mass per species?")
 chat.ask("Only the heaviest two")  # (1)!
 
-print(answer.code)  # (2)!
-answer.explore()    # (3)!
+print(answer.code)        # (2)!
+answer.export("my_answer")  # (3)!
+answer.explore()          # (4)!
 ```
 
 1. Each follow-up sees the earlier questions and runs on the data the last answer left.
 2. Lumen code that rebuilds the chart or data without an LLM. In-memory data is embedded; files keep their paths.
-3. Opens the chat UI on the same source and LLM, with the answer as its first exploration.
+3. Writes `my_answer/answer.py` and the in-memory data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
+4. Opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
-A dict passed to `lumen.read` can mix DataFrames, files and Pipelines; they become named tables of one source, so a question can join them.
+A dict passed to `lumen.read` can mix DataFrames, files, Pipelines, xarray data and a DuckDB connection; they become named tables of one source, so a question can join them. xarray data is read lazily, and a connection's tables are copied in so your database is never written to.
 
 ## Supported sources
 
