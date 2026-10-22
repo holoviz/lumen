@@ -24,6 +24,7 @@ nav = [
       {"Overview" = "examples/tutorials/index.md"},
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
       {"SaaS Company Report Dashboard" = "examples/tutorials/saas_company_report_dashboard.md"},
+      {"Geospatial Data Explorer" = "examples/tutorials/geospatial_data_explorer.md"},
       {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"},
       {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"},
       {"Weather API Explorer" = "examples/tutorials/weather_openapi_explorer.md"},
@@ -91,7 +92,7 @@ nav = [
       {"Sources" = "reference/api/sources.md"},
       {"Transforms" = "reference/api/transforms.md"},
       {"Views" = "reference/api/views.md"}
-    ]},
+    ]}
   ]},
   {"Releases" = "releases.md"},
   {"Contributing" = "contributing.md"}
