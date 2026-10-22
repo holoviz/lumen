@@ -6,7 +6,6 @@ import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator
-from contextlib import nullcontext
 from functools import partial
 from types import FunctionType
 from typing import Any, Self, final
@@ -166,12 +165,13 @@ class Task(Viewer):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, logs the title and returns a nullcontext
+        that captures calls.
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
         self._view[:] = self._header

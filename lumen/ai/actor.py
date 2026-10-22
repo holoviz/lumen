@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .context import ContextModel, TContext
 from .llm import Llm, Message, SubmitTool
+from ..util import log
 from .utils import (
     class_name_to_llm_spec_key, log_debug, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
@@ -81,6 +82,13 @@ class NullStep:
 
     def stream(self, text, **kwargs):
         log_debug(f"[NullStep] {text}")
+
+    def add(self, title: str):
+        # Without an interface the step titles are the progress report, so
+        # they go to the lumen logger where a handler can pick them up.
+        if title:
+            log.info(title)
+        return nullcontext(self)
 
 
 class LLMUser(param.Parameterized):
@@ -213,12 +221,13 @@ class LLMUser(param.Parameterized):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, logs the title and returns a nullcontext
+        that captures calls.
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
@@ -447,10 +456,11 @@ class Actor(LLMUser):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, logs the title and returns a nullcontext
+        that captures calls.
         Otherwise, returns the interface's add_step contextmanager.
         """
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
