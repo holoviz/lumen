@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache
@@ -24,14 +25,14 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import geometry_columns
+from ..util import geometry_columns, log
 from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
 from .data import read
 from .editors import LumenEditor
-from .llm import Llm, get_available_llm
+from .llm import Llm, get_available_llm, quiet_retry_log
 from .ui import _keyless_options_message
 
 if TYPE_CHECKING:
@@ -131,6 +132,8 @@ async def aask(
     -------
     Answer
     """
+    if not log.isEnabledFor(logging.DEBUG):
+        quiet_retry_log()
     source, visible_slugs = _resolve(data)
     context: dict[str, Any] = {"source": source, "sources": [source]}
     if visible_slugs is not None:

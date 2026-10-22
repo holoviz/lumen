@@ -5,6 +5,7 @@ import base64
 import contextvars
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -299,6 +300,16 @@ def local_cli_providers() -> dict[type[LlmCli], bool | None]:
         for class_name in LLM_PROVIDERS.values()
         if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
     }
+
+
+def quiet_retry_log():
+    """
+    Silence instructor's per-attempt error log.
+
+    Lumen sends a single attempt and reports or recovers from the error
+    itself, so that log only duplicates it.
+    """
+    logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
 
 
 def get_available_llm() -> type[Llm] | None:
