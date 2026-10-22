@@ -14,10 +14,10 @@ import sqlglot
 from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
-    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
-    Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV, Select,
-    Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_, func, or_,
-    replace_placeholders, select, to_identifier,
+    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Func,
+    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV,
+    Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_,
+    func, or_, replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
@@ -323,9 +323,12 @@ class SQLSelectFrom(SQLFormat):
 
         # A bare table name that does not round-trip was mis-parsed as an
         # expression, e.g. 'data/life-expectancy.csv' becomes
-        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'
+        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'.
+        # A table function is exempt because keyword arguments are reprinted
+        # with spaces, e.g. nullstr='NA' becomes nullstr = 'NA'.
         if (
             not list(expression.find_all(Select))
+            and not isinstance(expression, Func)
             and expression.sql().strip().lower() != sql_in.strip().lower()
         ):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
