@@ -1,3 +1,4 @@
+import base64
 import subprocess
 import sys
 
@@ -12,6 +13,8 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from panel.config import panel_extension
+
 from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
@@ -25,6 +28,7 @@ from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.tests.utils import Polygon, gpd
+from lumen.views.base import VegaLiteView
 
 QUESTION = [{"role": "user", "content": "Total value?"}]
 
@@ -155,4 +159,76 @@ async def test_source_and_pipeline_methods_delegate(frame_source):
 
 def test_core_imports_do_not_load_lumen_ai():
     code = "import sys, lumen, lumen.sources, lumen.pipeline; assert 'lumen.ai' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.fixture
+def chart_answer(frame_source):
+    view = VegaLiteView(
+        pipeline=Pipeline(source=frame_source, table="tiny"),
+        spec={"mark": "bar", "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"},
+        }},
+    )
+    return Answer(
+        question="Value by category?", value="**B** is largest.\nA is second.",
+        sql="SELECT * FROM tiny", spec=view.spec, view=view, status="success",
+    )
+
+
+def test_answer_repr_is_one_line(chart_answer):
+    assert repr(chart_answer) == "Answer(status='success', value='**B** is largest.')"
+
+
+def test_answer_static_bundle_outside_a_kernel(chart_answer):
+    bundle = chart_answer._repr_mimebundle_()
+    assert bundle["text/markdown"] == "**B** is largest.\nA is second.\n\n```sql\nSELECT * FROM tiny\n```"
+    spec = bundle["application/vnd.vegalite.v5+json"]
+    assert spec["data"]["values"][0] == {"category": "A", "value": 10.5}
+    assert base64.b64decode(bundle["image/png"]).startswith(b"\x89PNG")
+
+
+def test_answer_static_bundle_without_a_chart():
+    answer = Answer(question="q", value="Three rows.", status="success")
+    assert set(answer._repr_mimebundle_()) == {"text/plain", "text/markdown"}
+
+
+def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
+    def load(*args):
+        panel_extension._loaded = True
+
+    with (
+        patch("lumen.ai.answer._in_kernel", return_value=True),
+        patch.object(panel_extension, "_loaded", False),
+        patch("lumen.ai.answer.pn.extension", side_effect=load) as extension,
+        patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", return_value=({"text/html": "card"}, {})),
+    ):
+        assert chart_answer._repr_mimebundle_() == ({"text/html": "card"}, {})
+        chart_answer._repr_mimebundle_()
+    extension.assert_called_once_with("vega")
+
+
+def test_answer_falls_back_when_panel_cannot_render(chart_answer):
+    with (
+        patch("lumen.ai.answer._in_kernel", return_value=True),
+        patch.object(panel_extension, "_loaded", True),
+        patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
+    ):
+        assert "application/vnd.vegalite.v5+json" in chart_answer._repr_mimebundle_()
+
+
+def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
+    card = chart_answer.__panel__()
+    assert card is chart_answer.__panel__()
+    text, _chart, sql = card
+    assert text.object.startswith("**B** is largest.")
+    assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
+
+
+def test_importing_answer_does_not_load_the_panel_extension():
+    code = (
+        "import lumen.ai.answer; from panel.config import panel_extension; "
+        "assert not panel_extension._loaded"
+    )
     subprocess.run([sys.executable, "-c", code], check=True)
