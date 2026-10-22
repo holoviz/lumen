@@ -14,10 +14,10 @@ import sqlglot
 from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
-    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Func,
-    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV,
-    Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_,
-    func, or_, replace_placeholders, select, to_identifier,
+    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Func, Identifier,
+    Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV, Select,
+    Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_, func, or_,
+    replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
