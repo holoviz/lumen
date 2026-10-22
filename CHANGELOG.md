@@ -85,6 +85,9 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Fix `lumen serve <spec>.yaml` routing to the AI handler ([#2075](https://github.com/holoviz/lumen/pull/2075))
 * Correct the CLI version output and code execution ([#2166](https://github.com/holoviz/lumen/pull/2166))
 * Keep each exploration's chat when switching explorations while a plan runs ([#2213](https://github.com/holoviz/lumen/pull/2213))
+* Center planner checklist status icons on the label's first line ([#2217](https://github.com/holoviz/lumen/pull/2217))
+* Keep the nav drawer toggle clear of chat avatars ([#2218](https://github.com/holoviz/lumen/pull/2218))
+* Size the code editor to match the body text ([#2219](https://github.com/holoviz/lumen/pull/2219))
 
 ### Deprecations
 
@@ -103,9 +106,9 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 
 ### Contributors
 
-Many thanks to @ghostiee-11, @philippjfr, @ahuang11, @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @hoxbro, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @SuMayaBee, @Mr-Neutr0n, and @Coderambling for their contributions to this release.
+Many thanks to @ghostiee-11, @philippjfr, @ahuang11, @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @hoxbro, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @SuMayaBee, @Mr-Neutr0n, @Coderambling, and @umi008 for their contributions to this release.
 
-A special welcome to our new contributors: @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, and @Mr-Neutr0n.
+A special welcome to our new contributors: @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @Mr-Neutr0n, and @umi008.
 
 ## Version 1.3.0
 
