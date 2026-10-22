@@ -243,14 +243,14 @@ def test_codex_cli_command_defaults_to_read_only():
     ]
 
 
-def test_claude_code_command_defaults_to_plan_mode():
+def test_claude_code_command_does_not_use_plan_mode():
     llm = ClaudeCode()
 
     command = llm._build_command("sonnet")
 
     assert command == [
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
-        "--max-turns", "3", "--permission-mode", "plan",
+        "--max-turns", "3", "--permission-mode", "dontAsk",
         "--tools", "", "--strict-mcp-config", "--setting-sources=", "--model", "sonnet",
     ]
 
