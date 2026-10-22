@@ -219,6 +219,31 @@ def chart_answer(frame_source):
     )
 
 
+def test_answer_code_rebuilds_the_chart_without_an_llm(chart_answer):
+    namespace = {}
+    exec(chart_answer.code, namespace)
+    view = namespace["view"]
+    assert view.spec["mark"] == "bar"
+    pd.testing.assert_frame_equal(view.pipeline.data, chart_answer.view.pipeline.data)
+
+
+async def test_answer_code_rebuilds_the_queried_data(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "38.", "38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    namespace = {}
+    exec(answer.code, namespace)
+    assert namespace["pipeline"].data.iloc[0, 0] == 38.0
+
+
+def test_answer_code_is_empty_without_data():
+    assert Answer(question="q", value="Hi", status="success").code == ""
+
+
 def test_answer_repr_is_one_line(chart_answer):
     assert repr(chart_answer) == "Answer(status='success', value='**B** is largest.')"
 
