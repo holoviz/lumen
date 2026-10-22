@@ -210,6 +210,10 @@ def test_answer_static_bundle_outside_a_kernel(chart_answer):
     spec = bundle["application/vnd.vegalite.v5+json"]
     assert spec["data"]["values"][0] == {"category": "A", "value": 10.5}
     assert base64.b64decode(bundle["image/png"]).startswith(b"\x89PNG")
+    html = bundle["text/html"]
+    assert "<strong>B</strong> is largest." in html
+    assert f'src="data:image/png;base64,{bundle["image/png"]}" width="600"' in html
+    assert "<details><summary>SQL</summary><pre><code>SELECT * FROM tiny</code></pre></details>" in html
 
 
 def test_answer_static_spec_keeps_data_given_by_url(frame_source):
@@ -224,7 +228,9 @@ def test_answer_static_spec_keeps_data_given_by_url(frame_source):
 
 def test_answer_static_bundle_without_a_chart():
     answer = Answer(question="q", value="Three rows.", status="success")
-    assert set(answer._repr_mimebundle_()) == {"text/plain", "text/markdown"}
+    bundle = answer._repr_mimebundle_()
+    assert set(bundle) == {"text/plain", "text/markdown", "text/html"}
+    assert bundle["text/html"] == "<p>Three rows.</p>\n"
 
 
 def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):

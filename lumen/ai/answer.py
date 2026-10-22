@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import logging
 
 from concurrent.futures import ThreadPoolExecutor
@@ -35,6 +36,7 @@ from .editors import LumenEditor
 from .llm import (
     Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
 )
+from .story import _prose_to_html
 
 if TYPE_CHECKING:
     from .data import DataT
@@ -264,9 +266,18 @@ class Answer(param.Parameterized):
                 bundle = None
             if bundle is not None:
                 return bundle
+        # A front-end shows one mime type per output, so the HTML carries the
+        # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
         bundle = {"text/plain": repr(self), "text/markdown": f"{self.value}{sql}"}
+        card = [_prose_to_html(self.value)] if self.value else []
         if (spec := self._vega_lite_spec()) is not None:
+            png = base64.b64encode(Vega(spec).export("png", scale=2)).decode()
             bundle["application/vnd.vegalite.v5+json"] = spec
-            bundle["image/png"] = base64.b64encode(Vega(spec).export("png", scale=2)).decode()
+            bundle["image/png"] = png
+            # Rendered at twice the size for sharpness, shown at the spec width
+            card.append(f'<img src="data:image/png;base64,{png}" width="{spec["width"]}" style="max-width: 100%">')
+        if self.sql:
+            card.append(f"<details><summary>SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>")
+        bundle["text/html"] = "\n".join(card)
         return bundle
