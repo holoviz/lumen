@@ -2256,6 +2256,10 @@ class ExplorerUI(UI):
             # Hug the drawer's own width (tab when closed, ``size`` when open)
             # instead of flex-growing to eat half the Row.
             styles={"flex": "0 0 auto"},
+            # A closed inline drawer collapses to zero width and its 24px toggle
+            # tab floats over the content, covering the chat avatars. Reserve the
+            # tab's gutter, as the open drawer does, so the content starts beside it.
+            min_width=24,
             # The sidebar Settings popup is ``attached`` to the sidebar MenuList,
             # so it portals into a container nested inside the Page's left sidebar
             # Drawer paper, which sits at MUI's ``theme.zIndex.drawer`` (1200) and
