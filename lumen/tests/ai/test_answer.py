@@ -230,6 +230,11 @@ def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
 
 
+def test_answer_card_skips_empty_text(chart_answer):
+    chart_answer.value = ""
+    assert len(chart_answer.__panel__()) == 2
+
+
 def test_importing_answer_does_not_load_the_panel_extension():
     code = (
         "import lumen.ai.answer; from panel.config import panel_extension; "

@@ -211,7 +211,7 @@ class Answer(param.Parameterized):
 
     def __panel__(self):
         if self._card is None:
-            parts = [Markdown(self.value, sizing_mode="stretch_width")]
+            parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self.view)
             if self.sql:
