@@ -29,6 +29,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor import Mode
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel, ValidationError
 
@@ -546,6 +547,10 @@ def test_groq_api_key_env_var():
 def test_groq_endpoint():
     groq = Groq(api_key="test-key")
     assert groq.endpoint == "https://api.groq.com/openai/v1"
+
+
+def test_groq_uses_structured_outputs():
+    assert Groq(api_key="test-key").mode == Mode.JSON_SCHEMA
 
 
 def test_ollama_models_lists_pulled_models(monkeypatch):
