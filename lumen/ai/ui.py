@@ -11,7 +11,7 @@ from functools import partial
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -51,7 +51,7 @@ from .controls import (
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
-from .data import DataT, resolve_data
+from .data import resolve_data
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
@@ -67,6 +67,9 @@ from .utils import (
     wrap_logfire,
 )
 from .vector_store import VectorStore
+
+if TYPE_CHECKING:
+    from .data import DataT
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},

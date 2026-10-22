@@ -5,6 +5,7 @@ connections) into Lumen Sources.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import duckdb
 import pandas as pd
@@ -21,7 +22,14 @@ from .config import PROVIDED_SOURCE_NAME
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .controls.ingest.utils import read_geo_file
 
-DataT = str | Path | Source | Pipeline | pd.DataFrame
+if TYPE_CHECKING:
+    import polars as pl
+    import xarray as xr
+
+    DataT = (
+        str | Path | Source | Pipeline | pd.DataFrame | pl.DataFrame | pa.Table
+        | xr.Dataset | xr.DataArray | duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation
+    )
 
 
 def _is_frame(obj) -> bool:
@@ -49,8 +57,9 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         A file path or URL, a Source, a Pipeline, a DataFrame (pandas,
         polars, GeoPandas), a pyarrow Table, an xarray Dataset or
         DataArray, a DuckDB connection or relation, or a list or dict
-        of these. Frames in a list or dict share one source; a dict
-        names their tables.
+        of these. Frames in a list or dict share one source. A dict key
+        names a frame's table, a DataArray's variable or a DuckDB
+        connection's source. A DuckDB relation is read into memory.
 
     Returns
     -------
@@ -59,8 +68,8 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     sources = resolve_data(data)
     if len(sources) != 1:
         raise ValueError(
-            f"The data resolved to {len(sources)} sources, read returns "
-            "one. Pass frames of the same kind, or call read per source."
+            f"The data resolved to {len(sources)} sources but read returns "
+            "one. Call read once per source."
         )
     return sources[0]
 

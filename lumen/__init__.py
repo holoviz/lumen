@@ -10,9 +10,12 @@ from .transforms.base import Transform  # noqa
 from .views.base import View  # noqa
 
 
-def __getattr__(name):
-    # lumen.ai pulls in the Panel UI stack, so only import it on use
-    if name == "read":
-        from .ai.data import read
-        return read
-    raise AttributeError(f"module 'lumen' has no attribute {name!r}")
+def read(data):
+    """
+    Load data into a single Lumen Source.
+
+    See :func:`lumen.ai.data.read` for the data it accepts.
+    """
+    # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+    from .ai.data import read
+    return read(data)
