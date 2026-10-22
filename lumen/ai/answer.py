@@ -323,8 +323,10 @@ class Answer(param.Parameterized):
             ui.interface.send(self.question, respond=False)
             await ui._add_plan_exploration(self.plan)
 
-        # Runs once the page is served, or on the notebook's running loop
-        state.execute(seed)
+        # onload runs it inside the served session once the page is up, so
+        # the browser receives the changes; state.execute ran it outside the
+        # session and the page stopped updating. In a notebook it runs now.
+        state.onload(seed)
         return ui
 
     @property
