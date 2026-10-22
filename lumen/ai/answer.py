@@ -334,8 +334,10 @@ class Answer(param.Parameterized):
         """
         Python that rebuilds the chart, or else the data, with Lumen alone.
 
-        The data and the query travel in the spec, so the code runs
-        anywhere Lumen is installed without calling an LLM.
+        No LLM is called. In-memory data is embedded in the spec, so that
+        code runs anywhere Lumen is installed, but a large table makes it
+        large. File-based sources keep their absolute paths, so those
+        files have to be reachable where the code runs.
         """
         component = self.view if self.view is not None else self.pipeline
         if component is None:

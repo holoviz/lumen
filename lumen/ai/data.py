@@ -60,6 +60,10 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         of these. Frames in a list or dict share one source. A dict key
         names a frame's table, a DataArray's variable or a DuckDB
         connection's source. A DuckDB relation is read into memory.
+        Frames, files and pipelines in one dict share one DuckDB source,
+        frames being stored as pandas when mixed with the others. A DuckDB
+        connection or xarray data is a separate database, so mixing either
+        with other entries gives several sources and read raises.
 
     Returns
     -------
