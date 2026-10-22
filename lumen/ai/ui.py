@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import param
 
 from panel.chat.feed import PLACEHOLDER_SVG
@@ -72,7 +73,7 @@ from .utils import (
 )
 from .vector_store import VectorStore
 
-DataT = str | Path | Source | Pipeline
+DataT = str | Path | Source | Pipeline | pd.DataFrame
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
@@ -590,13 +591,17 @@ class UI(Viewer):
 
         sources = []
         remote = False
-        mirrors, tables = {}, {}
+        mirrors, tables, frames = {}, {}, {}
 
         for src in data:
             if isinstance(src, Source):
                 sources.append(src)
             elif isinstance(src, Pipeline):
                 mirrors[src.name] = src
+            elif isinstance(src, pd.DataFrame):
+                frames[f"data_{len(frames)}" if frames else "data"] = src
+            elif isinstance(src, tuple) and isinstance(src[1], pd.DataFrame):
+                frames[src[0]] = src[1]
             elif isinstance(src, (str, Path, tuple)):
                 if isinstance(src, tuple):
                     name, src = src
@@ -675,7 +680,14 @@ class UI(Viewer):
                         f"Could not determine how to load {src} file."
                     )
                 tables[name] = table
+            else:
+                raise TypeError(
+                    f"Cannot load data of type {type(src).__name__}. Pass a "
+                    "file path or URL, a Source, a Pipeline or a pandas DataFrame."
+                )
 
+        if frames:
+            sources.append(DuckDBSource.from_df(frames))
         if tables or mirrors:
             initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
             source = DuckDBSource(
