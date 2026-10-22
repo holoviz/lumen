@@ -111,7 +111,6 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
     llm.set_responses([
-        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
         PlanModel(
             chain_of_thought="Just use ChatAgent",
             title="Hello!",
@@ -121,6 +120,7 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
     ])
 
     planner = Planner(llm=llm, headless=True)
+    planner._check_clarification_needed = AsyncMock()
     with caplog.at_level(logging.INFO, logger="lumen"):
         plan = await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
         outputs, _ = await plan.execute()
@@ -130,6 +130,7 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
     assert plan.status == "success"
     assert outputs[-1].object == "Hello there!"
     assert "Hello Reply..." in caplog.messages
+    planner._check_clarification_needed.assert_not_awaited()
     with pytest.raises(ValueError, match="headless"):
         planner.__panel__()
 
@@ -138,7 +139,7 @@ async def test_planner_headless_raises_planning_errors(llm):
     def fail():
         raise RuntimeError("LLM unavailable")
 
-    llm.set_responses([ThinkingYesNo(chain_of_thought="Simple greeting", yes=False), fail])
+    llm.set_responses([fail])
     planner = Planner(llm=llm, headless=True)
     with pytest.raises(RuntimeError, match="LLM unavailable"):
         await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
