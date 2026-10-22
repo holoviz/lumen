@@ -1142,11 +1142,11 @@ class TestResolveData:
 
     def test_resolve_data_unnamed_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
-        result = UI._resolve_data([df, df])
+        result = resolve_data([df, df])
         assert result[0].get_tables() == ['data_0', 'data_1']
 
     def test_resolve_data_named_source(self, test_source):
-        assert UI._resolve_data({'sales': test_source}) == [test_source]
+        assert resolve_data({'sales': test_source}) == [test_source]
 
     def test_resolve_data_unsupported_type_raises(self):
         with pytest.raises(TypeError, match="Cannot load data of type object"):
@@ -1533,17 +1533,25 @@ def test_read_xarray(as_array):
     da = xr.DataArray(np.arange(3.0), dims='x', coords={'x': [0, 1, 2]}, name='temp')
     source = read(da if as_array else da.to_dataset())
     assert isinstance(source, XArraySQLSource)
-    assert len(source.get(source.get_tables()[0])) == 3
+    assert source.get_tables() == ['temp']
+    assert list(source.get('temp').sort_values('x')['temp']) == [0.0, 1.0, 2.0]
 
 
-def test_read_several_sources_raises(tmp_path):
+def test_read_names_a_dataarray_from_its_key():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    da = xr.DataArray(np.arange(3.0), dims='x', coords={'x': [0, 1, 2]})
+    assert read({'temp': da}).get_tables() == ['temp']
+
+
+def test_read_several_sources_raises():
     with pytest.raises(ValueError, match='resolved to 2 sources'):
         read([pd.DataFrame({'a': [1]}), duckdb.connect()])
 
 
 def test_lumen_read_is_exposed():
     import lumen
-    assert lumen.read is read
+    assert lumen.read(pd.DataFrame({'a': [1]})).get_tables() == ['data']
 
 
 class TestCLIPathValidation:
