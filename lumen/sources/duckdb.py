@@ -32,6 +32,7 @@ from .base import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    import polars as pl
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
@@ -424,7 +425,7 @@ class DuckDBSource(BaseSQLSource):
         return spec
 
     @classmethod
-    def from_df(cls, tables: dict[str, Any], **kwargs):
+    def from_df(cls, tables: dict[str, pd.DataFrame | pa.Table | pl.DataFrame], **kwargs):
         """
         Creates an ephemeral, in-memory DuckDBSource containing the
         supplied dataframe.
