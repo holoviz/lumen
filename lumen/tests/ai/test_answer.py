@@ -21,13 +21,14 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     Answer, _default_agents, _default_llm, _planner, _planners, _resolve, aask,
-    ask,
+    ask, chat,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
+from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView
@@ -335,3 +336,54 @@ def test_importing_answer_does_not_load_the_panel_extension():
         "assert not panel_extension._loaded"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+class FollowUpLLM(MockLLM):
+    """Replies by response model, and records what each Plan call was sent."""
+
+    def __init__(self, sql_models, **params):
+        super().__init__(**params)
+        self.sql_models = list(sql_models)
+        self.plan_calls = []
+        self.follow_up_checks = 0
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        name = getattr(response_model, "__name__", "")
+        if "Plan" in name:
+            self.plan_calls.append(messages)
+            return _plan(("SQLAgent", "Query"), ("ChatAgent", "Explain"))
+        if name == "FollowUpClassification":
+            self.follow_up_checks += 1
+            return response_model(chain_of_thought="Builds on the last result", follow_up_type="derived")
+        if "SQLQuery" in name:
+            return self.sql_models.pop(0)
+        if name:
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+        return "Done."
+
+
+async def test_chat_follow_up_sees_history_and_last_result(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT category, SUM(value) AS total FROM tiny GROUP BY category", table_slug="totals", tables=["tiny"]),
+        SQLModel(query="SELECT * FROM tiny WHERE category = 'A'", table_slug="only_a", tables=["tiny"]),
+    ])
+    conversation = frame_source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    first = await conversation.aask("Total value per category?")
+    second = await conversation.aask("Only A")
+
+    assert conversation.answers == [first, second]
+    history, latest = llm.plan_calls[-1]
+    assert "User: Total value per category?" in history["content"]
+    assert latest == {"role": "user", "content": "Only A"}
+    # The classifier only runs when the last answer's data is in context
+    assert llm.follow_up_checks == 1
+    assert "SUM(value)" in first.sql and "category = 'A'" in second.sql
+    assert repr(conversation) == "Chat(answers=2)"
+
+
+def test_chat_ask_works_from_sync_code(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT COUNT(*) AS n FROM tiny", table_slug="n", tables=["tiny"])])
+    answer = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()]).ask("How many rows?")
+    assert answer.pipeline.data.iloc[0, 0] == 3
