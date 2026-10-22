@@ -143,6 +143,13 @@ def test_ask_without_a_running_loop(llm, frame_source):
     assert answer.value == "Three rows."
 
 
+def test_ask_errors_do_not_chain_the_loop_check(frame_source):
+    with patch("lumen.ai.answer.aask", side_effect=ValueError("boom")):
+        with pytest.raises(ValueError) as info:
+            ask(frame_source, "q")
+    assert info.value.__context__ is None
+
+
 async def test_ask_inside_a_running_loop(llm, frame_source):
     _chat_only(llm)
     answer = ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])

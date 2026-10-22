@@ -161,10 +161,16 @@ def ask(
     Takes the same arguments as aask, and works whether or not an event
     loop is already running, e.g. in a Jupyter notebook.
     """
-    coro = aask(data, question, llm=llm, agents=agents)
     try:
         asyncio.get_running_loop()
     except RuntimeError:
+        loop_running = False
+    else:
+        loop_running = True
+    # Run outside the except block, or every error raised by the question
+    # would also print a chained "no running event loop" traceback
+    coro = aask(data, question, llm=llm, agents=agents)
+    if not loop_running:
         return asyncio.run(coro)
     # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
     # in a worker thread instead of patching the loop with nest_asyncio
