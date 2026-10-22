@@ -591,23 +591,24 @@ class UI(Viewer):
 
         sources = []
         remote = False
-        mirrors, tables, frames = {}, {}, {}
+        mirrors, tables, frames, unnamed = {}, {}, {}, []
 
         for src in data:
+            name = None
+            if isinstance(src, tuple):
+                name, src = src
             if isinstance(src, Source):
                 sources.append(src)
             elif isinstance(src, Pipeline):
-                mirrors[src.name] = src
+                mirrors[name or src.name] = src
             elif isinstance(src, pd.DataFrame):
-                frames[f"data_{len(frames)}" if frames else "data"] = src
-            elif isinstance(src, tuple) and isinstance(src[1], pd.DataFrame):
-                frames[src[0]] = src[1]
-            elif isinstance(src, (str, Path, tuple)):
-                if isinstance(src, tuple):
-                    name, src = src
-                    src = str(src)
+                if name:
+                    frames[name] = src
                 else:
-                    name = src = str(src)
+                    unnamed.append(src)
+            elif isinstance(src, (str, Path)):
+                src = str(src)
+                name = name or src
 
                 # Handle "no_data" as a special case for starting without data
                 if src == 'no_data':
@@ -686,6 +687,10 @@ class UI(Viewer):
                     "file path or URL, a Source, a Pipeline or a pandas DataFrame."
                 )
 
+        if len(unnamed) == 1:
+            frames["data"] = unnamed[0]
+        else:
+            frames.update({f"data_{i}": df for i, df in enumerate(unnamed)})
         if frames:
             sources.append(DuckDBSource.from_df(frames))
         if tables or mirrors:
