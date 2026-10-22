@@ -660,6 +660,26 @@ class Source(MultiTypeComponent):
         """
         return None
 
+    def ask(self, question: str, **kwargs):
+        """
+        Ask this source a question with Lumen AI and return the Answer.
+
+        See :func:`lumen.ai.answer.ask` for the keyword arguments.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask
+        return ask(self, question, **kwargs)
+
+    async def aask(self, question: str, **kwargs):
+        """
+        Ask this source a question with Lumen AI and await the Answer.
+
+        See :func:`lumen.ai.answer.aask` for the keyword arguments.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask
+        return await aask(self, question, **kwargs)
+
     def get_tables(self) -> list[str]:
         """
         Returns the list of tables available on this source.

@@ -3,6 +3,9 @@ Ask a Lumen Source or Pipeline a question from Python and get an Answer.
 """
 from __future__ import annotations
 
+import asyncio
+
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 import param
@@ -125,6 +128,26 @@ async def aask(
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
     return _build_answer(question, plan, outputs, out_context)
+
+
+def ask(
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+) -> Answer:
+    """
+    Ask a question of some data and return the Answer.
+
+    Takes the same arguments as aask, and works whether or not an event
+    loop is already running, e.g. in a Jupyter notebook.
+    """
+    coro = aask(data, question, llm=llm, agents=agents)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
+    # in a worker thread instead of patching the loop with nest_asyncio
+    with ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 class Answer(param.Parameterized):
