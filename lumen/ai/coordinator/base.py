@@ -381,6 +381,15 @@ class Coordinator(Viewer, VectorLookupToolUser):
         Whether to show verbose output.""",
     )
 
+    headless = param.Boolean(
+        default=False,
+        constant=True,
+        doc="""
+        Whether to run without a ChatInterface, e.g. from a notebook or a
+        script. Step titles are then logged to the ``lumen`` logger at INFO
+        level instead of being rendered.""",
+    )
+
     within_ui = param.Boolean(
         default=False,
         constant=True,
@@ -407,7 +416,6 @@ class Coordinator(Viewer, VectorLookupToolUser):
         context: TContext | None = None,
         vector_store: VectorStore | None = None,
         document_vector_store: VectorStore | None = None,
-        headless: bool = False,
         **params,
     ):
         if context is None:
@@ -415,7 +423,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        if interface is None and not headless:
+        if interface is None and not params.get("headless"):
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
@@ -637,18 +645,18 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agents = {normalized_name(agent): agent for agent in self.agents}
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
-            self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
-            todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
-            todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
-            self.steps_layout = Card(
-                header=todos_layout, collapsed=not self.verbose, variant="outlined",
-                sx={"bgcolor": "transparent"},
-            )
             if not headless:
+                self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
+                todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
+                todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
+                self.steps_layout = Card(
+                    header=todos_layout, collapsed=not self.verbose, variant="outlined",
+                    sx={"bgcolor": "transparent"},
+                )
                 self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
-        if plan is not None:
+        if plan is not None and self.steps_layout is not None:
             self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)
             self.steps_layout.header[1].object = todos
@@ -670,6 +678,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return result.yes
 
     def __panel__(self):
+        if self.interface is None:
+            raise ValueError("A headless Coordinator has no interface to display.")
         return self.interface
 
     async def sync(self, context: TContext | None):
