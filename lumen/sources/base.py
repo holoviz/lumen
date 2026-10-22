@@ -680,6 +680,15 @@ class Source(MultiTypeComponent):
         from ..ai.answer import aask
         return await aask(self, question, **kwargs)
 
+    def chat(self, **kwargs):
+        """
+        Start a conversation with this source, where each question can follow
+        up on the answers before it. See :func:`lumen.ai.answer.chat`.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import chat
+        return chat(self, **kwargs)
+
     def get_tables(self) -> list[str]:
         """
         Returns the list of tables available on this source.

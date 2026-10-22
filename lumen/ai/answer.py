@@ -114,6 +114,50 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
 
+def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | None) -> dict[str, Any]:
+    # Starts from the Planner's own context (its vector stores) so nothing
+    # one question adds is seen by an unrelated one
+    context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
+    if visible_slugs is not None:
+        context["visible_slugs"] = visible_slugs
+    return context
+
+
+async def _respond(
+    planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any]
+) -> tuple[Answer, dict[str, Any]]:
+    """Run one question through the Planner, returning the Answer and the context it left."""
+    if log.getEffectiveLevel() > logging.DEBUG:
+        quiet_retry_log()
+    await planner.sync(context)
+    plan = await planner.respond(messages, context)
+    if plan is None:
+        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+    outputs, out_context = await plan.execute()
+    if plan.status == "error":
+        failed = next((task.title for task in plan if task.status == "error"), plan.title)
+        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
+    return _build_answer(question, plan, outputs, out_context), out_context
+
+
+def _run(coro):
+    """Run a coroutine to completion from sync code, inside Jupyter or not."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop_running = False
+    else:
+        loop_running = True
+    # Run outside the except block, or every error raised by the question
+    # would also print a chained "no running event loop" traceback
+    if not loop_running:
+        return asyncio.run(coro)
+    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
+    # in a worker thread instead of patching the loop with nest_asyncio
+    with ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
 def _build_answer(question: str, plan: Plan, outputs: list, context: dict[str, Any]) -> Answer:
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
     views = [
@@ -156,24 +200,11 @@ async def aask(
     -------
     Answer
     """
-    if log.getEffectiveLevel() > logging.DEBUG:
-        quiet_retry_log()
     source, visible_slugs = _resolve(data)
     planner = _planner(source, llm or _default_llm(), agents)
-    # Each question starts from the Planner's own context (its vector stores)
-    # so nothing one question adds is seen by the next
-    context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
-    if visible_slugs is not None:
-        context["visible_slugs"] = visible_slugs
-    await planner.sync(context)
-    plan = await planner.respond([{"role": "user", "content": question}], context)
-    if plan is None:
-        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-    outputs, out_context = await plan.execute()
-    if plan.status == "error":
-        failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
-    return _build_answer(question, plan, outputs, out_context)
+    context = _fresh_context(planner, source, visible_slugs)
+    answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
+    return answer
 
 
 def ask(
@@ -185,21 +216,55 @@ def ask(
     Takes the same arguments as aask, and works whether or not an event
     loop is already running, e.g. in a Jupyter notebook.
     """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        loop_running = False
-    else:
-        loop_running = True
-    # Run outside the except block, or every error raised by the question
-    # would also print a chained "no running event loop" traceback
-    coro = aask(data, question, llm=llm, agents=agents)
-    if not loop_running:
-        return asyncio.run(coro)
-    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
-    # in a worker thread instead of patching the loop with nest_asyncio
-    with ThreadPoolExecutor(1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    return _run(aask(data, question, llm=llm, agents=agents))
+
+
+def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
+    """
+    Start a conversation with some data, where each question can follow up
+    on the answers before it. Takes the same arguments as aask.
+    """
+    return Chat(data, llm=llm, agents=agents)
+
+
+class Chat(param.Parameterized):
+    """
+    A conversation with a Source or Pipeline. Each question sees the earlier
+    questions and answers, and runs against the data the last answer left,
+    the way a follow-up in the chat UI does.
+    """
+
+    answers = param.List(doc="""
+        The answers so far, oldest first.""")
+
+    def __init__(self, data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None, **params):
+        super().__init__(**params)
+        self._source, self._visible_slugs = _resolve(data)
+        self._llm = llm
+        self._agents = agents
+        self._messages: list[dict[str, str]] = []
+        self._context: dict[str, Any] | None = None
+
+    def __repr__(self) -> str:
+        return f"Chat(answers={len(self.answers)})"
+
+    async def aask(self, question: str) -> Answer:
+        """Ask the next question and wait for the Answer."""
+        planner = _planner(self._source, self._llm or _default_llm(), self._agents)
+        if self._context is None:
+            context = _fresh_context(planner, self._source, self._visible_slugs)
+        else:
+            context = dict(self._context)
+        messages = [*self._messages, {"role": "user", "content": question}]
+        answer, out_context = await _respond(planner, question, messages, context)
+        self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
+        self._context = out_context
+        self.answers = [*self.answers, answer]
+        return answer
+
+    def ask(self, question: str) -> Answer:
+        """Ask the next question and return the Answer."""
+        return _run(self.aask(question))
 
 
 class Answer(param.Parameterized):
