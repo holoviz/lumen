@@ -242,6 +242,40 @@ async def test_answer_code_rebuilds_the_queried_data(llm, frame_source):
     assert namespace["pipeline"].data.iloc[0, 0] == 38.0
 
 
+async def test_answer_export_keeps_large_data_out_of_the_script(llm, tmp_path):
+    big = read({"big": pd.DataFrame({"category": ["A", "B"] * 1000, "value": range(2000)})})
+    SQLModel = make_sql_model([(big.name, "big")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT category, SUM(value) AS total FROM big GROUP BY category", table_slug="totals", tables=["big"]),
+        "Done.", "Done.",
+    ])
+    answer = await aask(big, "Total per category?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    script = answer.export(tmp_path / "out")
+
+    assert script.stat().st_size < 5_000
+    assert sorted(p.name for p in (tmp_path / "out" / "data").iterdir()) == ["big.parquet", "totals.parquet"]
+    code = (
+        "import runpy, sys; g = runpy.run_path(sys.argv[1]); "
+        "print(sorted(map(tuple, g['pipeline'].data.values.tolist())))"
+    )
+    run = subprocess.run([sys.executable, "-c", code, str(script)], cwd=tmp_path, capture_output=True, text=True, check=True)
+    expected = sorted(map(tuple, answer.pipeline.data.values.tolist()))
+    assert run.stdout.strip() == str(expected)
+
+
+def test_answer_export_rebuilds_a_chart(chart_answer, tmp_path):
+    script = chart_answer.export(tmp_path)
+    code = "import runpy, sys; g = runpy.run_path(sys.argv[1]); print(g['view'].spec['mark'], len(g['view'].pipeline.data))"
+    run = subprocess.run([sys.executable, "-c", code, str(script)], cwd=tmp_path.parent, capture_output=True, text=True, check=True)
+    assert run.stdout.strip() == "bar 3"
+
+
+def test_answer_export_needs_data():
+    with pytest.raises(ValueError, match="no chart or data"):
+        Answer(question="q", value="Hi", status="success").export("unused")
+
+
 def test_answer_code_is_empty_without_data():
     assert Answer(question="q", value="Hi", status="success").code == ""
 
