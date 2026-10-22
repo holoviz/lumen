@@ -1,4 +1,3 @@
-import asyncio
 import json
 
 from pathlib import Path
@@ -18,7 +17,6 @@ except ModuleNotFoundError:
 
 from panel.chat import ChatFeed
 from panel.pane import Markdown
-from panel_material_ui import ChatFeed as MaterialChatFeed
 
 from lumen.ai.agents import (
     AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
@@ -176,28 +174,6 @@ async def test_chat_agent(llm, test_messages):
     out, out_context = await agent.respond(test_messages, {})
     assert out[0].object == "Test Response"
     assert out[0].user == "Lumen"
-
-
-async def test_chat_agent_shows_avatar_while_streaming(llm, test_messages):
-    interface = MaterialChatFeed()
-    agent = ChatAgent(llm=llm, interface=interface)
-    first_chunk_streamed = asyncio.Event()
-    finish_stream = asyncio.Event()
-
-    async def fake_stream_prompt(*args, **kwargs):
-        yield "Still"
-        first_chunk_streamed.set()
-        await finish_stream.wait()
-        yield "Still answering"
-
-    with patch.object(agent, "_stream_prompt", side_effect=fake_stream_prompt):
-        stream_task = asyncio.create_task(agent._stream(test_messages, {}))
-        await first_chunk_streamed.wait()
-        assert interface.objects[-1].show_avatar is True
-        finish_stream.set()
-        message = await stream_task
-
-    assert message.object == "Still answering"
 
 async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
     """Test ChatAgent in analyst mode (with data)"""

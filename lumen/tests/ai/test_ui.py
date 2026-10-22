@@ -155,6 +155,16 @@ async def test_explorer_ui_initialization(explorer_ui):
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.items[0]['label'] == 'New Exploration'
 
+
+async def test_explorer_ui_shows_avatar_for_single_agent(explorer_ui):
+    """The first Planner message should render its avatar before other agents respond."""
+    explorer_ui.interface.send("Question", user="User", respond=False)
+    message = explorer_ui.interface.stream("Planning...", user="Planner")
+
+    assert message.show_avatar is True
+    assert message._internal_state.multi_user is False
+
+
 async def test_exploration_ui_error(explorer_ui_with_error):
     ui = explorer_ui_with_error
     exploration = ui._exploration['view']
