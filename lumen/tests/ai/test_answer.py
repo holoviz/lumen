@@ -275,6 +275,7 @@ def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
 
 
 def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_answer):
+    pytest.importorskip("IPython")
     with (
         patch("lumen.ai.answer._in_kernel", return_value=True),
         patch.object(panel_extension, "_loaded_extensions", ["vega"]),
