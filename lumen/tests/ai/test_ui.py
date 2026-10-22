@@ -191,7 +191,7 @@ async def test_ui_without_provider_explains_options_instead_of_failing(monkeypat
     for env_var in PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setattr("lumen.ai.llm.requests.get", MagicMock(side_effect=requests.ConnectionError))
-    monkeypatch.setattr("lumen.ai.ui.local_cli_providers", lambda: {ClaudeCode: True})
+    monkeypatch.setattr("lumen.ai.llm.local_cli_providers", lambda: {ClaudeCode: True})
     ui = ExplorerUI()
     ui.llm.initialize = AsyncMock()
     await ui._initialize_new_llm()

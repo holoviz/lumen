@@ -32,8 +32,9 @@ from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
 from .data import read
 from .editors import LumenEditor
-from .llm import Llm, get_available_llm, quiet_retry_log
-from .ui import _keyless_options_message
+from .llm import (
+    Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
+)
 
 if TYPE_CHECKING:
     from .data import DataT
@@ -76,7 +77,11 @@ def _default_agents(source: Source) -> list:
 def _default_llm() -> Llm:
     llm_cls = get_available_llm()
     if llm_cls is None:
-        raise RuntimeError(_keyless_options_message())
+        raise RuntimeError(
+            "No LLM provider found. Pass llm=lumen.ai.llm.Kilo() for free models without an "
+            f"account{signed_in_cli_hint()}, or set an API key such as OPENAI_API_KEY or "
+            "GROQ_API_KEY and restart the kernel."
+        )
     return llm_cls()
 
 
@@ -132,7 +137,7 @@ async def aask(
     -------
     Answer
     """
-    if not log.isEnabledFor(logging.DEBUG):
+    if log.getEffectiveLevel() > logging.DEBUG:
         quiet_retry_log()
     source, visible_slugs = _resolve(data)
     context: dict[str, Any] = {"source": source, "sources": [source]}

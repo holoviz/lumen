@@ -312,6 +312,12 @@ def quiet_retry_log():
     logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
 
 
+def signed_in_cli_hint() -> str:
+    """Name the keyless coding CLIs the user is signed in to, as a clause to append."""
+    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
+    return f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
+
+
 def get_available_llm() -> type[Llm] | None:
     """
     Detect an available LLM provider: the first one whose API key environment

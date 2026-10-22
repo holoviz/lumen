@@ -28,6 +28,7 @@ from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
 from lumen.tests.utils import Polygon, gpd
+from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView
 
 QUESTION = [{"role": "user", "content": "Total value?"}]
@@ -81,7 +82,7 @@ async def test_aask_raises_when_the_plan_fails(llm, frame_source):
 async def test_aask_without_a_provider_explains_the_options(frame_source):
     _default_llm.cache_clear()
     with patch("lumen.ai.answer.get_available_llm", return_value=None):
-        with pytest.raises(RuntimeError, match="No LLM provider found"):
+        with pytest.raises(RuntimeError, match=r"No LLM provider found\. Pass llm=lumen\.ai\.llm\.Kilo"):
             await aask(frame_source, "Total value?")
 
 
@@ -154,6 +155,8 @@ def test_ask_errors_do_not_chain_the_loop_check(frame_source):
 async def test_aask_quiets_instructor_retry_log(llm, frame_source, monkeypatch):
     logger = logging.getLogger("instructor.v2.retry")
     monkeypatch.setattr(logger, "level", logging.NOTSET)
+    # ExplorerUI tests in the same process leave Lumen's logger at DEBUG
+    monkeypatch.setattr(lumen_log, "level", logging.WARNING)
     _chat_only(llm)
     await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
     assert logger.level == logging.CRITICAL
