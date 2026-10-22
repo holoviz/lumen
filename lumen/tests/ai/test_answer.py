@@ -20,7 +20,8 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _default_llm, _resolve, aask, ask,
+    Answer, _default_agents, _default_llm, _planner, _planners, _resolve, aask,
+    ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
@@ -91,6 +92,24 @@ def test_default_llm_is_shared_between_questions(llm):
     with patch("lumen.ai.answer.get_available_llm", return_value=type(llm)):
         assert _default_llm() is _default_llm()
     _default_llm.cache_clear()
+
+
+async def test_aask_reuses_one_planner_per_source(llm, frame_source):
+    _chat_only(llm)
+    await aask(frame_source, "How many rows?", llm=llm)
+    planner = _planners[frame_source]
+    _chat_only(llm)
+    second = await aask(frame_source, "How many rows?", llm=llm)
+    assert _planners[frame_source] is planner
+    assert second.value == "Three rows."
+    assert "metaset" not in planner.context
+
+
+def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
+    first = _planner(frame_source, llm, None)
+    assert _planner(frame_source, llm, None) is first
+    assert _planner(frame_source, type(llm)(), None) is not first
+    assert _planner(frame_source, llm, [ChatAgent()]) is not _planner(frame_source, llm, [ChatAgent()])
 
 
 def test_default_agents_plain_table(frame_source):

@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import logging
+import weakref
 
 from concurrent.futures import ThreadPoolExecutor
 from functools import cache
@@ -87,6 +88,21 @@ def _default_llm() -> Llm:
     return llm_cls()
 
 
+# One Planner per Source, freed with it. Building a Planner and syncing its
+# metadata costs about half a second, and a reused one sends the LLM exactly
+# the prompts a fresh one would.
+_planners: weakref.WeakKeyDictionary[Source, Planner] = weakref.WeakKeyDictionary()
+
+
+def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
+    if agents is not None:
+        return Planner(llm=llm, agents=agents, headless=True)
+    planner = _planners.get(source)
+    if planner is None or planner.llm is not llm:
+        planner = _planners[source] = Planner(llm=llm, agents=_default_agents(source), headless=True)
+    return planner
+
+
 def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
     """Return the Source to ask and the table slugs it is limited to."""
     if not isinstance(data, Pipeline):
@@ -142,15 +158,12 @@ async def aask(
     if log.getEffectiveLevel() > logging.DEBUG:
         quiet_retry_log()
     source, visible_slugs = _resolve(data)
-    context: dict[str, Any] = {"source": source, "sources": [source]}
+    planner = _planner(source, llm or _default_llm(), agents)
+    # Each question starts from the Planner's own context (its vector stores)
+    # so nothing one question adds is seen by the next
+    context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
     if visible_slugs is not None:
         context["visible_slugs"] = visible_slugs
-    planner = Planner(
-        llm=llm or _default_llm(),
-        agents=agents or _default_agents(source),
-        context=context,
-        headless=True,
-    )
     await planner.sync(context)
     plan = await planner.respond([{"role": "user", "content": question}], context)
     if plan is None:
