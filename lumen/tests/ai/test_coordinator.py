@@ -1,9 +1,10 @@
 import datetime as dt
 import io
 import json
+import logging
 
 from typing import get_args
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pandas as pd
 import pytest
@@ -29,7 +30,9 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
-from lumen.ai.coordinator import Coordinator, Plan, Planner
+from lumen.ai.coordinator import (
+    Coordinator, DependencyResolver, Plan, Planner,
+)
 from lumen.ai.coordinator.base import Checklist
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import SQLEditor
@@ -103,7 +106,7 @@ async def test_planner_empty_plan(llm):
     assert todos.object == ""
 
 
-async def test_planner_headless_answers_without_interface(llm):
+async def test_planner_headless_answers_without_interface(llm, caplog):
     PlanModel = make_plan_model(["ChatAgent"], [])
     (StepModel,) = get_args(PlanModel.__annotations__['steps'])
 
@@ -118,12 +121,25 @@ async def test_planner_headless_answers_without_interface(llm):
     ])
 
     planner = Planner(llm=llm, headless=True)
-    plan = await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
-    outputs, _ = await plan.execute()
+    with caplog.at_level(logging.INFO, logger="lumen"):
+        plan = await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
+        outputs, _ = await plan.execute()
 
     assert planner.interface is None
+    assert planner.steps_layout is None
     assert plan.status == "success"
     assert outputs[-1].object == "Hello there!"
+    assert "Hello Reply..." in caplog.messages
+    with pytest.raises(ValueError, match="headless"):
+        planner.__panel__()
+
+
+async def test_dependency_resolver_headless_raises_agent_errors(llm):
+    resolver = DependencyResolver(llm=llm, agents=[ChatAgent(), SQLAgent()], headless=True)
+    resolver._pre_plan = AsyncMock(side_effect=lambda m, c, agents, tools: (agents, tools, {}))
+    resolver._choose_agent = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
+    with pytest.raises(RuntimeError, match="LLM unavailable"):
+        await resolver.respond([{'role': 'user', 'content': 'Hello?'}], {})
 
 
 async def test_planner_simple_plan(llm):
