@@ -23,11 +23,29 @@ ui = lmai.ExplorerUI(data=['penguins.csv', 'earthquakes.parquet'])
 ui.servable()
 ```
 
+### In-memory data
+
+`ExplorerUI` and `lumen.read` also take data you already have in Python. A dict key names the table.
+
+``` py title="DataFrames and datasets"
+import lumen
+import pandas as pd
+
+df = pd.read_csv('penguins.csv')
+source = lumen.read({'penguins': df})  # (1)!
+source.get('penguins')
+
+ui = lmai.ExplorerUI(data={'penguins': df})
+```
+
+1. `lumen.read` returns one Source. It accepts pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets and DataArrays, DuckDB connections and relations, plus the paths and URLs above.
+
 ## Supported sources
 
 | Source | Use for |
 |--------|---------|
 | Files | CSV, TSV, Parquet, JSON, JSONL and NDJSON (local or URL); Excel and HTML tables when uploaded in the UI |
+| In-memory data | pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray objects, DuckDB connections |
 | DuckDB | Local SQL queries on files |
 | xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5, GRIB) |
 | Geospatial files | GeoJSON, WKT and zipped shapefiles |
