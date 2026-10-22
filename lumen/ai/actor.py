@@ -13,10 +13,10 @@ from panel.chat import ChatFeed
 from panel.layout.base import ListLike, NamedListLike
 from pydantic import BaseModel
 
+from ..util import log
 from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .context import ContextModel, TContext
 from .llm import Llm, Message, SubmitTool
-from ..util import log
 from .utils import (
     class_name_to_llm_spec_key, log_debug, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
