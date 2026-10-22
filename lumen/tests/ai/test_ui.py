@@ -1524,6 +1524,16 @@ def test_read_frame(make):
     assert list(source.get('data')['a']) == [1, 2, 3]
 
 
+def test_read_mixed_dict_is_one_source(tmp_path):
+    pl = pytest.importorskip('polars')
+    csv = tmp_path / 'orders.csv'
+    pd.DataFrame({'amount': [10, 20]}).to_csv(csv, index=False)
+    source = read({'people': pd.DataFrame({'name': ['a', 'b']}), 'scores': pl.DataFrame({'s': [1.5]}), 'orders': str(csv)})
+    assert sorted(source.get_tables()) == ['orders', 'people', 'scores']
+    totals = source.execute('SELECT (SELECT COUNT(*) FROM people) AS p, (SELECT SUM(amount) FROM orders) AS o')
+    assert totals.to_dict('records') == [{'p': 2, 'o': 30.0}]
+
+
 def test_read_duckdb_connection():
     conn = duckdb.connect()
     conn.execute('CREATE TABLE t AS SELECT * FROM range(3) r(a)')

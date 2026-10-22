@@ -17,7 +17,7 @@ from ..pipeline import Pipeline
 from ..sources import Source
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import normalize_table_name, try_import_xarray
+from ..util import as_pandas, normalize_table_name, try_import_xarray
 from .config import PROVIDED_SOURCE_NAME
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .controls.ingest.utils import read_geo_file
@@ -206,7 +206,11 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         frames["data"] = unnamed[0]
     else:
         frames.update({f"data_{i}": df for i, df in enumerate(unnamed)})
-    if frames:
+    if frames and (tables or mirrors):
+        # Mixed with files or pipelines, frames join the same connection as
+        # mirrors, which DuckDBSource ingests and serializes as pandas
+        mirrors.update({name: as_pandas(df) for name, df in frames.items()})
+    elif frames:
         sources.append(DuckDBSource.from_df(frames))
     if tables or mirrors:
         initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
