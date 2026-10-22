@@ -4,12 +4,18 @@ Ask a Lumen Source or Pipeline a question from Python and get an Answer.
 from __future__ import annotations
 
 import asyncio
+import base64
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
+import panel as pn
 import param
 
+from panel.config import panel_extension
+from panel.pane import Markdown, Vega
+from panel.pane.vega import ds_to_records
+from panel_material_ui import Card, Column
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR
@@ -29,6 +35,18 @@ from .ui import _keyless_options_message
 
 if TYPE_CHECKING:
     from .data import DataT
+
+
+def _in_kernel() -> bool:
+    """Whether code runs in a Jupyter kernel, where Panel output gets comms."""
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        return False
+    try:
+        return get_ipython().kernel is not None
+    except AttributeError:  # no IPython at all, or a terminal IPython
+        return False
 
 
 def _has_geometry(source: Source) -> bool:
@@ -178,3 +196,55 @@ class Answer(param.Parameterized):
 
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._card = None
+
+    def __repr__(self) -> str:
+        first_line = self.value.strip().splitlines()[0] if self.value.strip() else ""
+        return f"Answer(status={self.status!r}, value={first_line!r})"
+
+    def __panel__(self):
+        if self._card is None:
+            parts = [Markdown(self.value, sizing_mode="stretch_width")]
+            if self.view is not None:
+                parts.append(self.view)
+            if self.sql:
+                parts.append(Card(
+                    Markdown(f"```sql\n{self.sql}\n```"), title="SQL", collapsed=True,
+                    sizing_mode="stretch_width",
+                ))
+            self._card = Column(*parts, sizing_mode="stretch_width")
+        return self._card
+
+    def _vega_lite_spec(self) -> dict | None:
+        """The chart as a self-contained Vega-Lite spec, data inlined."""
+        if self.spec is None:
+            return None
+        spec = dict(self.view.get_panel().object)
+        spec["data"] = {"values": ds_to_records(spec["data"]["values"])}
+        for dim, size in (("width", 600), ("height", 400)):
+            if spec.get(dim, "container") == "container":
+                spec[dim] = size
+        return spec
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        if _in_kernel():
+            # Loaded on first display, not on import, so lumen.ai stays
+            # quiet in scripts and in front-ends that never show an Answer
+            if not panel_extension._loaded:
+                pn.extension("vega")
+            try:
+                bundle = self.__panel__()._repr_mimebundle_(include, exclude)
+            except ImportError:
+                # VS Code renders Panel through jupyter_bokeh, which may be missing
+                bundle = None
+            if bundle is not None:
+                return bundle
+        sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
+        bundle = {"text/plain": repr(self), "text/markdown": f"{self.value}{sql}"}
+        if (spec := self._vega_lite_spec()) is not None:
+            bundle["application/vnd.vegalite.v5+json"] = spec
+            bundle["image/png"] = base64.b64encode(Vega(spec).export("png", scale=2)).decode()
+        return bundle
