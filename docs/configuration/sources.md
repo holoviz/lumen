@@ -40,6 +40,25 @@ ui = lmai.ExplorerUI(data={'penguins': df})
 
 1. `lumen.read` returns one Source. It accepts pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets and DataArrays, DuckDB connections and relations, plus the paths and URLs above.
 
+### Ask from a notebook
+
+A Source or a Pipeline can answer a question directly, without the chat UI.
+
+``` py title="Ask a question"
+import lumen
+import pandas as pd
+
+source = lumen.read({'penguins': pd.read_csv('penguins.csv')})
+answer = source.ask("What is the average body mass per species?")
+answer  # (1)!
+```
+
+1. Renders a card with the answer, the chart and the SQL. Outside a live notebook it falls back to a Vega-Lite spec and a PNG.
+
+The `Answer` holds `value` (the text), `sql`, `spec` (the Vega-Lite spec), `pipeline` (a Pipeline over the result), `view` (the chart as a Lumen View), `plan` and `status`. `pipeline.ask(...)` limits the question to that table and its filters, and `await source.aask(...)` is the async form.
+
+`ask` uses the first LLM provider with an API key set, or pass `llm=`. It only writes SQL and declarative chart specs, both shown to you; it never runs LLM-written Python.
+
 ## Supported sources
 
 | Source | Use for |
