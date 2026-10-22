@@ -193,6 +193,16 @@ def test_answer_static_bundle_outside_a_kernel(chart_answer):
     assert base64.b64decode(bundle["image/png"]).startswith(b"\x89PNG")
 
 
+def test_answer_static_spec_keeps_data_given_by_url(frame_source):
+    url = {"url": "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/cars.json"}
+    view = VegaLiteView(
+        pipeline=Pipeline(source=frame_source, table="tiny"),
+        spec={"data": url, "mark": "point", "encoding": {"x": {"field": "Horsepower", "type": "quantitative"}}},
+    )
+    answer = Answer(question="q", value="v", spec=view.spec, view=view, status="success")
+    assert answer._vega_lite_spec()["data"] == url
+
+
 def test_answer_static_bundle_without_a_chart():
     answer = Answer(question="q", value="Three rows.", status="success")
     assert set(answer._repr_mimebundle_()) == {"text/plain", "text/markdown"}
@@ -200,11 +210,12 @@ def test_answer_static_bundle_without_a_chart():
 
 def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
     def load(*args):
-        panel_extension._loaded = True
+        panel_extension._loaded_extensions.append("vega")
 
     with (
         patch("lumen.ai.answer._in_kernel", return_value=True),
-        patch.object(panel_extension, "_loaded", False),
+        patch.object(panel_extension, "_loaded", True),
+        patch.object(panel_extension, "_loaded_extensions", []),
         patch("lumen.ai.answer.pn.extension", side_effect=load) as extension,
         patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", return_value=({"text/html": "card"}, {})),
     ):
@@ -216,7 +227,7 @@ def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
 def test_answer_falls_back_when_panel_cannot_render(chart_answer):
     with (
         patch("lumen.ai.answer._in_kernel", return_value=True),
-        patch.object(panel_extension, "_loaded", True),
+        patch.object(panel_extension, "_loaded_extensions", ["vega"]),
         patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
     ):
         assert "application/vnd.vegalite.v5+json" in chart_answer._repr_mimebundle_()

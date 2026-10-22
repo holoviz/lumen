@@ -227,7 +227,10 @@ class Answer(param.Parameterized):
         if self.spec is None:
             return None
         spec = dict(self.view.get_panel().object)
-        spec["data"] = {"values": ds_to_records(spec["data"]["values"])}
+        data = spec.get("data")
+        # A spec can bring its own data, e.g. a topojson url for a map
+        if isinstance(data, dict) and "values" in data:
+            spec["data"] = dict(data, values=ds_to_records(data["values"]))
         for dim, size in (("width", 600), ("height", 400)):
             if spec.get(dim, "container") == "container":
                 spec[dim] = size
@@ -236,8 +239,9 @@ class Answer(param.Parameterized):
     def _repr_mimebundle_(self, include=None, exclude=None):
         if _in_kernel():
             # Loaded on first display, not on import, so lumen.ai stays
-            # quiet in scripts and in front-ends that never show an Answer
-            if not panel_extension._loaded:
+            # quiet in scripts and in front-ends that never show an Answer.
+            # Checked per extension: a plain pn.extension() leaves Vega out.
+            if "vega" not in panel_extension._loaded_extensions:
                 pn.extension("vega")
             try:
                 bundle = self.__panel__()._repr_mimebundle_(include, exclude)
