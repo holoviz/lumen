@@ -34,6 +34,7 @@ from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
 from .data import read
 from .editors import LumenEditor
+from .export import format_output, make_preamble
 from .llm import (
     Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
 )
@@ -233,6 +234,23 @@ class Answer(param.Parameterized):
     def __init__(self, **params):
         super().__init__(**params)
         self._card = None
+
+    @property
+    def code(self) -> str:
+        """
+        Python that rebuilds the chart, or else the data, with Lumen alone.
+
+        The data and the query travel in the spec, so the code runs
+        anywhere Lumen is installed without calling an LLM.
+        """
+        component = self.view if self.view is not None else self.pipeline
+        if component is None:
+            return ""
+        cell, extension = format_output(component)
+        if cell is None:
+            return ""
+        (preamble,) = make_preamble("", extensions=[extension] if extension else [])
+        return f"{preamble.source}\n\n{cell.source}"
 
     def __repr__(self) -> str:
         first_line = self.value.strip().splitlines()[0] if self.value.strip() else ""
