@@ -52,7 +52,7 @@ dependencies = [
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
     "param >=2.2.1,<2.5.0",
-    "pillow",
+    "pillow >=13.0.0",
     "platformdirs",
     "pyarrow",
     "pydantic >=2.8.0",
