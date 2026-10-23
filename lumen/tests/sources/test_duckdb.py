@@ -1825,6 +1825,15 @@ def test_table_function_expression_is_queryable_by_name(table_function_source):
     assert result["n"].tolist() == [2]
 
 
+def test_table_function_with_keyword_arguments_is_read(tmp_path):
+    path = tmp_path / "orders.csv"
+    path.write_text("order_id,amount\n1,10\n2,NA\n")
+    source = DuckDBSource(uri=":memory:", tables={"orders": f"read_csv('{path}', nullstr='NA')"})
+    result = source.get("orders")
+    assert result["amount"].isna().tolist() == [False, True]
+    assert list(source.get_metadata("orders")["columns"]) == ["order_id", "amount"]
+
+
 def test_sql_expr_source_joins_table_functions_by_name(table_function_source):
     sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
     derived = table_function_source.create_sql_expr_source({"joined": sql})
