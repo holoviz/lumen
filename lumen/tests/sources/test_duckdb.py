@@ -275,6 +275,96 @@ def test_duckdb_source_mirrors_source(duckdb_source):
     pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'), check_dtype=False)
 
 
+def test_duckdb_get_metadata_applies_user_descriptions():
+    source = DuckDBSource.from_df(tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})})
+    source.metadata = {'cells': {
+        'description': 'One row per cell',
+        'columns': {
+            'area': {'description': 'Area in um^2'},
+            'label': 'Cell label',
+            'missing': {'description': 'Not a column of the table'},
+        },
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'One row per cell'
+    assert meta['columns']['area'] == {'data_type': 'float64', 'description': 'Area in um^2'}
+    assert meta['columns']['label']['description'] == 'Cell label'
+    assert 'missing' not in meta['columns']
+
+
+def test_duckdb_get_metadata_keeps_non_empty_generated_values():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0]})},
+        metadata_func=lambda tables: {t: {
+            'description': 'Generated', 'columns': {'area': {'description': 'Generated area'}}
+        } for t in tables},
+    )
+    source.metadata = {'cells': {
+        'description': 'User', 'columns': {'area': {'description': 'User area', 'unit': 'um^2'}},
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns']['area'] == {'description': 'Generated area', 'unit': 'um^2'}
+
+
+def test_duckdb_get_metadata_fills_empty_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a'], 'count': [1]})},
+        metadata_func=lambda tables: {t: {
+            'description': None, 'columns': {'area': '', 'label': {}, 'count': None}
+        } for t in tables},
+    )
+    source.metadata = {'cells': {
+        'description': 'One row per cell',
+        'columns': {
+            'area': {'description': 'Area in um^2'},
+            'label': 'Cell label',
+            'count': {'description': 'Number of cells'},
+        },
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'One row per cell'
+    assert meta['columns']['area'] == {'description': 'Area in um^2'}
+    assert meta['columns']['label'] == {'description': 'Cell label'}
+    assert meta['columns']['count'] == {'description': 'Number of cells'}
+
+
+def test_duckdb_get_metadata_normalizes_columns_without_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})},
+        metadata_func=lambda tables: {t: {'description': 'Generated'} for t in tables},
+    )
+    user_area = {'description': 'Area in um^2'}
+    source.metadata = {'cells': {'columns': {'area': user_area, 'label': 'Cell label'}}}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns'] == {
+        'area': {'description': 'Area in um^2'},
+        'label': {'description': 'Cell label'},
+    }
+    assert meta['columns']['area'] is not user_area
+
+
+def test_duckdb_get_metadata_applies_user_descriptions_to_multiple_tables():
+    source = DuckDBSource.from_df(tables={
+        'cells': pd.DataFrame({'area': [1.0]}),
+        'samples': pd.DataFrame({'name': ['a']}),
+        'plates': pd.DataFrame({'well': ['A1']}),
+    })
+    source.metadata = {
+        'cells': {'description': 'One row per cell', 'columns': {'area': 'Area in um^2'}},
+        'samples': {'description': 'One row per sample', 'columns': {'name': {'description': 'Sample name'}}},
+    }
+    meta = source.get_metadata(['cells', 'samples', 'plates'])
+    assert set(meta) == {'cells', 'samples', 'plates'}
+    assert meta['cells']['description'] == 'One row per cell'
+    assert meta['cells']['columns']['area'] == {'data_type': 'float64', 'description': 'Area in um^2'}
+    assert meta['samples']['description'] == 'One row per sample'
+    assert meta['samples']['columns']['name']['description'] == 'Sample name'
+    assert meta['plates']['description'] == ''
+    assert meta['plates']['columns']['well']['description'] == ''
+
+
 def test_joined_source_get_schema_merges_sql_tables():
     lhs = DuckDBSource.from_df({'lhs': pd.DataFrame({'id': [1, 2, 3], 'x': [0.5, 1.5, 2.5]})})
     rhs = DuckDBSource.from_df({'rhs': pd.DataFrame({'id': [2, 3, 4], 'y': [10, 20, 30]})})

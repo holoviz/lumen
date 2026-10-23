@@ -132,8 +132,6 @@ toolz = "*"
 zensical = "<0.0.17"
 mkdocstrings = "*"
 mkdocstrings-python = "*"
-mkdocs-gen-files = "*"
-mkdocs-literate-nav = "*"
 
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs

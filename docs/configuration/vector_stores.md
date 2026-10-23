@@ -57,6 +57,26 @@ vector_store = DuckDBVectorStore(uri='embeddings.db')
 - ✅ Fast similarity search
 - Best for: Production, large datasets
 
+### ChromaDBVectorStore
+
+Storage backed by [ChromaDB](https://www.trychroma.com/), in memory or persisted to a directory.
+
+``` bash
+pip install 'lumen[chromadb]'
+```
+
+``` py
+from lumen.ai.vector_store import ChromaDBVectorStore
+
+vector_store = ChromaDBVectorStore()                         # in memory
+vector_store = ChromaDBVectorStore(uri='chroma_db')          # persisted to a directory
+vector_store = ChromaDBVectorStore(uri='chroma_db', collection_name='docs')
+```
+
+- ✅ Persists on disk when given a `uri`
+- ✅ Reuses an existing ChromaDB collection
+- Best for: Projects that already use ChromaDB
+
 ## Adding documents
 
 ### Add files
