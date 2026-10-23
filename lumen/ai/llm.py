@@ -4129,6 +4129,11 @@ class Groq(OpenAI):
         doc="The Groq API endpoint.",
     )
 
+    # Groq validates tool-call arguments server side and rejects a mismatch
+    # with an APIError before instructor can retry, which made chart specs
+    # fail every attempt. json_schema output is validated client side instead.
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
     model_kwargs = param.Dict(default={
         "default": {"model": "openai/gpt-oss-120b"},
     })

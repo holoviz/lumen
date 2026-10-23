@@ -549,6 +549,11 @@ def test_groq_endpoint():
     assert groq.endpoint == "https://api.groq.com/openai/v1"
 
 
+def test_groq_uses_json_schema_mode():
+    groq = Groq(api_key="test-key")
+    assert groq.mode == Mode.JSON_SCHEMA
+
+
 def test_ollama_models_lists_pulled_models(monkeypatch):
     monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags([{"name": "qwen3.5:9b"}]))
     assert Ollama().models() == {"qwen3.5:9b"}
