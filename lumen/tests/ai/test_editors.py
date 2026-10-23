@@ -476,3 +476,43 @@ def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor
     assert multi.export("yaml").getvalue().count("line0") == 3
     with pytest.raises(ValueError, match="Unknown export format"):
         multi.export("csv")
+
+
+
+
+@pytest.mark.asyncio
+async def test_sql_editor_render_pipeline_header_tooltips(sql_pipeline_editor):
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+    assert not layout[0]._pane.header_tooltips
+
+
+def test_sql_editor_header_tooltips_match_unaliased_columns(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = "SELECT category, SUM(amount) FROM (VALUES ('A', 1.0), ('B', 2.0)) AS t(category, amount) GROUP BY category"
+    pipeline = Pipeline(source=DuckDBSource(tables={"q": sql}), table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by t.category"}}
+
+
+def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = (
+        "WITH s AS (SELECT category, SUM(amount) AS total FROM orders GROUP BY category) "
+        "SELECT category, total * 2 AS doubled FROM s"
+    )
+    source = DuckDBSource(
+        initializers=["CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 1.0)) AS t(category, amount)"],
+        tables={"q": sql},
+    )
+    pipeline = Pipeline(source=source, table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"doubled": "SUM(orders.amount) * 2, grouped by category"}}
+
+
+def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, monkeypatch):
+    def boom(*args):
+        raise IndexError
+    monkeypatch.setattr(editors_module, "column_tooltips", boom)
+    assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
