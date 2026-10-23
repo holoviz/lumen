@@ -506,3 +506,10 @@ def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
     kwargs = editor._pipeline_table_kwargs(pipeline)
     assert kwargs == {"header_tooltips": {"doubled": "s.total * 2 from orders.amount"}}
 
+
+def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, monkeypatch):
+    def boom(*args):
+        raise IndexError
+    monkeypatch.setattr(editors_module, "extract_provenance", boom)
+    assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
+

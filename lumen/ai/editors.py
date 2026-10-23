@@ -622,8 +622,13 @@ class SQLEditor(LumenEditor):
         # Derived from the current spec so tooltips follow SQL edits.
         # Match case-insensitively: DuckDB names `SUM(x)` as `sum(x)`.
         columns = {str(col).lower(): col for col in pipeline.data.columns}
+        try:
+            provenance = extract_provenance(self.spec, pipeline.source.dialect)
+        except Exception:
+            # Tooltips are a nicety; never let lineage break the table.
+            provenance = []
         header_tooltips = {}
-        for item in extract_provenance(self.spec, pipeline.source.dialect):
+        for item in provenance:
             col = columns.get(item["column"].lower())
             if col is None:
                 continue
