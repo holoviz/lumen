@@ -67,6 +67,18 @@ _PAGINATED_TABLE_STYLES = """
   display: inline-flex !important;
   flex-wrap: wrap !important;
 }
+/* Header tooltips (column provenance) otherwise render light text on a
+   white box under dark themes, making them unreadable. */
+.tabulator-tooltip {
+  background: #2b2b2b !important;
+  color: #f5f5f5 !important;
+  border: 1px solid #555 !important;
+  border-radius: 4px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  max-width: 420px !important;
+  white-space: normal !important;
+}
 """
 
 

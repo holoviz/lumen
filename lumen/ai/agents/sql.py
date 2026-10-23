@@ -1401,11 +1401,13 @@ class SQLAgent(BaseLumenAgent):
 
             source_columns = list(dict.fromkeys(source_columns))
 
-            # Skip direct pass-through columns
+            # Skip direct pass-through columns. Compare case-insensitively:
+            # lineage normalizes identifiers (e.g. "Symbol" -> "symbol").
             is_same = False
             if len(source_columns) == 1:
                 src_col = source_columns[0].split('.')[-1].strip('"').strip("'")
-                if target_column == src_col or target_column == source_columns[0]:
+                target = target_column.strip('"').strip("'")
+                if target.lower() == src_col.lower() or target.lower() == source_columns[0].lower():
                     is_same = True
 
             if not is_same:

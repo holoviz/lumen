@@ -474,6 +474,18 @@ async def test_submit_sql_ends_request_on_second_timeout():
                 },
             ],
         ),
+        (
+            # Mixed-case pass-through column is skipped; only the aggregate remains
+            'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
+            [
+                {
+                    "column": "avg_close",
+                    "expression": 'AVG(stocks."Close")',
+                    "source_columns": ['stocks."Close"'],
+                    "grouped_by": '"Symbol"',
+                },
+            ],
+        ),
     ],
 )
 def test_sql_agent_extract_provenance(sql, expected):
