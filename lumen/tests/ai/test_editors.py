@@ -482,8 +482,11 @@ async def test_sql_editor_render_pipeline_header_tooltips(sql_pipeline_editor):
     assert not layout[0]._pane.header_tooltips
 
 
-def test_sql_editor_header_tooltips_follow_spec(sql_pipeline_editor):
-    with param.parameterized.discard_events(sql_pipeline_editor):
-        sql_pipeline_editor.spec = "SELECT category, SUM(value) AS total FROM tiny GROUP BY category"
-    kwargs = sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component)
-    assert kwargs == {"header_tooltips": {"total": "SUM(tiny.value), grouped by category"}}
+def test_sql_editor_header_tooltips_match_unaliased_columns(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = "SELECT category, SUM(amount) FROM (VALUES ('A', 1.0), ('B', 2.0)) AS t(category, amount) GROUP BY category"
+    pipeline = Pipeline(source=DuckDBSource(tables={"q": sql}), table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by category"}}
+

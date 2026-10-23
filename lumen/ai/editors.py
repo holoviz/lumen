@@ -620,10 +620,15 @@ class SQLEditor(LumenEditor):
 
     def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
         # Derived from the current spec so tooltips follow SQL edits.
+        # Match case-insensitively: DuckDB names `SUM(x)` as `sum(x)`.
+        columns = {str(col).lower(): col for col in pipeline.data.columns}
         header_tooltips = {}
         for item in extract_provenance(self.spec, pipeline.source.dialect):
+            col = columns.get(item["column"].lower())
+            if col is None:
+                continue
             grp = item["grouped_by"]
-            header_tooltips[item["column"]] = f"{item['expression']}, grouped by {grp}" if grp else item["expression"]
+            header_tooltips[col] = f"{item['expression']}, grouped by {grp}" if grp else item["expression"]
         return {"header_tooltips": header_tooltips} if header_tooltips else {}
 
     def _render_editor(self):
