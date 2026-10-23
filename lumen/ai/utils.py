@@ -2373,11 +2373,14 @@ def _root_expression(node) -> exp.Expression | None:
         if child is None:
             continue
         if isinstance(child.source, exp.Table):
-            replacement = exp.column(column.name, table=child.source.name)
+            # Table functions like read_parquet(...) have no name to qualify with.
+            replacement = exp.column(column.this.copy(), table=child.source.name or None)
         elif isinstance(child.source, exp.Select | exp.SetOperation):
             replacement = _root_expression(child)
             if replacement is None:
                 return None
+            if not isinstance(replacement, exp.Column | exp.Func | exp.Literal | exp.Paren):
+                replacement = exp.paren(replacement)
         else:
             # VALUES, table functions etc. are base relations already.
             continue
@@ -2387,12 +2390,12 @@ def _root_expression(node) -> exp.Expression | None:
     return expression
 
 
-def _group_by(node, dialect: str | None) -> str | None:
+def _group_by(node) -> list[exp.Expression]:
     """Return the first GROUP BY found along a lineage chain."""
     for n in node.walk():
         if isinstance(n.source, exp.Select) and (group := n.source.args.get("group")):
-            return ", ".join(e.sql(dialect=dialect) for e in group.expressions)
-    return None
+            return [e.copy() for e in group.expressions]
+    return []
 
 
 @functools.lru_cache(maxsize=128)
@@ -2410,6 +2413,8 @@ def column_tooltips(sql_query: str, dialect: str | None, columns: tuple[str, ...
         return {}
     if not isinstance(select, exp.Select):
         return {}
+    # Lineage lowercases identifiers; restore them as the user wrote them.
+    spelling = {ident.name.lower(): ident.name for ident in select.find_all(exp.Identifier)}
 
     projections = select.expressions
     # Unaliased names differ per dialect (DuckDB `sum(x)`, Postgres `sum`), so
@@ -2436,10 +2441,13 @@ def column_tooltips(sql_query: str, dialect: str | None, columns: tuple[str, ...
         except sqlglot.errors.SqlglotError:
             continue
         root = _root_expression(node)
-        if root is None or isinstance(root, exp.Column):
+        if root is None or isinstance(root, exp.Column) or root.find(exp.Select):
             continue
+        parts = [root, *_group_by(node)]
+        for identifier in (i for part in parts for i in part.find_all(exp.Identifier)):
+            identifier.set("this", spelling.get(identifier.name.lower(), identifier.name))
         tooltip = root.sql(dialect=dialect)
-        if group := _group_by(node, dialect):
-            tooltip += f", grouped by {group}"
+        if len(parts) > 1:
+            tooltip += ", grouped by " + ", ".join(e.sql(dialect=dialect) for e in parts[1:])
         tooltips[column] = tooltip
     return tooltips

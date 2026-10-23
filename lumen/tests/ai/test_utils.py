@@ -1076,6 +1076,30 @@ def test_format_tool_error_truncates():
             {},
             id="union-in-cte",
         ),
+        pytest.param(
+            'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
+            ("Symbol", "avg_close"),
+            {"avg_close": 'AVG(stocks."Close"), grouped by "Symbol"'},
+            id="quoted-mixed-case",
+        ),
+        pytest.param(
+            "WITH s AS (SELECT SUM(x) AS Total FROM t) SELECT total * 2 AS d FROM s",
+            ("d",),
+            {"d": "SUM(t.x) * 2"},
+            id="cte-alias-case-mismatch",
+        ),
+        pytest.param(
+            "WITH a AS (SELECT x + 1 AS y FROM t) SELECT y * 3 AS z FROM a",
+            ("z",),
+            {"z": "(t.x + 1) * 3"},
+            id="inlined-keeps-precedence",
+        ),
+        pytest.param(
+            "SELECT SUM(p) AS s FROM read_parquet('x.parquet')",
+            ("s",),
+            {"s": "SUM(p)"},
+            id="table-function",
+        ),
         pytest.param("SELEC nonsense", ("x",), {}, id="unparseable"),
     ],
 )
