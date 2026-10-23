@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +11,7 @@ import param
 try:
     from sqlalchemy import create_engine, inspect, text
     from sqlalchemy.engine.url import URL, make_url
+    from sqlalchemy.pool import SingletonThreadPool
 except ImportError as e:
     raise ImportError(
         "SQLAlchemySource requires the 'sqlalchemy' package. "
@@ -24,6 +26,13 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
     DataFrame = pd.DataFrame
+
+# How each dialect's driver reports a table it cannot find
+MISSING_TABLE_PATTERNS = {
+    "sqlite": re.compile(r"no such table:\s*\"?([^\s\"]+)\"?"),
+    "postgresql": re.compile(r"relation\s+\"([^\"]+)\"\s+does not exist"),
+    "mysql": re.compile(r"Table\s+'(?:[^'.]+\.)?([^'.]+)'\s+doesn't exist"),
+}
 
 
 class SQLAlchemySource(BaseSQLSource):
@@ -97,6 +106,10 @@ class SQLAlchemySource(BaseSQLSource):
         'sqlite+aiosqlite',
         'oracle+oracledb_async',
     }
+
+    # Catalog schemas that describe the database itself, skipped when
+    # discovering tables across all schemas
+    _system_schemas = frozenset({'information_schema'})
 
     def __init__(self, **params):
         engine = params.pop('engine', None)
@@ -197,6 +210,15 @@ class SQLAlchemySource(BaseSQLSource):
         return self._engine.connect()
 
     @property
+    def _thread_bound(self) -> bool:
+        """
+        Whether each thread gets its own connection, so a query run in a worker
+        thread does not see the caller's data (e.g. an in-memory SQLite
+        database, which SQLAlchemy pools per thread).
+        """
+        return not self._driver_is_async and isinstance(self._engine.pool, SingletonThreadPool)
+
+    @property
     def _inspector(self):
         """Get or create a SQLAlchemy inspector for metadata operations."""
         if self._engine is None:
@@ -213,6 +235,12 @@ class SQLAlchemySource(BaseSQLSource):
         except Exception:
             # Fallback to dialect-agnostic (None) if detection fails.
             return None
+
+    def missing_table(self, error: Exception) -> str | None:
+        pattern = MISSING_TABLE_PATTERNS.get(self.dialect)
+        if pattern is None or not (match := pattern.search(str(error))):
+            return None
+        return match.group(1)
 
     def create_sql_expr_source(self, tables: dict[str, str], params: dict[str, list | dict] | None = None, **kwargs):
         """
@@ -307,6 +335,8 @@ class SQLAlchemySource(BaseSQLSource):
         pd.DataFrame
             The result as a pandas DataFrame
         """
+        if self._thread_bound:
+            return self.execute(sql_query, params, *args, **kwargs)
         if not self._driver_is_async:
             # Fall back to running sync in thread
             return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
@@ -318,6 +348,14 @@ class SQLAlchemySource(BaseSQLSource):
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
             return df
+
+    async def execute_with_timeout(
+        self, sql_query: str, timeout: float | None, fetch: bool = False
+    ) -> DataFrame:
+        if self._thread_bound:
+            # Running inline is the only way to reach the data, so the timeout cannot apply.
+            return self.fetch(sql_query) if fetch else self.execute(sql_query)
+        return await super().execute_with_timeout(sql_query, timeout, fetch)
 
     def get_tables(self) -> list[str]:
         """Return the list of available tables."""
@@ -340,6 +378,8 @@ class SQLAlchemySource(BaseSQLSource):
         else:
             # Get tables from all schemas
             for schema in inspector.get_schema_names():
+                if schema.lower() in self._system_schemas:
+                    continue
                 table_names = inspector.get_table_names(schema=schema)
                 for table in table_names:
                     # For SQLite, skip the schema prefix if it's 'main'

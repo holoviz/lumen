@@ -18,13 +18,11 @@ Ask questions in natural language, but keep execution explicit, reproducible, an
 !!! tip "Quick Demo"
     New to Lumen? **[Try our 30-second quick start →](quick_start.md)** to see it in action with a walkthrough.
 
-Bring your own LLM. Then connect to your data sources: Snowflake, BigQuery, DuckDB, and any database supported by SQLAlchemy. **[See all installation options →](installation.md)**
+Bring your own LLM. Then connect to your data sources: Snowflake, BigQuery, DuckDB, and any database supported by SQLAlchemy. Each example below assumes your provider is set up as in the **[Installation guide →](installation.md)**
 
 === "CSV File + OpenAI"
 
     ```bash
-    export OPENAI_API_KEY=sk-...
-
     lumen-ai serve your_data.csv --provider openai --show  # parquet also works
     ```
     
@@ -121,12 +119,9 @@ Bring your own LLM. Then connect to your data sources: Snowflake, BigQuery, Duck
 === "PostgreSQL + Ollama (Local)"
 
     ```bash
-    export OPENAI_BASE_URL=http://localhost:11434/v1
-    export OPENAI_API_KEY=ollama
-    
     lumen-ai serve postgresql://user:pass@localhost/mydb \
       --provider ollama \
-      --model qwen3:32b \
+      --model qwen3.6:35b-a3b \
       --show
     ```
     

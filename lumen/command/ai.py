@@ -4,6 +4,7 @@ import argparse
 import inspect
 import json
 import logging
+import shutil
 import sys
 import traceback
 
@@ -20,11 +21,15 @@ from panel.io.application import Application
 try:
     from ..ai.config import THIS_DIR
 except ImportError as e:
-    print(f'You need to install lumen-ai with "pip install lumen[ai]": {e}')  # noqa: T201
+    print(f'You need to install Lumen AI with "pip install lumen": {e}')  # noqa: T201
     sys.exit(1)
 
+from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
-from ..ai.llm import LLM_PROVIDERS, get_available_llm
+from ..ai.llm import (
+    LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, local_cli_providers,
+    ollama_models, provider_name,
+)
 from ..ai.utils import parse_huggingface_url, render_template
 from . import YAML_SUFFIXES
 
@@ -61,12 +66,12 @@ class LumenAIServe(Serve):
         group.add_argument(
             "--model",
             type=str,
-            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3:8b'",
+            help="Model name to use (sets model in model_kwargs['default']). Example: --model 'qwen3.5:9b'",
         )
         group.add_argument(
             "--model-kwargs",
             type=str,
-            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"default\": {\"repo\": \"abcdef\"}}'",
+            help="JSON string of model keyword arguments for the LLM. Example: --model-kwargs '{\"sql\": {\"model\": \"gpt-5.6-luna\"}}'",
         )
         group.add_argument(
             "--llm-model-url",
@@ -83,7 +88,7 @@ class LumenAIServe(Serve):
         )
         group.add_argument(
             "--code-execution",
-            choices=["hidden", "disabled", "prompt", "llm", "bypass"],
+            choices=["hidden", "disabled", "prompt", "llm", "allow"],
             default="hidden",
             help="""
             Code execution mode for generating Vega-Lite specs via Altair code.
@@ -115,24 +120,48 @@ class LumenAIServe(Serve):
         provider = args.provider
         llm_model_url = args.llm_model_url
         provider_cls = None
-        if llm_model_url and provider and provider != "llama":
+        if llm_model_url and provider and provider != "llama-cpp":
             raise ValueError(
                 f"Cannot specify both --llm-model-url and --provider {provider!r}. "
                 f"Use --llm-model-url to load a model from HuggingFace."
             )
         elif llm_model_url:
-            provider = "llama"
+            provider = "llama-cpp"
         elif not provider:
             provider_cls = get_available_llm()
+            if provider_cls is not None:
+                # Name the provider so every session uses it instead of detecting again.
+                provider = provider_name(provider_cls)
+                print(  # noqa: T201
+                    f"Using {provider_cls.display_name} because {PROVIDER_ENV_VARS[provider]} is set; "
+                    "pass --provider to choose another."
+                )
 
-        if provider is None and provider_cls is None:
-            raise RuntimeError(
-                "It looks like a Language Model provider isn't set up yet.\n"
-                "You have a few options to resolve this:\n\n"
-                "- Set environment variables with an API key: For example, OPENAI_API_KEY or ANTHROPIC_API_KEY.\n"
-                "- Specify a provider and API key directly: For example, set `--provider openai` with your API key via --api-key.\n"
-                "- Custom endpoint: If using an OpenAI-compatible API, set --provider openai and define the --provider-endpoint.\n\n"
-                "If you still need assistance visit the docs: https://lumen.holoviz.org/lumen_ai/how_to/llm/index.html"
+        if provider is None:
+            clis = local_cli_providers()
+            ready = ", ".join(f"--provider {provider_name(cls)}" for cls, signed_in in clis.items() if signed_in)
+            unready = ", ".join(f"--provider {provider_name(cls)}" for cls, signed_in in clis.items() if not signed_in)
+            cli_options = (
+                (f"- Use a coding CLI you are signed in to: {ready}\n" if ready else "")
+                + (f"- Sign in to one of these coding CLIs first: {unready}\n" if unready else "")
+            )
+            ollama_model = lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
+            pulled = ollama_models()
+            if pulled:
+                ollama_option = f"- Use a model you pulled in Ollama: --provider ollama --model {pulled[0]}\n"
+            elif pulled is None:
+                ollama_option = f"- Run models locally: install Ollama, then `ollama pull {ollama_model}`\n"
+            else:
+                ollama_option = f"- Ollama is running with no models: `ollama pull {ollama_model}`\n"
+            die(
+                "No LLM provider found: no API key is set.\n"
+                "Pick one of these to get started:\n\n"
+                "- Free models, no signup: --provider kilo\n"
+                f"{cli_options}"
+                "- Set an API key, e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY\n"
+                "- Use an OpenAI-compatible server: --provider openai --provider-endpoint URL\n"
+                f"{ollama_option}\n"
+                "Docs: https://lumen.holoviz.org/configuration/llm_providers/"
             )
 
         api_key = args.api_key
@@ -141,6 +170,10 @@ class LumenAIServe(Serve):
         temperature = args.temperature
         agents = args.agents
         log_level = args.log_level
+        if (log_level or "").lower() not in ("debug", "trace"):
+            # Lumen sends a single attempt and reports or recovers from the
+            # error itself, so instructor's per-attempt log only duplicates it.
+            logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
         logfire_tags = getattr(args, 'logfire_tags', None)
         model = getattr(args, 'model', None)
         code_execution = getattr(args, 'code_execution', 'hide')
@@ -172,17 +205,31 @@ class LumenAIServe(Serve):
             # Handle huggingface URL if provided
             if llm_model_url:
                 try:
-                    repo, model_file, query_kwargs = parse_huggingface_url(llm_model_url)
+                    repo_id, filename, query_kwargs = parse_huggingface_url(llm_model_url)
                     # Initialize default dict if not exists
                     if 'default' not in model_kwargs:
                         model_kwargs['default'] = {}
                     model_kwargs['default'].update({
-                        'repo': repo,
-                        'model_file': model_file,
+                        'repo_id': repo_id,
+                        'filename': filename,
                         **query_kwargs
                     })
                 except ValueError as e:
                     die(str(e))
+        if issubclass(provider_cls, lumen_llms.LlmCli):
+            executable = provider_cls.param.executable.default
+            if not shutil.which(executable):
+                die(
+                    f"`{executable}` was not found on your PATH. Install "
+                    f"{provider_cls.display_name} and sign in, or choose another --provider."
+                )
+            if provider_cls.signed_in() is False:
+                die(
+                    f"{provider_cls.display_name} reports no signed-in user. Sign in to "
+                    f"`{executable}` first, or choose another --provider."
+                )
+        elif provider_cls is lumen_llms.Ollama:
+            _warn_if_ollama_not_ready(endpoint, model_kwargs)
         provider_cls.warmup(model_kwargs)
 
         agent_classes = [
@@ -228,6 +275,20 @@ class LumenAIServe(Serve):
         )
 
         return super().invoke(args)
+
+
+def _warn_if_ollama_not_ready(endpoint: str | None, model_kwargs: dict | None) -> None:
+    """Warn when the Ollama server is unreachable or lacks the requested model."""
+    model = (model_kwargs or {}).get("default", {}).get("model") or (
+        lumen_llms.Ollama.param.model_kwargs.default["default"]["model"]
+    )
+    pulled = ollama_models(endpoint)
+    if pulled is None:
+        url = endpoint or lumen_llms.Ollama.param.endpoint.default
+        print(f"Warning: Could not reach Ollama at {url}. Start it with `ollama serve`.")  # noqa: T201
+    elif model not in pulled and f"{model}:latest" not in pulled:
+        alternative = f", or use --model {pulled[0]}" if pulled else ""
+        print(f"Warning: Ollama has no model {model!r}. Run `ollama pull {model}`{alternative}.")  # noqa: T201
 
 
 class AIHandler(CodeHandler):
@@ -329,7 +390,7 @@ def main(args=None):
             To start the application without any data, simply run 'lumen-ai' with no additional arguments.
 
             First time running Lumen AI take a look at getting started documentation:
-            https://lumen.holoviz.org/lumen_ai/getting_started/
+            https://lumen.holoviz.org/getting_started/launching_lumen/
 
             Found a Bug or Have a Feature Request?
             Open an issue at: https://github.com/holoviz/lumen/issues
@@ -344,7 +405,7 @@ def main(args=None):
         epilog="See '<command> --help' to read about a specific subcommand.",
     )
 
-    parser.add_argument("-v", "--version", action="version", version="Lumen AI 1.0.0")
+    parser.add_argument("-v", "--version", action="version", version=f"Lumen AI {__version__}")
 
     subs = parser.add_subparsers(help="Sub-commands", dest="command")
 

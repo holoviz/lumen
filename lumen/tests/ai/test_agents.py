@@ -27,29 +27,114 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.document_list import DocumentListAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import (
-    EXPLORATION_MAX_TOKENS, SQLCleanup, format_exploration_result,
-    make_sql_model, sql_contains_aggregates,
+    EXPLORATION_MAX_ROWS, EXPLORATION_MAX_TOKENS, SCHEMA_MAX_TOKENS,
+    VALIDATION_MAX_ROWS, SQLCleanup, execute_exploration_sql,
+    format_exploration_result, make_load_table_schemas_tool,
+    make_run_exploration_sql_tool, make_sql_model, sql_contains_aggregates,
 )
 from lumen.ai.agents.table_list import TableListAgent
 from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
 from lumen.ai.analysis import Analysis
-from lumen.ai.config import RetriesExceededError
+from lumen.ai.config import DeterministicError, RetriesExceededError
+from lumen.ai.context import schema_fields
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
 from lumen.ai.llm import Llm
+from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
-from lumen.ai.utils import count_tokens
+from lumen.ai.utils import count_tokens, format_error
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
+from lumen.sources.base import QueryTimeoutError
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
 root = str(Path(__file__).parent.parent / "sources")
+
+
+@pytest.mark.parametrize("input_slug", ["src ⦙ orders", "src/orders", "src.orders", "orders"])
+async def test_load_table_schemas_resolves_aliases(input_slug):
+    slug = f"src{SOURCE_TABLE_SEPARATOR}orders"
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, [Column("order_id")])},
+        schemas={slug: {"__len__": 12, "order_id": {"type": "integer", "inclusiveMinimum": 1, "inclusiveMaximum": 12}}},
+    )
+
+    result = await make_load_table_schemas_tool(metaset).function([input_slug])
+
+    assert result == "orders (12 rows)\n  order_id INTEGER 1..12"
+
+
+async def test_load_table_schemas_preserves_dots_in_source_name():
+    slug = f"src.prod{SOURCE_TABLE_SEPARATOR}orders"
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, [Column("order_id")])},
+        schemas={slug: {"order_id": {"type": "integer"}}},
+    )
+
+    for alias in ("src.prod/orders", "src.prod.orders"):
+        result = await make_load_table_schemas_tool(metaset).function([alias])
+        assert result.startswith("orders")
+        assert "order_id INTEGER" in result
+
+
+async def test_load_table_schemas_rejects_ambiguous_bare_name():
+    slugs = [f"{source}{SOURCE_TABLE_SEPARATOR}orders" for source in ("src_a", "src_b")]
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
+        schemas={},
+    )
+    metaset.ensure_stats = AsyncMock()
+
+    result = await make_load_table_schemas_tool(metaset).function(["orders"])
+
+    assert "ambiguous" in result.lower()
+    assert all(slug in result for slug in slugs)
+    metaset.ensure_stats.assert_not_awaited()
+
+
+def _wide_schema_metaset(n_tables):
+    slugs = [f"src{SOURCE_TABLE_SEPARATOR}table_{i}" for i in range(n_tables)]
+    names = [f"field_{a}{b}" for a in "abcdefghij" for b in "klmnopqrs"]
+    schemas = {
+        slug: {"__len__": 100, **{name: {"type": "string", "enum": [f"{name} value {k}" for k in range(4)]} for name in names}}
+        for slug in slugs
+    }
+    metaset = Metaset(
+        query=None,
+        catalog={slug: TableCatalogEntry(slug, 1, []) for slug in slugs},
+        schemas=schemas,
+    )
+    return metaset, slugs
+
+
+async def test_load_table_schemas_budget_is_split_across_tables():
+    metaset, slugs = _wide_schema_metaset(4)
+
+    result = await make_load_table_schemas_tool(metaset).function(slugs)
+
+    for i in range(4):
+        assert f"table_{i} (100 rows)\n  field_ak VARCHAR {{field_ak value 0" in result
+    assert result.count("truncated") == 4
+    assert "split across the 4 tables" in result
+    assert count_tokens(result) < SCHEMA_MAX_TOKENS * 1.1
+
+
+async def test_load_table_schemas_single_table_gets_full_budget():
+    metaset, slugs = _wide_schema_metaset(1)
+
+    result = await make_load_table_schemas_tool(metaset).function(slugs)
+
+    assert SCHEMA_MAX_TOKENS * 0.9 < count_tokens(result) < SCHEMA_MAX_TOKENS * 1.1
+    assert "split across" not in result
 
 
 @pytest.mark.filterwarnings("ignore:Widget.name is deprecated:PendingDeprecationWarning")
@@ -133,6 +218,136 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
         "FROM test_sql"
     )
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
+
+
+def test_sql_agent_same_source_selection_keeps_all_join_tables():
+    source = DuckDBSource(tables={"customers": "SELECT 1", "orders": "SELECT 2"})
+    agent = SQLAgent()
+    selected = [SimpleNamespace(source="src", table=table) for table in ("customers", "orders")]
+    resolved, tables = agent._merge_sources({("src", table.table): source for table in selected}, selected)
+
+    assert resolved is source
+    assert tables == ["customers", "orders"]
+
+
+def test_sql_agent_rejects_invalid_source_table_pair():
+    source = DuckDBSource(tables={"customers": "SELECT 1"})
+    selected = [SimpleNamespace(source="other", table="customers")]
+    with pytest.raises(ValueError, match="Unknown source/table pair"):
+        SQLAgent()._merge_sources({("src", "customers"): source}, selected)
+
+
+async def test_sql_agent_rejects_empty_single_source_tables(llm, test_messages):
+    source = DuckDBSource(tables={"customers": "SELECT 1 AS id"})
+    model = make_sql_model([(source.name, "customers")])
+    empty = model(query="SELECT id FROM customers", table_slug="result", tables=[])
+    valid = model(query="SELECT id FROM customers", table_slug="result", tables=["customers"])
+    llm.set_responses([empty, valid])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["customers"])}
+
+    out, _ = await SQLAgent(llm=llm).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert out[0].component.data["id"].tolist() == [1]
+
+
+async def test_sql_agent_validation_fetch_is_bounded(llm, test_messages):
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm, clean_data=False)
+    model = make_sql_model([(source.name, "numbers")])
+    llm.set_responses([model(query="SELECT i FROM numbers", table_slug="numbers_result", tables=["numbers"])])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["numbers"])}
+    original = source.execute_with_timeout
+    validated = []
+
+    async def capture(query, timeout, fetch=False):
+        result = await original(query, timeout, fetch)
+        validated.append((query, len(result)))
+        return result
+
+    with patch.object(source, "execute_with_timeout", capture):
+        out, _ = await agent.respond(test_messages, context)
+
+    assert len(validated) == 1
+    assert "LIMIT" in validated[0][0].upper()
+    # One row past the cap shows the preview is a prefix of a longer result.
+    assert validated[0][1] == VALIDATION_MAX_ROWS + 1
+    assert len(out[0].component.data) == 6000
+
+
+async def test_sql_agent_lints_capped_preview_as_prefix(llm, test_messages):
+    source = DuckDBSource(tables={"sorted": "SELECT i // 5000 AS bucket FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm, clean_data=False)
+    model = make_sql_model([(source.name, "sorted")])
+    llm.set_responses([model(query="SELECT * FROM sorted ORDER BY bucket", table_slug="buckets", tables=["sorted"])])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["sorted"])}
+    linted = []
+
+    def capture(df, actionable_only=False, capped=False):
+        linted.append((len(df), capped))
+        return []
+
+    with patch("lumen.ai.agents.sql.lint_data", capture):
+        await agent.respond(test_messages, context)
+
+    assert linted == [(VALIDATION_MAX_ROWS, True)]
+
+
+@pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
+async def test_sql_exploration_caps_fetched_rows(backend):
+    if backend:
+        pytest.importorskip(backend)
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(5000) AS t(i)"}, dataframe_backend=backend)
+    with patch.object(source, "execute_with_timeout", wraps=source.execute_with_timeout) as execute:
+        result = await execute_exploration_sql(source.name, "SELECT i FROM numbers", sources={(source.name, "numbers"): source})
+    assert f"at least {EXPLORATION_MAX_ROWS} rows" in result
+    assert "LIMIT" in execute.call_args.args[0].upper()
+
+
+@pytest.mark.parametrize("query", ["SELECT 1; DROP TABLE numbers", "DELETE FROM numbers", "WITH x AS (DELETE FROM numbers) SELECT * FROM x", "SELECT * INTO temp FROM numbers", 'SELECT "unterminated FROM numbers'])
+async def test_sql_exploration_rejects_non_read_only(query):
+    source = DuckDBSource(tables={"numbers": "SELECT 1 AS i"})
+    with patch.object(source, "execute_with_timeout", wraps=source.execute_with_timeout) as execute:
+        result = await execute_exploration_sql(source.name, query, sources={(source.name, "numbers"): source})
+    assert "error" in result.lower() or "read-only" in result.lower()
+    execute.assert_not_called()
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT * FROM numbers; -- trailing note",
+    "PIVOT numbers ON k USING SUM(i)",
+    "UNPIVOT (SELECT 1 AS a, 2 AS b) ON a, b INTO NAME n VALUE x",
+])
+async def test_sql_exploration_accepts_read_only_statements(query):
+    source = DuckDBSource(tables={"numbers": "SELECT 'a' AS k, 1 AS i"})
+    result = await execute_exploration_sql(source.name, query, sources={(source.name, "numbers"): source})
+    assert result.splitlines()[0].endswith(" columns")
+
+
+@pytest.mark.parametrize("query", ["SELECT * FROM t; DROP TABLE t", "DELETE FROM t"])
+async def test_sql_agent_validate_revises_non_read_only_sql(llm, query):
+    source = DuckDBSource(tables={"t": "SELECT 1 AS i"})
+    agent = SQLAgent(llm=llm)
+    agent.revise = AsyncMock(return_value="SELECT i FROM t")
+    step = SimpleNamespace(stream=lambda msg: None)
+
+    sql, result = await agent._validate_sql({}, query, "slug", source, [], step)
+
+    assert "Only one read-only SELECT" in agent.revise.await_args.args[0]
+    assert sql == "SELECT\n  i\nFROM t"
+    assert result["i"].tolist() == [1]
+
+
+async def test_sql_agent_validate_raises_non_read_only_sql_on_last_attempt(llm):
+    source = DuckDBSource(tables={"t": "SELECT 1 AS i"})
+    agent = SQLAgent(llm=llm)
+    agent.revise = AsyncMock(return_value="DELETE FROM t")
+    step = SimpleNamespace(stream=lambda msg: None)
+
+    with pytest.raises(ValueError, match="Only one read-only SELECT"):
+        await agent._validate_sql({}, "DELETE FROM t", "slug", source, [], step)
+    assert agent.revise.await_count == 1
+
 
 @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
 async def test_sql_agent_summarises_the_source_frame_unconverted(llm, test_messages, backend):
@@ -279,6 +494,23 @@ async def test_sql_agent_profiles_source_rows_behind_an_aggregate(llm, dirty_sou
     assert "-9999" in joined, "the placeholder the aggregate hid must reach the rewrite"
 
 
+async def test_sql_agent_profiles_source_rows_behind_a_scalar_aggregate(llm, dirty_source, test_messages):
+    """A one-row AVG gives the result lint nothing, but the -9999 it averaged in must still be found."""
+    SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
+    captured = {}
+
+    async def _capture(self, sql_query, findings, original_rows, source, messages, context, step):
+        captured["findings"] = findings
+        return sql_query
+
+    with patch.object(SQLAgent, "_clean_data_pass", new=_capture):
+        await _respond_to_dirty_table(llm, dirty_source, test_messages, [
+            SQLQueryWithTables(query='SELECT AVG("value") AS mean FROM dirty', table_slug="mean", tables=["dirty"]),
+        ])
+
+    assert "-9999" in " ".join(captured["findings"])
+
+
 async def test_sql_agent_skips_source_profiling_when_not_aggregating(llm, dirty_source, test_messages):
     """A plain SELECT already shows its own problems, so it must not pay for extra queries."""
     SQLQueryWithTables = make_sql_model([(dirty_source.name, "dirty")])
@@ -403,7 +635,7 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteEditor)
-    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\nconfig:\n  numberFormat: ','\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
+    assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\nconfig:\n  numberFormat: ',~r'\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
 
 
 async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
@@ -602,7 +834,7 @@ async def test_analysis_agent(llm, duckdb_source, test_messages):
     class TestAnalysis(Analysis):
 
         def __call__(self, pipeline, context):
-            return f"Test Analysis"
+            return "Test Analysis"
 
     agent = AnalysisAgent(
         analyses=[TestAnalysis.instance(name='foo'), TestAnalysis.instance(name='bar')],
@@ -646,17 +878,17 @@ class TestDocumentListAgentIntegration:
                 DocumentChunk(filename="schema.md", text="chunk 3", similarity=0.7),
             ]
         )
-        
+
         context = {"metaset": metaset}
-        
+
         # Test applies
         applies = await DocumentListAgent.applies(context)
         assert applies is True  # More than 1 unique document
-        
+
         # Test _get_items
         agent = DocumentListAgent()
         items = agent._get_items(context)
-        
+
         # Should return unique, sorted filenames
         assert items == {"Documents": ["readme.md", "schema.md"]}
 
@@ -665,7 +897,7 @@ class TestDocumentListAgentIntegration:
         # Metaset without docs
         metaset = Metaset(query="test", catalog={}, docs=None)
         context = {"metaset": metaset}
-        
+
         applies = await DocumentListAgent.applies(context)
         assert applies is False
 
@@ -1197,3 +1429,95 @@ def test_colliding_slug_does_not_clobber_source_table():
     source.create_sql_expr_source({slug: bad_sql}, materialize=True)
 
     pd.testing.assert_frame_equal(source.get("hosts"), before)
+
+
+@pytest.mark.parametrize("agent_cls", [hvPlotAgent, VegaLiteAgent, DeckGLAgent])
+def test_view_agents_require_view_output(agent_cls):
+    # `view` must be a required key of the output schema, otherwise a view agent
+    # that finishes without producing a view goes undetected (holoviz/lumen#2106)
+    assert "view" in agent_cls.output_schema.__required_keys__
+    assert schema_fields(agent_cls.output_schema)["view"]["required"]
+
+
+async def test_revise_keeps_sql_hash_literals(llm):
+    """Revised SQL used to round-trip through YAML, which truncates at '#'."""
+    agent = SQLAgent(llm=llm)
+    fixed = "SELECT * FROM schools WHERE street = '80651 Route #271'"
+    revision = RetrySpec(chain_of_thought="Fix the street", edits=[ReplaceLine(line_no=1, line=fixed)])
+
+    with patch.object(agent, "_invoke_prompt", AsyncMock(return_value=revision)):
+        result = await agent.revise("fix", [{"role": "user", "content": "fix"}], {}, spec="SELECT 1", language="sql.duckdb")
+
+    assert result == fixed
+
+
+async def test_sql_agent_accepts_empty_result_after_one_retry(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT * FROM (VALUES (1, 'paid')) AS t(id, status)"})
+    model = make_sql_model([(source.name, "orders")])
+    query = model(query="SELECT id FROM orders WHERE status = 'refunded'", table_slug="refunded_orders", tables=["orders"])
+    llm.set_responses([query, query])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+
+    out, _ = await SQLAgent(llm=llm, clean_data=False).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert len(out[0].component.data) == 0
+
+
+async def test_sql_agent_does_not_retry_unresolvable_table(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT 1 AS id"})
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+    source._connection.execute("DROP VIEW orders")
+    model = make_sql_model([(source.name, "orders")])
+    llm.set_responses([model(query="SELECT id FROM orders", table_slug="order_ids", tables=["orders"])] * 3)
+
+    with pytest.raises(DeterministicError, match="orders"):
+        await SQLAgent(llm=llm, clean_data=False).respond(test_messages, context)
+
+    assert llm._index == 1
+
+
+async def test_sql_agent_revises_a_timed_out_query_once(llm, test_messages):
+    source = DuckDBSource(tables={"orders": "SELECT 1 AS id"})
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["orders"])}
+    model = make_sql_model([(source.name, "orders")])
+    revision = RetrySpec(chain_of_thought="Do less work", edits=[ReplaceLine(line_no=2, line="  1 AS id")])
+    llm.set_responses([model(query="SELECT id FROM orders", table_slug="order_ids", tables=["orders"]), revision])
+
+    timeout = AsyncMock(side_effect=QueryTimeoutError("The query did not finish within 1 seconds."))
+    with patch.object(DuckDBSource, "execute_with_timeout", timeout), pytest.raises(DeterministicError, match="timed out"):
+        await SQLAgent(llm=llm, clean_data=False, query_timeout=1).respond(test_messages, context)
+
+    assert llm._index == 2
+    assert [call.args[1] for call in timeout.call_args_list] == [1, 1]
+
+
+async def test_sql_exploration_reports_timeout():
+    source = DuckDBSource(tables={"t": "SELECT 1 AS a"})
+    slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
+    result = await execute_exploration_sql(source.name, slow, sources={(source.name, "t"): source}, timeout=0.1)
+    assert result == "QueryTimeoutError: The query did not finish within 0.1 seconds."
+
+
+async def test_sql_exploration_error_hides_limit_wrapper():
+    source = DuckDBSource(tables={"t": "SELECT 1 AS a"})
+    result = await execute_exploration_sql(source.name, "SELECT nope FROM t", sources={(source.name, "t"): source})
+
+    assert "subquery" not in result
+    query_line, caret_line = next(
+        (line, following) for line, following in zip(result.splitlines(), result.splitlines()[1:], strict=False)
+        if "SELECT nope FROM t" in line
+    )
+    assert caret_line.index("^") == query_line.index("nope")
+
+
+def test_format_error_strips_ansi_codes():
+    error = ValueError("Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE \x1b[4m(\x1b[0m")
+    assert format_error(error) == "ValueError: Invalid expression. Line 1, Col: 23.\n  SELECT a FROM t WHERE ("
+
+
+def test_exploration_tool_doc_quotes_every_name():
+    sources = {("src_b", "orders"): None, ("src_a", "customers"): None}
+    doc = make_run_exploration_sql_tool(sources).function.__doc__
+    assert "one of `src_a`, `src_b`." in doc
+    assert doc.count("`") % 2 == 0

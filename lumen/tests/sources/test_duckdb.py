@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import os
 import tempfile
@@ -14,6 +15,7 @@ from lumen.transforms.sql import SQLGroupBy
 try:
     import duckdb
 
+    from lumen.sources.base import JoinedSource, QueryTimeoutError
     from lumen.sources.duckdb import DuckDBSource
     pytestmark = pytest.mark.xdist_group("duckdb")
 except ImportError:
@@ -271,6 +273,114 @@ def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
 def test_duckdb_source_mirrors_source(duckdb_source):
     mirrored = DuckDBSource(uri=':memory:', mirrors={'mixed': (duckdb_source, 'test_sql')})
     pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'), check_dtype=False)
+
+
+def test_duckdb_get_metadata_applies_user_descriptions():
+    source = DuckDBSource.from_df(tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})})
+    source.metadata = {'cells': {
+        'description': 'One row per cell',
+        'columns': {
+            'area': {'description': 'Area in um^2'},
+            'label': 'Cell label',
+            'missing': {'description': 'Not a column of the table'},
+        },
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'One row per cell'
+    assert meta['columns']['area'] == {'data_type': 'float64', 'description': 'Area in um^2'}
+    assert meta['columns']['label']['description'] == 'Cell label'
+    assert 'missing' not in meta['columns']
+
+
+def test_duckdb_get_metadata_keeps_non_empty_generated_values():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0]})},
+        metadata_func=lambda tables: {t: {
+            'description': 'Generated', 'columns': {'area': {'description': 'Generated area'}}
+        } for t in tables},
+    )
+    source.metadata = {'cells': {
+        'description': 'User', 'columns': {'area': {'description': 'User area', 'unit': 'um^2'}},
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns']['area'] == {'description': 'Generated area', 'unit': 'um^2'}
+
+
+def test_duckdb_get_metadata_fills_empty_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a'], 'count': [1]})},
+        metadata_func=lambda tables: {t: {
+            'description': None, 'columns': {'area': '', 'label': {}, 'count': None}
+        } for t in tables},
+    )
+    source.metadata = {'cells': {
+        'description': 'One row per cell',
+        'columns': {
+            'area': {'description': 'Area in um^2'},
+            'label': 'Cell label',
+            'count': {'description': 'Number of cells'},
+        },
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'One row per cell'
+    assert meta['columns']['area'] == {'description': 'Area in um^2'}
+    assert meta['columns']['label'] == {'description': 'Cell label'}
+    assert meta['columns']['count'] == {'description': 'Number of cells'}
+
+
+def test_duckdb_get_metadata_normalizes_columns_without_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})},
+        metadata_func=lambda tables: {t: {'description': 'Generated'} for t in tables},
+    )
+    user_area = {'description': 'Area in um^2'}
+    source.metadata = {'cells': {'columns': {'area': user_area, 'label': 'Cell label'}}}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns'] == {
+        'area': {'description': 'Area in um^2'},
+        'label': {'description': 'Cell label'},
+    }
+    assert meta['columns']['area'] is not user_area
+
+
+def test_duckdb_get_metadata_applies_user_descriptions_to_multiple_tables():
+    source = DuckDBSource.from_df(tables={
+        'cells': pd.DataFrame({'area': [1.0]}),
+        'samples': pd.DataFrame({'name': ['a']}),
+        'plates': pd.DataFrame({'well': ['A1']}),
+    })
+    source.metadata = {
+        'cells': {'description': 'One row per cell', 'columns': {'area': 'Area in um^2'}},
+        'samples': {'description': 'One row per sample', 'columns': {'name': {'description': 'Sample name'}}},
+    }
+    meta = source.get_metadata(['cells', 'samples', 'plates'])
+    assert set(meta) == {'cells', 'samples', 'plates'}
+    assert meta['cells']['description'] == 'One row per cell'
+    assert meta['cells']['columns']['area'] == {'data_type': 'float64', 'description': 'Area in um^2'}
+    assert meta['samples']['description'] == 'One row per sample'
+    assert meta['samples']['columns']['name']['description'] == 'Sample name'
+    assert meta['plates']['description'] == ''
+    assert meta['plates']['columns']['well']['description'] == ''
+
+
+def test_joined_source_get_schema_merges_sql_tables():
+    lhs = DuckDBSource.from_df({'lhs': pd.DataFrame({'id': [1, 2, 3], 'x': [0.5, 1.5, 2.5]})})
+    rhs = DuckDBSource.from_df({'rhs': pd.DataFrame({'id': [2, 3, 4], 'y': [10, 20, 30]})})
+    source = JoinedSource(
+        sources={'lhs': lhs, 'rhs': rhs},
+        tables={'joined': [
+            {'source': 'lhs', 'table': 'lhs', 'index': 'id'},
+            {'source': 'rhs', 'table': 'rhs', 'index': 'id'},
+        ]},
+    )
+    schema = source.get_schema('joined')
+    assert schema == {
+        'id': {'type': 'integer', 'inclusiveMinimum': 1, 'inclusiveMaximum': 4},
+        'x': {'type': 'number', 'inclusiveMinimum': 0.5, 'inclusiveMaximum': 2.5},
+        'y': {'type': 'integer', 'inclusiveMinimum': 10, 'inclusiveMaximum': 30},
+    }
 
 
 @pytest.fixture
@@ -1696,3 +1806,74 @@ def test_file_table_key_survives_normalization(tmp_path):
     assert not table.startswith("_")
     assert source.normalize_table(table) in source.tables
     assert len(source.get(table)) == 2
+
+
+@pytest.fixture
+def table_function_source(tmp_path):
+    orders, refunds = tmp_path / "orders.csv", tmp_path / "refunds.json"
+    pd.DataFrame({"order_id": [1, 2, 3], "status": ["paid", "paid", "cancelled"]}).to_csv(orders, index=False)
+    refunds.write_text('[{"order_id": 1, "refund": 5}, {"order_id": 3, "refund": 7}]')
+    return DuckDBSource(uri=":memory:", tables={
+        "orders": f"read_csv('{orders}')",
+        "refunds": f"read_json_auto('{refunds}')",
+    })
+
+
+def test_table_function_expression_is_queryable_by_name(table_function_source):
+    assert table_function_source.tables["orders"].startswith("read_csv(")
+    result = table_function_source.execute("SELECT COUNT(*) AS n FROM orders WHERE status = 'paid'")
+    assert result["n"].tolist() == [2]
+
+
+def test_sql_expr_source_joins_table_functions_by_name(table_function_source):
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    derived = table_function_source.create_sql_expr_source({"joined": sql})
+    assert derived.get("joined").values.tolist() == [[1, 5], [3, 7]]
+
+
+def test_missing_tables_are_inlined_across_a_join(table_function_source):
+    table_function_source._connection.execute("DROP VIEW orders")
+    table_function_source._connection.execute("DROP VIEW refunds")
+    sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
+    with table_function_source._connection.cursor() as cursor:
+        rows = table_function_source._execute_resolving_tables(cursor, sql).fetchall()
+    assert rows == [(1, 5), (3, 7)]
+
+
+def test_missing_table_outside_the_source_raises_original_error(table_function_source):
+    with pytest.raises(duckdb.CatalogException, match="nope"):
+        table_function_source.create_sql_expr_source({"bad": "SELECT * FROM nope JOIN orders USING (order_id)"})
+
+
+def test_failed_view_creation_is_logged(tmp_path, caplog):
+    DuckDBSource(uri=":memory:", tables={"orders": f"read_csv('{tmp_path / 'missing.csv'}')"})
+    assert "could not create a view for table 'orders'" in caplog.text
+
+
+def test_missing_table_resolves_case_insensitively():
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 AS id"})
+    source._connection.execute("DROP VIEW orders")
+    with pytest.raises(duckdb.CatalogException) as excinfo:
+        source.execute("SELECT * FROM ORDERS")
+    assert source.missing_table(excinfo.value) == "orders"
+    assert source.missing_table(ValueError("Table with name orders does not exist!")) is None
+
+
+async def test_execute_with_timeout_interrupts_the_query():
+    source = DuckDBSource(uri=":memory:")
+    connection, cursors = source._connection, []
+
+    class RecordingConnection:
+        def cursor(self):
+            cursors.append(connection.cursor())
+            return cursors[-1]
+
+    source._connection = RecordingConnection()
+    slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
+    with pytest.raises(QueryTimeoutError, match="0.1 seconds"):
+        await source.execute_with_timeout(slow, 0.1)
+    await asyncio.sleep(0.2)
+    # The worker closes its cursor once the interrupted statement returns.
+    with pytest.raises(duckdb.ConnectionException):
+        cursors[0].execute("SELECT 1")
+    assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]

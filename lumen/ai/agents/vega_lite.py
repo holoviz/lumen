@@ -498,7 +498,7 @@ class VegaLiteAgent(BaseCodeAgent):
         """Generate one or more VegaLite specs via YAML (declarative mode)."""
         errors_context = self._build_errors_context(pipeline, context, errors)
         gridded = get_gridded_metadata(pipeline)
-        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Creating basic plot structure", steps_layout=self._steps_layout, context_exception="raise") as step:
             response = self._stream_prompt(
                 "main",
                 messages,
@@ -554,7 +554,7 @@ class VegaLiteAgent(BaseCodeAgent):
         errors_context = self._build_errors_context(pipeline, context, errors)
         gridded = get_gridded_metadata(pipeline)
 
-        with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout) as step:
+        with self._add_step(title="Generating Altair code", steps_layout=self._steps_layout, context_exception="raise") as step:
             response = self._stream_prompt(
                 "main_altair",
                 messages,
@@ -619,8 +619,10 @@ class VegaLiteAgent(BaseCodeAgent):
             # Per-encoding `axis: {format: ','}` is not sufficient: in a layered
             # spec the axes of a shared scale are merged, so a format set on one
             # layer and absent on another does not survive, and the axis falls
-            # back to a default that renders 6000 as 6e+3.
-            vega_spec = self._deep_merge_dicts({"config": {"numberFormat": ","}}, vega_spec)
+            # back to a default that renders 6000 as 6e+3. Plain ',' is no fix
+            # either: Vega pairs it with a precision of its own and gets 6e+3
+            # back, while '~r' rounds to significant digits and trims zeros.
+            vega_spec = self._deep_merge_dicts({"config": {"numberFormat": ",~r"}}, vega_spec)
         return normalize_vegalite_spec(vega_spec, editor_type=self._editor_type)
 
     def _last_user_query(self, messages: list[Message], step_title: str | None = None) -> str:

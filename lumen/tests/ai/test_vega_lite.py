@@ -63,6 +63,41 @@ def test_normalize_vegalite_spec_strips_sizing_for_compound_charts():
     assert spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
 
 
+def test_normalize_vegalite_spec_thins_band_labels_on_heatmaps():
+    """Ordinal rect axes drop overlapping labels instead of printing one per band."""
+    raw = {
+        "layer": [{
+            "mark": {"type": "rect"},
+            "encoding": {
+                "x": {"field": "lon", "type": "ordinal"},
+                "y": {"field": "lat", "type": "ordinal", "axis": {"labelOverlap": False}},
+                "color": {"field": "air", "type": "quantitative"},
+            },
+        }],
+    }
+
+    encoding = normalize_vegalite_spec(raw)["spec"]["layer"][0]["encoding"]
+
+    assert encoding["x"]["axis"] == {"labelOverlap": "parity", "labelAngle": 0}
+    assert encoding["y"]["axis"] == {"labelOverlap": False}
+    assert "axis" not in encoding["color"]
+
+
+def test_normalize_vegalite_spec_keeps_bar_labels():
+    """Every category label stays on a bar chart, where each one names a bar."""
+    raw = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "island", "type": "nominal"},
+            "y": {"field": "count", "type": "quantitative"},
+        },
+    }
+
+    encoding = normalize_vegalite_spec(raw)["spec"]["encoding"]
+
+    assert "axis" not in encoding["x"]
+
+
 def test_normalize_vegalite_spec_adds_geographic_interactivity():
     """Specs with lat/long encodings gain a projection, zoom params and map layer."""
     raw = {
@@ -139,6 +174,22 @@ async def test_palette_not_reapplied_once_the_chart_exists(llm):
     ))["spec"]
 
     assert "range" not in spec.get("config", {})
+
+
+async def test_default_number_format_avoids_scientific_notation(llm):
+    """Axis labels read 4,000 rather than 4e+3, and decimals survive."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+    chart = {
+        "data": {"values": [{"c": "a", "v": 4000}, {"c": "b", "v": 6000.5}]},
+        "mark": "bar",
+        "encoding": {"x": {"field": "c", "type": "nominal"}, "y": {"field": "v", "type": "quantitative"}},
+    }
+
+    spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(chart)}))["spec"]
+    svg = vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))
+
+    assert ">4,000<" in svg
+    assert "e+" not in svg
 
 
 def test_palette_reaches_the_compiled_vega_scale():
@@ -263,3 +314,31 @@ class TestGeoshapeGeometryValidation:
             },
         }
         VegaLiteEditor.validate_spec(spec)
+
+
+def test_normalize_vegalite_spec_rewrites_the_comma_number_format():
+    """A bare ',' format makes Vega print 6000 as 6e+3, however deep in the spec the model wrote it."""
+    raw = {
+        "config": {"numberFormat": ","},
+        "data": {"values": [{"c": "a", "v": 4000}, {"c": "b", "v": 6000}], "format": {"type": "json"}},
+        "layer": [{
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "c", "type": "nominal"},
+                "y": {"field": "v", "type": "quantitative", "axis": {"format": ","}},
+                "tooltip": [{"field": "v", "type": "quantitative", "format": ","}],
+                "color": {"field": "c", "type": "nominal", "legend": {"format": "%Y"}},
+            },
+        }],
+    }
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+    layer = spec["layer"][0]["encoding"]
+
+    assert spec["config"]["numberFormat"] == ",~r"
+    assert layer["y"]["axis"]["format"] == ",~r"
+    assert layer["tooltip"][0]["format"] == ",~r"
+    # Other formats, and a data format that is not a number format, are left alone.
+    assert layer["color"]["legend"]["format"] == "%Y"
+    assert spec["data"]["format"] == {"type": "json"}
+    assert "e+" not in vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))

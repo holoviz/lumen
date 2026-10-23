@@ -78,6 +78,9 @@ IMAGE_MIME_TYPES = {
 # it is asked to act on are drawn from the same amount of data.
 PROFILE_SAMPLE_ROWS = 5000
 
+# Terminal colour codes, which sqlglot puts in its error messages
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
 # Column-selection tuning for describe_data_sync.
 DEFAULT_MAX_SUMMARY_COLS = 16
 # Columns with at most this many distinct values are treated as
@@ -172,7 +175,7 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     )
     system_prompt = {
         "role": "system",
-        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        "content": f"<Chat History>\n{formatted_history}\n</Chat History>"
     }
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
@@ -256,6 +259,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -308,6 +312,29 @@ def warn_on_unused_variables(string, kwargs, prompt_label):
             f"from these variables: {unused_keys}. If this is unintended, "
             f"please create a template that contains those keys."
         )
+
+
+def format_error(error: BaseException) -> str:
+    """Render an error as ``Type: message`` for the model, without terminal colour codes."""
+    return ANSI_ESCAPE.sub("", f"{type(error).__name__}: {error}")
+
+
+# Credentials that error messages commonly quote, e.g. an HTTP error naming
+# the request URL with ``?key=...`` or ``https://user:token@host``.
+URL_CREDENTIALS = re.compile(r"(?<=://)[^/\s@]+@")
+URL_QUERY = re.compile(r"(?P<url>\b[a-z][\w+.-]*://[^\s?#'\"<>]*)\?[^\s#'\"<>)]+", re.IGNORECASE)
+
+
+def format_tool_error(error: BaseException | str, max_length: int = 1000) -> str:
+    """
+    Render an error for a tool result that is sent to the provider.
+
+    Tool results are re-sent every round, so the text is truncated, and URL
+    credentials and query strings are redacted so secrets do not leak.
+    """
+    text = error if isinstance(error, str) else format_error(error)
+    text = URL_CREDENTIALS.sub("<redacted>@", URL_QUERY.sub(r"\g<url>?<redacted>", text))
+    return truncate_string(text, max_length)
 
 
 def get_root_exception(e: Exception, depth: int = 5, exceptions: tuple[Exception] | None = None) -> Exception | None:
@@ -371,7 +398,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -407,7 +435,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -1281,13 +1310,13 @@ def cast_value(value):
 
 
 def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
-    """Parse a HuggingFace URL to extract repo, model file, and model_kwargs.
+    """Parse a HuggingFace URL to extract repo_id, filename, and model_kwargs.
 
     Args:
         url: HuggingFace URL in format https://huggingface.co/org/repo/blob/main/file.gguf?param1=value1&param2=value2
 
     Returns:
-        tuple: (repo, model_file, model_kwargs)
+        tuple: (repo_id, filename, model_kwargs)
 
     Raises:
         ValueError: If URL format is invalid
@@ -1296,16 +1325,16 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
     hf_index = parts.index('huggingface.co')
     if len(parts) < hf_index + 4:  # Need at least org/repo after huggingface.co
         raise ValueError
-    repo = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
-    model_file = parts[-1]  # Last component is the filename
+    repo_id = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
+    filename = parts[-1]
 
     # Parse query parameters
     model_kwargs = {}
-    if "?" in model_file:
-        model_file, query_params = model_file.split('?')
+    if "?" in filename:
+        filename, query_params = filename.split('?')
         for key, value in parse_qs(query_params).items():
             model_kwargs[key] = cast_value(value)
-    return repo, model_file, model_kwargs
+    return repo_id, filename, model_kwargs
 
 
 def load_json(json_spec: str) -> dict:
@@ -1346,6 +1375,34 @@ def truncate_string(s, max_length=30, ellipsis="..."):
         return s
     part_length = (max_length - len(ellipsis)) // 2
     return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
+
+
+def closest_names(name: str, options, n: int = 3) -> list[str]:
+    """Return up to ``n`` entries of ``options`` that most resemble ``name``, ignoring case."""
+    by_lower: dict[str, str] = {}
+    for option in options:
+        by_lower.setdefault(str(option).lower(), str(option))
+    matches = difflib.get_close_matches(str(name).lower(), list(by_lower), n=n, cutoff=0.5)
+    return [by_lower[match] for match in matches]
+
+
+def format_unknown_name(kind: str, name: Any, options, max_listed: int = 30) -> str:
+    """
+    Describe an unknown ``kind`` (tool, table, column, ...) so a model can correct itself.
+
+    Lists the closest matches first, then the valid names, capped at
+    ``max_listed`` so a large catalog does not flood the transcript.
+    """
+    options = sorted({str(option) for option in options})
+    message = f"Unknown {kind} {name!r}."
+    close = closest_names(str(name), options)
+    if close:
+        message += f" Closest matches: {', '.join(close)}."
+    if options:
+        listed = ", ".join(options[:max_listed])
+        more = f" (and {len(options) - max_listed} more)" if len(options) > max_listed else ""
+        message += f" Valid {kind}s: {listed}{more}."
+    return message
 
 
 def _get_token_encoder():
@@ -1574,6 +1631,39 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def inline_schema_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Replace local ``$ref`` pointers in a JSON schema with their ``$defs`` definitions.
+
+    Instructor already inlines them for the native Gemini client, but OpenAI
+    compatible endpoints such as OpenRouter forward them unchanged.
+    Recursive definitions stay referenced.
+    """
+    defs = schema.get("$defs", {})
+    unresolved = False
+
+    def resolve(node: Any, seen: frozenset[str]) -> Any:
+        nonlocal unresolved
+        if isinstance(node, list):
+            return [resolve(item, seen) for item in node]
+        if not isinstance(node, dict):
+            return node
+        name = node.get("$ref", "").removeprefix("#/$defs/")
+        if name in defs:
+            if name in seen:
+                unresolved = True
+                return node
+            siblings = {k: v for k, v in node.items() if k != "$ref"}
+            return resolve({**defs[name], **siblings}, seen | {name})
+        return {k: resolve(v, seen) for k, v in node.items() if k != "$defs"}
+
+    inlined = resolve(schema, frozenset())
+    if unresolved:
+        inlined["$defs"] = defs
+    return inlined
+
 
 def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     """
@@ -2025,6 +2115,26 @@ def _spec_has_aggregate(spec: Any) -> bool:
     return False
 
 
+def _pin_value(grid: Any, dim: str) -> Any:
+    """
+    Return the first coord value of ``dim`` encoded like its SQL column.
+
+    xarray-sql >= 0.6 restores cftime coords on the dataset, while the SQL
+    column holds them encoded: microseconds counted in the calendar for
+    Gregorian-like calendars, int64 offsets for 360_day and julian. The pin
+    must use the same encoding or the filter never matches.
+    """
+    from xarray_sql import cftime as xsql_cftime
+
+    value = grid[dim].values[:1]
+    if not xsql_cftime.is_cftime(value):
+        return value[0]
+    units, calendar = xsql_cftime.encoding(grid, dim)
+    if xsql_cftime.is_gregorian_like(calendar):
+        return xsql_cftime.to_microseconds(value).astype('datetime64[us]')[0]
+    return xsql_cftime.to_offsets(value, units, calendar)[0]
+
+
 def subset_gridded_to_2d(
     pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
 ) -> Pipeline:
@@ -2039,11 +2149,9 @@ def subset_gridded_to_2d(
     not gridded or the spec already references every dimension.
     """
     # The compact gridded dataset (lazy, coords only -- never the long-form
-    # frame) carries just this variable's dims and, crucially, its coords in the
-    # materialized column's dtype (e.g. cftime coords become datetime64 there),
-    # so both the dims to collapse and the pin values come from it. Pinning from
-    # the raw dataset would leave cftime dims uncollapsed (the object value can't
-    # match the datetime64 column).
+    # frame) carries just this variable's dims and its coords, so both the dims
+    # to collapse and the pin values come from it; _pin_value encodes cftime
+    # coords the way xarray-sql stores them in the SQL column.
     # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
     # a temporal mean) reduces over every dim it does not plot. Pinning those
     # dims to one slice would make the aggregate run on a single slice and
@@ -2060,7 +2168,7 @@ def subset_gridded_to_2d(
     if not collapse:
         return pipeline
     filters = [
-        ConstantFilter(field=dim, value=grid[dim].values[0]) for dim in collapse
+        ConstantFilter(field=dim, value=_pin_value(grid, dim)) for dim in collapse
     ]
     return pipeline.chain(filters=filters)
 
@@ -2141,6 +2249,8 @@ def normalize_vegalite_spec(
             vega_spec["height"] = "container"
 
     editor_type.validate_spec(vega_spec)
+    _thin_band_labels(vega_spec)
+    _fix_comma_number_formats(vega_spec)
 
     # using string comparison because these keys could be in different nested levels
     vega_spec_str = dump_yaml(vega_spec)
@@ -2152,6 +2262,61 @@ def normalize_vegalite_spec(
     #     # because those result in an blank plot without error
     #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
     return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
+
+
+def _fix_comma_number_formats(spec: Any) -> None:
+    """Rewrite a bare ``,`` number format to ``,~r`` wherever the spec has one.
+
+    Vega pairs ``,`` with a precision of its own and prints 6000 as 6e+3, while
+    ``,~r`` rounds to significant digits and trims zeros. The model writes the
+    bare form on axes, legends, tooltips and config however deep they sit, so
+    every nesting is walked. Only the exact string is touched, so time formats
+    and a ``data.format`` object are left alone.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _fix_comma_number_formats(item)
+    elif isinstance(spec, dict):
+        for key, value in spec.items():
+            if key in ("format", "numberFormat") and value == ",":
+                spec[key] = ",~r"
+            else:
+                _fix_comma_number_formats(value)
+
+
+def _thin_band_labels(spec: Any) -> None:
+    """Let heatmap axes drop overlapping labels.
+
+    Vega-Lite prints one label per band on discrete axes, so a rect heatmap of
+    a gridded dataset with 50 longitudes gets 50 labels rotated into an
+    unreadable strip. Parity thinning drops every other label until they fit.
+    Only rect marks are touched: on a bar chart each label names a bar.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _thin_band_labels(item)
+        return
+    if not isinstance(spec, dict):
+        return
+    mark = spec.get("mark")
+    if (mark.get("type") if isinstance(mark, dict) else mark) == "rect":
+        _thin_rect_axes(spec.get("encoding", {}))
+    for value in spec.values():
+        _thin_band_labels(value)
+
+
+def _thin_rect_axes(encodings: dict) -> None:
+    """Set parity label thinning on the discrete x/y axes of a rect mark."""
+    for channel in ("x", "y"):
+        encoding = encodings.get(channel)
+        if not isinstance(encoding, dict) or encoding.get("type") not in ("ordinal", "nominal"):
+            continue
+        if "axis" in encoding and not isinstance(encoding["axis"], dict):
+            continue  # axis: null hides the axis entirely
+        axis = encoding.setdefault("axis", {})
+        axis.setdefault("labelOverlap", "parity")
+        if channel == "x":
+            axis.setdefault("labelAngle", 0)
 
 
 def _add_zoom_params(vega_spec: dict) -> None:

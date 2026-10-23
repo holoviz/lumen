@@ -23,13 +23,48 @@ Write SQL query for user's data transformation request, focusing on intent over 
 - Use CTEs only when necessary
 
 ## Data summary vs tools
-**Data summary** below: capped snapshot (top tables by relevance) without embedded documentation. For other tables or richer types, call **browse_data_catalog** and **load_table_schemas** — do not guess column names or types. Use **load_relevant_metaset_docs** when available and doc text needed.
+**Data summary** below: top tables by relevance, one line per column with SQL type, keys (PK, `-> table.column` for foreign keys), value range or values with row counts, and null share. Do not guess column names, types or stored values; use the tools for what the summary lacks.
+{%- if tool_names is defined and tool_names %}
+{%- if 'browse_data_catalog' in tool_names %}
+- **browse_data_catalog**: page through tables the summary does not list.
+{%- endif %}
+{%- if 'load_table_schemas' in tool_names %}
+- **load_table_schemas**: full column statistics for tables the summary lists with names and types only.
+{%- endif %}
+{%- if 'distinct_values' in tool_names %}
+- **distinct_values**: the exact stored form of a literal before you filter on it.
+{%- endif %}
+{%- if 'run_exploration_sql' in tool_names %}
+- **run_exploration_sql**: anything else you need to inspect, not the final query.
+{%- endif %}
+{%- if 'load_relevant_metaset_docs' in tool_names %}
+- **load_relevant_metaset_docs**: documentation text.
+{%- endif %}
+
+You have {{ tool_rounds }} tool rounds. Before submitting, check what the summary does not settle: the stored form of each string literal you filter on, unless the summary lists that value, and which column holds a concept when more than one could. Then submit the final query with **submit_sql**; it executes the query and returns any error for you to fix.
+{%- endif %}
+
+Use `{{ dialect }}` SQL dialect.
+{%- if dialect == 'duckdb' %}
+
+## DuckDB Essentials
+- Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
+- A table listed as `source {{ source_table_sep }} table` is referenced in SQL as `table` alone
+- Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
+- Date selection: CAST(col as DATE) == '2023-06-01'
+- Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
+- Safe conversions: Use `TRY_CAST` for type conversions
+- Use materialized tables when available
+{%- endif %}
+{%- if dialect == 'snowflake' %}
+- No quotes around database/schema/table names
+{%- endif %}
 {%- endblock -%}
 
 {%- block context -%}
 {%- if memory.get('metaset') %}
 ## Data summary
-{{ memory["metaset"].compact_context(n=12, n_others=25, include_lineage=True) }}
+{{ memory["metaset"].compact_context(n=schema_tables_shown | default(12), n_others=prompt_other_tables | default(25), include_lineage=True, max_tokens=schema_max_tokens | default(none)) }}
 {%- endif %}
 
 {%- if memory.get('sql') %}
@@ -42,22 +77,6 @@ Data Summary:
 {%- if 'rows_capped_at_limit' in memory["data"] %}
 (`rows_capped_at_limit` indicates preview truncated for display; not table's true row count. Do not add LIMIT to match — pagination handled automatically.)
 {%- endif %}
-{%- endif %}
-
-Use `{{ dialect }}` SQL dialect.
-{%- if dialect == 'duckdb' %}
-
-## DuckDB Essentials
-- Table references: Use exact names `read_csv('table.csv')`, alias if needed `as table_name`
-- Reference just table in SQL query: `source {{ source_table_sep }} table`
-- Range predicates: `"date" >= '2023-06-01' AND "date" < '2023-09-01'`
-- Date selection: CAST(col as DATE) == '2023-06-01'
-- Window filtering: `QUALIFY ROW_NUMBER() OVER (...) <= 5`
-- Safe conversions: Use `TRY_CAST` for type conversions
-- Use materialized tables when available
-{% endif %}
-{%- if dialect == 'snowflake' %}
-- No quotes around database/schema/table names
 {%- endif %}
 {% if not is_final_step %}
 Step {{ step_number }}: {{ current_step }}
@@ -81,6 +100,19 @@ User interactively subset current data with these filters. Add equivalent WHERE 
 
 {%- block errors %}
 {{ super() }}
+{%- if previous_attempt is defined and previous_attempt %}
+## Previous attempt
+{%- if previous_attempt.sql %}
+The previous attempt submitted this query, which failed with the error above:
+```sql
+{{ previous_attempt.sql }}
+```
+{%- endif %}
+{%- if previous_attempt.tools %}
+Its tool calls already found the following; reuse these results instead of repeating the calls:
+{{ previous_attempt.tools }}
+{%- endif %}
+{%- endif %}
 {% if errors is defined and errors %}
 ## Quick Fixes
 - Mixed units: Use CASE to normalize units before aggregating

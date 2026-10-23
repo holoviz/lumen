@@ -2,23 +2,28 @@
 
 import asyncio
 import base64
+import sys
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
 import openai
 import pytest
+import requests
 
 try:
     import lumen.ai as lmai
 
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
-        MLX, Anthropic, AnthropicBedrock, AzureOpenAI, Bedrock, ClaudeCode,
-        CodexCli, Google, Groq, LiteLLM, LlamaCpp, Llm, LlmCli, Message,
-        MistralAI, Ollama, OpenAI, WebLLM,
+        MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
+        ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM,
+        LlamaCpp, Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter,
+        WebLLM, is_image_rejection,
     )
+    from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
 
 except ModuleNotFoundError:
@@ -26,6 +31,46 @@ except ModuleNotFoundError:
 
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel, ValidationError
+
+FAKE_ACP_SERVER = r"""
+import json, os, sys
+
+def send(message):
+    print(json.dumps({"jsonrpc": "2.0", **message}), flush=True)
+
+def chunk(session, text):
+    update = {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+    send({"method": "session/update", "params": {"sessionId": session, "update": update}})
+
+cwds = {}
+for line in sys.stdin:
+    request = json.loads(line)
+    method, params = request["method"], request.get("params", {})
+    if method == "initialize":
+        send({"id": request["id"], "result": {"protocolVersion": 1}})
+    elif method == "session/new":
+        session = f"s{len(cwds)}"
+        cwds[session] = params["cwd"]
+        send({"id": request["id"], "result": {"sessionId": session}})
+    elif method == "session/prompt":
+        session = params["sessionId"]
+        prompt = params["prompt"][0]["text"]
+        chunk(session, "Info: Disabled tools: bash")
+        chunk(session, "Warning: something")
+        chunk(session, f"pid={os.getpid()} ")
+        chunk(session, f"cwd_exists={os.path.isdir(cwds[session])} ")
+        chunk(session, prompt.splitlines()[-1])
+        stop = "refusal" if "REFUSE" in prompt else "end_turn"
+        send({"id": request["id"], "result": {"stopReason": stop}})
+"""
+
+FAKE_AGY = r"""
+import json, os, sys
+
+prompt = json.loads(sys.stdin.readline())["message"]["content"].splitlines()[-1]
+response = f"{os.getpid()} {os.getcwd()} {prompt}"
+print(json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": response}}), flush=True)
+"""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -139,13 +184,21 @@ def test_api_key_from_modified_provider_env_vars(monkeypatch):
         OpenAI.api_key_env_var = original
 
 
-def test_get_available_llm_returns_local_provider_when_no_env_vars_set(monkeypatch):
-    """get_available_llm returns a local provider when no cloud API keys are set."""
+def _ollama_tags(models):
+    response = MagicMock(ok=True)
+    response.json.return_value = {"models": models}
+    return MagicMock(return_value=response)
+
+
+def test_get_available_llm_returns_none_without_keys(monkeypatch):
+    """Without an API key nothing is detected, even a ready local Ollama server,
+    which is only suggested alongside the other keyless options."""
     for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
-    # Local providers (no env var required) should still be returned
-    result = lmai.llm.get_available_llm()
-    assert result is not None
+    get = _ollama_tags([{"name": Ollama.param.model_kwargs.default["default"]["model"]}])
+    monkeypatch.setattr(lmai.llm.requests, "get", get)
+    assert lmai.llm.get_available_llm() is None
+    get.assert_not_called()
 
 
 def test_get_available_llm_returns_correct_provider(monkeypatch):
@@ -169,8 +222,14 @@ def test_cli_providers_are_registered():
     """CLI-backed subscription providers can be selected explicitly by the command line."""
     assert lmai.llm.LLM_PROVIDERS["codex-cli"] == "CodexCli"
     assert lmai.llm.LLM_PROVIDERS["claude-code"] == "ClaudeCode"
+    assert lmai.llm.LLM_PROVIDERS["copilot-cli"] == "CopilotCli"
+    assert lmai.llm.LLM_PROVIDERS["antigravity-cli"] == "AntigravityCli"
     assert issubclass(CodexCli, LlmCli)
     assert issubclass(ClaudeCode, LlmCli)
+    assert issubclass(CopilotCli, LlmCli)
+    assert issubclass(AntigravityCli, LlmCli)
+    # Last, so CLI providers are never auto-selected ahead of a configured one.
+    assert list(lmai.llm.LLM_PROVIDERS)[-2:] == ["copilot-cli", "antigravity-cli"]
 
 
 def test_codex_cli_command_defaults_to_read_only():
@@ -191,8 +250,35 @@ def test_claude_code_command_defaults_to_plan_mode():
 
     assert command == [
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
-        "--max-turns", "3", "--permission-mode", "plan", "--model", "sonnet",
+        "--max-turns", "3", "--permission-mode", "plan",
+        "--tools", "", "--strict-mcp-config", "--setting-sources=", "--model", "sonnet",
     ]
+
+
+def test_copilot_cli_command_disables_all_tools():
+    llm = CopilotCli()
+
+    lockdown = [
+        "copilot", "--no-ask-user", "--no-custom-instructions", "--disable-builtin-mcps",
+        "--no-remote-export", "--no-auto-update", "--available-tools=none", "--deny-tool=shell",
+        "--deny-tool=write", "--deny-tool=read", "--deny-tool=url", "--deny-tool=memory",
+    ]
+
+    assert llm._build_command(None) == [*lockdown, "--acp", "--stdio"]
+    assert llm._build_command("auto") == [*lockdown, "--acp", "--stdio"]
+    assert llm._build_command("gpt-5.4") == [
+        *lockdown, "--output-format", "json", "--stream", "off", "--model", "gpt-5.4",
+    ]
+
+
+def test_antigravity_cli_command_reads_prompt_from_stdin():
+    llm = AntigravityCli()
+
+    stream = ["agy", "--input-format", "stream-json", "--output-format", "stream-json"]
+
+    assert llm._build_command(None) == stream
+    assert llm._build_command("gemini-3.8-flash-low") == [*stream, "--model", "gemini-3.8-flash-low"]
+    assert llm._get_model_kwargs("default")["model"] == "gemini-3.8-flash-low"
 
 
 def test_cli_output_decoders():
@@ -206,6 +292,91 @@ def test_cli_output_decoders():
 
     claude = ClaudeCode()
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
+
+
+async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
+    spawned = []
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def fake_copilot(*command, **kwargs):
+        spawned.append(command)
+        return await create_subprocess(sys.executable, "-c", FAKE_ACP_SERVER, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_copilot)
+    llm = CopilotCli()
+
+    first = await llm.run_client("default", [{"role": "user", "content": "first"}])
+    second = await llm.run_client("default", [{"role": "user", "content": "second"}])
+
+    assert len(spawned) == 1
+    assert spawned[0][-2:] == ("--acp", "--stdio")
+    pid = first.split()[0]
+    assert first == f"{pid} cwd_exists=True first"
+    assert second == f"{pid} cwd_exists=True second"
+
+    with pytest.raises(RuntimeError, match="stopped early"):
+        await llm.run_client("default", [{"role": "user", "content": "REFUSE"}])
+
+
+async def test_antigravity_cli_uses_a_prestarted_process(monkeypatch):
+    spawned = []
+    create_subprocess = asyncio.create_subprocess_exec
+
+    async def fake_agy(*command, **kwargs):
+        process = await create_subprocess(sys.executable, "-c", FAKE_AGY, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_agy)
+    llm = AntigravityCli()
+
+    first = (await llm.run_client("default", [{"role": "user", "content": "first"}])).split()
+    second = (await llm.run_client("default", [{"role": "user", "content": "second"}])).split()
+
+    # The first request starts its own process plus a spare; the second uses that spare.
+    assert len(spawned) == 3
+    assert first[0] == str(spawned[0].pid) and first[2] == "first"
+    assert second[0] == str(spawned[1].pid) and second[2] == "second"
+    assert first[1] != second[1]
+    assert not Path(first[1]).exists() and not Path(second[1]).exists()
+    spawned[2].kill()
+    await spawned[2].wait()
+
+
+def test_antigravity_cli_decodes_result():
+    antigravity = AntigravityCli()
+    init = '{"event":"init","init":{"cwd":"/tmp"}}\n'
+    delta = '{"event":"step_update","step_update":{"text_delta":"READY"}}\n'
+
+    assert antigravity._decode_output(
+        init + delta + '{"event":"result","result":{"status":"SUCCESS","response":"READY\\n"}}'
+    ) == "READY"
+
+    with pytest.raises(RuntimeError, match="WriteToFile"):
+        antigravity._decode_output(
+            '{"event":"result","result":{"status":"SUCCESS","response":"",'
+            '"denied_actions":[{"action":"write_file","display_name":"WriteToFile"}]}}'
+        )
+    with pytest.raises(RuntimeError, match="invalid model"):
+        antigravity._decode_output('{"event":"result","result":{"status":"ERROR","error":"invalid model"}}')
+    with pytest.raises(ValueError, match="did not return a result"):
+        antigravity._decode_output(init + delta)
+
+
+def test_copilot_cli_decodes_last_assistant_message():
+    copilot = CopilotCli()
+    output = (
+        '{"type":"session.tools_updated","data":{"model":"claude-haiku-4.5"}}\n'
+        '{"type":"user.message","data":{"content":"Private prompt"}}\n'
+        '{"type":"assistant.message","data":{"content":"","toolRequests":[{"name":"bash"}]}}\n'
+        'not json\n'
+        '{"type":"assistant.message","data":{"content":"READY\\n","toolRequests":[]}}\n'
+        '{"type":"result","exitCode":0}'
+    )
+    assert copilot._decode_output(output) == "READY"
+
+    with pytest.raises(ValueError, match="final assistant message"):
+        copilot._decode_output('{"type":"user.message","data":{"content":"Private prompt"}}')
 
 
 async def test_cli_provider_validates_structured_output(monkeypatch):
@@ -250,6 +421,33 @@ async def test_cli_provider_sends_prompt_over_stdin(monkeypatch, tmp_path):
     assert captured["command"] == ("claude", "--print")
     assert captured["kwargs"]["stdin"] is asyncio.subprocess.PIPE
     assert captured["kwargs"]["cwd"] == str(tmp_path)
+
+
+async def test_cli_provider_isolates_cwd(monkeypatch, tmp_path):
+    seen = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self, data):
+            return b"", b""
+
+    async def create_subprocess(*command, **kwargs):
+        cwd = kwargs["cwd"]
+        seen.append((cwd, cwd is not None and Path(cwd).is_dir()))
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_subprocess)
+    await ClaudeCode()._run_command(["claude"], "Hi")
+    await CopilotCli()._run_command(["copilot"], "Hi")
+    await CopilotCli(working_dir=str(tmp_path))._run_command(["copilot"], "Hi")
+
+    (claude_cwd, claude_existed), (isolated_cwd, existed), (override_cwd, _) = seen
+    for cwd, was_dir in ((claude_cwd, claude_existed), (isolated_cwd, existed)):
+        assert was_dir
+        assert Path(cwd).name.startswith("lumen-cli-")
+        assert not Path(cwd).exists()
+    assert override_cwd == str(tmp_path)
 
 
 async def test_cli_provider_skips_unsupported_tool_loop(monkeypatch):
@@ -345,11 +543,58 @@ def test_groq_api_key_env_var():
     assert Groq.api_key_env_var == "GROQ_API_KEY"
 
 
-def test_groq_defaults():
-    """Test that Groq has the correct default endpoint and model."""
+def test_groq_endpoint():
     groq = Groq(api_key="test-key")
     assert groq.endpoint == "https://api.groq.com/openai/v1"
-    assert groq.model_kwargs["default"]["model"] == "llama-3.3-70b-versatile"
+
+
+def test_ollama_models_lists_pulled_models(monkeypatch):
+    monkeypatch.setattr(lmai.llm.requests, "get", _ollama_tags([{"name": "qwen3.5:9b"}]))
+    assert Ollama().models() == {"qwen3.5:9b"}
+
+
+@pytest.mark.parametrize("returncode, stdout, expected", [
+    (0, '{"loggedIn": true, "authMethod": "claude.ai"}', True),
+    (0, '{"loggedIn": false}', False),
+    (1, "", False),
+])
+def test_claude_code_signed_in_reads_auth_status(monkeypatch, returncode, stdout, expected):
+    run = MagicMock(return_value=SimpleNamespace(returncode=returncode, stdout=stdout))
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert ClaudeCode.signed_in() is expected
+    assert run.call_args.args[0] == ["claude", "auth", "status"]
+
+
+@pytest.mark.parametrize("returncode, expected", [(0, True), (1, False)])
+def test_codex_signed_in_reads_login_status(monkeypatch, returncode, expected):
+    run = MagicMock(return_value=SimpleNamespace(returncode=returncode, stdout=""))
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert CodexCli.signed_in() is expected
+    assert run.call_args.args[0] == ["codex", "login", "status"]
+
+
+def test_cli_without_status_command_cannot_say(monkeypatch):
+    run = MagicMock()
+    monkeypatch.setattr(lmai.llm.subprocess, "run", run)
+    assert CopilotCli.signed_in() is None
+    run.assert_not_called()
+
+
+def test_local_cli_providers_only_lists_installed(monkeypatch):
+    monkeypatch.setattr(lmai.llm.shutil, "which", lambda exe: "/usr/bin/claude" if exe == "claude" else None)
+    monkeypatch.setattr(ClaudeCode, "signed_in", classmethod(lambda cls: True))
+    assert lmai.llm.local_cli_providers() == {ClaudeCode: True}
+
+
+def test_kilo_uses_free_tier_without_api_key(monkeypatch):
+    """Kilo sends a placeholder key so its free tier works without signing up."""
+    monkeypatch.delenv("KILO_API_KEY", raising=False)
+    assert Kilo().api_key == "anonymous"
+
+
+def test_kilo_api_key_env_var_overrides_placeholder(monkeypatch):
+    monkeypatch.setenv("KILO_API_KEY", "test-key")
+    assert Kilo().api_key == "test-key"
 
 
 def test_get_available_llm_selects_groq(monkeypatch):
@@ -526,13 +771,13 @@ async def test_run_tool_loop_drops_max_retries_on_bare_client(monkeypatch):
 # Adaptive request kwargs
 # ---------------------------------------------------------------------------
 
-def _bad_request(param: str) -> openai.BadRequestError:
+def _bad_request(param: str | dict | None, message: str = "rejected") -> openai.BadRequestError:
     """The 400 OpenAI returns when a model rejects a request parameter."""
     request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
     return openai.BadRequestError(
-        "rejected",
+        message,
         response=httpx.Response(400, request=request),
-        body={"message": "rejected", "type": "invalid_request_error", "param": param},
+        body={"message": message, "type": "invalid_request_error", "param": param},
     )
 
 
@@ -550,13 +795,24 @@ def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
     return calls
 
 
-def test_openai_default_model_is_selectable():
-    """The default has to appear in select_models: opening the settings dialog
-    rewrites model_kwargs to select_models[0] when the current model is missing
-    from the list, silently downgrading the default."""
-    default_model = OpenAI.param.model_kwargs.default["default"]["model"]
-    assert default_model == "gpt-5.6-luna"
-    assert default_model in OpenAI.param.select_models.default
+@pytest.mark.parametrize("provider", [
+    OpenAI, OpenRouter, AzureOpenAI, MistralAI, Anthropic, AnthropicBedrock,
+    Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
+], ids=lambda cls: cls.__name__)
+def test_default_model_is_selectable(provider):
+    """Opening the settings dialog rewrites model_kwargs to select_models[0]
+    when the current model is missing from the list, silently swapping the
+    default."""
+    default_model = provider.param.model_kwargs.default["default"]["model"]
+    assert default_model in provider.param.select_models.default
+
+
+@pytest.mark.parametrize("model", LlamaCpp.param.select_models.default)
+def test_llamacpp_select_models_resolve_to_gguf_file(model):
+    resolved = LlamaCpp().resolve_model_spec(model, {})
+    assert resolved["repo_id"].count("/") == 1
+    assert resolved["filename"].endswith(".gguf")
+    assert resolved["chat_format"]
 
 
 async def test_rejected_temperature_is_dropped_and_retried(monkeypatch):
@@ -583,6 +839,82 @@ async def test_rejected_reasoning_effort_is_disabled_and_retried(monkeypatch):
 
     assert "reasoning_effort" not in calls[1]
     assert calls[2]["reasoning_effort"] == "none"
+
+
+async def test_rejection_with_non_string_param_is_reraised(monkeypatch):
+    """Gateways such as Kilo put a dict in ``param``; the original error must
+    surface instead of a TypeError from the adaptive-kwargs lookup."""
+    llm = OpenAI(model_kwargs={"default": {"model": "m"}})
+    error = _bad_request({"error": "unsupported"})
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise error
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
+
+
+KILO_TEXT_ONLY = (
+    "Beam supports text input only. This conversation contains an image. "
+    "Remove the image from the conversation and try again."
+)
+
+
+@pytest.mark.parametrize("error", [
+    _bad_request({"error": KILO_TEXT_ONLY}, KILO_TEXT_ONLY),
+    openai.NotFoundError(
+        "No endpoints found that support image input",
+        response=httpx.Response(404, request=httpx.Request("POST", "https://api.kilo.ai/api/gateway")),
+        body=None,
+    ),
+], ids=["kilo-400", "openrouter-404"])
+async def test_rejected_image_is_dropped_and_vision_disabled(monkeypatch, error):
+    """A text-only model rejects image content; the text is still answerable,
+    so retry without the image and stop sending images to this LLM."""
+    llm = OpenAI(model_kwargs={"default": {"model": "text-only"}})
+    sent: list[list] = []
+
+    async def fake_send(self, _model_spec, messages, **kwargs):
+        sent.append([m["content"] for m in messages])
+        if any(isinstance(c, list) and any(isinstance(p, Image) for p in c) for c in sent[-1]):
+            raise RuntimeError("instructor gave up") from error
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    await llm.run_client("default", [{"role": "user", "content": ["describe", _make_test_image()]}])
+
+    assert sent[1] == [["describe"]]
+    assert llm._supports_vision is False
+    assert OpenAI._supports_vision is True
+
+
+@pytest.mark.parametrize("message", [
+    "Invalid image: exceeds the 20MB limit",
+    "unsupported image format: image/tiff",
+    "Could not process image",
+])
+async def test_bad_image_on_vision_model_is_raised(monkeypatch, message):
+    """A vision model complaining about one image keeps vision on; only a
+    model that cannot read images at all loses it."""
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-5.6-luna"}})
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise _bad_request(None, message)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": ["describe", _make_test_image()]}])
+    assert llm._supports_vision is True
+
+
+@pytest.mark.parametrize("message", [
+    KILO_TEXT_ONLY,
+    "No endpoints found that support image input",
+    "Invalid content type. image_url is only supported by certain models.",
+    "This model does not support image input",
+])
+def test_image_capability_errors_are_recognised(message):
+    assert is_image_rejection(_bad_request(None, message))
 
 
 async def test_rejection_wrapped_by_instructor_is_still_adapted(monkeypatch):
@@ -989,6 +1321,22 @@ def test_api_key_env_var_does_not_clobber_provider_default(monkeypatch):
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
     assert OpenAI().api_key == "sk-from-env"
+
+
+@pytest.mark.parametrize("host, endpoint", [
+    ("remote:11500", "http://remote:11500/v1"),
+    ("0.0.0.0", "http://0.0.0.0:11434/v1"),
+    ("https://ollama.example.com:443/", "https://ollama.example.com:443/v1"),
+])
+def test_ollama_endpoint_reads_ollama_host(monkeypatch, host, endpoint):
+    monkeypatch.setenv("OLLAMA_HOST", host)
+    assert Ollama().endpoint == endpoint
+    assert Ollama(endpoint="http://explicit:1/v1").endpoint == "http://explicit:1/v1"
+
+
+def test_ollama_endpoint_default_without_ollama_host(monkeypatch):
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert Ollama().endpoint == "http://localhost:11434/v1"
 
 
 # ---------------------------------------------------------------------------
@@ -1501,6 +1849,44 @@ def test_model_card_offers_user_supplied_select_models():
     assert card._get_default_models() == ["m", "my-model", "other"]
 
 
+@pytest.mark.parametrize("action", ["_apply_changes", "_cancel_changes", "_reset_to_defaults"])
+def test_llm_dialog_keeps_omitted_temperature(action):
+    """An LLM with temperature=None omits it from requests (some models reject
+    any), so the placeholder the slider shows must not be written back."""
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI})
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+    getattr(dialog, action)(None)
+
+    assert dialog.llm.temperature is None
+
+
+def test_llm_dialog_provider_change_keeps_omitted_temperature():
+    dialog = LLMConfigDialog(
+        llm=OpenAI(temperature=None), provider_choices={"OpenAI": OpenAI, "Mistral": MistralAI}
+    )
+
+    dialog._provider_select.value = MistralAI
+
+    assert isinstance(dialog.llm, MistralAI)
+    assert dialog.llm.temperature is None
+    assert dialog._temperature_slider.value == DEFAULT_TEMPERATURE
+
+
+@pytest.mark.parametrize("initial", [None, 0.2])
+def test_llm_dialog_applies_and_cancels_moved_temperature(initial):
+    dialog = LLMConfigDialog(llm=OpenAI(temperature=initial), provider_choices={"OpenAI": OpenAI})
+
+    dialog._temperature_slider.value = 0.5
+    dialog._apply_changes(None)
+    assert dialog.llm.temperature == 0.5
+
+    dialog._temperature_slider.value = 0.9
+    dialog._cancel_changes(None)
+    assert dialog.llm.temperature == 0.5
+    assert dialog._temperature_slider.value == 0.5
+
+
 # ---------------------------------------------------------------------------
 # Resolved model name (issue #2043)
 # ---------------------------------------------------------------------------
@@ -1565,3 +1951,150 @@ async def test_stream_sets_resolved_model(monkeypatch):
     chunks = [c async for c in llm.stream([{"role": "user", "content": "hi"}])]
     assert chunks[-1] == "ok"
     assert llm._resolved_model == "gpt-stream"
+
+
+@pytest.mark.parametrize("cache, cached", [("5m", True), (None, False)])
+async def test_anthropic_system_prompt_sets_cache_control(monkeypatch, cache, cached):
+    llm = Anthropic(model_kwargs={"default": {"model": "m"}}, cache=cache)
+    captured = {}
+
+    async def client(messages, **kwargs):
+        captured.update(kwargs)
+        return "ok"
+
+    async def get_client(model_spec, **kwargs):
+        return client
+
+    monkeypatch.setattr(llm, "get_client", get_client)
+    await llm.run_client("default", [{"role": "system", "content": "Static"}, {"role": "user", "content": "hi"}])
+
+    if cached:
+        assert captured["system"] == [{"type": "text", "text": "Static", "cache_control": {"type": "ephemeral"}}]
+    else:
+        assert captured["system"] == "Static"
+
+
+async def test_anthropic_uses_native_structured_output_for_modern_models(monkeypatch):
+    class Answer(BaseModel):
+        value: str
+
+    captured = {}
+
+    class Messages:
+        async def parse(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(parsed_output=Answer(value="ok"))
+
+    monkeypatch.setattr(
+        Anthropic,
+        "_create_base_client",
+        lambda self, **kwargs: SimpleNamespace(messages=Messages()),
+    )
+    llm = Anthropic(
+        model_kwargs={"default": {"model": "claude-sonnet-5-5"}},
+        cache=None,
+    )
+
+    result = await llm.run_client(
+        "default",
+        [{"role": "user", "content": "hi"}],
+        response_model=Answer,
+        temperature=0.7,
+        max_retries=2,
+    )
+
+    assert result == Answer(value="ok")
+    assert captured["model"] == "claude-sonnet-5-5"
+    assert captured["output_format"] is Answer
+    assert "temperature" not in captured
+    assert "max_retries" not in captured
+
+
+async def test_anthropic_keeps_instructor_for_native_tool_calls(monkeypatch):
+    class Answer(BaseModel):
+        value: str
+
+    captured = {}
+
+    async def client(messages, **kwargs):
+        captured.update(kwargs)
+        return Answer(value="ok")
+
+    async def get_client(model_spec, **kwargs):
+        return client
+
+    llm = Anthropic(
+        model_kwargs={"default": {"model": "claude-sonnet-5-5"}},
+        cache=None,
+    )
+    monkeypatch.setattr(llm, "get_client", get_client)
+
+    await llm.run_client(
+        "default",
+        [{"role": "user", "content": "hi"}],
+        response_model=Answer,
+        tools=[{
+            "type": "function",
+            "function": {"name": "lookup", "parameters": {"type": "object"}},
+        }],
+        temperature=0.7,
+    )
+
+    assert captured["response_model"] is Answer
+    assert "temperature" not in captured
+    assert captured["tools"][0]["name"] == "lookup"
+
+
+async def test_anthropic_keeps_instructor_when_streaming(monkeypatch):
+    class Answer(BaseModel):
+        value: str
+
+    captured = {}
+
+    async def client(messages, **kwargs):
+        captured.update(kwargs)
+        return Answer(value="ok")
+
+    async def get_client(model_spec, **kwargs):
+        return client
+
+    llm = Anthropic(
+        model_kwargs={"default": {"model": "claude-sonnet-5-5"}},
+        cache=None,
+    )
+    monkeypatch.setattr(llm, "get_client", get_client)
+
+    await llm.run_client(
+        "default",
+        [{"role": "user", "content": "hi"}],
+        response_model=Answer,
+        stream=True,
+    )
+
+    assert captured["response_model"] is Answer
+
+
+@pytest.mark.parametrize("model, native, omit", [
+    ("claude-sonnet-5-5", True, True),
+    ("us.anthropic.claude-sonnet-5-5", True, True),
+    ("claude-sonnet-4-6", False, False),
+    ("us.anthropic.claude-haiku-4-5-20251001-v1:0", False, False),
+])
+def test_anthropic_model_capabilities_ignore_bedrock_prefix(model, native, omit):
+    assert Anthropic._uses_native_structured_output(model) is native
+    assert Anthropic._omit_temperature(model) is omit
+
+
+async def test_invoke_keeps_single_blank_lines_in_system(monkeypatch):
+    llm = Llm(model_kwargs={"default": {"model": "m"}})
+    captured = {}
+
+    async def run_tool_loop(messages, *args, **kwargs):
+        captured["messages"] = messages
+        return "ok"
+
+    monkeypatch.setattr(llm, "_run_tool_loop", run_tool_loop)
+    monkeypatch.setattr(llm, "_create_base_client", lambda **kwargs: None, raising=False)
+    await llm.invoke([{"role": "user", "content": "hi"}], system="## A\n\nText\n\n\n\n## B")
+    system = next(m["content"] for m in captured["messages"] if m["role"] == "system")
+    assert system == "## A\n\nText\n\n## B"

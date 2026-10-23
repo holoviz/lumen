@@ -45,6 +45,31 @@ class TestLintData:
         findings = lint_data(df)
         assert any("Placeholder numbers" in f and '"temp" (2 rows)' in f for f in findings)
 
+    def test_sentinel_inside_value_range_not_reported(self):
+        # Customer 9999 is an ordinary id among ids 12 to 21390, not a placeholder
+        df = pd.DataFrame({
+            "customer_id": [12, 845, 9999, 9999, 15020, 21390],
+            "revenue": [80.0, 35.5, 60.0, 67.36, 20.0, 41.0],
+        })
+        assert not any("Placeholder numbers" in f for f in lint_data(df))
+
+    def test_sentinel_message_names_only_flagged_values(self):
+        # 9999 sits inside the range of the other values, so only -9999 is a placeholder
+        df = pd.DataFrame({"x": [-9999, 5, 9999, 20000, 30]})
+        findings = [f for f in lint_data(df) if "Placeholder numbers" in f]
+        assert len(findings) == 1
+        assert "[-9999]" in findings[0]
+        assert "9999," not in findings[0].replace("-9999", "")
+
+    def test_sentinel_nullable_dtype_reported(self):
+        df = pd.DataFrame({"a": pd.array([1, 2, None, -9999, 5], dtype="Int64")})
+        assert any('"a" (1 rows)' in f for f in lint_data(df))
+
+    def test_sentinel_only_column_reported(self):
+        df = pd.DataFrame({"reading": [-9999.0, -9999.0, None]})
+        findings = lint_data(df)
+        assert any("Placeholder numbers" in f and '"reading" (2 rows)' in f for f in findings)
+
     def test_untrimmed_and_empty_text_reported(self):
         df = pd.DataFrame({"name": ["alice", " bob ", "", "dave"]})
         findings = lint_data(df)
@@ -103,6 +128,21 @@ class TestLintData:
         findings = lint_data(df)
         assert findings
         assert findings[-1].startswith(f"Counts above come from a random {PROFILE_SAMPLE_ROWS}-row sample")
+
+    def test_capped_prefix_skips_order_sensitive_checks_and_notes_it(self):
+        """The first rows of a sorted result are often constant in the sort key
+        and need not resemble the rest, so a capped preview cannot support a
+        constant-column or outlier verdict."""
+        df = pd.DataFrame({
+            "region": ["a"] * 50,
+            "revenue": [float(i) for i in range(49)] + [100000.0],
+            "flag": [None] * 50,
+        })
+        assert any("Constant column" in f for f in lint_data(df))
+        findings = lint_data(df, capped=True)
+        assert not any("Constant column" in f or "IQR outliers" in f for f in findings)
+        assert any("Missing values" in f for f in findings)
+        assert findings[-1].startswith("Counts above come from only the first 50 rows of the result in query order")
 
     def test_constant_and_outlier_findings_are_not_actionable(self):
         """Filtering to one region then grouping is an ordinary query, not a defect:
