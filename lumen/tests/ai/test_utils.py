@@ -1100,6 +1100,18 @@ def test_format_tool_error_truncates():
             ],
         ),
         (
+            # GROUP BY ordinal resolves to the selected column
+            "SELECT region, SUM(population) AS total_pop FROM t GROUP BY 1",
+            [
+                {
+                    "column": "total_pop",
+                    "expression": "SUM(t.population)",
+                    "source_columns": ["t.population"],
+                    "grouped_by": "region",
+                },
+            ],
+        ),
+        (
             # Mixed-case pass-through column is skipped; only the aggregate remains
             'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
             [

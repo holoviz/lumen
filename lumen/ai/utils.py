@@ -2374,6 +2374,9 @@ def extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]
     group_by_cols = []
     if main_select.args.get("group"):
         for group_expr in main_select.args["group"].expressions:
+            # Resolve ordinals like GROUP BY 1 to the selected column.
+            if isinstance(group_expr, exp.Literal) and group_expr.is_int:
+                group_expr = main_select.expressions[int(group_expr.this) - 1].unalias()
             group_by_cols.append(group_expr.sql(dialect=dialect))
     group_by_str = ", ".join(group_by_cols) if group_by_cols else None
 
