@@ -409,4 +409,3 @@ async def test_submit_sql_ends_request_on_second_timeout():
             await submit.validate(output)
         with pytest.raises(DeterministicError, match="timed out as well"):
             await submit.validate(output)
-
