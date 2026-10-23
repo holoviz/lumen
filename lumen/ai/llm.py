@@ -4485,3 +4485,17 @@ class Kilo(OpenAI):
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Kilo."""
         return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        try:
+            return await super().run_client(model_spec, messages, **kwargs)
+        except Exception as e:
+            error = find_bad_request(e)
+            # kilo-auto/free routes to models whose upstream provider rejects a
+            # forced tool call or response_format with a 400. JSON asked for in
+            # plain text needs neither, so switch for the rest of the session.
+            if error is None or self.mode is Mode.MD_JSON or "upstream_error" not in str(error):
+                raise
+            log_debug(f"Kilo's upstream rejected a structured request; switching to {Mode.MD_JSON.name}")
+            self.mode = Mode.MD_JSON
+            return await super().run_client(model_spec, messages, **kwargs)

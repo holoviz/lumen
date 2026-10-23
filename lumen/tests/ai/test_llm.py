@@ -29,6 +29,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor import Mode
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel, ValidationError
 
@@ -853,6 +854,65 @@ async def test_rejection_with_non_string_param_is_reraised(monkeypatch):
     monkeypatch.setattr(OpenAI, "_send", fake_send)
     with pytest.raises(openai.BadRequestError):
         await llm.run_client("default", [{"role": "user", "content": "hi"}])
+
+
+KILO_UPSTREAM_ERROR = {
+    "error": "The upstream provider was unable to process the request",
+    "error_type": "upstream_error",
+}
+
+
+def _kilo_rejection(body: dict) -> openai.BadRequestError:
+    """The 400 the OpenAI client builds for a Kilo payload: the message holds
+    the whole payload, while ``body`` is only its ``error`` string."""
+    request = httpx.Request("POST", "https://api.kilo.ai/api/gateway/chat/completions")
+    return openai.BadRequestError(
+        f"Error code: 400 - {body}", response=httpx.Response(400, request=request), body=body["error"],
+    )
+
+
+async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch):
+    """The free tier's upstream rejects a forced tool call, so Kilo asks for
+    JSON in plain text instead and keeps doing so."""
+    llm = Kilo()
+    modes = []
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        modes.append(self.mode)
+        if self.mode is not Mode.MD_JSON:
+            raise _kilo_rejection(KILO_UPSTREAM_ERROR)
+        return "ok"
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    assert await llm.run_client("default", [{"role": "user", "content": "hi"}]) == "ok"
+    assert await llm.run_client("default", [{"role": "user", "content": "hi"}]) == "ok"
+    assert modes == [Mode.TOOLS, Mode.MD_JSON, Mode.MD_JSON]
+
+
+async def test_kilo_other_rejections_are_reraised(monkeypatch):
+    llm = Kilo()
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise _kilo_rejection({"error": "bad schema", "error_type": "invalid_request"})
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
+    assert llm.mode is Mode.TOOLS
+
+
+async def test_kilo_upstream_rejection_in_json_mode_is_reraised(monkeypatch):
+    llm = Kilo()
+    calls = []
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        calls.append(self.mode)
+        raise _kilo_rejection(KILO_UPSTREAM_ERROR)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
+    assert calls == [Mode.TOOLS, Mode.MD_JSON]
 
 
 KILO_TEXT_ONLY = (
