@@ -1082,6 +1082,24 @@ def test_format_tool_error_truncates():
             ],
         ),
         (
+            # COUNT(*) and a same-name CAST are derived, not pass-through
+            "SELECT region, COUNT(*) AS n, CAST(price AS INT) AS price FROM t GROUP BY region",
+            [
+                {
+                    "column": "n",
+                    "expression": "COUNT(*)",
+                    "source_columns": ["n"],
+                    "grouped_by": "region",
+                },
+                {
+                    "column": "price",
+                    "expression": "CAST(t.price AS INT)",
+                    "source_columns": ["t.price"],
+                    "grouped_by": "region",
+                },
+            ],
+        ),
+        (
             # Mixed-case pass-through column is skipped; only the aggregate remains
             'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
             [

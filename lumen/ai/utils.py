@@ -2378,6 +2378,9 @@ def extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]
     group_by_str = ", ".join(group_by_cols) if group_by_cols else None
 
     for i, expression in enumerate(main_select.expressions):
+        # Plain or renamed columns and stars carry nothing worth explaining.
+        if isinstance(expression.unalias(), (exp.Column, exp.Star)):
+            continue
         target_column = expression.alias_or_name or expression.sql(dialect=dialect)
         trace_target = expression.alias_or_name
         query_to_trace = parsed
@@ -2409,23 +2412,11 @@ def extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]
 
                 source_columns.append(full_col_name)
 
-        source_columns = list(dict.fromkeys(source_columns))
-
-        # Skip direct pass-through columns. Compare case-insensitively:
-        # lineage normalizes identifiers (e.g. "Symbol" -> "symbol").
-        is_same = False
-        if len(source_columns) == 1:
-            src_col = source_columns[0].split('.')[-1].strip('"').strip("'")
-            target = target_column.strip('"').strip("'")
-            if target.lower() == src_col.lower() or target.lower() == source_columns[0].lower():
-                is_same = True
-
-        if not is_same:
-            provenance_list.append({
-                "column": target_column,
-                "expression": formula,
-                "source_columns": source_columns,
-                "grouped_by": group_by_str
-            })
+        provenance_list.append({
+            "column": target_column,
+            "expression": formula,
+            "source_columns": list(dict.fromkeys(source_columns)),
+            "grouped_by": group_by_str
+        })
 
     return provenance_list
