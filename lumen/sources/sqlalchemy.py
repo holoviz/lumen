@@ -107,6 +107,10 @@ class SQLAlchemySource(BaseSQLSource):
         'oracle+oracledb_async',
     }
 
+    # Catalog schemas that describe the database itself, skipped when
+    # discovering tables across all schemas
+    _system_schemas = frozenset({'information_schema'})
+
     def __init__(self, **params):
         engine = params.pop('engine', None)
         super().__init__(**params)
@@ -374,6 +378,8 @@ class SQLAlchemySource(BaseSQLSource):
         else:
             # Get tables from all schemas
             for schema in inspector.get_schema_names():
+                if schema.lower() in self._system_schemas:
+                    continue
                 table_names = inspector.get_table_names(schema=schema)
                 for table in table_names:
                     # For SQLite, skip the schema prefix if it's 'main'

@@ -323,6 +323,18 @@ def test_pipeline_auto_filters(penguins_file):
     pipeline = Pipeline.from_spec(spec)
     assert len(pipeline.filters) == 9
 
+def test_pipeline_auto_filters_sql_source():
+    if duckdb is None:
+        pytest.skip("duckdb is not installed")
+    source = DuckDBSource.from_df({'penguins': pd.DataFrame({
+        'species': ['Adelie', 'Gentoo', 'Adelie'],
+        'body_mass_g': [3300.0, 5200.0, 3550.0],
+        'year': [2007, 2008, 2009],
+    })})
+    assert '__len__' in source.get_schema('penguins')
+    pipeline = Pipeline(source=source, table='penguins', filters='auto')
+    assert [filt.field for filt in pipeline.filters] == ['species', 'body_mass_g', 'year']
+
 def test_load_chained_pipeline(penguins_file):
     spec = {
         "pipelines": {

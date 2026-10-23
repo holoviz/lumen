@@ -69,6 +69,15 @@ _PAGINATED_TABLE_STYLES = """
 }
 """
 
+# Ace defaults to 12px, which looks undersized next to the chat text and the
+# tables. Use MUI's ``body2`` size so code reads at a size matching the rest of
+# the app.
+_CODE_EDITOR_STYLES = """
+.ace_editor {
+  font-size: 0.875rem !important;
+}
+"""
+
 
 class LumenEditor(Viewer):
 
@@ -124,7 +133,8 @@ class LumenEditor(Viewer):
             indent=2,
             margin=(0, 10),
             disabled=self.param.spec.rx.is_(None),
-            styles={"border": "1px solid var(--border-color)"}
+            styles={"border": "1px solid var(--border-color)"},
+            stylesheets=[_CODE_EDITOR_STYLES],
         )
         editor.link(self, bidirectional=True, value='spec')
         return editor

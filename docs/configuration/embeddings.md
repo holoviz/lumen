@@ -57,7 +57,7 @@ embeddings = AzureOpenAIEmbeddings(
 )
 ```
 
-See [LLM Providers - Azure OpenAI](llm_providers.md#azure-openai) for authentication details.
+See [LLM Providers - Azure OpenAI](llm_providers.md#managed-identity-azure) for authentication details.
 
 ### HuggingFace
 
@@ -75,7 +75,7 @@ embeddings = HuggingFaceEmbeddings(
 **Install:**
 
 ``` bash
-pip install sentence-transformers
+pip install 'lumen[ai-transformers]'
 ```
 
 ### Llama.cpp
@@ -95,7 +95,7 @@ embeddings = LlamaCppEmbeddings(
 )
 ```
 
-See [LLM Providers - Llama.cpp](llm_providers.md#llamacpp-local) for model configuration.
+See [LLM Providers - Llama.cpp](llm_providers.md#local-providers) for model configuration.
 
 ### Numpy (default)
 

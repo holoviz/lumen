@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import html
+import re
 import sys
 import warnings
 
@@ -1741,6 +1742,30 @@ class VegaLiteView(View):
 
         return spec
 
+    @classmethod
+    def _escape_field_names(cls, spec: Any, columns: set[str]) -> Any:
+        """
+        Escape dots and brackets in fields that name a column, since Vega-Lite
+        otherwise reads "nino3.4_anom" as the nested path nino3 -> 4_anom.
+        """
+        if isinstance(spec, list):
+            return [cls._escape_field_names(item, columns) for item in spec]
+        if not isinstance(spec, dict):
+            return spec
+        spec = {key: cls._escape_field_names(value, columns) for key, value in spec.items()}
+        for key, value in spec.items():
+            if key == "field" and isinstance(value, str):
+                spec[key] = cls._escape_field(value, columns)
+            elif key in ("fold", "groupby", "fields") and isinstance(value, list):
+                spec[key] = [cls._escape_field(item, columns) for item in value]
+        return spec
+
+    @staticmethod
+    def _escape_field(field: Any, columns: set[str]) -> Any:
+        if isinstance(field, str) and field in columns:
+            return re.sub(r"([.\[\]])", r"\\\1", field)
+        return field
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1750,6 +1775,7 @@ class VegaLiteView(View):
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
         spec = self._coerce_temporal(spec, df)
+        spec = self._escape_field_names(spec, set(df.columns))
 
         if self._declares_own_data(spec):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
@@ -1760,6 +1786,10 @@ class VegaLiteView(View):
             datasets = dict(self.spec.get('datasets', {}))
             datasets[self.pipeline.table] = df
             spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
+            # A lat/lon map's basemap layer brings its own url, but the point layers
+            # beside it carry no data and would draw nothing without the table.
+            if 'data' not in spec and any('data' not in layer for layer in spec.get('layer', [])):
+                spec['data'] = {'name': self.pipeline.table}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):

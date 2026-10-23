@@ -192,6 +192,50 @@ def cached_schema(method, locks=None):
     return wrapped
 
 
+def _is_empty_metadata(value) -> bool:
+    return value is None or (isinstance(value, str) and not value)
+
+
+def _as_column_metadata(value) -> dict:
+    """
+    Normalizes a column entry, treating a plain string as its description.
+    """
+    if isinstance(value, str):
+        return {'description': value} if value else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _merge_column_metadata(generated, user: dict) -> dict:
+    """
+    Fills missing or empty keys of the generated column entries from the
+    user column entries. User columns that are not among the generated
+    columns are skipped, unless no columns were generated at all.
+    """
+    columns = dict(generated) if isinstance(generated, dict) else {}
+    known = set(columns)
+    for column, value in user.items():
+        if known and column not in known:
+            continue
+        merged = _as_column_metadata(columns.get(column))
+        for key, user_value in _as_column_metadata(value).items():
+            if _is_empty_metadata(merged.get(key)):
+                merged[key] = user_value
+        columns[column] = merged
+    return columns
+
+
+def _merge_user_metadata(generated: dict, user: dict) -> None:
+    """
+    Merges user supplied table metadata into the generated metadata,
+    filling keys that are missing or empty, including per-column entries.
+    """
+    for key, value in user.items():
+        if key == 'columns' and isinstance(value, dict):
+            generated[key] = _merge_column_metadata(generated.get(key), value)
+        elif _is_empty_metadata(generated.get(key)):
+            generated[key] = value
+
+
 def cached_metadata(method, locks=None):
     if locks is None:
         locks = weakref.WeakKeyDictionary()
@@ -278,7 +322,12 @@ class Source(MultiTypeComponent):
 
     metadata = param.Dict(default={}, doc="""
         Optional metadata about the source tables. Should follow the format:
-        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}""")
+        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}
+
+        A column entry may be a description string or a dict of column
+        metadata. These values only fill metadata that is missing or empty
+        in the generated metadata (from metadata_func or the Source itself);
+        non-empty generated values take precedence.""")
 
     source_type: ClassVar[str | None] = None
 
@@ -716,9 +765,7 @@ class Source(MultiTypeComponent):
 
         # Merge source.metadata with metadata_func output
         for table_name in tables:
-            for key, value in self.metadata.get(table_name, {}).items():
-                if key not in metadata[table_name]:
-                    metadata[table_name][key] = value
+            _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
 
         return metadata
 

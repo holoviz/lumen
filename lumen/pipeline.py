@@ -49,6 +49,8 @@ def auto_filters(schema: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
     """
     filters = {}
     for field, fschema in schema.items():
+        if field == '__len__':
+            continue
         ftype = fschema['type']
         if ftype in ('number', 'integer'):
             fmin = fschema['inclusiveMinimum']
