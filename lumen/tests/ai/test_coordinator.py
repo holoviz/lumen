@@ -103,6 +103,23 @@ async def test_planner_empty_plan(llm):
     assert todos.object == ""
 
 
+async def test_planner_empty_plan_with_validation(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Nothing to plan", yes=False),
+        plan_model(chain_of_thought="Nothing to do", title="Empty", steps=[])
+    ])
+
+    planner = Planner(llm=llm, agents=[ChatAgent(), ValidationAgent()], validation_enabled=True)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'How many rows?'}], {})
+
+    assert isinstance(plan, Plan)
+    assert plan.title == "Empty"
+    assert len(plan) == 0
+
+
 async def test_planner_simple_plan(llm):
     PlanModel = make_plan_model(["ChatAgent"], [])
 
