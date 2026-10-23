@@ -15,11 +15,6 @@ from lumen.sources.base import Source, cached
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
-try:
-    import fastparquet
-except ImportError:
-    fastparquet = None
-
 def assert_df_equal(df1, df2):
     pd.testing.assert_frame_equal(df1, df2, check_dtype=False)
 
@@ -154,7 +149,6 @@ def test_file_source_clear_cache(source, column_value_type, dask):
     assert len(source._cache) == 0
 
 
-@pytest.mark.skipif(fastparquet is None, reason='fastparquet not installed')
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
@@ -162,10 +156,7 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
 
     cache_key = source._get_key('test', A=(1, 2))
     cache_path = Path(cachedir) / f'{cache_key}_test.parq'
-    df = pd.read_parquet(cache_path, engine='fastparquet')
-
-    # Patch index names due to https://github.com/dask/fastparquet/issues/732
-    df.index.names = [None]
+    df = pd.read_parquet(cache_path)
     assert_df_equal(
         df,
         makeMixedDataFrame().iloc[1:3]
