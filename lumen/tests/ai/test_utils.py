@@ -20,13 +20,13 @@ from lumen.ai.config import PROMPTS_DIR, EmptyResultError
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
-    apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
-    count_tokens, describe_data, extract_provenance, find_slug_by_table_name,
-    format_msg_content,
-    format_tool_error, fuse_messages, get_schema, inline_schema_defs,
-    mutate_user_message, parse_huggingface_url, render_template, report_error,
-    retry_llm_output, sanitize_column_names, serialize_image_content,
-    set_content_text, slug_to_table_name, truncate_to_tokens,
+    apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
+    content_to_text, count_tokens, describe_data, find_slug_by_table_name,
+    format_msg_content, format_tool_error, fuse_messages, get_schema,
+    inline_schema_defs, mutate_user_message, parse_huggingface_url,
+    render_template, report_error, retry_llm_output, sanitize_column_names,
+    serialize_image_content, set_content_text, slug_to_table_name,
+    truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -1019,111 +1019,65 @@ def test_format_tool_error_truncates():
 
 
 @pytest.mark.parametrize(
-    "sql, expected",
+    "sql, columns, expected",
     [
-        (
-            # No derived columns (direct pass-through)
-            "SELECT name, age FROM users",
-            [],
+        pytest.param("SELECT name, age FROM users", ("name", "age"), {}, id="pass-through"),
+        pytest.param("SELECT region, price AS cost FROM t", ("region", "cost"), {}, id="rename"),
+        pytest.param(
+            "SELECT region, SUM(population) AS total_pop, AVG(price) AS avg_price FROM t GROUP BY region",
+            ("region", "total_pop", "avg_price"),
+            {"total_pop": "SUM(t.population), grouped by region", "avg_price": "AVG(t.price), grouped by region"},
+            id="group-by",
         ),
-        (
-            # GROUP BY with aggregations
-            "SELECT region, SUM(population) AS total_pop, AVG(price) AS avg_price FROM sample_data GROUP BY region",
-            [
-                {
-                    "column": "total_pop",
-                    "expression": "SUM(sample_data.population)",
-                    "source_columns": ["sample_data.population"],
-                    "grouped_by": "region",
-                },
-                {
-                    "column": "avg_price",
-                    "expression": "AVG(sample_data.price)",
-                    "source_columns": ["sample_data.price"],
-                    "grouped_by": "region",
-                },
-            ],
+        pytest.param(
+            "SELECT region, SUM(population) AS total FROM t GROUP BY 1",
+            ("region", "total"),
+            {"total": "SUM(t.population), grouped by region"},
+            id="group-by-ordinal",
         ),
-        (
-            # JOIN with derived expression
-            "SELECT u.name, o.amount * 1.1 AS total_amount FROM users AS u JOIN orders AS o ON u.id = o.user_id",
-            [
-                {
-                    "column": "total_amount",
-                    "expression": "o.amount * 1.1",
-                    "source_columns": ["orders.amount"],
-                    "grouped_by": None,
-                },
-            ],
-        ),
-        (
-            # Common Table Expression (CTE)
-            "WITH summary AS (SELECT department, AVG(salary) AS avg_sal FROM employees GROUP BY department) "
-            "SELECT department, avg_sal * 1.1 AS projected_sal FROM summary",
-            [
-                {
-                    "column": "projected_sal",
-                    "expression": "summary.avg_sal * 1.1",
-                    "source_columns": ["employees.salary"],
-                    "grouped_by": None,
-                },
-            ],
-        ),
-        (
-            # Unaliased derived column (e.g. LLM generated query without AS alias)
-            "SELECT SUM(population) FROM sample_data",
-            [
-                {
-                    "column": "SUM(population)",
-                    "expression": "SUM(sample_data.population)",
-                    "source_columns": ["sample_data.population"],
-                    "grouped_by": None,
-                },
-            ],
-        ),
-        (
-            # COUNT(*) and a same-name CAST are derived, not pass-through
+        pytest.param(
             "SELECT region, COUNT(*) AS n, CAST(price AS INT) AS price FROM t GROUP BY region",
-            [
-                {
-                    "column": "n",
-                    "expression": "COUNT(*)",
-                    "source_columns": [],
-                    "grouped_by": "region",
-                },
-                {
-                    "column": "price",
-                    "expression": "CAST(t.price AS INT)",
-                    "source_columns": ["t.price"],
-                    "grouped_by": "region",
-                },
-            ],
+            ("region", "n", "price"),
+            {"n": "COUNT(*), grouped by region", "price": "CAST(t.price AS INT), grouped by region"},
+            id="count-star-and-same-name-cast",
         ),
-        (
-            # GROUP BY ordinal resolves to the selected column
-            "SELECT region, SUM(population) AS total_pop FROM t GROUP BY 1",
-            [
-                {
-                    "column": "total_pop",
-                    "expression": "SUM(t.population)",
-                    "source_columns": ["t.population"],
-                    "grouped_by": "region",
-                },
-            ],
+        pytest.param(
+            "SELECT u.name, o.amount * 1.1 AS total FROM users AS u JOIN orders AS o ON u.id = o.user_id",
+            ("name", "total"),
+            {"total": "orders.amount * 1.1"},
+            id="join-uses-table-not-alias",
         ),
-        (
-            # Mixed-case pass-through column is skipped; only the aggregate remains
-            'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
-            [
-                {
-                    "column": "avg_close",
-                    "expression": 'AVG(stocks."Close")',
-                    "source_columns": ['stocks."Close"'],
-                    "grouped_by": '"Symbol"',
-                },
-            ],
+        pytest.param(
+            "WITH s AS (SELECT dept, AVG(salary) AS avg_sal FROM employees GROUP BY dept) "
+            "SELECT dept, avg_sal * 1.1 AS projected FROM s",
+            ("dept", "projected"),
+            {"projected": "AVG(employees.salary) * 1.1, grouped by dept"},
+            id="cte-inlined",
         ),
+        pytest.param(
+            "SELECT region, s FROM (SELECT region, SUM(population) AS s FROM t GROUP BY region) AS sub",
+            ("region", "s"),
+            {"s": "SUM(t.population), grouped by region"},
+            id="subquery-column-is-derived",
+        ),
+        pytest.param(
+            "SELECT region, RANK() OVER (ORDER BY price) AS r FROM t",
+            ("region", "r"),
+            {"r": "RANK() OVER (ORDER BY t.price)"},
+            id="window",
+        ),
+        pytest.param("SELECT SUM(population) FROM t", ("sum(population)",), {"sum(population)": "SUM(t.population)"}, id="unaliased-duckdb"),
+        pytest.param("SELECT SUM(population) FROM t", ("sum",), {"sum": "SUM(t.population)"}, id="unaliased-postgres"),
+        pytest.param("SELECT *, price * 2 AS p2 FROM t", ("region", "price", "p2"), {"p2": "t.price * 2"}, id="star"),
+        pytest.param("SELECT price * 2 AS p FROM t UNION ALL SELECT price FROM u", ("p",), {}, id="union"),
+        pytest.param(
+            "WITH u AS (SELECT price FROM a UNION ALL SELECT price FROM b) SELECT SUM(price) AS total FROM u",
+            ("total",),
+            {},
+            id="union-in-cte",
+        ),
+        pytest.param("SELEC nonsense", ("x",), {}, id="unparseable"),
     ],
 )
-def test_extract_provenance(sql, expected):
-    assert extract_provenance(sql) == expected
+def test_column_tooltips(sql, columns, expected):
+    assert column_tooltips(sql, "duckdb", columns) == expected

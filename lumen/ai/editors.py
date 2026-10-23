@@ -41,7 +41,7 @@ from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, extract_provenance, get_frame
+from .utils import column_tooltips, describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
@@ -620,26 +620,13 @@ class SQLEditor(LumenEditor):
 
     def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
         # Derived from the current spec so tooltips follow SQL edits.
-        # Match case-insensitively: DuckDB names `SUM(x)` as `sum(x)`.
-        columns = {str(col).lower(): col for col in pipeline.data.columns}
+        columns = tuple(str(col) for col in pipeline.data.columns)
         try:
-            provenance = extract_provenance(self.spec, pipeline.source.dialect)
+            header_tooltips = column_tooltips(self.spec, pipeline.source.dialect, columns)
         except Exception:
             # Tooltips are a nicety; never let lineage break the table.
-            provenance = []
-        header_tooltips = {}
-        for item in provenance:
-            col = columns.get(item["column"].lower())
-            if col is None:
-                continue
-            tooltip = item["expression"]
-            # CTEs and subqueries only show an intermediate alias, so name the roots.
-            if roots := [src for src in item["source_columns"] if src not in tooltip]:
-                tooltip += f" from {', '.join(roots)}"
-            if item["grouped_by"]:
-                tooltip += f", grouped by {item['grouped_by']}"
-            header_tooltips[col] = tooltip
-        return {"header_tooltips": header_tooltips} if header_tooltips else {}
+            header_tooltips = {}
+        return {"header_tooltips": dict(header_tooltips)} if header_tooltips else {}
 
     def _render_editor(self):
         editor = super()._render_editor()

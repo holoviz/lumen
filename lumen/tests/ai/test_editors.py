@@ -488,7 +488,7 @@ def test_sql_editor_header_tooltips_match_unaliased_columns(monkeypatch):
     pipeline = Pipeline(source=DuckDBSource(tables={"q": sql}), table="q")
     editor = SQLEditor(component=pipeline, spec=sql)
     kwargs = editor._pipeline_table_kwargs(pipeline)
-    assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by category"}}
+    assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by t.category"}}
 
 
 def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
@@ -504,12 +504,12 @@ def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
     pipeline = Pipeline(source=source, table="q")
     editor = SQLEditor(component=pipeline, spec=sql)
     kwargs = editor._pipeline_table_kwargs(pipeline)
-    assert kwargs == {"header_tooltips": {"doubled": "s.total * 2 from orders.amount"}}
+    assert kwargs == {"header_tooltips": {"doubled": "SUM(orders.amount) * 2, grouped by category"}}
 
 
 def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, monkeypatch):
     def boom(*args):
         raise IndexError
-    monkeypatch.setattr(editors_module, "extract_provenance", boom)
+    monkeypatch.setattr(editors_module, "column_tooltips", boom)
     assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
 

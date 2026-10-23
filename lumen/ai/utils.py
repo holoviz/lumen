@@ -2355,65 +2355,91 @@ def _add_geographic_items(vega_spec: dict, vega_spec_str: str) -> dict:
     return vega_spec
 
 
-def extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]:
+def _root_expression(node) -> exp.Expression | None:
     """
-    Extracts lineage information (expression, source columns with relations, grouped by)
-    using SQLGlot's lineage API.
+    Rebuild a lineage node's expression in terms of base table columns,
+    inlining CTE and subquery aliases along the way.
+    """
+    if isinstance(node.source, exp.SetOperation):
+        return None
+    expression = node.expression.unalias().copy()
+    children = {child.name: child for child in node.downstream}
+    columns = list(expression.find_all(exp.Column))
+    # Unmatched children are set-operation branches (named "0", "1", ...).
+    if set(children) - {column.sql() for column in columns}:
+        return None
+    for column in columns:
+        child = children.get(column.sql())
+        if child is None:
+            continue
+        if isinstance(child.source, exp.Table):
+            replacement = exp.column(column.name, table=child.source.name)
+        elif isinstance(child.source, exp.Select | exp.SetOperation):
+            replacement = _root_expression(child)
+            if replacement is None:
+                return None
+        else:
+            # VALUES, table functions etc. are base relations already.
+            continue
+        if column is expression:
+            return replacement
+        column.replace(replacement)
+    return expression
+
+
+def _group_by(node, dialect: str | None) -> str | None:
+    """Return the first GROUP BY found along a lineage chain."""
+    for n in node.walk():
+        if isinstance(n.source, exp.Select) and (group := n.source.args.get("group")):
+            return ", ".join(e.sql(dialect=dialect) for e in group.expressions)
+    return None
+
+
+@functools.lru_cache(maxsize=128)
+def column_tooltips(sql_query: str, dialect: str | None, columns: tuple[str, ...]) -> dict[str, str]:
+    """
+    Map each derived result column to a one-line description of how it is
+    computed from base table columns, e.g. ``SUM(orders.price), grouped by region``.
+
+    Plain or renamed columns get no entry. Set operations (UNION etc.) are
+    skipped since each branch computes the column differently.
     """
     try:
-        parsed = sqlglot.parse_one(sql_query, read=dialect)
-    except Exception:
-        return []
+        select = sqlglot.parse_one(sql_query, read=dialect)
+    except sqlglot.errors.ParseError:
+        return {}
+    if not isinstance(select, exp.Select):
+        return {}
 
-    provenance_list = []
+    projections = select.expressions
+    # Unaliased names differ per dialect (DuckDB `sum(x)`, Postgres `sum`), so
+    # match by position when every projection maps to exactly one column.
+    positional = len(projections) == len(columns) and not any(
+        isinstance(p.unalias(), exp.Star) or (isinstance(p, exp.Column) and isinstance(p.this, exp.Star))
+        for p in projections
+    )
+    by_name = {col.lower(): col for col in columns}
 
-    main_select = parsed.find(exp.Select)
-    if not main_select:
-        return []
-
-    group_by_cols = []
-    if main_select.args.get("group"):
-        for group_expr in main_select.args["group"].expressions:
-            # Resolve ordinals like GROUP BY 1 to the selected column.
-            if isinstance(group_expr, exp.Literal) and group_expr.is_int:
-                group_expr = main_select.expressions[int(group_expr.this) - 1].unalias()
-            group_by_cols.append(group_expr.sql(dialect=dialect))
-    group_by_str = ", ".join(group_by_cols) if group_by_cols else None
-
-    for i, expression in enumerate(main_select.expressions):
-        # Plain or renamed columns and stars carry nothing worth explaining.
-        if isinstance(expression.unalias(), (exp.Column, exp.Star)):
+    tooltips = {}
+    for i, projection in enumerate(projections):
+        name = projection.alias_or_name
+        column = columns[i] if positional else by_name.get(name.lower())
+        if column is None or isinstance(projection.unalias(), exp.Star):
             continue
-        target_column = expression.alias_or_name or expression.sql(dialect=dialect)
-        trace_target = expression.alias_or_name
-        query_to_trace = parsed
-
-        if not trace_target:
-            trace_target = f"_col_{i}"
-            query_to_trace = parsed.copy()
-            query_to_trace.find(exp.Select).expressions[i] = expression.as_(trace_target)
-
+        traced = select
+        if not projection.alias and not isinstance(projection, exp.Column):
+            name = f"_col_{i}"
+            traced = select.copy()
+            traced.expressions[i] = projection.as_(name)
         try:
-            node = lineage(trace_target, query_to_trace, schema=None, dialect=dialect)
+            node = lineage(name, traced, schema=None, dialect=dialect)
         except sqlglot.errors.SqlglotError:
             continue
-
-        if isinstance(node.expression, exp.Alias):
-            formula = node.expression.this.sql(dialect=dialect)
-        else:
-            formula = node.expression.sql(dialect=dialect)
-
-        source_columns = [
-            f"{leaf.source.name}.{leaf.name.split('.')[-1]}"
-            for leaf in node.walk()
-            if not leaf.downstream and isinstance(leaf.source, exp.Table)
-        ]
-
-        provenance_list.append({
-            "column": target_column,
-            "expression": formula,
-            "source_columns": list(dict.fromkeys(source_columns)),
-            "grouped_by": group_by_str
-        })
-
-    return provenance_list
+        root = _root_expression(node)
+        if root is None or isinstance(root, exp.Column):
+            continue
+        tooltip = root.sql(dialect=dialect)
+        if group := _group_by(node, dialect):
+            tooltip += f", grouped by {group}"
+        tooltips[column] = tooltip
+    return tooltips
