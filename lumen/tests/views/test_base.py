@@ -500,6 +500,22 @@ def test_vega_layered_choropleth_registers_the_named_dataset(set_root):
     assert "data" not in final_spec
 
 
+def test_vega_layer_registers_name_only_dataset(set_root):
+    """A name-only layer must resolve to the pipeline rows it names."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layer": [
+            {"data": {"name": "airports"}, "mark": "point"},
+        ],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == {"name": "airports"}
+    pd.testing.assert_frame_equal(final_spec["datasets"]["airports"], pipeline.data)
+
+
 def test_vega_defaults_schema(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
