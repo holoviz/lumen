@@ -464,7 +464,19 @@ class DuckDBSource(BaseSQLSource):
         else:
             ephemeral_tables = {}
 
-        mirrors = spec.pop("mirrors", {})
+        # Mirrors are ingested when the source is built, so they have to be
+        # rebuilt from their specs before it, not after
+        mirrors = {}
+        for table, mirror in spec.pop("mirrors", {}).items():
+            if isinstance(mirror, (tuple, list)):  # a tuple comes back from YAML as a list
+                src_spec, src_table = mirror
+                mirrors[table] = (cls.from_spec(src_spec), src_table)
+            elif 'serializer' in mirror:  # a serialized DataFrame
+                mirrors[table] = Serializer.deserialize(mirror)
+            else:
+                mirrors[table] = Pipeline.from_spec(mirror)
+        if mirrors:
+            spec['mirrors'] = mirrors
 
         source = super().from_spec(spec)
         if not ephemeral_tables:
@@ -480,18 +492,6 @@ class DuckDBSource(BaseSQLSource):
                 continue
             new_tables[t] = source.sql_expr.format(table=t)
         source.tables = dict(new_tables, **tables)
-
-        resolved_mirrors = {}
-        for table, mirror in mirrors.items():
-            if isinstance(mirror, tuple):
-                src_spec, src_table = mirror
-                source = cls.from_spec(src_spec)
-                resolved_mirrors[table] = (source, src_table)
-            elif mirror.get('type') == 'pipeline':
-                resolved_mirrors[table] = Pipeline.from_spec(mirror)
-            else:
-                resolved_mirrors[table] = Serializer.deserialize(mirror)
-        spec['mirrors'] = resolved_mirrors
         return source
 
     def create_sql_expr_source(
