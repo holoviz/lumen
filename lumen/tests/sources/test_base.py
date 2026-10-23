@@ -15,6 +15,7 @@ from lumen.sources.base import Source, cached
 from lumen.state import state
 from lumen.transforms.sql import SQLLimit
 
+
 def assert_df_equal(df1, df2):
     pd.testing.assert_frame_equal(df1, df2, check_dtype=False)
 
