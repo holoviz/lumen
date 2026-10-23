@@ -512,4 +512,3 @@ def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, 
         raise IndexError
     monkeypatch.setattr(editors_module, "column_tooltips", boom)
     assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
-
