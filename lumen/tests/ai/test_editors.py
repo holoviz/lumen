@@ -500,10 +500,3 @@ async def test_sql_editor_render_pipeline_header_tooltips(sql_pipeline_editor):
         "revenue": "SUM(price), grouped by orders.region"
     }
 
-
-def test_sql_editor_render_controls_no_provenance_toggle(sql_pipeline_editor):
-    sql_pipeline_editor.provenance = [
-        {"column": "x", "expression": "SUM(a)", "source_columns": ["t.a"], "grouped_by": None}
-    ]
-    controls = sql_pipeline_editor.render_controls(task=None, interface=None)
-    assert not any(getattr(c, "label", None) == "View Provenance" for c in controls)

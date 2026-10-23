@@ -160,7 +160,7 @@ class LumenEditor(Viewer):
         name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', cls.__name__)
         return re.sub(r'([a-z\d])([A-Z])', r'\1_\2', name).lower() + f'.{fmt}'
 
-    def _render_export_menu(self) -> MenuButton:
+    def render_controls(self, task: Task, interface: ChatFeed):
         export_menu = MenuButton(
             label=f"Export {self._label} as", variant='text', icon="file_download", margin=0,
             items=[
@@ -183,12 +183,13 @@ class LumenEditor(Viewer):
             filename=self.title or 'output', visible=False
         )
         export_menu.attached.append(file_download)
-        return export_menu
 
-    def render_controls(self, task: Task, interface: ChatFeed):
-        controls = [control(interface=interface, task=task, view=self) for control in self._controls]
-        controls.append(self._render_export_menu())
-        return Row(*controls, sizing_mode="stretch_width", margin=(0, 10))
+        return Row(
+            *(control(interface=interface, task=task, view=self) for control in self._controls),
+            export_menu,
+            sizing_mode="stretch_width",
+            margin=(0, 10)
+        )
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         if fmt not in self.export_formats:
@@ -751,8 +752,9 @@ class SQLEditor(LumenEditor):
         ]
         self._filter_paper.visible = bool(len(self._filter_area))
 
-    def _render_filter_menu(self) -> MenuToggle:
-        return MenuToggle(
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        filter_controls = MenuToggle(
             items=self._filter_items(),
             label="Add Filter",
             icon="filter_list",
@@ -760,12 +762,8 @@ class SQLEditor(LumenEditor):
             variant="text",
             on_click=self._add_filter,
         )
-
-    def render_controls(self, task: Task, interface: ChatFeed):
-        controls = [control(interface=interface, task=task, view=self) for control in self._controls]
-        controls.append(self._render_filter_menu())
-        controls.append(self._render_export_menu())
-        return Row(*controls, sizing_mode="stretch_width", margin=(0, 10))
+        controls.insert(-1, filter_controls)
+        return controls
 
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)

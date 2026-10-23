@@ -2639,10 +2639,8 @@ class ExplorerUI(UI):
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
-        editor_col = Column(editor, width_policy="max", scroll="y-auto")
-
         vsplit = VSplit(
-            editor_col,
+            Column(view.editor, width_policy="max", scroll="y-auto"),
             view,
             expanded_sizes=(20, 80),
             sizes=(20, 80),
