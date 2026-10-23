@@ -68,11 +68,11 @@ _PAGINATED_TABLE_STYLES = """
   flex-wrap: wrap !important;
 }
 /* Header tooltips (column provenance) otherwise render light text on a
-   white box under dark themes, making them unreadable. */
+   white box under dark themes; match the MUI tooltip instead. */
 .tabulator-tooltip {
-  background: #2b2b2b !important;
-  color: #f5f5f5 !important;
-  border: 1px solid #555 !important;
+  background: var(--mui-palette-Tooltip-bg, #616161) !important;
+  color: var(--mui-palette-common-white, #fff) !important;
+  border: none !important;
   border-radius: 4px !important;
   padding: 6px 10px !important;
   font-size: 12px !important;
