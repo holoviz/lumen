@@ -41,7 +41,7 @@ from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_frame
+from .utils import describe_data, extract_provenance, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
@@ -239,14 +239,14 @@ class LumenEditor(Viewer):
             self.component, self.spec, self._spec_dict, pipeline=pipeline
         )
 
-    def _pipeline_table_kwargs(self) -> dict[str, Any]:
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
         return {}
 
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote', min_height=200,
             sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
-            **self._pipeline_table_kwargs(),
+            **self._pipeline_table_kwargs(pipeline),
         )
         layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
@@ -611,8 +611,6 @@ class SQLEditor(LumenEditor):
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
-    provenance = param.List(default=[])
-
     # Icon shown in the "Add Filter" menu for each schema type.
     _filter_icons = {
         "number": "calculate",
@@ -620,19 +618,13 @@ class SQLEditor(LumenEditor):
         "boolean": "toggle_on",
     }
 
-    def _pipeline_table_kwargs(self) -> dict[str, Any]:
-        kwargs = super()._pipeline_table_kwargs()
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        # Derived from the current spec so tooltips follow SQL edits.
         header_tooltips = {}
-        for item in self.provenance:
-            col = item.get("column")
-            expr = item.get("expression")
-            if not col or not expr:
-                continue
-            grp = item.get("grouped_by")
-            header_tooltips[col] = f"{expr}, grouped by {grp}" if grp else expr
-        if header_tooltips:
-            kwargs["header_tooltips"] = header_tooltips
-        return kwargs
+        for item in extract_provenance(self.spec, pipeline.source.dialect):
+            grp = item["grouped_by"]
+            header_tooltips[item["column"]] = f"{item['expression']}, grouped by {grp}" if grp else item["expression"]
+        return {"header_tooltips": header_tooltips} if header_tooltips else {}
 
     def _render_editor(self):
         editor = super()._render_editor()

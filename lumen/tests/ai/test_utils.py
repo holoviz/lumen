@@ -21,7 +21,8 @@ from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
-    count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
+    count_tokens, describe_data, extract_provenance, find_slug_by_table_name,
+    format_msg_content,
     format_tool_error, fuse_messages, get_schema, inline_schema_defs,
     mutate_user_message, parse_huggingface_url, render_template, report_error,
     retry_llm_output, sanitize_column_names, serialize_image_content,
@@ -1015,3 +1016,84 @@ def test_format_tool_error_redacts_url_secrets(text, expected):
 
 def test_format_tool_error_truncates():
     assert len(format_tool_error(ValueError("x" * 5000), max_length=200)) <= 200
+
+
+@pytest.mark.parametrize(
+    "sql, expected",
+    [
+        (
+            # No derived columns (direct pass-through)
+            "SELECT name, age FROM users",
+            [],
+        ),
+        (
+            # GROUP BY with aggregations
+            "SELECT region, SUM(population) AS total_pop, AVG(price) AS avg_price FROM sample_data GROUP BY region",
+            [
+                {
+                    "column": "total_pop",
+                    "expression": "SUM(sample_data.population)",
+                    "source_columns": ["sample_data.population"],
+                    "grouped_by": "region",
+                },
+                {
+                    "column": "avg_price",
+                    "expression": "AVG(sample_data.price)",
+                    "source_columns": ["sample_data.price"],
+                    "grouped_by": "region",
+                },
+            ],
+        ),
+        (
+            # JOIN with derived expression
+            "SELECT u.name, o.amount * 1.1 AS total_amount FROM users AS u JOIN orders AS o ON u.id = o.user_id",
+            [
+                {
+                    "column": "total_amount",
+                    "expression": "o.amount * 1.1",
+                    "source_columns": ["orders.amount"],
+                    "grouped_by": None,
+                },
+            ],
+        ),
+        (
+            # Common Table Expression (CTE)
+            "WITH summary AS (SELECT department, AVG(salary) AS avg_sal FROM employees GROUP BY department) "
+            "SELECT department, avg_sal * 1.1 AS projected_sal FROM summary",
+            [
+                {
+                    "column": "projected_sal",
+                    "expression": "summary.avg_sal * 1.1",
+                    "source_columns": ["employees.salary"],
+                    "grouped_by": None,
+                },
+            ],
+        ),
+        (
+            # Unaliased derived column (e.g. LLM generated query without AS alias)
+            "SELECT SUM(population) FROM sample_data",
+            [
+                {
+                    "column": "SUM(population)",
+                    "expression": "SUM(sample_data.population)",
+                    "source_columns": ["sample_data.population"],
+                    "grouped_by": None,
+                },
+            ],
+        ),
+        (
+            # Mixed-case pass-through column is skipped; only the aggregate remains
+            'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
+            [
+                {
+                    "column": "avg_close",
+                    "expression": 'AVG(stocks."Close")',
+                    "source_columns": ['stocks."Close"'],
+                    "grouped_by": '"Symbol"',
+                },
+            ],
+        ),
+    ],
+)
+def test_extract_provenance(sql, expected):
+    assert extract_provenance(sql) == expected

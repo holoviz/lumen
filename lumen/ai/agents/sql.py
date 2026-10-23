@@ -12,8 +12,6 @@ from pydantic import (
     BaseModel, Field, create_model, field_validator, model_validator,
 )
 from pydantic.fields import FieldInfo
-from sqlglot import exp
-from sqlglot.lineage import lineage
 
 from ...filters import ConstantFilter
 from ...pipeline import Pipeline
@@ -1293,11 +1291,9 @@ class SQLAgent(BaseLumenAgent):
         step_title: str | None,
     ) -> SQLEditor:
         """Finalize execution for final step."""
-        dialect = pipeline.source.dialect if pipeline and pipeline.source else None
-        provenance = self._extract_provenance(sql, dialect)
 
         view = self._editor_type(
-            component=pipeline, title=step_title, spec=sql, provenance=provenance
+            component=pipeline, title=step_title, spec=sql
         )
         return view
 
@@ -1343,82 +1339,6 @@ class SQLAgent(BaseLumenAgent):
                 condition = f"= {query!r}"
             conditions.append(f"{filt.field} {condition}")
         return conditions or None
-
-    @staticmethod
-    def _extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]:
-        """
-        Extracts lineage information (expression, source columns with relations, grouped by)
-        using SQLGlot's lineage API.
-        """
-        try:
-            parsed = sqlglot.parse_one(sql_query, read=dialect)
-        except Exception:
-            return []
-
-        provenance_list = []
-
-        main_select = parsed.find(exp.Select)
-        if not main_select:
-            return []
-
-        group_by_cols = []
-        if main_select.args.get("group"):
-            for group_expr in main_select.args["group"].expressions:
-                group_by_cols.append(group_expr.sql(dialect=dialect))
-        group_by_str = ", ".join(group_by_cols) if group_by_cols else None
-
-        for i, expression in enumerate(main_select.expressions):
-            target_column = expression.alias_or_name or expression.sql(dialect=dialect)
-            trace_target = expression.alias_or_name
-            query_to_trace = parsed
-
-            if not trace_target:
-                trace_target = f"_col_{i}"
-                query_to_trace = parsed.copy()
-                query_to_trace.find(exp.Select).expressions[i] = expression.as_(trace_target)
-
-            try:
-                node = lineage(trace_target, query_to_trace, schema=None, dialect=dialect)
-            except sqlglot.errors.SqlglotError:
-                continue
-
-            if isinstance(node.expression, exp.Alias):
-                formula = node.expression.this.sql(dialect=dialect)
-            else:
-                formula = node.expression.sql(dialect=dialect)
-
-            source_columns = []
-            for leaf in node.walk():
-                if not leaf.downstream:
-                    if isinstance(leaf.source, exp.Table):
-                        relation_name = leaf.source.name
-                        col_name = leaf.name.split(".")[-1]
-                        full_col_name = f"{relation_name}.{col_name}"
-                    else:
-                        full_col_name = leaf.name
-
-                    source_columns.append(full_col_name)
-
-            source_columns = list(dict.fromkeys(source_columns))
-
-            # Skip direct pass-through columns. Compare case-insensitively:
-            # lineage normalizes identifiers (e.g. "Symbol" -> "symbol").
-            is_same = False
-            if len(source_columns) == 1:
-                src_col = source_columns[0].split('.')[-1].strip('"').strip("'")
-                target = target_column.strip('"').strip("'")
-                if target.lower() == src_col.lower() or target.lower() == source_columns[0].lower():
-                    is_same = True
-
-            if not is_same:
-                provenance_list.append({
-                    "column": target_column,
-                    "expression": formula,
-                    "source_columns": source_columns,
-                    "grouped_by": group_by_str
-                })
-
-        return provenance_list
 
     @retry_llm_output()
     async def _render_execute_query(
