@@ -627,8 +627,13 @@ class SQLEditor(LumenEditor):
             col = columns.get(item["column"].lower())
             if col is None:
                 continue
-            grp = item["grouped_by"]
-            header_tooltips[col] = f"{item['expression']}, grouped by {grp}" if grp else item["expression"]
+            tooltip = item["expression"]
+            # CTEs and subqueries only show an intermediate alias, so name the roots.
+            if roots := [src for src in item["source_columns"] if src not in tooltip]:
+                tooltip += f" from {', '.join(roots)}"
+            if item["grouped_by"]:
+                tooltip += f", grouped by {item['grouped_by']}"
+            header_tooltips[col] = tooltip
         return {"header_tooltips": header_tooltips} if header_tooltips else {}
 
     def _render_editor(self):

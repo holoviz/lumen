@@ -490,3 +490,19 @@ def test_sql_editor_header_tooltips_match_unaliased_columns(monkeypatch):
     kwargs = editor._pipeline_table_kwargs(pipeline)
     assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by category"}}
 
+
+def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = (
+        "WITH s AS (SELECT category, SUM(amount) AS total FROM orders GROUP BY category) "
+        "SELECT category, total * 2 AS doubled FROM s"
+    )
+    source = DuckDBSource(
+        initializers=["CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 1.0)) AS t(category, amount)"],
+        tables={"q": sql},
+    )
+    pipeline = Pipeline(source=source, table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"doubled": "s.total * 2 from orders.amount"}}
+

@@ -2400,17 +2400,11 @@ def extract_provenance(sql_query: str, dialect: str | None = None) -> list[dict]
         else:
             formula = node.expression.sql(dialect=dialect)
 
-        source_columns = []
-        for leaf in node.walk():
-            if not leaf.downstream:
-                if isinstance(leaf.source, exp.Table):
-                    relation_name = leaf.source.name
-                    col_name = leaf.name.split(".")[-1]
-                    full_col_name = f"{relation_name}.{col_name}"
-                else:
-                    full_col_name = leaf.name
-
-                source_columns.append(full_col_name)
+        source_columns = [
+            f"{leaf.source.name}.{leaf.name.split('.')[-1]}"
+            for leaf in node.walk()
+            if not leaf.downstream and isinstance(leaf.source, exp.Table)
+        ]
 
         provenance_list.append({
             "column": target_column,

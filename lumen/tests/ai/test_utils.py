@@ -1088,7 +1088,7 @@ def test_format_tool_error_truncates():
                 {
                     "column": "n",
                     "expression": "COUNT(*)",
-                    "source_columns": ["n"],
+                    "source_columns": [],
                     "grouped_by": "region",
                 },
                 {
