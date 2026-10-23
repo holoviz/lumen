@@ -1980,11 +1980,14 @@ class ClaudeCode(LlmCli):
 
     _auth_status_args = ("auth", "status")
 
+    # Not plan: every tool is already disabled, and plan mode adds planning
+    # remarks to each answer ("I'll answer directly rather than creating a
+    # plan file"), which leak into Lumen's text and break JSON replies.
     permission_mode = param.Selector(
-        default="plan",
+        default="dontAsk",
         objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
         constant=True,
-        doc="Claude Code permission mode. The non-writing plan mode is the default.",
+        doc="Claude Code permission mode. dontAsk never prompts and, with every tool disabled, never acts.",
     )
 
     max_turns = param.Integer(
