@@ -758,6 +758,10 @@ def normalize_table_name(name: str) -> str:
     and underscores) with underscores, strips leading/trailing underscores,
     and converts to lowercase.
 
+    Names that start with a digit are prefixed with ``t_``. Names that
+    normalize to empty (empty string or symbols only) fall back to
+    ``table``.
+
     This matches the behavior of DuckDBSource.normalize_table() to ensure
     consistent table naming across the codebase.
 
@@ -777,12 +781,16 @@ def normalize_table_name(name: str) -> str:
     'customer_orders'
     >>> normalize_table_name("My-Data File")
     'my_data_file'
-    >>> normalize_table_name("table__name")
-    'table_name'
+    >>> normalize_table_name("20_load_cells")
+    't_20_load_cells'
+    >>> normalize_table_name("!!!")
+    'table'
     """
     normalized = re.sub(r'\W+', '_', name).strip('_').lower()
-    if normalized and normalized[0].isdigit():
-        normalized = f"t_{normalized}"
+    if not normalized:
+        return "table"
+    if normalized[0].isdigit():
+        return f"t_{normalized}"
     return normalized
 
 
