@@ -9,7 +9,7 @@ from collections.abc import Callable
 from inspect import Signature, signature
 from types import FunctionType
 from typing import (
-    Any, Literal, TypeVar, Union, get_args, get_origin,
+    Annotated, Any, Literal, TypeVar, Union, get_args, get_origin,
 )
 
 import param
@@ -647,23 +647,101 @@ def function_to_model(function: FunctionType, skipped: list[str] | None = None) 
     return model
 
 
+def _fixed_list(item: Any, length: int | None) -> Any:
+    return Annotated[list[item], Field(min_length=length, max_length=length)] if length else list[item]
+
+
+def _bounded_number(base: type, bounds: tuple[Any, Any] | None) -> Any:
+    if not bounds:
+        return base
+    constraints = {
+        key: bound for key, bound in zip(("ge", "le"), bounds, strict=False)
+        if isinstance(bound, (int, float)) and not isinstance(bound, bool)
+    }
+    return Annotated[base, Field(**constraints)] if constraints else base
+
+
+def parameter_to_json_type(
+    parameter: param.Parameter,
+    options: dict[Any, Any] | None = None,
+    bounds: tuple[Any, Any] | None = None,
+    max_options: int | None = None,
+) -> Any:
+    """
+    Map a parameter to an annotation whose JSON schema an LLM can fill in.
+
+    Unlike :func:`parameter_to_annotation` this returns None for parameters
+    that have no JSON representation, never adds ``None`` for ``allow_None``
+    and takes the constraints from the caller, since a Panel widget declares
+    the options and bounds of its ``value`` on sibling parameters.
+
+    Parameters
+    ----------
+    parameter : param.Parameter
+        The parameter to map.
+    options : dict, optional
+        Allowed values keyed by the label the LLM should send.
+    bounds : tuple, optional
+        Inclusive ``(low, high)`` bounds of a numeric parameter.
+    max_options : int, optional
+        Above this many options the labels are not enumerated in the schema.
+    """
+    multiple = isinstance(parameter, (param.List, param.ListSelector))
+    if options is not None:
+        labels = list(options)
+        item = Literal[tuple(labels)] if max_options is None or len(labels) <= max_options else str
+        return list[item] if multiple else item
+    if isinstance(parameter, param.Boolean):  # includes param.Event
+        return bool
+    if isinstance(parameter, param.Integer):
+        return _bounded_number(int, bounds)
+    if isinstance(parameter, param.CalendarDate):
+        return datetime.date
+    if isinstance(parameter, param.Date):
+        return datetime.datetime
+    if isinstance(parameter, param.Number):
+        return _bounded_number(float, bounds)
+    # Tuples are declared as fixed-length arrays; the prefixItems pydantic
+    # generates for tuple annotations are rejected by Gemini.
+    if isinstance(parameter, param.CalendarDateRange):
+        return _fixed_list(datetime.date, 2)
+    if isinstance(parameter, param.DateRange):
+        return _fixed_list(datetime.datetime, 2)
+    if isinstance(parameter, param.Range):
+        return _fixed_list(float, 2)
+    if isinstance(parameter, param.NumericTuple):
+        return _fixed_list(float, parameter.length)
+    if isinstance(parameter, param.Tuple):
+        return _fixed_list(str | float | bool, parameter.length)
+    if isinstance(parameter, (param.String, param.Path, param.Color)):
+        return str
+    if isinstance(parameter, param.List):
+        item_type = getattr(parameter, "item_type", None)
+        return list[item_type] if item_type in (str, int, float, bool) else list
+    if isinstance(parameter, param.Dict):
+        return dict[str, Any]
+    if isinstance(parameter, param.ClassSelector):
+        classes = parameter.class_ if isinstance(parameter.class_, tuple) else (parameter.class_,)
+        if all(cls in (str, int, float, bool, list, dict) for cls in classes):
+            return Union[classes]  # noqa: UP007
+        return None
+    if type(parameter) is param.Parameter:
+        # An untyped schema gives the LLM nothing to go on and is rejected
+        # by Gemini, so offer the JSON scalars.
+        return str | float | bool
+    return None
+
+
 def parameter_to_annotation(parameter: param.Parameter) -> Any:
     """Map a Param parameter instance to a best-effort Python annotation."""
-    annotation = PARAM_TYPE_MAPPING.get(type(parameter))
-    if annotation is not None:
-        pass
-    elif isinstance(parameter, param.List):
-        annotation = list
-    elif isinstance(parameter, param.Dict):
-        annotation = dict
-    elif isinstance(parameter, param.Tuple):
-        annotation = tuple
-    elif isinstance(parameter, param.Selector):
-        objects = list(getattr(parameter, "objects", []) or [])
-        annotation = type(objects[0]) if objects else str
-    else:
+    options = None
+    if isinstance(parameter, param.Selector):
+        objects = list(parameter.get_range().values())
+        if objects and all(isinstance(o, (str, int, float, bool)) for o in objects):
+            options = {o: o for o in objects}
+    annotation = parameter_to_json_type(parameter, options=options, bounds=getattr(parameter, "bounds", None))
+    if annotation is None:
         annotation = str
-
     if parameter.allow_None:
         return annotation | None
     return annotation
