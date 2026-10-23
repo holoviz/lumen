@@ -621,8 +621,9 @@ class Planner(Coordinator):
             )
             actors_in_graph.add("ChatAgent")
 
+        # An empty plan has nothing to validate
         if (
-            tasks and  # an empty plan has nothing to validate
+            tasks and
             "ValidationAgent" in agents and
             self.validation_enabled and
             "ValidationAgent" not in actors_in_graph
