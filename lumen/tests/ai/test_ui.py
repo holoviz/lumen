@@ -43,7 +43,7 @@ from lumen.ai.agents.sql import SQLAgent, make_sql_model
 from lumen.ai.agents.vega_lite import (
     ChartSpec, VegaLiteAgent, VegaLiteSpec, VegaLiteSpecUpdate,
 )
-from lumen.ai.config import PROVIDED_SOURCE_NAME
+from lumen.ai.config import PROVIDED_SOURCE_NAME, GuardrailViolation
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.llm import (
@@ -146,6 +146,35 @@ async def explorer_ui_with_error(explorer_ui):
     await explorer_ui._execute_plan(plan)
 
     yield explorer_ui
+
+async def test_exploration_ui_guardrail_violation(explorer_ui):
+    """A block is shown as is; asking the LLM to explain it would send the blocked text again."""
+    def block():
+        raise GuardrailViolation("Blocked.", ["pii"], "output")
+
+    test_source = explorer_ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    explorer_ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT SUM(value) as value_sum FROM test_table",
+            table_slug="test_sql_agg",
+            tables=["test_table"]
+        ),
+        block,
+    ])
+    plan = Plan(
+        ActorTask(SQLAgent(llm=explorer_ui.llm)),
+        ActorTask(ChatAgent(llm=explorer_ui.llm)),
+        history=[{"content": "Sum value column", "role": "user"}],
+        title="Sum of value",
+        context=explorer_ui.context
+    )
+
+    await explorer_ui._execute_plan(plan)
+
+    tabs = explorer_ui._exploration['view'].view[0]
+    assert tabs[-1].object == "🛑 Blocked. (pii)"
+
 
 async def test_explorer_ui_initialization(explorer_ui):
     """Test that ExplorerUI initializes correctly."""

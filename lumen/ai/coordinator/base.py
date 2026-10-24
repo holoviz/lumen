@@ -28,7 +28,7 @@ from ..actor import Actor
 from ..agents import (
     Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
-from ..config import PROMPTS_DIR, MissingContextError
+from ..config import PROMPTS_DIR, GuardrailViolation, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
@@ -642,8 +642,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 sx={"bgcolor": "transparent"},
             )
             self.interface.stream(self.steps_layout, user="Planner")
-            agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
-            plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+            try:
+                agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
+                plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+            except GuardrailViolation as e:
+                self._todos_title.object = f"🛑 {e}"
+                return None
         if plan is not None:
             self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)

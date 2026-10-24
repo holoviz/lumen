@@ -25,7 +25,7 @@ from lumen.ai.agents import (
     ChatAgent, SourceAgent, SQLAgent, ValidationAgent,
 )
 from lumen.ai.agents.sql import make_sql_model
-from lumen.ai.config import PROMPTS_DIR
+from lumen.ai.config import PROMPTS_DIR, GuardrailViolation
 from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
@@ -101,6 +101,19 @@ async def test_planner_empty_plan(llm):
 
     assert title.object == "🧾 Checklist ready..."
     assert todos.object == ""
+
+
+async def test_planner_reports_a_guardrail_block(llm):
+    """A block while planning must reach the chat, not only the server log."""
+    def block():
+        raise GuardrailViolation("Blocked.", ["pii"], "input")
+
+    llm.set_responses([block])
+    planner = Planner(llm=llm)
+
+    assert await planner.respond([{"role": "user", "content": "What is the SSN of C0001?"}], {}) is None
+    title, _ = planner.interface[0].object.header
+    assert title.object == "🛑 Blocked. (pii)"
 
 
 async def test_planner_empty_plan_with_validation(llm):

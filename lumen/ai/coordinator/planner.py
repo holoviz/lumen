@@ -21,7 +21,7 @@ from pydantic.fields import FieldInfo
 
 from ..actor import _merge_prompt_tools
 from ..agents import Agent, SourceAgent, SQLAgent
-from ..config import PROMPTS_DIR
+from ..config import PROMPTS_DIR, GuardrailViolation
 from ..context import (
     LWW, ContextError, TContext, merge_contexts,
 )
@@ -331,6 +331,8 @@ class Planner(Coordinator):
                 prefix="[clarification]",
             )
             return result.yes
+        except GuardrailViolation:
+            raise
         except Exception:
             return False  # On failure, default to not clarifying
 
