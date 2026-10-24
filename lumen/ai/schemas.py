@@ -4,7 +4,7 @@ import asyncio
 import warnings
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import yaml
 
@@ -103,8 +103,24 @@ DEGRADED_NOTE = (
 )
 
 
+class TableMetadata(TypedDict, total=False):
+    """Metadata for a table stored in the AI context.
+
+    Each entry is keyed by table slug and may contain a description,
+    column metadata, source information, and other source-specific fields.
+    """
+
+    description: str
+    columns: dict[str, dict[str, Any]]
+    source_name: str
+
+TablesMetadata = dict[str, TableMetadata]
+
+
 @dataclass
 class Column:
+    """Represents a table column, its description, and additional metadata."""
+
     name: str
     description: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -124,6 +140,8 @@ class DocumentChunk:
 
 @dataclass
 class TableCatalogEntry:
+    """Describes a discovered table, its columns, and its metadata."""
+
     table_slug: str
     similarity: float
     columns: list[Column]
