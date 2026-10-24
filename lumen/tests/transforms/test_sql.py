@@ -1045,6 +1045,13 @@ def test_sql_select_from_duckdb_path():
     assert result == expected
 
 
+@pytest.mark.parametrize("args", ["nullstr='NA'", "header=true, delim=';'"])
+def test_sql_select_from_duckdb_path_with_keyword_arguments(args):
+    result = SQLSelectFrom.apply_to(f"read_csv('data/life_expectancy.csv', {args})")
+    assert result.startswith("SELECT * FROM READ_CSV('data/life_expectancy.csv', ")
+    assert '"read_csv' not in result
+
+
 def test_sql_select_from_table_starting_with_digit():
     result = SQLSelectFrom.apply_to("2014_world_gdp_with_codes")
     expected = 'SELECT * FROM "2014_world_gdp_with_codes"'
