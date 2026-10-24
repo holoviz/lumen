@@ -124,6 +124,19 @@ class RequestBudgetExceededError(Exception):
     """
 
 
+class GuardrailViolation(Exception):
+    """
+    Raised when a guardrail blocks text sent to or returned by an LLM.
+
+    Unrecoverable by design: retrying would send the same text again.
+    """
+
+    def __init__(self, message: str, violations: list[str], mode: str):
+        super().__init__(f"{message} ({', '.join(violations)})")
+        self.violations = violations
+        self.mode = mode
+
+
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
@@ -159,6 +172,7 @@ UNRECOVERABLE_ERRORS = (
     asyncio.CancelledError,
     UserCancelledError,
     RequestBudgetExceededError,
+    GuardrailViolation,
 )
 
 PROVIDED_SOURCE_NAME = "ProvidedSource00000"
