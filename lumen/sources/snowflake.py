@@ -146,7 +146,15 @@ class SnowflakeSource(BaseSQLSource):
             conn_kwargs['warehouse'] = self.warehouse
 
         self._conn = conn or snowflake.connector.connect(**conn_kwargs)
-        self._cursor = self._conn.cursor()
+
+    @contextlib.contextmanager
+    def _open_cursor(self):
+        """Open a cursor in the calling thread and close it when the statement is done."""
+        cursor = self._conn.cursor()
+        try:
+            yield cursor
+        finally:
+            cursor.close()
 
     @staticmethod
     def _decode_secret(secret: str | bytes) -> bytes | None:
@@ -295,11 +303,32 @@ class SnowflakeSource(BaseSQLSource):
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
-        if params:
-            df = self._cursor.execute(sql_query, params, *args, **kwargs).fetch_pandas_all()
-        else:
-            df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
+        with self._open_cursor() as cursor:
+            if params:
+                df = cursor.execute(sql_query, params, *args, **kwargs).fetch_pandas_all()
+            else:
+                df = cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
+
+    def _submit_async_query(self, sql_query: str, params: list | dict | None, *args, **kwargs) -> str:
+        """Submit an async query and return its id, closing the submit cursor."""
+        with self._open_cursor() as cursor:
+            if params:
+                cursor.execute_async(sql_query, params, *args, **kwargs)
+            else:
+                cursor.execute_async(sql_query, *args, **kwargs)
+            return cursor.sfqid
+
+    def _fetch_async_result(self, query_id: str) -> pd.DataFrame:
+        """Download an async query's result on a cursor of its own."""
+        with self._open_cursor() as cursor:
+            cursor.get_results_from_sfqid(query_id)
+            return cursor.fetch_pandas_all()
+
+    def _cancel_query(self, query_id: str) -> None:
+        """Cancel a server-side query on a cursor of its own."""
+        with self._open_cursor() as cursor:
+            cursor.execute(f"SELECT SYSTEM$CANCEL_QUERY('{query_id}')")
 
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         """
@@ -324,11 +353,10 @@ class SnowflakeSource(BaseSQLSource):
         pd.DataFrame
             The query result as a pandas DataFrame with supported dtypes
         """
-        if params:
-            self._cursor.execute_async(sql_query, params, *args, **kwargs)
-        else:
-            self._cursor.execute_async(sql_query, *args, **kwargs)
-        query_id = self._cursor.sfqid
+        submit_query = asyncio.ensure_future(
+            asyncio.to_thread(self._submit_async_query, sql_query, params, *args, **kwargs)
+        )
+        query_id = None
 
         # Poll query status. Each status check is a small HTTPS request
         # — keep it on a worker thread so we don't block the loop even
@@ -340,6 +368,7 @@ class SnowflakeSource(BaseSQLSource):
             QueryStatus.FAILED_WITH_INCIDENT,
         )
         try:
+            query_id = await asyncio.shield(submit_query)
             while True:
                 status = await asyncio.to_thread(
                     self._conn.get_query_status, query_id
@@ -348,23 +377,29 @@ class SnowflakeSource(BaseSQLSource):
                     break
                 await asyncio.sleep(0.5)  # Check every 500ms
         except asyncio.CancelledError:
-            # A caller's timeout cancels the poll; without this the warehouse
-            # keeps running (and billing) the query.
-            await asyncio.to_thread(
-                self._conn.cursor().execute, f"SELECT SYSTEM$CANCEL_QUERY('{query_id}')"
-            )
+            # A caller's timeout can cancel during submit or polling. Recover
+            # the query id if submit is still in flight, then cancel the
+            # server-side query; without this the warehouse keeps running (and
+            # billing) it. A failed submit leaves nothing to cancel, and the
+            # caller's cancellation must still surface if either step fails.
+            if query_id is None:
+                with contextlib.suppress(Exception):
+                    query_id = await asyncio.shield(submit_query)
+            if query_id is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(self._cancel_query, query_id)
             raise
 
         if status != QueryStatus.SUCCESS:
             raise snowflake.connector.errors.ProgrammingError(
                 f"Query failed with status: {status}")
 
-        self._cursor.get_results_from_sfqid(query_id)
-        df = self._cursor.fetch_pandas_all()
+        df = await asyncio.to_thread(self._fetch_async_result, query_id)
         return self._cast_to_supported_dtypes(df)
 
     async def execute_with_timeout(self, sql_query: str, timeout: float | None, fetch: bool = False):
-        # Only execute_async cancels the query on timeout; fetch runs in a thread.
+        # Always use execute_async, which cancels the server-side query on
+        # timeout; the base class's fetch path simply runs in a thread.
         df = await super().execute_with_timeout(sql_query, timeout)
         return to_backend(df, self.dataframe_backend) if fetch else df
 
@@ -433,12 +468,19 @@ class SnowflakeSource(BaseSQLSource):
             return
 
         try:
-            # Set the timeout in seconds
-            self._cursor.execute(f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {seconds}")
+            # ALTER SESSION is session-scoped, so closing the cursor does not undo it.
+            self._execute_session_statement(
+                f"ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = {seconds}"
+            )
             yield
         finally:
             # Restore the original timeout
-            self._cursor.execute("ALTER SESSION UNSET STATEMENT_TIMEOUT_IN_SECONDS")
+            self._execute_session_statement("ALTER SESSION UNSET STATEMENT_TIMEOUT_IN_SECONDS")
+
+    def _execute_session_statement(self, sql_query: str) -> None:
+        """Run a session-scoped statement without borrowing another query's cursor."""
+        with self._open_cursor() as cursor:
+            cursor.execute(sql_query)
 
     @cached_schema
     def get_schema(self, table: str | None = None, limit: int | None = None, shuffle: bool = False) -> dict:
@@ -557,15 +599,11 @@ class SnowflakeSource(BaseSQLSource):
 
     def close(self):
         """
-        Close the Snowflake connection and cursor, releasing associated resources.
+        Close the Snowflake connection, releasing associated resources.
 
         This method should be called when the source is no longer needed to prevent
         connection leaks and properly clean up server-side resources.
         """
-        if self._cursor is not None:
-            self._cursor.close()
-            self._cursor = None
-
         if self._conn is not None:
             self._conn.close()
             self._conn = None
