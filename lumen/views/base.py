@@ -1630,6 +1630,28 @@ class VegaLiteView(View):
     _extension = 'vega'
 
     @classmethod
+    def _named_data_sources(cls, node: Any) -> set[str]:
+        """Return datasets referenced by layers without their own data source."""
+        if isinstance(node, list):
+            return set().union(*(cls._named_data_sources(item) for item in node))
+        if not isinstance(node, dict):
+            return set()
+
+        names = set()
+        data = node.get("data")
+        if (
+            isinstance(data, dict)
+            and isinstance(data.get("name"), str)
+            and not {"url", "values"} & data.keys()
+        ):
+            names.add(data["name"])
+
+        for key in ("layer", "hconcat", "vconcat", "concat"):
+            if key in node:
+                names.update(cls._named_data_sources(node[key]))
+        return names
+
+    @classmethod
     def _declares_own_data(cls, node: Any) -> bool:
         """Whether the spec supplies its own data (a url or inline values) anywhere.
 
@@ -1776,6 +1798,7 @@ class VegaLiteView(View):
 
         spec = self._coerce_temporal(spec, df)
         spec = self._escape_field_names(spec, set(df.columns))
+        named_datasets = self._named_data_sources(spec)
 
         if self._declares_own_data(spec):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
@@ -1784,7 +1807,10 @@ class VegaLiteView(View):
             # Copied rather than mutated in place: self.spec is reused across
             # renders, and growing its datasets dict would leak frames.
             datasets = dict(self.spec.get('datasets', {}))
-            datasets[self.pipeline.table] = geometry_to_wkt(df)
+            pipeline_data = geometry_to_wkt(df)
+            datasets[self.pipeline.table] = pipeline_data
+            for name in named_datasets:
+                datasets.setdefault(name, pipeline_data)
             spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
             # A lat/lon map's basemap layer brings its own url, but the point layers
             # beside it carry no data and would draw nothing without the table.
@@ -1800,9 +1826,16 @@ class VegaLiteView(View):
             name = spec_data.get('name', self.pipeline.table)
             features = geometry_to_geojson(df)['features']
             datasets = dict(self.spec.get('datasets', {}), **{name: features})
+            for dataset_name in named_datasets:
+                datasets.setdefault(dataset_name, features)
             encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
+            datasets = dict(self.spec.get('datasets', {}))
+            for name in named_datasets:
+                datasets.setdefault(name, df)
             encoded = dict(spec, data={'values': df, **spec_data})
+            if datasets:
+                encoded['datasets'] = datasets
         return dict(object=encoded, **self.kwargs)
 
 

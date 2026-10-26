@@ -500,6 +500,71 @@ def test_vega_layered_choropleth_registers_the_named_dataset(set_root):
     assert "data" not in final_spec
 
 
+def test_vega_layer_registers_name_only_dataset(set_root):
+    """A name-only layer must resolve to the pipeline rows it names."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layer": [
+            {"data": {"name": "airports"}, "mark": "point"},
+        ],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == {"name": "airports"}
+    pd.testing.assert_frame_equal(final_spec["datasets"]["airports"], pipeline.data)
+
+
+def test_vega_layer_registers_name_only_dataset_with_external_data(set_root):
+    """A named layer gets pipeline rows even when another layer owns the data URL."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "data": {"url": "https://example.com/boundaries.json"},
+        "layer": [{"data": {"name": "airports"}, "mark": "point"}],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["data"] == spec["data"]
+    assert final_spec["layer"][0]["data"] == {"name": "airports"}
+    pd.testing.assert_frame_equal(final_spec["datasets"]["airports"], pipeline.data)
+
+
+def test_vega_named_data_sources_excludes_self_contained_data():
+    spec = {
+        "layer": [
+            {"data": {"name": "pipeline"}},
+            {"data": {"name": "remote", "url": "https://example.com/data.json"}},
+            {"data": {"name": "inline", "values": [{"x": 1}]}},
+        ],
+    }
+
+    assert VegaLiteView._named_data_sources(spec) == {"pipeline"}
+    assert VegaLiteView._named_data_sources("not a spec") == set()
+
+
+def test_vega_registers_name_only_dataset_for_geojson_layers(monkeypatch):
+    """Named datasets in the GeoJSON path work without the optional GeoPandas dep."""
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"geo": pd.DataFrame({"x": [1]})}),
+        table="geo",
+    )
+    features = [{"type": "Feature", "properties": {"x": 1}, "geometry": None}]
+    monkeypatch.setattr("lumen.views.base.is_geodataframe", lambda data: True)
+    monkeypatch.setattr(
+        "lumen.views.base.geometry_to_geojson",
+        lambda data: {"features": features},
+    )
+
+    spec = {"layer": [{"data": {"name": "named_geo"}, "mark": "point"}]}
+    encoded = VegaLiteView(pipeline=pipeline, spec=spec)._get_params()["object"]
+
+    assert encoded["data"] == {"name": "geo"}
+    assert encoded["datasets"]["named_geo"] == features
+
+
 def test_vega_defaults_schema(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
@@ -636,13 +701,16 @@ def _serialize(view):
 def test_vegalite_view_geometry_as_geoshape_data():
     """VegaLiteView hands a GeoDataFrame to the Vega pane as a list of GeoJSON
     features, the one geometry form the pane passes through untouched."""
-    spec = {'mark': 'geoshape',
-            'encoding': {'color': {'field': 'properties.pop', 'type': 'quantitative'}}}
+    spec = {
+        'layer': [{'data': {'name': 'named_geo'}, 'mark': 'geoshape'}],
+        'encoding': {'color': {'field': 'properties.pop', 'type': 'quantitative'}},
+    }
     view = VegaLiteView(pipeline=_geo_pipeline(), spec=spec)
     obj = view._get_params()['object']
 
     assert obj['data'] == {'name': 'geo'}
     assert len(obj['datasets']['geo']) == 2
+    assert obj['datasets']['named_geo'] == obj['datasets']['geo']
     assert obj['datasets']['geo'][0]['properties']['pop'] == 1
     json.dumps(obj['datasets'])
     _serialize(view)
