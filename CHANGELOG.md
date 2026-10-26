@@ -99,7 +99,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Keep the nav drawer toggle clear of chat avatars ([#2218](https://github.com/holoviz/lumen/pull/2218))
 * Size the code editor to match the body text ([#2219](https://github.com/holoviz/lumen/pull/2219))
 * Show agent avatars while a response is streaming ([#2216](https://github.com/holoviz/lumen/pull/2216))
-* A new Lumen homepage modeled on Panel's ([#2189](https://github.com/holoviz/lumen/pull/2189))
+* Add a homepage for Lumen ([#2189](https://github.com/holoviz/lumen/pull/2189))
 
 ### Deprecations
 
