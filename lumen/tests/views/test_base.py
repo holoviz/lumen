@@ -785,6 +785,7 @@ def test_vega_point_map_layers_get_the_table(set_root):
     assert "test" in final_spec["datasets"]
 
 
+@pytest.mark.skipif(importlib.util.find_spec("vl_convert") is None, reason="vl-convert-python not installed")
 def test_vega_to_image_sizes_container_spec(set_root):
     """A 'container' size has no container to fill outside the UI, so to_image gives it one."""
     set_root(str(Path(__file__).parent.parent))
