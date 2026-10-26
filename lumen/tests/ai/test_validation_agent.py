@@ -6,7 +6,9 @@ import pytest
 try:
     from lumen.ai.agents.chat import ChatAgent
     from lumen.ai.agents.sql import SQLAgent
-    from lumen.ai.agents.validation import ValidationAgent
+    from lumen.ai.agents.validation import (
+        QueryCompletionValidation, RequirementCheck, ValidationAgent,
+    )
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.coordinator.base import Plan
     from lumen.ai.report import ActorTask
@@ -102,10 +104,6 @@ def test_validation_agent_chat_instructions_need_chat(jinja_env):
 )
 @pytest.mark.asyncio
 async def test_validation_agent_verdict_comes_from_checks(satisfied, expected):
-    from lumen.ai.agents.validation import (
-        QueryCompletionValidation, RequirementCheck,
-    )
-
     agent = ValidationAgent()
     checks = [RequirementCheck(requirement=f"r{i}", evidence="e", satisfied=s) for i, s in enumerate(satisfied)]
 
