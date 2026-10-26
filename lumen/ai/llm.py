@@ -1980,11 +1980,14 @@ class ClaudeCode(LlmCli):
 
     _auth_status_args = ("auth", "status")
 
+    # Not plan: every tool is already disabled, and plan mode adds planning
+    # remarks to each answer ("I'll answer directly rather than creating a
+    # plan file"), which leak into Lumen's text and break JSON replies.
     permission_mode = param.Selector(
-        default="plan",
+        default="dontAsk",
         objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
         constant=True,
-        doc="Claude Code permission mode. The non-writing plan mode is the default.",
+        doc="Claude Code permission mode. dontAsk never prompts and, with every tool disabled, never acts.",
     )
 
     max_turns = param.Integer(
@@ -2012,10 +2015,20 @@ class ClaudeCode(LlmCli):
             self.executable, "--print", "--output-format", "json",
             "--no-session-persistence", "--max-turns", str(self.max_turns),
             "--permission-mode", self.permission_mode,
+            # Lumen runs its own tool loop, so Claude Code's built-in tools and
+            # MCP servers only spend turns and hit --max-turns. User settings
+            # would add the user's own hooks and instructions to every answer.
+            "--tools", "", "--strict-mcp-config", "--setting-sources=",
         ]
         if model:
             command.extend(["--model", model])
         return command
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Claude Code never reads the project Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            return await super()._run_command(command, prompt, cwd or self.working_dir or tmp)
 
     def _decode_output(self, output: str) -> str:
         try:
@@ -4116,6 +4129,11 @@ class Groq(OpenAI):
         doc="The Groq API endpoint.",
     )
 
+    # Groq validates tool-call arguments server side and rejects a mismatch
+    # with an APIError before instructor can retry, which made chart specs
+    # fail every attempt. json_schema output is validated client side instead.
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
     model_kwargs = param.Dict(default={
         "default": {"model": "openai/gpt-oss-120b"},
     })
@@ -4472,3 +4490,17 @@ class Kilo(OpenAI):
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Kilo."""
         return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        try:
+            return await super().run_client(model_spec, messages, **kwargs)
+        except Exception as e:
+            error = find_bad_request(e)
+            # kilo-auto/free routes to models whose upstream provider rejects a
+            # forced tool call or response_format with a 400. JSON asked for in
+            # plain text needs neither, so switch for the rest of the session.
+            if error is None or self.mode is Mode.MD_JSON or "upstream_error" not in str(error):
+                raise
+            log_debug(f"Kilo's upstream rejected a structured request; switching to {Mode.MD_JSON.name}")
+            self.mode = Mode.MD_JSON
+            return await super().run_client(model_spec, messages, **kwargs)

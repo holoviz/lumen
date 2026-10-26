@@ -103,6 +103,23 @@ async def test_planner_empty_plan(llm):
     assert todos.object == ""
 
 
+async def test_planner_empty_plan_with_validation(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Nothing to plan", yes=False),
+        plan_model(chain_of_thought="Nothing to do", title="Empty", steps=[])
+    ])
+
+    planner = Planner(llm=llm, agents=[ChatAgent(), ValidationAgent()], validation_enabled=True)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'How many rows?'}], {})
+
+    assert isinstance(plan, Plan)
+    assert plan.title == "Empty"
+    assert len(plan) == 0
+
+
 async def test_planner_simple_plan(llm):
     PlanModel = make_plan_model(["ChatAgent"], [])
 
@@ -840,6 +857,13 @@ def test_checklist_renders_status_indicators():
     for status in ("done", "current", "pending", "failed"):
         assert f"todo-status todo-{status}" in html
     assert not any(emoji in html for emoji in "🟢🟡⚪🔴")
+
+
+def test_checklist_status_is_centered_on_first_line_of_label():
+    sx = Checklist().sx
+    status = sx["& .todo-status"]
+    # Half of the free space in the first line box, so it holds at any font size.
+    assert status["mt"] == f"calc((1lh - {status['height']}) / 2)"
 
 
 def test_checklist_ignores_status_markers_inside_instruction(llm):

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import html
+import re
 import sys
 import warnings
 
@@ -1741,6 +1742,30 @@ class VegaLiteView(View):
 
         return spec
 
+    @classmethod
+    def _escape_field_names(cls, spec: Any, columns: set[str]) -> Any:
+        """
+        Escape dots and brackets in fields that name a column, since Vega-Lite
+        otherwise reads "nino3.4_anom" as the nested path nino3 -> 4_anom.
+        """
+        if isinstance(spec, list):
+            return [cls._escape_field_names(item, columns) for item in spec]
+        if not isinstance(spec, dict):
+            return spec
+        spec = {key: cls._escape_field_names(value, columns) for key, value in spec.items()}
+        for key, value in spec.items():
+            if key == "field" and isinstance(value, str):
+                spec[key] = cls._escape_field(value, columns)
+            elif key in ("fold", "groupby", "fields") and isinstance(value, list):
+                spec[key] = [cls._escape_field(item, columns) for item in value]
+        return spec
+
+    @staticmethod
+    def _escape_field(field: Any, columns: set[str]) -> Any:
+        if isinstance(field, str) and field in columns:
+            return re.sub(r"([.\[\]])", r"\\\1", field)
+        return field
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1750,6 +1775,7 @@ class VegaLiteView(View):
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
         spec = self._coerce_temporal(spec, df)
+        spec = self._escape_field_names(spec, set(df.columns))
 
         if self._declares_own_data(spec):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
@@ -1758,7 +1784,7 @@ class VegaLiteView(View):
             # Copied rather than mutated in place: self.spec is reused across
             # renders, and growing its datasets dict would leak frames.
             datasets = dict(self.spec.get('datasets', {}))
-            datasets[self.pipeline.table] = df
+            datasets[self.pipeline.table] = geometry_to_wkt(df)
             spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
             # A lat/lon map's basemap layer brings its own url, but the point layers
             # beside it carry no data and would draw nothing without the table.
@@ -1767,13 +1793,14 @@ class VegaLiteView(View):
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
-            # geoshape consumes a FeatureCollection, so fields then live under
-            # properties, e.g. {"field": "properties.value"}.
-            encoded = dict(spec, data={
-                'values': geometry_to_geojson(df),
-                'format': {'type': 'json', 'property': 'features'},
-                **spec_data,
-            })
+            # geoshape consumes GeoJSON features, so fields then live under
+            # properties, e.g. {"field": "properties.value"}. Panel's Vega pane
+            # passes a list of features through untouched, but would turn a
+            # FeatureCollection in data.values into columns.
+            name = spec_data.get('name', self.pipeline.table)
+            features = geometry_to_geojson(df)['features']
+            datasets = dict(self.spec.get('datasets', {}), **{name: features})
+            encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
             encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)

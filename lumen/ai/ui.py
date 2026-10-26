@@ -2257,6 +2257,10 @@ class ExplorerUI(UI):
             # Hug the drawer's own width (tab when closed, ``size`` when open)
             # instead of flex-growing to eat half the Row.
             styles={"flex": "0 0 auto"},
+            # A closed inline drawer collapses to zero width and its 24px toggle
+            # tab floats over the content, covering the chat avatars. Reserve the
+            # tab's gutter, as the open drawer does, so the content starts beside it.
+            min_width=24,
             # The sidebar Settings popup is ``attached`` to the sidebar MenuList,
             # so it portals into a container nested inside the Page's left sidebar
             # Drawer paper, which sits at MUI's ``theme.zIndex.drawer`` (1200) and
@@ -2879,7 +2883,7 @@ class ExplorerUI(UI):
     async def _postprocess_exploration(
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
     ):
-        self._exploration['view'].conversation = self.interface.objects
+        exploration.conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
             # Propagate sources produced by the plan (out_context) into
             # the global UI context so the source catalog and CTA update.
