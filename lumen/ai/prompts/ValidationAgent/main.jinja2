@@ -22,6 +22,9 @@ When data fetched from external source, table already scoped to fetched paramete
 {% if memory.get('view') and 'view' not in previous_keys %}
 
 View: spec already rendered; check what it draws. Styling, titles, tooltips, sort and color not requirements unless user requested them.
+{%- if view_image is defined and view_image %}
+Rendered view attached as last message. Check in image what chart draws: marks present, stacking, category order, labels, empty chart. Take fields, scale types and exact values from spec.
+{%- endif %}
 Edit of existing chart ("bigger points", "add title", "sort ascending"): previous version not shown, so check current spec has requested property, not that it changed. Property present counts as satisfied.
 {% endif %}
 {% if memory.get('listing') and 'listing' not in previous_keys %}

@@ -1,7 +1,12 @@
 import datetime
 
+from io import BytesIO
+from unittest.mock import MagicMock
+
 import jinja2
 import pytest
+
+from PIL import Image
 
 try:
     from lumen.ai.agents.chat import ChatAgent
@@ -9,7 +14,9 @@ try:
     from lumen.ai.agents.validation import ValidationAgent
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.coordinator.base import Plan
+    from lumen.ai.editors import LumenEditor
     from lumen.ai.report import ActorTask
+    from lumen.views import View
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
@@ -164,3 +171,48 @@ def test_validation_agent_drops_roadmap():
         {"role": "system", "content": "other context"},
     ]
     assert ValidationAgent._without_roadmap(messages) == [messages[0], messages[2]]
+
+
+def _plan_with_view(validation_agent, to_image):
+    view = MagicMock(spec=View)
+    view.to_image = to_image
+    editor = MagicMock(spec=LumenEditor)
+    editor.component = view
+    producer = ActorTask(ChatAgent())
+    producer.views = [editor]
+    return Plan(producer, ActorTask(validation_agent))
+
+
+@pytest.mark.asyncio
+async def test_validation_agent_attaches_rendered_view(llm):
+    """The rendered view reaches the model, and the prompt is told to judge the chart from it."""
+    from lumen.ai.agents.validation import QueryCompletionValidation
+
+    agent = ValidationAgent(llm=llm)
+    seen = {}
+
+    async def invoke(prompt_name, messages, context, **kwargs):
+        seen["messages"], seen["kwargs"] = messages, kwargs
+        return QueryCompletionValidation(chain_of_thought="x")
+
+    agent._invoke_prompt = invoke
+    png = BytesIO()
+    Image.new("RGB", (4, 4)).save(png, format="PNG")
+    plan = _plan_with_view(agent, png.getvalue)
+    await agent.respond([{"role": "user", "content": "bar chart"}], {"plan": plan})
+
+    assert seen["kwargs"]["view_image"] is True
+    assert seen["messages"][-1]["content"][0] == "Rendered view:"
+
+
+@pytest.mark.parametrize("vision", [True, False])
+@pytest.mark.asyncio
+async def test_validation_agent_validates_without_image(llm, vision):
+    """No image when the model can't read one or the view fails to render; validation still runs."""
+    agent = ValidationAgent(llm=llm)
+    llm._supports_vision = vision
+
+    def broken():
+        raise RuntimeError("Neither Selenium nor Playwright is installed")
+
+    assert await agent._render_view({"plan": _plan_with_view(agent, broken)}) is None
