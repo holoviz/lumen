@@ -2,19 +2,21 @@
  * All copy and link targets for the homepage, kept out of the components so wording can
  * be reviewed without reading JSX.
  *
- * The homepage is copied over the root of the Zensical build, so docs links are root
- * relative directory URLs. `homepage-serve` points them at the live site instead.
+ * Docs links are absolute under /en/docs/latest/ because the homepage is unversioned and
+ * lives at the site root, while the Zensical build is published per version.
+ * `homepage-serve` points them at the live site instead.
  */
 
 import {asset, video} from './assets'
 
-export const DOCS = import.meta.env.VITE_DOCS_PATH ?? ''
+// The lumen-dev staging site has no latest build, so its homepage links into dev.
+export const DOCS = import.meta.env.VITE_DOCS_PATH ?? '/en/docs/latest'
 export const GITHUB = 'https://github.com/holoviz/lumen'
 const DISCOURSE = 'https://discourse.holoviz.org/c/lumen/'
 const DISCORD = 'https://discord.com/invite/rb6gPXbdAr'
 
 export const nav = [
-  {label: 'Docs', href: `${DOCS}/overview/`},
+  {label: 'Docs', href: `${DOCS}/`},
   {label: 'Quick Start', href: `${DOCS}/quick_start/`},
   {label: 'Tutorials', href: `${DOCS}/examples/tutorials/`},
   {label: 'Gallery', href: `${DOCS}/examples/gallery/`},

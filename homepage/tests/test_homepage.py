@@ -111,13 +111,16 @@ def test_every_picture_loads_from_the_hashed_prefix(home: Page) -> None:
 
 
 def test_internal_links_point_at_docs_pages(home: Page) -> None:
-    """The homepage sits on top of the Zensical build, so every internal link needs a source page."""
+    """Every docs link has to resolve to a source page in the versioned Zensical build."""
     hrefs = home.eval_on_selector_all('a[href]', 'els => els.map(e => e.getAttribute("href"))')
     internal = {h.split('#')[0] for h in hrefs if h.startswith('/') and h != '/'}
     assert internal, 'expected some docs links'
+    outside = [h for h in internal if not re.match(r'/en/docs/[^/]+/', h)]
+    assert not outside, f'links outside /en/docs/<version>/: {outside}'
+    pages = {re.sub(r'^/en/docs/[^/]+/', '', h).strip('/') for h in internal}
     missing = [
-        h for h in internal
-        if not (DOCS / f'{h.strip("/")}.md').exists() and not (DOCS / h.strip('/') / 'index.md').exists()
+        p for p in pages
+        if not (DOCS / f'{p}.md').exists() and not (DOCS / p / 'index.md').exists()
     ]
     assert not missing, missing
 
