@@ -52,7 +52,7 @@ from lumen.ai.schemas import (
 from lumen.ai.utils import count_tokens, format_error
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
-from lumen.sources.base import QueryTimeoutError
+from lumen.sources.base import InMemorySource, QueryTimeoutError
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
@@ -1526,7 +1526,6 @@ def test_exploration_tool_doc_quotes_every_name():
 
 
 def _view_editor(n_rows):
-    from lumen.sources.base import InMemorySource
     df = pd.DataFrame({"county": [f"C{i}" for i in range(n_rows)], "pm25": range(n_rows)})
     pipeline = Pipeline(source=InMemorySource(tables={"top": df}), table="top")
     return SimpleNamespace(component=Table(pipeline=pipeline), spec="page_size: 5", language="yaml", validate_spec=lambda s: s)
