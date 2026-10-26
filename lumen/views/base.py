@@ -774,19 +774,13 @@ class View(MultiTypeComponent, Viewer):
 
     def to_image(self) -> bytes:
         """
-        Renders the view to a PNG, so an agent can check what it draws
-        rather than infer it from the specification.
+        Renders the view to PNG bytes.
 
-        Uses Panel's Playwright export, which needs a Panel release that
-        accepts ``backend`` in ``save`` and ``playwright install chromium``.
-
-        Returns
-        -------
-        bytes
-            The PNG image.
+        Uses Panel's Playwright export, which needs a Panel whose ``save``
+        accepts ``backend`` and ``playwright install chromium``.
         """
         buffer = BytesIO()
-        pn.panel(self.get_panel()).save(buffer, as_png=True, backend='playwright')
+        self.get_panel().save(buffer, as_png=True, backend='playwright')
         return buffer.getvalue()
 
     def _get_params(self) -> dict[str, Any] | None:
@@ -1828,8 +1822,8 @@ class VegaLiteView(View):
         return pn.pane.Vega(**spec)
 
     def to_image(self, width: int = 800, height: int = 400) -> bytes:
-        # vl-convert renders without a browser; a 'container' size has no
-        # container here, so give it a concrete one.
+        # vl-convert renders without a browser. An export has no container to
+        # fill, so a 'container' size gets a concrete one, as in VegaLiteEditor.export.
         pane = self.get_panel()
         spec = dict(pane.object)
         for key, default in (('width', width), ('height', height)):

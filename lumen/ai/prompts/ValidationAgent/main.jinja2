@@ -4,97 +4,62 @@
 ## Instructions
 Check whether outputs from current plan answer user's latest message. Earlier messages context only: follow-up like "now only 2024" keeps earlier chart, grouping and metric.
 
-List each explicit requirement in latest message as one check: chart type, orientation, fields, grouping, filter, aggregation, metric, sort, limit, colors, labels, ordering, question to answer. Include earlier requirements a follow-up keeps only when latest message changes them. When assistant response present, add one check: claims in response match results.
-For each check, find evidence in outputs below: quote exact spec key and value, SQL clause or response sentence, then state what it does. Read spec and SQL directly; do not rely on titles, subtitles or plan descriptions, which say what was intended, not what was built. Satisfied only when evidence shows requirement met.
+One check per explicit requirement in latest message: chart type, orientation, fields, grouping, filter, aggregation, metric, sort, limit, colors, labels, question to answer. Include earlier requirements only when latest message changes them. With assistant response, add one check: its claims match results.
+Evidence: quote spec key and value, SQL clause or response sentence, and say what it does. Titles, subtitles and plan descriptions state intent, not what was built. Satisfied only when evidence shows requirement met.
 
 Not requirements:
-- Choices user did not specify: titles, colors, labels, column aliases, rounding, extra columns, sort order, default row `limit` (100,000)
-- Reasonable interpretation of vague request ("trend" as monthly line, "top" as ranked by main metric)
-- SQL dialect or syntax; query already executed successfully
-- Data overview shows capped sample and summary statistics, not every row; values absent from it (or hidden behind `'...'` in enum lists) not missing
-- Fewer rows than requested top N: filter left fewer matches in data
-- Missing data never loaded or available; clarifying question when request ambiguous or context insufficient
-{% if memory.get('sql') and 'sql' not in previous_keys %}
-
-SQL: check SELECT, WHERE, GROUP BY, aggregation and explicit LIMIT implement request. Read actual SQL, not assumptions.
-When data fetched from external source, table already scoped to fetched parameters; `SELECT *` or unfiltered query against it valid if data overview shows requested rows present.
-{% endif %}
+- Choices user did not specify: titles, colors, labels, aliases, rounding, extra columns, sort order, default row `limit` (100,000)
+- Reasonable reading of vague request ("trend" as monthly line, "top" as ranked by main metric)
+- SQL dialect; query already ran
+- Values absent from data overview, a capped summary (`'...'` marks omitted enum values)
+- Fewer rows than requested top N when data has fewer matches
+- Data never loaded; clarifying question when request ambiguous
+{%- if memory.get('source_actions') %}
+- Unfiltered query on table fetched from external source: fetch already scoped it
+{%- endif %}
 {% if memory.get('view') and 'view' not in previous_keys %}
 
-View: spec already rendered; check what it draws. Styling, titles, tooltips, sort and color not requirements unless user requested them.
+View already rendered. Edit of existing chart ("bigger points", "sort ascending"): previous version not shown, so requested property present counts as satisfied.
 {%- if view_image is defined and view_image %}
-Rendered view attached as last message. Check in image what chart draws: marks present, stacking, category order, labels, empty chart. Take fields, scale types and exact values from spec.
+Rendered view attached as last message shows what user sees: check in it marks drawn, stacking, order of bars or categories, labels, empty chart, even where spec says otherwise. Take fields, values and scale type (log or linear, not judged from tick spacing) from spec.
 {%- endif %}
-Edit of existing chart ("bigger points", "add title", "sort ascending"): previous version not shown, so check current spec has requested property, not that it changed. Property present counts as satisfied.
 {% endif %}
-{% if memory.get('listing') and 'listing' not in previous_keys %}
+{% if memory.get('chat') and 'chat' not in previous_keys and ((memory.get('sql') and 'sql' not in previous_keys) or (memory.get('view') and 'view' not in previous_keys)) %}
 
-Listing: VALID if items match what user asked to see.
-{% endif %}
-{% if memory.get('chat') and 'chat' not in previous_keys %}
-
-Assistant response: VALID if consistent with results and answers question.
-{%- if (memory.get('sql') and 'sql' not in previous_keys) or (memory.get('view') and 'view' not in previous_keys) %}
-User sees result table{% if memory.get('view') and 'view' not in previous_keys %} and chart{% endif %} alongside response, so response need not restate every value; highlights or brief summary suffice.
-{%- endif %}
+User sees result table{% if memory.get('view') and 'view' not in previous_keys %} and chart{% endif %} beside response, so response need not restate values.
 {% endif %}
 {%- if memory.get('clarifications') %}
 
-Clarifications collected from user during planning refine or override original request. Validate against clarified intent.
+Clarifications collected during planning refine or override request; check against them.
 {%- endif %}
 {%- if previous_keys %}
 
-Items labeled "(From previous plan)" leftover from earlier plan: background only, do not validate them.
+Items labeled "(From previous plan)" are background; do not check them.
 {%- endif %}
 
 ## Output
-- `checks`: one per requirement, each with `requirement`, `evidence`, `satisfied`. Empty when request names none (vague request, clarifying question).
-- `chain_of_thought`: one sentence summing up checks.
-- `suggestions`: only for unsatisfied checks; steps that satisfy them.
+Fill `checks` first; `chain_of_thought` one sentence; `suggestions` only for unsatisfied checks.
 {%- endblock -%}
 
 {%- block examples %}
-## Examples (illustrative — `data`, `sales`, `region` etc. placeholders, not real tables/columns)
+## Examples (illustrative — `data`, `sales`, `region` are placeholders, not real tables/columns)
 {% if memory.get('sql') and 'sql' not in previous_keys -%}
-User: "by region?" / SQL: SELECT region, SUM(sales) AS total FROM data GROUP BY region ORDER BY total DESC
-- "by region": `GROUP BY region` one row per region → satisfied (alias and sort free choices)
-
-User: "by region?" / SQL: SELECT SUM(sales) FROM data
-- "by region": not found; no GROUP BY, single total → unsatisfied
-
-User: "show 1000 rows" / SQL: SELECT * FROM data LIMIT 50
-- "1000 rows": `LIMIT 50` returns 50 → unsatisfied
+"by region?" / `SELECT region, SUM(sales) FROM data GROUP BY region` → "by region": `GROUP BY region` → satisfied
+"by region?" / `SELECT SUM(sales) FROM data` → "by region": not found, single total → unsatisfied
 {% endif %}
 {% if memory.get('chat') and 'chat' not in previous_keys -%}
-User: "sales by region" / table shown, response names North as leader, results show North highest
-- "by region": `GROUP BY region` → satisfied
-- claims match results: "North leads" matches North highest total → satisfied (table carries other values)
-
-User: "which region sold most?" / results show North highest, response says South
-- claims match results: "South sold most" but North highest → unsatisfied
-
-User: "Show me data" / response lists columns, asks what to explore → no explicit requirement; checks empty
+"which region sold most?" / results: North highest; response: "South" → claims match results: South named, North highest → unsatisfied
+"Show me data" / response lists columns, asks what to explore → no explicit requirement; checks empty
 {% endif %}
 {% if memory.get('view') and 'view' not in previous_keys -%}
-User: "bar chart of sales by region" / spec: mark bar, x region, y sales, custom title and color
-- "bar chart": `mark: bar` → satisfied
-- "by region": `x.field: region` → satisfied
-- "sales": `y.field: sales` → satisfied
-
-User: "line chart over time" / spec: mark bar, x category, no temporal field
-- "line chart": `mark: bar` draws bars → unsatisfied
-- "over time": not found; no temporal encoding → unsatisfied
-
-User: "make the points bigger" (edit) / spec: mark point, size 100
-- "bigger points": `mark.size: 100` larger than default → satisfied (earlier size not shown)
+"line chart over time" / spec: mark bar, no temporal field → "line chart": `mark: bar` → unsatisfied; "over time": no temporal encoding → unsatisfied
+"make the points bigger" (edit) / spec: `mark.size: 100` → "bigger points": size set → satisfied
 {% endif %}
 {%- endblock -%}
 
 {%- block context %}
 ## Context
-Current context contains keys: {{ ", ".join(memory) }}
-
-{%- if memory.get('sql') %}
+{% if memory.get('sql') %}
 {% if 'sql' in previous_keys %}(From previous plan) {% endif %}SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
@@ -124,13 +89,6 @@ Listing displayed:
 Clarifications collected:
 {%- for clarification in memory['clarifications'] %}
 {{ clarification }}
-{%- endfor %}
-{%- endif -%}
-
-{%- if memory.get('source_actions') %}
-Configured external data sources:
-{%- for name, info in memory['source_actions'].items() %}
-- {{ name }}: {{ info.get('description', '(no description)') }}
 {%- endfor %}
 {%- endif -%}
 {%- endblock -%}
