@@ -3,13 +3,13 @@ import param
 from ...config import dump_yaml, load_yaml
 from ...pipeline import Pipeline
 from ...views import View
-from ..config import PROMPTS_DIR
+from ..config import PROMPTS_DIR, MissingDataError
 from ..context import TContext
 from ..editors import LumenEditor
 from ..llm import Message
-from ..models import RetrySpec
+from ..models import RetrySpec, ViewRetrySpec
 from ..schemas import slug_to_table_name
-from ..utils import apply_changes, retry_llm_output
+from ..utils import apply_changes, describe_data, retry_llm_output
 from .base import Agent
 
 SPEC_TYPE_MAP = {
@@ -91,18 +91,28 @@ class BaseLumenAgent(Agent):
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
+        # A view edit can only reshape the rows the view already has; show them,
+        # and let the model say when the feedback needs a new query instead.
+        view_data, response_model = None, None
+        if view is not None and isinstance(view.component, View) and view.component.pipeline is not None:
+            view_data = await describe_data(view.component.get_data())
+            response_model = ViewRetrySpec
         result = await self._invoke_prompt(
             "revise_output",
             messages,
             context,
+            response_model=response_model,
             model_spec="edit",
             numbered_text=numbered_text,
             language=language,
             feedback=instruction,
             errors=errors,
             revise_table=revise_table,
+            view_data=view_data,
             **kwargs
         )
+        if getattr(result, "needs_new_data", None):
+            raise MissingDataError(result.needs_new_data)
         new_spec_raw = apply_changes(lines, result.edits)
         # SQL is not YAML: a round trip truncates at '#' (e.g. '80651 Route #271').
         if language and language.startswith("sql"):

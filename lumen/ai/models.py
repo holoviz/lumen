@@ -126,3 +126,12 @@ class RetrySpec(BaseModel):
                     )
                 seen_replace_or_delete.add(e.line_no)
         return self
+
+
+class ViewRetrySpec(RetrySpec):
+    """A revision of a view spec, which can only use the data the view already has."""
+
+    needs_new_data: str | None = Field(default=None, description=(
+        "Only when the feedback needs rows or columns the view's data does not have: "
+        "why, in one sentence. Leave edits empty then."
+    ))

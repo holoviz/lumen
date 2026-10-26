@@ -28,6 +28,13 @@ Available schema context:
 {% endif %}
 {% endif %}
 
+{% if view_data is defined and view_data %}
+Data view draws from (summary of all its rows; edit cannot reach rest of table):
+{{ view_data }}
+
+Feedback needing rows or columns this data lacks (more rows than it has, a category or value not among these rows, another column): set `needs_new_data` to reason, leave `edits` empty. Filtering, sorting or restyling these rows is an edit.
+{% endif %}
+
 {% if language %}
 Language: {{ language }}
 {% endif %}
