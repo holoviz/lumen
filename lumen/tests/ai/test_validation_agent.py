@@ -11,7 +11,9 @@ from PIL import Image
 try:
     from lumen.ai.agents.chat import ChatAgent
     from lumen.ai.agents.sql import SQLAgent
-    from lumen.ai.agents.validation import ValidationAgent
+    from lumen.ai.agents.validation import (
+        QueryCompletionValidation, RequirementCheck, ValidationAgent,
+    )
     from lumen.ai.config import PROMPTS_DIR
     from lumen.ai.coordinator.base import Plan
     from lumen.ai.editors import LumenEditor
@@ -109,10 +111,6 @@ def test_validation_agent_chat_instructions_need_chat(jinja_env):
 )
 @pytest.mark.asyncio
 async def test_validation_agent_verdict_comes_from_checks(satisfied, expected):
-    from lumen.ai.agents.validation import (
-        QueryCompletionValidation, RequirementCheck,
-    )
-
     agent = ValidationAgent()
     checks = [RequirementCheck(requirement=f"r{i}", evidence="e", satisfied=s) for i, s in enumerate(satisfied)]
 
@@ -165,8 +163,6 @@ def _plan_with_view(validation_agent, to_image):
 @pytest.mark.asyncio
 async def test_validation_agent_attaches_rendered_view(llm):
     """The rendered view reaches the model, and the prompt is told to judge the chart from it."""
-    from lumen.ai.agents.validation import QueryCompletionValidation
-
     agent = ValidationAgent(llm=llm)
     seen = {}
 
