@@ -14,41 +14,27 @@ from .base import Agent
 
 
 class RequirementCheck(BaseModel):
-    """One explicit element of the request, checked against the outputs."""
+    """One requirement checked against the outputs."""
 
-    requirement: str = Field(description="One thing the user asked for, in their words.")
-    evidence: str = Field(
-        description=(
-            "The exact spec key/value, SQL clause or response sentence that addresses it, "
-            "and what it does; 'not found' if nothing does."
-        )
-    )
+    requirement: str = Field(description="What the user asked for, in their words.")
+    evidence: str = Field(description="Spec key/value, SQL clause or sentence that addresses it and what it does, in under 25 words; 'not found' if none.")
     satisfied: bool
 
 
+# The verdict is derived from per-requirement checks rather than asked for:
+# a single yes/no (reasoning off) was judged from the request's wording and
+# chart titles, while the same model answered each property correctly when
+# asked about it directly.
 class QueryCompletionValidation(BaseModel):
-    """
-    Validation of whether the executed plan answered the user's query.
-
-    The model checks each explicit requirement against quoted evidence and the
-    verdict is derived from those checks in code. Asked for one holistic
-    yes/no, the model (with reasoning off) judged by the request's wording and
-    the chart's title instead of the spec: it passed charts that contradicted
-    the request and failed correct ones, while answering the same questions
-    correctly when asked about each property directly.
-    """
+    """Whether the executed plan answered the user's latest message."""
 
     checks: list[RequirementCheck] = Field(
-        default_factory=list,
-        description="One check per explicit requirement. Empty when the request names none.",
-    )
+        default_factory=list, description="One per explicit requirement; empty when the request names none.")
 
     chain_of_thought: str = Field(default="", description="One sentence summing up the checks.")
 
     suggestions: list[str] = Field(
-        default_factory=list,
-        description="Only for unsatisfied checks: steps that would satisfy them."
-    )
+        default_factory=list, description="Steps that would satisfy the unsatisfied checks.")
 
     @computed_field
     @property
@@ -143,13 +129,8 @@ class ValidationAgent(Agent):
 
     @staticmethod
     def _compact_view(view: Any) -> Any:
-        """
-        Keep the parts of a view spec that decide whether it answers the
-        request (marks, encodings, transforms, titles). The pipeline repeats
-        the SQL already shown, and the theme config (a 20-colour palette,
-        number formats) is boilerplate: both cost tokens and invite the model
-        to second-guess choices the user never asked about.
-        """
+        # The pipeline repeats the SQL shown separately, and the theme config
+        # and sizing are boilerplate the user never asks about.
         if not isinstance(view, dict):
             return view
         view = {k: v for k, v in view.items() if k not in ("sizing_mode", "min_height")}
@@ -158,17 +139,16 @@ class ValidationAgent(Agent):
             view["pipeline"] = {"table": pipeline.get("table")}
         spec = view.get("spec")
         if isinstance(spec, dict):
-            view["spec"] = {k: v for k, v in spec.items() if k not in ("config", "$schema")}
+            view["spec"] = {
+                k: v for k, v in spec.items()
+                if k not in ("config", "$schema") and not (k in ("width", "height") and v == "container")
+            }
         return view
 
     @staticmethod
     def _without_roadmap(messages: list[Message]) -> list[Message]:
-        """
-        Drop the plan roadmap the coordinator appends to the history. It
-        describes each step as done ("Create a horizontal bar chart"), and the
-        model takes that as evidence instead of reading the spec, so it passed
-        charts whose spec contradicted the request.
-        """
+        # The roadmap describes each step as done, and the model took that as
+        # evidence instead of reading the outputs.
         return [
             msg for msg in messages
             if not (msg.get("role") == "system" and str(msg.get("content", "")).lstrip().startswith("<roadmap>"))

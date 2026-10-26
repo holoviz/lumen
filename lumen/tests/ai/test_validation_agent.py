@@ -25,46 +25,25 @@ def jinja_env():
     return env
 
 
-def test_validation_agent_previous_keys_gating(jinja_env):
+MARKERS = {
+    "sql": "`SELECT SUM(sales) FROM data`",
+    "view": "View already rendered",
+    "chat": '"which region sold most?"',
+    "listing": "Listing displayed:",
+}
+
+
+@pytest.mark.parametrize("previous", [False, True], ids=["current_plan", "previous_plan"])
+def test_validation_agent_previous_keys_gating(jinja_env, previous):
+    """Instructions and examples for a key render only when the current plan produced it."""
     template = jinja_env.get_template("ValidationAgent/main.jinja2")
-    
-    # Test 1: Keys present and NOT in previous_keys (should render gating instructions)
-    context = {
-        "current_datetime": datetime.datetime.now(),
-        "memory": {"sql": "SELECT 1", "view": "...", "chat": "hello", "listing": "list"},
-        "previous_keys": set()
-    }
-    rendered = template.render(**context)
-    
-    # Check instructions are present
-    assert "SQL: check SELECT, WHERE, GROUP BY" in rendered
-    assert "View: spec already rendered" in rendered
-    assert "Listing: VALID if items match" in rendered
-    assert "Assistant response: VALID if consistent" in rendered
-    
-    # Check examples are present
-    assert "SQL: SELECT region, SUM(sales)" in rendered
-    assert "User: \"sales by region\" / table shown" in rendered
-    assert "User: \"bar chart of sales by region\"" in rendered
-    
-    # Test 2: Keys present but IN previous_keys (should NOT render gating instructions)
-    context = {
-        "current_datetime": datetime.datetime.now(),
-        "memory": {"sql": "SELECT 1", "view": "...", "chat": "hello", "listing": "list"},
-        "previous_keys": {"sql", "view", "chat", "listing"}
-    }
-    rendered = template.render(**context)
-    
-    # Check instructions are absent
-    assert "SQL: check SELECT, WHERE, GROUP BY" not in rendered
-    assert "View: spec already rendered" not in rendered
-    assert "Listing: VALID if items match" not in rendered
-    assert "Assistant response: VALID if consistent" not in rendered
-    
-    # Check examples are absent
-    assert "SQL: SELECT region, SUM(sales)" not in rendered
-    assert "User: \"sales by region\" / table shown" not in rendered
-    assert "User: \"bar chart of sales by region\"" not in rendered
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"sql": "SELECT 1", "view": "...", "chat": "hello", "listing": "list"},
+        previous_keys=set(MARKERS) if previous else set(),
+    )
+    for key, marker in MARKERS.items():
+        assert (marker in rendered) is not previous, key
 
 
 @pytest.mark.parametrize(
@@ -101,7 +80,7 @@ def test_validation_agent_marks_previous_plan_data(jinja_env):
     )
     assert "(From previous plan) Data overview" in rendered
     # The table is from a previous plan, so the response must not be excused for it
-    assert "need not restate every value" not in rendered
+    assert "need not restate values" not in rendered
 
 
 def test_validation_agent_chat_instructions_need_chat(jinja_env):
@@ -111,7 +90,7 @@ def test_validation_agent_chat_instructions_need_chat(jinja_env):
         memory={"sql": "SELECT 1"},
         previous_keys=set(),
     )
-    assert "Assistant response: VALID if consistent" not in rendered
+    assert MARKERS["chat"] not in rendered
     assert "(From previous plan)" not in rendered
 
 
