@@ -133,13 +133,10 @@ toolz = "*"
 zensical = "<0.0.17"
 mkdocstrings = "*"
 mkdocstrings-python = "*"
-nodejs = ">=20" # builds the homepage copied over the docs root
 
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs
-_docs-site = { cmd = 'zensical build --clean', depends-on = ['install'] }
-_docs-homepage = { cmd = 'npm ci && npm run build', cwd = 'homepage' }
-docs-build = { cmd = 'cp -R homepage/dist/. builtdocs/', depends-on = ['_docs-site', '_docs-homepage'] }
+docs-build = { cmd = 'zensical build --clean', depends-on = ['install'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
@@ -160,7 +157,7 @@ _homepage-install = { cmd = 'npm ci', cwd = 'homepage', inputs = [
     'homepage/package.json',
     'homepage/package-lock.json',
 ], outputs = ['homepage/node_modules/.package-lock.json'] }
-homepage-serve = { cmd = 'npm run dev', cwd = 'homepage', env = { VITE_DOCS_PATH = 'https://lumen.holoviz.org' }, depends-on = ['_homepage-install'], description = "Start the homepage dev server" }
+homepage-serve = { cmd = 'npm run dev', cwd = 'homepage', env = { VITE_DOCS_PATH = 'https://lumen.holoviz.org/en/docs/latest' }, depends-on = ['_homepage-install'], description = "Start the homepage dev server" }
 homepage-preview = { cmd = 'npm run preview', cwd = 'homepage', description = "Preview the built homepage" }
 homepage-typecheck = { cmd = 'npm run typecheck', cwd = 'homepage', depends-on = ['_homepage-install'], description = "Type check the homepage" }
 homepage-build = { cmd = 'npm run build', cwd = 'homepage', depends-on = ['_homepage-install'], description = "Build the homepage" }
