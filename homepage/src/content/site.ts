@@ -444,7 +444,7 @@ export const adoption = {
     'Lumen is built on Panel, hvPlot and the rest of the HoloViz tools and developed in the open. Ask questions on Discourse or Discord, and report bugs on GitHub.',
   // Checked against the GitHub API and PyPI on 2026-10-14; nothing here reads them live.
   stats: [
-    {value: '1.3', label: 'Latest release'},
+    {value: '1.4', label: 'Latest release'},
     {value: '2020', label: 'First release'},
     {value: '40+', label: 'Contributors'},
     {value: 'BSD-3', label: 'License'},
