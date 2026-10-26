@@ -545,6 +545,26 @@ def test_vega_named_data_sources_excludes_self_contained_data():
     assert VegaLiteView._named_data_sources("not a spec") == set()
 
 
+def test_vega_registers_name_only_dataset_for_geojson_layers(monkeypatch):
+    """Named datasets in the GeoJSON path work without the optional GeoPandas dep."""
+    pipeline = Pipeline(
+        source=InMemorySource(tables={"geo": pd.DataFrame({"x": [1]})}),
+        table="geo",
+    )
+    features = [{"type": "Feature", "properties": {"x": 1}, "geometry": None}]
+    monkeypatch.setattr("lumen.views.base.is_geodataframe", lambda data: True)
+    monkeypatch.setattr(
+        "lumen.views.base.geometry_to_geojson",
+        lambda data: {"features": features},
+    )
+
+    spec = {"layer": [{"data": {"name": "named_geo"}, "mark": "point"}]}
+    encoded = VegaLiteView(pipeline=pipeline, spec=spec)._get_params()["object"]
+
+    assert encoded["data"] == {"name": "geo"}
+    assert encoded["datasets"]["named_geo"] == features
+
+
 def test_vega_defaults_schema(set_root):
     set_root(str(Path(__file__).parent.parent))
     source = FileSource(tables={'test': 'sources/test.csv'})
