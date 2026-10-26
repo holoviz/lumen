@@ -19,6 +19,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Show which model answered in the chat message footer ([#2053](https://github.com/holoviz/lumen/pull/2053))
 * Run Claude Code CLI requests without plan mode ([#2229](https://github.com/holoviz/lumen/pull/2229))
 * Fall back to JSON mode when Kilo's upstream rejects structured requests ([#2234](https://github.com/holoviz/lumen/pull/2234))
+* Use `json_schema` mode for Groq, so server-side tool validation no longer rejects every chart ([#2239](https://github.com/holoviz/lumen/pull/2239))
 
 ### Agents, Tools & Observability
 
@@ -97,6 +98,8 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Center planner checklist status icons on the label's first line ([#2217](https://github.com/holoviz/lumen/pull/2217))
 * Keep the nav drawer toggle clear of chat avatars ([#2218](https://github.com/holoviz/lumen/pull/2218))
 * Size the code editor to match the body text ([#2219](https://github.com/holoviz/lumen/pull/2219))
+* Show agent avatars while a response is streaming ([#2216](https://github.com/holoviz/lumen/pull/2216))
+* A new Lumen homepage modeled on Panel's ([#2189](https://github.com/holoviz/lumen/pull/2189))
 
 ### Deprecations
 
@@ -105,6 +108,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 ### Dependencies & Compatibility
 
 * Require panel 1.9.0+ and bokeh 3.9.0+, pin griffe below 2.0, and exclude param 2.5.0a0 ([#2079](https://github.com/holoviz/lumen/pull/2079), [#2087](https://github.com/holoviz/lumen/pull/2087))
+* Require pillow 13.0.0+ ([#2240](https://github.com/holoviz/lumen/pull/2240))
 * Exclude litellm 1.107.0, which was compromised on PyPI ([#2205](https://github.com/holoviz/lumen/pull/2205))
 * Declare all top-level imports as direct dependencies and support metadata 2.5 in PyPI publishing ([#2092](https://github.com/holoviz/lumen/pull/2092), [#2095](https://github.com/holoviz/lumen/pull/2095))
 * Test the full range of supported Python versions ([#2093](https://github.com/holoviz/lumen/pull/2093))
