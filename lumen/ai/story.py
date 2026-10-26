@@ -275,7 +275,7 @@ class StoryReport(Report):
             if kind == "heading":
                 views.append(Typography(value, variant=f"h{level}"))
             elif value.include_in_export:
-                views += self._selected_views(value)
+                views += self._selected_views(value, include_calls=True)
         return views
 
     def _export_view(self):

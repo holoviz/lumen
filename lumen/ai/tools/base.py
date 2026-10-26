@@ -1,5 +1,9 @@
 import asyncio
 
+from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from types import FunctionType
 from typing import Any, TypedDict
 
@@ -16,6 +20,39 @@ from ..llm import Message
 from ..translate import function_to_model
 
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
+
+
+@dataclass
+class FunctionCall:
+    """
+    A call a FunctionTool made, kept so a notebook export can repeat it.
+    """
+
+    function: Callable
+    arguments: dict[str, Any]
+    # Arguments filled from the context, which can't be written as code
+    context: list[str] = field(default_factory=list)
+    provides: list[str] = field(default_factory=list)
+    # Whether the provided values are keys of the returned dict
+    unpack: bool = False
+
+
+_function_calls: ContextVar[list[FunctionCall] | None] = ContextVar(
+    "lumen_function_calls", default=None
+)
+
+
+@contextmanager
+def capture_function_calls():
+    """
+    Collect the calls FunctionTools make inside the block.
+    """
+    calls: list[FunctionCall] = []
+    token = _function_calls.set(calls)
+    try:
+        yield calls
+    finally:
+        _function_calls.reset(token)
 
 
 def define_tool(
@@ -172,11 +209,20 @@ class FunctionTool(Tool):
                 p = HoloViews(object=p.object)
             return [p], {}
         out_model = {}
+        unpack = bool(self.provides) and (len(self.provides) > 1 or isinstance(result, dict))
         if self.provides:
-            if len(self.provides) == 1 and not isinstance(result, dict):
+            if not unpack:
                 out_model[self.provides[0]] = result
             else:
                 out_model.update({key: result[key] for key in self.provides})
+        if (calls := _function_calls.get()) is not None:
+            calls.append(FunctionCall(
+                function=self.function,
+                arguments={k: v for k, v in arguments.items() if k not in self.requires},
+                context=list(self.requires),
+                provides=list(self.provides),
+                unpack=unpack,
+            ))
         return [self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
