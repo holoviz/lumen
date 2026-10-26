@@ -4,7 +4,13 @@
 
 Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds keyless and CLI-backed LLM providers, tracks token usage and cost, gives agents more accurate table context, and lets reports carry an AI-written story that exports to Word. It also adds polars and pyarrow support through narwhals, broader geospatial rendering, and a large batch of reliability fixes for SQL, validation, and charts.
 
-### LLM Providers & Models
+This release requires Panel 1.9.0 and Bokeh 3.9.0 or later, and deprecates `HistoryTransform`.
+
+Many thanks to the contributors to this release: @ghostiee-11, @philippjfr, @ahuang11, @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @hoxbro, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @SuMayaBee, @Mr-Neutr0n, @Coderambling, @umi008, and @jadhavgaurav.
+
+A special welcome to our new contributors: @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @Mr-Neutr0n, @umi008, and @jadhavgaurav.
+
+### 🤖 LLM Providers & Models
 
 * Kilo provider, including a keyless free tier that works end to end ([#1984](https://github.com/holoviz/lumen/pull/1984), [#2198](https://github.com/holoviz/lumen/pull/2198))
 * Codex CLI, Claude Code, and GitHub Copilot CLI providers ([#2070](https://github.com/holoviz/lumen/pull/2070), [#2121](https://github.com/holoviz/lumen/pull/2121))
@@ -21,7 +27,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Fall back to JSON mode when Kilo's upstream rejects structured requests ([#2234](https://github.com/holoviz/lumen/pull/2234))
 * Use `json_schema` mode for Groq, so server-side tool validation no longer rejects every chart ([#2239](https://github.com/holoviz/lumen/pull/2239))
 
-### Agents, Tools & Observability
+### 🛠️ Agents, Tools & Observability
 
 * Track LLM token usage and estimated costs ([#2100](https://github.com/holoviz/lumen/pull/2100))
 * Capture scoped LLM model and tool traces, including streamed usage ([#2101](https://github.com/holoviz/lumen/pull/2101), [#2102](https://github.com/holoviz/lumen/pull/2102))
@@ -35,7 +41,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Unified agent names and avatars, and a polished planner checklist ([#2096](https://github.com/holoviz/lumen/pull/2096), [#2115](https://github.com/holoviz/lumen/pull/2115))
 * Column-level lineage tooltips: hover a derived column in a SQL result to see its expression and grouping ([#2124](https://github.com/holoviz/lumen/pull/2124))
 
-### Validation & Reliability
+### 🛡️ Validation & Reliability
 
 * Fix deterministic AI failures found by the evals ([#2103](https://github.com/holoviz/lumen/pull/2103))
 * ValidationAgent no longer fails valid plans on stale context, with a rule-based heuristic for previous keys ([#2074](https://github.com/holoviz/lumen/pull/2074), [#2081](https://github.com/holoviz/lumen/pull/2081), [#2065](https://github.com/holoviz/lumen/pull/2065))
@@ -47,12 +53,12 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Skip the validation step for an empty plan ([#2236](https://github.com/holoviz/lumen/pull/2236))
 * Fix `Filter` warning formatting and call the existing `_embed` instead of the undefined `_embed_actions` ([#2018](https://github.com/holoviz/lumen/pull/2018), [#2027](https://github.com/holoviz/lumen/pull/2027))
 
-### Reports
+### 📄 Reports
 
 * Annotate reports with an AI-written story, editable with Panel's `TextEditor` ([#1923](https://github.com/holoviz/lumen/pull/1923), [#2017](https://github.com/holoviz/lumen/pull/2017))
 * Export a report as Word (`.docx`) ([#1924](https://github.com/holoviz/lumen/pull/1924))
 
-### Data Sources & Performance
+### ⚡ Data Sources & Performance
 
 * Support polars and pyarrow frames via narwhals ([#2008](https://github.com/holoviz/lumen/pull/2008), [#2039](https://github.com/holoviz/lumen/pull/2039), [#2059](https://github.com/holoviz/lumen/pull/2059))
 * Narrow queries to the columns the transforms need ([#2051](https://github.com/holoviz/lumen/pull/2051))
@@ -67,7 +73,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Read table functions with keyword arguments, such as `read_csv(..., nullstr='NA')` ([#2233](https://github.com/holoviz/lumen/pull/2233))
 * Avoid passing `how` together with `thresh` in `DropNA` ([#2021](https://github.com/holoviz/lumen/pull/2021))
 
-### Geospatial & Scientific Data
+### 🌍 Geospatial & Scientific Data
 
 * Render a table's own geometry as a Vega-Lite geoshape ([#1998](https://github.com/holoviz/lumen/pull/1998))
 * Load GeoJSON uploads end to end and preserve GeoDataFrame CRS at DuckDB ingest ([#1996](https://github.com/holoviz/lumen/pull/1996), [#2077](https://github.com/holoviz/lumen/pull/2077))
@@ -76,7 +82,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Collapse cftime gridded dims on xarray-sql 0.6, and decline to grid a `to_dataset` result that is not a grid ([#2144](https://github.com/holoviz/lumen/pull/2144), [#2049](https://github.com/holoviz/lumen/pull/2049))
 * Render geometry in Vega-Lite views, both from a table's own geometry and when a spec joins external boundaries ([#2232](https://github.com/holoviz/lumen/pull/2232))
 
-### Charts & Visualization
+### 📊 Charts & Visualization
 
 * Improved VegaLiteAgent ([#1992](https://github.com/holoviz/lumen/pull/1992))
 * Datashader categorical blending on hvPlot views ([#2035](https://github.com/holoviz/lumen/pull/2035))
@@ -88,7 +94,7 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Stop awaiting the async generator that streams view specs ([#2034](https://github.com/holoviz/lumen/pull/2034))
 * Escape dotted column names such as `nino3.4_anom` in Vega-Lite specs, which drew no series or a blank chart ([#2215](https://github.com/holoviz/lumen/pull/2215))
 
-### UX & CLI
+### 🎨 UX & CLI
 
 * "Follow system" option for the light and dark theme toggle ([#1970](https://github.com/holoviz/lumen/pull/1970))
 * Fix the Full data toggle overlap in explorations and let chat steps shrink with the column ([#2045](https://github.com/holoviz/lumen/pull/2045), [#2152](https://github.com/holoviz/lumen/pull/2152))
@@ -101,11 +107,11 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Show agent avatars while a response is streaming ([#2216](https://github.com/holoviz/lumen/pull/2216))
 * Add a homepage for Lumen ([#2189](https://github.com/holoviz/lumen/pull/2189))
 
-### Deprecations
+### ⚠️ Deprecations
 
 * `HistoryTransform` is deprecated ([#2060](https://github.com/holoviz/lumen/pull/2060))
 
-### Dependencies & Compatibility
+### ⚙️ Dependencies & Compatibility
 
 * Require panel 1.9.0+ and bokeh 3.9.0+, pin griffe below 2.0, and exclude param 2.5.0a0 ([#2079](https://github.com/holoviz/lumen/pull/2079), [#2087](https://github.com/holoviz/lumen/pull/2087))
 * Require pillow 13.0.0+ ([#2240](https://github.com/holoviz/lumen/pull/2240))
@@ -113,16 +119,10 @@ Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds
 * Declare all top-level imports as direct dependencies and support metadata 2.5 in PyPI publishing ([#2092](https://github.com/holoviz/lumen/pull/2092), [#2095](https://github.com/holoviz/lumen/pull/2095))
 * Test the full range of supported Python versions ([#2093](https://github.com/holoviz/lumen/pull/2093))
 
-### Documentation
+### 📚 Documentation
 
 * A docs truth pass: install and setup steps, CLI providers and flags, model keys (Groq, Kilo), every agent and export format, geospatial files and GRIB, ChromaDB, missing API reference pages, cost-friendly example models, and fixed links ([#2158](https://github.com/holoviz/lumen/pull/2158), [#2160](https://github.com/holoviz/lumen/pull/2160), [#2162](https://github.com/holoviz/lumen/pull/2162), [#2164](https://github.com/holoviz/lumen/pull/2164), [#2168](https://github.com/holoviz/lumen/pull/2168), [#2170](https://github.com/holoviz/lumen/pull/2170), [#2172](https://github.com/holoviz/lumen/pull/2172), [#2176](https://github.com/holoviz/lumen/pull/2176), [#2178](https://github.com/holoviz/lumen/pull/2178), [#2186](https://github.com/holoviz/lumen/pull/2186), [#2191](https://github.com/holoviz/lumen/pull/2191), [#2203](https://github.com/holoviz/lumen/pull/2203), [#2037](https://github.com/holoviz/lumen/pull/2037))
 * Document table discovery in the embeddings guide, update the ingestion controls docs and add the spec tutorial to the navigation ([#2019](https://github.com/holoviz/lumen/pull/2019), [#2022](https://github.com/holoviz/lumen/pull/2022), [#2030](https://github.com/holoviz/lumen/pull/2030))
-
-### Contributors
-
-Many thanks to @ghostiee-11, @philippjfr, @ahuang11, @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @hoxbro, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @SuMayaBee, @Mr-Neutr0n, @Coderambling, @umi008, and @jadhavgaurav for their contributions to this release.
-
-A special welcome to our new contributors: @vignesh-chaturvedi, @SajalDevX, @DevForge255, @7487, @rimsha152007-dotcom, @fly1d, @Vamshi1404, @AmirF194, @yiboban, @raashish1601, @nightcityblade, @mayuriphad, @mahdibani, @latent-9, @Zayn329, @Mr-Neutr0n, @umi008, and @jadhavgaurav.
 
 ## Version 1.3.0
 
