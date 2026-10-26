@@ -1,3 +1,5 @@
+import asyncio
+
 from typing import Any, NotRequired
 
 import param
@@ -5,11 +7,13 @@ import param
 from panel_material_ui import Button
 from pydantic import Field, computed_field
 
+from ...views import View
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext, input_dependency_keys
+from ..editors import LumenEditor
 from ..llm import Message
 from ..models import BaseModel
-from ..utils import content_to_text, log_debug
+from ..utils import content_to_text, log_debug, serialize_image_content
 from .base import Agent
 
 
@@ -154,6 +158,27 @@ class ValidationAgent(Agent):
             if not (msg.get("role") == "system" and str(msg.get("content", "")).lstrip().startswith("<roadmap>"))
         ]
 
+    async def _render_view(self, context: TContext) -> bytes | None:
+        # Some defects only show once drawn (an empty chart, a sort Vega-Lite
+        # ignores), so the model gets the last view this plan produced.
+        plan = context.get("plan")
+        if plan is None or not self.llm._supports_vision:
+            return None
+        views = [
+            view.component for task in plan if task.actor is not self
+            for view in task.views
+            if isinstance(view, LumenEditor) and isinstance(view.component, View)
+        ]
+        if not views:
+            return None
+        try:
+            return await asyncio.to_thread(views[-1].to_image)
+        except Exception as e:
+            # The image is extra evidence; a view that cannot be rendered here
+            # (no browser installed, an older Panel) still gets validated.
+            log_debug(f"ValidationAgent could not render the view: {type(e).__name__}: {e}")
+            return None
+
     async def respond(
         self,
         messages: list[Message],
@@ -161,6 +186,12 @@ class ValidationAgent(Agent):
         step_title: str | None = None,
     ) -> tuple[list[Any], ValidationOutputs]:
         interface = self.interface
+        invoke_messages = self._without_roadmap(messages)
+        image = await self._render_view(context)
+        if image is not None:
+            invoke_messages.append({"role": "user", "content": [
+                "Rendered view:", serialize_image_content("view.png", image)
+            ]})
         def on_click(event):
             user_messages = [msg for msg in reversed(messages) if msg.get("role") == "user"]
             if not user_messages:
@@ -170,7 +201,7 @@ class ValidationAgent(Agent):
             interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
         try:
-            result = await self._invoke_prompt("main", self._without_roadmap(messages), context)
+            result = await self._invoke_prompt("main", invoke_messages, context, view_image=image is not None)
         except Exception as e:
             # Validation is a quality gate, not part of the answer: the plan's
             # actual outputs were already produced/displayed. If the structured

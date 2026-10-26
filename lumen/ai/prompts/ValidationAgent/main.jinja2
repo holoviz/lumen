@@ -20,6 +20,9 @@ Not requirements:
 {% if memory.get('view') and 'view' not in previous_keys %}
 
 View already rendered. Edit of existing chart ("bigger points", "sort ascending"): previous version not shown, so requested property present counts as satisfied.
+{%- if view_image is defined and view_image %}
+Rendered view attached as last message shows what user sees: check in it marks drawn, stacking, order of bars or categories, labels, empty chart, even where spec says otherwise. Take fields, values and scale type (log or linear, not judged from tick spacing) from spec.
+{%- endif %}
 {% endif %}
 {% if memory.get('chat') and 'chat' not in previous_keys and ((memory.get('sql') and 'sql' not in previous_keys) or (memory.get('view') and 'view' not in previous_keys)) %}
 

@@ -772,6 +772,17 @@ class View(MultiTypeComponent, Viewer):
         """
         return pn.panel(self.get_data())
 
+    def to_image(self) -> bytes:
+        """
+        Renders the view to PNG bytes.
+
+        Uses Panel's Playwright export, which needs a Panel whose ``save``
+        accepts ``backend`` and ``playwright install chromium``.
+        """
+        buffer = BytesIO()
+        self.get_panel().save(buffer, as_png=True, backend='playwright')
+        return buffer.getvalue()
+
     def _get_params(self) -> dict[str, Any] | None:
         """
         Returns a dictionary of parameter values that will update the
@@ -1809,6 +1820,17 @@ class VegaLiteView(View):
     def get_panel(self) -> pn.pane.Vega:
         spec = self._normalize_params(self._get_params())
         return pn.pane.Vega(**spec)
+
+    def to_image(self, width: int = 800, height: int = 400) -> bytes:
+        # vl-convert renders without a browser. An export has no container to
+        # fill, so a 'container' size gets a concrete one, as in VegaLiteEditor.export.
+        pane = self.get_panel()
+        spec = dict(pane.object)
+        for key, default in (('width', width), ('height', height)):
+            if spec.get(key) in (None, 'container'):
+                spec[key] = default
+        pane.object = spec
+        return pane.export('png')
 
 
 class DeckGLView(View):

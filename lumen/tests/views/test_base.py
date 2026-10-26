@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import json
 
 from pathlib import Path
@@ -782,3 +783,35 @@ def test_vega_point_map_layers_get_the_table(set_root):
 
     assert final_spec["data"] == {"name": "test"}
     assert "test" in final_spec["datasets"]
+
+
+@pytest.mark.skipif(importlib.util.find_spec("vl_convert") is None, reason="vl-convert-python not installed")
+def test_vega_to_image_sizes_container_spec(set_root):
+    """A 'container' size has no container to fill outside the UI, so to_image gives it one."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "mark": "bar", "width": "container", "height": "container",
+        "encoding": {"x": {"field": "A", "type": "quantitative"}, "y": {"field": "B", "type": "quantitative"}},
+    }
+
+    png = VegaLiteView(spec=spec, pipeline=pipeline).to_image(width=300, height=200)
+
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert int.from_bytes(png[16:20], "big") >= 300
+
+
+def _panel_saves_with_playwright():
+    from panel.io.save import save_png
+    return importlib.util.find_spec("playwright") is not None and "backend" in inspect.signature(save_png).parameters
+
+
+@pytest.mark.skipif(not _panel_saves_with_playwright(), reason="needs playwright and a Panel whose save takes backend=")
+def test_view_to_image_through_panel(set_root):
+    """Views without their own renderer export through Panel's Playwright backend."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+
+    png = hvPlotView(pipeline=pipeline, kind="scatter", x="A", y="B").to_image()
+
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
