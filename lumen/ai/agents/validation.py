@@ -3,7 +3,7 @@ from typing import Any, NotRequired
 import param
 
 from panel_material_ui import Button
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from ..config import PROMPTS_DIR
 from ..context import ContextModel, TContext, input_dependency_keys
@@ -13,21 +13,52 @@ from ..utils import content_to_text, log_debug
 from .base import Agent
 
 
-class QueryCompletionValidation(BaseModel):
-    """Validation of whether the executed plan answered the user's query"""
+class RequirementCheck(BaseModel):
+    """One explicit element of the request, checked against the outputs."""
 
-    chain_of_thought: str = Field(
-        description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
-
-    missing_elements: list[str] = Field(
-        default_factory=list,
-        description="List of specific elements from the user's query that weren't addressed"
+    requirement: str = Field(description="One thing the user asked for, in their words.")
+    evidence: str = Field(
+        description=(
+            "The exact spec key/value, SQL clause or response sentence that addresses it, "
+            "and what it does; 'not found' if nothing does."
+        )
     )
+    satisfied: bool
+
+
+class QueryCompletionValidation(BaseModel):
+    """
+    Validation of whether the executed plan answered the user's query.
+
+    The model checks each explicit requirement against quoted evidence and the
+    verdict is derived from those checks in code. Asked for one holistic
+    yes/no, the model (with reasoning off) judged by the request's wording and
+    the chart's title instead of the spec: it passed charts that contradicted
+    the request and failed correct ones, while answering the same questions
+    correctly when asked about each property directly.
+    """
+
+    checks: list[RequirementCheck] = Field(
+        default_factory=list,
+        description="One check per explicit requirement. Empty when the request names none.",
+    )
+
+    chain_of_thought: str = Field(default="", description="One sentence summing up the checks.")
+
     suggestions: list[str] = Field(
         default_factory=list,
-        description="Suggestions for additional steps that could complete the query if not fully answered"
+        description="Only for unsatisfied checks: steps that would satisfy them."
     )
-    correct: bool = Field(description="True if query correctly solves user request, otherwise False.")
+
+    @computed_field
+    @property
+    def missing_elements(self) -> list[str]:
+        return [f"{c.requirement}: {c.evidence}" for c in self.checks if not c.satisfied]
+
+    @computed_field
+    @property
+    def correct(self) -> bool:
+        return all(c.satisfied for c in self.checks)
 
 
 class ValidationInputs(ContextModel):
@@ -100,13 +131,48 @@ class ValidationAgent(Agent):
                 if task.actor is not self:
                     required_keys |= input_dependency_keys(task.input_schema)
             produced = {k for task in plan for k in task.out_context}
-            for key in ("chat", "sql", "view", "listing"):
+            for key in ("chat", "sql", "data", "view", "listing"):
                 if key in context and key not in produced:
                     if key in required_keys:
                         continue
                     previous_keys.add(key)
         ctx["previous_keys"] = previous_keys
+        if context.get("view"):
+            ctx["view_spec"] = self._compact_view(context["view"])
         return ctx
+
+    @staticmethod
+    def _compact_view(view: Any) -> Any:
+        """
+        Keep the parts of a view spec that decide whether it answers the
+        request (marks, encodings, transforms, titles). The pipeline repeats
+        the SQL already shown, and the theme config (a 20-colour palette,
+        number formats) is boilerplate: both cost tokens and invite the model
+        to second-guess choices the user never asked about.
+        """
+        if not isinstance(view, dict):
+            return view
+        view = {k: v for k, v in view.items() if k not in ("sizing_mode", "min_height")}
+        pipeline = view.get("pipeline")
+        if isinstance(pipeline, dict):
+            view["pipeline"] = {"table": pipeline.get("table")}
+        spec = view.get("spec")
+        if isinstance(spec, dict):
+            view["spec"] = {k: v for k, v in spec.items() if k not in ("config", "$schema")}
+        return view
+
+    @staticmethod
+    def _without_roadmap(messages: list[Message]) -> list[Message]:
+        """
+        Drop the plan roadmap the coordinator appends to the history. It
+        describes each step as done ("Create a horizontal bar chart"), and the
+        model takes that as evidence instead of reading the spec, so it passed
+        charts whose spec contradicted the request.
+        """
+        return [
+            msg for msg in messages
+            if not (msg.get("role") == "system" and str(msg.get("content", "")).lstrip().startswith("<roadmap>"))
+        ]
 
     async def respond(
         self,
@@ -124,7 +190,7 @@ class ValidationAgent(Agent):
             interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
         try:
-            result = await self._invoke_prompt("main", messages, context)
+            result = await self._invoke_prompt("main", self._without_roadmap(messages), context)
         except Exception as e:
             # Validation is a quality gate, not part of the answer: the plan's
             # actual outputs were already produced/displayed. If the structured
@@ -140,7 +206,6 @@ class ValidationAgent(Agent):
                     "Validation could not be completed due to an LLM error; "
                     "treating the executed plan as complete."
                 ),
-                correct=True,
             )
             return [result], {"validation_result": result}
 
@@ -148,8 +213,7 @@ class ValidationAgent(Agent):
             return [result], {"validation_result": result}
 
         response_parts = [f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}"]
-        if result.missing_elements:
-            response_parts.append(f"**Missing Elements:** {', '.join(result.missing_elements)}")
+        response_parts.append("**Missing Elements:**\n" + "\n".join(f"- {m}" for m in result.missing_elements))
         if result.suggestions:
             response_parts.append("**Suggested Next Steps:**")
             for i, suggestion in enumerate(result.suggestions, 1):

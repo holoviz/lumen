@@ -37,14 +37,14 @@ def test_validation_agent_previous_keys_gating(jinja_env):
     rendered = template.render(**context)
     
     # Check instructions are present
-    assert "Analyze if SQL query matches user's request" in rendered
-    assert "Analyze if generated view and responses match" in rendered
-    assert "Listing of items displayed to user." in rendered
-    assert "Analyze if assistant's response addresses user's request" in rendered
+    assert "SQL: check SELECT, WHERE, GROUP BY" in rendered
+    assert "View: spec already rendered" in rendered
+    assert "Listing: VALID if items match" in rendered
+    assert "Assistant response: VALID if consistent" in rendered
     
     # Check examples are present
     assert "SQL: SELECT region, SUM(sales)" in rendered
-    assert "User: \"Summarize survey results\"" in rendered
+    assert "User: \"sales by region\" / table shown" in rendered
     assert "User: \"bar chart of sales by region\"" in rendered
     
     # Test 2: Keys present but IN previous_keys (should NOT render gating instructions)
@@ -56,14 +56,14 @@ def test_validation_agent_previous_keys_gating(jinja_env):
     rendered = template.render(**context)
     
     # Check instructions are absent
-    assert "Analyze if SQL query matches user's request" not in rendered
-    assert "Analyze if generated view and responses match" not in rendered
-    assert "Listing of items displayed to user." not in rendered
-    assert "Analyze if assistant's response addresses user's request" not in rendered
+    assert "SQL: check SELECT, WHERE, GROUP BY" not in rendered
+    assert "View: spec already rendered" not in rendered
+    assert "Listing: VALID if items match" not in rendered
+    assert "Assistant response: VALID if consistent" not in rendered
     
     # Check examples are absent
     assert "SQL: SELECT region, SUM(sales)" not in rendered
-    assert "User: \"Summarize survey results\"" not in rendered
+    assert "User: \"sales by region\" / table shown" not in rendered
     assert "User: \"bar chart of sales by region\"" not in rendered
 
 
@@ -90,3 +90,77 @@ async def test_validation_agent_uses_prior_plan_dependencies(
     )
 
     assert prompt_context["previous_keys"] == expected_previous_keys
+
+
+def test_validation_agent_marks_previous_plan_data(jinja_env):
+    template = jinja_env.get_template("ValidationAgent/main.jinja2")
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"sql": "SELECT 1", "data": "rows: 1", "chat": "hello"},
+        previous_keys={"sql", "data"},
+    )
+    assert "(From previous plan) Data overview" in rendered
+    # The table is from a previous plan, so the response must not be excused for it
+    assert "need not restate every value" not in rendered
+
+
+def test_validation_agent_chat_instructions_need_chat(jinja_env):
+    template = jinja_env.get_template("ValidationAgent/main.jinja2")
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"sql": "SELECT 1"},
+        previous_keys=set(),
+    )
+    assert "Assistant response: VALID if consistent" not in rendered
+    assert "(From previous plan)" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("satisfied", "expected"),
+    [pytest.param([], True, id="no_requirements"),
+     pytest.param([True, True], True, id="all_met"),
+     pytest.param([True, False], False, id="one_unmet")],
+)
+@pytest.mark.asyncio
+async def test_validation_agent_verdict_comes_from_checks(satisfied, expected):
+    from lumen.ai.agents.validation import (
+        QueryCompletionValidation, RequirementCheck,
+    )
+
+    agent = ValidationAgent()
+    checks = [RequirementCheck(requirement=f"r{i}", evidence="e", satisfied=s) for i, s in enumerate(satisfied)]
+
+    async def invoke(*args, **kwargs):
+        return QueryCompletionValidation(checks=checks, chain_of_thought="x")
+
+    agent._invoke_prompt = invoke
+    _, outputs = await agent.respond([{"role": "user", "content": "sales by region"}], {})
+    result = outputs["validation_result"]
+    assert result.correct is expected
+    assert result.missing_elements == [f"r{i}: e" for i, s in enumerate(satisfied) if not s]
+
+
+def test_validation_agent_compacts_view():
+    view = {
+        "type": "vegalite",
+        "sizing_mode": "stretch_both",
+        "pipeline": {"source": {"tables": {"t": "SELECT 1"}}, "sql_transforms": [], "table": "t"},
+        "spec": {"config": {"range": {"category": ["#000"]}}, "$schema": "v5", "mark": "bar",
+                 "encoding": {"x": {"field": "region"}}},
+    }
+    compact = ValidationAgent._compact_view(view)
+    assert compact == {
+        "type": "vegalite",
+        "pipeline": {"table": "t"},
+        "spec": {"mark": "bar", "encoding": {"x": {"field": "region"}}},
+    }
+    assert "config" in view["spec"]  # the context's view is not mutated
+
+
+def test_validation_agent_drops_roadmap():
+    messages = [
+        {"role": "user", "content": "horizontal bar chart"},
+        {"role": "system", "content": "<roadmap>\n  - 🟢 Create a horizontal bar chart\n</roadmap>"},
+        {"role": "system", "content": "other context"},
+    ]
+    assert ValidationAgent._without_roadmap(messages) == [messages[0], messages[2]]
