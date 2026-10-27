@@ -22,8 +22,8 @@ def test_numpy_embeddings_get_char_ngrams():
 
 async def test_numpy_embeddings_short_strings():
     embeddings = NumpyEmbeddings()
-    result = await embeddings.embed(["ab", "xy"])
-    assert len(result) == 2
+    result = await embeddings.embed(["ab", "xy", "x"])
+    assert len(result) == 3
     for vec in result:
         assert len(vec) == embeddings.embedding_dim
         assert not all(v == 0.0 for v in vec)
@@ -33,8 +33,12 @@ async def test_numpy_embeddings_short_strings():
     result2 = await embeddings.embed(["ab"])
     assert result[0] == result2[0]
 
+    result_x = await embeddings.embed(["x"])
+    assert result[2] == result_x[0]
+
     # Different short strings produce different embeddings
     assert result[0] != result[1]
+    assert result[0] != result[2]
 
 
 async def test_numpy_embeddings_whitespace_and_empty():

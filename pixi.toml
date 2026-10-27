@@ -69,7 +69,7 @@ COVERAGE_CORE = "sysmon"
 
 [feature.ai.dependencies]
 chardet = "*"
-duckdb = ">=1.2.0"
+duckdb = ">=1.2.0,<2"
 griffe = "<2"
 instructor = ">=1.14.3"
 markitdown = "!=0.1.1"
@@ -86,7 +86,7 @@ panel-splitjs = ">=0.4.0"
 panel-graphic-walker = ">=0.6.4"
 
 [feature.sql.dependencies]
-duckdb = "*"
+duckdb = "<2"
 intake-sql = "*"
 sqlalchemy = "*"
 

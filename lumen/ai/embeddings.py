@@ -59,8 +59,10 @@ class NumpyEmbeddings(Embeddings):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         embeddings = []
         for text in texts:
-            text = STOP_WORDS_RE.sub("", text)
-            ngrams = self.get_char_ngrams(text)
+            filtered_text = STOP_WORDS_RE.sub("", text)
+            ngrams = self.get_char_ngrams(filtered_text)
+            if not ngrams:
+                ngrams = self.get_char_ngrams(text)
             vector = np.zeros(self.vocab_size)
 
             for ngram in ngrams:
