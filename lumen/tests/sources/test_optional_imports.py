@@ -167,6 +167,7 @@ def test_require_names_install_command():
 
 
 def test_llm_provider_missing_package_names_extra():
+    pytest.importorskip("pydantic")
     from lumen.ai.llm import MistralAI
 
     with patch.dict(sys.modules, {"mistralai": None}):
