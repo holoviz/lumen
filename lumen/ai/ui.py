@@ -1342,7 +1342,13 @@ class UI(Viewer):
                 self._success_alert,
                 max_width=850,
                 styles={'margin': 'auto'},
-                sx={'p': '0 20px 20px 20px'},
+                elevation=0,
+                sx={
+                    'p': '0 20px 20px 20px',
+                    'borderRadius': 3,
+                    'border': '1px solid',
+                    'borderColor': 'divider',
+                },
                 sizing_mode="stretch_width"
             ),
             sx={'display': 'flex', 'align-items': 'center'},
@@ -1808,6 +1814,7 @@ class UI(Viewer):
                     variant="outlined",
                     on_click=use_suggestion,
                     margin=5 if i else (5, 5, 5, 5),
+                    sx={'borderRadius': '999px'},
                     disabled=self.interface.param.loading
                 )
                 for i, suggestion in enumerate(suggestions)
@@ -1823,6 +1830,7 @@ class UI(Viewer):
                 variant="outlined",
                 on_click=run_demo,
                 margin=5,
+                sx={'borderRadius': '999px'},
                 disabled=self.interface.param.loading
             ))
         disable_js = "cb_obj.origin.disabled = true; setTimeout(() => cb_obj.origin.disabled = false, 3000)"
