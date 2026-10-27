@@ -5,7 +5,6 @@ helpful message when their optional dependency is not installed.
 """
 from __future__ import annotations
 
-import asyncio
 import builtins
 import importlib
 import json
@@ -16,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lumen.util import require, try_import, try_import_xarray
+from lumen.util import try_import, try_import_xarray
 
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
@@ -155,21 +154,3 @@ def test_try_import_xarray_none_when_missing():
 
     with patch("lumen.util.importlib.import_module", side_effect=mock_import):
         assert try_import_xarray() is None
-
-
-def test_require_returns_module():
-    assert require("json", "json").dumps({}) == "{}"
-
-
-def test_require_names_install_command():
-    with pytest.raises(ImportError, match=r"pip install lumen\[nope\]"):
-        require("not_a_real_module_xyz", "lumen[nope]")
-
-
-def test_llm_provider_missing_package_names_extra():
-    pytest.importorskip("pydantic")
-    from lumen.ai.llm import MistralAI
-
-    with patch.dict(sys.modules, {"mistralai": None}):
-        with pytest.raises(ImportError, match=r"pip install lumen\[ai-mistralai\]"):
-            asyncio.run(MistralAI()._traced_run_client("default", []))

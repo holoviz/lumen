@@ -799,20 +799,6 @@ def try_import(module_name, load=True):
         return None
 
 
-def require(module_name, install):
-    """Import and return a module, or raise an ImportError saying how to install it.
-
-    ``install`` is the pip requirement, e.g. ``"lumen[xarray]"`` or ``"boto3"``.
-    """
-    try:
-        return importlib.import_module(module_name)
-    except ImportError as exc:
-        raise ImportError(
-            f"{module_name!r} is required for this feature. "
-            f"Install it with `pip install {install}`."
-        ) from exc
-
-
 def try_import_xarray(load=True):
     """Import and return xarray, or None if xarray or xarray-sql is unavailable."""
     if try_import("xarray_sql", load=load) is None:
