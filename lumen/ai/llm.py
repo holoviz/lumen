@@ -35,6 +35,7 @@ from openai import OpenAI as OpenAIClient
 from pydantic import BaseModel, ValidationError, create_model
 
 from .config import UNRECOVERABLE_ERRORS
+from .guardrails import Guardrail
 from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
@@ -339,6 +340,10 @@ class Llm(param.Parameterized):
         The calling mode used by instructor to guide the LLM towards generating
         outputs matching the schema.""")
 
+    guardrails = param.List(default=[], item_type=Guardrail, doc="""
+        Guardrails run in order on every model call; the first violation
+        blocks the call. See lumen.ai.guardrails.""")
+
     interceptor = param.ClassSelector(default=None, class_=Interceptor, doc="""
         Intercepter instance to intercept LLM calls, e.g. for logging.""")
 
@@ -512,6 +517,19 @@ class Llm(param.Parameterized):
         return capture_trace(self)
 
     async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        # Every provider's model call, streamed or not, passes through here.
+        for guardrail in self.guardrails:
+            await guardrail.check_messages(messages)
+        result = await self._run_client_with_trace(model_spec, messages, **kwargs)
+        if kwargs.get("response_model") or kwargs.get("stream") or not any(g.check_output for g in self.guardrails):
+            return result
+        text = self._get_content(result)
+        if isinstance(text, str):
+            for guardrail in self.guardrails:
+                await guardrail.check_response(text)
+        return result
+
+    async def _run_client_with_trace(self, model_spec: str | dict, messages: list[Message], **kwargs):
         if not is_tracing(self):
             return await self.run_client(model_spec, messages, **kwargs)
         started = time.perf_counter()

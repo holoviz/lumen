@@ -37,6 +37,16 @@ class IntakeBaseSQLSource(BaseSQLSource, IntakeBaseSource):
             ) from e
         return source
 
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self._guard_active:
+            # Queries run through intake rather than execute, so the guard
+            # could not mask them; refuse rather than leak the columns.
+            raise NotImplementedError(
+                f"{type(self).__name__} does not support guardrails or mask_columns; "
+                "load the data into a DuckDBSource to mask columns."
+            )
+
     def get_sql_expr(self, table):
         return self._get_source(table)._sql_expr
 

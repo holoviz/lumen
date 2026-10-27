@@ -46,7 +46,7 @@ from .agents import (
 )
 from .config import (
     DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR,
+    SOURCE_TABLE_SEPARATOR, GuardrailViolation,
 )
 from .context import TContext
 from .controls import (
@@ -2926,6 +2926,22 @@ class ExplorerUI(UI):
 
         error_type = plan.out_context.pop("__error_type__", Exception)
         error = plan.out_context.pop("__error__", "Unknown error")
+        if issubclass(error_type, GuardrailViolation):
+            # Asking the LLM to explain the block would send the blocked text again.
+            explanation = f"🛑 {error}"
+        else:
+            explanation = await self._explain_error(plan, error_type, error)
+        if not exploration.view:
+            exploration.conversation[-1].stream(f"\n\n{explanation}")
+        else:
+            tabs = exploration.view[0]
+            if exploration.initialized:
+                tabs.append(("Error", Markdown(explanation, margin=(5, 20))))
+                tabs.active = len(tabs)-1
+            else:
+                tabs[0].object = explanation
+
+    async def _explain_error(self, plan: Plan, error_type: type[Exception], error: str) -> str:
         _, todos = plan.render_task_history(failed=True)
 
         user_msg = ""
@@ -2942,16 +2958,7 @@ class ExplorerUI(UI):
             ), "role": "user"}],
             response_model=ErrorDescription
         )
-        explanation = f"❌ **Unable to complete your request**\n\n{response.explanation}"
-        if not exploration.view:
-            exploration.conversation[-1].stream(f"\n\n{explanation}")
-        else:
-            tabs = exploration.view[0]
-            if exploration.initialized:
-                tabs.append(("Error", Markdown(explanation, margin=(5, 20))))
-                tabs.active = len(tabs)-1
-            else:
-                tabs[0].object = explanation
+        return f"❌ **Unable to complete your request**\n\n{response.explanation}"
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(

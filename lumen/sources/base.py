@@ -10,9 +10,11 @@ import threading
 import warnings
 import weakref
 
+from collections.abc import Callable
 from concurrent import futures
 from functools import wraps
 from itertools import product
+from logging import getLogger
 from os.path import basename
 from pathlib import Path
 from typing import (
@@ -26,6 +28,7 @@ import pandas as pd
 import panel as pn
 import param  # type: ignore
 import requests
+import sqlglot
 
 try:
     import aiohttp
@@ -48,6 +51,12 @@ from ..util import (
     is_lazyframe, is_narwhals, is_ref, merge_schemas, to_backend,
 )
 from ..validation import ValidationError, match_suggestion_message
+from .guard import (
+    SAMPLE_ROWS, GuardPlan, GuardState, build_plan, bypass, guard_query,
+    guarded_expr, guarded_sql, mask_frame,
+)
+
+log = getLogger(__name__)
 
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
@@ -138,6 +147,10 @@ def cached(method, locks=None):
             if not self.cache_per_query and (hasattr(self, 'dask') or hasattr(self, 'use_dask')):
                 cache_query['__dask'] = True
             df = method(self, table, **cache_query)
+            if not self._supports_sql:
+                # SQL sources mask in the query; the rest mask here, before
+                # the table is cached, so the cache holds masked data only.
+                df = self._mask_frame(table, df)
             with lock:
                 self._set_cache(df, table, **cache_query)
         filtered = df
@@ -329,12 +342,31 @@ class Source(MultiTypeComponent):
         in the generated metadata (from metadata_func or the Source itself);
         non-empty generated values take precedence.""")
 
+    guardrails = param.List(default=[], doc="""
+        lumen.ai.guardrails.Guardrail objects that check a sample of each
+        table the first time it is read. The columns they flag are masked,
+        per `mask`, in every table, schema and query result the source
+        returns, so their values never reach the table or a prompt.""")
+
+    mask = param.Selector(default='hash', objects=['hash', 'redact', 'drop'], doc="""
+        How guarded columns are masked: 'hash' replaces each value with an
+        8-character hash, so equal values still group, count and join;
+        'redact' replaces them with nulls; 'drop' removes the column.""")
+
+    mask_columns = param.List(default=[], item_type=str, doc="""
+        Names of columns to mask in every table whatever the guardrails
+        find, matched case-insensitively. Masking works without guardrails.""")
+
+    unmask_columns = param.List(default=[], item_type=str, doc="""
+        Names of columns never to mask, e.g. an ID the user looks rows up by.""")
+
     source_type: ClassVar[str | None] = None
 
     __abstract = True
 
-    # Specification configuration
-    _internal_params: ClassVar[list[str]] = ['name', 'root']
+    # Specification configuration; guardrails hold API clients, so they are
+    # not part of a spec and must be passed again to a source loaded from one.
+    _internal_params: ClassVar[list[str]] = ['name', 'root', 'guardrails']
 
     # Declare whether source supports SQL transforms
     _supports_sql: ClassVar[bool] = False
@@ -432,11 +464,71 @@ class Source(MultiTypeComponent):
 
     def __init__(self, **params):
         params['root'] = Path(params.get('root', config.root))
+        guard_state = params.pop('_guard_state', None)
         super().__init__(**params)
+        self._guard_state = guard_state or GuardState()
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
+
+    @property
+    def _guard_active(self) -> bool:
+        return bool(self.guardrails or self.mask_columns)
+
+    def _guard_plan(self, key: str, sample: Callable[[], DataFrame]) -> GuardPlan | None:
+        """
+        Return the plan for the table ``key``, building it from ``sample()``
+        the first time; None for a derived table, which is already masked.
+        """
+        state = self._guard_state
+        with state.lock:
+            if key in state.derived:
+                return None
+            if key not in state.plans:
+                plan = build_plan(self, sample())
+                if plan.masked:
+                    log.info(f"{type(self).__name__} masks {plan.masked} in {key!r}")
+                state.plans[key] = plan
+            return state.plans[key]
+
+    def _derive_guard(self, tables: list[str]) -> dict[str, Any]:
+        """
+        Return the parameters that share this source's guard with a source
+        derived from it, whose new ``tables`` are defined by SQL the guard
+        masks, so they are not masked twice.
+        """
+        state = self._guard_state
+        if self._guard_active:
+            own = {table.lower() for table in self.get_tables() or []}
+            with state.lock:
+                # A derived table that reuses a guarded table's name keeps the guard.
+                state.derived.update(
+                    key for key in (table.lower() for table in tables)
+                    if key not in own and key not in state.plans
+                )
+        return {'_guard_state': state}
+
+    def _mask_frame(self, table: str, df: DataFrame) -> DataFrame:
+        """Mask a table returned by ``get`` on a source that does not run SQL."""
+        if not self._guard_active or df is None:
+            return df
+        plan = self._guard_plan(table.lower(), lambda: df.head(SAMPLE_ROWS))
+        return df if plan is None else mask_frame(df, plan, self.mask)
+
+    def guarded_columns(self, table: str) -> dict[str, list[str]]:
+        """
+        Return the columns of ``table`` that are masked, with the reasons each
+        is masked: the rules the guardrails flagged, or 'mask_columns'.
+        """
+        if not self._guard_active:
+            return {}
+        if self._supports_sql:
+            self.get_sql_expr(table)
+        else:
+            self.get(table)
+        plan = self._guard_state.plans.get(table.lower())
+        return dict(plan.masked) if plan else {}
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -452,6 +544,9 @@ class Source(MultiTypeComponent):
         for k, v in self.param.values().items():
             if k in ('root',):
                 continue
+            if k == 'guardrails':
+                # Guardrails hold API clients; their types stand in for them.
+                v = [type(g).__name__ for g in v]
             sha.update(k.encode('utf-8'))
             sha.update(_generate_hash(v))
         return sha.hexdigest()
@@ -548,7 +643,9 @@ class Source(MultiTypeComponent):
                     dd = None
             else:
                 dd = None
-            if query:
+            # A guarded table is keyed by the source hash, which covers the
+            # guard, so a file cached before the guard was set is never read.
+            if query or self._guard_active:
                 filename = f'{key}_{table}.parq'
             else:
                 filename = f'{table}.parq'
@@ -597,7 +694,7 @@ class Source(MultiTypeComponent):
                 dd = None
             path = self.root / self.cache_dir
             path.mkdir(parents=True, exist_ok=True)
-            if query:
+            if query or self._guard_active:
                 filename = f'{key}_{table}.parq'
             else:
                 filename = f'{table}.parq'
@@ -647,6 +744,9 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
+        # The guard or the data may have changed, so decide again.
+        with self._guard_state.lock:
+            self._guard_state.plans.clear()
         if self.cache_dir:
             path = self.root / self.cache_dir
             if path.is_dir():
@@ -861,7 +961,8 @@ class RESTSource(Source):
             async with session.get(self.url+'/data', params=query) as response:
                 data = await response.json()
                 df = pd.DataFrame(data)
-                return df
+        # Not cached, so masked here; in a thread, as a plan may call a guardrail.
+        return await asyncio.to_thread(self._mask_frame, table, df)
 
 
 class InMemorySource(Source):
@@ -885,8 +986,8 @@ class InMemorySource(Source):
 
     def get(self, table: str, **query) -> pd.DataFrame:
         dask = query.pop('__dask', False)
-        table = self.tables.get(table)
-        df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        df = self._mask_frame(table, self.tables.get(table))
+        df = FilterTransform.apply_to(df, conditions=list(query.items()))
         df = collect_lazy(df)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
@@ -1153,6 +1254,47 @@ class BaseSQLSource(Source):
         """
         return table
 
+    def _guard_sql(self, sql_query: str) -> str:
+        """
+        Return ``sql_query`` with each table it reads replaced by a subquery
+        masking the guarded columns. Called by the methods ``guarded_sql``
+        wraps; every SQL source must wrap each method that runs a query.
+        """
+        if not self._guard_active:
+            return sql_query
+
+        def plan_for(key: str, table) -> GuardPlan | None:
+            def sample():
+                # A declared table is read by its definition, which the
+                # database may not know by name; any other by its reference.
+                declared = {t.lower(): t for t in self.tables or []}
+                if key in declared:
+                    return self._sample_expr(self.get_sql_expr(declared[key]), declared[key])
+                relation = table.copy()
+                relation.set('alias', None)
+                return self.execute(sqlglot.exp.select('*').from_(relation).limit(SAMPLE_ROWS).sql(dialect=self.dialect))
+            return self._guard_plan(key, sample)
+
+        try:
+            # The samples plans are built from must read the raw tables.
+            with bypass():
+                return guard_query(sql_query, self.dialect, plan_for, self.mask)
+        except sqlglot.errors.ParseError as e:
+            # Failing closed: a query that cannot be read cannot be masked.
+            raise ValueError(
+                f"{type(self).__name__} masks columns, so it only runs SQL it "
+                f"can parse as {self.dialect or 'SQL'}: {e}"
+            ) from e
+
+    def _sample_expr(self, sql_expr: str, table: str) -> DataFrame:
+        sample_sql = SQLLimit(limit=SAMPLE_ROWS, read=self.dialect).apply(sql_expr)
+        return self.execute(sample_sql, self.table_params.get(table) or None)
+
+    def _table_plan(self, table: str, sql_expr: str) -> GuardPlan | None:
+        """Return the plan for a declared table, sampling it by its SQL expression."""
+        return self._guard_plan(table.lower(), lambda: self._sample_expr(sql_expr, table))
+
+    @guarded_expr
     def get_sql_expr(self, table: str | dict):
         """
         Returns the SQL expression corresponding to a particular table.
@@ -1190,6 +1332,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
+    @guarded_sql
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
@@ -1215,6 +1358,7 @@ class BaseSQLSource(Source):
         """
         raise NotImplementedError
 
+    @guarded_sql
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query asynchronously and returns the result as a DataFrame.
@@ -1244,6 +1388,7 @@ class BaseSQLSource(Source):
         """
         return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
+    @guarded_sql
     async def execute_with_timeout(
         self, sql_query: str, timeout: float | None, fetch: bool = False
     ) -> DataFrame:
@@ -1299,6 +1444,7 @@ class BaseSQLSource(Source):
         """
         return None
 
+    @guarded_sql
     def fetch(self, sql_query: str, params: list | dict | None = None) -> DataFrame:
         """
         Executes a SQL query and returns the result in `dataframe_backend`.
