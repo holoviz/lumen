@@ -12,7 +12,7 @@ import yaml
 
 from instructor.utils import disable_pydantic_error_url
 from panel.pane import SVG
-from panel_material_ui import ChatMessage
+from panel_material_ui import ChatMessage, ChatStep as MaterialChatStep
 
 from ..config import SOURCE_TABLE_SEPARATOR  # NOQA: F401
 
@@ -254,6 +254,22 @@ def numpy_representer(dumper, data):
 # overflowing a fixed minimum width.
 pn.chat.ChatStep.sizing_mode = 'stretch_width'
 pn.chat.ChatStep.collapsed_on_success = False
+MaterialChatStep.param.sx.default = {
+    "& .MuiCardHeader-root": {
+        "position": "relative",
+    },
+    "& .MuiCardHeader-content": {
+        "minWidth": 0,
+        "paddingRight": "40px",
+    },
+    "& .MuiCardHeader-action": {
+        "position": "absolute",
+        "right": "16px",
+        "top": "50%",
+        "transform": "translateY(-50%)",
+        "margin": 0,
+    },
+}
 
 disable_pydantic_error_url()
 yaml.add_representer(str, str_presenter)
