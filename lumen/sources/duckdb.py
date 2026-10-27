@@ -29,6 +29,7 @@ from ..util import (
 from .base import (
     BaseSQLSource, QueryTimeoutError, Source, cached,
 )
+from .guard import guarded_sql
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -164,7 +165,13 @@ class DuckDBSource(BaseSQLSource):
                 # read_csv(...) as views so SQL can reference the table by name.
                 stripped = sql_expr.strip()
                 if stripped.upper().startswith('SELECT'):
-                    self._create_view(table_alias, sql_expr)
+                    if table_alias.lower() in self._guard_state.derived:
+                        # The guard skips a derived table by name, so its view
+                        # must read the masked tables.
+                        sql_expr_view = self._guard_sql(sql_expr)
+                    else:
+                        sql_expr_view = sql_expr
+                    self._create_view(table_alias, sql_expr_view)
                 elif TABLE_FUNCTION.match(stripped):
                     self._create_view(table_alias, f"SELECT * FROM {stripped}")
                 processed_tables[table_alias] = sql_expr
@@ -220,6 +227,7 @@ class DuckDBSource(BaseSQLSource):
         # DuckDB resolves identifiers case-insensitively.
         return next((table for table in self.get_tables() if table.lower() == name.lower()), name)
 
+    @guarded_sql
     async def execute_with_timeout(self, sql_query: str, timeout: float | None, fetch: bool = False):
         cursor = self._connection.cursor()
 
@@ -561,6 +569,7 @@ class DuckDBSource(BaseSQLSource):
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             source_params['_connection'] = self._connection
         source_params.pop('name', None)
+        source_params.update(self._derive_guard(list(tables)))
         source = type(self)(**source_params)
 
         if not materialize:
@@ -580,7 +589,8 @@ class DuckDBSource(BaseSQLSource):
                 continue
             elif sql_expr in equivalent_sql_exprs:
                 continue
-            table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({sql_expr})'
+            # Run on a cursor rather than through execute, so masked here.
+            table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({self._guard_sql(sql_expr) if self._guard_active else sql_expr})'
             with self._connection.cursor() as cursor:
                 self._execute_resolving_tables(cursor, table_expr, params.get(table))
 
@@ -659,10 +669,12 @@ class DuckDBSource(BaseSQLSource):
             df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
         return df
 
+    @guarded_sql
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
             return self._fetch_df(cursor, sql_query, params)
 
+    @guarded_sql
     def fetch(self, sql_query: str, params: list | dict | None = None):
         """Fetch query results in `dataframe_backend`, built by DuckDB itself.
 

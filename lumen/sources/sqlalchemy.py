@@ -21,6 +21,7 @@ except ImportError as e:
 from ..transforms.base import Filter
 from ..transforms.sql import SQLFilter
 from .base import BaseSQLSource, cached, cached_schema
+from .guard import guarded_sql
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
@@ -269,8 +270,10 @@ class SQLAlchemySource(BaseSQLSource):
         if params is not None:
             params_dict['table_params'] = params
         params_dict['engine'] = self._engine
+        params_dict.update(self._derive_guard(list(tables)))
         return SQLAlchemySource(**params_dict)
 
+    @guarded_sql
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
@@ -308,6 +311,7 @@ class SQLAlchemySource(BaseSQLSource):
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
             return df
 
+    @guarded_sql
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query asynchronously and returns the result as a DataFrame.
@@ -349,6 +353,7 @@ class SQLAlchemySource(BaseSQLSource):
             df = pd.DataFrame(rows, columns=result.keys())
             return df
 
+    @guarded_sql
     async def execute_with_timeout(
         self, sql_query: str, timeout: float | None, fetch: bool = False
     ) -> DataFrame:

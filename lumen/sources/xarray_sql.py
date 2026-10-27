@@ -16,6 +16,7 @@ import param
 from ..transforms.sql import SQLFilter
 from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
+from .guard import guarded_sql
 
 
 class XArraySQLSource(BaseSQLSource):
@@ -250,11 +251,13 @@ class XArraySQLSource(BaseSQLSource):
         lower_map = {t.lower(): t for t in known}
         return lower_map.get(table.lower(), table)
 
+    @guarded_sql
     def execute(self, sql_query, params=None, *args, **kwargs):
         """Execute a SQL query against the DataFusion context."""
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
+    @guarded_sql
     def fetch(self, sql_query, params=None):
         """Fetch query results in `dataframe_backend`, built by DataFusion.
 
@@ -294,7 +297,9 @@ class XArraySQLSource(BaseSQLSource):
         Uses xarray-sql's ``to_dataset``, which is lazy and keeps the data
         gridded, so a gridded source is never materialized as long-form.
         """
-        result = self._ctx.sql(self._build_sql(table, **query))
+        sql_query = self._build_sql(table, **query)
+        # Runs on the context rather than through execute, so masked here.
+        result = self._ctx.sql(self._guard_sql(sql_query) if self._guard_active else sql_query)
         # Pass only the dims the result actually has a column for. Multiple
         # data vars need dims passed explicitly (the FROM clause is
         # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
@@ -333,6 +338,11 @@ class XArraySQLSource(BaseSQLSource):
             open_kwargs=self.open_kwargs,
             tables=all_tables,
             table_params=all_params,
+            guardrails=self.guardrails,
+            mask=self.mask,
+            mask_columns=self.mask_columns,
+            unmask_columns=self.unmask_columns,
+            **self._derive_guard(list(tables)),
         )
 
     def _build_column_metadata(

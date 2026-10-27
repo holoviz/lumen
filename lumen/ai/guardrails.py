@@ -7,7 +7,10 @@ Every model call goes through ``Llm._traced_run_client``, so guardrails set on a
     llm = lmai.llm.OpenAI(guardrails=[EnkryptGuardrail()])
 
 To add a provider, subclass ``Guardrail`` and implement ``check``. To mask data
-before anyone sees it, use ``flagged_columns`` to find the columns to mask.
+before the table or the model sees it, pass guardrails to the source too, which
+masks the columns ``flagged_columns`` finds in every table, schema and query::
+
+    DuckDBSource(tables=..., guardrails=[guardrail], mask_columns=["ssn"])
 """
 from __future__ import annotations
 

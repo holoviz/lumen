@@ -27,6 +27,7 @@ from tqdm import tqdm
 
 from ..transforms.sql import SQLFilter, SQLMinMax
 from .base import BaseSQLSource, cached, cached_schema
+from .guard import guarded_expr, guarded_sql
 
 
 class BigQuerySource(BaseSQLSource):
@@ -197,6 +198,7 @@ class BigQuerySource(BaseSQLSource):
 
         return bigquery.QueryJobConfig(query_parameters=query_parameters)
 
+    @guarded_sql
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query and returns the result as a DataFrame.
@@ -224,6 +226,7 @@ class BigQuerySource(BaseSQLSource):
             kwargs['job_config'] = self._build_query_config(params)
         return self._sql_client.query_and_wait(sql_query, *args, **kwargs).to_dataframe()
 
+    @guarded_sql
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs) -> pd.DataFrame:
         """
         Executes a SQL query asynchronously and returns the result as a DataFrame.
@@ -291,6 +294,7 @@ class BigQuerySource(BaseSQLSource):
         self._cached_tables = table_references
         return table_references
 
+    @guarded_expr
     def get_sql_expr(self, table: str) -> str:
         if isinstance(self.tables, dict):
             if table not in self.tables:
@@ -325,6 +329,7 @@ class BigQuerySource(BaseSQLSource):
         source_params["tables"] = tables
         if params:
             source_params["table_params"] = params
+        source_params.update(self._derive_guard(list(tables)))
         return type(self)(**source_params)
 
     def _get_dataset_metadata(self, datasets: list[str] | None = None) -> dict:

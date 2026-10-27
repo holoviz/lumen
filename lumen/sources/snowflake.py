@@ -36,6 +36,7 @@ except ImportError as e:
 from ..transforms.sql import SQLFilter
 from ..util import to_backend
 from .base import BaseSQLSource, cached, cached_schema
+from .guard import guarded_sql
 
 # PEM certificates have the pattern:
 #   -----BEGIN PKEY-----  # renamed private... to pkey to prevent ruff from flagging
@@ -265,6 +266,7 @@ class SnowflakeSource(BaseSQLSource):
         if params:
             source_params['table_params'] = params
         source_params['conn'] = self._conn
+        source_params.update(self._derive_guard(list(tables)))
         return SnowflakeSource(**source_params)
 
     def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
@@ -293,6 +295,7 @@ class SnowflakeSource(BaseSQLSource):
                 df[col] = df[col].astype(str)
         return df
 
+    @guarded_sql
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
         if params:
@@ -301,6 +304,7 @@ class SnowflakeSource(BaseSQLSource):
             df = self._cursor.execute(sql_query, *args, **kwargs).fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
+    @guarded_sql
     async def execute_async(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         """
         Execute a Snowflake SQL query asynchronously and return the result as a DataFrame.
@@ -363,6 +367,7 @@ class SnowflakeSource(BaseSQLSource):
         df = self._cursor.fetch_pandas_all()
         return self._cast_to_supported_dtypes(df)
 
+    @guarded_sql
     async def execute_with_timeout(self, sql_query: str, timeout: float | None, fetch: bool = False):
         # Only execute_async cancels the query on timeout; fetch runs in a thread.
         df = await super().execute_with_timeout(sql_query, timeout)
