@@ -12,7 +12,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.config import MissingDataError
+from lumen.ai.config import MissingContextError
 from lumen.ai.controls.revision import (
     AnnotationControls, RetryControls, RevisionControls,
 )
@@ -389,7 +389,7 @@ class TestRetryControls:
         interface = MockInterface()
         view = MockView(spec="original")
         task = MockTask()
-        task.actor.revise = AsyncMock(side_effect=MissingDataError("The query returned 5 rows."))
+        task.actor.revise = AsyncMock(side_effect=MissingContextError("The query returned 5 rows."))
 
         controls = RetryControls(interface=interface, view=view, task=task)
         controls.instruction = "show the top 10"

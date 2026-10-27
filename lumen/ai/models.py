@@ -128,7 +128,5 @@ class RetrySpec(BaseModel):
         return self
 
 
-class ViewRetrySpec(RetrySpec):
+class ViewRetrySpec(RetrySpec, EscapeBaseModel):
     """A revision of a view spec, which can only use the data the view already has."""
-
-    needs_new_data: str | None = Field(default=None, description="Why the feedback needs data the view lacks, in one sentence; set instead of edits.")

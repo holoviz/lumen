@@ -38,7 +38,7 @@ from lumen.ai.agents.vega_lite import (
 )
 from lumen.ai.analysis import Analysis
 from lumen.ai.config import (
-    DeterministicError, MissingDataError, RetriesExceededError,
+    DeterministicError, MissingContextError, RetriesExceededError,
 )
 from lumen.ai.context import schema_fields
 from lumen.ai.editors import (
@@ -1533,15 +1533,18 @@ def _view_editor(n_rows):
 
 async def test_view_revise_declines_when_data_is_missing(llm):
     """A view edit that needs rows the view's query didn't return raises
-    MissingDataError instead of applying an edit that changes nothing."""
+    MissingContextError instead of applying an edit that changes nothing."""
     agent = hvPlotAgent(llm=llm)
     captured = {}
 
     async def fake_invoke(prompt_name, messages, context, **kwargs):
         captured.update(kwargs)
-        return ViewRetrySpec(chain_of_thought="x", edits=[], needs_new_data="The query returned 5 counties, not 10.")
+        return ViewRetrySpec(
+            chain_of_thought="x", edits=[], insufficient_context=True,
+            insufficient_context_reason="The query returned 5 counties, not 10.",
+        )
 
-    with patch.object(agent, "_invoke_prompt", side_effect=fake_invoke), pytest.raises(MissingDataError, match="5 counties"):
+    with patch.object(agent, "_invoke_prompt", side_effect=fake_invoke), pytest.raises(MissingContextError, match="5 counties"):
         await agent.revise("show the top 10", [{"role": "user", "content": "top 10"}], {}, view=_view_editor(5))
 
     assert captured["response_model"] is ViewRetrySpec

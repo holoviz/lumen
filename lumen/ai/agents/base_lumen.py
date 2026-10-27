@@ -3,7 +3,7 @@ import param
 from ...config import dump_yaml, load_yaml
 from ...pipeline import Pipeline
 from ...views import View
-from ..config import PROMPTS_DIR, MissingDataError
+from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..editors import LumenEditor
 from ..llm import Message
@@ -92,7 +92,7 @@ class BaseLumenAgent(Agent):
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
         # A view edit can only reshape the rows the view already has; show them,
-        # and let the model say when the feedback needs a new query instead.
+        # and let the model raise MissingContextError when the feedback needs a new query.
         view_data, response_model = None, None
         if view is not None and isinstance(view.component, View) and view.component.pipeline is not None:
             view_data = await describe_data(view.component.get_data())
@@ -111,8 +111,6 @@ class BaseLumenAgent(Agent):
             view_data=view_data,
             **kwargs
         )
-        if getattr(result, "needs_new_data", None):
-            raise MissingDataError(result.needs_new_data)
         new_spec_raw = apply_changes(lines, result.edits)
         # SQL is not YAML: a round trip truncates at '#' (e.g. '80651 Route #271').
         if language and language.startswith("sql"):

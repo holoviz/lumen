@@ -97,13 +97,6 @@ class MissingContextError(Exception):
     """Raise to indicate missing context for a query."""
 
 
-class MissingDataError(Exception):
-    """
-    Raised when a revision of a view needs data the view does not have, e.g.
-    the top 10 rows when its query returned 5, so the query must run again.
-    """
-
-
 class DeterministicError(Exception):
     """
     Raised for failures that regenerating the LLM output cannot fix,
@@ -163,7 +156,6 @@ UNRECOVERABLE_ERRORS = (
     LlmSetupError,
     RecursionError,
     MissingContextError,
-    MissingDataError,
     asyncio.CancelledError,
     UserCancelledError,
     RequestBudgetExceededError,
