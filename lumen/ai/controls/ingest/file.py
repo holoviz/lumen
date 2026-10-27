@@ -19,7 +19,6 @@ from .constants import TABLE_EXTENSIONS, XARRAY_EXTENSIONS
 from .file_row import UploadedFileRow
 from .utils import FileReadResult, read_file_to_dataframes
 
-
 PIP_NAMES = {"xarray_sql": "xarray-sql", "netCDF4": "netcdf4", "docx": "python-docx"}
 
 
