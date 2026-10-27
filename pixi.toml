@@ -18,6 +18,7 @@ test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
 lint = ["py312", "lint"]
+homepage = ["homepage"]
 
 [dependencies]
 bokeh = ">=3.9.0"
@@ -138,6 +139,30 @@ mkdocstrings-python = "*"
 docs-build = { cmd = 'zensical build --clean', depends-on = ['install'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
+
+# =============================================
+# ================= HOMEPAGE ==================
+# =============================================
+[feature.homepage.dependencies]
+nodejs = ">=20"
+# Python only for the Playwright checks; the site itself is Node.
+python = "3.12.*"
+pytest = "*"
+pytest-asyncio = "*" # the shared pytest config sets asyncio options
+pytest-playwright = "*"
+pillow = "*" # scripts/showcase.py writes webp
+
+[feature.homepage.tasks]
+_homepage-install = { cmd = 'npm ci', cwd = 'homepage', inputs = [
+    'homepage/package.json',
+    'homepage/package-lock.json',
+], outputs = ['homepage/node_modules/.package-lock.json'] }
+homepage-serve = { cmd = 'npm run dev', cwd = 'homepage', env = { VITE_DOCS_PATH = 'https://lumen.holoviz.org/en/docs/latest' }, depends-on = ['_homepage-install'], description = "Start the homepage dev server" }
+homepage-preview = { cmd = 'npm run preview', cwd = 'homepage', description = "Preview the built homepage" }
+homepage-typecheck = { cmd = 'npm run typecheck', cwd = 'homepage', depends-on = ['_homepage-install'], description = "Type check the homepage" }
+homepage-build = { cmd = 'npm run build', cwd = 'homepage', depends-on = ['_homepage-install'], description = "Build the homepage" }
+homepage-test = { cmd = 'pytest homepage/tests --browser chromium', description = "Run the homepage tests" }
+homepage-og-image = { cmd = 'python homepage/scripts/og-image.py', description = "Render the homepage social preview image" }
 
 # =============================================
 # ================== BUILD ====================
