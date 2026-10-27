@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from lumen.util import try_import, try_import_xarray
+from lumen.util import require, try_import, try_import_xarray
 
 # Each entry: (module_path, class_name, guard_package, pip_extra)
 OPTIONAL_SOURCES = [
@@ -154,3 +154,12 @@ def test_try_import_xarray_none_when_missing():
 
     with patch("lumen.util.importlib.import_module", side_effect=mock_import):
         assert try_import_xarray() is None
+
+
+def test_require_returns_module():
+    assert require("json", "json").dumps({}) == "{}"
+
+
+def test_require_names_install_command():
+    with pytest.raises(ImportError, match=r"pip install lumen\[nope\]"):
+        require("not_a_real_module_xyz", "lumen[nope]")
