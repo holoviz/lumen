@@ -1251,7 +1251,7 @@ class hvPlotView(hvPlotBaseView):
     def _gridded_pivot_blocker(self, df) -> str | None:
         """Return None if df can be pivoted to a grid, else a human-readable reason."""
         if try_import_xarray() is None:
-            return "xarray is not installed"
+            return "xarray is not installed (pip install lumen[xarray])"
         if not (self.x and self.y and self.z):
             return "x, y, and z must all be set for gridded plot kinds"
         index = self._gridded_index()
