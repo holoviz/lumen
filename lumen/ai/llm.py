@@ -34,6 +34,7 @@ from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
 from pydantic import BaseModel, ValidationError, create_model
 
+from ..util import require
 from .config import UNRECOVERABLE_ERRORS
 from .interceptor import Interceptor
 from .services import (
@@ -328,7 +329,10 @@ class Llm(param.Parameterized):
     Subclasses MUST implement _create_base_client().
     Subclasses MAY set _instructor_wrapper (default: "openai").
     Subclasses MAY override _create_instructor_client() or _get_completion_method().
+    Subclasses MAY set ``requires`` to ``(module, pip requirement)`` for an optional package.
     """
+
+    requires: tuple[str, str] | None = None
 
     create_kwargs = param.Dict(default={"max_retries": 1}, doc="""
         Additional keyword arguments to pass to the LLM provider
@@ -512,6 +516,8 @@ class Llm(param.Parameterized):
         return capture_trace(self)
 
     async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        if self.requires:
+            require(*self.requires)
         if not is_tracing(self):
             return await self.run_client(model_spec, messages, **kwargs)
         started = time.perf_counter()
@@ -2838,6 +2844,8 @@ class MistralAI(Llm, MistralAIMixin):
     A LLM implementation that calls Mistral AI.
     """
 
+    requires = ("mistralai", "lumen[ai-mistralai]")
+
     display_name = param.String(default="Mistral AI", constant=True)
 
     mode = param.Selector(default=Mode.MISTRAL_TOOLS, objects=[Mode.JSON_SCHEMA, Mode.MISTRAL_TOOLS])
@@ -2932,6 +2940,8 @@ class Anthropic(Llm, AnthropicMixin):
     """
     A LLM implementation that calls Anthropic models such as Claude.
     """
+
+    requires = ("anthropic", "lumen[ai-anthropic]")
 
     cache = param.Selector(default="5m", objects=[None, "5m", "1h"], doc="""
         Prompt-caching TTL. None disables caching; "5m" refreshes free on each
@@ -3502,6 +3512,8 @@ class Google(Llm, GenAIMixin):
     A LLM implementation that calls Google's Gemini models.
     """
 
+    requires = ("google.genai", "lumen[ai-google]")
+
     display_name = param.String(default="Google AI", constant=True)
 
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
@@ -3900,6 +3912,8 @@ class MLX(Llm):
           mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080
     """
 
+    requires = ("mlx_lm", "mlx-lm")
+
     display_name = param.String(default="MLX", constant=True, doc="""
         Display name shown in the UI.""")
 
@@ -4168,6 +4182,8 @@ class Response(BaseModel):
 class WebLLM(Llm):
     """WebLLM implementation using panel_web_llm. Uses patch(create=...) like LlamaCpp."""
 
+    requires = ("panel_web_llm", "panel-web-llm")
+
     display_name = param.String(default="WebLLM", constant=True)
 
     mode = param.Parameter(default=Mode.JSON_SCHEMA)
@@ -4272,6 +4288,8 @@ class LiteLLM(Llm):
     input/output format, including providers like OpenAI, Anthropic, Cohere,
     Hugging Face, Azure, Vertex AI, and more.
     """
+
+    requires = ("litellm", "lumen[ai-litellm]")
 
     display_name = param.String(default="LiteLLM", constant=True)
 

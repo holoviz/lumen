@@ -5,6 +5,7 @@ helpful message when their optional dependency is not installed.
 """
 from __future__ import annotations
 
+import asyncio
 import builtins
 import importlib
 import json
@@ -163,3 +164,11 @@ def test_require_returns_module():
 def test_require_names_install_command():
     with pytest.raises(ImportError, match=r"pip install lumen\[nope\]"):
         require("not_a_real_module_xyz", "lumen[nope]")
+
+
+def test_llm_provider_missing_package_names_extra():
+    from lumen.ai.llm import MistralAI
+
+    with patch.dict(sys.modules, {"mistralai": None}):
+        with pytest.raises(ImportError, match=r"pip install lumen\[ai-mistralai\]"):
+            asyncio.run(MistralAI()._traced_run_client("default", []))
