@@ -6,8 +6,10 @@ import pytest
 try:
     from lumen.ai.agents.chat import ChatAgent
     from lumen.ai.agents.sql import SQLAgent
-    from lumen.ai.agents.validation import ValidationAgent
-    from lumen.ai.config import PROMPTS_DIR
+    from lumen.ai.agents.validation import (
+        QueryCompletionValidation, RequirementCheck, ValidationAgent,
+    )
+    from lumen.ai.config import PROMPTS_DIR, ROADMAP_TAG
     from lumen.ai.coordinator.base import Plan
     from lumen.ai.report import ActorTask
 except ModuleNotFoundError:
@@ -25,46 +27,25 @@ def jinja_env():
     return env
 
 
-def test_validation_agent_previous_keys_gating(jinja_env):
+MARKERS = {
+    "sql": "`SELECT SUM(sales) FROM data`",
+    "view": "View already rendered",
+    "chat": '"which region sold most?"',
+    "listing": "Listing displayed:",
+}
+
+
+@pytest.mark.parametrize("previous", [False, True], ids=["current_plan", "previous_plan"])
+def test_validation_agent_previous_keys_gating(jinja_env, previous):
+    """Instructions and examples for a key render only when the current plan produced it."""
     template = jinja_env.get_template("ValidationAgent/main.jinja2")
-    
-    # Test 1: Keys present and NOT in previous_keys (should render gating instructions)
-    context = {
-        "current_datetime": datetime.datetime.now(),
-        "memory": {"sql": "SELECT 1", "view": "...", "chat": "hello", "listing": "list"},
-        "previous_keys": set()
-    }
-    rendered = template.render(**context)
-    
-    # Check instructions are present
-    assert "Analyze if SQL query matches user's request" in rendered
-    assert "Analyze if generated view and responses match" in rendered
-    assert "Listing of items displayed to user." in rendered
-    assert "Analyze if assistant's response addresses user's request" in rendered
-    
-    # Check examples are present
-    assert "SQL: SELECT region, SUM(sales)" in rendered
-    assert "User: \"Summarize survey results\"" in rendered
-    assert "User: \"bar chart of sales by region\"" in rendered
-    
-    # Test 2: Keys present but IN previous_keys (should NOT render gating instructions)
-    context = {
-        "current_datetime": datetime.datetime.now(),
-        "memory": {"sql": "SELECT 1", "view": "...", "chat": "hello", "listing": "list"},
-        "previous_keys": {"sql", "view", "chat", "listing"}
-    }
-    rendered = template.render(**context)
-    
-    # Check instructions are absent
-    assert "Analyze if SQL query matches user's request" not in rendered
-    assert "Analyze if generated view and responses match" not in rendered
-    assert "Listing of items displayed to user." not in rendered
-    assert "Analyze if assistant's response addresses user's request" not in rendered
-    
-    # Check examples are absent
-    assert "SQL: SELECT region, SUM(sales)" not in rendered
-    assert "User: \"Summarize survey results\"" not in rendered
-    assert "User: \"bar chart of sales by region\"" not in rendered
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"sql": "SELECT 1", "view": "...", "chat": "hello", "listing": "list"},
+        previous_keys=set(MARKERS) if previous else set(),
+    )
+    for key, marker in MARKERS.items():
+        assert (marker in rendered) is not previous, key
 
 
 @pytest.mark.parametrize(
@@ -90,3 +71,117 @@ async def test_validation_agent_uses_prior_plan_dependencies(
     )
 
     assert prompt_context["previous_keys"] == expected_previous_keys
+
+
+def test_validation_agent_marks_previous_plan_data(jinja_env):
+    template = jinja_env.get_template("ValidationAgent/main.jinja2")
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"sql": "SELECT 1", "data": "rows: 1", "chat": "hello"},
+        previous_keys={"sql", "data"},
+    )
+    assert "(From previous plan) Data overview" in rendered
+    # The table is from a previous plan, so the response must not be excused for it
+    assert "need not restate values" not in rendered
+
+
+def test_validation_agent_chat_instructions_need_chat(jinja_env):
+    template = jinja_env.get_template("ValidationAgent/main.jinja2")
+    rendered = template.render(
+        current_datetime=datetime.datetime.now(),
+        memory={"sql": "SELECT 1"},
+        previous_keys=set(),
+    )
+    assert MARKERS["chat"] not in rendered
+    assert "(From previous plan)" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("satisfied", "expected"),
+    [pytest.param([], True, id="no_requirements"),
+     pytest.param([True, True], True, id="all_met"),
+     pytest.param([True, False], False, id="one_unmet")],
+)
+@pytest.mark.asyncio
+async def test_validation_agent_verdict_comes_from_checks(satisfied, expected):
+    agent = ValidationAgent()
+    checks = [RequirementCheck(requirement=f"r{i}", evidence="e", satisfied=s) for i, s in enumerate(satisfied)]
+
+    async def invoke(*args, **kwargs):
+        return QueryCompletionValidation(checks=checks, chain_of_thought="x")
+
+    agent._invoke_prompt = invoke
+    _, outputs = await agent.respond([{"role": "user", "content": "sales by region"}], {})
+    result = outputs["validation_result"]
+    assert result.correct is expected
+    assert result.missing_elements == [f"r{i}: e" for i, s in enumerate(satisfied) if not s]
+
+
+@pytest.mark.parametrize(
+    ("stale", "expected"),
+    [pytest.param(False, False, id="current_sql"), pytest.param(True, True, id="previous_plan_sql")],
+)
+@pytest.mark.asyncio
+async def test_validation_agent_empty_checks_fail_with_current_outputs(stale, expected):
+    agent = ValidationAgent()
+    out_context = {} if stale else {"sql": "SELECT 1"}
+    plan = Plan(ActorTask(ChatAgent(), out_context=out_context), ActorTask(agent))
+
+    async def invoke(*args, **kwargs):
+        return QueryCompletionValidation(chain_of_thought="x")
+
+    agent._invoke_prompt = invoke
+    _, outputs = await agent.respond(
+        [{"role": "user", "content": "sales by region"}], {"plan": plan, "sql": "SELECT 1"},
+    )
+    assert outputs["validation_result"].correct is expected
+
+
+@pytest.mark.asyncio
+async def test_validation_agent_llm_error_passes():
+    agent = ValidationAgent()
+
+    async def invoke(*args, **kwargs):
+        raise RuntimeError("no structured output")
+
+    agent._invoke_prompt = invoke
+    _, outputs = await agent.respond(
+        [{"role": "user", "content": "sales by region"}], {"sql": "SELECT 1", "view": {}},
+    )
+    assert outputs["validation_result"].correct is True
+
+
+def test_validation_agent_compacts_view():
+    view = {
+        "type": "vegalite",
+        "sizing_mode": "stretch_both",
+        "pipeline": {"source": {"tables": {"t": "SELECT 1"}}, "sql_transforms": [], "table": "t"},
+        "spec": {"config": {"range": {"category": ["#000"]}}, "$schema": "v5", "mark": "bar",
+                 "encoding": {"x": {"field": "region"}}},
+    }
+    compact = ValidationAgent._compact_view(view)
+    assert compact == {
+        "type": "vegalite",
+        "pipeline": {"table": "t"},
+        "spec": {"mark": "bar", "encoding": {"x": {"field": "region"}}},
+    }
+    assert "config" in view["spec"]  # the context's view is not mutated
+
+
+def test_validation_agent_compact_view_keeps_filters_and_mark_config():
+    view = {
+        "pipeline": {"table": "t", "filters": [{"field": "year", "value": 2024}], "transforms": []},
+        "spec": {"config": {"range": {"category": ["#000"]}, "mark": {"color": "red"}}, "mark": "bar"},
+    }
+    compact = ValidationAgent._compact_view(view)
+    assert compact["pipeline"] == {"table": "t", "filters": [{"field": "year", "value": 2024}]}
+    assert compact["spec"] == {"mark": "bar", "config": {"mark": {"color": "red"}}}
+
+
+def test_validation_agent_drops_roadmap():
+    messages = [
+        {"role": "user", "content": "horizontal bar chart"},
+        {"role": "system", "content": f"{ROADMAP_TAG}\n  - 🟢 Create a horizontal bar chart\n</roadmap>"},
+        {"role": "system", "content": "other context"},
+    ]
+    assert ValidationAgent._without_roadmap(messages) == [messages[0], messages[2]]

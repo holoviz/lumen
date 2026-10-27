@@ -127,6 +127,10 @@ class RequestBudgetExceededError(Exception):
 THIS_DIR = Path(__file__).parent
 PROMPTS_DIR = THIS_DIR / "prompts"
 
+# Opening tag of the coordinator's roadmap system message; the ValidationAgent
+# matches on it to drop the roadmap from its prompt.
+ROADMAP_TAG = "<roadmap>"
+
 GETTING_STARTED_SUGGESTIONS = [
     ("search", "What data is available?"),
     ("description", "Show me a dataset"),
