@@ -114,8 +114,8 @@ class TableMetadata(TypedDict, total=False):
     columns: dict[str, dict[str, Any]]
     source_name: str
 
-TablesMetadata = dict[str, TableMetadata]
 
+TablesMetadata = dict[str, TableMetadata]
 
 @dataclass
 class Column:
