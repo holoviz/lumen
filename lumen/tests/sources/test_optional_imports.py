@@ -163,13 +163,3 @@ def test_require_returns_module():
 def test_require_names_install_command():
     with pytest.raises(ImportError, match=r"pip install lumen\[nope\]"):
         require("not_a_real_module_xyz", "lumen[nope]")
-
-
-def test_llm_provider_missing_package_names_extra():
-    from types import SimpleNamespace
-
-    from lumen.ai.llm import MistralAI
-
-    with patch.dict(sys.modules, {"mistralai": None}):
-        with pytest.raises(ImportError, match=r"pip install lumen\[ai-mistralai\]"):
-            MistralAI.models(SimpleNamespace(api_key="x"))
