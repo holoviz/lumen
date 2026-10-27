@@ -297,9 +297,8 @@ class XArraySQLSource(BaseSQLSource):
         Uses xarray-sql's ``to_dataset``, which is lazy and keeps the data
         gridded, so a gridded source is never materialized as long-form.
         """
-        sql_query = self._build_sql(table, **query)
         # Runs on the context rather than through execute, so masked here.
-        result = self._ctx.sql(self._guard_sql(sql_query) if self._guard_active else sql_query)
+        result = self._ctx.sql(self._guard_sql(self._build_sql(table, **query)))
         # Pass only the dims the result actually has a column for. Multiple
         # data vars need dims passed explicitly (the FROM clause is
         # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/

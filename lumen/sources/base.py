@@ -466,11 +466,11 @@ class Source(MultiTypeComponent):
         params['root'] = Path(params.get('root', config.root))
         guard_state = params.pop('_guard_state', None)
         super().__init__(**params)
+        self._guard_state = guard_state or GuardState()
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
-        self._guard_state = guard_state or GuardState()
 
     @property
     def _guard_active(self) -> bool:
@@ -744,10 +744,9 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
-        if hasattr(self, '_guard_state'):
-            # The guard or the data may have changed, so decide again.
-            with self._guard_state.lock:
-                self._guard_state.plans.clear()
+        # The guard or the data may have changed, so decide again.
+        with self._guard_state.lock:
+            self._guard_state.plans.clear()
         if self.cache_dir:
             path = self.root / self.cache_dir
             if path.is_dir():
@@ -1261,20 +1260,19 @@ class BaseSQLSource(Source):
         masking the guarded columns. Called by the methods ``guarded_sql``
         wraps; every SQL source must wrap each method that runs a query.
         """
+        if not self._guard_active:
+            return sql_query
+
         def plan_for(key: str, table) -> GuardPlan | None:
             def sample():
+                # A declared table is read by its definition, which the
+                # database may not know by name; any other by its reference.
+                declared = {t.lower(): t for t in self.tables or []}
+                if key in declared:
+                    return self._sample_expr(self.get_sql_expr(declared[key]), declared[key])
                 relation = table.copy()
                 relation.set('alias', None)
-                sample_sql = sqlglot.exp.select('*').from_(relation).limit(SAMPLE_ROWS).sql(dialect=self.dialect)
-                try:
-                    return self.execute(sample_sql)
-                except Exception:
-                    # A declared table the database cannot resolve by name,
-                    # e.g. one whose view failed; read its definition instead.
-                    declared = {t.lower(): t for t in (self.tables if isinstance(getattr(self, 'tables', None), dict) else {})}
-                    if key not in declared:
-                        raise
-                    return self._sample_expr(self.get_sql_expr(declared[key]), declared[key])
+                return self.execute(sqlglot.exp.select('*').from_(relation).limit(SAMPLE_ROWS).sql(dialect=self.dialect))
             return self._guard_plan(key, sample)
 
         try:

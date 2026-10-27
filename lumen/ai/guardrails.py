@@ -37,7 +37,8 @@ async def flagged_columns(df: pd.DataFrame, guardrail: Guardrail, sample_size: i
 
     Each column is checked once, by its name and up to ``sample_size`` distinct
     non-null values, in a single ``check_many`` call, so callers can mask whole
-    columns instead of checking every cell. Errors from the guardrail propagate.
+    columns instead of checking every cell. If the guardrail itself fails, its
+    ``on_error`` decides: 'block' raises GuardrailViolation, 'allow' flags nothing.
     """
     texts = [
         f"{column}: " + ", ".join(df[column].dropna().astype(str).unique()[:sample_size])
@@ -45,7 +46,13 @@ async def flagged_columns(df: pd.DataFrame, guardrail: Guardrail, sample_size: i
     ]
     if not texts:
         return {}
-    results = await guardrail.check_many(texts, "data")
+    try:
+        results = await guardrail.check_many(texts, "data")
+    except NotImplementedError:
+        raise
+    except Exception as error:  # cleanup: ignore[blind-except] providers raise their own errors; on_error decides
+        guardrail._on_check_error(error, "data")
+        return {}
     return {column: rules for column, rules in zip(df.columns, results, strict=True) if rules}
 
 
@@ -116,6 +123,13 @@ class Guardrail(param.Parameterized):
         if self.check_output:
             await self._run(text, "output")
 
+    def _on_check_error(self, error: Exception, mode: Mode) -> None:
+        """Return to allow the call, or raise to block it, when a check itself failed."""
+        if self.on_error == "allow":
+            log_debug(f"{type(self).__name__} failed, allowing: {error!r}")
+            return
+        raise GuardrailViolation(self.message, [f"guardrail unavailable: {error}"], mode) from error
+
     async def _run(self, text: str, mode: Mode) -> None:
         key = (mode, text)
         if not text.strip() or key in self._passed:
@@ -125,10 +139,8 @@ class Guardrail(param.Parameterized):
         except NotImplementedError:
             raise
         except Exception as error:  # cleanup: ignore[silent-except] on_error="allow" fails open on purpose
-            if self.on_error == "allow":
-                log_debug(f"{type(self).__name__} failed, allowing: {error!r}")
-                return
-            raise GuardrailViolation(self.message, [f"guardrail unavailable: {error}"], mode) from error
+            self._on_check_error(error, mode)
+            return
         if violations:
             await self.handle_violation(text, violations, mode)
         elif self.cache_size:

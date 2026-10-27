@@ -26,7 +26,6 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
-from logging import getLogger
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -40,8 +39,6 @@ from ..util import (
 
 if TYPE_CHECKING:
     from .base import Source
-
-log = getLogger(__name__)
 
 #: Rows read from a table to decide which of its columns to mask.
 SAMPLE_ROWS = 100
@@ -68,27 +65,6 @@ def bypass():
         _BYPASS.reset(token)
 
 
-@dataclass(frozen=True)
-class GuardPlan:
-    """The columns of one table, and the reasons each masked one is masked."""
-
-    columns: tuple[str, ...] = ()
-    masked: dict[str, list[str]] = field(default_factory=dict)
-
-
-@dataclass
-class GuardState:
-    """
-    Plans shared by a Source and the sources derived from it, so a table is
-    sampled once and a derived table, built from already masked SQL, is not
-    masked twice.
-    """
-
-    plans: dict[str, GuardPlan] = field(default_factory=dict)
-    derived: set[str] = field(default_factory=set)
-    lock: threading.RLock = field(default_factory=threading.RLock)
-
-
 def run_sync(coro):
     """Run a coroutine to completion from sync code, even inside a running loop."""
     try:
@@ -101,21 +77,21 @@ def run_sync(coro):
 
 def hash_value(value: Any) -> str | None:
     """The 8-character hash a value is masked with; equal values hash equally."""
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return None
     return hashlib.md5(str(value).encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
 
 
 def build_plan(source: Source, sample) -> GuardPlan:
     """Decide which columns of ``sample`` to mask."""
+    # lumen.ai is optional; a source only reaches it when given guardrails.
+    from ..ai.guardrails import flagged_columns
+
     sample = as_pandas(sample)
     columns = tuple(str(column) for column in sample.columns)
     masked: dict[str, list[str]] = {}
     for guardrail in source.guardrails:
-        for column, rules in _flagged(guardrail, sample).items():
+        for column, rules in run_sync(flagged_columns(sample, guardrail)).items():
             masked.setdefault(str(column), []).extend(rules)
     always = {column.lower() for column in source.mask_columns}
     never = {column.lower() for column in source.unmask_columns}
@@ -126,59 +102,26 @@ def build_plan(source: Source, sample) -> GuardPlan:
     return GuardPlan(columns=columns, masked=masked)
 
 
-def _flagged(guardrail, sample: pd.DataFrame) -> dict[str, list[str]]:
-    from ..ai.config import GuardrailViolation
-    from ..ai.guardrails import flagged_columns
-
-    try:
-        return run_sync(flagged_columns(sample, guardrail))
-    except Exception as error:
-        if getattr(guardrail, "on_error", "block") == "allow":
-            log.warning(f"{type(guardrail).__name__} could not check columns, masking only mask_columns: {error!r}")
-            return {}
-        # Failing closed: without a decision, no column is known to be safe.
-        raise GuardrailViolation(
-            getattr(guardrail, "message", "This request was blocked by a guardrail."),
-            [f"guardrail unavailable: {error}"], "data",
-        ) from error
-
-
-# ---------------------------------------------------------------------------
-# DataFrames
-# ---------------------------------------------------------------------------
-
 def mask_frame(df, plan: GuardPlan, mode: str):
     """Return ``df`` with the columns ``plan`` masks hashed, nulled or dropped."""
     columns = [column for column in plan.masked if column in df.columns]
     if not columns:
         return df
-    if hasattr(df, "map_partitions"):  # dask
-        if mode == "drop":
-            return df.drop(columns=columns)
-        df = df.copy()
-        for column in columns:
-            if mode == "hash":
-                df[column] = df[column].map(hash_value, meta=(column, "object"))
-            else:
-                df[column] = df[column].map(lambda _: None, meta=(column, "object"))
-        return df
-    if isinstance(df, pd.DataFrame):
-        if mode == "drop":
-            return df.drop(columns=columns)
-        df = df.copy()
-        for column in columns:
-            df[column] = df[column].map(hash_value) if mode == "hash" else None
-        return df
-    # polars, pyarrow and other narwhals-supported frames: mask as pandas and
-    # convert back, which costs a copy but only for guarded tables.
-    narwhals_df = as_narwhals(df)
-    backend = narwhals_df.implementation.name.lower() if is_narwhals(narwhals_df) else None
-    return to_backend(mask_frame(as_pandas(df), plan, mode), backend)
+    is_dask = hasattr(df, "map_partitions")
+    if not (is_dask or isinstance(df, pd.DataFrame)):
+        # polars, pyarrow and other narwhals frames: mask as pandas and convert
+        # back, which costs a copy but only for guarded tables.
+        narwhals_df = as_narwhals(df)
+        backend = narwhals_df.implementation.name.lower() if is_narwhals(narwhals_df) else None
+        return to_backend(mask_frame(as_pandas(df), plan, mode), backend)
+    if mode == "drop":
+        return df.drop(columns=columns)
+    mask = hash_value if mode == "hash" else (lambda _: None)
+    df = df.copy()
+    for column in columns:
+        df[column] = df[column].map(mask, meta=(column, "object")) if is_dask else df[column].map(mask)
+    return df
 
-
-# ---------------------------------------------------------------------------
-# SQL
-# ---------------------------------------------------------------------------
 
 def _is_raw(node: exp.Expression) -> bool:
     """Whether ``node`` sits inside a relation a masking subquery reads."""
@@ -273,10 +216,6 @@ def guard_expr(sql_expr: str, dialect: str | None, plan: GuardPlan, mode: str) -
     return masked_select(relation, plan, mode).sql(dialect=dialect)
 
 
-# ---------------------------------------------------------------------------
-# Decorators for Source methods
-# ---------------------------------------------------------------------------
-
 def guarded_sql(method):
     """
     Mask the tables the SQL query passed to ``method`` reads.
@@ -322,3 +261,24 @@ def guarded_expr(method):
         return guard_expr(sql_expr, self.dialect, plan, self.mask)
     wrapped.__lumen_guarded__ = True
     return wrapped
+
+
+@dataclass(frozen=True)
+class GuardPlan:
+    """The columns of one table, and the reasons each masked one is masked."""
+
+    columns: tuple[str, ...] = ()
+    masked: dict[str, list[str]] = field(default_factory=dict)
+
+
+@dataclass
+class GuardState:
+    """
+    Plans shared by a Source and the sources derived from it, so a table is
+    sampled once and a derived table, built from already masked SQL, is not
+    masked twice.
+    """
+
+    plans: dict[str, GuardPlan] = field(default_factory=dict)
+    derived: set[str] = field(default_factory=set)
+    lock: threading.RLock = field(default_factory=threading.RLock)

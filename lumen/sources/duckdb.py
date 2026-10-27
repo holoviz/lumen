@@ -169,13 +169,10 @@ class DuckDBSource(BaseSQLSource):
                 # read_csv(...) as views so SQL can reference the table by name.
                 stripped = sql_expr.strip()
                 if stripped.upper().startswith('SELECT'):
-                    if table_alias.lower() in self._guard_state.derived:
-                        # The guard skips a derived table by name, so its view
-                        # must read the masked tables.
-                        sql_expr_view = self._guard_sql(sql_expr)
-                    else:
-                        sql_expr_view = sql_expr
-                    self._create_view(table_alias, sql_expr_view)
+                    # The guard skips a derived table by name, so its view
+                    # must read the masked tables.
+                    derived = table_alias.lower() in self._guard_state.derived
+                    self._create_view(table_alias, self._guard_sql(sql_expr) if derived else sql_expr)
                 elif TABLE_FUNCTION.match(stripped):
                     self._create_view(table_alias, f"SELECT * FROM {stripped}")
                 processed_tables[table_alias] = sql_expr
@@ -594,7 +591,7 @@ class DuckDBSource(BaseSQLSource):
             elif sql_expr in equivalent_sql_exprs:
                 continue
             # Run on a cursor rather than through execute, so masked here.
-            table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({self._guard_sql(sql_expr) if self._guard_active else sql_expr})'
+            table_expr = f'CREATE OR REPLACE TEMP TABLE "{table}" AS ({self._guard_sql(sql_expr)})'
             with self._connection.cursor() as cursor:
                 self._execute_resolving_tables(cursor, table_expr, params.get(table))
 
