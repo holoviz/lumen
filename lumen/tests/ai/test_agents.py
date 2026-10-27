@@ -37,20 +37,22 @@ from lumen.ai.agents.vega_lite import (
     AltairChartSpec, AltairSpec, ChartSpec, VegaLiteSpec, VegaLiteSpecUpdate,
 )
 from lumen.ai.analysis import Analysis
-from lumen.ai.config import DeterministicError, RetriesExceededError
+from lumen.ai.config import (
+    DeterministicError, MissingContextError, RetriesExceededError,
+)
 from lumen.ai.context import schema_fields
 from lumen.ai.editors import (
     AnalysisOutput, MultiChartEditor, SQLEditor, VegaLiteEditor,
 )
 from lumen.ai.llm import Llm
-from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.models import ReplaceLine, RetrySpec, ViewRetrySpec
 from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
 from lumen.ai.utils import count_tokens, format_error
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
 from lumen.pipeline import Pipeline
-from lumen.sources.base import QueryTimeoutError
+from lumen.sources.base import InMemorySource, QueryTimeoutError
 from lumen.sources.duckdb import DuckDBSource
 from lumen.views import Panel, Table
 
@@ -1521,3 +1523,45 @@ def test_exploration_tool_doc_quotes_every_name():
     doc = make_run_exploration_sql_tool(sources).function.__doc__
     assert "one of `src_a`, `src_b`." in doc
     assert doc.count("`") % 2 == 0
+
+
+def _view_editor(n_rows):
+    df = pd.DataFrame({"county": [f"C{i}" for i in range(n_rows)], "pm25": range(n_rows)})
+    pipeline = Pipeline(source=InMemorySource(tables={"top": df}), table="top")
+    return SimpleNamespace(component=Table(pipeline=pipeline), spec="page_size: 5", language="yaml", validate_spec=lambda s: s)
+
+
+async def test_view_revise_declines_when_data_is_missing(llm):
+    """A view edit that needs rows the view's query didn't return raises
+    MissingContextError instead of applying an edit that changes nothing."""
+    agent = hvPlotAgent(llm=llm)
+    captured = {}
+
+    async def fake_invoke(prompt_name, messages, context, **kwargs):
+        captured.update(kwargs)
+        return ViewRetrySpec(
+            chain_of_thought="x", edits=[], insufficient_context=True,
+            insufficient_context_reason="The query returned 5 counties, not 10.",
+        )
+
+    with patch.object(agent, "_invoke_prompt", side_effect=fake_invoke), pytest.raises(MissingContextError, match="5 counties"):
+        await agent.revise("show the top 10", [{"role": "user", "content": "top 10"}], {}, view=_view_editor(5))
+
+    assert captured["response_model"] is ViewRetrySpec
+    assert "data_shape" in captured["view_data"]
+
+
+async def test_spec_revise_without_view_keeps_retry_spec(llm):
+    """Revising a bare spec (e.g. after a render error) has no view data to show, so it can't decline."""
+    agent = hvPlotAgent(llm=llm)
+    captured = {}
+
+    async def fake_invoke(prompt_name, messages, context, **kwargs):
+        captured.update(kwargs)
+        return RetrySpec(chain_of_thought="x", edits=[])
+
+    with patch.object(agent, "_invoke_prompt", side_effect=fake_invoke):
+        await agent.revise("fix", [{"role": "user", "content": "fix"}], {}, spec="kind: bar", language="yaml")
+
+    assert captured["response_model"] is None
+    assert captured["view_data"] is None

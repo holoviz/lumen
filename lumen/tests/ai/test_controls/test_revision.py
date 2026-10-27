@@ -12,6 +12,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from lumen.ai.config import MissingContextError
 from lumen.ai.controls.revision import (
     AnnotationControls, RetryControls, RevisionControls,
 )
@@ -74,10 +75,14 @@ class MockInterface:
     
     def __init__(self):
         self.messages = []
+        self.sent = []
         
     def stream(self, content, user="Assistant"):
         """Mock stream method."""
         self.messages.append({"content": content, "user": user})
+
+    def send(self, content, user="User"):
+        self.sent.append((content, user))
 
 
 class TestRevisionControls:
@@ -377,6 +382,23 @@ class TestRetryControls:
         # Verify revise was not called
         task.actor.revise.assert_not_called()
         
+    @pytest.mark.asyncio
+    async def test_revise_needing_new_data_runs_as_new_request(self):
+        """When the edit needs data the view lacks, the spec is left alone and the
+        instruction goes to the coordinator as a follow-up."""
+        interface = MockInterface()
+        view = MockView(spec="original")
+        task = MockTask()
+        task.actor.revise = AsyncMock(side_effect=MissingContextError("The query returned 5 rows."))
+
+        controls = RetryControls(interface=interface, view=view, task=task)
+        controls.instruction = "show the top 10"
+        await controls._revise()
+
+        assert view.spec == "original"
+        assert interface.sent == [("show the top 10", "User")]
+        assert interface.messages[0]["content"].title == "Needs new data"
+
     @pytest.mark.asyncio
     async def test_revise_handles_exception(self):
         """Test _revise handles exceptions during revision."""

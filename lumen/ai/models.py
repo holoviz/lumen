@@ -126,3 +126,7 @@ class RetrySpec(BaseModel):
                     )
                 seen_replace_or_delete.add(e.line_no)
         return self
+
+
+class ViewRetrySpec(RetrySpec, EscapeBaseModel):
+    """A revision of a view spec, which can only use the data the view already has."""
