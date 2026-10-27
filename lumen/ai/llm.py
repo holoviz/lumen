@@ -34,6 +34,7 @@ from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
 from pydantic import BaseModel, ValidationError, create_model
 
+from ..util import require
 from .config import UNRECOVERABLE_ERRORS
 from .interceptor import Interceptor
 from .services import (
@@ -2864,7 +2865,7 @@ class MistralAI(Llm, MistralAIMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Mistral."""
-        from mistralai import Mistral
+        Mistral = require("mistralai", "lumen[ai-mistralai]").Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
     def _create_base_client(self, **kwargs) -> Any:
@@ -2967,7 +2968,7 @@ class Anthropic(Llm, AnthropicMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Anthropic."""
-        from anthropic import Anthropic as AnthropicClient
+        AnthropicClient = require("anthropic", "lumen[ai-anthropic]").Anthropic
         response = AnthropicClient(api_key=self.api_key, timeout=5).models.list()
         # also handle model aliases (claude-sonnet-4-5-20250929) -> (claude-sonnet-4-5)
         return {m.id for m in response.data} | {m.id.rsplit("-", maxsplit=1)[0] for m in response.data}
@@ -3317,7 +3318,7 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
     ], constant=True, doc="Available Claude models on Bedrock")
 
     def _create_base_client(self, **kwargs) -> Any:
-        from anthropic.lib.bedrock import AsyncAnthropicBedrock
+        AsyncAnthropicBedrock = require("anthropic.lib.bedrock", "lumen[ai-anthropic]").AsyncAnthropicBedrock
         client = AsyncAnthropicBedrock(
             aws_access_key=self.aws_access_key_id,
             aws_secret_key=self.api_key,
@@ -3529,7 +3530,7 @@ class Google(Llm, GenAIMixin):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Google AI."""
-        from google import genai
+        genai = require("google.genai", "lumen[ai-google]")
         available = set()
         for m in genai.Client(api_key=self.api_key).models.list():
             available.add(m.name)
@@ -3716,7 +3717,8 @@ class Google(Llm, GenAIMixin):
         if not tool_specs:
             return
 
-        from google.genai.types import FunctionDeclaration, Tool
+        types = require("google.genai.types", "lumen[ai-google]")
+        FunctionDeclaration, Tool = types.FunctionDeclaration, types.Tool
         declarations = []
         for spec in tool_specs:
             if not isinstance(spec, dict) or spec.get("type") != "function":
@@ -3970,7 +3972,7 @@ class MLX(Llm):
     def _load_mlx_model(self, model_id: str) -> tuple:
         """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
         if model_id not in self._mlx_models:
-            from mlx_lm import load
+            load = require("mlx_lm", "mlx-lm").load
             self._mlx_models[model_id] = load(model_id)
         return self._mlx_models[model_id]
 
@@ -3996,14 +3998,14 @@ class MLX(Llm):
 
     def _make_sampler(self):
         """Create an MLX sampler from the configured temperature."""
-        from mlx_lm.sample_utils import make_sampler
+        make_sampler = require("mlx_lm.sample_utils", "mlx-lm").make_sampler
         if self.temperature is None:
             return make_sampler()
         return make_sampler(temp=self.temperature)
 
     def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
         """Synchronous chat completion compatible with instructor's patch(create=...)."""
-        from mlx_lm import generate as mlx_generate
+        mlx_generate = require("mlx_lm", "mlx-lm").generate
 
         model_spec = kwargs.pop("model", "default")
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -4049,7 +4051,7 @@ class MLX(Llm):
     @classmethod
     def warmup(cls, model_kwargs: dict | None):
         """Pre-download model weights from Hugging Face Hub."""
-        from mlx_lm import load
+        load = require("mlx_lm", "mlx-lm").load
         model_kwargs = model_kwargs or {}
         if "default" not in model_kwargs:
             model_kwargs["default"] = cls.model_kwargs["default"]
@@ -4192,7 +4194,7 @@ class WebLLM(Llm):
         return {}
 
     def __init__(self, **params):
-        from panel_web_llm import WebLLM as pnWebLLM
+        pnWebLLM = require("panel_web_llm", "panel-web-llm").WebLLM
         self._llm = pnWebLLM()
         super().__init__(**params)
 
@@ -4328,17 +4330,15 @@ class LiteLLM(Llm):
         super().__init__(**params)
         self._router = None  # Lazy init
         if self.enable_caching:
-            import litellm
-
-            from litellm import Cache
-            litellm.cache = Cache()
+            litellm = require("litellm", "lumen[ai-litellm]")
+            litellm.cache = litellm.Cache()
         if self.logfire_tags:
             self._logfire.instrument_litellm()
 
     def _get_router(self):
         """Get or create cached LiteLLM Router."""
         if self._router is None:
-            from litellm import Router
+            Router = require("litellm", "lumen[ai-litellm]").Router
             model_list = [
                 {'model_name': key, 'litellm_params': config}
                 for key, config in self.model_kwargs.items()
