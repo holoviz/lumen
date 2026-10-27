@@ -36,6 +36,10 @@ if TYPE_CHECKING:
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
 
+# Whether the connection execute() returns can build polars and arrow frames
+# itself (pl(), arrow()); duckdb 2 leaves that to relations.
+_NATIVE_ON_EXECUTE = hasattr(duckdb.DuckDBPyConnection, 'pl')
+
 # A table expression that is a single table function call, e.g. read_csv('x.csv')
 TABLE_FUNCTION = re.compile(r"^[A-Za-z_]\w*\s*\(.*\)$", re.DOTALL)
 
@@ -625,7 +629,12 @@ class DuckDBSource(BaseSQLSource):
         other library would hold the column as opaque bytes, drop it from the
         schema, and render a blank map with nothing raising.
         """
-        rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+        if backend in ('polars', 'pyarrow') and not _NATIVE_ON_EXECUTE:
+            # duckdb 2 builds arrow and polars from a relation only; it is
+            # bound but not run, so the geometry path below can still query.
+            rel = cursor.sql(sql_expr, params=params) if params else cursor.sql(sql_expr)
+        else:
+            rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
             d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
             for d in rel.description if str(d[1]).startswith('GEOMETRY')
@@ -635,6 +644,8 @@ class DuckDBSource(BaseSQLSource):
             if backend == 'polars':
                 return rel.pl()
             if backend == 'pyarrow':
+                if not _NATIVE_ON_EXECUTE:
+                    return rel.to_arrow_table()
                 # Through pa.table because arrow() returns a Table up to
                 # duckdb 1.3 and a RecordBatchReader from 1.4, and
                 # Pipeline.data rejects the reader. Not fetch_arrow_table,
