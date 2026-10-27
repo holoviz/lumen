@@ -1094,6 +1094,7 @@ class UI(Viewer):
                 callback_exception="raise",
                 edit_callback=on_edit,
                 load_buffer=5,
+                message_params={"show_avatar": True},
                 on_submit=on_submit,
                 show_button_tooltips=True,
                 show_button_name=False,
