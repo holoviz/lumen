@@ -15,9 +15,19 @@ from ....util import detect_file_encoding
 from ...config import get_markitdown
 from ...utils import log_debug
 from .base import BaseSourceControls
-from .constants import TABLE_EXTENSIONS
+from .constants import TABLE_EXTENSIONS, XARRAY_EXTENSIONS
 from .file_row import UploadedFileRow
 from .utils import FileReadResult, read_file_to_dataframes
+
+
+def _unsupported_message(filename: str, extension: str) -> str:
+    if extension in XARRAY_EXTENSIONS:
+        return (
+            f"\n⚠️ Could not read {filename!r}: unsupported format without xarray. "
+            f"Install it with `pip install xarray-sql netcdf4` to open .{extension} files."
+        )
+    supported = ", ".join(f".{ext}" for ext in TABLE_EXTENSIONS)
+    return f"\n⚠️ Could not read {filename!r}: unsupported format. Supported: {supported}."
 
 
 class FileSourceControls(BaseSourceControls):
@@ -151,9 +161,7 @@ class FileSourceControls(BaseSourceControls):
                     file, extension, alias=alias, sheet_name=card.sheet,
                 )
                 if result is None:
-                    self._error_placeholder.object += (
-                        f"\n⚠️ Could not convert {filename!r}: unsupported format."
-                    )
+                    self._error_placeholder.object += _unsupported_message(filename, extension)
                     self._error_placeholder.visible = True
                     return 0
         except Exception as e:
@@ -351,7 +359,7 @@ class FileSourceControls(BaseSourceControls):
                 added = self._add_table(source, card.file_obj, card)
                 n_tables += added
             else:
-                self._error_placeholder.object += f"\n⚠️ Skipped '{card.filename}.{card.extension}': unsupported format."
+                self._error_placeholder.object += _unsupported_message(f"{card.filename}.{card.extension}", card.extension)
                 self._error_placeholder.visible = True
 
         for card in metadata_cards:
