@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import hashlib
+import inspect
 import threading
 
 from collections.abc import Callable
@@ -284,7 +285,7 @@ def guarded_sql(method):
     ``execute_async``, ``fetch``, ``execute_with_timeout``). Calls made from
     inside a guarded call run their SQL as given.
     """
-    if asyncio.iscoroutinefunction(method):
+    if inspect.iscoroutinefunction(method):
         @wraps(method)
         async def wrapped_async(self, sql_query, *args, **kwargs):
             if _BYPASS.get() or not self._guard_active:
