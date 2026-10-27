@@ -50,6 +50,10 @@ class NumpyEmbeddings(Embeddings):
 
     def get_char_ngrams(self, text, n=3):
         text = re.sub(r"\W+", "", text.lower())
+        if not text:
+            return []
+        if len(text) < n:
+            return [text]
         return [text[i : i + n] for i in range(len(text) - n + 1)]
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
