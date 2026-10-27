@@ -4,7 +4,7 @@
 ## Instructions
 Check whether outputs from current plan answer user's latest message. Earlier messages context only: follow-up like "now only 2024" keeps earlier chart, grouping and metric.
 
-One check per explicit requirement in latest message: chart type, orientation, fields, grouping, filter, aggregation, metric, sort, limit, colors, labels, question to answer. Include earlier requirements only when latest message changes them. With assistant response, add one check: its claims match results.
+One check per explicit requirement in latest message: chart type, orientation, fields, grouping, filter, aggregation, metric, sort, limit, colors, labels, question to answer. Include earlier requirements only when latest message changes them. When assistant response states facts about results, add one check: those claims match results. When current plan produced SQL or a view, at least one check; for vague request, check the reasonable reading ("show sales" → sales shown).
 Evidence: quote spec key and value, SQL clause or response sentence, and say what it does. Titles, subtitles and plan descriptions state intent, not what was built. Satisfied only when evidence shows requirement met.
 
 Not requirements:
@@ -46,7 +46,7 @@ Fill `checks` first; `chain_of_thought` one sentence; `suggestions` only for uns
 {% endif %}
 {% if memory.get('chat') and 'chat' not in previous_keys -%}
 "which region sold most?" / results: North highest; response: "South" → claims match results: South named, North highest → unsatisfied
-"Show me data" / response lists columns, asks what to explore → no explicit requirement; checks empty
+"Show me data" / response lists columns, asks what to explore → no explicit requirement, no claims about results; checks empty
 {% endif %}
 {% if memory.get('view') and 'view' not in previous_keys -%}
 "line chart over time" / spec: mark bar, no temporal field → "line chart": `mark: bar` → unsatisfied; "over time": no temporal encoding → unsatisfied

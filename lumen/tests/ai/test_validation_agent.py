@@ -9,7 +9,7 @@ try:
     from lumen.ai.agents.validation import (
         QueryCompletionValidation, RequirementCheck, ValidationAgent,
     )
-    from lumen.ai.config import PROMPTS_DIR
+    from lumen.ai.config import PROMPTS_DIR, ROADMAP_TAG
     from lumen.ai.coordinator.base import Plan
     from lumen.ai.report import ActorTask
 except ModuleNotFoundError:
@@ -117,6 +117,40 @@ async def test_validation_agent_verdict_comes_from_checks(satisfied, expected):
     assert result.missing_elements == [f"r{i}: e" for i, s in enumerate(satisfied) if not s]
 
 
+@pytest.mark.parametrize(
+    ("stale", "expected"),
+    [pytest.param(False, False, id="current_sql"), pytest.param(True, True, id="previous_plan_sql")],
+)
+@pytest.mark.asyncio
+async def test_validation_agent_empty_checks_fail_with_current_outputs(stale, expected):
+    agent = ValidationAgent()
+    out_context = {} if stale else {"sql": "SELECT 1"}
+    plan = Plan(ActorTask(ChatAgent(), out_context=out_context), ActorTask(agent))
+
+    async def invoke(*args, **kwargs):
+        return QueryCompletionValidation(chain_of_thought="x")
+
+    agent._invoke_prompt = invoke
+    _, outputs = await agent.respond(
+        [{"role": "user", "content": "sales by region"}], {"plan": plan, "sql": "SELECT 1"},
+    )
+    assert outputs["validation_result"].correct is expected
+
+
+@pytest.mark.asyncio
+async def test_validation_agent_llm_error_passes():
+    agent = ValidationAgent()
+
+    async def invoke(*args, **kwargs):
+        raise RuntimeError("no structured output")
+
+    agent._invoke_prompt = invoke
+    _, outputs = await agent.respond(
+        [{"role": "user", "content": "sales by region"}], {"sql": "SELECT 1", "view": {}},
+    )
+    assert outputs["validation_result"].correct is True
+
+
 def test_validation_agent_compacts_view():
     view = {
         "type": "vegalite",
@@ -134,10 +168,20 @@ def test_validation_agent_compacts_view():
     assert "config" in view["spec"]  # the context's view is not mutated
 
 
+def test_validation_agent_compact_view_keeps_filters_and_mark_config():
+    view = {
+        "pipeline": {"table": "t", "filters": [{"field": "year", "value": 2024}], "transforms": []},
+        "spec": {"config": {"range": {"category": ["#000"]}, "mark": {"color": "red"}}, "mark": "bar"},
+    }
+    compact = ValidationAgent._compact_view(view)
+    assert compact["pipeline"] == {"table": "t", "filters": [{"field": "year", "value": 2024}]}
+    assert compact["spec"] == {"mark": "bar", "config": {"mark": {"color": "red"}}}
+
+
 def test_validation_agent_drops_roadmap():
     messages = [
         {"role": "user", "content": "horizontal bar chart"},
-        {"role": "system", "content": "<roadmap>\n  - 🟢 Create a horizontal bar chart\n</roadmap>"},
+        {"role": "system", "content": f"{ROADMAP_TAG}\n  - 🟢 Create a horizontal bar chart\n</roadmap>"},
         {"role": "system", "content": "other context"},
     ]
     assert ValidationAgent._without_roadmap(messages) == [messages[0], messages[2]]

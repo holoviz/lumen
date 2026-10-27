@@ -3,9 +3,9 @@ from typing import Any, NotRequired
 import param
 
 from panel_material_ui import Button
-from pydantic import Field, computed_field
+from pydantic import Field, PrivateAttr, computed_field
 
-from ..config import PROMPTS_DIR
+from ..config import PROMPTS_DIR, ROADMAP_TAG
 from ..context import ContextModel, TContext, input_dependency_keys
 from ..llm import Message
 from ..models import BaseModel
@@ -29,12 +29,16 @@ class QueryCompletionValidation(BaseModel):
     """Whether the executed plan answered the user's latest message."""
 
     checks: list[RequirementCheck] = Field(
-        default_factory=list, description="One per explicit requirement; empty when the request names none.")
+        default_factory=list, description="One per explicit requirement; empty only when the request names none and no SQL or view was produced.")
 
     chain_of_thought: str = Field(default="", description="One sentence summing up the checks.")
 
     suggestions: list[str] = Field(
         default_factory=list, description="Steps that would satisfy the unsatisfied checks.")
+
+    # Set by the agent, not the LLM: when the current plan produced SQL or a
+    # view, there is always something to check, so empty checks fail.
+    _require_checks: bool = PrivateAttr(default=False)
 
     @computed_field
     @property
@@ -44,6 +48,8 @@ class QueryCompletionValidation(BaseModel):
     @computed_field
     @property
     def correct(self) -> bool:
+        if not self.checks:
+            return not self._require_checks
         return all(c.satisfied for c in self.checks)
 
 
@@ -108,41 +114,51 @@ class ValidationAgent(Agent):
         current-plan outputs from previous-plan leftovers.
         """
         ctx = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
-
-        plan = context.get("plan")
-        previous_keys = set()
-        if plan is not None:
-            required_keys = set()
-            for task in plan:
-                if task.actor is not self:
-                    required_keys |= input_dependency_keys(task.input_schema)
-            produced = {k for task in plan for k in task.out_context}
-            for key in ("chat", "sql", "data", "view", "listing"):
-                if key in context and key not in produced:
-                    if key in required_keys:
-                        continue
-                    previous_keys.add(key)
-        ctx["previous_keys"] = previous_keys
+        ctx["previous_keys"] = self._previous_keys(context)
         if context.get("view"):
             ctx["view_spec"] = self._compact_view(context["view"])
         return ctx
 
+    def _previous_keys(self, context: TContext) -> set[str]:
+        plan = context.get("plan")
+        previous_keys = set()
+        if plan is None:
+            return previous_keys
+        required_keys = set()
+        for task in plan:
+            if task.actor is not self:
+                required_keys |= input_dependency_keys(task.input_schema)
+        produced = {k for task in plan for k in task.out_context}
+        for key in ("chat", "sql", "data", "view", "listing"):
+            if key in context and key not in produced and key not in required_keys:
+                previous_keys.add(key)
+        return previous_keys
+
     @staticmethod
     def _compact_view(view: Any) -> Any:
-        # The pipeline repeats the SQL shown separately, and the theme config
-        # and sizing are boilerplate the user never asks about.
+        # The pipeline's source repeats the SQL shown separately, and the theme
+        # palette and sizing are boilerplate the user never asks about. Pipeline
+        # filters and transforms and mark-level config stay, since a requested
+        # filter or color can live there.
         if not isinstance(view, dict):
             return view
         view = {k: v for k, v in view.items() if k not in ("sizing_mode", "min_height")}
         pipeline = view.get("pipeline")
         if isinstance(pipeline, dict):
-            view["pipeline"] = {"table": pipeline.get("table")}
+            view["pipeline"] = {
+                k: v for k, v in pipeline.items()
+                if k == "table" or (k in ("filters", "transforms") and v)
+            }
         spec = view.get("spec")
         if isinstance(spec, dict):
-            view["spec"] = {
+            config = spec.get("config")
+            spec = {
                 k: v for k, v in spec.items()
                 if k not in ("config", "$schema") and not (k in ("width", "height") and v == "container")
             }
+            if isinstance(config, dict) and config.get("mark"):
+                spec["config"] = {"mark": config["mark"]}
+            view["spec"] = spec
         return view
 
     @staticmethod
@@ -151,7 +167,7 @@ class ValidationAgent(Agent):
         # evidence instead of reading the outputs.
         return [
             msg for msg in messages
-            if not (msg.get("role") == "system" and str(msg.get("content", "")).lstrip().startswith("<roadmap>"))
+            if not (msg.get("role") == "system" and str(msg.get("content", "")).lstrip().startswith(ROADMAP_TAG))
         ]
 
     async def respond(
@@ -181,6 +197,7 @@ class ValidationAgent(Agent):
                 f"ValidationAgent could not run; treating plan as complete: "
                 f"{type(e).__name__}: {e}"
             )
+            # No checks and _require_checks left False, so this passes.
             result = QueryCompletionValidation(
                 chain_of_thought=(
                     "Validation could not be completed due to an LLM error; "
@@ -189,11 +206,21 @@ class ValidationAgent(Agent):
             )
             return [result], {"validation_result": result}
 
+        previous_keys = self._previous_keys(context)
+        result._require_checks = any(
+            context.get(key) and key not in previous_keys for key in ("sql", "view")
+        )
         if result.correct:
             return [result], {"validation_result": result}
 
-        response_parts = [f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}"]
-        response_parts.append("**Missing Elements:**\n" + "\n".join(f"- {m}" for m in result.missing_elements))
+        header = "**Query Validation: ✗ Incomplete**"
+        if result.chain_of_thought:
+            header += f" - {result.chain_of_thought}"
+        response_parts = [header]
+        if result.missing_elements:
+            response_parts.append("**Missing Elements:**\n" + "\n".join(f"- {m}" for m in result.missing_elements))
+        elif not result.checks:
+            response_parts.append("**Missing Elements:** no requirement was checked against the outputs.")
         if result.suggestions:
             response_parts.append("**Suggested Next Steps:**")
             for i, suggestion in enumerate(result.suggestions, 1):
