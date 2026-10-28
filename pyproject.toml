@@ -29,7 +29,7 @@ classifiers = [
 dependencies = [
     "bokeh >=3.9.0",
     "chardet",
-    "duckdb >=1.2.0",
+    "duckdb >=1.2.0,<2",
     "lxml",
     "griffe <2",
     "holoviews >=1.17.0",
