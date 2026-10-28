@@ -2,14 +2,14 @@
 site_name = "Lumen"
 site_description = "Open-source agent framework for chatting with data and building dashboards"
 site_author = "HoloViz Developers"
-site_url = "https://lumen.holoviz.org"
+site_url = "https://lumen.holoviz.org/en/docs/latest/"
 site_dir = "builtdocs"
 repo_url = "https://github.com/holoviz/lumen"
 repo_name = "holoviz/lumen"
 edit_uri = "edit/main/docs/"
 extra_css = ["assets/extra.css"]
 nav = [
-  {"Home" = "index.md"},
+  {"Overview" = "index.md"},
   {"Quick Start" = "quick_start.md"},
   {"Installation" = "installation.md"},
   {"FAQ" = "faq.md"},
