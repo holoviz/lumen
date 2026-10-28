@@ -20,10 +20,10 @@ Lumen works with any LLM provider. Choose the approach that fits your needs:
 
 - ☁️ **Cloud providers** — OpenAI, Anthropic, Google, Mistral, Azure, Groq (easiest to get started)
 - 🖥️ **Locally hosted** — Ollama, Llama.cpp, MLX (free, runs on your machine, no API keys)
-- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, LiteLLM, AWS Bedrock (unified interface, many providers and models)
+- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, Cheaper Inference, LiteLLM, AWS Bedrock (unified interface, many providers and models)
 - 💻 **Coding CLIs** — Codex, Claude Code, GitHub Copilot, Antigravity (use a CLI you are already signed in to, no API key)
 
-`pip install lumen` is all you need for OpenAI, every OpenAI-compatible provider (OpenRouter, Kilo, Groq, Ollama, AI Navigator, AI Catalyst) and the coding CLIs. Anthropic, Google, Mistral, AWS Bedrock, Llama.cpp and LiteLLM need their client library, which the matching extra below installs.
+`pip install lumen` is all you need for OpenAI, every OpenAI-compatible provider (OpenRouter, Kilo, Cheaper Inference, Groq, Ollama, AI Navigator, AI Catalyst) and the coding CLIs. Anthropic, Google, Mistral, AWS Bedrock, Llama.cpp and LiteLLM need their client library, which the matching extra below installs.
 
 ---
 
@@ -384,6 +384,48 @@ Use a unified interface to access multiple LLM providers and models.
             "default": {"model": "openai/gpt-6-luna"},
             "edit": {"model": "deepseek/deepseek-v4-pro-0813"},
             "sql": {"model": "qwen/qwen3.8-flash"},
+        }
+    )
+    ui = lmai.ExplorerUI(data='data.csv', llm=llm)
+    ui.servable()
+    ```
+
+=== "Cheaper Inference"
+
+    ```bash
+    pip install lumen
+    export CHEAPER_INFERENCE_API_KEY=ci_live_...
+    ```
+
+    [Cheaper Inference](https://cheaperinference.com/) provides an OpenAI-compatible API for accessing models from multiple providers through a single API key.
+
+    **Get your API key:**
+
+    1. Visit [cheaperinference.com](https://cheaperinference.com/) and sign up
+    2. Create or copy an API key
+    3. Set environment variable:
+
+    ```bash
+    # macOS/Linux
+    export CHEAPER_INFERENCE_API_KEY='ci_live_your-key-here'
+
+    # Windows PowerShell
+    $env:CHEAPER_INFERENCE_API_KEY='ci_live_your-key-here'
+
+    # Windows CMD
+    set CHEAPER_INFERENCE_API_KEY=ci_live_your-key-here
+    ```
+
+    Then use Cheaper Inference with any supported model:
+
+    ```python
+    import lumen.ai as lmai
+
+    llm = lmai.llm.CheaperInference(
+        model_kwargs={
+            "default": {"model": "gpt-5.4-mini"},
+            "edit": {"model": "claude-sonnet-5"},
+            "sql": {"model": "deepseek-v4-flash"},
         }
     )
     ui = lmai.ExplorerUI(data='data.csv', llm=llm)
