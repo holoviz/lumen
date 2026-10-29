@@ -1680,6 +1680,32 @@ class VegaLiteView(View):
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
 
+    @classmethod
+    def _unregistered_dataset_names(cls, node: Any, known: set[str]) -> set[str]:
+        """
+        Names of datasets the spec refers to by ``data: {name: ...}`` alone,
+        with no ``url`` or ``values``, that are not in ``known``.
+
+        A layer naming the table this way overrides the top-level data, so if
+        the name is never registered Vega gives the layer no rows and the chart
+        renders blank with no error.
+        """
+        if isinstance(node, list):
+            return set().union(*(cls._unregistered_dataset_names(item, known) for item in node))
+        if not isinstance(node, dict):
+            return set()
+
+        names = set()
+        data = node.get("data")
+        if (
+            isinstance(data, dict) and "name" in data
+            and not {"values", "url"} & data.keys() and data["name"] not in known
+        ):
+            names.add(data["name"])
+        for value in node.values():
+            names |= cls._unregistered_dataset_names(value, known)
+        return names
+
     def _coerce_temporal(self, spec: Any, df: pd.DataFrame) -> Any:
         """
         Recursively walk the spec. If an encoding channel references a field that
@@ -1803,6 +1829,13 @@ class VegaLiteView(View):
             encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
             encoded = dict(spec, data={'values': df, **spec_data})
+            # Layers naming the table with data: {name: ...} replace the top-level
+            # values with that dataset, so it has to be registered under the name.
+            # Only one table is ever passed to a view, so that is what they mean.
+            known = set(self.spec.get('datasets', {})) | {spec_data.get('name')}
+            body = {k: v for k, v in spec.items() if k != 'data'}
+            if names := self._unregistered_dataset_names(body, known):
+                encoded['datasets'] = dict(self.spec.get('datasets', {}), **dict.fromkeys(names, df))
         return dict(object=encoded, **self.kwargs)
 
 

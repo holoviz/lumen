@@ -782,3 +782,75 @@ def test_vega_point_map_layers_get_the_table(set_root):
 
     assert final_spec["data"] == {"name": "test"}
     assert "test" in final_spec["datasets"]
+
+
+def test_vega_layers_naming_the_table_get_its_rows(set_root):
+    """A layer with data: {name: <table>} overrides the top-level values, so the
+    table has to be registered under that name or the layer draws nothing."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    point = {
+        "mark": "circle",
+        "encoding": {
+            "longitude": {"field": "A", "type": "quantitative"},
+            "latitude": {"field": "B", "type": "quantitative"},
+        },
+    }
+    spec = {"projection": {"type": "albersUsa"}, "layer": [{"data": {"name": "test"}, **point}]}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == {"name": "test"}
+    pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
+
+
+def test_vega_layers_naming_an_unregistered_dataset_get_the_table(set_root):
+    """The agent may name the dataset after a derived table rather than the
+    pipeline's; only one table is ever passed, so that name means it too."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "layer": [
+            {"data": {"name": "test_colored"}, "mark": "circle", "encoding": {"x": {"field": "A"}}},
+            {"data": {"name": "test_colored"}, "mark": "point", "encoding": {"x": {"field": "B"}}},
+        ],
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert set(final_spec["datasets"]) == {"test_colored"}
+    pd.testing.assert_frame_equal(final_spec["datasets"]["test_colored"], pipeline.data)
+
+
+def test_vega_layers_naming_a_declared_dataset_are_left_alone(set_root):
+    """A dataset the spec declares itself is already resolvable and must not be
+    replaced by the table, nor the caller's datasets grown across renders."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "datasets": {"populations": [{"A": "a", "B": 1}]},
+        "layer": [
+            {"mark": "bar", "encoding": {"x": {"field": "A"}}},
+            {"data": {"name": "populations"}, "mark": "rule", "encoding": {"y": {"field": "B"}}},
+        ],
+    }
+    view = VegaLiteView(spec=spec, pipeline=pipeline)
+
+    final_spec = view.get_panel().object
+    view.get_panel()
+
+    assert final_spec["datasets"] == {"populations": [{"A": "a", "B": 1}]}
+    assert set(view.spec["datasets"]) == {"populations"}
+
+
+def test_vega_top_level_named_data_is_not_duplicated(set_root):
+    """A top-level data: {name: ...} already carries the values beside it."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {"data": {"name": "test"}, "mark": "bar", "encoding": {"x": {"field": "A"}}}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["data"]["name"] == "test"
+    pd.testing.assert_frame_equal(final_spec["data"]["values"], pipeline.data)
+    assert "datasets" not in final_spec
