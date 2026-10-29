@@ -21,6 +21,7 @@ PROVIDER_ENV_VARS = {
     "ai-catalyst": "AI_CATALYST_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "kilo": "KILO_API_KEY",
+    "cheaper-inference": "CHEAPER_INFERENCE_API_KEY",
 }
 
 
