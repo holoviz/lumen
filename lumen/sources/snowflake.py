@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import datetime
-import decimal
 import re
 
 from pathlib import Path
@@ -266,32 +264,6 @@ class SnowflakeSource(BaseSQLSource):
             source_params['table_params'] = params
         source_params['conn'] = self._conn
         return SnowflakeSource(**source_params)
-
-    def _cast_to_supported_dtypes(self, df: pd.DataFrame, sample: int = 100) -> pd.DataFrame:
-        """
-        Convert decimal.Decimal to float in a pandas DataFrame, as
-        Bokeh ColumnDataSource does not support decimal.Decimal.
-        Samples only a subset of the DataFrame to check for decimal.Decimal
-        Arguments
-        ---------
-        df (pd.DataFrame):
-        the DataFrame to convert
-        sample (int):
-        number of rows to sample to check for decimal.Decimal
-        """
-        df = df.copy()
-        for col in df.select_dtypes(include=["object", "string"]).columns:
-            df_col_sample = df[col].sample(min(sample, len(df)))
-            try:
-                if df_col_sample.apply(lambda x: isinstance(x, decimal.Decimal)).any():
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                if df_col_sample.apply(
-                    lambda x: isinstance(x, (datetime.datetime, datetime.date))
-                ).any():
-                    df[col] = pd.to_datetime(df[col], errors="coerce")
-            except Exception:
-                df[col] = df[col].astype(str)
-        return df
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         # TODO: remove cast in future, but keep until bokeh has a solution
