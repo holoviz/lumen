@@ -1,5 +1,6 @@
 import asyncio
 
+from dataclasses import dataclass
 from types import FunctionType
 from typing import Any, TypedDict
 
@@ -16,6 +17,17 @@ from ..llm import Message
 from ..translate import function_to_model
 
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
+
+
+@dataclass
+class FunctionCall:
+    """
+    Internal metadata for reproducing an executed FunctionTool call.
+    """
+
+    function: Any
+    arguments: dict[str, Any]
+    provides: list[str]
 
 
 def define_tool(
@@ -177,11 +189,12 @@ class FunctionTool(Tool):
                 out_model[self.provides[0]] = result
             else:
                 out_model.update({key: result[key] for key in self.provides})
-        return [self.formatter.format(
+        output = self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
-        )], out_model
+        )
+        return [output, FunctionCall(self.function, arguments, self.provides)], out_model
 
 
 class ToolUser(Actor):

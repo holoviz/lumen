@@ -18,6 +18,7 @@ from ..pipeline import Pipeline
 from ..util import as_pandas
 from ..views import View
 from .editors import LumenEditor
+from .tools.base import FunctionCall
 
 
 def make_md_cell(text: str):
@@ -77,6 +78,31 @@ def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) 
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
+
+def format_function_call(call: FunctionCall):
+    """Render an executed FunctionTool call as reproducible Python code."""
+    function = call.function
+    module = getattr(function, "__module__", None)
+    name = getattr(function, "__name__", None)
+    qualname = getattr(function, "__qualname__", name)
+    importable = (
+        isinstance(module, str)
+        and module != "__main__"
+        and all(part.isidentifier() for part in module.split("."))
+        and isinstance(name, str)
+        and name.isidentifier()
+        and qualname == name
+    )
+    arguments = ", ".join(f"{name}={value!r}" for name, value in call.arguments.items())
+    expression = f"{name}({arguments})"
+    if len(call.provides) == 1:
+        expression = f"{call.provides[0]} = {expression}"
+    elif call.provides:
+        expression = f"{', '.join(call.provides)} = {expression}"
+    if importable:
+        expression = f"from {module} import {name}\n\n{expression}"
+    return nbformat.v4.new_code_cell(source=expression)
+
 def format_output(output: Any):
     ext = None
     code = []
@@ -116,7 +142,9 @@ def format_output(output: Any):
 def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
     for out in outputs:
-        if isinstance(out, Markdown):
+        if isinstance(out, FunctionCall):
+            cells.append(format_function_call(out))
+        elif isinstance(out, Markdown):
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)
