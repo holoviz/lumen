@@ -12,7 +12,6 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
-import pyarrow as pa
 import sqlglot
 
 from ..config import config
@@ -35,10 +34,6 @@ if TYPE_CHECKING:
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
-
-# Whether the connection execute() returns can build polars and arrow frames
-# itself (pl(), arrow()); duckdb 2 leaves that to relations.
-_NATIVE_ON_EXECUTE = hasattr(duckdb.DuckDBPyConnection, 'pl')
 
 # A table expression that is a single table function call, e.g. read_csv('x.csv')
 TABLE_FUNCTION = re.compile(r"^[A-Za-z_]\w*\s*\(.*\)$", re.DOTALL)
@@ -629,10 +624,10 @@ class DuckDBSource(BaseSQLSource):
         other library would hold the column as opaque bytes, drop it from the
         schema, and render a blank map with nothing raising.
         """
-        if backend in ('polars', 'pyarrow') and not _NATIVE_ON_EXECUTE:
-            # duckdb 2 builds arrow and polars from a relation only; it is
-            # bound but not run, so the geometry path below can still query.
-            rel = cursor.sql(sql_expr, params=params) if params else cursor.sql(sql_expr)
+        if backend in ('polars', 'pyarrow'):
+            # duckdb 2 builds polars and arrow frames only from a relation,
+            # not from what execute() returns.
+            rel = cursor.sql(sql_expr, params=params)
         else:
             rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
@@ -644,14 +639,7 @@ class DuckDBSource(BaseSQLSource):
             if backend == 'polars':
                 return rel.pl()
             if backend == 'pyarrow':
-                if not _NATIVE_ON_EXECUTE:
-                    return rel.to_arrow_table()
-                # Through pa.table because arrow() returns a Table up to
-                # duckdb 1.3 and a RecordBatchReader from 1.4, and
-                # Pipeline.data rejects the reader. Not fetch_arrow_table,
-                # which 1.5 deprecates and the suite turns that into an
-                # error, nor to_arrow_table, which 1.4 does not have.
-                return pa.table(rel.arrow())
+                return rel.to_arrow_table()
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(
