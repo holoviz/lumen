@@ -12,7 +12,6 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
-import pyarrow as pa
 import sqlglot
 
 from ..config import config
@@ -625,7 +624,12 @@ class DuckDBSource(BaseSQLSource):
         other library would hold the column as opaque bytes, drop it from the
         schema, and render a blank map with nothing raising.
         """
-        rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+        if backend in ('polars', 'pyarrow'):
+            # duckdb 2 builds polars and arrow frames only from a relation,
+            # not from what execute() returns.
+            rel = cursor.sql(sql_expr, params=params)
+        else:
+            rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
             d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
             for d in rel.description if str(d[1]).startswith('GEOMETRY')
@@ -635,12 +639,7 @@ class DuckDBSource(BaseSQLSource):
             if backend == 'polars':
                 return rel.pl()
             if backend == 'pyarrow':
-                # Through pa.table because arrow() returns a Table up to
-                # duckdb 1.3 and a RecordBatchReader from 1.4, and
-                # Pipeline.data rejects the reader. Not fetch_arrow_table,
-                # which 1.5 deprecates and the suite turns that into an
-                # error, nor to_arrow_table, which 1.4 does not have.
-                return pa.table(rel.arrow())
+                return rel.to_arrow_table()
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(
