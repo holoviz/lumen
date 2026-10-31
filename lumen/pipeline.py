@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import panel as pn
 import param  # type: ignore
+import sqlglot
 import tqdm  # type: ignore
 
 from holoviews import Dataset  # type: ignore
@@ -170,6 +171,10 @@ class Pipeline(Viewer, Component):
         Update event trigger (if manual update is set)."""
     )
 
+    paginated = param.Boolean(default=False, doc="""
+        Whether to paginate data fetching from SQL source using LIMIT and OFFSET."""
+    )
+
     _stale = param.Boolean(default=False, precedence=-1, doc="""
         Whether the pipeline is stale."""
     )
@@ -228,13 +233,32 @@ class Pipeline(Viewer, Component):
 
     def __panel__(self) -> Row:
         controls = self.control_panel
-        # Tabulator reads .index and .iloc, so it needs real pandas. This is
-        # the notebook and pn.panel(pipeline) path, which does not go through
-        # View.get_data where the other materialization lives.
+        page_size = 50
+
         table = Tabulator(
-            param.rx(as_pandas)(self.param.data), pagination='remote',
-            sizing_mode="stretch_both", min_height=200
+            param.rx(as_pandas)(self.param.data),
+            pagination='remote',
+            page_size=page_size,
+            sizing_mode="stretch_both",
+            min_height=200
         )
+
+        def on_page_change(event):
+            current_page = event.new or 1
+            offset = (current_page - 1) * page_size
+            sql_expr = self.source.get_sql_expr(self.table) if hasattr(self.source, 'get_sql_expr') else None
+            if sql_expr and self._is_preview_query(sql_expr):
+                new_chunk = self._fetch_paginated_data(
+                    sql_expr,
+                    self._filter_query(),
+                    limit=page_size,
+                    offset=offset
+                )
+                table.value = as_pandas(new_chunk)
+
+        if self.paginated:
+            table.param.watch(on_page_change, 'page')
+
         if controls:
             return Row(self.control_panel, table)
         return table
@@ -367,23 +391,71 @@ class Pipeline(Viewer, Component):
             return None
         return SQLColumns(columns=columns)
 
+    def _is_preview_query(self, sql_expr: str) -> bool:
+        """Check if query is a SELECT * query or already has a LIMIT clause."""
+        try:
+            parsed = sqlglot.parse_one(sql_expr)
+            if not isinstance(parsed, sqlglot.exp.Select):
+                return False
+            # Check if query has a LIMIT clause
+            has_limit = parsed.args.get("limit") is not None
+            # Check if query is selecting all columns (SELECT *)
+            is_select_star = any(isinstance(expr, sqlglot.exp.Star) for expr in parsed.expressions)
+            return is_select_star or has_limit
+        except Exception:
+            upper = sql_expr.upper()
+            return "SELECT *" in upper or " LIMIT " in upper
+
+    def _fetch_paginated_data(self, sql_expr: str, query: dict, limit: int | None = 50, offset: int = 0):
+        """
+        Replace hardcoded values with dynamic limit/offset variables, apply sql_transforms,
+        and fetch data.
+        """
+        try:
+            parsed = sqlglot.parse_one(sql_expr)
+            if limit is not None:
+                parsed = parsed.limit(limit).offset(offset)
+            cleaned_sql = parsed.sql()
+        except Exception:
+            cleaned_sql = sql_expr
+            if limit is not None:
+                cleaned_sql += f" LIMIT {limit} OFFSET {offset}"
+
+        if isinstance(getattr(self.source, 'tables', None), dict):
+            self.source.tables[self.table] = cleaned_sql
+
+        if self.sql_transforms:
+            if not self.source._supports_sql:
+                raise ValidationError(
+                    'Can only use sql transforms source that support them. '
+                    f'Found source typed {self.source.source_type!r} instead.'
+                )
+            query['sql_transforms'] = self.sql_transforms
+
+        if pushdown := self._pushdown_transform():
+            query['sql_transforms'] = [*query.get('sql_transforms', []), pushdown]
+
+        return self.source.get(self.table, **query)
+
     def _compute_data(self):
         query = self._filter_query()
 
         if self.pipeline is None:
-            # Compute SQL transform expression
-            if self.sql_transforms:
-                if not self.source._supports_sql:
-                    raise ValidationError(
-                        'Can only use sql transforms source that support them. '
-                        f'Found source typed {self.source.source_type!r} instead.'
-                    )
-                query['sql_transforms'] = self.sql_transforms
-            if pushdown := self._pushdown_transform():
-                # Last, so the filter and the declared transforms above still
-                # see every column.
-                query['sql_transforms'] = [*query.get('sql_transforms', []), pushdown]
-            data = self.source.get(self.table, **query)
+            sql_expr = self.source.get_sql_expr(self.table) if hasattr(self.source, 'get_sql_expr') else None
+            if self.paginated and sql_expr and self._is_preview_query(sql_expr):
+                data = self._fetch_paginated_data(sql_expr, query)
+            else:
+                # Original execution flow
+                if self.sql_transforms:
+                    if not self.source._supports_sql:
+                        raise ValidationError(
+                            'Can only use sql transforms source that support them. '
+                            f'Found source typed {self.source.source_type!r} instead.'
+                        )
+                    query['sql_transforms'] = self.sql_transforms
+                if pushdown := self._pushdown_transform():
+                    query['sql_transforms'] = [*query.get('sql_transforms', []), pushdown]
+                data = self.source.get(self.table, **query)
         else:
             pipelines = []
             current = self

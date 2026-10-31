@@ -109,7 +109,7 @@ class TableExplorer(Viewer):
         new_table = f"select_{table}"
         sql_expr = f"SELECT * FROM \"{table}\""
         new_source = source.create_sql_expr_source({new_table: sql_expr})
-        pipeline = Pipeline(source=new_source, table=new_table)
+        pipeline = Pipeline(source=new_source, table=new_table, paginated=True)
         return SQLEditor(spec=sql_expr, component=pipeline)
 
     def __panel__(self):
