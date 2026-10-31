@@ -397,7 +397,7 @@ class DuckDBSource(BaseSQLSource):
         # Handle tables that are either a list or dictionary
         elif isinstance(self.tables, list):
             spec['tables'] = [self._process_sql_paths(table_name) for table_name in self.tables]
-        else:
+        elif isinstance(self.tables, dict):
             # For dictionary case, process each SQL expression
             processed_tables = {}
             for table_name, sql_expr in self.tables.items():
