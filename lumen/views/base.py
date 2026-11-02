@@ -1491,6 +1491,19 @@ class _RemotePageTabulator(pn.widgets.tables.Tabulator):
             return self.total_rows
         return super()._length
 
+    # Callable ``page -> DataFrame`` returning the rows of a given page.
+    page_loader: ClassVar[Any] = None
+
+    def _update_cds(self, *events):
+        if self.page_loader is not None and any(e.name == 'page' for e in events) and not self._updating:
+            # Swap in the new page *before* Panel serializes ``value`` for the
+            # browser, whose pending remote-pagination request resolves with
+            # the first update it receives.
+            new_page = self.page_loader(self.page)
+            with param.parameterized.discard_events(self):
+                self.value = new_page
+        super()._update_cds(*events)
+
     def _get_data(self):
         if self.total_rows is None or self.pagination != 'remote' or self.value is None:
             return super()._get_data()
@@ -1558,8 +1571,8 @@ class Table(View):
             tabulator = _RemotePageTabulator(**params)
             tabulator._update_max_page()
 
-            def on_page_change(event):
-                current_page = event.new or 1
+            def load_page(page):
+                current_page = page or 1
                 offset = (current_page - 1) * page_size
                 print(f"[PAGINATION] Page change executed: fetching page {current_page} (offset={offset})...")  # noqa: T201
 
@@ -1569,9 +1582,9 @@ class Table(View):
                     limit=page_size,
                     offset=offset,
                 )
-                tabulator.value = geometry_to_wkt(as_pandas(new_chunk))
+                return geometry_to_wkt(as_pandas(new_chunk))
 
-            tabulator.param.watch(on_page_change, 'page')
+            tabulator.page_loader = load_page
 
             return tabulator
 
