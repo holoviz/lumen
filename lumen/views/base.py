@@ -1561,7 +1561,6 @@ class Table(View):
                 total_count = None
 
             page_size = 50
-            print(f"[PAGINATION] Table.get_panel hook executed: total_rows={total_count}, page_size={page_size}")  # noqa: T201
             params['page_size'] = page_size
             params['pagination'] = 'remote'
             if total_count is None:
@@ -1574,15 +1573,15 @@ class Table(View):
             def load_page(page):
                 current_page = page or 1
                 offset = (current_page - 1) * page_size
-                print(f"[PAGINATION] Page change executed: fetching page {current_page} (offset={offset})...")  # noqa: T201
 
-                new_chunk = self.pipeline._fetch_paginated_data(
+                new_chunk = as_pandas(self.pipeline._fetch_paginated_data(
                     sql_expr,
                     self.pipeline._filter_query(),
                     limit=page_size,
                     offset=offset,
-                )
-                return geometry_to_wkt(as_pandas(new_chunk))
+                ))
+                new_chunk.index = pd.RangeIndex(offset, offset + len(new_chunk))
+                return geometry_to_wkt(new_chunk)
 
             tabulator.page_loader = load_page
 
