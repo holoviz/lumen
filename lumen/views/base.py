@@ -21,8 +21,9 @@ import numpy as np
 import pandas as pd
 import panel as pn
 import param  # type: ignore
+import sqlglot
 
-from bokeh.models import NumeralTickFormatter  # type: ignore
+from bokeh.models import ColumnDataSource, NumeralTickFormatter  # type: ignore
 from holoviews import Overlay  # type: ignore
 from holoviews.core import (  # type: ignore
     Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
@@ -1491,6 +1492,82 @@ class Table(View):
         if 'configuration' in self.kwargs:
             config.update(self.kwargs['configuration'])
         params['configuration'] = config
+
+        is_paginated = getattr(self.pipeline, 'paginated', False)
+        if is_paginated and hasattr(getattr(self.pipeline, 'source', None), 'get_sql_expr'):
+            sql_expr = self.pipeline.source.get_sql_expr(self.pipeline.table)
+
+            total_count = None
+            try:
+                count_expr = sql_expr
+                try:
+                    parsed_count = sqlglot.parse_one(sql_expr)
+                    parsed_count.set('limit', None)
+                    parsed_count.set('offset', None)
+                    count_expr = parsed_count.sql()
+                except Exception:
+                    pass
+                count_query = f"SELECT count(*) FROM ({count_expr})"
+                total_count = int(self.pipeline.source.execute(count_query).iloc[0, 0])
+            except Exception:
+                total_count = None
+
+            page_size = 50
+            params['page_size'] = page_size
+            params['pagination'] = 'remote'
+
+            tabulator = self._panel_type(**params)
+
+            if total_count is not None:
+                tabulator._total_count = total_count
+
+                orig_get_data = tabulator._get_data
+
+                def custom_get_data():
+                    if getattr(tabulator, '_total_count', None) is not None:
+                        df = tabulator.value
+                        nrows = tabulator.page_size or tabulator.initial_page_size
+                        page_df = df.iloc[:nrows]
+                        data = ColumnDataSource.from_df(page_df).items()
+                        return df, {k if isinstance(k, str) else str(k): tabulator._process_column(v, k, page_df) for k, v in data}
+                    return orig_get_data()
+
+                orig_update_max_page = tabulator._update_max_page
+
+                def custom_update_max_page():
+                    if getattr(tabulator, '_total_count', None) is not None:
+                        length = tabulator._total_count
+                        nrows = tabulator.page_size or tabulator.initial_page_size
+                        max_page = max(length // nrows + bool(length % nrows), 1)
+                        tabulator.param.page.bounds = (1, max_page)
+                        for ref, (model, _) in tabulator._models.copy().items():
+                            tabulator._apply_update([], {'max_page': max_page}, model, ref)
+                    else:
+                        orig_update_max_page()
+
+                tabulator._get_data = custom_get_data
+                tabulator._update_max_page = custom_update_max_page
+                tabulator._update_max_page()
+
+            def on_page_change(event):
+                current_page = event.new or 1
+                offset = (current_page - 1) * page_size
+                print(f"[PAGINATION] Page change executed: fetching page {current_page} (offset={offset})...")  # noqa: T201
+
+                new_chunk = self.pipeline._fetch_paginated_data(
+                    sql_expr,
+                    self.pipeline._filter_query(),
+                    limit=page_size,
+                    offset=offset,
+                )
+                tabulator.value = geometry_to_wkt(as_pandas(new_chunk))
+                if getattr(tabulator, '_total_count', None) is not None:
+                    tabulator._update_max_page()
+
+            tabulator.param.watch(on_page_change, 'page')
+
+            return tabulator
+
         return self._panel_type(**params)
 
     def _get_params(self):

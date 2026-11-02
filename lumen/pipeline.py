@@ -233,32 +233,13 @@ class Pipeline(Viewer, Component):
 
     def __panel__(self) -> Row:
         controls = self.control_panel
-        page_size = 50
-
+        # Tabulator reads .index and .iloc, so it needs real pandas. This is
+        # the notebook and pn.panel(pipeline) path, which does not go through
+        # View.get_data where the other materialization lives.
         table = Tabulator(
-            param.rx(as_pandas)(self.param.data),
-            pagination='remote',
-            page_size=page_size,
-            sizing_mode="stretch_both",
-            min_height=200
+            param.rx(as_pandas)(self.param.data), pagination='remote',
+            sizing_mode="stretch_both", min_height=200
         )
-
-        def on_page_change(event):
-            current_page = event.new or 1
-            offset = (current_page - 1) * page_size
-            sql_expr = self.source.get_sql_expr(self.table) if hasattr(self.source, 'get_sql_expr') else None
-            if sql_expr and self._is_preview_query(sql_expr):
-                new_chunk = self._fetch_paginated_data(
-                    sql_expr,
-                    self._filter_query(),
-                    limit=page_size,
-                    offset=offset
-                )
-                table.value = as_pandas(new_chunk)
-
-        if self.paginated:
-            table.param.watch(on_page_change, 'page')
-
         if controls:
             return Row(self.control_panel, table)
         return table
