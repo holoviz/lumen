@@ -280,7 +280,11 @@ def test_table_pagination_remote(tmp_path):
     assert len(panel.value) == 50
     assert panel.value['id'].tolist()[:3] == [1, 2, 3]
 
+    model = panel.get_root()
+    assert model.max_page == 3
+
     panel.page = 2
+    assert model.source.data['id'][0] == 51
     assert len(panel.value) == 50
     assert panel.value['id'].tolist()[:3] == [51, 52, 53]
 

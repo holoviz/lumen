@@ -1470,6 +1470,41 @@ class hvOverlayView(View):
         return self._panel_type(**params)
 
 
+
+class _RemotePageTabulator(pn.widgets.tables.Tabulator):
+    """
+    Tabulator that holds a single page of rows in ``value`` while reporting
+    the full row count (``total_rows``), so the browser shows every page
+    button even though only the current page lives in memory.
+    """
+
+    total_rows = param.Integer(default=None, allow_None=True, doc="""
+        Total number of rows available remotely.""")
+
+    _rename: ClassVar[dict[str, str | None]] = {
+        **pn.widgets.tables.Tabulator._rename, 'total_rows': None
+    }
+
+    @property
+    def _length(self):
+        if self.total_rows is not None:
+            return self.total_rows
+        return super()._length
+
+    def _get_data(self):
+        if self.total_rows is None or self.pagination != 'remote' or self.value is None:
+            return super()._get_data()
+        # ``value`` already is the current page, so never slice by page offset.
+        df = self.value
+        nrows = self.page_size or self.initial_page_size
+        page_df = df.iloc[:nrows]
+        data = ColumnDataSource.from_df(page_df).items()
+        return df, {
+            k if isinstance(k, str) else str(k): self._process_column(v, k, page_df)
+            for k, v in data
+        }
+
+
 class Table(View):
     """
     `Table` renders data using the powerful Panel `Tabulator` component.
@@ -1516,39 +1551,12 @@ class Table(View):
             print(f"[PAGINATION] Table.get_panel hook executed: total_rows={total_count}, page_size={page_size}")  # noqa: T201
             params['page_size'] = page_size
             params['pagination'] = 'remote'
+            if total_count is None:
+                return self._panel_type(**params)
 
-            tabulator = self._panel_type(**params)
-
-            if total_count is not None:
-                tabulator._total_count = total_count
-
-                orig_get_data = tabulator._get_data
-
-                def custom_get_data():
-                    if getattr(tabulator, '_total_count', None) is not None:
-                        df = tabulator.value
-                        nrows = tabulator.page_size or tabulator.initial_page_size
-                        page_df = df.iloc[:nrows]
-                        data = ColumnDataSource.from_df(page_df).items()
-                        return df, {k if isinstance(k, str) else str(k): tabulator._process_column(v, k, page_df) for k, v in data}
-                    return orig_get_data()
-
-                orig_update_max_page = tabulator._update_max_page
-
-                def custom_update_max_page():
-                    if getattr(tabulator, '_total_count', None) is not None:
-                        length = tabulator._total_count
-                        nrows = tabulator.page_size or tabulator.initial_page_size
-                        max_page = max(length // nrows + bool(length % nrows), 1)
-                        tabulator.param.page.bounds = (1, max_page)
-                        for ref, (model, _) in tabulator._models.copy().items():
-                            tabulator._apply_update([], {'max_page': max_page}, model, ref)
-                    else:
-                        orig_update_max_page()
-
-                tabulator._get_data = custom_get_data
-                tabulator._update_max_page = custom_update_max_page
-                tabulator._update_max_page()
+            params['total_rows'] = total_count
+            tabulator = _RemotePageTabulator(**params)
+            tabulator._update_max_page()
 
             def on_page_change(event):
                 current_page = event.new or 1
@@ -1562,8 +1570,6 @@ class Table(View):
                     offset=offset,
                 )
                 tabulator.value = geometry_to_wkt(as_pandas(new_chunk))
-                if getattr(tabulator, '_total_count', None) is not None:
-                    tabulator._update_max_page()
 
             tabulator.param.watch(on_page_change, 'page')
 
