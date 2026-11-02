@@ -1513,6 +1513,7 @@ class Table(View):
                 total_count = None
 
             page_size = 50
+            print(f"[PAGINATION] Table.get_panel hook executed: total_rows={total_count}, page_size={page_size}")  # noqa: T201
             params['page_size'] = page_size
             params['pagination'] = 'remote'
 

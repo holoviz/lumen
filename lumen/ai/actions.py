@@ -108,7 +108,7 @@ class SQLQuery(Action):
         # Pass table_params if provided
         params = {self.table: self.table_params} if self.table_params else None
         source = source.create_sql_expr_source({self.table: self.sql_expr}, params=params)
-        pipeline = Pipeline(source=source, table=self.table)
+        pipeline = Pipeline(source=source, table=self.table, paginated=True)
         out_context = {
             "source": source,
             "pipeline": pipeline,
