@@ -191,7 +191,7 @@ class ValidationAgent(Agent):
             return await asyncio.to_thread(views[-1].to_image)
         except Exception as e:
             # The image is extra evidence; a view that cannot be rendered here
-            # (no browser installed, an older Panel) still gets validated.
+            # (no browser installed) still gets validated.
             log_debug(f"ValidationAgent could not render the view: {type(e).__name__}: {e}")
             return None
 
