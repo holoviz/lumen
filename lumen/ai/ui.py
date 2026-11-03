@@ -2768,6 +2768,7 @@ class ExplorerUI(UI):
             exploration.parent.conversation = exploration.conversation
 
         error_type = plan.out_context.pop("__error_type__", Exception)
+        plan.out_context.pop("__exception__", None)
         error = plan.out_context.pop("__error__", "Unknown error")
         _, todos = plan.render_task_history(failed=True)
 

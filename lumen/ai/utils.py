@@ -1218,6 +1218,18 @@ def format_msg_content(content: Any) -> str:
     return f"<{type(content).__name__}[{id(content)}]>"
 
 
+def print_task_exception(e: BaseException, interface: Any) -> None:
+    """
+    Print a failed task's traceback to the server console. Without an
+    interface the caller gets the error back in the result, e.g. an
+    Answer with status "error", so it is only logged at debug level.
+    """
+    if interface is None:
+        log.debug("Task failed", exc_info=e)
+    else:
+        traceback.print_exception(e)
+
+
 def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
     """
     Log a debug message with a separator line above and below.
