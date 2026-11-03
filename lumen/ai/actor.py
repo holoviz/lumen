@@ -2,7 +2,9 @@ import datetime
 import inspect
 
 from abc import abstractmethod
+from collections.abc import Callable
 from contextlib import nullcontext
+from contextvars import ContextVar
 from pathlib import Path
 from types import FunctionType
 from typing import Any
@@ -75,6 +77,11 @@ def _merge_prompt_tools(
     return merged if merged else None
 
 
+# Receives each step title of a run without an interface, e.g. so
+# lumen.ai.ask can show which step a question is on
+step_title_callback: ContextVar[Callable[[str], None] | None] = ContextVar("step_title_callback", default=None)
+
+
 class NullStep:
 
     def __init__(self):
@@ -88,6 +95,8 @@ class NullStep:
         # they go to the lumen logger where a handler can pick them up.
         if title:
             log.info(title)
+            if (callback := step_title_callback.get()) is not None:
+                callback(title)
         return nullcontext(self)
 
 
