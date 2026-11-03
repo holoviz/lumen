@@ -5,6 +5,7 @@ import param
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
+from ...util import is_geodataframe
 from ...views import hvPlotView
 from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
@@ -12,6 +13,20 @@ from ..context import TContext
 from ..translate import param_to_pydantic
 from ..utils import get_data
 from .base_view import BaseViewAgent
+
+# Rows (grid cells) past which a gridded plot is rasterized, as Bokeh slows
+# down drawing a quadmesh or image cell by cell
+GRID_RASTERIZE_CELLS = 250_000
+
+LON_NAMES, LAT_NAMES = {"lon", "longitude", "lng"}, {"lat", "latitude"}
+
+
+def _is_lon_lat(spec: dict[str, Any], data: Any) -> bool:
+    """Whether the plot draws longitude and latitude, as geometry or as x and y."""
+    if is_geodataframe(data):
+        return data.crs is not None and data.crs.is_geographic
+    x, y = str(spec.get("x", "")).lower(), str(spec.get("y", "")).lower()
+    return x in LON_NAMES and y in LAT_NAMES
 
 
 class hvPlotAgent(BaseViewAgent):
@@ -140,6 +155,13 @@ class hvPlotAgent(BaseViewAgent):
         spec["responsive"] = True
         data = await get_data(pipeline)
         self._drop_unknown_columns(spec, set(data.columns))
+        if _is_lon_lat(spec, data) and spec.get("kind") not in GRIDDED_KINDS:
+            # Longitude and latitude read best on a basemap
+            spec.setdefault("geo", True)
+            if spec["geo"]:
+                spec.setdefault("tiles", "CartoLight")
+        if spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
+            spec["rasterize"] = True
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             if spec.get("by"):
                 # rasterize reduces to a single number per pixel, which throws

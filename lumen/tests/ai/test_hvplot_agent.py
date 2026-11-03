@@ -110,3 +110,42 @@ async def test_an_axis_naming_a_missing_column_is_dropped(pipeline):
     assert extracted["y"] == "y"
     assert "by" not in extracted
     assert extracted["groupby"] == ["x"]
+
+
+# ---- Maps: a basemap under longitude and latitude ----
+
+def _geo_pipeline(crs):
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+
+    from lumen.sources.duckdb import DuckDBSource
+    gdf = gpd.GeoDataFrame({"v": [1.0, 2.0]}, geometry=[Point(13.4, 52.5), Point(2.3, 48.9)], crs="EPSG:4326").to_crs(crs)
+    return Pipeline(source=DuckDBSource.from_df({"places": gdf}), table="places")
+
+
+async def test_lon_lat_geometry_gets_a_basemap():
+    spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:4326")}, {"kind": "points", "c": "v"})
+    assert spec["geo"] is True and spec["tiles"] == "CartoLight"
+
+
+async def test_projected_geometry_gets_no_basemap():
+    spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:3857")}, {"kind": "points", "c": "v"})
+    assert "tiles" not in spec and "geo" not in spec
+
+
+async def test_lon_lat_columns_get_a_basemap_unless_turned_off():
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9]})
+    pipe = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "points", "x": "lon", "y": "lat"})
+    assert spec["tiles"] == "CartoLight"
+    off = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "points", "x": "lon", "y": "lat", "geo": False})
+    assert "tiles" not in off
+
+
+async def test_a_large_grid_is_rasterized(monkeypatch):
+    import lumen.ai.agents.hvplot as hvplot_agent
+    monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)
+    df = pd.DataFrame({"x": [0.0, 1.0, 0.0, 1.0], "y": [0.0, 0.0, 1.0, 1.0], "t": [1.0, 2.0, 3.0, 4.0]})
+    pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "x", "y": "y", "z": "t"})
+    assert spec["rasterize"] is True
