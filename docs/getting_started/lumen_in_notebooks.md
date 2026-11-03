@@ -80,6 +80,23 @@ if answer.status == "error":
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
+## Spatial and gridded questions
+
+GeoDataFrames, GeoParquet and GeoJSON load with their geometry and CRS, and xarray Datasets load as grids:
+
+``` py
+import geopandas as gpd
+import xarray as xr
+
+source = lumen.read({"places": gpd.read_file("places.geojson"), "regions": gpd.read_file("regions.geojson")})
+source.ask("How many places are within 750 km of Berlin?")
+
+grid = lumen.read(xr.open_dataset("era5_t2m.nc"))
+grid.ask("Which month had the highest area-weighted global mean temperature?")
+```
+
+When a table has a geometry column or is a grid, Lumen gives the model extra rules for it: distances and areas in metres on a sphere or an equal-area CRS rather than in degrees, longitude before latitude, a spatial predicate in every join; filters on the grid's dimensions, latitude weights for means and Kelvin to Celsius.
+
 ## Settings
 
 `lumen.ai.configure` sets the defaults for every question in the session. A question's own `llm=` or `agents=` still wins.
