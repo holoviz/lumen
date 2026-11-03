@@ -52,7 +52,7 @@ dependencies = [
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
     "param >=2.2.1,<2.5.0",
-    "pillow",
+    "pillow >=13.0.0",
     "platformdirs",
     "pyarrow",
     "pydantic >=2.8.0",
@@ -149,6 +149,8 @@ filterwarnings = [
     "ignore:ArrowStringArray._data is a deprecated and will be removed in a future version, use ._pa_array instead:FutureWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning", # Panel/asyncio event loop cleanup on fixture teardown
     "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:fastparquet",
+    "ignore:The inplace keyword in DataFrame\\..* is deprecated", # bokeh/panel table code with pandas 3.1
+    "ignore:DatetimeIndex.values returning an ndarray that drops timezone information is deprecated", # pandas 4
 ]
 
 [tool.ruff]
