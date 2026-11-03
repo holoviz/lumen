@@ -5,7 +5,7 @@ from . import (  # noqa
 )
 from .analysis import Analysis  # noqa
 from .answer import (  # noqa
-    Answer, Chat, aask, ask, chat,
+    Answer, Chat, aask, ask, chat, configure,
 )
 from .coordinator import Coordinator, DependencyResolver, Planner  # noqa
 from .decisions import (  # noqa

@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import logging
+import os
 import time
 import weakref
 
@@ -46,7 +47,7 @@ from .data import read
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
-    Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
+    Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
 )
 from .report import ActorTask
 from .story import _prose_to_html
@@ -88,18 +89,46 @@ def _default_agents(source: Source) -> list:
     return agents
 
 
+# Set through configure, and used by every question that does not pass its own
+_settings: dict[str, Any] = {"agents": None, "llm": None}
+
+
+def configure(*, llm: Llm | None = None, agents: list | None = None) -> dict[str, Any]:
+    """
+    Set the defaults for ask, aask and chat in this session.
+
+    A question's own llm= or agents= still wins. Without either set
+    here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
+    LLM, and otherwise the first provider with an API key set.
+
+    Returns the settings now in effect.
+    """
+    if llm is not None:
+        _settings["llm"] = llm
+    if agents is not None:
+        _settings["agents"] = agents
+    return dict(_settings)
+
+
+def _default_llm() -> Llm:
+    if _settings["llm"] is not None:
+        return _settings["llm"]
+    return _env_llm(os.environ.get("LUMEN_AI_PROVIDER"), os.environ.get("LUMEN_AI_MODEL"))
+
+
 # One instance for every ask, so its client and the request fixes it
 # learns from provider errors carry over from question to question
 @cache
-def _default_llm() -> Llm:
-    llm_cls = get_available_llm()
+def _env_llm(provider: str | None, model: str | None) -> Llm:
+    llm_cls = get_available_llm() if provider is None else llm_class(provider)
     if llm_cls is None:
         raise RuntimeError(
             "No LLM provider found. Pass llm=lumen.ai.llm.Kilo() for free models without an "
             f"account{signed_in_cli_hint()}, or set an API key such as OPENAI_API_KEY or "
             "GROQ_API_KEY and restart the kernel."
         )
-    return llm_cls()
+    # The same model_kwargs the CLI builds for --model
+    return llm_cls(model_kwargs={"default": {"model": model}}) if model else llm_cls()
 
 
 # One Planner per Source, freed with it. Building a Planner and syncing its
@@ -338,7 +367,7 @@ async def _aask_messages(
     llm: Llm | None, agents: list | None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
-    planner = _planner(source, llm or _default_llm(), agents)
+    planner = _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents)
     return answer
@@ -388,7 +417,8 @@ class Chat(param.Parameterized):
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
-        planner = _planner(self._source, self._llm or _default_llm(), self._agents)
+        agents = _settings["agents"] if self._agents is None else self._agents
+        planner = _planner(self._source, self._llm or _default_llm(), agents)
         if self._context is None:
             context = _fresh_context(planner, self._source, self._visible_slugs)
         else:

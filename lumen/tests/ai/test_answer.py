@@ -20,13 +20,15 @@ except ModuleNotFoundError:
 from panel.config import panel_extension
 from panel.tests.util import async_wait_until
 
+import lumen.ai.answer as answer_module
+
 from lumen.ai.actor import NullStep
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _default_llm, _planner, _planners, _resolve, _run,
-    _StatusLine, aask, ask, chat,
+    Answer, _default_agents, _default_llm, _env_llm, _planner, _planners,
+    _resolve, _run, _StatusLine, aask, ask, chat, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -189,18 +191,67 @@ async def test_chat_does_not_build_on_an_error_answer(frame_source):
     assert llm.plan_calls[-1] == [{"role": "user", "content": "How many rows?"}]
 
 
+@pytest.fixture(autouse=True)
+def fresh_settings(monkeypatch):
+    """No test sees another's configure() call, environment or cached LLM."""
+    monkeypatch.setattr(answer_module, "_settings", {"agents": None, "llm": None})
+    monkeypatch.delenv("LUMEN_AI_PROVIDER", raising=False)
+    monkeypatch.delenv("LUMEN_AI_MODEL", raising=False)
+    _env_llm.cache_clear()
+    yield
+    _env_llm.cache_clear()
+
+
 async def test_aask_without_a_provider_explains_the_options(frame_source):
-    _default_llm.cache_clear()
     with patch("lumen.ai.answer.get_available_llm", return_value=None):
         with pytest.raises(RuntimeError, match=r"No LLM provider found\. Pass llm=lumen\.ai\.llm\.Kilo"):
             await aask(frame_source, "Total value?")
 
 
 def test_default_llm_is_shared_between_questions(llm):
-    _default_llm.cache_clear()
     with patch("lumen.ai.answer.get_available_llm", return_value=type(llm)):
         assert _default_llm() is _default_llm()
-    _default_llm.cache_clear()
+
+
+async def test_configure_sets_the_llm_and_a_question_can_override_it(frame_source):
+    configured, passed = MockLLM(), MockLLM()
+    assert configure(llm=configured)["llm"] is configured
+    _chat_only(configured)
+    assert (await aask(frame_source, "How many rows?"))._llm is configured
+    _chat_only(passed)
+    assert (await aask(frame_source, "How many rows?", llm=passed))._llm is passed
+
+
+async def test_configure_sets_the_agents(llm, frame_source):
+    agents = [ChatAgent()]
+    configure(agents=agents)
+    _chat_only(llm)
+    answer = await aask(frame_source, "How many rows?", llm=llm)
+    assert answer._agents is None
+    assert _planners.get(frame_source) is None  # explicit agents get their own Planner
+    assert configure() == {"agents": agents, "llm": None}
+
+
+def test_environment_picks_the_provider_and_model(monkeypatch):
+    monkeypatch.setenv("LUMEN_AI_PROVIDER", "kilo")
+    monkeypatch.setenv("LUMEN_AI_MODEL", "kilo-auto/free")
+    llm = _default_llm()
+    assert type(llm).__name__ == "Kilo"
+    assert llm.model_kwargs["default"]["model"] == "kilo-auto/free"
+    assert _default_llm() is llm
+
+
+def test_configure_wins_over_the_environment(monkeypatch):
+    monkeypatch.setenv("LUMEN_AI_PROVIDER", "kilo")
+    configured = MockLLM()
+    configure(llm=configured)
+    assert _default_llm() is configured
+
+
+def test_unknown_provider_lists_the_valid_ones(monkeypatch):
+    monkeypatch.setenv("LUMEN_AI_PROVIDER", "nope")
+    with pytest.raises(ValueError, match="Could not find LLM Provider 'nope', valid providers include"):
+        _default_llm()
 
 
 async def test_aask_reuses_one_planner_per_source(llm, frame_source):
