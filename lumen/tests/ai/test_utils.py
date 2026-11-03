@@ -17,7 +17,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.config import PROMPTS_DIR, EmptyResultError
-from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
+from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine, RetrySpec
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
@@ -1105,3 +1105,14 @@ def test_format_tool_error_truncates():
 )
 def test_column_tooltips(sql, columns, expected):
     assert column_tooltips(sql, "duckdb", columns) == expected
+
+
+def test_retry_spec_reads_an_edit_without_op_as_replace_or_delete():
+    # Seen from free models: the right edits, with "op" left out every retry
+    spec = RetrySpec.model_validate({"chain_of_thought": "Recolor", "edits": [
+        {"line_no": 14, "line": "      value: orange"},
+        {"line_no": 20},
+        {"op": "insert", "line_no": 3, "line": "title: Mass"},
+    ]})
+    assert [type(e) for e in spec.edits] == [ReplaceLine, DeleteLine, InsertLine]
+    assert spec.edits[0].line == "      value: orange"

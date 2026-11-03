@@ -1,6 +1,6 @@
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .config import MissingContextError
 
@@ -112,6 +112,21 @@ class RetrySpec(BaseModel):
             "The chart needs horizontal bars instead of vertical. Will swap x and y encodings."
         ])
     edits: list[LineEdit] = Field(description="A list of line edits based on the chain_of_thought.")
+
+    @field_validator("edits", mode="before")
+    @classmethod
+    def default_missing_op(cls, edits: Any) -> Any:
+        # Small models often leave out "op" and fail every retry on it.
+        # An edit with new content but no op is read as a replace, the
+        # common case; an insert has to say so. Without content it can
+        # only be a delete.
+        if not isinstance(edits, list):
+            return edits
+        return [
+            {**edit, "op": "replace" if "line" in edit else "delete"}
+            if isinstance(edit, dict) and "op" not in edit else edit
+            for edit in edits
+        ]
 
     @model_validator(mode="after")
     def validate_indices_nonconflicting(self) -> "RetrySpec":
