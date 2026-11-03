@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -104,6 +105,31 @@ LineEdit = Annotated[
     Field(discriminator="op")
 ]
 
+# The lines a RetrySpec edits, set while revising, so an edit that leaves
+# out its op can be read against the line it points at
+revision_lines: ContextVar[list[str] | None] = ContextVar("revision_lines", default=None)
+
+
+def _line_key(line: str) -> tuple[str, str] | None:
+    """The indent and YAML key of a line, e.g. ("  ", "color"), if it has one."""
+    stripped = line.lstrip()
+    if ":" not in stripped:
+        return None
+    return line[:len(line) - len(stripped)], stripped.split(":", 1)[0]
+
+
+def _infer_op(edit: dict[str, Any], lines: list[str] | None) -> str:
+    if "line" not in edit:
+        return "delete"
+    line_no = edit.get("line_no")
+    if lines is None or not isinstance(line_no, int) or not 1 <= line_no <= len(lines):
+        # Past the end can only add a line; without the text, assume a change
+        return "replace" if lines is None else "insert"
+    old, new = _line_key(lines[line_no - 1]), _line_key(edit["line"])
+    # A different key at that spot adds a line, e.g. color: before x:
+    return "insert" if old is not None and new is not None and old != new else "replace"
+
+
 class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
@@ -118,14 +144,13 @@ class RetrySpec(BaseModel):
     @field_validator("edits", mode="before")
     @classmethod
     def default_missing_op(cls, edits: Any) -> Any:
-        # Small models often leave out "op" and fail every retry on it.
-        # An edit with new content but no op is read as a replace, the
-        # common case; an insert has to say so. Without content it can
-        # only be a delete.
+        # Small models often leave out "op" and fail every retry on it, so
+        # it is read from the edit and the line it points at
         if not isinstance(edits, list):
             return edits
+        lines = revision_lines.get()
         return [
-            {**edit, "op": "replace" if "line" in edit else "delete"}
+            {**edit, "op": _infer_op(edit, lines)}
             if isinstance(edit, dict) and "op" not in edit else edit
             for edit in edits
         ]
