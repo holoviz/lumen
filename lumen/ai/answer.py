@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import importlib.util
 import logging
 import math
 import os
@@ -22,6 +23,8 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
+import pandas as pd
 import panel as pn
 import param
 
@@ -40,7 +43,7 @@ from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
 from ..util import (
-    as_pandas, geometry_columns, is_geodataframe, log,
+    as_pandas, geometry_columns, geometry_to_geojson, is_geodataframe, log,
 )
 from ..views import View
 from .actor import step_title_callback
@@ -668,6 +671,22 @@ class Answer(param.Parameterized):
             raise ValueError(f"Cannot write {suffix!r} files. Use .parquet, .geojson, .gpkg, .csv, .zarr or .nc.")
         return path
 
+    def map(self) -> Any:
+        """
+        An interactive map of the answer's geometry: lonboard's when it is
+        installed, otherwise hvPlot's, on a basemap when geoviews is installed.
+        """
+        gdf = self.gdf
+        if gdf is None:
+            raise ValueError("This answer has no geometry to map.")
+        if importlib.util.find_spec("lonboard") is not None:
+            # Deferred: lonboard is optional, and heavy to import
+            from lonboard import viz
+            return viz(gdf)
+        if importlib.util.find_spec("geoviews") is not None:
+            return gdf.hvplot(geo=True, tiles="CartoLight")
+        return gdf.hvplot()
+
     def explore(self, **params) -> ExplorerUI:
         """
         Open this answer in the Lumen chat UI: an ExplorerUI on the same
@@ -774,9 +793,36 @@ class Answer(param.Parameterized):
                 spec[dim] = size
         return spec
 
+    def _geoshape_spec(self) -> dict | None:
+        """
+        The answer's geometry as a Vega-Lite map, for answers drawn with
+        hvPlot, which have no static form of their own.
+        """
+        gdf = self.gdf
+        if gdf is None or not len(gdf):
+            return None
+        if gdf.crs is not None and not gdf.crs.is_geographic:
+            # Vega's projections expect longitude and latitude
+            gdf = gdf.to_crs("EPSG:4326")
+        fields = [c for c in gdf.columns if c != gdf.geometry.name]
+        numeric = [c for c in fields if pd.api.types.is_numeric_dtype(gdf[c])]
+        encoding: dict[str, Any] = {"tooltip": [{"field": f"properties.{c}"} for c in fields]}
+        if numeric:
+            encoding["color"] = {"field": f"properties.{numeric[0]}", "type": "quantitative"}
+        return {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"values": geometry_to_geojson(gdf)["features"]},
+            "mark": {"type": "geoshape", "stroke": "white", "strokeWidth": 0.5},
+            "projection": {"type": "mercator"},
+            "encoding": encoding,
+            "title": self.question,
+            "width": 600,
+            "height": 400,
+        }
+
     def _chart_bundle(self) -> dict | None:
         """The chart as interactive Vega-Lite, with a PNG for viewers that cannot run it."""
-        if (spec := self._vega_lite_spec()) is None:
+        if (spec := self._vega_lite_spec() or self._geoshape_spec()) is None:
             return None
         title = spec.get("title", "")
         if isinstance(title, dict):

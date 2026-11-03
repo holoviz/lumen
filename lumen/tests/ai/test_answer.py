@@ -862,3 +862,37 @@ def test_to_file_writes_a_grid(tmp_path, suffix):
     path = answer.to_file(tmp_path / f"g{suffix}")
     back = xr.open_zarr(path, consolidated=False) if suffix == ".zarr" else xr.open_dataset(path)
     assert dict(back.sizes) == {"lat": 3, "lon": 4}
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4326", "EPSG:3857"])
+def test_a_map_answer_gets_a_static_geoshape(crs):
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    points = gpd.GeoDataFrame({"v": [1.0, 2.0]}, geometry=[Point(13.4, 52.5), Point(2.3, 48.9)], crs="EPSG:4326").to_crs(crs)
+    answer = Answer(question="Where?", status="success", pipeline=Pipeline(source=read({"pts": points}), table="pts"))
+    bundle = answer._chart_bundle()
+    spec = bundle["application/vnd.vegalite.v5+json"]
+    assert spec["mark"]["type"] == "geoshape" and spec["encoding"]["color"]["field"] == "properties.v"
+    lon, lat = spec["data"]["values"][0]["geometry"]["coordinates"]
+    # Back in longitude and latitude, whatever CRS the answer came in
+    assert abs(lon - 13.4) < 1e-6 and abs(lat - 52.5) < 1e-6
+    assert base64.b64decode(bundle["image/png"])[:4] == b"\x89PNG"
+
+
+def test_map_uses_lonboard_when_installed():
+    pytest.importorskip("lonboard")
+    assert type(_geo_answer().map()).__name__ == "Map"
+
+
+def test_map_falls_back_to_hvplot_on_a_basemap(monkeypatch):
+    pytest.importorskip("geoviews")
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "lonboard" else real(name, *a))
+    plot = _geo_answer().map()
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+
+
+def test_map_needs_geometry(frame_source):
+    with pytest.raises(ValueError, match="no geometry to map"):
+        Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).map()
