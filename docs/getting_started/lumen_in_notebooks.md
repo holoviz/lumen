@@ -80,6 +80,27 @@ if answer.status == "error":
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
+## Settings
+
+`lumen.ai.configure` sets the defaults for every question in the session. A question's own `llm=` or `agents=` still wins.
+
+``` py
+from lumen.ai import configure
+from lumen.ai.llm import Kilo
+
+configure(llm=Kilo(), max_rows=100_000, share="schema", mask_pii=True)
+```
+
+| Setting | Environment variable | What it does |
+|---------|----------------------|--------------|
+| `llm` | `LUMEN_AI_PROVIDER`, `LUMEN_AI_MODEL` | The LLM, e.g. `LUMEN_AI_PROVIDER=kilo`. Without either, the first provider with an API key |
+| `agents` | | The agents the planner may use |
+| `max_rows` | | Rows an answer's data holds, as a LIMIT on its query (1,000,000 by default, `None` for all). The card notes when a result hits it |
+| `share` | `LUMEN_AI_SHARE` | What of the data prompts contain, see below |
+| `mask_pii` | `LUMEN_AI_MASK_PII` | Withhold the values of columns that look like personal data |
+
+Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sales": "data/*.parquet"})` does not load the data into memory. Name tables with a dict, as there; a bare path names the table after the whole path.
+
 ## Where answers render
 
 | Front end | What you get |
@@ -99,3 +120,13 @@ pip install jupyter_bokeh
 ## What Lumen runs
 
 Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on, so asking a question cannot execute arbitrary code on your machine.
+
+What the LLM sees of your data is up to `share`:
+
+| `share` | The LLM sees |
+|---------|--------------|
+| `"sample"` (default) | Values: summaries of results, value counts, ranges, examples and chart images |
+| `"schema"` | Table and column names, types, row counts and null fractions, but no values |
+| `"none"` | Table and column names only |
+
+The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.
