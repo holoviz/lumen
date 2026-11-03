@@ -322,6 +322,15 @@ def signed_in_cli_hint() -> str:
     return f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
 
 
+def llm_class(provider: str) -> type[Llm]:
+    """The LLM class for a provider name, e.g. the ``--provider`` value."""
+    if provider not in LLM_PROVIDERS:
+        raise ValueError(
+            f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
+        )
+    return globals()[LLM_PROVIDERS[provider]]
+
+
 def get_available_llm() -> type[Llm] | None:
     """
     Detect an available LLM provider: the first one whose API key environment

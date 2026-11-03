@@ -27,8 +27,8 @@ except ImportError as e:
 from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
 from ..ai.llm import (
-    LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, local_cli_providers,
-    ollama_models, provider_name, quiet_retry_log,
+    LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, llm_class,
+    local_cli_providers, ollama_models, provider_name, quiet_retry_log,
 )
 from ..ai.utils import parse_huggingface_url, render_template
 from . import YAML_SUFFIXES
@@ -177,12 +177,7 @@ class LumenAIServe(Serve):
         code_execution = getattr(args, 'code_execution', 'hide')
 
         if provider_cls is None:
-            try:
-                provider_cls = getattr(lumen_llms, LLM_PROVIDERS[provider])
-            except (KeyError, AttributeError) as err:
-                raise ValueError(
-                    f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
-                ) from err
+            provider_cls = llm_class(provider)
 
         model_kwargs = None
         if args.model_kwargs or llm_model_url or model:
