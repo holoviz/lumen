@@ -80,6 +80,23 @@ if answer.status == "error":
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
+## Maps and grids
+
+``` bash
+pip install geopandas geoviews lonboard
+```
+
+An answer over a table with a geometry column, or over an xarray Dataset, has a few more fields:
+
+| Field | What it is |
+|-------|------------|
+| `gdf` | The result as a GeoDataFrame with its CRS, or `None` without geometry. Warns once when the geometry looks like longitude and latitude but has no CRS |
+| `ds` | The result as an xarray Dataset, for answers over gridded data, or `None` |
+| `to_file(path)` | Writes the result by extension: `.parquet` (GeoParquet when there is geometry), `.geojson`, `.gpkg`, `.csv`, or `.zarr` and `.nc` for gridded answers |
+| `map()` | The geometry on an interactive map: lonboard when installed, otherwise hvPlot on a basemap |
+
+Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed, and large grids are rasterized. Where the card cannot render, such as a saved notebook, a map answer falls back to a static Vega-Lite map.
+
 ## Settings
 
 `lumen.ai.configure` sets the defaults for every question in the session. A question's own `llm=` or `agents=` still wins.
