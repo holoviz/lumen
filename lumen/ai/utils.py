@@ -409,7 +409,8 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        # Retried, so only worth a look when debugging
+                        log.debug("Retrying after error", exc_info=e)
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -446,7 +447,8 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        # Retried, so only worth a look when debugging
+                        log.debug("Retrying after error", exc_info=e)
                         if sleep:
                             time.sleep(sleep)
 
