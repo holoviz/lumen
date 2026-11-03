@@ -6,6 +6,10 @@ Ask your data questions from a notebook cell and get back an answer, the SQL tha
 
 ## Load data and ask
 
+``` bash
+pip install "lumen[ai-openai]" hvsampledata
+```
+
 ``` py title="Ask a question"
 import hvsampledata
 import lumen
@@ -53,7 +57,19 @@ chat.ask("Only keep the species above 4000 g")  # (1)!
 
 ## Where answers render
 
-<!-- filled in from the front-end checks -->
+| Front end | What you get |
+|-----------|--------------|
+| JupyterLab, Notebook 7 | The interactive card: answer, chart and an expandable SQL section |
+| Google Colab | The interactive card. Panel warns that `jupyter_bokeh` is missing; the card still works without it |
+| VS Code | The interactive card once `jupyter_bokeh` is installed in the kernel's environment. Without it, the Vega-Lite chart and a PNG |
+| marimo | A static card with the answer, a PNG and the SQL. Pick the Vega-Lite output in the cell's output menu for the interactive chart |
+| Python REPL or script | Echoing `answer` shows its status and first line; `answer.value` and `answer.sql` hold the full text |
+
+For VS Code, install the widget bridge into the same environment as the kernel:
+
+``` bash
+pip install jupyter_bokeh
+```
 
 ## What Lumen runs
 
