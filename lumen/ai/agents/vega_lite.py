@@ -319,10 +319,11 @@ class VegaLiteAgent(BaseCodeAgent):
                 else:
                     result[key] = value
 
-        # If we're merging in a 'layer', remove conflicting top-level properties
+        # A top-level mark cannot sit beside layers, but a top-level encoding
+        # can and usually holds the x and y every layer shares, e.g. a
+        # heatmap's rect and text layers; dropping it piles all cells onto one
         if "layer" in update_dict:
             result.pop("mark", None)
-            result.pop("encoding", None)
 
         return result
 

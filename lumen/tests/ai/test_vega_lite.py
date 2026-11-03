@@ -342,3 +342,27 @@ def test_normalize_vegalite_spec_rewrites_the_comma_number_format():
     assert layer["color"]["legend"]["format"] == "%Y"
     assert spec["data"]["format"] == {"type": "json"}
     assert "e+" not in vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))
+
+
+HEATMAP_XY = {
+    "x": {"field": "decade", "type": "ordinal"},
+    "y": {"field": "continent", "type": "nominal"},
+}
+
+
+def test_merging_layers_keeps_the_shared_encoding():
+    # A heatmap's x and y sit at the top, shared by its rect and text layers;
+    # dropping them when a label layer is merged in piles every cell onto one
+    base = {"encoding": HEATMAP_XY, "layer": [{"mark": "rect", "encoding": {"color": {"field": "v"}}}]}
+    labels = {"layer": [{"mark": "text", "encoding": {"text": {"field": "v"}}}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
+    assert merged["encoding"] == HEATMAP_XY
+    assert [layer["mark"] for layer in merged["layer"]] == ["rect", {"type": "text"}]
+
+
+def test_turning_a_single_view_into_layers_drops_only_its_mark():
+    base = {"mark": "rect", "encoding": {**HEATMAP_XY, "color": {"field": "v"}}}
+    labels = {"layer": [{"mark": "rect"}, {"mark": "text", "encoding": {"text": {"field": "v"}}}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
+    assert "mark" not in merged
+    assert merged["encoding"]["x"] == HEATMAP_XY["x"] and merged["encoding"]["y"] == HEATMAP_XY["y"]
