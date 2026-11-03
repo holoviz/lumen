@@ -36,6 +36,7 @@ from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
+from ..transforms.sql import SQLLimit
 from ..util import geometry_columns, log
 from ..views import View
 from .actor import step_title_callback
@@ -92,8 +93,12 @@ def _default_agents(source: Source) -> list:
 # Set through configure, and used by every question that does not pass its own
 _settings: dict[str, Any] = {"agents": None, "llm": None}
 
+_UNSET: Any = object()
 
-def configure(*, llm: Llm | None = None, agents: list | None = None) -> dict[str, Any]:
+
+def configure(
+    *, llm: Llm | None = None, agents: list | None = None, max_rows: int | None = _UNSET,
+) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
 
@@ -101,13 +106,28 @@ def configure(*, llm: Llm | None = None, agents: list | None = None) -> dict[str
     here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
     LLM, and otherwise the first provider with an API key set.
 
+    max_rows caps the rows an answer's data holds (1,000,000 by
+    default), as a LIMIT on its query; None lifts the cap.
+
     Returns the settings now in effect.
     """
     if llm is not None:
         _settings["llm"] = llm
     if agents is not None:
         _settings["agents"] = agents
-    return dict(_settings)
+    if max_rows is not _UNSET:
+        # The class default, so every SQLAgent without its own value uses it
+        SQLAgent.max_rows = max_rows
+    return {**_settings, "max_rows": SQLAgent.max_rows}
+
+
+def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
+    """The row cap the pipeline's data stopped at, if the cap cut it short."""
+    limits = [] if pipeline is None else [
+        t.limit for t in pipeline.sql_transforms if isinstance(t, SQLLimit) and t.limit is not None
+    ]
+    # The run has already loaded the data, so its length costs no query
+    return limits[0] if limits and len(pipeline.data) >= limits[0] else None
 
 
 def _default_llm() -> Llm:
@@ -331,6 +351,7 @@ def _build_answer(
         source=source,
         sql=context.get("sql"),
         status=plan.status,
+        truncated_at=_row_cap_hit(context.get("pipeline")),
         value=str(messages[-1].object) if messages else "",
         view=view,
     )
@@ -466,6 +487,10 @@ class Answer(param.Parameterized):
 
     status = param.String(doc="""
         The status of the executed Plan.""")
+
+    truncated_at = param.Integer(default=None, allow_None=True, doc="""
+        The row cap the data stopped at, when the result had more rows.
+        lumen.ai.configure(max_rows=...) sets the cap.""")
 
     value = param.String(default="", doc="""
         The written answer.""")
@@ -629,6 +654,8 @@ class Answer(param.Parameterized):
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self.view)
+            if self._cap_note:
+                parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
             if self.sql:
                 parts.append(Card(
                     Markdown(f"```sql\n{self.sql}\n```"), title="SQL", collapsed=True,
@@ -666,8 +693,17 @@ class Answer(param.Parameterized):
 
     @property
     def _text(self) -> str:
-        """The written answer, followed by the error for a failed question."""
-        return f"{self.value}\n\n{self.error}" if self.error else self.value
+        """The written answer, followed by the error or the row cap note."""
+        return "\n\n".join(part for part in (self.value, self.error, self._cap_note) if part)
+
+    @property
+    def _cap_note(self) -> str:
+        if self.truncated_at is None:
+            return ""
+        return (
+            f"The data stops at the first {self.truncated_at:,} rows. "
+            "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
+        )
 
     def _sql_html(self) -> str:
         # A failed query is what the reader needs to see, so it starts open
@@ -688,6 +724,8 @@ class Answer(param.Parameterized):
             width = chart["application/vnd.vegalite.v5+json"]["width"]
             # Rendered at twice the size for sharpness, shown at the spec width
             card.append(f'<img src="data:image/png;base64,{chart["image/png"]}" width="{width}" style="max-width: 100%">')
+        if self._cap_note:
+            card.append(f"<p><em>{html.escape(self._cap_note)}</em></p>")
         if self.sql:
             card.append(self._sql_html())
         bundle["text/html"] = "\n".join(card)

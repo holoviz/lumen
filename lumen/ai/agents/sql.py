@@ -947,6 +947,10 @@ class SQLAgent(BaseLumenAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
+    max_rows = param.Integer(default=1_000_000, bounds=(1, None), allow_None=True, doc="""
+        Most rows a final query returns, applied as a LIMIT on the query so
+        a large result never loads in full. None returns every row.""")
+
     max_request_llm_calls = param.Integer(default=40, bounds=(1, None), doc="""
         Maximum LLM calls one SQL request may spend across all attempts, tool
         rounds and revisions. Checked before each attempt.""")
@@ -1220,7 +1224,7 @@ class SQLAgent(BaseLumenAgent):
 
         # Create pipeline
         if is_final:
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            sql_transforms = [SQLLimit(limit=self.max_rows, write=source.dialect, pretty=True, identify=False)]
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
         else:
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)

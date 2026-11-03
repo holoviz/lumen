@@ -198,8 +198,11 @@ def fresh_settings(monkeypatch):
     monkeypatch.delenv("LUMEN_AI_PROVIDER", raising=False)
     monkeypatch.delenv("LUMEN_AI_MODEL", raising=False)
     _env_llm.cache_clear()
+    max_rows = SQLAgent.max_rows
     yield
     _env_llm.cache_clear()
+    # Plain assignment: monkeypatch would restore the Parameter object itself
+    SQLAgent.max_rows = max_rows
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
@@ -229,7 +232,40 @@ async def test_configure_sets_the_agents(llm, frame_source):
     answer = await aask(frame_source, "How many rows?", llm=llm)
     assert answer._agents is None
     assert _planners.get(frame_source) is None  # explicit agents get their own Planner
-    assert configure() == {"agents": agents, "llm": None}
+    assert configure() == {"agents": agents, "llm": None, "max_rows": 1_000_000}
+
+
+async def _ask_every_row(source):
+    SQLModel = make_sql_model([(source.name, "rows")])
+    llm = FollowUpLLM([SQLModel(query="SELECT * FROM rows", table_slug="all_rows", tables=["rows"])])
+    return await aask(source, "Show every row", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+
+@pytest.fixture
+def ten_rows():
+    return read({"rows": pd.DataFrame({"a": range(10)})})
+
+
+async def test_max_rows_caps_the_answer_data_and_says_so(ten_rows):
+    configure(max_rows=4)
+    answer = await _ask_every_row(ten_rows)
+    assert len(answer.pipeline.data) == 4
+    assert answer.truncated_at == 4
+    assert "stops at the first 4 rows" in answer._static_bundle(None)["text/html"]
+    assert any("stops at the first 4 rows" in getattr(part, "object", "") for part in answer.__panel__())
+
+
+async def test_no_note_below_the_cap(ten_rows):
+    answer = await _ask_every_row(ten_rows)
+    assert len(answer.pipeline.data) == 10
+    assert answer.truncated_at is None and "stops at" not in answer._text
+
+
+async def test_max_rows_none_returns_every_row(ten_rows):
+    configure(max_rows=4)
+    configure(max_rows=None)
+    answer = await _ask_every_row(ten_rows)
+    assert len(answer.pipeline.data) == 10
 
 
 def test_environment_picks_the_provider_and_model(monkeypatch):
