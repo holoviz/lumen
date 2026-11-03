@@ -492,3 +492,28 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     joined = read({"grid": grid, "plain": __import__("pandas").DataFrame({"a": [1]})})
     assert is_gridded({(joined.name, "grid"): joined})
     assert not is_gridded({(joined.name, "plain"): joined})
+
+
+async def _main_prompt(sql_context, test_messages, llm, **flags):
+    agent = SQLAgent(llm=llm)
+    return await agent._render_prompt(
+        "main", test_messages, await sql_context(), dialect="duckdb", is_final_step=True,
+        sql_plan_context=None, active_filters=None, tool_names=[], tool_rounds=6, **flags,
+    )
+
+
+@pytest.mark.parametrize("flags, spatial, gridded", [
+    ({}, False, False),
+    ({"has_geometry": True}, True, False),
+    ({"gridded": True}, False, True),
+])
+async def test_sql_prompt_adds_spatial_and_gridded_guidance_only_when_flagged(sql_context, test_messages, llm, flags, spatial, gridded):
+    prompt = await _main_prompt(sql_context, test_messages, llm, **flags)
+    assert ("## Spatial SQL" in prompt, "ST_FlipCoordinates" in prompt) == (spatial, spatial)
+    assert ("## Gridded SQL" in prompt, "COS(RADIANS(lat))" in prompt) == (gridded, gridded)
+
+
+async def test_sql_prompt_is_unchanged_for_plain_tables(sql_context, test_messages, llm):
+    plain = await _main_prompt(sql_context, test_messages, llm)
+    off = await _main_prompt(sql_context, test_messages, llm, has_geometry=False, gridded=False)
+    assert plain == off

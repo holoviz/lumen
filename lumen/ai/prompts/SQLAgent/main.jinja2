@@ -59,6 +59,31 @@ Use `{{ dialect }}` SQL dialect.
 {%- if dialect == 'snowflake' %}
 - No quotes around database/schema/table names
 {%- endif %}
+{%- if has_geometry is defined and has_geometry %}
+
+## Spatial SQL
+A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitude/latitude.
+- Points are `ST_Point(lon, lat)`, longitude first.
+- `ST_Distance`, `ST_Area`, `ST_Length` and `ST_Buffer` work in the units of the CRS, so on EPSG:4326 they return degrees. Never report those as metres or kilometres, and never buffer in degrees.
+- Distances in metres: `ST_Distance_Sphere(ST_FlipCoordinates(a), ST_FlipCoordinates(b))`. The sphere and spheroid functions (`ST_Distance_Sphere`, `ST_Distance_Spheroid`, `ST_Length_Spheroid`, `ST_Area_Spheroid`) read points as (lat, lon), so flip lon/lat geometry first; without the flip the result is wrong but looks plausible.
+- Areas in square metres: `ST_Area(ST_Transform(geom, 'EPSG:4326', 'EPSG:6933', always_xy := true))`, an equal-area CRS. Web Mercator (EPSG:3857) inflates areas away from the equator, so transform 3857 data to EPSG:6933 too. Always pass `always_xy := true` to `ST_Transform`, or the axes come out swapped.
+- Lengths of lines in metres: `ST_Length_Spheroid(ST_FlipCoordinates(geom))`.
+- Every join between two geometry tables needs a spatial predicate, e.g. `ST_Within(point, polygon)`, `ST_Intersects(a, b)` or a distance threshold; never a cross join or a join on names alone.
+- Nearest features: `ORDER BY <distance in metres> LIMIT k`.
+- Keep the geometry column in the result when the question asks for a map.
+{%- endif %}
+{%- if gridded is defined and gridded %}
+
+## Gridded SQL
+Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as columns and the data variables as values.
+- Select only the columns you need, never `SELECT *`.
+- Filter on the dimension columns (latitude, longitude and time ranges) so only the needed part of the grid is read.
+- A mean over latitudes must be area-weighted: `SUM(v * COS(RADIANS(lat))) / SUM(COS(RADIANS(lat)))`; `COS` takes radians, so never `COS(lat)`. A plain `AVG` over-weights the small cells near the poles. Use it for global or regional means unless the question asks for a plain average.
+- Temperatures stored in Kelvin (units `K` or `degK`, or values around 200 to 320) convert to Celsius with `- 273.15`.
+- Check the longitude range in the schema: on a 0 to 360 grid, a box from -10 to 10 is `lon >= 350 OR lon <= 10`.
+- Monthly climatology: `GROUP BY EXTRACT(MONTH FROM time)`; an anomaly is the value minus the climatology for its month.
+- The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`.
+{%- endif %}
 {%- endblock -%}
 
 {%- block context -%}
