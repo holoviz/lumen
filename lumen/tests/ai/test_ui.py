@@ -156,6 +156,16 @@ async def test_explorer_ui_initialization(explorer_ui):
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.items[0]['label'] == 'New Exploration'
 
+
+async def test_explorer_ui_shows_avatar_for_single_agent(explorer_ui):
+    """The first Planner message should render its avatar before other agents respond."""
+    explorer_ui.interface.send("Question", user="User", respond=False)
+    message = explorer_ui.interface.stream("Planning...", user="Planner")
+
+    assert message.show_avatar is True
+    assert message._internal_state.multi_user is False
+
+
 async def test_exploration_ui_error(explorer_ui_with_error):
     ui = explorer_ui_with_error
     exploration = ui._exploration['view']
@@ -751,6 +761,12 @@ async def test_initial_state_shows_splash(explorer_ui):
     # Should be on home
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
     assert len(explorer_ui._explorations.items) == 1  # Only home
+
+
+async def test_closed_nav_drawer_reserves_toggle_gutter(explorer_ui):
+    """The closed drawer's 24px toggle tab must not float over the content."""
+    assert explorer_ui._nav_drawer.open is False
+    assert explorer_ui._nav_drawer.min_width == 24
 
 
 async def test_exploration_launch_transitions_to_split(explorer_ui):

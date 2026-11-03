@@ -234,6 +234,15 @@ async def test_profile_source_rows_only_lints_referenced_columns():
     assert any("-9999" in finding for finding in findings)
 
 
+async def test_profile_source_rows_judges_duplicates_on_whole_rows():
+    source = DuckDBSource(tables={
+        "t": "SELECT * FROM (VALUES (1, 'a', 10), (2, 'a', 10), (3, 'b', 20)) AS t(id, species, mass)"
+    })
+    agent = SimpleNamespace(query_timeout=None)
+    sql = "SELECT species, AVG(mass) FROM t GROUP BY species"
+    assert await SQLAgent._profile_source_rows(agent, source, ["t"], sql) == []
+
+
 def test_numeric_cast_edit_is_dialect_aware():
     assert "TRY_CAST" in numeric_cast_edit("duckdb")
     assert "TRY_CAST" not in numeric_cast_edit("sqlite")
