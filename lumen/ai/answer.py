@@ -42,6 +42,7 @@ from .export import format_output, make_preamble
 from .llm import (
     Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
 )
+from .report import ActorTask
 from .story import _prose_to_html
 from .ui import ExplorerUI
 
@@ -208,14 +209,14 @@ def _build_answer(
             value=f"Lumen could not answer {question!r}: {failed!r} failed.",
         )
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
-    views = [
-        out.component for out in outputs
-        if isinstance(out, LumenEditor) and isinstance(out.component, View)
-    ]
-    view = views[-1] if views else None
+    editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
+    editor = editors[-1] if editors else None
+    view = None if editor is None else editor.component
     return Answer(
         agents=agents,
+        context=context,
         data=data,
+        editor=editor,
         llm=llm,
         pipeline=context.get("pipeline"),
         plan=plan,
@@ -367,7 +368,8 @@ class Answer(param.Parameterized):
 
     def __init__(
         self, llm: Llm | None = None, data: DataT | Pipeline | None = None,
-        agents: list | None = None, **params,
+        agents: list | None = None, editor: LumenEditor | None = None,
+        context: dict[str, Any] | None = None, **params,
     ):
         super().__init__(**params)
         self._card = None
@@ -375,6 +377,37 @@ class Answer(param.Parameterized):
         # What was asked and with which agents, so retry asks the same way
         self._data = data
         self._agents = agents
+        # The chart's editor and the context it was made in, for refine
+        self._editor = editor
+        self._context = context or {}
+
+    async def arefine(self, instruction: str) -> Answer:
+        """
+        Change the chart, e.g. its colors, title or encodings, without
+        querying the data again. Returns a new Answer.
+        """
+        actor = next((
+            task.actor for task in self.plan or []
+            if isinstance(task, ActorTask) and isinstance(task.actor, VegaLiteAgent)
+        ), None)
+        if self.spec is None or self._editor is None or actor is None:
+            raise ValueError("refine changes a Vega-Lite chart, and this answer has none.")
+        # A copy, so this answer and its card keep the chart they show
+        editor = type(self._editor)(component=self.view)
+        messages = [{"role": "user", "content": self.question}]
+        # The Planner only sets the agent's LLM while a plan runs
+        with actor.param.update(llm=actor.llm or self._llm):
+            editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
+        return Answer(
+            agents=self._agents, context=self._context, data=self._data, editor=editor,
+            llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
+            source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
+            value=self.value, view=editor.component,
+        )
+
+    def refine(self, instruction: str) -> Answer:
+        """Change the chart and return the new Answer. See arefine."""
+        return _run(self.arefine(instruction))
 
     async def aretry(self, hint: str | None = None) -> Answer:
         """

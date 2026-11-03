@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 from panel.config import panel_extension
 from panel.tests.util import async_wait_until
 
-from lumen.ai.agents import ChatAgent, SQLAgent
+from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
@@ -25,8 +25,12 @@ from lumen.ai.answer import (
     ask, chat,
 )
 from lumen.ai.config import QueryError
+from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
+from lumen.ai.editors import VegaLiteEditor
+from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.report import ActorTask
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -297,6 +301,55 @@ def chart_answer(frame_source):
         question="Value by category?", value="**B** is largest.\nA is second.",
         sql="SELECT * FROM tiny", spec=view.spec, view=view, status="success",
     )
+
+
+@pytest.fixture
+def refinable_answer(chart_answer, llm):
+    """The chart answer as a run leaves it: with its editor and the Vega-Lite task."""
+    agent = VegaLiteAgent(n_doc_pages=0)
+    return Answer(
+        editor=VegaLiteEditor(component=chart_answer.view), llm=llm,
+        plan=Plan(ActorTask(agent, title="Chart", instruction="Chart"), title="Chart"),
+        **{k: getattr(chart_answer, k) for k in ("question", "value", "sql", "spec", "view", "status", "source")},
+    )
+
+
+def _line_edit(llm, line_no, line):
+    llm.set_responses([RetrySpec(chain_of_thought="Change the mark", edits=[ReplaceLine(line_no=line_no, line=line)])])
+
+
+async def test_refine_changes_the_chart_with_one_llm_call(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    with patch.object(SQLAgent, "respond", side_effect=AssertionError("refine must not query")):
+        refined = await refinable_answer.arefine("Use a line")
+
+    assert llm._index == 1
+    assert refined.spec["mark"] == "line" and refined.view.spec["mark"] == "line"
+    assert refinable_answer.spec["mark"] == "bar" and refinable_answer.view.spec["mark"] == "bar"
+    assert refined.sql == refinable_answer.sql and refined.question == refinable_answer.question
+
+
+async def test_refine_can_be_refined_again(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    once = await refinable_answer.arefine("Use a line")
+    _line_edit(llm, 8, "mark: point")
+    twice = await once.arefine("Use points")
+    assert (once.spec["mark"], twice.spec["mark"]) == ("line", "point")
+
+
+def test_refine_from_sync_code(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: area")
+    assert refinable_answer.refine("Use an area").spec["mark"] == "area"
+
+
+@pytest.mark.parametrize("missing", ["spec", "editor"])
+async def test_refine_needs_a_vega_lite_chart(refinable_answer, missing):
+    if missing == "spec":
+        refinable_answer.spec = None
+    else:
+        refinable_answer._editor = None
+    with pytest.raises(ValueError, match="refine changes a Vega-Lite chart"):
+        await refinable_answer.arefine("Use a line")
 
 
 def test_answer_code_rebuilds_the_chart_without_an_llm(chart_answer):
