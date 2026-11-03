@@ -15,9 +15,12 @@ from panel.pane import Markdown
 from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
+from lumen.ai.export import render_cells
 from lumen.ai.report import (
-    Action, Report, Section, TaskGroup, Typography,
+    Action, ActorTask, Report, Section, TaskGroup, Typography,
 )
+from lumen.ai.tools import FunctionTool
+from lumen.ai.tools.base import FunctionCall
 
 try:
     from panel_material_ui import ChatMessage, Checkbox
@@ -375,6 +378,54 @@ async def test_report_to_notebook():
 
     assert cell3['cell_type'] == 'markdown'
     assert cell3['source'] == ["**Hello**"]
+
+
+async def test_function_tool_calls_export_reproducibly():
+    # tracker #2130
+    def summarize(df):
+        return {"a": sum(df), "b": len(df)}
+
+    task = ActorTask(
+        FunctionTool(summarize, requires=["df"], provides=["a", "b"]),
+        title="Summarize",
+    )
+    report = Report(Section(task, HelloAction(title="After"), title="Results"), context={"df": [1, 2, 3]})
+    await report.execute()
+
+    cells = json.loads(report.to_notebook())["cells"]
+    code_index = next(
+        i for i, cell in enumerate(cells)
+        if cell["cell_type"] == "code" and "summarize(df=df)" in "".join(cell["source"])
+    )
+    markdown_index = next(
+        i for i, cell in enumerate(cells)
+        if "**Hello**" in "".join(cell["source"])
+    )
+    code = "".join(cells[code_index]["source"])
+    assert code.startswith("def summarize(df):")
+    namespace = {"df": [1, 2, 3]}
+    exec(code, namespace)
+
+    assert code_index < markdown_index
+    assert {key: namespace[key] for key in ("a", "b")} == task.out_context
+    assert not any(isinstance(view, FunctionCall) for view in task._view.objects)
+    assert "summarize" not in report.to_html()
+
+    json_kwargs = {"obj": {"x": 1}}
+    imported_call = FunctionCall(
+        function=json.dumps,
+        arguments=json_kwargs,
+        context_arguments=set(),
+        provides=["serialized"],
+        result_is_dict=False,
+    )
+    imported_cell = render_cells([imported_call])[0][0]
+    imported_code = "".join(imported_cell["source"])
+    imported_namespace = dict(json_kwargs)
+    exec(imported_code, imported_namespace)
+
+    assert imported_code.startswith("from json import dumps")
+    assert imported_namespace["serialized"] == json.dumps(json_kwargs["obj"])
 
 
 async def test_report_to_html():

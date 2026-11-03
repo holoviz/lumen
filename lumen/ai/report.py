@@ -84,6 +84,11 @@ def _export_header(section, status_source, variant="h3"):
     )
 
 
+def _renderable_views(views):
+    """Exclude notebook-only FunctionCall metadata from rendered reports."""
+    return [view for view in views if not isinstance(view, FunctionCall)]
+
+
 class Task(Viewer):
     """
     A `Task` defines a single unit of work that can be executed and rendered.
@@ -1158,7 +1163,7 @@ class Report(TaskGroup):
         cards = [
             (
                 section.title,
-                Column(*[v for v in self._selected_views(section, include_header=False) if not isinstance(v, FunctionCall)], sizing_mode="stretch_width"),
+                Column(*_renderable_views(self._selected_views(section, include_header=False)), sizing_mode="stretch_width"),
             )
             for section in self if section.include_in_export
         ]
@@ -1181,10 +1186,10 @@ class Report(TaskGroup):
             )
         cells, extensions = [], ['tabulator']
         pending_headers = []
-        for out in self._export_views:
+        for index, out in enumerate(self._export_views):
             cell = ext = None
             if isinstance(out, FunctionCall):
-                cell = format_function_call(out)
+                cell = format_function_call(out, index)
             elif isinstance(out, Typography):
                 # Buffer headers; only emit them if followed by exportable content
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
@@ -1251,9 +1256,7 @@ class Report(TaskGroup):
                 doc.add_heading(heading, level=level or 1)
             pending.clear()
 
-        for out in self._export_views:
-            if isinstance(out, FunctionCall):
-                continue
+        for out in _renderable_views(self._export_views):
             if isinstance(out, Typography):
                 obj = out.object or ""
                 if out.variant and out.variant.startswith('h'):

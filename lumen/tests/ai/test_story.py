@@ -15,8 +15,9 @@ from lumen.ai.agents.story import (
     ProseEdit, Story, StoryAgent, StoryBlock, build_catalog,
 )
 from lumen.ai.editors import LumenEditor
-from lumen.ai.report import Action, Section
+from lumen.ai.report import Action, ActorTask, Section
 from lumen.ai.story import StoryReport, _prose_to_html, _prose_to_markdown
+from lumen.ai.tools import FunctionTool
 from lumen.pipeline import Pipeline
 
 
@@ -478,6 +479,23 @@ async def test_report_outline_reorders_html_export():
     html = report.to_html()
     assert "Key Findings" in html
     assert html.index("B done") < html.index("A done")
+
+
+async def test_function_call_metadata_is_excluded_from_arranged_story_html():
+    def load_value():
+        return 42
+
+    report = StoryReport(
+        Section(ActorTask(FunctionTool(load_value, provides=["value"])), title="Tools"),
+        title="R",
+    )
+    await report.execute()
+    report._story.outline = [{"section": "Tools"}]
+
+    html = report.to_html()
+
+    assert "FunctionCall" not in html
+    assert "load_value" not in html
 
 
 async def test_report_arrange_editor_seeds_and_binds_outline():
