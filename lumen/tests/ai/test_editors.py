@@ -1,5 +1,7 @@
 """Tests for lumen.ai.editors module."""
 import json
+import subprocess
+import sys
 
 from io import BytesIO
 
@@ -524,3 +526,20 @@ def test_editor_builds_outside_an_event_loop():
     component = MockComponent(data=pd.DataFrame({'name': ['Alice']}))
     editor = SQLEditor(component=component, spec="SELECT * FROM test")
     assert editor.view is not None
+
+
+
+def test_vl_convert_warnings_do_not_reach_stderr():
+    # Lumen renders charts to images for the LLM; with no logging set up, as
+    # in a notebook, Vega-Lite's spec warnings would print into the cell. A
+    # subprocess, since pytest's own log handlers would hide the problem.
+    code = """
+import lumen.ai.editors as editors
+spec = {"data": {"values": [{"a": "x", "b": 1}]}, "layer": [
+    {"mark": "bar", "encoding": {"x": {"field": "a", "type": "nominal", "sort": "-y"}, "y": {"field": "b", "type": "quantitative"}}},
+    {"mark": "text", "encoding": {"x": {"field": "a", "type": "nominal", "sort": {"field": "b"}}, "y": {"field": "b", "type": "quantitative"}, "text": {"field": "b"}}},
+]}
+editors.vlc.vegalite_to_png(spec)
+"""
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert "conflicting sort" not in run.stderr
