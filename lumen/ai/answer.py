@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import logging
+import math
 import time
 import weakref
 
@@ -153,6 +154,21 @@ async def _respond(
     outputs, out_context = await plan.execute()
     answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm, data, agents)
     return answer, out_context
+
+
+def _records(data: Any) -> Any:
+    """
+    A frame as JSON records, with missing values as null. JSON has no
+    NaN, and in a stacked chart one NaN blanks every series at that x.
+    Data that is not a frame, e.g. GeoJSON features, is returned as is.
+    """
+    records = ds_to_records(data)
+    if records is None:
+        return data
+    return [
+        {key: None if isinstance(value, float) and math.isnan(value) else value for key, value in row.items()}
+        for row in records
+    ]
 
 
 class _StatusLine:
@@ -615,7 +631,9 @@ class Answer(param.Parameterized):
         data = spec.get("data")
         # A spec can bring its own data, e.g. a topojson url for a map
         if isinstance(data, dict) and "values" in data:
-            spec["data"] = dict(data, values=ds_to_records(data["values"]))
+            spec["data"] = dict(data, values=_records(data["values"]))
+        if isinstance(spec.get("datasets"), dict):
+            spec["datasets"] = {name: _records(values) for name, values in spec["datasets"].items()}
         for dim, size in (("width", 600), ("height", 400)):
             if spec.get(dim, "container") == "container":
                 spec[dim] = size

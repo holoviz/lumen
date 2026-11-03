@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import logging
 import subprocess
 import sys
@@ -450,6 +451,18 @@ def test_answer_static_bundle_outside_a_kernel(chart_answer):
     assert "<strong>B</strong> is largest." in html
     assert f'src="data:image/png;base64,{bundle["image/png"]}" width="600"' in html
     assert "<details><summary>SQL</summary><pre><code>SELECT * FROM tiny</code></pre></details>" in html
+
+
+def test_answer_static_spec_sends_missing_values_as_null():
+    source = read({"fuels": pd.DataFrame({"year": [1900, 1950], "coal": [1.0, 2.0], "gas": [float("nan"), 3.0]})})
+    view = VegaLiteView(pipeline=Pipeline(source=source, table="fuels"), spec={"mark": "area", "encoding": {
+        "x": {"field": "year", "type": "quantitative"}, "y": {"field": "gas", "type": "quantitative"},
+    }})
+    answer = Answer(question="?", spec=view.spec, view=view, status="success")
+    spec = answer._chart_bundle()["application/vnd.vegalite.v5+json"]
+    # Strict JSON, which a kernel message and the Vega stack both need
+    json.dumps(spec, allow_nan=False)
+    assert [row["gas"] for row in spec["data"]["values"]] == [None, 3.0]
 
 
 def test_answer_static_spec_keeps_data_given_by_url(frame_source):
