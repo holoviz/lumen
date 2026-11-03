@@ -40,6 +40,17 @@ class TestLintData:
         findings = lint_data(df)
         assert any("1 of 4 rows are exact duplicates" in f for f in findings)
 
+    def test_duplicates_judged_on_whole_rows_when_columns_given(self):
+        """Records that only agree on the reported columns are not duplicates."""
+        df = pd.DataFrame({"id": [1, 2, 3], "species": ["a", "a", "b"], "mass": [10, 10, 20]})
+        assert not any("duplicates" in f for f in lint_data(df, columns={"species", "mass"}))
+        repeated = pd.concat([df, df.iloc[[0]]])
+        assert any("1 of 4 rows are exact duplicates" in f for f in lint_data(repeated, columns={"species"}))
+
+    def test_columns_limit_per_column_checks(self):
+        df = pd.DataFrame({"temp": [12.5, 13.0, 14.0], "unused": [-9999.0, 1.0, -9999.0]})
+        assert lint_data(df, actionable_only=True, columns={"temp"}) == []
+
     def test_sentinel_numbers_reported(self):
         df = pd.DataFrame({"temp": [12.5, 13.0, -9999.0, 14.0, -9999.0, 15.0]})
         findings = lint_data(df)

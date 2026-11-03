@@ -4,6 +4,12 @@ This page lists all Lumen releases with links to detailed changelogs.
 
 ## Latest
 
+### Version 1.4.0
+
+Lumen AI 1.4 adds keyless and CLI-backed LLM providers (Kilo, Codex CLI, Claude Code, GitHub Copilot CLI), tracks token usage and cost, gives agents more accurate table context, lets reports carry an AI-written story that exports to Word, and supports polars and pyarrow frames via narwhals.
+
+[Release notes →](https://github.com/holoviz/lumen/releases/tag/v1.4.0)
+
 ### Version 1.3.0
 
 Lumen AI 1.3 expands support for geospatial and scientific data, makes AI-generated visualizations more capable, and improves the reliability of exploration, validation, reporting, and exports.
