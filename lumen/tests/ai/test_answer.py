@@ -832,3 +832,33 @@ def test_answer_ds_is_the_gridded_result():
 
 def test_answer_ds_is_none_for_tables(frame_source):
     assert Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).ds is None
+
+
+@pytest.mark.parametrize("suffix", [".parquet", ".geojson", ".gpkg"])
+def test_to_file_writes_geometry_with_its_crs(tmp_path, suffix):
+    gpd = pytest.importorskip("geopandas")
+    path = _geo_answer().to_file(tmp_path / f"places{suffix}")
+    back = gpd.read_parquet(path) if suffix == ".parquet" else gpd.read_file(path)
+    assert back.crs.to_epsg() == 4326 and list(back["n"]) == ["a", "b"]
+
+
+def test_to_file_writes_a_table(tmp_path, frame_source):
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"))
+    assert len(pd.read_csv(answer.to_file(tmp_path / "t.csv"))) == 3
+    assert len(pd.read_parquet(answer.to_file(tmp_path / "t.parquet"))) == 3
+    with pytest.raises(ValueError, match="hold geometry"):
+        answer.to_file(tmp_path / "t.geojson")
+    with pytest.raises(ValueError, match="hold grids"):
+        answer.to_file(tmp_path / "t.zarr")
+    with pytest.raises(ValueError, match="Cannot write '.xlsx'"):
+        answer.to_file(tmp_path / "t.xlsx")
+
+
+@pytest.mark.parametrize("suffix", [".zarr", ".nc"])
+def test_to_file_writes_a_grid(tmp_path, suffix):
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("zarr" if suffix == ".zarr" else "netCDF4")
+    grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    path = answer.to_file(tmp_path / f"g{suffix}")
+    back = xr.open_zarr(path, consolidated=False) if suffix == ".zarr" else xr.open_dataset(path)
+    assert dict(back.sizes) == {"lat": 3, "lon": 4}

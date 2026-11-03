@@ -39,7 +39,9 @@ from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
-from ..util import geometry_columns, is_geodataframe, log
+from ..util import (
+    as_pandas, geometry_columns, is_geodataframe, log,
+)
 from ..views import View
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
@@ -630,6 +632,41 @@ class Answer(param.Parameterized):
         if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
             return None
         return self.pipeline.get_dataset()
+
+    def to_file(self, path: str | Path) -> Path:
+        """
+        Write the answer's data to a file, in the format its extension names:
+        ``.parquet`` (GeoParquet when the data has geometry), ``.geojson``,
+        ``.gpkg`` and ``.csv`` for tables, ``.zarr`` and ``.nc`` for grids.
+        Returns the path.
+        """
+        path = Path(path)
+        suffix = path.suffix.lower()
+        if suffix in (".zarr", ".nc"):
+            ds = self.ds
+            if ds is None:
+                raise ValueError(f"{suffix} files hold grids, and this answer is a table. Use .parquet or .csv.")
+            if suffix == ".zarr":
+                # Consolidated metadata is not part of the Zarr 3 format
+                ds.to_zarr(path, mode="w", consolidated=False)
+            else:
+                ds.to_netcdf(path)
+            return path
+        if self.pipeline is None:
+            raise ValueError("This answer has no data to write.")
+        gdf = self.gdf
+        data = gdf if gdf is not None else as_pandas(self.pipeline.data)
+        if suffix == ".parquet":
+            data.to_parquet(path)
+        elif suffix in (".geojson", ".gpkg"):
+            if gdf is None:
+                raise ValueError(f"{suffix} files hold geometry, and this answer has none. Use .parquet or .csv.")
+            gdf.to_file(path, driver="GeoJSON" if suffix == ".geojson" else "GPKG")
+        elif suffix == ".csv":
+            data.to_csv(path, index=False)
+        else:
+            raise ValueError(f"Cannot write {suffix!r} files. Use .parquet, .geojson, .gpkg, .csv, .zarr or .nc.")
+        return path
 
     def explore(self, **params) -> ExplorerUI:
         """
