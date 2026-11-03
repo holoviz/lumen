@@ -92,10 +92,11 @@ def _has_geometry(source: Source) -> bool:
 
 
 def _default_agents(source: Source) -> list:
-    agents = [ChatAgent(), SQLAgent(), VegaLiteAgent()]
+    # Maps and grids go to hvPlot, which draws them on basemap tiles and
+    # rasterizes large grids; Vega-Lite can do neither.
     if isinstance(source, XArraySQLSource) or _has_geometry(source):
-        agents.append(hvPlotAgent())
-    return agents
+        return [ChatAgent(), SQLAgent(), hvPlotAgent()]
+    return [ChatAgent(), SQLAgent(), VegaLiteAgent()]
 
 
 # Set through configure, and used by every question that does not pass its own

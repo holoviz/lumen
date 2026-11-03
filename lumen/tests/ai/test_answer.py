@@ -26,7 +26,6 @@ import lumen.ai.answer as answer_module
 
 from lumen.ai.actor import NullStep
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
-from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     Answer, _default_agents, _default_llm, _env_llm, _planner, _planners,
@@ -315,23 +314,23 @@ def test_default_agents_plain_table(frame_source):
     assert [type(a).__name__ for a in agents] == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
 
 
-def test_default_agents_add_hvplot_for_gridded_data():
+def test_default_agents_use_hvplot_for_gridded_data():
     xr = pytest.importorskip("xarray")
     pytest.importorskip("xarray_sql")
     ds = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
-    assert any(isinstance(a, hvPlotAgent) for a in _default_agents(read(ds)))
+    assert [type(a).__name__ for a in _default_agents(read(ds))] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
 
 
-def test_default_agents_add_hvplot_for_geometry():
+def test_default_agents_use_hvplot_for_geometry():
     if gpd is None:
         pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])])
-    assert any(isinstance(a, hvPlotAgent) for a in _default_agents(read({"shapes": gdf})))
+    assert [type(a).__name__ for a in _default_agents(read({"shapes": gdf}))] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
 
 
-def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
+def test_default_agents_use_hvplot_when_a_table_has_geometry(frame_source):
     with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
-        assert any(isinstance(a, hvPlotAgent) for a in _default_agents(frame_source))
+        assert [type(a).__name__ for a in _default_agents(frame_source)] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
 
 
 def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
@@ -807,7 +806,7 @@ def test_answer_gdf_warns_once_when_lon_lat_has_no_crs():
         assert answer.gdf.crs is None
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        answer.gdf
+        assert answer.gdf.crs is None
 
 
 def _grid_answer(sql):
@@ -850,7 +849,7 @@ def test_to_file_writes_a_table(tmp_path, frame_source):
         answer.to_file(tmp_path / "t.geojson")
     with pytest.raises(ValueError, match="hold grids"):
         answer.to_file(tmp_path / "t.zarr")
-    with pytest.raises(ValueError, match="Cannot write '.xlsx'"):
+    with pytest.raises(ValueError, match=r"Cannot write '\.xlsx'"):
         answer.to_file(tmp_path / "t.xlsx")
 
 
@@ -858,7 +857,7 @@ def test_to_file_writes_a_table(tmp_path, frame_source):
 def test_to_file_writes_a_grid(tmp_path, suffix):
     xr = pytest.importorskip("xarray")
     pytest.importorskip("zarr" if suffix == ".zarr" else "netCDF4")
-    grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    _, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
     path = answer.to_file(tmp_path / f"g{suffix}")
     back = xr.open_zarr(path, consolidated=False) if suffix == ".zarr" else xr.open_dataset(path)
     assert dict(back.sizes) == {"lat": 3, "lon": 4}
