@@ -1,6 +1,8 @@
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel, Field, field_validator, model_validator,
+)
 
 from .config import MissingContextError
 

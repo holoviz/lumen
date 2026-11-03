@@ -17,7 +17,9 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.config import PROMPTS_DIR, EmptyResultError
-from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine, RetrySpec
+from lumen.ai.models import (
+    DeleteLine, InsertLine, ReplaceLine, RetrySpec,
+)
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,

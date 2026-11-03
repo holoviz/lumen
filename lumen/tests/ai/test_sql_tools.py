@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 try:
+    from lumen.ai.actor import NullStep
     from lumen.ai.agents.sql import (
         PROMPT_OTHER_TABLES, RequestBudget, SQLAgent, _coerce_filter_value,
         build_distinct_values_sql, catalog_exceeds_prompt,
@@ -18,7 +19,6 @@ try:
         make_run_exploration_sql_tool, make_sql_model, numeric_cast_edit,
         referenced_columns, sql_is_scalar_aggregate, summarize_tool_calls,
     )
-    from lumen.ai.actor import NullStep
     from lumen.ai.config import (
         UNRECOVERABLE_ERRORS, DeterministicError, DeterministicQueryError,
         MissingContextError, QueryError, RequestBudgetExceededError,

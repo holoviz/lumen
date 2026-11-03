@@ -41,8 +41,8 @@ from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..tools.monty import make_monty_llm_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, print_task_exception, truncate_to_tokens,
-    wrap_logfire,
+    mutate_user_message, normalized_name, print_task_exception,
+    truncate_to_tokens, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 

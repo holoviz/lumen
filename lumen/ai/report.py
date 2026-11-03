@@ -44,8 +44,8 @@ from .export import (
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
 from .utils import (
-    content_to_text, extract_block_source, get_block_names, print_task_exception,
-    set_content_text, wrap_logfire_on_method,
+    content_to_text, extract_block_source, get_block_names,
+    print_task_exception, set_content_text, wrap_logfire_on_method,
 )
 
 

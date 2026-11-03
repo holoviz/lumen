@@ -15,8 +15,8 @@ from concurrent.futures import (
     TimeoutError as FutureTimeoutError,
 )
 from contextlib import suppress
-from pathlib import Path
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import panel as pn
@@ -37,8 +37,8 @@ from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import geometry_columns, log
 from ..views import View
-from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .actor import step_title_callback
+from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
