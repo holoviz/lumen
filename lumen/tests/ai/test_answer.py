@@ -896,3 +896,9 @@ def test_map_falls_back_to_hvplot_on_a_basemap(monkeypatch):
 def test_map_needs_geometry(frame_source):
     with pytest.raises(ValueError, match="no geometry to map"):
         Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).map()
+
+
+def test_answer_ds_has_sorted_coordinates():
+    _, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon ORDER BY lat DESC, lon DESC")
+    ds = answer.ds
+    assert list(ds.lat.values) == [10.0, 20.0, 30.0] and list(ds.lon.values) == [0.0, 1.0, 2.0, 3.0]

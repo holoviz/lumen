@@ -302,7 +302,10 @@ class XArraySQLSource(BaseSQLSource):
         # result, and to_dataset(dims=...) errors on a dim it can't find.
         names = set(result.schema().names)
         dims = [d for d in self._dataset.dims if d in names]
-        return result.to_dataset(dims=dims)
+        ds = result.to_dataset(dims=dims)
+        # Coordinates come in the order the rows did, which a GROUP BY leaves
+        # arbitrary, and a grid with unsorted coordinates plots and slices wrong
+        return ds.sortby([d for d in dims if d in ds.coords])
 
     def create_sql_expr_source(
         self,
