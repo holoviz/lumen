@@ -36,9 +36,9 @@ class hvPlotAgent(BaseViewAgent):
             "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
             "Can render a geometry column (GeoDataFrame polygons/lines/points) as a "
-            "2D choropleth, shading shapes by a value column without a basemap; fits "
-            "geometry whose schema is not 'geographic' (a projected or absent CRS) or "
-            "when a basemap adds no context",
+            "2D map or choropleth, shading shapes by a value column; geometry whose "
+            "schema is 'geographic' (a lat/lon CRS) and lon/lat points are drawn on "
+            "basemap tiles, projected geometry without one",
         ]
     )
 
