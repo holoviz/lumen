@@ -21,7 +21,7 @@ from panel.config import panel_extension
 from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
-from panel_material_ui import Card, Column
+from panel_material_ui import Alert, Card, Column
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -34,6 +34,7 @@ from ..util import geometry_columns, log
 from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
+from .config import QueryError
 from .coordinator import Plan, Planner
 from .data import read
 from .editors import LumenEditor
@@ -128,9 +129,13 @@ def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | N
 
 
 async def _respond(
-    planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any]
+    planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any],
+    data: DataT | Pipeline, agents: list | None,
 ) -> tuple[Answer, dict[str, Any]]:
-    """Run one question through the Planner, returning the Answer and the context it left."""
+    """
+    Run one question through the Planner, returning the Answer and the
+    context it left. A failed plan gives an Answer with status "error".
+    """
     if log.getEffectiveLevel() > logging.DEBUG:
         quiet_retry_log()
     await planner.sync(context)
@@ -138,10 +143,7 @@ async def _respond(
     if plan is None:
         raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
     outputs, out_context = await plan.execute()
-    if plan.status == "error":
-        failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
-    answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm)
+    answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm, data, agents)
     return answer, out_context
 
 
@@ -186,8 +188,25 @@ def _write_tables(spec: Any, data_dir: Path) -> None:
 
 
 def _build_answer(
-    question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm
+    question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
+    data: DataT | Pipeline, agents: list | None,
 ) -> Answer:
+    if plan.status == "error":
+        failed = next((task.title for task in plan if task.status == "error"), plan.title)
+        exc = context.get("__exception__")
+        return Answer(
+            agents=agents,
+            data=data,
+            error=context.get("__error__", ""),
+            llm=llm,
+            plan=plan,
+            question=question,
+            source=source,
+            # The query that failed, which is what needs fixing
+            sql=exc.sql if isinstance(exc, QueryError) else context.get("sql"),
+            status="error",
+            value=f"Lumen could not answer {question!r}: {failed!r} failed.",
+        )
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
     views = [
         out.component for out in outputs
@@ -195,6 +214,8 @@ def _build_answer(
     ]
     view = views[-1] if views else None
     return Answer(
+        agents=agents,
+        data=data,
         llm=llm,
         pipeline=context.get("pipeline"),
         plan=plan,
@@ -231,10 +252,17 @@ async def aask(
     -------
     Answer
     """
+    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents)
+
+
+async def _aask_messages(
+    data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
+    llm: Llm | None, agents: list | None,
+) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = _planner(source, llm or _default_llm(), agents)
     context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
+    answer, _ = await _respond(planner, question, messages, context, data, agents)
     return answer
 
 
@@ -270,6 +298,7 @@ class Chat(param.Parameterized):
 
     def __init__(self, data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None, **params):
         super().__init__(**params)
+        self._data = data
         self._source, self._visible_slugs = _resolve(data)
         self._llm = llm
         self._agents = agents
@@ -287,10 +316,13 @@ class Chat(param.Parameterized):
         else:
             context = dict(self._context)
         messages = [*self._messages, {"role": "user", "content": question}]
-        answer, out_context = await _respond(planner, question, messages, context)
+        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        self.answers = [*self.answers, answer]
+        if answer.status == "error":
+            # The next question starts from the last answer that worked
+            return answer
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
-        self.answers = [*self.answers, answer]
         return answer
 
     def ask(self, question: str) -> Answer:
@@ -308,6 +340,9 @@ class Answer(param.Parameterized):
 
     plan = param.ClassSelector(class_=Plan, doc="""
         The executed Plan, with every step the Planner took.""")
+
+    error = param.String(default="", doc="""
+        Why the question could not be answered, when status is "error".""")
 
     question = param.String(doc="""
         The question that was asked.""")
@@ -330,10 +365,34 @@ class Answer(param.Parameterized):
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
-    def __init__(self, llm: Llm | None = None, **params):
+    def __init__(
+        self, llm: Llm | None = None, data: DataT | Pipeline | None = None,
+        agents: list | None = None, **params,
+    ):
         super().__init__(**params)
         self._card = None
         self._llm = llm
+        # What was asked and with which agents, so retry asks the same way
+        self._data = data
+        self._agents = agents
+
+    async def aretry(self, hint: str | None = None) -> Answer:
+        """
+        Ask the question again, optionally with a hint on what to change,
+        e.g. after an error or a wrong result. Returns a new Answer.
+        """
+        messages = [{"role": "user", "content": self.question}]
+        if hint:
+            outcome = f"That failed: {self.error}" if self.status == "error" else self.value
+            if self.sql:
+                outcome += f"\n\nThe SQL was:\n{self.sql}"
+            messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
+        data = self.source if self._data is None else self._data
+        return await _aask_messages(data, self.question, messages, self._llm, self._agents)
+
+    def retry(self, hint: str | None = None) -> Answer:
+        """Ask the question again and return the new Answer. See aretry."""
+        return _run(self.aretry(hint))
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -403,7 +462,14 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None:
+        if self._card is None and self.status == "error":
+            parts = [Alert(object=self.error, severity="error", title=self.value, sizing_mode="stretch_width")]
+            if self.sql:
+                parts.append(Card(
+                    Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL", sizing_mode="stretch_width",
+                ))
+            self._card = Column(*parts)
+        elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self.view)
@@ -442,15 +508,25 @@ class Answer(param.Parameterized):
             "text/plain": f"<Vega-Lite chart: {title}>",
         }
 
+    @property
+    def _text(self) -> str:
+        """The written answer, followed by the error for a failed question."""
+        return f"{self.value}\n\n{self.error}" if self.error else self.value
+
     def _sql_html(self) -> str:
+        # A failed query is what the reader needs to see, so it starts open
+        if self.status == "error":
+            return f"<details open><summary>Failed SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
         return f"<details><summary>SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
 
     def _static_bundle(self, chart: dict | None) -> dict:
         # A viewer shows one mime type per output, so the HTML carries the
         # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
-        bundle = {"text/plain": repr(self), "text/markdown": f"{self.value}{sql}"}
+        bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
         card = [_prose_to_html(self.value)] if self.value else []
+        if self.error:
+            card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:
             bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
             width = chart["application/vnd.vegalite.v5+json"]["width"]
@@ -480,8 +556,8 @@ class Answer(param.Parameterized):
         # themselves, so the chart goes out as its own output and keeps its
         # tooltips. IPython is present, since this runs in a kernel.
         from IPython.display import display
-        if self.value:
-            display({"text/markdown": self.value, "text/plain": self.value}, raw=True)
+        if self._text:
+            display({"text/markdown": self._text, "text/plain": self._text}, raw=True)
         if (chart := self._chart_bundle()) is not None:
             display(chart, raw=True)
         if not self.sql:

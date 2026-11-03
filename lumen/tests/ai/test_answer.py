@@ -24,6 +24,7 @@ from lumen.ai.answer import (
     Answer, _default_agents, _default_llm, _planner, _planners, _resolve, aask,
     ask, chat,
 )
+from lumen.ai.config import QueryError
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
 from lumen.config import SOURCE_TABLE_SEPARATOR
@@ -70,7 +71,7 @@ async def test_aask_answers_with_sql_and_text(llm, frame_source):
     assert answer.view is None and answer.spec is None
 
 
-async def test_aask_raises_when_the_plan_fails(llm, frame_source):
+async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):
     def fail():
         raise RuntimeError("LLM unavailable")
 
@@ -78,8 +79,85 @@ async def test_aask_raises_when_the_plan_fails(llm, frame_source):
         _plan(("ChatAgent", "Explain")),
         fail, fail, fail, fail,
     ])
-    with pytest.raises(RuntimeError, match="could not answer 'Total value\\?'"):
-        await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert answer.value == "Lumen could not answer 'Total value?': 'Explain' failed."
+    assert "LLM unavailable" in answer.error
+    assert repr(answer).startswith("Answer(status='error'")
+
+
+def _failing_sql(fail_times=1):
+    """Patch SQLAgent.respond to fail like a query that never ran, then work."""
+    original = SQLAgent.respond
+    calls = []
+
+    async def respond(self, *args, **kwargs):
+        calls.append(1)
+        if len(calls) <= fail_times:
+            raise QueryError("BinderException: column nope not found", "SELECT nope FROM tiny")
+        return await original(self, *args, **kwargs)
+
+    return patch.object(SQLAgent, "respond", new=respond)
+
+
+async def test_failed_sql_is_kept_on_the_error_answer(frame_source):
+    llm = FollowUpLLM([])
+    with _failing_sql(fail_times=9):
+        answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert answer.sql == "SELECT nope FROM tiny"
+    assert "column nope not found" in answer.error
+    assert answer.pipeline is None and answer.view is None
+
+
+async def test_error_answer_prints_no_traceback(frame_source, capsys):
+    with _failing_sql(fail_times=9):
+        answer = await aask(frame_source, "Total value?", llm=FollowUpLLM([]), agents=[ChatAgent(), SQLAgent()])
+    assert answer.status == "error"
+    assert "Traceback" not in capsys.readouterr().err
+
+
+async def test_error_card_shows_the_message_and_open_sql(frame_source):
+    llm = FollowUpLLM([])
+    with _failing_sql(fail_times=9):
+        answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    alert, sql = answer.__panel__()
+    assert alert.severity == "error" and "column nope" in alert.object
+    assert not sql.collapsed and "SELECT nope FROM tiny" in sql[0].object
+    html = answer._static_bundle(None)["text/html"]
+    assert "column nope not found" in html
+    assert "<details open><summary>Failed SQL</summary>" in html
+
+
+async def test_retry_sends_the_hint_after_the_failure(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="total", tables=["tiny"])])
+    with _failing_sql(fail_times=1):
+        failed = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        fixed = await failed.aretry(hint="The column is called value")
+
+    assert failed.status == "error" and fixed.status == "success"
+    assert fixed.question == "Total value?"
+    assert fixed.pipeline.data.iloc[0, 0] == 38.0
+    history, latest = llm.plan_calls[-1]
+    assert "SELECT nope FROM tiny" in history["content"]
+    assert latest == {"role": "user", "content": "The column is called value"}
+
+
+async def test_chat_does_not_build_on_an_error_answer(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT COUNT(*) AS n FROM tiny", table_slug="n", tables=["tiny"])])
+    conversation = frame_source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    with _failing_sql(fail_times=1):
+        failed = await conversation.aask("Broken?")
+        second = await conversation.aask("How many rows?")
+
+    assert conversation.answers == [failed, second]
+    assert failed.status == "error" and second.status == "success"
+    assert llm.plan_calls[-1] == [{"role": "user", "content": "How many rows?"}]
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
