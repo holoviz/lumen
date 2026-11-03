@@ -1,7 +1,10 @@
+import asyncio
 import base64
 import logging
 import subprocess
 import sys
+import threading
+import time
 
 from typing import get_args
 from unittest.mock import AsyncMock, patch
@@ -17,12 +20,13 @@ except ModuleNotFoundError:
 from panel.config import panel_extension
 from panel.tests.util import async_wait_until
 
+from lumen.ai.actor import NullStep
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _default_llm, _planner, _planners, _resolve, aask,
-    ask, chat,
+    Answer, _default_agents, _default_llm, _planner, _planners, _resolve, _run,
+    _StatusLine, aask, ask, chat,
 )
 from lumen.ai.config import QueryError
 from lumen.ai.coordinator import Plan
@@ -574,3 +578,72 @@ class FollowUpLLM(MockLLM):
         if name:
             return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
         return "Done."
+
+
+class FakeShell:
+    def __init__(self):
+        self.next_inputs = []
+
+    def set_next_input(self, text, replace=False):
+        self.next_inputs.append((text, replace))
+
+
+def test_to_cell_puts_the_code_in_the_next_cell(chart_answer):
+    shell = FakeShell()
+    with patch("lumen.ai.answer._in_kernel", return_value=True), patch("IPython.get_ipython", return_value=shell):
+        chart_answer.to_cell()
+    assert shell.next_inputs == [(chart_answer.code, False)]
+
+
+def test_to_cell_needs_a_kernel(chart_answer):
+    with pytest.raises(RuntimeError, match="answer.code holds the code"):
+        chart_answer.to_cell()
+
+
+def test_to_cell_needs_code():
+    with pytest.raises(ValueError, match="no chart or data"):
+        Answer(question="?", status="success").to_cell()
+
+
+class FakeHandle:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, obj, raw=False):
+        self.updates.append(obj["text/plain"])
+
+
+async def test_run_shows_the_current_step_in_place():
+    handle = FakeHandle()
+
+    async def question():
+        NullStep().add("Generating SQL...")
+        await asyncio.sleep(0.6)
+        return "done"
+
+    with patch("lumen.ai.answer._in_kernel", return_value=True), \
+            patch("IPython.display.display", return_value=handle) as display:
+        assert _run(question()) == "done"
+
+    display.assert_called_once()
+    assert any(text.startswith("Generating SQL (") for text in handle.updates)
+    assert handle.updates[-1] == ""
+
+
+async def test_run_cancels_the_question_on_interrupt():
+    ended = []
+
+    async def question():
+        try:
+            await asyncio.sleep(30)
+        finally:
+            ended.append(asyncio.current_task().cancelling())
+
+    threads = threading.active_count()
+    start = time.monotonic()
+    with patch.object(_StatusLine, "show", side_effect=KeyboardInterrupt), pytest.raises(KeyboardInterrupt):
+        _run(question())
+
+    assert time.monotonic() - start < 5
+    assert ended == [1]
+    assert threading.active_count() == threads

@@ -7,9 +7,14 @@ import asyncio
 import base64
 import html
 import logging
+import time
 import weakref
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import (
+    CancelledError as FutureCancelledError, ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+)
+from contextlib import suppress
 from pathlib import Path
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -33,6 +38,7 @@ from ..sources.xarray_sql import XArraySQLSource
 from ..util import geometry_columns, log
 from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
+from .actor import step_title_callback
 from .agents.hvplot import hvPlotAgent
 from .config import QueryError
 from .coordinator import Plan, Planner
@@ -148,6 +154,43 @@ async def _respond(
     return answer, out_context
 
 
+class _StatusLine:
+    """One output line, updated in place with the step a question is on."""
+
+    def __init__(self):
+        self._handle = None
+        self._shown = None
+        self._start = time.monotonic()
+
+    def __enter__(self) -> _StatusLine:
+        if _in_kernel():
+            # IPython is present, since this runs in a kernel
+            from IPython.display import display
+            self._handle = display({"text/plain": "Planning"}, raw=True, display_id=True)
+        return self
+
+    def show(self, title: str) -> None:
+        text = f"{title.rstrip('.')} ({time.monotonic() - self._start:.0f}s)"
+        if self._handle is not None and text != self._shown:
+            self._handle.update({"text/plain": text}, raw=True)
+            self._shown = text
+
+    def __exit__(self, *exc) -> None:
+        if self._handle is not None:
+            self._handle.update({"text/plain": ""}, raw=True)
+
+
+def _cancel(future, started: dict) -> None:
+    """Cancel the question's task, as the report stop button does, and wait for it to end."""
+    while "task" not in started and not future.done():
+        time.sleep(0.01)
+    if "task" in started:
+        task = started["task"]
+        task.get_loop().call_soon_threadsafe(task.cancel)
+    with suppress(Exception, asyncio.CancelledError, FutureCancelledError):
+        future.result()
+
+
 def _run(coro):
     """Run a coroutine to completion from sync code, inside Jupyter or not."""
     try:
@@ -159,11 +202,33 @@ def _run(coro):
     # Run outside the except block, or every error raised by the question
     # would also print a chained "no running event loop" traceback
     if not loop_running:
+        # asyncio.run already cancels the question on Ctrl-C
         return asyncio.run(coro)
+
+    titles: list[str] = []
+    started: dict[str, asyncio.Task] = {}
+
+    async def tracked():
+        started["task"] = asyncio.current_task()
+        # Set inside the task, so the steps it runs inherit it
+        step_title_callback.set(titles.append)
+        return await coro
+
     # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
-    # in a worker thread instead of patching the loop with nest_asyncio
-    with ThreadPoolExecutor(1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+    # in a worker thread instead of patching the loop with nest_asyncio.
+    # The status line is updated from this thread, so it stays in the cell.
+    # ponytail: aask has no status line, add one if async callers want it
+    with ThreadPoolExecutor(1) as pool, _StatusLine() as status:
+        future = pool.submit(asyncio.run, tracked())
+        try:
+            while True:
+                try:
+                    return future.result(timeout=0.25)
+                except FutureTimeoutError:
+                    status.show(titles[-1] if titles else "Planning")
+        except KeyboardInterrupt:
+            _cancel(future, started)
+            raise
 
 
 def _write_tables(spec: Any, data_dir: Path) -> None:
@@ -408,6 +473,17 @@ class Answer(param.Parameterized):
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
         return _run(self.arefine(instruction))
+
+    def to_cell(self) -> None:
+        """Put answer.code into a new cell below this one, in Jupyter."""
+        code = self.code
+        if not code:
+            raise ValueError("This answer has no chart or data to turn into code.")
+        if not _in_kernel():
+            raise RuntimeError("to_cell needs a Jupyter kernel. answer.code holds the code as a string.")
+        # IPython is present, since this runs in a kernel
+        from IPython import get_ipython
+        get_ipython().set_next_input(code, replace=False)
 
     async def aretry(self, hint: str | None = None) -> Answer:
         """
