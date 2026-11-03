@@ -20,12 +20,13 @@ from lumen.ai.config import PROMPTS_DIR, EmptyResultError
 from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
-    apply_changes, clean_sql, collapse_indexed_columns, content_to_text,
-    count_tokens, describe_data, find_slug_by_table_name, format_msg_content,
-    format_tool_error, fuse_messages, get_schema, inline_schema_defs,
-    mutate_user_message, parse_huggingface_url, render_template, report_error,
-    retry_llm_output, sanitize_column_names, serialize_image_content,
-    set_content_text, slug_to_table_name, truncate_to_tokens,
+    apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
+    content_to_text, count_tokens, describe_data, find_slug_by_table_name,
+    format_msg_content, format_tool_error, fuse_messages, get_schema,
+    inline_schema_defs, mutate_user_message, parse_huggingface_url,
+    render_template, report_error, retry_llm_output, sanitize_column_names,
+    serialize_image_content, set_content_text, slug_to_table_name,
+    truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -1015,3 +1016,92 @@ def test_format_tool_error_redacts_url_secrets(text, expected):
 
 def test_format_tool_error_truncates():
     assert len(format_tool_error(ValueError("x" * 5000), max_length=200)) <= 200
+
+
+@pytest.mark.parametrize(
+    "sql, columns, expected",
+    [
+        pytest.param("SELECT name, age FROM users", ("name", "age"), {}, id="pass-through"),
+        pytest.param("SELECT region, price AS cost FROM t", ("region", "cost"), {}, id="rename"),
+        pytest.param(
+            "SELECT region, SUM(population) AS total_pop, AVG(price) AS avg_price FROM t GROUP BY region",
+            ("region", "total_pop", "avg_price"),
+            {"total_pop": "SUM(t.population), grouped by region", "avg_price": "AVG(t.price), grouped by region"},
+            id="group-by",
+        ),
+        pytest.param(
+            "SELECT region, SUM(population) AS total FROM t GROUP BY 1",
+            ("region", "total"),
+            {"total": "SUM(t.population), grouped by region"},
+            id="group-by-ordinal",
+        ),
+        pytest.param(
+            "SELECT region, COUNT(*) AS n, CAST(price AS INT) AS price FROM t GROUP BY region",
+            ("region", "n", "price"),
+            {"n": "COUNT(*), grouped by region", "price": "CAST(t.price AS INT), grouped by region"},
+            id="count-star-and-same-name-cast",
+        ),
+        pytest.param(
+            "SELECT u.name, o.amount * 1.1 AS total FROM users AS u JOIN orders AS o ON u.id = o.user_id",
+            ("name", "total"),
+            {"total": "orders.amount * 1.1"},
+            id="join-uses-table-not-alias",
+        ),
+        pytest.param(
+            "WITH s AS (SELECT dept, AVG(salary) AS avg_sal FROM employees GROUP BY dept) "
+            "SELECT dept, avg_sal * 1.1 AS projected FROM s",
+            ("dept", "projected"),
+            {"projected": "AVG(employees.salary) * 1.1, grouped by dept"},
+            id="cte-inlined",
+        ),
+        pytest.param(
+            "SELECT region, s FROM (SELECT region, SUM(population) AS s FROM t GROUP BY region) AS sub",
+            ("region", "s"),
+            {"s": "SUM(t.population), grouped by region"},
+            id="subquery-column-is-derived",
+        ),
+        pytest.param(
+            "SELECT region, RANK() OVER (ORDER BY price) AS r FROM t",
+            ("region", "r"),
+            {"r": "RANK() OVER (ORDER BY t.price)"},
+            id="window",
+        ),
+        pytest.param("SELECT SUM(population) FROM t", ("sum(population)",), {"sum(population)": "SUM(t.population)"}, id="unaliased-duckdb"),
+        pytest.param("SELECT SUM(population) FROM t", ("sum",), {"sum": "SUM(t.population)"}, id="unaliased-postgres"),
+        pytest.param("SELECT *, price * 2 AS p2 FROM t", ("region", "price", "p2"), {"p2": "t.price * 2"}, id="star"),
+        pytest.param("SELECT price * 2 AS p FROM t UNION ALL SELECT price FROM u", ("p",), {}, id="union"),
+        pytest.param(
+            "WITH u AS (SELECT price FROM a UNION ALL SELECT price FROM b) SELECT SUM(price) AS total FROM u",
+            ("total",),
+            {},
+            id="union-in-cte",
+        ),
+        pytest.param(
+            'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
+            ("Symbol", "avg_close"),
+            {"avg_close": 'AVG(stocks."Close"), grouped by "Symbol"'},
+            id="quoted-mixed-case",
+        ),
+        pytest.param(
+            "WITH s AS (SELECT SUM(x) AS Total FROM t) SELECT total * 2 AS d FROM s",
+            ("d",),
+            {"d": "SUM(t.x) * 2"},
+            id="cte-alias-case-mismatch",
+        ),
+        pytest.param(
+            "WITH a AS (SELECT x + 1 AS y FROM t) SELECT y * 3 AS z FROM a",
+            ("z",),
+            {"z": "(t.x + 1) * 3"},
+            id="inlined-keeps-precedence",
+        ),
+        pytest.param(
+            "SELECT SUM(p) AS s FROM read_parquet('x.parquet')",
+            ("s",),
+            {"s": "SUM(p)"},
+            id="table-function",
+        ),
+        pytest.param("SELEC nonsense", ("x",), {}, id="unparseable"),
+    ],
+)
+def test_column_tooltips(sql, columns, expected):
+    assert column_tooltips(sql, "duckdb", columns) == expected

@@ -1107,7 +1107,9 @@ class SQLAgent(BaseLumenAgent):
         Placeholder numbers [-9999, ...] appear as data in "revenue"".
 
         Only the columns ``sql_query`` references are linted: a placeholder in
-        a column the query never reads cannot affect its result.
+        a column the query never reads cannot affect its result. Duplicates are
+        still judged on whole rows, since two records can share every column
+        the query reads.
         """
         columns = referenced_columns(sql_query, source.dialect) if sql_query else None
         findings = []
@@ -1125,14 +1127,12 @@ class SQLAgent(BaseLumenAgent):
                 # the query it feeds has already run successfully.
                 log_debug(f"Could not profile source table {table!r}: {e}")
                 continue
-            if columns is not None:
-                sample = as_pandas(sample)
-                sample = sample[[col for col in sample.columns if str(col).lower() in columns]]
-                if sample.columns.empty:
-                    continue
+            sample = as_pandas(sample)
+            if columns is not None and not any(str(col).lower() in columns for col in sample.columns):
+                continue
             findings.extend(
                 f"In the source rows of `{table}` (before aggregation): {finding}"
-                for finding in lint_data(sample, actionable_only=True)
+                for finding in lint_data(sample, actionable_only=True, columns=columns)
             )
         return findings
 

@@ -37,6 +37,8 @@ from jinja2 import (
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
 from panel_material_ui import Details
+from sqlglot import exp
+from sqlglot.lineage import lineage
 
 from ..config import dump_yaml
 from ..filters.base import ConstantFilter
@@ -2372,3 +2374,101 @@ def _add_geographic_items(vega_spec: dict, vega_spec_str: str) -> dict:
 
     _handle_map_compatibility(vega_spec, vega_spec_str)
     return vega_spec
+
+
+def _root_expression(node) -> exp.Expression | None:
+    """
+    Rebuild a lineage node's expression in terms of base table columns,
+    inlining CTE and subquery aliases along the way.
+    """
+    if isinstance(node.source, exp.SetOperation):
+        return None
+    expression = node.expression.unalias().copy()
+    children = {child.name: child for child in node.downstream}
+    columns = list(expression.find_all(exp.Column))
+    # Unmatched children are set-operation branches (named "0", "1", ...).
+    if set(children) - {column.sql() for column in columns}:
+        return None
+    for column in columns:
+        child = children.get(column.sql())
+        if child is None:
+            continue
+        if isinstance(child.source, exp.Table):
+            # Table functions like read_parquet(...) have no name to qualify with.
+            replacement = exp.column(column.this.copy(), table=child.source.name or None)
+        elif isinstance(child.source, exp.Select | exp.SetOperation):
+            replacement = _root_expression(child)
+            if replacement is None:
+                return None
+            if not isinstance(replacement, exp.Column | exp.Func | exp.Literal | exp.Paren):
+                replacement = exp.paren(replacement)
+        else:
+            # VALUES, table functions etc. are base relations already.
+            continue
+        if column is expression:
+            return replacement
+        column.replace(replacement)
+    return expression
+
+
+def _group_by(node) -> list[exp.Expression]:
+    """Return the first GROUP BY found along a lineage chain."""
+    for n in node.walk():
+        if isinstance(n.source, exp.Select) and (group := n.source.args.get("group")):
+            return [e.copy() for e in group.expressions]
+    return []
+
+
+@functools.lru_cache(maxsize=128)
+def column_tooltips(sql_query: str, dialect: str | None, columns: tuple[str, ...]) -> dict[str, str]:
+    """
+    Map each derived result column to a one-line description of how it is
+    computed from base table columns, e.g. ``SUM(orders.price), grouped by region``.
+
+    Plain or renamed columns get no entry. Set operations (UNION etc.) are
+    skipped since each branch computes the column differently.
+    """
+    try:
+        select = sqlglot.parse_one(sql_query, read=dialect)
+    except sqlglot.errors.ParseError:
+        return {}
+    if not isinstance(select, exp.Select):
+        return {}
+    # Lineage lowercases identifiers; restore them as the user wrote them.
+    spelling = {ident.name.lower(): ident.name for ident in select.find_all(exp.Identifier)}
+
+    projections = select.expressions
+    # Unaliased names differ per dialect (DuckDB `sum(x)`, Postgres `sum`), so
+    # match by position when every projection maps to exactly one column.
+    positional = len(projections) == len(columns) and not any(
+        isinstance(p.unalias(), exp.Star) or (isinstance(p, exp.Column) and isinstance(p.this, exp.Star))
+        for p in projections
+    )
+    by_name = {col.lower(): col for col in columns}
+
+    tooltips = {}
+    for i, projection in enumerate(projections):
+        name = projection.alias_or_name
+        column = columns[i] if positional else by_name.get(name.lower())
+        if column is None or isinstance(projection.unalias(), exp.Star):
+            continue
+        traced = select
+        if not projection.alias and not isinstance(projection, exp.Column):
+            name = f"_col_{i}"
+            traced = select.copy()
+            traced.expressions[i] = projection.as_(name)
+        try:
+            node = lineage(name, traced, schema=None, dialect=dialect)
+        except sqlglot.errors.SqlglotError:
+            continue
+        root = _root_expression(node)
+        if root is None or isinstance(root, exp.Column) or root.find(exp.Select):
+            continue
+        parts = [root, *_group_by(node)]
+        for identifier in (i for part in parts for i in part.find_all(exp.Identifier)):
+            identifier.set("this", spelling.get(identifier.name.lower(), identifier.name))
+        tooltip = root.sql(dialect=dialect)
+        if len(parts) > 1:
+            tooltip += ", grouped by " + ", ".join(e.sql(dialect=dialect) for e in parts[1:])
+        tooltips[column] = tooltip
+    return tooltips

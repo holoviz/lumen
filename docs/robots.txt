@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /
+Allow: /$
+Allow: /_home/
+Allow: /og-image.png
+Allow: /en/docs/latest/
+Sitemap: https://lumen.holoviz.org/sitemap.xml

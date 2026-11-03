@@ -152,7 +152,7 @@ async def test_list_agent_uses_configured_user():
 @pytest.fixture
 def duckdb_source():
     duckdb_source = DuckDBSource(
-        initializers=["INSTALL sqlite;", "LOAD sqlite;", f"SET home_directory='{root}';"],
+        initializers=[f"SET home_directory='{root}';"],
         root=root,
         tables={"test_sql": f"SELECT A, B, C, D::TIMESTAMP_NS AS D FROM READ_CSV('{root + '/test.csv'}')"},
     )

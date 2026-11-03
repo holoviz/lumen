@@ -30,6 +30,7 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
+from lumen.ai.actor import LLMUser, NullStep
 from lumen.ai.coordinator import (
     Coordinator, DependencyResolver, Plan, Planner,
 )
@@ -135,6 +136,17 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
         planner.__panel__()
 
 
+def test_llm_user_step_without_interface_logs_its_title(caplog):
+    class Probe(LLMUser):
+        interface = None
+        steps_layout = None
+        _null_step = NullStep()
+
+    with caplog.at_level(logging.INFO, logger="lumen"), Probe()._add_step(title="Loading data") as step:
+        step.stream("ignored")
+    assert caplog.messages == ["Loading data"]
+
+
 async def test_planner_headless_raises_planning_errors(llm):
     def fail():
         raise RuntimeError("LLM unavailable")
@@ -151,6 +163,23 @@ async def test_dependency_resolver_headless_raises_agent_errors(llm):
     resolver._choose_agent = AsyncMock(side_effect=RuntimeError("LLM unavailable"))
     with pytest.raises(RuntimeError, match="LLM unavailable"):
         await resolver.respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+
+async def test_planner_empty_plan_with_validation(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Nothing to plan", yes=False),
+        plan_model(chain_of_thought="Nothing to do", title="Empty", steps=[])
+    ])
+
+    planner = Planner(llm=llm, agents=[ChatAgent(), ValidationAgent()], validation_enabled=True)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'How many rows?'}], {})
+
+    assert isinstance(plan, Plan)
+    assert plan.title == "Empty"
+    assert len(plan) == 0
 
 
 async def test_planner_simple_plan(llm):
@@ -890,6 +919,13 @@ def test_checklist_renders_status_indicators():
     for status in ("done", "current", "pending", "failed"):
         assert f"todo-status todo-{status}" in html
     assert not any(emoji in html for emoji in "🟢🟡⚪🔴")
+
+
+def test_checklist_status_is_centered_on_first_line_of_label():
+    sx = Checklist().sx
+    status = sx["& .todo-status"]
+    # Half of the free space in the first line box, so it holds at any font size.
+    assert status["mt"] == f"calc((1lh - {status['height']}) / 2)"
 
 
 def test_checklist_ignores_status_markers_inside_instruction(llm):
