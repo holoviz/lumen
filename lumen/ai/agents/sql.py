@@ -17,6 +17,7 @@ from ...filters import ConstantFilter
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, QueryTimeoutError, Source
 from ...sources.duckdb import DuckDBSource
+from ...sources.xarray_sql import XArraySQLSource
 from ...transforms.sql import SQLLimit
 from ...util import as_narwhals, as_pandas, is_lazyframe
 from ..config import (
@@ -247,6 +248,23 @@ class RequestBudget:
             raise RequestBudgetExceededError(
                 f"SQL request used {self.calls} LLM calls, the limit is {self.max_calls}.{self.last_error()}"
             )
+
+
+def has_geometry(metaset: Metaset | None) -> bool:
+    """Whether any table in the metaset has a geometry column, from its types alone."""
+    if metaset is None:
+        return False
+    types = [(column.metadata or {}).get("data_type") for entry in metaset.catalog.values() for column in entry.columns]
+    types += [column.type for stats in metaset.stats.values() for column in stats.columns]
+    return any(str(kind).upper().startswith("GEOMETRY") for kind in types if kind)
+
+
+def is_gridded(sources: dict[tuple[str, str], BaseSQLSource]) -> bool:
+    """Whether any table is an xarray grid, read directly or joined into DuckDB."""
+    return any(
+        isinstance(source, XArraySQLSource) or bool((source.metadata or {}).get(table, {}).get("gridded"))
+        for (_, table), source in sources.items()
+    )
 
 
 def validate_read_only_sql(sql_query: str, dialect: str) -> None:
@@ -1530,6 +1548,8 @@ class SQLAgent(BaseLumenAgent):
                         context,
                         model_kwargs=dict(sources=list(sources)),
                         dialect=dialect,
+                        has_geometry=has_geometry(metaset),
+                        gridded=is_gridded(sources),
                         step_number=1,
                         is_final_step=True,
                         current_step="",

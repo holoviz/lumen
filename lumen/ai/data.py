@@ -264,6 +264,8 @@ def _add_grids(source: DuckDBSource, grids: dict) -> None:
         # Read lazily: DuckDB pulls record batches from the Dataset per query
         source._connection.from_arrow(arrow_dataset(ds)).to_view(name)
         source.tables[name] = f'SELECT * FROM "{name}"'
+        # So the SQL prompt knows the table is a grid, as with XArraySQLSource
+        source.metadata = {**source.metadata, name: {**source.metadata.get(name, {}), "gridded": True}}
 
 def _resolve_geo_source(src: str, extension: str) -> Source:
     """Load a geospatial file into an in-memory DuckDBSource.
