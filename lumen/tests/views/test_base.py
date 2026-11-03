@@ -815,3 +815,30 @@ def test_vega_point_map_layers_get_the_table(set_root):
 
     assert final_spec["data"] == {"name": "test"}
     assert "test" in final_spec["datasets"]
+
+
+def _points_view(**params):
+    from lumen.sources.base import InMemorySource
+    from lumen.views.base import hvPlotView
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9]})
+    pipeline = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    return hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", **params)
+
+
+def test_hvplot_view_draws_tiles_under_a_geo_plot():
+    pytest.importorskip("geoviews")
+    plot = _points_view(geo=True, tiles="CartoLight").get_plot(_points_view().get_data())
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+    # geo reaches hvPlot, so the points are projected geoviews points, not plain ones
+    points = [el for el in plot if type(el).__name__ == "Points"]
+    assert points and type(points[0]).__module__.startswith("geoviews")
+
+
+def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "geoviews" else real(name, *a))
+    view = _points_view(geo=True, tiles="CartoLight")
+    plot = view.get_plot(view.get_data())
+    assert type(plot).__name__ == "Points"
+    assert "needs geoviews" in caplog.text
