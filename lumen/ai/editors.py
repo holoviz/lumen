@@ -129,9 +129,10 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # Set before the view, which renders at once when no event loop runs
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
     def _code_editor(self) -> CodeEditor:
         """A CodeEditor two-way bound to this editor's spec."""

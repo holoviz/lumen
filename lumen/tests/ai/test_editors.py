@@ -516,3 +516,11 @@ def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, 
         raise IndexError
     monkeypatch.setattr(editors_module, "column_tooltips", boom)
     assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
+
+
+def test_editor_builds_outside_an_event_loop():
+    # The fixtures stub ParamMethod, which hid that the view renders at
+    # once without a running loop, before the editor had its state
+    component = MockComponent(data=pd.DataFrame({'name': ['Alice']}))
+    editor = SQLEditor(component=component, spec="SELECT * FROM test")
+    assert editor.view is not None
