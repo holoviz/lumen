@@ -1784,7 +1784,7 @@ class VegaLiteView(View):
             # Copied rather than mutated in place: self.spec is reused across
             # renders, and growing its datasets dict would leak frames.
             datasets = dict(self.spec.get('datasets', {}))
-            datasets[self.pipeline.table] = df
+            datasets[self.pipeline.table] = geometry_to_wkt(df)
             spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
             # A lat/lon map's basemap layer brings its own url, but the point layers
             # beside it carry no data and would draw nothing without the table.
@@ -1793,13 +1793,14 @@ class VegaLiteView(View):
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
-            # geoshape consumes a FeatureCollection, so fields then live under
-            # properties, e.g. {"field": "properties.value"}.
-            encoded = dict(spec, data={
-                'values': geometry_to_geojson(df),
-                'format': {'type': 'json', 'property': 'features'},
-                **spec_data,
-            })
+            # geoshape consumes GeoJSON features, so fields then live under
+            # properties, e.g. {"field": "properties.value"}. Panel's Vega pane
+            # passes a list of features through untouched, but would turn a
+            # FeatureCollection in data.values into columns.
+            name = spec_data.get('name', self.pipeline.table)
+            features = geometry_to_geojson(df)['features']
+            datasets = dict(self.spec.get('datasets', {}), **{name: features})
+            encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
             encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
