@@ -214,6 +214,10 @@ IMAGE_CAPABILITY_ERROR = re.compile(
     re.IGNORECASE,
 )
 
+# How Kilo's routed models refuse a forced tool call or structured output:
+# a generic upstream error, or naming the tool choice it cannot honour
+KILO_STRUCTURED_REJECTION = re.compile(r"upstream_error|tool[ _]choice", re.IGNORECASE)
+
 # model_kwargs entries that configure routing rather than the provider client,
 # and so must never reach an SDK constructor.
 ROUTING_KEYS = ("routing", "description")
@@ -4520,7 +4524,7 @@ class Kilo(OpenAI):
             # kilo-auto/free routes to models whose upstream provider rejects a
             # forced tool call or response_format with a 400. JSON asked for in
             # plain text needs neither, so switch for the rest of the session.
-            if error is None or self.mode is Mode.MD_JSON or "upstream_error" not in str(error):
+            if error is None or self.mode is Mode.MD_JSON or not KILO_STRUCTURED_REJECTION.search(str(error)):
                 raise
             log_debug(f"Kilo's upstream rejected a structured request; switching to {Mode.MD_JSON.name}")
             self.mode = Mode.MD_JSON

@@ -876,7 +876,14 @@ def _kilo_rejection(body: dict) -> openai.BadRequestError:
     )
 
 
-async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch):
+KILO_TOOL_CHOICE_ERROR = {
+    "error": "This model does not support a required or named tool choice. Remove it and retry.",
+    "type": "invalid_request_error",
+}
+
+
+@pytest.mark.parametrize("rejection", [KILO_UPSTREAM_ERROR, KILO_TOOL_CHOICE_ERROR], ids=["upstream", "tool-choice"])
+async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch, rejection):
     """The free tier's upstream rejects a forced tool call, so Kilo asks for
     JSON in plain text instead and keeps doing so."""
     llm = Kilo()
@@ -885,7 +892,7 @@ async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch):
     async def fake_send(self, _model_spec, _messages, **kwargs):
         modes.append(self.mode)
         if self.mode is not Mode.MD_JSON:
-            raise _kilo_rejection(KILO_UPSTREAM_ERROR)
+            raise _kilo_rejection(rejection)
         return "ok"
 
     monkeypatch.setattr(OpenAI, "_send", fake_send)
