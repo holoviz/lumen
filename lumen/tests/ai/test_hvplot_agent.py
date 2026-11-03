@@ -36,9 +36,11 @@ def test_a_none_option_is_not_offered_as_a_string():
     handed to the model as though it were a value."""
     model = param_to_pydantic(_Aggregating, base_model=BaseModel)[_Aggregating.__name__]
 
-    enum = model.model_json_schema()["properties"]["aggregator"]["enum"]
+    options = model.model_json_schema()["properties"]["aggregator"]["anyOf"]
+    enum = next(option["enum"] for option in options if "enum" in option)
 
     assert "None" not in enum
+    assert {"type": "null"} in options
     assert set(enum) >= {"count", "mean"}
 
 
@@ -56,7 +58,8 @@ def test_an_optional_selector_is_not_required():
 def test_the_view_accepts_every_aggregator_the_schema_offers(pipeline):
     """The schema and the view have to agree, or a valid answer fails to render."""
     model = hvPlotAgent()._get_model("main", {"x": {}, "y": {}})
-    enum = model.model_json_schema()["properties"]["aggregator"]["enum"]
+    options = model.model_json_schema()["properties"]["aggregator"]["anyOf"]
+    enum = next(option["enum"] for option in options if "enum" in option)
 
     for aggregator in enum:
         hvPlotUIView(pipeline=pipeline, kind="scatter", x="x", y="y", aggregator=aggregator)
