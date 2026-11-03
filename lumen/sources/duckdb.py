@@ -625,8 +625,9 @@ class DuckDBSource(BaseSQLSource):
         schema, and render a blank map with nothing raising.
         """
         if backend in ('polars', 'pyarrow'):
-            # duckdb 2 builds polars and arrow frames only from a relation,
-            # not from what execute() returns.
+            # Through a relation on every version: what execute() returns
+            # has no pl() or arrow() on duckdb 2. pandas stays on execute()
+            # since relations lack fetch_df on duckdb 1.2.
             rel = cursor.sql(sql_expr, params=params)
         else:
             rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
