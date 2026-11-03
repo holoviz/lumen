@@ -130,7 +130,8 @@ def names(expected: str) -> Callable[[pd.DataFrame, Answer], bool]:
 def declines(df: pd.DataFrame, answer: Answer) -> bool:
     """No data invented for a column that does not exist."""
     invented = any("elev" in str(col).lower() for col in df.columns) and bool(numbers(df))
-    return not invented and any(word in answer.value.lower() for word in ("no ", "not ", "unavailable", "does not"))
+    declined = ("no ", "not ", "n't", "cannot", "unavailable")
+    return not invented and any(word in answer.value.lower().replace("’", "'") for word in declined)
 
 
 @dataclass
