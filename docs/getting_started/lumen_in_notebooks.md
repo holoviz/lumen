@@ -82,7 +82,7 @@ if answer.status == "error":
 
 ## Spatial and gridded questions
 
-GeoDataFrames, GeoParquet and GeoJSON load with their geometry and CRS, and xarray Datasets load as grids:
+GeoDataFrames and GeoParquet files load with their geometry and CRS, and xarray Datasets load as grids:
 
 ``` py
 import geopandas as gpd
