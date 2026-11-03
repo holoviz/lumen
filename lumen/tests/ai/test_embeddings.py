@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 from lumen.ai.embeddings import NumpyEmbeddings
 
@@ -49,6 +48,14 @@ async def test_numpy_embeddings_whitespace_and_empty():
         assert len(vec) == embeddings.embedding_dim
         assert all(v == 0.0 for v in vec)
         assert np.linalg.norm(vec) == 0.0
+
+
+async def test_numpy_embeddings_stop_words_only():
+    embeddings = NumpyEmbeddings()
+    result = await embeddings.embed(["the", "and of"])
+    for vec in result:
+        assert np.isclose(np.linalg.norm(vec), 1.0)
+    assert result[0] != result[1]
 
 
 async def test_numpy_embeddings_longer_strings():
