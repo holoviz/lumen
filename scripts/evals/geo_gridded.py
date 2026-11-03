@@ -123,7 +123,8 @@ def per_key(expected: dict[str, float], rel: float) -> Callable[[pd.DataFrame, A
 
 
 def names(expected: str) -> Callable[[pd.DataFrame, Answer], bool]:
-    return lambda df, _: len(df) <= 3 and expected in df.astype(str).to_numpy()[0].tolist()
+    """The first row names the expected item, so a ranked list counts too."""
+    return lambda df, _: len(df) > 0 and expected in df.astype(str).to_numpy()[0].tolist()
 
 
 def declines(df: pd.DataFrame, answer: Answer) -> bool:
@@ -197,13 +198,15 @@ def spatial_cases(f: dict[str, gpd.GeoDataFrame]) -> list[Case]:
 
 def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
     a = air.air
-    box_c = float(a.sel(lat=slice(40, 30), lon=slice(250, 260)).mean()) - 273.15
+    box = a.sel(lat=slice(40, 30), lon=slice(250, 260))
+    # A plain and an area-weighted box mean are both fair readings
+    box_means = [float(box.mean()) - 273.15, weighted_mean(box) - 273.15]
     hottest = a.where(a == a.max(), drop=True)
     weighted = "SUM({v} * COS(RADIANS(lat))) / SUM(COS(RADIANS(lat)))"
     cases = [
         Case("gridded", "box_mean_celsius", "air",
              "What is the mean air temperature in degrees Celsius over latitudes 30 to 40 and longitudes 250 to 260?",
-             any_close(box_c, 0.01),
+             lambda df, answer: any(any_close(m, 0.01)(df, answer) for m in box_means),
              "SELECT AVG(air) - 273.15 AS c FROM air WHERE lat BETWEEN 30 AND 40 AND lon BETWEEN 250 AND 260",
              "SELECT AVG(air) AS c FROM air WHERE lat BETWEEN 30 AND 40 AND lon BETWEEN 250 AND 260"),
         Case("gridded", "weighted_mean", "air",
@@ -225,8 +228,9 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
     cases += [
         Case("gridded", "warmest_month", "era5",
              "Which month of 2022 had the highest area-weighted global mean 2 m temperature?",
-             lambda df, _: len(df) <= 3 and (warmest in [int(v) for v in numbers(df) if float(v).is_integer()]
-                                            or pd.Timestamp(2022, warmest, 1).strftime("%B") in df.astype(str).to_numpy()[0].tolist()),
+             # The first row, so a list ranked warmest first counts too
+             lambda df, _: len(df) > 0 and (warmest in [int(v) for v in numbers(df.head(1)) if float(v).is_integer()]
+                                           or pd.Timestamp(2022, warmest, 1).strftime("%B") in df.astype(str).to_numpy()[0].tolist()),
              f"{month_mean} ORDER BY w DESC LIMIT 1", f"{month_mean} ORDER BY w ASC LIMIT 1"),
         Case("gridded", "july_box_max", "era5",
              "What was the highest 2 m temperature in degrees Celsius in July 2022 between latitudes 30 and 45 and longitudes 0 and 40?",
@@ -267,11 +271,11 @@ async def run_case(case: Case, source, llm) -> dict:
         answer = await aask(source, case.question, llm=llm)
         df = answer.pipeline.data if answer.pipeline is not None else pd.DataFrame()
         passed = bool(case.check(pd.DataFrame(df), answer))
-        sql, error = answer.sql, answer.error
+        sql, error, value = answer.sql, answer.error, answer.value
     except Exception as e:
-        passed, sql, error = False, None, f"{type(e).__name__}: {e}"
-    return {"suite": case.suite, "case": case.name, "passed": passed, "sql": sql,
-            "error": error, "seconds": round(time.monotonic() - start, 1)}
+        passed, sql, error, value = False, None, f"{type(e).__name__}: {e}", ""
+    return {"suite": case.suite, "case": case.name, "passed": passed, "sql": sql, "error": error,
+            "value": value[:500], "seconds": round(time.monotonic() - start, 1)}
 
 
 async def main(args):
