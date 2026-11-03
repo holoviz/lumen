@@ -808,3 +808,27 @@ def test_answer_gdf_warns_once_when_lon_lat_has_no_crs():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         answer.gdf
+
+
+def _grid_answer(sql):
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+    grid = xr.Dataset(
+        {"t": (("time", "lat", "lon"), np.arange(24.0).reshape(2, 3, 4))},
+        coords={"time": [0, 1], "lat": [10.0, 20.0, 30.0], "lon": [0.0, 1.0, 2.0, 3.0]},
+    )
+    source = read({"t": grid})
+    derived = source.create_sql_expr_source({"result": sql})
+    return grid, Answer(question="?", status="success", pipeline=Pipeline(source=derived, table="result"))
+
+
+def test_answer_ds_is_the_gridded_result():
+    grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    ds = answer.ds
+    assert dict(ds.sizes) == {"lat": 3, "lon": 4}
+    assert (ds.t.transpose("lat", "lon").sortby(["lat", "lon"]).values == grid.t.mean("time").values).all()
+
+
+def test_answer_ds_is_none_for_tables(frame_source):
+    assert Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).ds is None

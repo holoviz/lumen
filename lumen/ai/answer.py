@@ -620,6 +620,17 @@ class Answer(param.Parameterized):
                 self._crs_warned = True
         return data
 
+    @property
+    def ds(self) -> Any:
+        """
+        The answer's data as an xarray Dataset, for an answer about a grid,
+        or None otherwise. xarray-sql builds it from the answer's query,
+        so it keeps the grid's dimensions instead of a long table.
+        """
+        if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
+            return None
+        return self.pipeline.get_dataset()
+
     def explore(self, **params) -> ExplorerUI:
         """
         Open this answer in the Lumen chat UI: an ExplorerUI on the same
