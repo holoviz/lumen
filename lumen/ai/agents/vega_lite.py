@@ -28,6 +28,7 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
+from ..sharing import shares_values
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
@@ -388,7 +389,8 @@ class VegaLiteAgent(BaseCodeAgent):
         content as a plain-text message.
         """
         fallback = messages + [{"role": "user", "content": content}]
-        if not self.llm._supports_vision:
+        # A chart image shows the data's values
+        if not self.llm._supports_vision or not shares_values():
             return fallback
         if out is None or not isinstance(out, VegaLiteEditor):
             return fallback

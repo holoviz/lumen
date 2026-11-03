@@ -57,6 +57,7 @@ from platformdirs import user_cache_dir
 from sqlglot import exp
 from sqlglot.dialects import Dialect
 
+from .sharing import shares_values, sharing
 from .utils import log_debug
 
 if TYPE_CHECKING:
@@ -1641,14 +1642,18 @@ def render_column(
     One line per column, e.g. ``AvgScrMath INTEGER 289..699 nulls 26%``.
 
     `detail` is ``"full"`` for every statistic, ``"types"`` for name, type and
-    keys only.
+    keys only, and ``"names"`` for the name alone, which is what sharing
+    nothing beyond names (``share="none"``) always gives.
     """
     parts = [name or format_name(col.name)]
-    if col.type:
+    if sharing.share == "none":
+        # Names only, as the sharing level asks
+        detail = "names"
+    if col.type and detail != "names":
         parts.append(col.type)
-    if col.primary_key:
+    if col.primary_key and detail != "names":
         parts.append("PK")
-    if col.references:
+    if col.references and detail != "names":
         parts.append(f"-> {col.references}")
     if detail == "full" and stats is not None and stats.method != TYPES_ONLY:
         parts.extend(_column_facts(col, stats))
@@ -1663,6 +1668,13 @@ def _column_facts(col: ColumnStats, stats: TableStats) -> list[str]:
     if col.nulls is not None and col.nulls >= 1:
         return ["all NULL"]
     exact = stats.method == EXACT
+    if not shares_values(col.name, [v for v, _ in col.values or ()] + list(col.examples or ())):
+        # Counts and nulls only, so no value of the column reaches the prompt
+        if exact and col.distinct:
+            facts.append(f"{col.distinct} distinct")
+        if nulls := _format_nulls(col.nulls):
+            facts.append(nulls)
+        return facts
     nonnull_rows = None
     if exact and stats.rows is not None and col.nulls is not None:
         nonnull_rows = round(stats.rows * (1 - col.nulls))
