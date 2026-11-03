@@ -953,6 +953,25 @@ async def test_rejected_image_is_dropped_and_vision_disabled(monkeypatch, error)
     assert OpenAI._supports_vision is True
 
 
+async def test_images_resent_after_vision_is_disabled_are_dropped(monkeypatch):
+    """A tool loop keeps its own messages, so the next round resends the image
+    the model already rejected; it must go out as text only."""
+    llm = OpenAI(model_kwargs={"default": {"model": "text-only"}})
+    sent: list[list] = []
+
+    async def fake_send(self, _model_spec, messages, **kwargs):
+        sent.append([m["content"] for m in messages])
+        if any(isinstance(c, list) and any(isinstance(p, Image) for p in c) for c in sent[-1]):
+            raise RuntimeError("instructor gave up") from _bad_request({"error": KILO_TEXT_ONLY}, KILO_TEXT_ONLY)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    round_messages = [{"role": "user", "content": ["describe", _make_test_image()]}]
+    await llm.run_client("default", round_messages)
+    await llm.run_client("default", round_messages)
+
+    assert sent[-1] == [["describe"]]
+
+
 @pytest.mark.parametrize("message", [
     "Invalid image: exceeds the 20MB limit",
     "unsupported image format: image/tiff",

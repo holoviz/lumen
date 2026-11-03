@@ -2763,6 +2763,10 @@ class OpenAI(Llm, OpenAIMixin):
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
         model = self._get_model_kwargs(model_spec)["model"]
         self._apply_kwarg_fixes(model, kwargs)
+        if not self._supports_vision:
+            # A tool loop resends its own messages each round, so images it
+            # added before vision was disabled come back here
+            messages = strip_images(messages)
         while True:
             try:
                 return await self._send(model_spec, messages, **kwargs)
