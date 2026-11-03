@@ -603,9 +603,10 @@ class Planner(Coordinator):
             actors_in_graph.add(key)
 
         last_task = tasks[-1] if tasks else None
-        not_with = getattr(agents["ChatAgent"], "not_with", [])
+        chat_agent = agents.get("ChatAgent")
+        not_with = getattr(chat_agent, "not_with", [])
         conflicts = [actor for actor in actors_in_graph if actor in not_with]
-        if last_task and isinstance(last_task.actor, (SourceAgent, SQLAgent, Tool)) and not conflicts:
+        if chat_agent and last_task and isinstance(last_task.actor, (SourceAgent, SQLAgent, Tool)) and not conflicts:
             summarize_step = type(step)(
                 actor="ChatAgent",
                 instruction="Summarize the results.",
@@ -614,7 +615,7 @@ class Planner(Coordinator):
             steps.append(summarize_step)
             tasks.append(
                 ActorTask(
-                    agents["ChatAgent"],
+                    chat_agent,
                     instruction=summarize_step.instruction,
                     title=summarize_step.title,
                 )

@@ -466,9 +466,33 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 state.execute(partial(tool.prepare, context))
 
     @wrap_logfire(span_name="Chat Invoke")
-    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> Plan:
+    async def _chat_invoke(self, contents: list | str, user: str, instance: ChatInterface) -> None:
+        # Returning the plan would add it to the chat feed, from which it
+        # cannot be serialized back into the conversation on the next turn.
         log_debug(f"New Message: \033[91m{contents!r}\033[0m", show_sep="above")
-        return await self.respond(contents, self.context)
+        await self.run(contents, self.context)
+
+    async def run(self, messages: list[Message] | str, context: TContext | None = None) -> Plan | None:
+        """
+        Plan a response to the messages and execute the plan.
+
+        Parameters
+        ----------
+        messages : list[Message] | str
+            The conversation to respond to.
+        context : TContext, optional
+            The context to plan and execute in, defaults to :attr:`context`.
+
+        Returns
+        -------
+        The executed plan, or None if nothing was planned.
+        """
+        context = self.context if context is None else context
+        plan = await self.respond(messages, context)
+        if plan is not None:
+            with plan.param.update(interface=self.interface):
+                await plan.execute()
+        return plan
 
     def _process_tools(self, tools: list[type[Tool] | Tool] | None) -> list[type[Tool] | Tool | FunctionType]:
         tools = list(tools) if tools else []
