@@ -28,7 +28,7 @@ from lumen.ai.answer import (
     Answer, _default_agents, _default_llm, _planner, _planners, _resolve, _run,
     _StatusLine, aask, ask, chat,
 )
-from lumen.ai.config import QueryError
+from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.data import read
@@ -138,6 +138,27 @@ async def test_error_card_shows_the_message_and_open_sql(frame_source):
     html = answer._static_bundle(None)["text/html"]
     assert "column nope not found" in html
     assert "<details open><summary>Failed SQL</summary>" in html
+
+
+async def test_a_later_step_failing_keeps_the_working_query(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="total", tables=["tiny"])])
+
+    async def respond(self, *args, **kwargs):
+        raise RetriesExceededError("Maximum number of retries exceeded.") from ValueError("chart spec is invalid")
+
+    with patch.object(ChatAgent, "respond", new=respond):
+        answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert answer.error == "ValueError: chart spec is invalid"
+    assert "SUM(value)" in answer.sql
+    assert answer.pipeline.data.iloc[0, 0] == 38.0
+    _alert, sql = answer.__panel__()
+    assert sql.title == "SQL" and sql.collapsed
+    assert "<details><summary>SQL</summary>" in answer._static_bundle(None)["text/html"]
+    with pytest.raises(ValueError, match="answer.retry"):
+        await answer.arefine("Use a line")
 
 
 async def test_retry_sends_the_hint_after_the_failure(frame_source):

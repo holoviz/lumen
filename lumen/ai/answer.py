@@ -40,7 +40,7 @@ from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .actor import step_title_callback
 from .agents.hvplot import hvPlotAgent
-from .config import QueryError
+from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .data import read
 from .editors import LumenEditor
@@ -51,6 +51,7 @@ from .llm import (
 from .report import ActorTask
 from .story import _prose_to_html
 from .ui import ExplorerUI
+from .utils import format_error
 
 if TYPE_CHECKING:
     from .data import DataT
@@ -260,16 +261,23 @@ def _build_answer(
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         exc = context.get("__exception__")
+        error = context.get("__error__", "")
+        if isinstance(exc, RetriesExceededError) and exc.__cause__ is not None:
+            # The last attempt's error says what went wrong; the wrapper does not
+            error = format_error(exc.__cause__)
+        sql_failed = isinstance(exc, QueryError)
         return Answer(
             agents=agents,
             data=data,
-            error=context.get("__error__", ""),
+            error=error,
             llm=llm,
+            # A later step failed, so the queried data is still worth having
+            pipeline=None if sql_failed else context.get("pipeline"),
             plan=plan,
             question=question,
             source=source,
-            # The query that failed, which is what needs fixing
-            sql=exc.sql if isinstance(exc, QueryError) else context.get("sql"),
+            sql=exc.sql if sql_failed else context.get("sql"),
+            sql_failed=sql_failed,
             status="error",
             value=f"Lumen could not answer {question!r}: {failed!r} failed.",
         )
@@ -434,7 +442,7 @@ class Answer(param.Parameterized):
     def __init__(
         self, llm: Llm | None = None, data: DataT | Pipeline | None = None,
         agents: list | None = None, editor: LumenEditor | None = None,
-        context: dict[str, Any] | None = None, **params,
+        context: dict[str, Any] | None = None, sql_failed: bool = False, **params,
     ):
         super().__init__(**params)
         self._card = None
@@ -445,6 +453,8 @@ class Answer(param.Parameterized):
         # The chart's editor and the context it was made in, for refine
         self._editor = editor
         self._context = context or {}
+        # Whether sql is the query that failed, rather than one that worked
+        self._sql_failed = sql_failed
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -455,6 +465,8 @@ class Answer(param.Parameterized):
             task.actor for task in self.plan or []
             if isinstance(task, ActorTask) and isinstance(task.actor, VegaLiteAgent)
         ), None)
+        if self.status == "error":
+            raise ValueError("This answer failed, so it has no chart to refine. Use answer.retry() to ask again.")
         if self.spec is None or self._editor is None or actor is None:
             raise ValueError("refine changes a Vega-Lite chart, and this answer has none.")
         # A copy, so this answer and its card keep the chart they show
@@ -575,7 +587,8 @@ class Answer(param.Parameterized):
             parts = [Alert(object=self.error, severity="error", title=self.value, sizing_mode="stretch_width")]
             if self.sql:
                 parts.append(Card(
-                    Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL", sizing_mode="stretch_width",
+                    Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
+                    collapsed=not self._sql_failed, sizing_mode="stretch_width",
                 ))
             self._card = Column(*parts)
         elif self._card is None:
@@ -624,7 +637,7 @@ class Answer(param.Parameterized):
 
     def _sql_html(self) -> str:
         # A failed query is what the reader needs to see, so it starts open
-        if self.status == "error":
+        if self._sql_failed:
             return f"<details open><summary>Failed SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
         return f"<details><summary>SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
 
