@@ -300,5 +300,13 @@ def _resolve_geo_source(src: str, extension: str) -> Source:
             conn.unregister(f"{tbl_name}_temp")
         else:
             df_rel.to_view(tbl_name)
+        if source.geometry_crs and tbl_name in result.conversions:
+            # Name the CRS on the column type too, as GeoDataFrames get it,
+            # so the schema the SQL prompt shows says which CRS it is
+            crs = source.geometry_crs.replace("'", "''")
+            columns = [row[0] for row in conn.execute(f'DESCRIBE "{tbl_name}"').fetchall() if row[1] == "GEOMETRY"]
+            if columns:
+                replaced = ", ".join(f'"{c}"::GEOMETRY(\'{crs}\') AS "{c}"' for c in columns)
+                conn.execute(f'CREATE OR REPLACE TABLE "{tbl_name}" AS SELECT * REPLACE ({replaced}) FROM "{tbl_name}"')
         source.tables[tbl_name] = f"SELECT * FROM {tbl_name}"
     return source
