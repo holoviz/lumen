@@ -18,7 +18,11 @@ try:
         make_run_exploration_sql_tool, make_sql_model, numeric_cast_edit,
         referenced_columns, sql_is_scalar_aggregate, summarize_tool_calls,
     )
-    from lumen.ai.config import DeterministicError, RequestBudgetExceededError
+    from lumen.ai.actor import NullStep
+    from lumen.ai.config import (
+        UNRECOVERABLE_ERRORS, DeterministicError, DeterministicQueryError,
+        MissingContextError, QueryError, RequestBudgetExceededError,
+    )
     from lumen.ai.llm import OpenAI
     from lumen.ai.schemas import (
         Column, Metaset, TableCatalogEntry, get_metaset, resolve_table_slug,
@@ -348,6 +352,44 @@ async def test_sql_agent_retry_receives_the_previous_attempt(sql_context, test_m
 
     assert seen[0] is None
     assert seen[1] == {"sql": "SELECT broken", "tools": "- distinct_values(...) -> ...", "error": "ValueError: boom"}
+
+
+async def _respond_after_failing_with(error, sql_context, test_messages, llm):
+    async def attempt_query(self, *args, **kwargs):
+        args[5]["sql"] = "SELECT nope FROM tiny"
+        raise error
+
+    with patch.object(SQLAgent, "_attempt_query", new=attempt_query), patch("lumen.ai.utils.asyncio.sleep", new=AsyncMock()):
+        await SQLAgent(llm=llm).respond(test_messages, await sql_context())
+
+
+async def test_sql_agent_failure_keeps_the_failed_query(sql_context, test_messages, llm):
+    with pytest.raises(QueryError, match="Binder Error") as info:
+        await _respond_after_failing_with(ValueError("Binder Error: nope"), sql_context, test_messages, llm)
+    assert info.value.sql == "SELECT nope FROM tiny"
+    assert not isinstance(info.value, UNRECOVERABLE_ERRORS)
+
+
+async def test_sql_agent_deterministic_failure_stays_unrecoverable(sql_context, test_messages, llm):
+    with pytest.raises(DeterministicQueryError) as info:
+        await _respond_after_failing_with(DeterministicError("unresolvable"), sql_context, test_messages, llm)
+    assert info.value.sql == "SELECT nope FROM tiny"
+    assert isinstance(info.value, UNRECOVERABLE_ERRORS)
+
+
+async def test_sql_agent_missing_context_is_not_wrapped(sql_context, test_messages, llm):
+    with pytest.raises(MissingContextError) as info:
+        await _respond_after_failing_with(MissingContextError("no pipeline"), sql_context, test_messages, llm)
+    assert not isinstance(info.value, QueryError)
+
+
+async def test_validate_sql_records_the_last_revised_query(tiny_source, test_messages, llm):
+    agent = SQLAgent(llm=llm)
+    attempt = {"sql": None}
+    revise = AsyncMock(return_value="SELECT also_bad FROM tiny")
+    with patch.object(SQLAgent, "revise", new=revise), pytest.raises(Exception, match="also_bad"):
+        await agent._validate_sql({}, "SELECT nope FROM tiny", "slug", tiny_source, test_messages, NullStep(), attempt=attempt)
+    assert "also_bad" in attempt["sql"]
 
 
 async def test_sql_agent_stops_at_the_request_timeout(sql_context, test_messages, llm):
