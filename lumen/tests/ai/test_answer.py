@@ -668,3 +668,17 @@ async def test_run_cancels_the_question_on_interrupt():
     assert time.monotonic() - start < 5
     assert ended == [1]
     assert threading.active_count() == threads
+
+
+async def test_run_names_the_first_step_until_one_reports():
+    handle = FakeHandle()
+
+    async def revise():
+        await asyncio.sleep(0.4)
+
+    with patch("lumen.ai.answer._in_kernel", return_value=True), \
+            patch("IPython.display.display", return_value=handle) as display:
+        _run(revise(), "Revising the chart")
+
+    assert display.call_args.args[0] == {"text/plain": "Revising the chart"}
+    assert any(text.startswith("Revising the chart (") for text in handle.updates)

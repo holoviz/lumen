@@ -158,7 +158,8 @@ async def _respond(
 class _StatusLine:
     """One output line, updated in place with the step a question is on."""
 
-    def __init__(self):
+    def __init__(self, first: str):
+        self._first = first
         self._handle = None
         self._shown = None
         self._start = time.monotonic()
@@ -167,7 +168,7 @@ class _StatusLine:
         if _in_kernel():
             # IPython is present, since this runs in a kernel
             from IPython.display import display
-            self._handle = display({"text/plain": "Planning"}, raw=True, display_id=True)
+            self._handle = display({"text/plain": self._first}, raw=True, display_id=True)
         return self
 
     def show(self, title: str) -> None:
@@ -192,8 +193,11 @@ def _cancel(future, started: dict) -> None:
         future.result()
 
 
-def _run(coro):
-    """Run a coroutine to completion from sync code, inside Jupyter or not."""
+def _run(coro, first_step: str = "Planning"):
+    """
+    Run a coroutine to completion from sync code, inside Jupyter or not.
+    In Jupyter a status line shows first_step until a step reports itself.
+    """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -219,14 +223,14 @@ def _run(coro):
     # in a worker thread instead of patching the loop with nest_asyncio.
     # The status line is updated from this thread, so it stays in the cell.
     # ponytail: aask has no status line, add one if async callers want it
-    with ThreadPoolExecutor(1) as pool, _StatusLine() as status:
+    with ThreadPoolExecutor(1) as pool, _StatusLine(first_step) as status:
         future = pool.submit(asyncio.run, tracked())
         try:
             while True:
                 try:
                     return future.result(timeout=0.25)
                 except FutureTimeoutError:
-                    status.show(titles[-1] if titles else "Planning")
+                    status.show(titles[-1] if titles else first_step)
         except KeyboardInterrupt:
             _cancel(future, started)
             raise
@@ -484,7 +488,7 @@ class Answer(param.Parameterized):
 
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
-        return _run(self.arefine(instruction))
+        return _run(self.arefine(instruction), "Revising the chart")
 
     def to_cell(self) -> None:
         """Put answer.code into a new cell below this one, in Jupyter."""
