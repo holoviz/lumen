@@ -20,7 +20,7 @@ import param
 import semchunk
 
 from panel import cache as pn_cache, state as pn_state
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
 from .config import get_markitdown
