@@ -232,7 +232,7 @@ async def test_configure_sets_the_agents(llm, frame_source):
     answer = await aask(frame_source, "How many rows?", llm=llm)
     assert answer._agents is None
     assert _planners.get(frame_source) is None  # explicit agents get their own Planner
-    assert configure() == {"agents": agents, "llm": None, "max_rows": 1_000_000}
+    assert configure() == {"agents": agents, "llm": None, "mask_pii": False, "max_rows": 1_000_000, "share": "sample"}
 
 
 async def _ask_every_row(source):

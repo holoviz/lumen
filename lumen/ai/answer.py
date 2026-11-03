@@ -51,6 +51,7 @@ from .llm import (
     Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
 )
 from .report import ActorTask
+from .sharing import sharing
 from .story import _prose_to_html
 from .ui import ExplorerUI
 from .utils import format_error
@@ -98,6 +99,7 @@ _UNSET: Any = object()
 
 def configure(
     *, llm: Llm | None = None, agents: list | None = None, max_rows: int | None = _UNSET,
+    share: str | None = None, mask_pii: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
@@ -109,6 +111,11 @@ def configure(
     max_rows caps the rows an answer's data holds (1,000,000 by
     default), as a LIMIT on its query; None lifts the cap.
 
+    share sets what of the data prompts contain: "sample" (values, as
+    before), "schema" (structure, no values) or "none" (names only).
+    mask_pii withholds the values of columns that look like personal
+    data. Both apply to the chat UI too; see lumen.ai.sharing.
+
     Returns the settings now in effect.
     """
     if llm is not None:
@@ -118,7 +125,8 @@ def configure(
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
         SQLAgent.max_rows = max_rows
-    return {**_settings, "max_rows": SQLAgent.max_rows}
+    sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
+    return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
 
 
 def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
