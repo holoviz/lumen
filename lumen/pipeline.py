@@ -5,7 +5,9 @@ import sys
 
 from functools import partial
 from itertools import product
-from typing import Any, ClassVar, Literal
+from typing import (
+    TYPE_CHECKING, Any, ClassVar, Literal,
+)
 
 import numpy as np
 import pandas as pd
@@ -32,6 +34,10 @@ from .util import (
     collect_lazy, get_dataframe_schema, is_narwhals, is_ref, to_backend,
 )
 from .validation import ValidationError, match_suggestion_message
+
+if TYPE_CHECKING:
+    from .ai.answer import Answer
+    from .ai.llm import Llm
 
 
 def auto_filters(schema: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
@@ -226,7 +232,7 @@ class Pipeline(Viewer, Component):
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()
 
-    def ask(self, question: str, **kwargs):
+    def ask(self, question: str, *, llm: Llm | None = None, agents: list | None = None) -> Answer:
         """
         Ask this pipeline's table a question with Lumen AI and return the Answer.
 
@@ -234,9 +240,9 @@ class Pipeline(Viewer, Component):
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import ask
-        return ask(self, question, **kwargs)
+        return ask(self, question, llm=llm, agents=agents)
 
-    async def aask(self, question: str, **kwargs):
+    async def aask(self, question: str, *, llm: Llm | None = None, agents: list | None = None) -> Answer:
         """
         Ask this pipeline's table a question with Lumen AI and await the Answer.
 
@@ -244,7 +250,7 @@ class Pipeline(Viewer, Component):
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import aask
-        return await aask(self, question, **kwargs)
+        return await aask(self, question, llm=llm, agents=agents)
 
     def __panel__(self) -> Row:
         controls = self.control_panel

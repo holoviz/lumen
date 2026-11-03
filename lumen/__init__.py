@@ -1,16 +1,29 @@
-from .__version import __version__  # noqa
-from .config import config  # noqa
-from .dashboard import Dashboard  # noqa
-from .filters.base import Filter  # noqa
-from .layout import Layout  # noqa
-from .pipeline import Pipeline  # noqa
-from .sources.base import Source  # noqa
-from .state import state  # noqa
-from .transforms.base import Transform  # noqa
-from .views.base import View  # noqa
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from .__version import __version__
+from .config import config
+from .dashboard import Dashboard
+from .filters.base import Filter
+from .layout import Layout
+from .pipeline import Pipeline
+from .sources.base import Source
+from .state import state
+from .transforms.base import Transform
+from .views.base import View
+
+if TYPE_CHECKING:
+    from .ai.data import DataT
+
+# Declared so type checkers treat these as public now that lumen ships py.typed
+__all__ = [
+    "Dashboard", "Filter", "Layout", "Pipeline", "Source", "Transform", "View",
+    "__version__", "config", "read", "state",
+]
 
 
-def read(data):
+def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     """
     Load data into a single Lumen Source.
 

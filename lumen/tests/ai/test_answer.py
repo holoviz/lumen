@@ -355,7 +355,7 @@ async def test_source_and_pipeline_methods_delegate(frame_source):
         await frame_source.aask("q")
         await pipeline.aask("q", llm="x")
     assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
-    assert sync_ask.call_args_list[0].kwargs == {"llm": "x"}
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None}
     assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
 
 
