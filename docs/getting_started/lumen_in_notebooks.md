@@ -38,6 +38,9 @@ An `Answer` renders as a card with the text, the chart and a collapsed SQL secti
 | `pipeline` | A Pipeline over the result, e.g. `answer.pipeline.data` |
 | `view` / `spec` | The chart as a Lumen View and its Vega-Lite spec |
 | `plan` / `status` | The steps the planner ran and how they ended |
+| `error` | Why the question failed, when `status` is `"error"` |
+
+While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop it; Lumen cancels the question and its LLM calls.
 
 ## Follow up
 
@@ -49,9 +52,31 @@ chat.ask("Only keep the species above 4000 g")  # (1)!
 
 1. Each follow-up sees the earlier questions and runs on the data the last answer left.
 
+## Change the chart
+
+``` py
+answer = source.ask("Plot the average body mass per species as a bar chart", llm=Kilo())
+answer.refine("Color the bars by species and sort them by mass")  # (1)!
+```
+
+1. `refine` changes only the chart, with one LLM call and no new SQL. It returns a new answer and leaves the old one as it was.
+
+## When a question fails
+
+A question that cannot be answered still returns an `Answer`, with `status` set to `"error"`. Its card shows the error and the failed SQL, open. Ask again with a hint:
+
+``` py
+answer = source.ask("Average flipper length by island in cm?", llm=Kilo())
+if answer.status == "error":
+    answer = answer.retry(hint="Flipper length is in mm, divide by 10")
+```
+
+`retry()` without a hint asks the same question again. In a script, check `answer.status` before using the result.
+
 ## Rerun, export, explore
 
 - `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results.
+- `answer.to_cell()` puts that code into a new cell below, in Jupyter.
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
