@@ -1048,3 +1048,11 @@ async def test_due_recheck_does_not_delay_cached_stats(duckdb_source):
         assert time.monotonic() - start < 0.5
     assert result["orders"] is stats
     await asyncio.sleep(1.2)
+
+
+def test_geoparquet_crs_is_shown_as_its_code():
+    pyproj = pytest.importorskip("pyproj")
+    from lumen.ai.table_stats import ColumnStats, render_column
+    projjson = pyproj.CRS.from_epsg(4326).to_json()
+    line = render_column(ColumnStats(name="geometry", type=f"GEOMETRY('{projjson}')"), detail="types")
+    assert line == "geometry GEOMETRY('EPSG:4326')"

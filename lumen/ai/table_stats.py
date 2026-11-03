@@ -1634,6 +1634,23 @@ def _format_nulls(nulls: float | None) -> str | None:
     return f"nulls {pct:.0f}%"
 
 
+def compact_geometry_type(sql_type: str) -> str:
+    """
+    A geometry type with its CRS as an authority code, e.g. GEOMETRY('EPSG:4326').
+    GeoParquet's CRS arrives as PROJJSON, about 1.5 KB in every schema line.
+    """
+    match = re.fullmatch(r"GEOMETRY\('(\{.*\})'\)", sql_type, re.DOTALL)
+    if match is None:
+        return sql_type
+    try:
+        crs_id = json.loads(match.group(1)).get("id") or {}
+    except ValueError:
+        return sql_type
+    if "authority" in crs_id and "code" in crs_id:
+        return f"GEOMETRY('{crs_id['authority']}:{crs_id['code']}')"
+    return "GEOMETRY"
+
+
 def render_column(
     col: ColumnStats, stats: TableStats | None = None, description: str | None = None,
     detail: str = "full", name: str | None = None,
@@ -1650,7 +1667,7 @@ def render_column(
         # Names only, as the sharing level asks
         detail = "names"
     if col.type and detail != "names":
-        parts.append(col.type)
+        parts.append(compact_geometry_type(col.type))
     if col.primary_key and detail != "names":
         parts.append("PK")
     if col.references and detail != "names":
