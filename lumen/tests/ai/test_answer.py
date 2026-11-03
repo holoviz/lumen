@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 
 from typing import get_args
 from unittest.mock import AsyncMock, patch
@@ -782,3 +783,28 @@ async def test_run_names_the_first_step_until_one_reports():
 
     assert display.call_args.args[0] == {"text/plain": "Revising the chart"}
     assert any(text.startswith("Revising the chart (") for text in handle.updates)
+
+
+def _geo_answer(crs="EPSG:4326"):
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    source = read({"places": gpd.GeoDataFrame({"n": ["a", "b"]}, geometry=[Point(13.4, 52.5), Point(2.3, 48.9)], crs=crs)})
+    return Answer(question="?", status="success", pipeline=Pipeline(source=source, table="places"))
+
+
+def test_answer_gdf_keeps_the_crs():
+    gdf = _geo_answer().gdf
+    assert gdf.crs.to_epsg() == 4326 and len(gdf) == 2
+
+
+def test_answer_gdf_is_none_without_geometry(frame_source):
+    assert Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).gdf is None
+
+
+def test_answer_gdf_warns_once_when_lon_lat_has_no_crs():
+    answer = _geo_answer(crs=None)
+    with pytest.warns(UserWarning, match="looks like longitude and latitude"):
+        assert answer.gdf.crs is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        answer.gdf

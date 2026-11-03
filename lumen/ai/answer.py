@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import time
+import warnings
 import weakref
 
 from concurrent.futures import (
@@ -38,7 +39,7 @@ from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
-from ..util import geometry_columns, log
+from ..util import geometry_columns, is_geodataframe, log
 from ..views import View
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
@@ -538,6 +539,7 @@ class Answer(param.Parameterized):
         self._context = context or {}
         # Whether sql is the query that failed, rather than one that worked
         self._sql_failed = sql_failed
+        self._crs_warned = False
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -597,6 +599,26 @@ class Answer(param.Parameterized):
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
         return _run(self.aretry(hint))
+
+    @property
+    def gdf(self) -> Any:
+        """
+        The answer's data as a GeoDataFrame with its CRS, or None when it has
+        no geometry. Warns once when the geometry has no CRS but its
+        coordinates look like longitude and latitude.
+        """
+        data = None if self.pipeline is None else self.pipeline.data
+        if not is_geodataframe(data):
+            return None
+        if data.crs is None and not self._crs_warned and len(data):
+            west, south, east, north = data.total_bounds
+            if -180 <= west <= east <= 360 and -90 <= south <= north <= 90:
+                warnings.warn(
+                    "This geometry has no CRS but looks like longitude and latitude. "
+                    "Set it with answer.gdf.set_crs('EPSG:4326') if so.", stacklevel=2,
+                )
+                self._crs_warned = True
+        return data
 
     def explore(self, **params) -> ExplorerUI:
         """
