@@ -30,6 +30,7 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
+from lumen.ai.actor import LLMUser, NullStep
 from lumen.ai.coordinator import (
     Coordinator, DependencyResolver, Plan, Planner,
 )
@@ -133,6 +134,17 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
     planner._check_clarification_needed.assert_not_awaited()
     with pytest.raises(ValueError, match="headless"):
         planner.__panel__()
+
+
+def test_llm_user_step_without_interface_logs_its_title(caplog):
+    class Probe(LLMUser):
+        interface = None
+        steps_layout = None
+        _null_step = NullStep()
+
+    with caplog.at_level(logging.INFO, logger="lumen"), Probe()._add_step(title="Loading data") as step:
+        step.stream("ignored")
+    assert caplog.messages == ["Loading data"]
 
 
 async def test_planner_headless_raises_planning_errors(llm):
