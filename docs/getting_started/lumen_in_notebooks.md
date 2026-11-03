@@ -60,8 +60,8 @@ chat.ask("Only keep the species above 4000 g")  # (1)!
 | Front end | What you get |
 |-----------|--------------|
 | JupyterLab, Notebook 7 | The interactive card: answer, chart and an expandable SQL section |
-| Google Colab | The interactive card. Panel warns that `jupyter_bokeh` is missing; the card still works without it |
-| VS Code | The interactive card once `jupyter_bokeh` is installed in the kernel's environment. Without it, the Vega-Lite chart and a PNG |
+| Google Colab | The interactive card. Panel warns that `jupyter_bokeh` is missing; the card still works without it. With panel-material-ui 0.16.7 or earlier the card stays light in Colab's dark theme |
+| VS Code | The interactive card once `jupyter_bokeh` is installed in the kernel's environment. Without it, Panel prints an install hint and you get the answer, the Vega-Lite chart and the SQL as plain outputs |
 | marimo | A static card with the answer, a PNG and the SQL. Pick the Vega-Lite output in the cell's output menu for the interactive chart |
 | Python REPL or script | Echoing `answer` shows its status and first line; `answer.value` and `answer.sql` hold the full text |
 
