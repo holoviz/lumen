@@ -1,0 +1,12 @@
+[
+  {
+    "name": "1.4 (latest)",
+    "version": "1.4.0",
+    "url": "https://lumen.holoviz.org/en/docs/latest/",
+    "preferred": true
+  },
+  {
+    "version": "dev",
+    "url": "https://lumen-dev.holoviz.org/en/docs/dev/"
+  }
+]

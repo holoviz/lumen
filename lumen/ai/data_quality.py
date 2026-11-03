@@ -164,7 +164,9 @@ def _lint_outliers(df: pd.DataFrame) -> list[str]:
     return [f"IQR outliers in {_format_column_hits(hits)}."]
 
 
-def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = False) -> list[str]:
+def lint_data(
+    df: pd.DataFrame, actionable_only: bool = False, capped: bool = False, columns: set[str] | None = None
+) -> list[str]:
     """
     Report data-quality problems in a query result, phrased so an LLM can fix them in SQL.
 
@@ -183,6 +185,10 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = Fa
         Constant columns and outliers are not checked, since an ordered
         prefix is often constant in its sort key and need not be
         representative of the rest.
+    columns : set[str] | None
+        Lowercased names of the only columns to report on. Rows still count
+        as duplicates only when every column matches, since rows that agree
+        on a few columns are usually distinct records.
 
     Returns
     -------
@@ -207,10 +213,14 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = Fa
         # profiler that reported different problems on each run would be noise.
         df = df.sample(PROFILE_SAMPLE_ROWS, random_state=0)
 
+    rows = df
+    if columns is not None:
+        df = df[[col for col in df.columns if str(col).lower() in columns]]
+
     findings = []
     for check in checks:
         try:
-            findings.extend(check(df))
+            findings.extend(check(rows if check is _lint_duplicates else df))
         except Exception as e:
             # Profiling must never break a query that already succeeded. Object
             # columns holding lists, dicts or geometries make several of the
