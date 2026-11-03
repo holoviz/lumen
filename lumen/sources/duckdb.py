@@ -638,7 +638,7 @@ class DuckDBSource(BaseSQLSource):
         else:
             rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
-            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
+            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self._missing_crs(sql_expr, d[0]))
             for d in rel.description if str(d[1]).startswith('GEOMETRY')
         }
         geom_cols = list(geom_crs)
@@ -664,6 +664,44 @@ class DuckDBSource(BaseSQLSource):
                 )
             df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
         return df
+
+    def _missing_crs(self, sql_expr: str, column: str) -> str | None:
+        """
+        The CRS of a result geometry column whose type carries none.
+
+        DuckDB drops the CRS through ST_Transform, so a transformed result
+        takes its target. Otherwise it is the source's geometry_crs, or the
+        one CRS every geometry column on the connection shares.
+        """
+        try:
+            parsed = sqlglot.parse_one(sql_expr, read='duckdb')
+        except sqlglot.errors.SqlglotError:
+            parsed = None
+        if parsed is not None:
+            select = parsed if isinstance(parsed, sqlglot.exp.Select) else parsed.find(sqlglot.exp.Select)
+            projected = [p for p in (select.expressions if select else []) if p.alias_or_name == column]
+            # The column's own projection, outermost transform first, else the query's only target
+            scopes = projected or [parsed]
+            targets = [
+                f.expressions[2].name for scope in scopes for f in scope.find_all(sqlglot.exp.Anonymous)
+                if f.name.upper() == 'ST_TRANSFORM' and len(f.expressions) > 2
+                and isinstance(f.expressions[2], sqlglot.exp.Literal)
+            ]
+            if projected and targets:
+                return targets[0]
+            if len(set(targets)) == 1:
+                return targets[0]
+            if targets:
+                return None
+        if self.geometry_crs:
+            return self.geometry_crs
+        # Its own cursor: the caller's cursor still holds the result being fetched
+        with self._connection.cursor() as meta:
+            types = meta.execute(
+                "SELECT DISTINCT data_type FROM information_schema.columns WHERE data_type LIKE 'GEOMETRY(%'"
+            ).fetchall()
+        crs = {m.group(1) for (kind,) in types if (m := GEOMETRY_CRS.search(kind))}
+        return crs.pop() if len(crs) == 1 else None
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
