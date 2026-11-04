@@ -851,6 +851,13 @@ def test_hvplot_view_draws_tiles_under_a_geo_plot():
     assert points and type(points[0]).__module__.startswith("geoviews")
 
 
+@pytest.mark.parametrize("tiles", ["true", "True"])
+def test_hvplot_view_reads_tiles_given_as_a_string(tiles):
+    pytest.importorskip("geoviews")
+    plot = _points_view(geo=True, tiles=tiles).get_plot(_points_view().get_data())
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+
+
 def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
     import importlib.util
     real = importlib.util.find_spec

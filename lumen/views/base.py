@@ -1366,8 +1366,12 @@ class hvPlotView(hvPlotBaseView):
             # draw the plot on plain axes rather than not at all
             if importlib.util.find_spec('geoviews') is not None:
                 processed['geo'] = True
-                if self.tiles:
-                    processed['tiles'] = self.tiles
+                tiles = self.tiles
+                # A spec written as JSON can carry the flag as a string
+                if isinstance(tiles, str) and tiles.lower() in ('true', 'false'):
+                    tiles = tiles.lower() == 'true'
+                if tiles:
+                    processed['tiles'] = tiles
             else:
                 log.warning("geo=True needs geoviews; drawing %s without a map projection or tiles.", self.name)
                 processed.pop('coastline', None)
