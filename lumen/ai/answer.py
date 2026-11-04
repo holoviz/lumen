@@ -35,7 +35,9 @@ from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
-from panel_material_ui import Alert, Button, Card, Column, Row
+from panel_material_ui import (
+    Alert, Button, Card, Column, Row,
+)
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
