@@ -731,6 +731,16 @@ class Answer(param.Parameterized):
         return self._card
 
     def _chart_part(self, view: View):
+        try:
+            # Drawn here, because inside the card a failure only becomes a
+            # notification once the chat UI has turned those on, and a
+            # notebook shows none, so the chart would just be missing
+            view.get_panel()
+        except Exception as e:
+            return Alert(
+                object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
+                severity="error", sizing_mode="stretch_width",
+            )
         return view
 
     def _spec_card(self, language: str, text: str, chart_index: int) -> Card:

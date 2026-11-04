@@ -11,6 +11,7 @@ from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 import pandas as pd
+import panel as pn
 import pytest
 
 try:
@@ -81,6 +82,16 @@ async def test_aask_answers_with_sql_and_text(llm, frame_source):
     assert "SUM(value)" in answer.sql
     assert answer.pipeline.data.iloc[0, 0] == 38.0
     assert answer.view is None and answer.spec is None
+
+
+@pytest.mark.parametrize("notifications", [False, True])
+def test_a_chart_that_fails_to_draw_shows_its_error_in_the_card(chart_answer, notifications):
+    with (
+        patch.object(VegaLiteView, "get_panel", side_effect=ValueError("bad encoding")),
+        pn.config.set(notifications=notifications),
+    ):
+        chart = chart_answer.__panel__()[1]
+    assert chart.title == "The chart could not be drawn" and "bad encoding" in chart.object
 
 
 async def test_a_plan_that_neither_queries_nor_answers_is_an_error(llm, frame_source):
