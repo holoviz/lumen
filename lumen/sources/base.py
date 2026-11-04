@@ -239,14 +239,6 @@ def _apply_descriptions(generated: dict, described: dict) -> None:
         columns[column] = {**_as_column_metadata(columns.get(column)), **entry}
 
 
-def _merged(user: dict, described: dict) -> dict:
-    """User metadata with what describe() set written over it."""
-    merged = {**user, **{k: v for k, v in described.items() if k != "columns"}}
-    if "columns" in described:
-        merged["columns"] = {**user.get("columns", {}), **described["columns"]}
-    return merged
-
-
 def _merge_user_metadata(generated: dict, user: dict) -> None:
     """
     Merges user supplied table metadata into the generated metadata,
@@ -342,6 +334,11 @@ class Source(MultiTypeComponent):
         Whether the Source can be shared across all instances of the
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
+
+    descriptions = param.Dict(default={}, doc="""
+        Table and column descriptions set with describe(), in the same
+        format as metadata. Unlike metadata, they replace a description
+        the database already has rather than filling in a missing one.""")
 
     metadata = param.Dict(default={}, doc="""
         Optional metadata about the source tables. Should follow the format:
@@ -460,7 +457,6 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
-        self._described: dict[str, dict] = {}
         # Bumped when describe() changes the metadata, so caches of it refresh
         self._metadata_revision = 0
 
@@ -734,16 +730,19 @@ class Source(MultiTypeComponent):
         known = set(self.get_metadata(table).get("columns", {}))
         if unknown := set(columns or {}) - known:
             raise ValueError(f"No column {sorted(unknown)} in {table!r}; it has {sorted(known)}.")
-        described = self._described.setdefault(table, {})
+        described = dict(self.descriptions.get(table, {}))
         if description is not None:
             described["description"] = description
-        for column, value in (columns or {}).items():
-            described.setdefault("columns", {})[column] = _as_column_metadata(value)
-        # Kept in metadata as well, so specs, answer.code and the chat UI carry
-        # it. Without events: a metadata change would otherwise clear the data
-        # cache, on disk too, for what is only a change of words.
+        if columns:
+            described["columns"] = {
+                **described.get("columns", {}),
+                **{column: _as_column_metadata(value) for column, value in columns.items()},
+            }
+        # A parameter, so specs and answer.code carry it. Without events: a
+        # parameter change otherwise clears the data cache, on disk too, for
+        # what is only a change of words.
         with param.parameterized.discard_events(self):
-            self.metadata = {**self.metadata, table: _merged(self.metadata.get(table, {}), described)}
+            self.descriptions = {**self.descriptions, table: described}
         self._metadata_cache = {}
         self._metadata_revision += 1
         return self
@@ -863,7 +862,7 @@ class Source(MultiTypeComponent):
         # Merge source.metadata with metadata_func output
         for table_name in tables:
             _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
-            _apply_descriptions(metadata[table_name], self._described.get(table_name, {}))
+            _apply_descriptions(metadata[table_name], self.descriptions.get(table_name, {}))
 
         return metadata
 

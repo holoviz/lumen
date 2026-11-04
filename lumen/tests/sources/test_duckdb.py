@@ -1989,4 +1989,15 @@ def test_describe_keeps_the_data_cache(described_source):
     described_source.get("orders")
     cached = dict(described_source._cache)
     described_source.describe("orders", "One row per order")
-    assert described_source._cache == cached and described_source.metadata["orders"]["description"] == "One row per order"
+    assert described_source._cache == cached and described_source.descriptions["orders"]["description"] == "One row per order"
+
+
+def test_describe_survives_a_round_trip_through_the_spec(described_source):
+    generated = described_source.get_metadata("orders")
+    generated["description"] = "From the database"
+    described_source.describe("orders", "Mine", columns={"amount": "Order value in EUR"})
+    restored = DuckDBSource.from_spec(described_source.to_spec())
+    with patch.object(DuckDBSource, "_get_table_metadata", return_value={"orders": generated}):
+        metadata = restored.get_metadata("orders")
+    assert metadata["description"] == "Mine"
+    assert metadata["columns"]["amount"]["description"] == "Order value in EUR"
