@@ -1,7 +1,6 @@
 from typing import Any
 
 import pandas as pd
-
 import param
 
 from pydantic import BaseModel
@@ -133,7 +132,7 @@ class hvPlotAgent(BaseViewAgent):
         finds out while drawing, where it raises a bare KeyError and the whole
         chart is lost; dropping the axis leaves hvPlot to infer one instead.
         """
-        for field in ("x", "y", "z"):
+        for field in ("x", "y", "z", "size"):
             if spec.get(field) is not None and spec[field] not in columns:
                 spec.pop(field)
         for field in ("by", "groupby"):
