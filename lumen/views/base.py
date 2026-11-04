@@ -1368,6 +1368,7 @@ class hvPlotView(hvPlotBaseView):
                     processed['tiles'] = self.tiles
             else:
                 log.warning("geo=True needs geoviews; drawing %s without a map projection or tiles.", self.name)
+                processed.pop('coastline', None)
         if is_geodataframe(df):
             # hvplot infers the geometry kind (polygons/paths/points); just
             # clear a non-geometry default so it isn't forced to scatter/points

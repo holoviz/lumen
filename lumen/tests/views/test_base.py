@@ -848,7 +848,7 @@ def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
     import importlib.util
     real = importlib.util.find_spec
     monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "geoviews" else real(name, *a))
-    view = _points_view(geo=True, tiles="OSM")
+    view = _points_view(geo=True, tiles="OSM", coastline=True)
     plot = view.get_plot(view.get_data())
     assert type(plot).__name__ == "Points"
     assert "needs geoviews" in caplog.text

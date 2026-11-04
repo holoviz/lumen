@@ -155,11 +155,16 @@ class hvPlotAgent(BaseViewAgent):
         # Add defaults
         spec["responsive"] = True
         self._drop_unknown_columns(spec, set(data.columns))
-        if _is_lon_lat(spec, data) and spec.get("kind") not in GRIDDED_KINDS:
+        if _is_lon_lat(spec, data):
             # Longitude and latitude read best on a basemap
             spec.setdefault("geo", True)
             if spec["geo"]:
                 spec.setdefault("tiles", "OSM")
+        if spec.get("geo") and spec.get("kind") in GRIDDED_KINDS:
+            # A grid hides the tiles under it and Web Mercator stretches its
+            # polar rows; coastlines on longitude and latitude show it whole
+            spec.pop("tiles", None)
+            spec.setdefault("coastline", True)
         if spec.get("geo"):
             # A map keeps the aspect of its data, which a responsive plot can
             # only meet by zooming far out or in to fill its container; a fixed

@@ -157,6 +157,15 @@ async def test_lon_lat_columns_get_a_basemap_unless_turned_off():
     assert "tiles" not in off
 
 
+async def test_a_gridded_map_gets_coastlines_not_tiles():
+    df = pd.DataFrame({"lon": [0.0, 1.0, 0.0, 1.0], "lat": [0.0, 0.0, 1.0, 1.0], "t": [1.0, 2.0, 3.0, 4.0]})
+    pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": pipe}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"}
+    )
+    assert "tiles" not in spec and spec["coastline"] is True
+
+
 async def test_a_large_grid_is_rasterized(monkeypatch):
     import lumen.ai.agents.hvplot as hvplot_agent
     monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)
