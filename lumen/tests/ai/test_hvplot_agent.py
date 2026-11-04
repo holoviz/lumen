@@ -4,6 +4,7 @@ Each test here stands for one step of that failure: the schema offered the
 model a value its own view rejects, the recovery path raised instead of
 recovering, and the one field the agent adds to the schema reached the view.
 """
+import holoviews as hv
 import pandas as pd
 import param
 import pytest
@@ -14,7 +15,7 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.translate import param_to_pydantic
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
-from lumen.views.base import hvPlotUIView
+from lumen.views.base import hvPlotUIView, hvPlotView
 
 
 @pytest.fixture
@@ -136,6 +137,16 @@ async def test_a_map_gets_a_fixed_height_not_a_responsive_frame():
     assert "responsive" not in spec and spec["frame_height"] == 400
     plain = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:3857")}, {"kind": "points", "c": "v"})
     assert plain["responsive"] is True and "frame_height" not in plain
+
+
+async def test_a_chart_has_grid_lines():
+    df = pd.DataFrame({"x": [1, 2], "y": [3, 4]})
+    pipe = Pipeline(source=InMemorySource(tables={"t": df}), table="t")
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "line", "x": "x", "y": "y"})
+    assert spec["grid"] is True
+    view = hvPlotView(pipeline=pipe, **spec)
+    fig = hv.render(view.get_plot(view.get_data()))
+    assert all(g.grid_line_color is not None for g in fig.grid)
 
 
 async def test_a_map_keeps_the_column_it_is_coloured_by():

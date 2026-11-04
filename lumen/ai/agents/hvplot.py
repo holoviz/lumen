@@ -154,6 +154,9 @@ class hvPlotAgent(BaseViewAgent):
 
         # Add defaults
         spec["responsive"] = True
+        # hvPlot turns Bokeh's grid lines off, and values are hard to read
+        # off a chart without them
+        spec.setdefault("grid", True)
         self._drop_unknown_columns(spec, set(data.columns))
         if _is_lon_lat(spec, data):
             # Longitude and latitude read best on a basemap
