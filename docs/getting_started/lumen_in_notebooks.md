@@ -25,7 +25,7 @@ answer
 
 `lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict lands in one source so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
 
-`pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form. Coming from PandasAI? See [Migrating from PandasAI](migrating_from_pandasai.md).
+`pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
 ## The answer
 
