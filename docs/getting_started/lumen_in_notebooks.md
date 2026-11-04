@@ -61,7 +61,7 @@ answer.refine("Color the bars by species and sort them by mass")  # (1)!
 
 1. `refine` changes only the chart, with one LLM call and no new SQL. It returns a new answer and leaves the old one as it was.
 
-To change the chart by hand, open the card's Spec section, edit the spec and press Redraw. `answer.with_spec(...)` does the same from code, taking the spec as a dict or as JSON or YAML text, and needs no LLM.
+To change the chart by hand, open the card's Spec section, press Edit, change the spec and press Redraw. `answer.with_spec(...)` does the same from code, taking the spec as a dict or as JSON or YAML text, and needs no LLM.
 
 ## When a question fails
 
