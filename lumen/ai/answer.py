@@ -31,7 +31,7 @@ from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
-from panel_material_ui import Alert, Button, Card, Column
+from panel_material_ui import Alert, Button, Card, Column, Row
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -725,27 +725,49 @@ class Answer(param.Parameterized):
         return view
 
     def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
-        """The chart's spec, editable, with a button that redraws the chart from it."""
+        """
+        The chart's spec as a code block, which has a copy button, and an
+        Edit button that swaps in an editor to change the spec and redraw.
+        """
+        code = Markdown(f"```{language}\n{text}\n```", sizing_mode="stretch_width")
+        edit = Button(label="Edit", icon="edit", variant="outlined")
         editor = CodeEditor(
-            value=text, language=language, sizing_mode="stretch_width",
+            value=text, language=language, sizing_mode="stretch_width", visible=False,
+            theme="github_dark" if pn.config.theme == "dark" else "github_light_default",
             height=min(400, 22 * (text.count("\n") + 2)),
         )
         error = Alert(severity="error", visible=False, sizing_mode="stretch_width")
+        redraw = Button(label="Redraw", icon="refresh", variant="contained")
+        cancel = Button(label="Cancel", variant="text")
+        actions = Row(redraw, cancel, visible=False)
 
-        def redraw(event):
+        def editing(on: bool):
+            code.visible = edit.visible = not on
+            editor.visible = actions.visible = on
+            if not on:
+                error.visible = False
+
+        def start(event):
+            editor.value = self._chart_spec()[1]
+            editing(True)
+
+        def apply(event):
             try:
                 redrawn = self.with_spec(editor.value)
             except Exception as e:
                 error.param.update(object=f"{type(e).__name__}: {e}", visible=True)
                 return
-            error.visible = False
             # The card shows this answer, so it takes the redrawn chart
             self.param.update(spec=redrawn.spec, view=redrawn.view)
             self._editor = redrawn._editor
             self._card[chart_index] = self._chart_part(redrawn.view)
+            code.object = "```{}\n{}\n```".format(*self._chart_spec())
+            editing(False)
 
-        button = Button(label="Redraw", icon="refresh", variant="outlined", on_click=redraw)
-        return Card(editor, error, button, title="Spec", collapsed=True, sizing_mode="stretch_width")
+        edit.on_click(start)
+        redraw.on_click(apply)
+        cancel.on_click(lambda event: editing(False))
+        return Card(code, edit, editor, error, actions, title="Spec", collapsed=True, sizing_mode="stretch_width")
 
     def _chart_spec(self) -> tuple[str, str] | None:
         """

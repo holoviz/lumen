@@ -617,7 +617,9 @@ def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     assert text.object.startswith("**B** is largest.")
     assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
     assert spec.title == "Spec" and spec.collapsed
-    assert json.loads(spec[0].value)["mark"] == "bar"
+    code = spec[0].object
+    assert code.startswith("```json\n")
+    assert json.loads(code.removeprefix("```json\n").removesuffix("\n```"))["mark"] == "bar"
 
 
 def test_with_spec_redraws_a_vega_lite_chart(chart_answer):
@@ -644,18 +646,27 @@ def test_with_spec_rejects_what_is_not_a_spec(chart_answer):
         Answer(question="?", status="success").with_spec({})
 
 
-def test_redraw_button_puts_the_edited_chart_in_the_card(chart_answer):
+def test_edit_then_redraw_puts_the_edited_chart_in_the_card(chart_answer):
     card = chart_answer.__panel__()
-    spec_card = card[-1]
-    editor, error, button = spec_card
+    code, edit, editor, error, actions = card[-1]
+    redraw, cancel = actions
+    assert code.visible and edit.visible and not editor.visible and not actions.visible
+
+    edit.clicks += 1
+    assert editor.visible and actions.visible and not code.visible
     old_chart = card[1]
     editor.value = editor.value.replace('"bar"', '"point"')
-    button.clicks += 1
-    assert chart_answer.spec["mark"] == "point"
-    assert card[1] is not old_chart and not error.visible
+    redraw.clicks += 1
+    assert chart_answer.spec["mark"] == "point" and card[1] is not old_chart
+    # Back to the code block, which now shows the redrawn spec
+    assert code.visible and not editor.visible and '"point"' in code.object
+
+    edit.clicks += 1
     editor.value = "{not: [valid"
-    button.clicks += 1
-    assert error.visible and chart_answer.spec["mark"] == "point"
+    redraw.clicks += 1
+    assert error.visible and editor.visible and chart_answer.spec["mark"] == "point"
+    cancel.clicks += 1
+    assert code.visible and not editor.visible and not error.visible
 
 
 def test_answer_spec_leaves_out_the_data(chart_answer):
