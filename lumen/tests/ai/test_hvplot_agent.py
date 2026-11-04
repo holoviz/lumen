@@ -70,13 +70,13 @@ def test_the_view_accepts_every_aggregator_the_schema_offers(pipeline):
 
 async def test_chain_of_thought_does_not_reach_the_view(pipeline):
     """It is added to the schema to make the model reason, not to be plotted;
-    hvPlotExplorer rejects any keyword none of its controls claims."""
+    hvPlot rejects a keyword it does not know."""
     spec = {"kind": "scatter", "x": "x", "y": "y", "chain_of_thought": "because"}
 
     extracted = await hvPlotAgent()._extract_spec({"pipeline": pipeline}, spec)
 
     assert "chain_of_thought" not in extracted
-    hvPlotUIView(pipeline=pipeline, **extracted).get_panel()
+    hvPlotAgent.view_type(pipeline=pipeline, **extracted).get_panel()
 
 
 # ---- The recovery path raised instead of recovering ----
