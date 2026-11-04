@@ -1183,3 +1183,22 @@ async def test_column_descriptions_in_source_metadata_reach_the_sql_prompt():
     await aask(source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
     assert any("Euro amount of each sale" in system for system in llm.systems)
 
+
+async def test_described_text_reaches_the_sql_prompt_even_after_a_first_question(frame_source):
+    llm = _RecordingLLM()
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    sql_step = lambda: SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"])  # noqa: E731
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum")), sql_step(), "The total is 38.",
+        _plan(("SQLAgent", "Sum")), sql_step(), "The total is 38.",
+    ])
+    agents = [ChatAgent(), SQLAgent()]
+
+    await aask(frame_source, "Total value?", llm=llm, agents=agents)
+    assert not any("Euro amount" in system for system in llm.systems)
+    frame_source.describe("tiny", "Sales by category", columns={"value": "Euro amount of each sale"})
+    await aask(frame_source, "Total value?", llm=llm, agents=agents)
+
+    later = llm.systems[3:]
+    assert any("Euro amount of each sale" in system for system in later)
+    assert any("Sales by category" in system for system in later)

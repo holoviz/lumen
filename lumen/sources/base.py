@@ -227,6 +227,26 @@ def _merge_column_metadata(generated, user: dict) -> dict:
     return columns
 
 
+def _apply_descriptions(generated: dict, described: dict) -> None:
+    """
+    Writes what describe() set over the generated metadata, so a user's
+    words replace a description the database already had.
+    """
+    if "description" in described:
+        generated["description"] = described["description"]
+    columns = generated.setdefault("columns", {})
+    for column, entry in described.get("columns", {}).items():
+        columns[column] = {**_as_column_metadata(columns.get(column)), **entry}
+
+
+def _merged(user: dict, described: dict) -> dict:
+    """User metadata with what describe() set written over it."""
+    merged = {**user, **{k: v for k, v in described.items() if k != "columns"}}
+    if "columns" in described:
+        merged["columns"] = {**user.get("columns", {}), **described["columns"]}
+    return merged
+
+
 def _merge_user_metadata(generated: dict, user: dict) -> None:
     """
     Merges user supplied table metadata into the generated metadata,
@@ -440,6 +460,9 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
+        self._described: dict[str, dict] = {}
+        # Bumped when describe() changes the metadata, so caches of it refresh
+        self._metadata_revision = 0
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -683,6 +706,44 @@ class Source(MultiTypeComponent):
         from ..ai.answer import aask
         return await aask(self, question, llm=llm, agents=agents)
 
+    def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
+        """
+        Describe a table and its columns in your own words, for the LLM to
+        read when it plans and writes SQL. Your text replaces any description
+        the database has for the same table or column.
+
+        Parameters
+        ----------
+        table: str
+            The table to describe.
+        description: str | None
+            What the table holds, e.g. "One row per order since 2020".
+        columns: dict | None
+            Column descriptions by name, e.g. {"amount": "Order value in EUR"}.
+
+        Returns
+        -------
+        The source, so calls can be chained.
+        """
+        if table not in self.get_tables():
+            raise ValueError(f"No table {table!r}; the tables are {self.get_tables()}.")
+        known = set(self.get_metadata(table).get("columns", {}))
+        if unknown := set(columns or {}) - known:
+            raise ValueError(f"No column {sorted(unknown)} in {table!r}; it has {sorted(known)}.")
+        described = self._described.setdefault(table, {})
+        if description is not None:
+            described["description"] = description
+        for column, value in (columns or {}).items():
+            described.setdefault("columns", {})[column] = _as_column_metadata(value)
+        # Kept in metadata as well, so specs, answer.code and the chat UI carry
+        # it. Without events: a metadata change would otherwise clear the data
+        # cache, on disk too, for what is only a change of words.
+        with param.parameterized.discard_events(self):
+            self.metadata = {**self.metadata, table: _merged(self.metadata.get(table, {}), described)}
+        self._metadata_cache = {}
+        self._metadata_revision += 1
+        return self
+
     def chat(self, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
         """
         Start a conversation with this source, where each question can follow
@@ -798,6 +859,7 @@ class Source(MultiTypeComponent):
         # Merge source.metadata with metadata_func output
         for table_name in tables:
             _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
+            _apply_descriptions(metadata[table_name], self._described.get(table_name, {}))
 
         return metadata
 

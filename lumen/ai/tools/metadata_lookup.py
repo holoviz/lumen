@@ -279,7 +279,8 @@ class MetadataLookup(VectorLookupTool):
                 )
                 # Skip this source if already processed with the same (or more) tables
                 current_table_count = len(source.get_tables())
-                source_key = source.name
+                # describe() bumps the revision, so described tables are read again
+                source_key = (source.name, source._metadata_revision)
                 known_count = self._sources_processed[vector_store_id].get(source_key, 0)
                 if source_key in self._sources_in_progress[vector_store_id]:
                     log_debug(f"[MetadataLookup] Skipping source {source.name} - already in progress")
