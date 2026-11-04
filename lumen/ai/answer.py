@@ -966,9 +966,11 @@ class Answer(param.Parameterized):
             return self._static_bundle(self._chart_bundle())
         # Loaded on first display, not on import, so lumen.ai stays
         # quiet in scripts and in front-ends that never show an Answer.
-        # Checked per extension: a plain pn.extension() leaves Vega out.
-        if "vega" not in panel_extension._loaded_extensions:
-            pn.extension("vega")
+        # Checked per extension: a plain pn.extension() leaves Vega out,
+        # and the Spec section's editor needs codeeditor.
+        missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
+        if missing:
+            pn.extension(*missing)
         try:
             bundle = self.__panel__()._repr_mimebundle_(include, exclude)
         except ImportError:
