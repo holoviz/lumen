@@ -124,6 +124,8 @@ _settings: dict[str, Any] = {
 # unique for as long as the entry lives.
 _answer_cache: OrderedDict[str, Answer] = OrderedDict()
 _ANSWER_CACHE_SIZE = 128
+# Each cached answer holds its result, so the rows across them are bounded too
+_ANSWER_CACHE_ROWS = 2_000_000
 
 _UNSET: Any = object()
 
@@ -164,6 +166,11 @@ def configure(
         SQLAgent.max_rows = max_rows
     sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
     return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
+
+
+def _cached_rows() -> int:
+    # The data is already loaded, so its length costs no query
+    return sum(len(answer.pipeline.data) for answer in _answer_cache.values() if answer.pipeline is not None)
 
 
 def clear_cache() -> None:
@@ -541,7 +548,7 @@ async def _aask_messages(
     answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
     if key is not None and answer.status == "success":
         _answer_cache[key] = answer
-        while len(_answer_cache) > _ANSWER_CACHE_SIZE:
+        while len(_answer_cache) > _ANSWER_CACHE_SIZE or _cached_rows() > _ANSWER_CACHE_ROWS:
             _answer_cache.popitem(last=False)
     return answer
 
@@ -724,6 +731,10 @@ class Answer(param.Parameterized):
         """
         Run the steps of an answer asked with confirm=True, exactly as
         planned, and fill this answer in with the result. Returns it.
+
+        Unlike refine, which returns a new answer and keeps the old one, a
+        planned answer has no result worth keeping, so it becomes the result:
+        the variable you held and the card on screen both show it.
         """
         if self._pending is None:
             raise ValueError("Only an answer asked with confirm=True can be run, and only once.")
