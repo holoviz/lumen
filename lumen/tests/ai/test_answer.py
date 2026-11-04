@@ -20,6 +20,7 @@ except ModuleNotFoundError:
 
 from panel.config import panel_extension
 from panel.tests.util import async_wait_until
+from panel_material_ui import Card
 
 import lumen.ai.answer as answer_module
 
@@ -44,7 +45,7 @@ from lumen.pipeline import Pipeline
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
 from lumen.util import log as lumen_log
-from lumen.views.base import VegaLiteView
+from lumen.views.base import VegaLiteView, hvPlotView
 
 QUESTION = [{"role": "user", "content": "Total value?"}]
 
@@ -160,7 +161,7 @@ async def test_a_later_step_failing_keeps_the_working_query(frame_source):
     _alert, sql = answer.__panel__()
     assert sql.title == "SQL" and sql.collapsed
     assert "<details><summary>SQL</summary>" in answer._static_bundle(None)["text/html"]
-    with pytest.raises(ValueError, match="answer.retry"):
+    with pytest.raises(ValueError, match=r"answer\.retry"):
         await answer.arefine("Use a line")
 
 
@@ -530,7 +531,7 @@ def test_answer_repr_is_one_line(chart_answer):
 
 def test_answer_static_bundle_outside_a_kernel(chart_answer):
     bundle = chart_answer._repr_mimebundle_()
-    assert bundle["text/markdown"] == "**B** is largest.\nA is second.\n\n```sql\nSELECT * FROM tiny\n```"
+    assert bundle["text/markdown"].startswith("**B** is largest.\nA is second.\n\n```sql\nSELECT * FROM tiny\n```\n\n```json\n")
     spec = bundle["application/vnd.vegalite.v5+json"]
     assert spec["data"]["values"][0] == {"category": "A", "value": 10.5}
     assert base64.b64decode(bundle["image/png"]).startswith(b"\x89PNG")
@@ -538,6 +539,7 @@ def test_answer_static_bundle_outside_a_kernel(chart_answer):
     assert "<strong>B</strong> is largest." in html
     assert f'src="data:image/png;base64,{bundle["image/png"]}" width="600"' in html
     assert "<details><summary>SQL</summary><pre><code>SELECT * FROM tiny</code></pre></details>" in html
+    assert "<details><summary>Spec</summary><pre><code>{" in html
 
 
 def test_answer_static_spec_sends_missing_values_as_null():
@@ -611,14 +613,36 @@ def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_an
 def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     card = chart_answer.__panel__()
     assert card is chart_answer.__panel__()
-    text, _chart, sql = card
+    text, _chart, sql, spec = card
     assert text.object.startswith("**B** is largest.")
     assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
+    assert spec.title == "Spec" and spec.collapsed
+    assert json.loads(spec[0].object.removeprefix("```json\n").removesuffix("\n```"))["mark"] == "bar"
+
+
+def test_answer_spec_leaves_out_the_data(chart_answer):
+    chart_answer.spec = dict(chart_answer.spec, data={"values": [{"category": "A"}] * 1000})
+    language, text = chart_answer._chart_spec()
+    assert language == "json" and "values" not in text
+
+
+def test_answer_spec_of_an_hvplot_chart_is_its_yaml(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    language, text = Answer(question="?", status="success", pipeline=pipeline, view=view)._chart_spec()
+    assert language == "yaml" and "kind: bar" in text and "pipeline" not in text
+
+
+def test_answer_without_a_chart_has_no_spec(frame_source):
+    answer = Answer(question="?", value="Ten rows.", sql="SELECT 1", status="success")
+    assert answer._chart_spec() is None
+    assert [part.title for part in answer.__panel__() if isinstance(part, Card)] == ["SQL"]
+    assert "Spec" not in answer._static_bundle(None)["text/html"]
 
 
 def test_answer_card_skips_empty_text(chart_answer):
     chart_answer.value = ""
-    assert len(chart_answer.__panel__()) == 2
+    assert len(chart_answer.__panel__()) == 3
 
 
 def test_importing_answer_does_not_load_the_panel_extension():
@@ -717,7 +741,7 @@ def test_to_cell_puts_the_code_in_the_next_cell(chart_answer):
 
 
 def test_to_cell_needs_a_kernel(chart_answer):
-    with pytest.raises(RuntimeError, match="answer.code holds the code"):
+    with pytest.raises(RuntimeError, match=r"answer\.code holds the code"):
         chart_answer.to_cell()
 
 
