@@ -18,6 +18,7 @@ nav = [
     {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
     {"Using Lumen AI" = "getting_started/using_lumen_ai.md"},
     {"Lumen in Notebooks" = "getting_started/lumen_in_notebooks.md"},
+    {"Migrating from PandasAI" = "getting_started/migrating_from_pandasai.md"},
     {"Building Lumen Apps" = "getting_started/building_lumen_apps.md"}
   ]},
   {"Examples" = [
