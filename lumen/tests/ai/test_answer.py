@@ -1325,4 +1325,3 @@ async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch
         answer.pipeline = Pipeline(source=frame_source, table="tiny")  # three rows each
         answer_module._answer_cache[next(reversed(answer_module._answer_cache))] = answer
     assert len(answer_module._answer_cache) <= 2
-
