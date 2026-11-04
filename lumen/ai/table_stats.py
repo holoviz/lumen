@@ -2108,8 +2108,14 @@ class TableStatsStore(param.Parameterized):
             log_debug(f"[table_stats] failed for {table!r}: {e}")
             return None
         finally:
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                # A loop that closed before the task ran closes this
+                # coroutine outside any loop; _schedule replaces the task
+                current = None
             with self._lock:
-                if self._tasks.get(key) is asyncio.current_task():
+                if current is not None and self._tasks.get(key) is current:
                     self._tasks.pop(key, None)
 
     async def ensure(
