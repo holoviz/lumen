@@ -160,6 +160,12 @@ class hvPlotAgent(BaseViewAgent):
             spec.setdefault("geo", True)
             if spec["geo"]:
                 spec.setdefault("tiles", "OSM")
+        if spec.get("geo"):
+            # A map keeps the aspect of its data, which a responsive plot can
+            # only meet by zooming far out or in to fill its container; a fixed
+            # height lets the width follow the data instead
+            spec.pop("responsive")
+            spec.setdefault("frame_height", 400)
         if spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
             spec["rasterize"] = True
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):

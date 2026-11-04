@@ -131,6 +131,13 @@ async def test_lon_lat_geometry_gets_a_basemap():
     assert spec["geo"] is True and spec["tiles"] == "OSM"
 
 
+async def test_a_map_gets_a_fixed_height_not_a_responsive_frame():
+    spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:4326")}, {"kind": "points", "c": "v"})
+    assert "responsive" not in spec and spec["frame_height"] == 400
+    plain = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:3857")}, {"kind": "points", "c": "v"})
+    assert plain["responsive"] is True and "frame_height" not in plain
+
+
 async def test_projected_geometry_gets_no_basemap():
     spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:3857")}, {"kind": "points", "c": "v"})
     assert "tiles" not in spec and "geo" not in spec
