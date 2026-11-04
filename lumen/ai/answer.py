@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import importlib.util
+import json
 import logging
 import math
 import os
@@ -27,6 +28,7 @@ import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import pandas as pd
 import panel as pn
 import param
+import yaml
 
 from panel.config import panel_extension
 from panel.io.state import state
@@ -782,8 +784,30 @@ class Answer(param.Parameterized):
                     Markdown(f"```sql\n{self.sql}\n```"), title="SQL", collapsed=True,
                     sizing_mode="stretch_width",
                 ))
+            if (chart_spec := self._chart_spec()) is not None:
+                language, text = chart_spec
+                parts.append(Card(
+                    Markdown(f"```{language}\n{text}\n```"), title="Spec", collapsed=True,
+                    sizing_mode="stretch_width",
+                ))
             self._card = Column(*parts)
         return self._card
+
+    def _chart_spec(self) -> tuple[str, str] | None:
+        """
+        The spec the chart was drawn from, as (language, text): JSON for
+        Vega-Lite, the view's YAML for hvPlot. Data values are left out,
+        so a large result does not flood it.
+        """
+        if self.view is None:
+            return None
+        if self.spec is not None:
+            spec = {key: value for key, value in self.spec.items() if key != "datasets"}
+            if isinstance(spec.get("data"), dict) and "values" in spec["data"]:
+                spec["data"] = {key: value for key, value in spec["data"].items() if key != "values"}
+            return "json", json.dumps(spec, indent=2, default=str)
+        spec = {key: value for key, value in self.view.to_spec().items() if key != "pipeline"}
+        return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
 
     def _vega_lite_spec(self) -> dict | None:
         """The chart as a self-contained Vega-Lite spec, data inlined."""
@@ -865,6 +889,9 @@ class Answer(param.Parameterized):
         # A viewer shows one mime type per output, so the HTML carries the
         # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
+        chart_spec = self._chart_spec()
+        if chart_spec is not None:
+            sql += f"\n\n```{chart_spec[0]}\n{chart_spec[1]}\n```"
         bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
         card = [_prose_to_html(self.value)] if self.value else []
         if self.error:
@@ -878,6 +905,8 @@ class Answer(param.Parameterized):
             card.append(f"<p><em>{html.escape(self._cap_note)}</em></p>")
         if self.sql:
             card.append(self._sql_html())
+        if chart_spec is not None:
+            card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
         bundle["text/html"] = "\n".join(card)
         return bundle
 

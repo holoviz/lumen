@@ -29,7 +29,7 @@ answer
 
 ## The answer
 
-An `Answer` renders as a card with the text, the chart and a collapsed SQL section. It also holds:
+An `Answer` renders as a card with the text, the chart, and collapsed SQL and Spec sections: the query, and the Vega-Lite or hvPlot spec the chart was drawn from. It also holds:
 
 | Field | What it is |
 |-------|------------|
