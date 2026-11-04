@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import html
 import importlib.util
 import json
@@ -16,6 +17,7 @@ import time
 import warnings
 import weakref
 
+from collections import OrderedDict
 from concurrent.futures import (
     CancelledError as FutureCancelledError, ThreadPoolExecutor,
     TimeoutError as FutureTimeoutError,
@@ -42,6 +44,7 @@ from panel_material_ui import (
 )
 from panel_material_ui.chat import ChatMessage
 
+from .. import __version__
 from ..config import SOURCE_TABLE_SEPARATOR, config
 from ..pipeline import Pipeline
 from ..serializers import Serializer
@@ -56,7 +59,7 @@ from ..views import VegaLiteView, View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
-from .config import QueryError, RetriesExceededError
+from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .data import input_kinds, read
 from .editors import LumenEditor
@@ -111,14 +114,23 @@ def _default_agents(source: Source) -> list:
 
 
 # Set through configure, and used by every question that does not pass its own
-_settings: dict[str, Any] = {"agents": None, "llm": None}
+_settings: dict[str, Any] = {
+    "agents": None, "llm": None,
+    "cache": os.environ.get("LUMEN_AI_CACHE", "").lower() in ("1", "true", "yes"),
+}
+
+# Finished answers by question, data, model and prompt version, kept for
+# configure(cache=True). A cached Answer holds its source, so its id stays
+# unique for as long as the entry lives.
+_answer_cache: OrderedDict[str, Answer] = OrderedDict()
+_ANSWER_CACHE_SIZE = 128
 
 _UNSET: Any = object()
 
 
 def configure(
     *, llm: Llm | None = None, agents: list | None = None, max_rows: int | None = _UNSET,
-    share: str | None = None, mask_pii: bool | None = None,
+    share: str | None = None, mask_pii: bool | None = None, cache: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
@@ -135,17 +147,50 @@ def configure(
     mask_pii withholds the values of columns that look like personal
     data. Both apply to the chat UI too; see lumen.ai.sharing.
 
+    cache keeps answers in memory, so asking the same question of the same
+    data with the same model again returns the answer without LLM calls.
+    LUMEN_AI_CACHE=1 turns it on too; clear_cache() empties it.
+
     Returns the settings now in effect.
     """
     if llm is not None:
         _settings["llm"] = llm
     if agents is not None:
         _settings["agents"] = agents
+    if cache is not None:
+        _settings["cache"] = cache
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
         SQLAgent.max_rows = max_rows
     sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
     return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
+
+
+def clear_cache() -> None:
+    """Forget the answers configure(cache=True) kept."""
+    _answer_cache.clear()
+
+
+@cache
+def _prompt_version() -> str:
+    """Lumen's version and a hash of its prompt templates, read once per process."""
+    sha = hashlib.sha256(__version__.encode())
+    for path in sorted(PROMPTS_DIR.rglob("*.jinja2")):
+        sha.update(path.read_bytes())
+    return sha.hexdigest()
+
+
+def _cache_key(source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None) -> str:
+    """What decides an answer: the question, the data, the model, the agents and the prompts."""
+    parts = (
+        " ".join(question.lower().split()), str(id(source)), source._get_source_hash(),
+        # Columns, types, row counts and descriptions, so a schema change or describe() misses
+        json.dumps(source.get_metadata(None), sort_keys=True, default=str),
+        type(llm).__name__, json.dumps(llm.model_kwargs, sort_keys=True, default=str),
+        ",".join(type(agent).__name__ for agent in agents), sharing.share, str(sharing.mask_pii),
+        str(sorted(visible_slugs or [])), _prompt_version(),
+    )
+    return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
 
 def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
@@ -485,8 +530,19 @@ async def _aask_messages(
 ) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
+    # A retry or a preview is asked for a fresh answer, so neither is cached
+    key = None
+    if _settings["cache"] and len(messages) == 1 and not confirm:
+        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs)
+        if (hit := _answer_cache.get(key)) is not None:
+            _answer_cache.move_to_end(key)
+            return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    if key is not None and answer.status == "success":
+        _answer_cache[key] = answer
+        while len(_answer_cache) > _ANSWER_CACHE_SIZE:
+            _answer_cache.popitem(last=False)
     return answer
 
 
@@ -599,6 +655,9 @@ class Answer(param.Parameterized):
         The row cap the data stopped at, when the result had more rows.
         lumen.ai.configure(max_rows=...) sets the cap.""")
 
+    cached = param.Boolean(default=False, doc="""
+        Whether the answer came from configure(cache=True), with no LLM calls.""")
+
     usage = param.ClassSelector(class_=UsageCollector, default=None, allow_None=True, doc="""
         The tokens and, when the provider prices them, the cost of the LLM
         calls this answer made, e.g. answer.usage.input_tokens.""")
@@ -682,6 +741,16 @@ class Answer(param.Parameterized):
     def run(self) -> Answer:
         """Run a planned answer and return it. See arun."""
         return _run(self.arun(), "Running the plan")
+
+    def _cached_copy(self) -> Answer:
+        """This answer again, for a cache hit, with its own card and no calls counted."""
+        copy = Answer(
+            **{key: value for key, value in self.param.values().items() if key != "name"},
+            agents=self._agents, context=self._context, data=self._data, editor=self._editor,
+            llm=self._llm, sql_failed=self._sql_failed,
+        )
+        copy.param.update(cached=True, usage=UsageCollector())
+        return copy
 
     def _take(self, other: Answer) -> None:
         """Become the answer this planned one ran to, card included."""
@@ -999,6 +1068,8 @@ class Answer(param.Parameterized):
     @property
     def _usage_note(self) -> str:
         """One line on what the answer cost, or nothing when no call was counted."""
+        if self.cached:
+            return "From the answer cache, no LLM calls"
         if self.usage is None or not self.usage.records:
             return ""
         note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"

@@ -5,7 +5,7 @@ from . import (
 )
 from .analysis import Analysis
 from .answer import (
-    Answer, Chat, aask, ask, chat, configure,
+    Answer, Chat, aask, ask, chat, clear_cache, configure,
 )
 from .coordinator import Coordinator, DependencyResolver, Planner
 from .decisions import (
@@ -20,7 +20,7 @@ __all__ = [
     "Analysis", "Answer", "Chat", "ChatUI", "Choice", "Coordinator",
     "DecisionModel", "DecisionResult", "DependencyResolver", "DuckDBVectorStore",
     "ExplorerUI", "Jev", "Noul", "NumpyVectorStore", "OpenRouterDecisionModel",
-    "Planner", "Score", "aask", "actor", "agents", "ask", "chat", "configure",
+    "Planner", "Score", "aask", "actor", "agents", "ask", "chat", "clear_cache", "configure",
     "embeddings", "llm",
 ]
 

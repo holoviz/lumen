@@ -31,7 +31,7 @@ from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     Answer, _default_agents, _default_llm, _env_llm, _planner, _planners,
-    _resolve, _run, _StatusLine, aask, ask, chat, configure,
+    _resolve, _run, _StatusLine, aask, ask, chat, clear_cache, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -309,10 +309,11 @@ async def test_chat_does_not_build_on_an_error_answer(frame_source):
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch):
     """No test sees another's configure() call, environment or cached LLM."""
-    monkeypatch.setattr(answer_module, "_settings", {"agents": None, "llm": None})
+    monkeypatch.setattr(answer_module, "_settings", {"agents": None, "llm": None, "cache": False})
     monkeypatch.delenv("LUMEN_AI_PROVIDER", raising=False)
     monkeypatch.delenv("LUMEN_AI_MODEL", raising=False)
     _env_llm.cache_clear()
+    clear_cache()
     max_rows = SQLAgent.max_rows
     yield
     _env_llm.cache_clear()
@@ -347,7 +348,9 @@ async def test_configure_sets_the_agents(llm, frame_source):
     answer = await aask(frame_source, "How many rows?", llm=llm)
     assert answer._agents is None
     assert _planners.get(frame_source) is None  # explicit agents get their own Planner
-    assert configure() == {"agents": agents, "llm": None, "mask_pii": False, "max_rows": 1_000_000, "share": "sample"}
+    assert configure() == {
+        "agents": agents, "cache": False, "llm": None, "mask_pii": False, "max_rows": 1_000_000, "share": "sample",
+    }
 
 
 async def _ask_every_row(source):
@@ -1248,3 +1251,60 @@ async def test_a_planned_chat_question_joins_the_chat_when_run(llm, frame_source
     assert conversation.answers == []
     await planned.arun()
     assert conversation.answers == [planned] and conversation._messages[-1]["content"] == "Ten rows."
+
+
+def _cached_ask(llm, source, question="How many rows?"):
+    _chat_only(llm)
+    return aask(source, question, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+
+async def test_a_cached_question_makes_no_llm_calls(llm, frame_source):
+    configure(cache=True)
+    first = await _cached_ask(llm, frame_source)
+    calls = llm._index
+    again = await aask(frame_source, "  how many  ROWS? ", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert llm._index == calls and again is not first
+    assert again.cached and again.value == first.value == "Three rows."
+    assert again._usage_note == "From the answer cache, no LLM calls"
+    assert again.__panel__() is not first.__panel__()
+
+
+async def test_the_cache_is_off_unless_configured(llm, frame_source):
+    await _cached_ask(llm, frame_source)
+    second = await _cached_ask(llm, frame_source)
+    assert not second.cached and llm._index == 2
+
+
+@pytest.mark.parametrize("change", ["describe", "model", "prompts", "source"])
+async def test_a_change_that_could_alter_the_answer_misses_the_cache(llm, frame_source, change):
+    configure(cache=True)
+    await _cached_ask(llm, frame_source)
+    source = frame_source
+    if change == "describe":
+        frame_source.describe("tiny", "Sales by category")
+    elif change == "model":
+        llm.model_kwargs = {"default": {"model": "another"}}
+    elif change == "source":
+        source = read({"tiny": pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})})
+    with patch("lumen.ai.answer._prompt_version", return_value="edited" if change == "prompts" else answer_module._prompt_version()):
+        again = await _cached_ask(llm, source)
+    assert not again.cached
+
+
+async def test_failed_answers_are_not_cached(llm, frame_source):
+    configure(cache=True)
+    llm.set_responses([_plan(("ChatAgent", "Explain")), ""])
+    await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    again = await _cached_ask(llm, frame_source, "Total?")
+    assert not again.cached
+
+
+async def test_the_cache_keeps_only_the_latest_answers(llm, frame_source, monkeypatch):
+    monkeypatch.setattr(answer_module, "_ANSWER_CACHE_SIZE", 2)
+    configure(cache=True)
+    for question in ("One?", "Two?", "Three?"):
+        await _cached_ask(llm, frame_source, question)
+    assert len(answer_module._answer_cache) == 2
+    assert not (await _cached_ask(llm, frame_source, "One?")).cached
+    clear_cache()
+    assert not answer_module._answer_cache
