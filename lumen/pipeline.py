@@ -232,7 +232,9 @@ class Pipeline(Viewer, Component):
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()
 
-    def ask(self, question: str, *, llm: Llm | None = None, agents: list | None = None) -> Answer:
+    def ask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+    ) -> Answer:
         """
         Ask this pipeline's table a question with Lumen AI and return the Answer.
 
@@ -240,9 +242,11 @@ class Pipeline(Viewer, Component):
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import ask
-        return ask(self, question, llm=llm, agents=agents)
+        return ask(self, question, llm=llm, agents=agents, confirm=confirm)
 
-    async def aask(self, question: str, *, llm: Llm | None = None, agents: list | None = None) -> Answer:
+    async def aask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+    ) -> Answer:
         """
         Ask this pipeline's table a question with Lumen AI and await the Answer.
 
@@ -250,7 +254,7 @@ class Pipeline(Viewer, Component):
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import aask
-        return await aask(self, question, llm=llm, agents=agents)
+        return await aask(self, question, llm=llm, agents=agents, confirm=confirm)
 
     def __panel__(self) -> Row:
         controls = self.control_panel

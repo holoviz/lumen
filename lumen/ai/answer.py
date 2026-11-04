@@ -20,7 +20,7 @@ from concurrent.futures import (
     CancelledError as FutureCancelledError, ThreadPoolExecutor,
     TimeoutError as FutureTimeoutError,
 )
-from contextlib import ExitStack, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -212,33 +212,58 @@ def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | N
     return context
 
 
+@contextmanager
+def _counting(planner: Planner):
+    """Collect the usage of every LLM the planner and its agents use, each LLM once."""
+    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
+    usage = UsageCollector()
+    with ExitStack() as stack:
+        scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
+        try:
+            yield usage
+        finally:
+            for scope in scopes:
+                for record in scope.records:
+                    usage.add(record)
+
+
 async def _respond(
     planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any],
-    data: DataT | Pipeline, agents: list | None,
+    data: DataT | Pipeline, agents: list | None, confirm: bool = False,
 ) -> tuple[Answer, dict[str, Any]]:
     """
     Run one question through the Planner, returning the Answer and the
     context it left. A failed plan gives an Answer with status "error".
+    With confirm, stop after planning and return a "planned" Answer.
     """
     if log.getEffectiveLevel() > logging.DEBUG:
         quiet_retry_log()
-    # An agent given its own LLM is counted too, each LLM once
-    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
-    with ExitStack() as stack:
-        scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
+    with _counting(planner) as usage:
         await planner.sync(context)
         plan = await planner.respond(messages, context)
-        if plan is None:
-            raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-        if plan.unanswerable:
-            outputs, out_context = [], context
-        else:
-            outputs, out_context = await plan.execute()
+    if plan is None:
+        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+    if confirm and not plan.unanswerable:
+        answer = Answer(
+            agents=agents, data=data, llm=planner.llm, plan=plan, question=question,
+            source=context["source"], status="planned", usage=usage,
+        )
+        answer._pending = (planner, context)
+        return answer, context
+    return await _execute(planner, plan, question, context, data, agents, usage)
+
+
+async def _execute(
+    planner: Planner, plan: Plan, question: str, context: dict[str, Any], data: DataT | Pipeline,
+    agents: list | None, usage: UsageCollector,
+) -> tuple[Answer, dict[str, Any]]:
+    """Run a plan and build its Answer, adding the run's usage to the planning's."""
+    with _counting(planner) as run_usage:
+        outputs, out_context = ([], context) if plan.unanswerable else await plan.execute()
     answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm, data, agents)
     answer.usage = UsageCollector()
-    for scope in scopes:
-        for record in scope.records:
-            answer.usage.add(record)
+    for record in (*usage.records, *run_usage.records):
+        answer.usage.add(record)
     return answer, out_context
 
 
@@ -425,7 +450,8 @@ def _build_answer(
 
 
 async def aask(
-    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
+    confirm: bool = False,
 ) -> Answer:
     """
     Ask a question of some data and wait for the Answer.
@@ -442,27 +468,31 @@ async def aask(
     agents: list | None
         The agents the Planner may use. Defaults to SQL and Vega-Lite, plus
         hvPlot for gridded data or tables with geometry.
+    confirm: bool
+        Stop once the question is planned and return an Answer with status
+        "planned" that lists its steps; answer.run() runs them.
 
     Returns
     -------
     Answer
     """
-    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents)
+    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm)
 
 
 async def _aask_messages(
     data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
-    llm: Llm | None, agents: list | None,
+    llm: Llm | None, agents: list | None, confirm: bool = False,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
     context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, messages, context, data, agents)
+    answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
     return answer
 
 
 def ask(
-    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
+    confirm: bool = False,
 ) -> Answer:
     """
     Ask a question of some data and return the Answer.
@@ -470,7 +500,7 @@ def ask(
     Takes the same arguments as aask, and works whether or not an event
     loop is already running, e.g. in a Jupyter notebook.
     """
-    return _run(aask(data, question, llm=llm, agents=agents))
+    return _run(aask(data, question, llm=llm, agents=agents, confirm=confirm))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -503,8 +533,11 @@ class Chat(param.Parameterized):
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
-    async def aask(self, question: str) -> Answer:
-        """Ask the next question and wait for the Answer."""
+    async def aask(self, question: str, *, confirm: bool = False) -> Answer:
+        """
+        Ask the next question and wait for the Answer. With confirm, the
+        Answer is "planned" and joins the conversation once it is run.
+        """
         agents = _settings["agents"] if self._agents is None else self._agents
         planner = _planner(self._source, self._llm or _default_llm(), agents)
         if self._context is None:
@@ -512,18 +545,24 @@ class Chat(param.Parameterized):
         else:
             context = dict(self._context)
         messages = [*self._messages, {"role": "user", "content": question}]
-        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
+        if answer.status == "planned":
+            answer._chat = (self, messages)
+        else:
+            self._record(answer, messages, out_context)
+        return answer
+
+    def _record(self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any]) -> None:
         self.answers = [*self.answers, answer]
         if answer.status == "error":
             # The next question starts from the last answer that worked
-            return answer
+            return
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
-        return answer
 
-    def ask(self, question: str) -> Answer:
+    def ask(self, question: str, *, confirm: bool = False) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self.aask(question))
+        return _run(self.aask(question, confirm=confirm))
 
 
 class Answer(param.Parameterized):
@@ -586,6 +625,9 @@ class Answer(param.Parameterized):
         self._context = context or {}
         # Whether sql is the query that failed, rather than one that worked
         self._sql_failed = sql_failed
+        # For a planned answer: what running it needs, and the chat it joins
+        self._pending: tuple[Planner, dict[str, Any]] | None = None
+        self._chat: tuple[Chat, list[dict[str, str]]] | None = None
         self._crs_warned = False
 
     async def arefine(self, instruction: str) -> Answer:
@@ -618,6 +660,35 @@ class Answer(param.Parameterized):
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
         return _run(self.arefine(instruction), "Revising the chart")
+
+    async def arun(self) -> Answer:
+        """
+        Run the steps of an answer asked with confirm=True, exactly as
+        planned, and fill this answer in with the result. Returns it.
+        """
+        if self._pending is None:
+            raise ValueError("Only an answer asked with confirm=True can be run, and only once.")
+        planner, context = self._pending
+        self._pending = None
+        done, out_context = await _execute(
+            planner, self.plan, self.question, context, self._data, self._agents, self.usage,
+        )
+        self._take(done)
+        if self._chat is not None:
+            chat, messages = self._chat
+            chat._record(self, messages, out_context)
+        return self
+
+    def run(self) -> Answer:
+        """Run a planned answer and return it. See arun."""
+        return _run(self.arun(), "Running the plan")
+
+    def _take(self, other: Answer) -> None:
+        """Become the answer this planned one ran to, card included."""
+        self.param.update({key: value for key, value in other.param.values().items() if key != "name"})
+        self._editor, self._context, self._sql_failed = other._editor, other._context, other._sql_failed
+        if self._card is not None:
+            self._card[:] = self._card_parts()
 
     def with_spec(self, spec: dict | str) -> Answer:
         """
@@ -863,7 +934,14 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None and self.status in ("error", "unanswerable"):
+        if self._card is None:
+            self._card = Column(*self._card_parts())
+        return self._card
+
+    def _card_parts(self) -> list:
+        if self.status == "planned":
+            return self._planned_parts()
+        if self.status in ("error", "unanswerable"):
             # The data lacking what was asked is not a failure, so it is not red
             severity = "info" if self.status == "unanswerable" else "error"
             parts = [Alert(object=self.error, severity=severity, title=self.value, sizing_mode="stretch_width")]
@@ -872,10 +950,7 @@ class Answer(param.Parameterized):
                     Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
                     collapsed=not self._sql_failed, sizing_mode="stretch_width",
                 ))
-            if self._usage_note:
-                parts.append(self._usage_pane())
-            self._card = Column(*parts)
-        elif self._card is None:
+        else:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self._chart_part(self.view))
@@ -888,10 +963,38 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
-            if self._usage_note:
-                parts.append(self._usage_pane())
-            self._card = Column(*parts)
-        return self._card
+        if self._usage_note:
+            parts.append(self._usage_pane())
+        return parts
+
+    @property
+    def _plan_steps(self) -> str:
+        """The planned steps as a numbered Markdown list."""
+        return "\n".join(
+            f"{i}. **{type(task.actor).__name__}**: {task.instruction}" for i, task in enumerate(self.plan, 1)
+        )
+
+    def _planned_parts(self) -> list:
+        run = Button(label="Run", icon="play_arrow", variant="contained")
+
+        async def on_run(event):
+            run.loading = True
+            try:
+                await self.arun()
+            finally:
+                run.loading = False
+
+        run.on_click(on_run)
+        parts = [
+            Alert(
+                object=self._plan_steps, title=f"Planned: {self.plan.title}", severity="info",
+                sizing_mode="stretch_width",
+            ),
+            run,
+        ]
+        if self._usage_note:
+            parts.append(self._usage_pane())
+        return parts
 
     @property
     def _usage_note(self) -> str:
@@ -1046,6 +1149,8 @@ class Answer(param.Parameterized):
     @property
     def _text(self) -> str:
         """The written answer, followed by the error or the row cap note."""
+        if self.status == "planned":
+            return f"Planned: {self.plan.title}\n\n{self._plan_steps}\n\nRun it with answer.run()."
         return "\n\n".join(part for part in (self.value, self.error, self._cap_note) if part)
 
     @property
@@ -1071,7 +1176,8 @@ class Answer(param.Parameterized):
         if chart_spec is not None:
             sql += f"\n\n```{chart_spec[0]}\n{chart_spec[1]}\n```"
         bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
-        card = [_prose_to_html(self.value)] if self.value else []
+        prose = self._text if self.status == "planned" else self.value
+        card = [_prose_to_html(prose)] if prose else []
         if self.error:
             card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:

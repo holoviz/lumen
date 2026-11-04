@@ -511,7 +511,7 @@ async def test_source_and_pipeline_methods_delegate(frame_source):
         await frame_source.aask("q")
         await pipeline.aask("q", llm="x")
     assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
-    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None}
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None, "confirm": False}
     assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
 
 
@@ -1187,7 +1187,7 @@ async def test_column_descriptions_in_source_metadata_reach_the_sql_prompt():
 async def test_described_text_reaches_the_sql_prompt_even_after_a_first_question(frame_source):
     llm = _RecordingLLM()
     SQLModel = make_sql_model([(frame_source.name, "tiny")])
-    sql_step = lambda: SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"])  # noqa: E731
+    sql_step = lambda: SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"])
     llm.set_responses([
         _plan(("SQLAgent", "Sum")), sql_step(), "The total is 38.",
         _plan(("SQLAgent", "Sum")), sql_step(), "The total is 38.",
@@ -1202,3 +1202,49 @@ async def test_described_text_reaches_the_sql_prompt_even_after_a_first_question
     later = llm.systems[3:]
     assert any("Euro amount of each sale" in system for system in later)
     assert any("Sales by category" in system for system in later)
+
+
+async def test_confirm_returns_the_plan_without_running_it(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _costing(llm, _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")), 100, 0.001),
+        _costing(llm, SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"]), 200, 0.002),
+        _costing(llm, "The total value is 38.", 50, 0.0005),
+    ])
+
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()], confirm=True)
+
+    assert answer.status == "planned" and llm._index == 1  # planned, nothing ran
+    assert "1. **SQLAgent**: Sum value" in answer._plan_steps and "2. **ChatAgent**: Explain" in answer._plan_steps
+    card = answer.__panel__()
+    assert card[0].title == "Planned: Total value" and card[1].label == "Run"
+    assert "Run it with answer.run()" in answer._static_bundle(None)["text/markdown"]
+
+    assert await answer.arun() is answer
+    assert answer.status == "success" and answer.value == "The total value is 38."
+    assert "SUM(value)" in answer.sql and llm._index == 3  # planning was not paid twice
+    assert answer.usage.input_tokens == 350  # planning and running together
+    assert answer.__panel__() is card and card[0].object.startswith("The total value is 38.")
+    with pytest.raises(ValueError, match="only once"):
+        await answer.arun()
+
+
+async def test_an_unanswerable_question_is_not_held_for_confirmation(llm, frame_source):
+    llm.set_responses([_plan(unanswerable="No table has an elevation column.")])
+    answer = await aask(frame_source, "Elevation?", llm=llm, agents=[ChatAgent(), SQLAgent()], confirm=True)
+    assert answer.status == "unanswerable"
+
+
+def test_only_a_planned_answer_runs(chart_answer):
+    with pytest.raises(ValueError, match="confirm=True"):
+        chart_answer.run()
+
+
+async def test_a_planned_chat_question_joins_the_chat_when_run(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "Ten rows."])
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    planned = await conversation.aask("How many rows?", confirm=True)
+    assert conversation.answers == []
+    await planned.arun()
+    assert conversation.answers == [planned] and conversation._messages[-1]["content"] == "Ten rows."
