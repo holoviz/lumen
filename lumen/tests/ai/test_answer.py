@@ -40,6 +40,7 @@ from lumen.ai.data import read
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
+from lumen.ai.usage import Usage, record_usage
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -102,6 +103,59 @@ async def test_a_plan_that_neither_queries_nor_answers_is_an_error(llm, frame_so
     assert answer.status == "error"
     assert "without querying the data" in answer.error
     assert answer.sql is None and answer.view is None
+
+
+def _costing(llm, response, tokens, cost):
+    """A response that reports usage, as a provider does when it answers."""
+    def respond():
+        record_usage(llm, llm.usage, Usage("mock", tokens, tokens // 10, cost_usd=cost))
+        return response
+    return respond
+
+
+async def test_answer_usage_sums_the_calls_it_made(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _costing(llm, _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")), 1000, 0.001),
+        _costing(llm, SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]), 2000, 0.002),
+        _costing(llm, "The total value is 38.", 500, 0.0005),
+    ])
+    record_usage(llm, llm.usage, Usage("mock", 9999, 9999))  # an earlier question, not this one
+
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert len(answer.usage.records) == 3
+    assert (answer.usage.input_tokens, answer.usage.output_tokens) == (3500, 350)
+    assert answer.usage.cost_usd == pytest.approx(0.0035)
+    assert answer._usage_note == "3,500 in / 350 out tokens · $0.0035"
+    assert answer.__panel__()[-1].object == answer._usage_note
+    assert "3,500 in / 350 out tokens" in answer._static_bundle(None)["text/html"]
+
+
+async def test_answer_usage_counts_an_agent_with_its_own_llm(llm, frame_source):
+    chat_llm = MockLLM()
+    chat_llm.set_responses([_costing(chat_llm, "Ten rows.", 400, 0.004)])
+    llm.set_responses([_costing(llm, _plan(("ChatAgent", "Explain")), 100, 0.001)])
+
+    answer = await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(llm=chat_llm), SQLAgent()])
+
+    assert answer.usage.input_tokens == 500 and answer.usage.cost_usd == pytest.approx(0.005)
+
+
+async def test_answer_usage_leaves_out_the_cost_when_a_call_is_unpriced(llm, frame_source):
+    llm.set_responses([
+        _costing(llm, _plan(("ChatAgent", "Explain")), 100, 0.001),
+        _costing(llm, "Ten rows.", 50, None),
+    ])
+    answer = await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.usage.cost_usd is None
+    assert answer._usage_note == "150 in / 15 out tokens"
+
+
+def test_answer_without_counted_calls_has_no_usage_line(chart_answer):
+    assert chart_answer._usage_note == ""
+    assert all("tokens" not in str(getattr(part, "object", "")) for part in chart_answer.__panel__())
+    assert chart_answer.with_spec(chart_answer._chart_spec()[1]).usage.records == []
 
 
 async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):

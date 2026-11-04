@@ -19,7 +19,7 @@ from concurrent.futures import (
     CancelledError as FutureCancelledError, ThreadPoolExecutor,
     TimeoutError as FutureTimeoutError,
 )
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,7 +35,9 @@ from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
-from panel_material_ui import Alert, Button, Card, Column, Row
+from panel_material_ui import (
+    Alert, Button, Card, Column, Row,
+)
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -64,6 +66,7 @@ from .report import ActorTask
 from .sharing import sharing
 from .story import _prose_to_html
 from .ui import ExplorerUI
+from .usage import UsageCollector
 from .utils import format_error
 
 if TYPE_CHECKING:
@@ -217,12 +220,20 @@ async def _respond(
     """
     if log.getEffectiveLevel() > logging.DEBUG:
         quiet_retry_log()
-    await planner.sync(context)
-    plan = await planner.respond(messages, context)
-    if plan is None:
-        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-    outputs, out_context = await plan.execute()
+    # An agent given its own LLM is counted too, each LLM once
+    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
+    with ExitStack() as stack:
+        scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
+        await planner.sync(context)
+        plan = await planner.respond(messages, context)
+        if plan is None:
+            raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+        outputs, out_context = await plan.execute()
     answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm, data, agents)
+    answer.usage = UsageCollector()
+    for scope in scopes:
+        for record in scope.records:
+            answer.usage.add(record)
     return answer, out_context
 
 
@@ -538,6 +549,10 @@ class Answer(param.Parameterized):
         The row cap the data stopped at, when the result had more rows.
         lumen.ai.configure(max_rows=...) sets the cap.""")
 
+    usage = param.ClassSelector(class_=UsageCollector, default=None, allow_None=True, doc="""
+        The tokens and, when the provider prices them, the cost of the LLM
+        calls this answer made, e.g. answer.usage.input_tokens.""")
+
     value = param.String(default="", doc="""
         The written answer.""")
 
@@ -579,13 +594,14 @@ class Answer(param.Parameterized):
         editor = type(self._editor)(component=self.view)
         messages = [{"role": "user", "content": self.question}]
         # The Planner only sets the agent's LLM while a plan runs
-        with actor.param.update(llm=actor.llm or self._llm):
+        llm = actor.llm or self._llm
+        with actor.param.update(llm=llm), llm.capture_usage() as usage:
             editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
         return Answer(
             agents=self._agents, context=self._context, data=self._data, editor=editor,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
             source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
-            value=self.value, view=editor.component,
+            usage=usage, value=self.value, view=editor.component,
         )
 
     def refine(self, instruction: str) -> Answer:
@@ -617,7 +633,8 @@ class Answer(param.Parameterized):
             editor=type(self._editor)(component=view) if self._editor is not None else None,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
             source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
-            status=self.status, truncated_at=self.truncated_at, value=self.value, view=view,
+            status=self.status, truncated_at=self.truncated_at, usage=UsageCollector(),
+            value=self.value, view=view,
         )
 
     def to_cell(self) -> None:
@@ -806,6 +823,8 @@ class Answer(param.Parameterized):
                     Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
                     collapsed=not self._sql_failed, sizing_mode="stretch_width",
                 ))
+            if self._usage_note:
+                parts.append(self._usage_pane())
             self._card = Column(*parts)
         elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
@@ -820,8 +839,26 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
+            if self._usage_note:
+                parts.append(self._usage_pane())
             self._card = Column(*parts)
         return self._card
+
+    @property
+    def _usage_note(self) -> str:
+        """One line on what the answer cost, or nothing when no call was counted."""
+        if self.usage is None or not self.usage.records:
+            return ""
+        note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
+        if self.usage.cost_usd is not None:
+            note += f" · ${self.usage.cost_usd:.4f}"
+        return note
+
+    def _usage_pane(self) -> Markdown:
+        return Markdown(
+            self._usage_note, sizing_mode="stretch_width", margin=(0, 10),
+            styles={"font-size": "0.8em", "opacity": "0.7"},
+        )
 
     def _chart_part(self, view: View):
         try:
@@ -999,6 +1036,9 @@ class Answer(param.Parameterized):
             card.append(self._sql_html())
         if chart_spec is not None:
             card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
+        if self._usage_note:
+            card.append(f"<p><small>{html.escape(self._usage_note)}</small></p>")
+            bundle["text/markdown"] += f"\n\n*{self._usage_note}*"
         bundle["text/html"] = "\n".join(card)
         return bundle
 
