@@ -115,7 +115,7 @@ plan.status   # "planned"
 plan.run()    # the same answer object, now with its result
 ```
 
-**Cache answers.** With `configure(cache=True)`, asking the same question of the same data and model again returns the earlier answer straight away, marked "From the answer cache". The key covers the question, the data's columns, types, row counts and descriptions, the model, the agents, the sharing settings and Lumen's prompts. It does not see a table whose values change in place with the same shape, and each cached answer keeps its data in memory; up to 128 are kept.
+**Cache answers.** With `configure(cache=True)`, asking the same question of the same data and model again returns the earlier answer straight away, marked "From the answer cache". The key covers the question, the data's columns, types, row counts and descriptions, the model, the agents, the sharing settings and Lumen's prompts. Frames are copied when `lumen.read` reads them, so editing a DataFrame afterwards changes no answer; a file or database whose values change while its row count stays the same is not noticed, so call `lumen.ai.clear_cache()` after such a change. Up to 128 answers and 2,000,000 rows of their data are kept, oldest dropped first.
 
 **Ask from a cell.** The `%%lumen` magic takes the source and the question; `{name}` fills in a variable:
 

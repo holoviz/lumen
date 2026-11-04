@@ -1308,3 +1308,21 @@ async def test_the_cache_keeps_only_the_latest_answers(llm, frame_source, monkey
     assert not (await _cached_ask(llm, frame_source, "One?")).cached
     clear_cache()
     assert not answer_module._answer_cache
+
+
+async def test_editing_a_frame_after_reading_it_cannot_make_a_cached_answer_stale(llm):
+    """lumen.read copies frames into DuckDB, so a later edit changes no answer."""
+    frame = pd.DataFrame({"category": ["A", "B"], "value": [1.0, 2.0]})
+    source = read({"tiny": frame})
+    frame.loc[0, "value"] = 99.0
+    assert source.execute("SELECT SUM(value) AS total FROM tiny").iloc[0, 0] == 3.0
+
+async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch):
+    monkeypatch.setattr(answer_module, "_ANSWER_CACHE_ROWS", 4)
+    configure(cache=True)
+    for question in ("One?", "Two?", "Three?"):
+        answer = await _cached_ask(llm, frame_source, question)
+        answer.pipeline = Pipeline(source=frame_source, table="tiny")  # three rows each
+        answer_module._answer_cache[next(reversed(answer_module._answer_cache))] = answer
+    assert len(answer_module._answer_cache) <= 2
+
