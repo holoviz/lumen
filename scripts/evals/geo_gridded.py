@@ -127,6 +127,17 @@ def names(expected: str) -> Callable[[pd.DataFrame, Answer], bool]:
     return lambda df, _: len(df) > 0 and expected in df.astype(str).to_numpy()[0].tolist()
 
 
+def first_month(expected: int) -> Callable[[pd.DataFrame, Answer], bool]:
+    """The first row names the expected month, as a number or its name."""
+    def check(df, _):
+        if not len(df):
+            return False
+        first = df.head(1)
+        return (expected in [int(v) for v in numbers(first) if float(v).is_integer()]
+                or pd.Timestamp(2022, expected, 1).strftime("%B") in first.astype(str).to_numpy()[0].tolist())
+    return check
+
+
 def declines(df: pd.DataFrame, answer: Answer) -> bool:
     """No data invented for a column that does not exist."""
     invented = any("elev" in str(col).lower() for col in df.columns) and bool(numbers(df))
@@ -204,6 +215,10 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
     box_means = [float(box.mean()) - 273.15, weighted_mean(box) - 273.15]
     hottest = a.where(a == a.max(), drop=True)
     weighted = "SUM({v} * COS(RADIANS(lat))) / SUM(COS(RADIANS(lat)))"
+    # The grid holds five days; weighted, the warmest is not the plain mean's warmest
+    daily = a.weighted(np.cos(np.deg2rad(a.lat))).mean(("lat", "lon")).resample(time="1D").mean()
+    warmest_day = str(daily.idxmax().dt.strftime("%Y-%m-%d").item())
+    day = "date_trunc('day', time)"
     cases = [
         Case("gridded", "box_mean_celsius", "air",
              "What is the mean air temperature in degrees Celsius over latitudes 30 to 40 and longitudes 250 to 260?",
@@ -217,6 +232,10 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
         Case("gridded", "hottest_point", "air", "At which latitude and longitude was the air temperature highest?",
              lambda df, _: len(df) <= 3 and all(any(close(v, float(hottest[c].item()), 1e-6) for v in numbers(df)) for c in ("lat", "lon")),
              "SELECT lat, lon FROM air ORDER BY air DESC LIMIT 1", "SELECT lat, lon FROM air ORDER BY air ASC LIMIT 1"),
+        Case("gridded", "warmest_day", "air", "Which day had the highest area-weighted mean air temperature?",
+             lambda df, _: len(df) > 0 and any(str(v).startswith(warmest_day) for v in df.iloc[0]),
+             f"SELECT {day} AS day, {weighted.format(v='air')} AS w FROM air GROUP BY 1 ORDER BY w DESC LIMIT 1",
+             f"SELECT {day} AS day, AVG(air) AS w FROM air GROUP BY 1 ORDER BY w DESC LIMIT 1"),
     ]
     if era5 is None:
         return cases
@@ -226,12 +245,16 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
     warmest = int(monthly.idxmax())
     july_box = float(t.sel(time="2022-07").where((t.lat >= 30) & (t.lat <= 45) & (t.lon >= 0) & (t.lon <= 40)).max()) - 273.15
     month_mean = f"SELECT EXTRACT(MONTH FROM time) AS month, {weighted.format(v='t2m')} AS w FROM t2m GROUP BY 1"
+    # Longitudes run 0 to 360, so a box from -30 to 30 wraps across 0
+    meridian = t.where((t.lat >= 35) & (t.lat <= 60) & ((t.lon >= 330) | (t.lon <= 30)))
+    meridian_means = [float(meridian.mean()) - 273.15, weighted_mean(meridian) - 273.15]
+    point = t.sel(lat=52.5, lon=13.4, method="nearest")
+    point_mean = float(point.mean()) - 273.15
     cases += [
         Case("gridded", "warmest_month", "era5",
              "Which month of 2022 had the highest area-weighted global mean 2 m temperature?",
              # The first row, so a list ranked warmest first counts too
-             lambda df, _: len(df) > 0 and (warmest in [int(v) for v in numbers(df.head(1)) if float(v).is_integer()]
-                                           or pd.Timestamp(2022, warmest, 1).strftime("%B") in df.astype(str).to_numpy()[0].tolist()),
+             first_month(warmest),
              f"{month_mean} ORDER BY w DESC LIMIT 1", f"{month_mean} ORDER BY w ASC LIMIT 1"),
         Case("gridded", "july_box_max", "era5",
              "What was the highest 2 m temperature in degrees Celsius in July 2022 between latitudes 30 and 45 and longitudes 0 and 40?",
@@ -247,6 +270,16 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
              any_close(float(monthly.sel(month=7) - monthly.sel(month=1)), 0.03),
              f"SELECT MAX(w) FILTER (WHERE month = 7) - MAX(w) FILTER (WHERE month = 1) AS d FROM ({month_mean})",
              "SELECT AVG(t2m) FILTER (WHERE EXTRACT(MONTH FROM time) = 7) - AVG(t2m) FILTER (WHERE EXTRACT(MONTH FROM time) = 1) AS d FROM t2m"),
+        Case("gridded", "box_across_meridian", "era5",
+             "What was the mean 2 m temperature in degrees Celsius in 2022 between latitudes 35 and 60 and longitudes -30 and 30?",
+             lambda df, answer: any(any_close(m, 0.01)(df, answer) for m in meridian_means),
+             "SELECT AVG(t2m) - 273.15 AS c FROM t2m WHERE lat BETWEEN 35 AND 60 AND (lon >= 330 OR lon <= 30)",
+             "SELECT AVG(t2m) - 273.15 AS c FROM t2m WHERE lat BETWEEN 35 AND 60 AND lon BETWEEN -30 AND 30"),
+        Case("gridded", "nearest_grid_point", "era5",
+             "What was the mean 2 m temperature in degrees Celsius in 2022 at the grid point nearest to latitude 52.5, longitude 13.4?",
+             any_close(point_mean, 0.01),
+             f"SELECT AVG(t2m) - 273.15 AS c FROM t2m WHERE lat = {float(point.lat)} AND lon = {float(point.lon)}",
+             "SELECT AVG(t2m) - 273.15 AS c FROM t2m WHERE lat = 52.5 AND lon = 13.4"),
     ]
     return cases
 
