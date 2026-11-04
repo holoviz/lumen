@@ -22,6 +22,7 @@ from panel_material_ui import (
 )
 from pydantic import ValidationError
 
+from lumen.ai.actor import LLMUser, NullStep
 from lumen.ai.agents import (
     ChatAgent, SourceAgent, SQLAgent, ValidationAgent,
 )
@@ -30,7 +31,6 @@ from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.controls.ingest import (
     BaseSourceControls, FileSourceControls, UploadedFileRow,
 )
-from lumen.ai.actor import LLMUser, NullStep
 from lumen.ai.coordinator import (
     Coordinator, DependencyResolver, Plan, Planner,
 )
