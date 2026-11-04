@@ -28,7 +28,7 @@ from ..actor import Actor
 from ..agents import (
     Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
-from ..config import PROMPTS_DIR, MissingContextError
+from ..config import PROMPTS_DIR, ROADMAP_TAG, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
@@ -96,7 +96,7 @@ class Plan(Section):
         todos = "\n".join(todos_list)
 
         roadmap_system = (
-            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            f"{ROADMAP_TAG}\n{indent(todos, '  ')}\n</roadmap>\n"
             "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
         )
         if user_query is None:
