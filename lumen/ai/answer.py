@@ -48,7 +48,7 @@ from ..util import (
 from ..views import View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
-from .agents.hvplot import hvPlotAgent
+from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .data import read
@@ -79,22 +79,25 @@ def _in_kernel() -> bool:
         return False
 
 
-def _has_geometry(source: Source) -> bool:
+def _is_spatial(source: Source) -> bool:
+    """Whether a table has geometry, or longitude and latitude columns."""
     # Only SQL sources can be probed without loading data. DuckDB returns
     # GEOMETRY as a GeoDataFrame only when geopandas is installed, which is
     # also what hvPlot needs to draw it.
     if not isinstance(source, BaseSQLSource):
         return False
-    return any(
-        geometry_columns(source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) LIMIT 0"))
-        for table in source.get_tables()
-    )
+    for table in source.get_tables():
+        empty = source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) LIMIT 0")
+        columns = {str(c).lower() for c in empty.columns}
+        if geometry_columns(empty) or (columns & LON_NAMES and columns & LAT_NAMES):
+            return True
+    return False
 
 
 def _default_agents(source: Source) -> list:
     # Maps and grids go to hvPlot, which draws them on basemap tiles and
     # rasterizes large grids; Vega-Lite can do neither.
-    if isinstance(source, XArraySQLSource) or _has_geometry(source):
+    if isinstance(source, XArraySQLSource) or _is_spatial(source):
         return [ChatAgent(), SQLAgent(), hvPlotAgent()]
     return [ChatAgent(), SQLAgent(), VegaLiteAgent()]
 

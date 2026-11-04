@@ -328,6 +328,11 @@ def test_default_agents_use_hvplot_for_geometry():
     assert [type(a).__name__ for a in _default_agents(read({"shapes": gdf}))] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
 
 
+def test_default_agents_use_hvplot_for_lon_lat_columns():
+    source = read({"quakes": pd.DataFrame({"Lat": [1.0], "lon": [2.0], "mag": [4.5]})})
+    assert [type(a).__name__ for a in _default_agents(source)] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
+
+
 def test_default_agents_use_hvplot_when_a_table_has_geometry(frame_source):
     with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
         assert [type(a).__name__ for a in _default_agents(frame_source)] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
