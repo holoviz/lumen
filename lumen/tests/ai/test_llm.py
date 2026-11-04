@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import sys
 
 from pathlib import Path
@@ -293,6 +294,22 @@ def test_cli_output_decoders():
 
     claude = ClaudeCode()
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
+
+
+def test_claude_code_records_the_usage_it_reports():
+    claude = ClaudeCode()
+    output = json.dumps({
+        "result": "Ready", "is_error": False, "total_cost_usd": 0.0125,
+        "usage": {"input_tokens": 10, "cache_read_input_tokens": 90, "cache_creation_input_tokens": 5, "output_tokens": 20},
+        "modelUsage": {"claude-opus-5-5": {}},
+    })
+    with claude.capture_usage() as scope:
+        claude._decode_output(output)
+    (usage,) = scope.records
+    assert usage.model == "claude-opus-5-5"
+    # Cache reads and writes count as input, as for the Anthropic API
+    assert (usage.input_tokens, usage.cached_tokens, usage.output_tokens) == (105, 90, 20)
+    assert usage.cost_usd == 0.0125 and claude.usage.records == [usage]
 
 
 async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
