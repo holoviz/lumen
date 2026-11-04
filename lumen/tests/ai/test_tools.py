@@ -1,5 +1,6 @@
 import asyncio
 import threading
+
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,9 @@ from panel_material_ui import (
 
 from lumen.ai.coordinator import Coordinator
 from lumen.ai.schemas import DocumentChunk, Metaset, TableCatalogEntry
-from lumen.ai.tools import FunctionTool, MetadataLookup, ToolUser, define_tool
+from lumen.ai.tools import (
+    FunctionTool, MetadataLookup, ToolUser, define_tool,
+)
 from lumen.ai.tools.clarification_llm_tool import make_clarification_llm_tool
 from lumen.ai.tools.document_llm_tools import make_document_vector_llm_tools
 from lumen.ai.vector_store import NumpyVectorStore
