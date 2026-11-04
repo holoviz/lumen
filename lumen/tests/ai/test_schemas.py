@@ -8,7 +8,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.schemas import (
-    Column, DocumentChunk, Metaset, TableCatalogEntry,
+    Column, DocumentChunk, Metaset, TableCatalogEntry, TableMetadata,
 )
 from lumen.ai.tools.metaset_docs_llm_tools import (
     make_load_metaset_relevant_docs_tool,
@@ -692,3 +692,16 @@ class TestRealisticOutput:
         output = oni_metaset.full_context()
         assert "data_oni_csv (900 rows)\n  season VARCHAR" in output
         assert "aggregated_metrics_by_season (7 rows)\n  derived_from: data_oni_csv" in output
+
+
+def test_table_metadata_is_a_typed_dict():
+    """Table metadata supports optional description, columns, and source."""
+    metadata: TableMetadata = {
+        "description": "Order records",
+        "columns": {"order_id": {"data_type": "INTEGER"}},
+        "source_name": "sales",
+    }
+
+    assert metadata["description"] == "Order records"
+    assert metadata["columns"]["order_id"]["data_type"] == "INTEGER"
+    assert metadata["source_name"] == "sales"
