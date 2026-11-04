@@ -44,7 +44,7 @@ from lumen.pipeline import Pipeline
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
 from lumen.util import log as lumen_log
-from lumen.views.base import VegaLiteView
+from lumen.views.base import VegaLiteView, hvPlotView
 
 QUESTION = [{"role": "user", "content": "Total value?"}]
 
@@ -901,3 +901,11 @@ def test_answer_ds_has_sorted_coordinates():
     _, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon ORDER BY lat DESC, lon DESC")
     ds = answer.ds
     assert list(ds.lat.values) == [10.0, 20.0, 30.0] and list(ds.lon.values) == [0.0, 1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize("responsive", [True, False])
+def test_card_gives_a_responsive_plot_a_height(frame_source, responsive):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value", responsive=responsive)
+    card = Answer(question="?", status="success", pipeline=pipeline, view=view).__panel__()
+    assert (card[0].min_height == 400) is responsive

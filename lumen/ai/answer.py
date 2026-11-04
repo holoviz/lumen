@@ -45,7 +45,7 @@ from ..transforms.sql import SQLLimit
 from ..util import (
     as_pandas, geometry_columns, geometry_to_geojson, is_geodataframe, log,
 )
-from ..views import View
+from ..views import View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
@@ -766,7 +766,11 @@ class Answer(param.Parameterized):
             self._card = Column(*parts)
         elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
-            if self.view is not None:
+            if isinstance(self.view, hvPlotView) and self.view.kwargs.get("responsive"):
+                # A responsive plot stretches to its container, and a notebook
+                # output has no height to give it, so it would collapse
+                parts.append(Column(self.view, min_height=400, sizing_mode="stretch_width"))
+            elif self.view is not None:
                 parts.append(self.view)
             if self._cap_note:
                 parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
