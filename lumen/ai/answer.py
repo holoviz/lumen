@@ -772,7 +772,7 @@ class Answer(param.Parameterized):
             if isinstance(self.view, hvPlotView) and self.view.kwargs.get("responsive"):
                 # A responsive plot stretches to its container, and a notebook
                 # output has no height to give it, so it would collapse
-                parts.append(Column(self.view, min_height=400, sizing_mode="stretch_width"))
+                parts.append(Column(self.view, min_height=400, sizing_mode="stretch_both"))
             elif self.view is not None:
                 parts.append(self.view)
             if self._cap_note:
