@@ -666,6 +666,13 @@ def _serialize(view):
 
 
 @requires_geopandas
+def test_hvplot_view_colours_geometry_by_z():
+    view = hvPlotView(pipeline=_geo_pipeline(), z='pop')
+    plot = view.get_plot(view.get_data())
+    assert plot.opts.get().kwargs['color'].dimension.name == 'pop'
+
+
+@requires_geopandas
 def test_vegalite_view_geometry_as_geoshape_data():
     """VegaLiteView hands a GeoDataFrame to the Vega pane as a list of GeoJSON
     features, the one geometry form the pane passes through untouched."""

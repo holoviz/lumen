@@ -138,6 +138,11 @@ async def test_a_map_gets_a_fixed_height_not_a_responsive_frame():
     assert plain["responsive"] is True and "frame_height" not in plain
 
 
+async def test_a_map_keeps_the_column_it_is_coloured_by():
+    spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:4326")}, {"kind": "points", "z": "v"})
+    assert spec["z"] == "v"
+
+
 async def test_projected_geometry_gets_no_basemap():
     spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:3857")}, {"kind": "points", "c": "v"})
     assert "tiles" not in spec and "geo" not in spec

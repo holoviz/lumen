@@ -95,7 +95,7 @@ class hvPlotAgent(BaseViewAgent):
         return model[self.view_type.__name__]
 
     @staticmethod
-    def _drop_conflicting_axes(spec: dict[str, Any]) -> None:
+    def _drop_conflicting_axes(spec: dict[str, Any], geometry: bool = False) -> None:
         """Remove axis assignments that contradict each other.
 
         The prompt asks for x, y, by and groupby to name distinct columns, and
@@ -111,10 +111,10 @@ class hvPlotAgent(BaseViewAgent):
         else:
             spec.pop("groupby", None)
         # z belongs to the gridded kinds, plus heatmap, which takes the same
-        # column as C. Elsewhere hvPlot only warns that it is unused, which is
-        # a warning nobody reads.
+        # column as C, and to maps, which colour their shapes by it. Elsewhere
+        # hvPlot only warns that it is unused, which is a warning nobody reads.
         kind = spec.get("kind")
-        if kind not in GRIDDED_KINDS and kind != "heatmap":
+        if kind not in GRIDDED_KINDS and kind != "heatmap" and not geometry:
             spec.pop("z", None)
         # Reducing a value column needs one named, and the spec has no field for
         # it, so an aggregator asking for that has nothing to work on.
@@ -146,14 +146,14 @@ class hvPlotAgent(BaseViewAgent):
         # Asked for to make the model reason about the plot, not to be plotted;
         # hvPlotExplorer rejects any keyword none of its controls claims.
         spec.pop("chain_of_thought", None)
-        self._drop_conflicting_axes(spec)
+        data = await get_data(pipeline)
+        self._drop_conflicting_axes(spec, geometry=is_geodataframe(data))
         spec["type"] = "hvplot"
         self.view_type.validate(spec)
         spec.pop("type", None)
 
         # Add defaults
         spec["responsive"] = True
-        data = await get_data(pipeline)
         self._drop_unknown_columns(spec, set(data.columns))
         if _is_lon_lat(spec, data) and spec.get("kind") not in GRIDDED_KINDS:
             # Longitude and latitude read best on a basemap

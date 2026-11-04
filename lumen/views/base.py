@@ -1017,8 +1017,9 @@ class hvPlotBaseView(View):
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
     z = param.Selector(doc="""
-        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
-        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf),
+        or the column a map of geometry colours its shapes by. Internally mapped to
+        hvPlot's C= for kind='heatmap', c= for geometry and z= for other kinds.""")
 
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
@@ -1372,6 +1373,8 @@ class hvPlotView(hvPlotBaseView):
             # clear a non-geometry default so it isn't forced to scatter/points
             if kind in (None, 'scatter', 'points'):
                 kind = None
+            if 'z' in processed:
+                processed['c'] = processed.pop('z')
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
         elif kind in BAR_KINDS and x is not None:
