@@ -32,6 +32,7 @@ from .base import (
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
+    import pyarrow as pa
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
