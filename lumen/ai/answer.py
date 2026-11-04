@@ -831,7 +831,7 @@ class Answer(param.Parameterized):
         editor = CodeEditor(
             value=text, language=language, sizing_mode="stretch_width", visible=False,
             theme="github_dark" if pn.config.theme == "dark" else "github_light_default",
-            height=min(400, 22 * (text.count("\n") + 2)),
+            height=min(400, 16 * (text.count("\n") + 1) + 24),
         )
         error = Alert(severity="error", visible=False, sizing_mode="stretch_width")
         redraw = Button(label="Redraw", icon="refresh", variant="contained")
