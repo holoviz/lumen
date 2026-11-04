@@ -83,6 +83,16 @@ async def test_aask_answers_with_sql_and_text(llm, frame_source):
     assert answer.view is None and answer.spec is None
 
 
+async def test_a_plan_that_neither_queries_nor_answers_is_an_error(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain")), ""])
+
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert "without querying the data" in answer.error
+    assert answer.sql is None and answer.view is None
+
+
 async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):
     def fail():
         raise RuntimeError("LLM unavailable")
