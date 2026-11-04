@@ -1,11 +1,11 @@
+import hvplot.pandas
 import numpy as np
 import pandas as pd
 import panel as pn
-import hvplot.pandas
+
 import lumen.ai as lmai
 
 from lumen.ai.agents import ChatAgent
-
 
 # ==========================================================
 # 1. PANEL CONFIGURATION
