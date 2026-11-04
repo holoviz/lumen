@@ -196,6 +196,20 @@ def test_points_covering_a_lon_lat_grid_become_a_quadmesh():
     assert spec["kind"] == "points" and "z" not in spec
 
 
+def test_the_schema_offers_size_as_a_column():
+    model = hvPlotAgent()._get_model("main", {"x": {}, "y": {}})
+    options = model.model_json_schema()["properties"]["size"]["anyOf"]
+    assert {"type": "null"} in options
+
+
+async def test_a_size_naming_no_column_is_dropped(pipeline):
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipeline}, {"kind": "scatter", "x": "x", "y": "y", "size": "y"})
+    assert spec["size"] == "y"
+    spec = {"kind": "scatter", "x": "x", "y": "y", "size": "population"}
+    hvPlotAgent._drop_unknown_columns(spec, {"x", "y"})
+    assert "size" not in spec
+
+
 async def test_points_keep_the_column_they_are_coloured_by(pipeline):
     spec = await hvPlotAgent()._extract_spec({"pipeline": pipeline}, {"kind": "scatter", "x": "x", "y": "y", "z": "y"})
     assert spec["z"] == "y"

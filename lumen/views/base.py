@@ -24,7 +24,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
-from holoviews import Overlay  # type: ignore
+from holoviews import Overlay, dim  # type: ignore
 from holoviews.core import (  # type: ignore
     Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
 )
@@ -1237,7 +1237,13 @@ class hvPlotView(hvPlotBaseView):
         A selection expression caputirng the current selection applied
         on the plot.""")
 
+    size = param.Selector(doc="""
+        Column that sizes points, e.g. the population of each place.
+        Scaled to 4 to 24 pixels.""")
+
     view_type = 'hvplot'
+
+    _field_params = hvPlotBaseView._field_params + ['size']
 
     _ignore_kwargs = ['tables']
 
@@ -1333,6 +1339,7 @@ class hvPlotView(hvPlotBaseView):
         x = self.x if keep(self.x) else None
         y = self.y if keep(self.y) else None
         z = self.z if keep(self.z) else None
+        size = self.size if keep(self.size) else None
         by = [column for column in self.by or [] if keep(column)]
         groupby = [column for column in self.groupby or [] if keep(column)]
         processed = {}
@@ -1344,6 +1351,9 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+        if size is not None:
+            # Raw values, e.g. a population, would be sizes in pixels
+            processed['s'] = dim(size).norm() * 20 + 4
         if z is not None:
             # heatmap takes it as C, points are coloured by c
             processed[{'heatmap': 'C', 'points': 'c', 'scatter': 'c'}.get(self.kind, 'z')] = z

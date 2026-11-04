@@ -9,6 +9,7 @@ import panel as pn
 import pytest
 
 from bokeh.core.serialization import Serializer
+from holoviews import Dataset
 
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
@@ -664,6 +665,14 @@ def _geo_pipeline():
 
 def _serialize(view):
     return Serializer().encode(view.get_panel().get_root())
+
+
+def test_hvplot_view_sizes_points_by_a_column():
+    view = _points_view(size="lat")
+    size = view.get_plot(view.get_data()).opts.get().kwargs["size"]
+    assert size.dimension.name == "lat"
+    # Scaled, so a column of large numbers still gives markers a few pixels wide
+    assert size.apply(Dataset(view.get_data())).max() == 24
 
 
 def test_hvplot_view_colours_points_by_z():
