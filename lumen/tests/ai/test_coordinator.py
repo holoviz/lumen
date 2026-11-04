@@ -165,6 +165,21 @@ async def test_dependency_resolver_headless_raises_agent_errors(llm):
         await resolver.respond([{'role': 'user', 'content': 'Hello?'}], {})
 
 
+async def test_planner_unanswerable_plan_tells_the_chat_why(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+    reason = "No table has an elevation column."
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Clear", yes=False),
+        plan_model(chain_of_thought="No elevation", title="No data", steps=[], unanswerable=reason),
+    ])
+    planner = Planner(llm=llm)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'Elevation of Berlin?'}], {})
+
+    assert plan.unanswerable == reason and len(plan) == 0
+    assert any(str(message.object) == reason for message in planner.interface.objects)
+
+
 async def test_planner_empty_plan_with_validation(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 

@@ -122,6 +122,10 @@ class RawStep(BaseModel):
 class RawPlan(BaseModel):
     chain_of_thought: str = Field(description="Summarize the user's goal and categorize the question type in 1-2 sentences.")
     title: str = Field(description="A title that describes this plan, up to three words.")
+    unanswerable: str | None = Field(default=None, description="""
+        Only when the Current Data Context shows that no table has the
+        columns, rows or period the question needs, the reason in one
+        sentence, with no steps. Otherwise null.""")
     steps: list[RawStep] = Field(
         description="""
         The sequence of steps to resolve the user's query.
@@ -704,6 +708,13 @@ class Planner(Coordinator):
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
                     traceback.print_exception(e)
                     raise e
+                if raw_plan.unanswerable and not raw_plan.steps:
+                    # Nothing to resolve or validate: the answer is the reason
+                    plan = Plan(
+                        title=raw_plan.title, history=messages, context=context, coordinator=self,
+                        steps_layout=self.steps_layout, unanswerable=raw_plan.unanswerable,
+                    )
+                    break
                 # Inject clarifications into messages so downstream agents see the clarified intent
                 clarifications = context.get("clarifications")
                 if clarifications:
@@ -731,7 +742,9 @@ class Planner(Coordinator):
                     raise e
 
             # Store the todo message reference for later updates
-            if attempts > 0:
+            if plan.unanswerable:
+                istep.success_title = "The data cannot answer this question"
+            elif attempts > 0:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
             else:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created"

@@ -230,7 +230,10 @@ async def _respond(
         plan = await planner.respond(messages, context)
         if plan is None:
             raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-        outputs, out_context = await plan.execute()
+        if plan.unanswerable:
+            outputs, out_context = [], context
+        else:
+            outputs, out_context = await plan.execute()
     answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm, data, agents)
     answer.usage = UsageCollector()
     for scope in scopes:
@@ -361,6 +364,11 @@ def _build_answer(
     question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
     data: DataT | Pipeline, agents: list | None,
 ) -> Answer:
+    if plan.unanswerable:
+        return Answer(
+            agents=agents, data=data, error=plan.unanswerable, llm=llm, plan=plan, question=question,
+            source=source, status="unanswerable", value=f"Lumen cannot answer {question!r} from this data.",
+        )
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         exc = context.get("__exception__")
@@ -545,7 +553,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan.""")
+        "success", "error" when the question failed, or "unanswerable"
+        when the data does not hold what it asks for; error says why.""")
 
     truncated_at = param.Integer(default=None, allow_None=True, doc="""
         The row cap the data stopped at, when the result had more rows.
@@ -657,7 +666,9 @@ class Answer(param.Parameterized):
         """
         messages = [{"role": "user", "content": self.question}]
         if hint:
-            outcome = f"That failed: {self.error}" if self.status == "error" else self.value
+            outcome = {
+                "error": f"That failed: {self.error}", "unanswerable": f"{self.value} {self.error}",
+            }.get(self.status, self.value)
             if self.sql:
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
@@ -852,8 +863,10 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None and self.status == "error":
-            parts = [Alert(object=self.error, severity="error", title=self.value, sizing_mode="stretch_width")]
+        if self._card is None and self.status in ("error", "unanswerable"):
+            # The data lacking what was asked is not a failure, so it is not red
+            severity = "info" if self.status == "unanswerable" else "error"
+            parts = [Alert(object=self.error, severity=severity, title=self.value, sizing_mode="stretch_width")]
             if self.sql:
                 parts.append(Card(
                     Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",

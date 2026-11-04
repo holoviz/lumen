@@ -71,6 +71,10 @@ class Plan(Section):
 
     is_followup = param.Boolean(default=False)
 
+    unanswerable = param.String(default=None, allow_None=True, doc="""
+        Why the data cannot answer the question, when the planner found
+        that it cannot; the plan then has no steps.""")
+
     _tasks = param.List(item_type=ActorTask)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
@@ -658,6 +662,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+        if plan is not None and plan.unanswerable and not headless:
+            self.interface.stream(plan.unanswerable, user="Planner")
         if plan is not None and self.steps_layout is not None:
             self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)

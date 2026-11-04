@@ -15,7 +15,7 @@ Team lead responsible for creating step-by-step plan addressing user queries by 
 - Stay within scope of user's request (don't plot unless asked, etc.)
 - Often unnecessary to use same actor multiple times in single plan
 - NEVER use same actor consecutively - combine multiple tasks for same actor into single step
-- Never mention lack of data in plan - assume actors will handle data discovery
+- Never mention lack of data in plan - assume actors will handle data discovery. The one exception: when the Current Data Context shows that no table has what the question needs (a column, a period, a kind of value), set `unanswerable` to the reason and give no steps
 - Do not ignore actor's exclusions and conditions
 - When keys already present in memory, utilize them to construct plan efficiently—avoid assigning actor to produce memory keys already available
 - **Visualization continuity**: Prefer previously used visualization agent if conditions still apply to current request

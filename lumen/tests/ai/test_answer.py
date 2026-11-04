@@ -52,13 +52,14 @@ from lumen.views.base import VegaLiteView, hvPlotView
 QUESTION = [{"role": "user", "content": "Total value?"}]
 
 
-def _plan(*steps):
+def _plan(*steps, unanswerable=None):
     PlanModel = make_plan_model(["ChatAgent", "SQLAgent"], [])
     (StepModel,) = get_args(PlanModel.__annotations__["steps"])
     return PlanModel(
         chain_of_thought="Query then explain",
         title="Total value",
         steps=[StepModel(actor=actor, instruction=title, title=title) for actor, title in steps],
+        unanswerable=unanswerable,
     )
 
 
@@ -93,6 +94,43 @@ def test_a_chart_that_fails_to_draw_shows_its_error_in_the_card(chart_answer, no
     ):
         chart = chart_answer.__panel__()[1]
     assert chart.title == "The chart could not be drawn" and "bad encoding" in chart.object
+
+
+@pytest.mark.parametrize("question, reason", [
+    ("What is the elevation of each category?", "No table has an elevation column."),
+    ("What was the value in 2030?", "The table has no dates, so no year can be picked out."),
+    ("Who bought each item?", "No table records buyers."),
+])
+async def test_an_impossible_question_is_unanswerable_without_running(llm, frame_source, question, reason):
+    llm.set_responses([_plan(unanswerable=reason)])
+
+    answer = await aask(frame_source, question, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "unanswerable" and answer.error == reason
+    assert llm._index == 1  # only the plan was asked for; no agent ran
+    alert = answer.__panel__()[0]
+    assert alert.severity == "info" and reason in alert.object
+    assert reason in answer._static_bundle(None)["text/html"]
+
+
+async def test_a_reason_with_steps_still_runs_the_steps(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain"), unanswerable="Unsure"), "Ten rows."])
+    answer = await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.status == "success" and answer.value == "Ten rows."
+
+
+def test_a_plan_without_the_reason_parses_as_before():
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    assert PlanModel(chain_of_thought="c", title="t", steps=[]).unanswerable is None
+
+
+async def test_retrying_an_unanswerable_answer_tells_the_model_why(llm, frame_source):
+    llm.set_responses([_plan(unanswerable="No table has an elevation column.")])
+    answer = await aask(frame_source, "Elevation?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    with patch("lumen.ai.answer._aask_messages", new_callable=AsyncMock) as ask:
+        await answer.aretry(hint="Use the value column")
+    messages = ask.call_args.args[2]
+    assert "No table has an elevation column." in messages[1]["content"]
 
 
 async def test_a_plan_that_neither_queries_nor_answers_is_an_error(llm, frame_source):
