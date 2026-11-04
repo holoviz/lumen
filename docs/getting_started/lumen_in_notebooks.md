@@ -94,6 +94,42 @@ answer.error   # e.g. "No table records beak colour."
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
+## Workflow
+
+**Describe your data.** The LLM writes better SQL when it knows what tables and columns mean:
+
+``` py
+source.describe(
+    "penguins", "One row per penguin measured on the Palmer Archipelago, 2007 to 2009",
+    columns={"body_mass_g": "Body mass in grams", "sex": "male or female, missing for some birds"},
+)
+```
+
+Your text replaces any description the database has, and the next question sees it.
+
+**Check the plan first.** `confirm=True` stops once the question is planned. The card lists the steps with a Run button, and `run()` runs exactly those steps without planning again:
+
+``` py
+plan = source.ask("Which island has the heaviest penguins?", confirm=True)
+plan.status   # "planned"
+plan.run()    # the same answer object, now with its result
+```
+
+**Cache answers.** With `configure(cache=True)`, asking the same question of the same data and model again returns the earlier answer straight away, marked "From the answer cache". The key covers the question, the data's columns, types, row counts and descriptions, the model, the agents, the sharing settings and Lumen's prompts. It does not see a table whose values change in place with the same shape, and each cached answer keeps its data in memory; up to 128 are kept.
+
+**Ask from a cell.** The `%%lumen` magic takes the source and the question; `{name}` fills in a variable:
+
+``` py
+%load_ext lumen.ai.notebook
+```
+
+``` py
+%%lumen source --as heaviest
+Which species was heaviest in {year}?
+```
+
+`%lumen source How many rows?` asks in one line, and `--confirm` previews the plan.
+
 ## Maps and grids
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/holoviz/lumen/blob/main/examples/notebooks/maps_and_grids.ipynb)
@@ -157,6 +193,7 @@ configure(llm=Kilo(), max_rows=100_000, share="schema", mask_pii=True)
 | `max_rows` | | Rows an answer's data holds, as a LIMIT on its query (1,000,000 by default, `None` for all). The card notes when a result hits it |
 | `share` | `LUMEN_AI_SHARE` | What of the data prompts contain, see below |
 | `mask_pii` | `LUMEN_AI_MASK_PII` | Withhold the values of columns that look like personal data |
+| `cache` | `LUMEN_AI_CACHE` | Keep answers in memory, so the same question of the same data and model returns without LLM calls; `lumen.ai.clear_cache()` empties it |
 
 Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sales": "data/*.parquet"})` does not load the data into memory. Name tables with a dict, as there; a bare path names the table after the whole path.
 
