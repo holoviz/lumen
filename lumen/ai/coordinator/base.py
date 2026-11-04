@@ -265,7 +265,9 @@ class Plan(Section):
         if self.steps_layout is not None:
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
-            if self.status == "success":
+            if self.unanswerable:
+                steps_title.object = f"ℹ️ The data cannot answer {self.title!r}"
+            elif self.status == "success":
                 steps_title.object = f"✅ Successfully completed {self.title!r}"
             else:
                 steps_title.object = f"❌ Failed to execute {self.title!r}"
