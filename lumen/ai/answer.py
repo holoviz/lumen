@@ -365,6 +365,15 @@ def _build_answer(
     editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
     editor = editors[-1] if editors else None
     view = None if editor is None else editor.component
+    value = str(messages[-1].object) if messages else ""
+    if not value.strip() and view is None and context.get("sql") is None:
+        # A plan can finish without a step that queries or answers, e.g. one
+        # that only looks up the tables; that is no answer, so say so
+        return Answer(
+            agents=agents, data=data, llm=llm, plan=plan, question=question, source=source,
+            error="The plan finished without querying the data or writing an answer.",
+            status="error", value=f"Lumen could not answer {question!r}.",
+        )
     return Answer(
         agents=agents,
         context=context,
@@ -379,7 +388,7 @@ def _build_answer(
         sql=context.get("sql"),
         status=plan.status,
         truncated_at=_row_cap_hit(context.get("pipeline")),
-        value=str(messages[-1].object) if messages else "",
+        value=value,
         view=view,
     )
 
@@ -722,6 +731,16 @@ class Answer(param.Parameterized):
         return self._card
 
     def _chart_part(self, view: View):
+        try:
+            # Drawn here, because inside the card a failure only becomes a
+            # notification once the chat UI has turned those on, and a
+            # notebook shows none, so the chart would just be missing
+            view.get_panel()
+        except Exception as e:
+            return Alert(
+                object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
+                severity="error", sizing_mode="stretch_width",
+            )
         return view
 
     def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
