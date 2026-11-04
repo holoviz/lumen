@@ -622,7 +622,45 @@ def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     assert text.object.startswith("**B** is largest.")
     assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
     assert spec.title == "Spec" and spec.collapsed
-    assert json.loads(spec[0].object.removeprefix("```json\n").removesuffix("\n```"))["mark"] == "bar"
+    assert json.loads(spec[0].value)["mark"] == "bar"
+
+
+def test_with_spec_redraws_a_vega_lite_chart(chart_answer):
+    edited = json.loads(chart_answer._chart_spec()[1])
+    edited["mark"] = "line"
+    redrawn = chart_answer.with_spec(json.dumps(edited))
+    assert redrawn.spec["mark"] == "line" and redrawn.view is not chart_answer.view
+    assert chart_answer.spec["mark"] == "bar"
+    assert redrawn.sql == chart_answer.sql and redrawn.value == chart_answer.value
+
+
+def test_with_spec_redraws_an_hvplot_chart(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    redrawn = answer.with_spec(answer._chart_spec()[1].replace("kind: bar", "kind: scatter"))
+    assert redrawn.view.kind == "scatter" and redrawn.view.pipeline is pipeline
+
+
+def test_with_spec_rejects_what_is_not_a_spec(chart_answer):
+    with pytest.raises(ValueError, match="mapping"):
+        chart_answer.with_spec("- just\n- a list")
+    with pytest.raises(ValueError, match="no chart"):
+        Answer(question="?", status="success").with_spec({})
+
+
+def test_redraw_button_puts_the_edited_chart_in_the_card(chart_answer):
+    card = chart_answer.__panel__()
+    spec_card = card[-1]
+    editor, error, button = spec_card
+    old_chart = card[1]
+    editor.value = editor.value.replace('"bar"', '"point"')
+    button.clicks += 1
+    assert chart_answer.spec["mark"] == "point"
+    assert card[1] is not old_chart and not error.visible
+    editor.value = "{not: [valid"
+    button.clicks += 1
+    assert error.visible and chart_answer.spec["mark"] == "point"
 
 
 def test_answer_spec_leaves_out_the_data(chart_answer):

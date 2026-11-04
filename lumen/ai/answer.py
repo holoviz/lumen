@@ -34,7 +34,8 @@ from panel.config import panel_extension
 from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
-from panel_material_ui import Alert, Card, Column
+from panel.widgets import CodeEditor
+from panel_material_ui import Alert, Button, Card, Column
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -47,7 +48,7 @@ from ..transforms.sql import SQLLimit
 from ..util import (
     as_pandas, geometry_columns, geometry_to_geojson, is_geodataframe, log,
 )
-from ..views import View, hvPlotView
+from ..views import VegaLiteView, View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
@@ -582,6 +583,34 @@ class Answer(param.Parameterized):
         """Change the chart and return the new Answer. See arefine."""
         return _run(self.arefine(instruction), "Revising the chart")
 
+    def with_spec(self, spec: dict | str) -> Answer:
+        """
+        Redraw the chart from an edited spec, without the LLM or a new
+        query. Takes the spec as the card's Spec section shows it, as a
+        dict or as JSON or YAML text. Returns a new Answer.
+        """
+        if self.view is None:
+            raise ValueError("This answer has no chart to redraw.")
+        if isinstance(spec, str):
+            # JSON is YAML too, so one parser reads either form
+            spec = yaml.safe_load(spec)
+        if not isinstance(spec, dict):
+            raise ValueError("The spec must be a mapping of the chart's options, as JSON or YAML.")
+        pipeline = self.view.pipeline
+        if self.spec is not None:
+            view = VegaLiteView(pipeline=pipeline, spec=spec)
+        else:
+            view = type(self.view)(pipeline=pipeline, **{key: value for key, value in spec.items() if key != "type"})
+        # Drawn now, so a spec the view cannot draw fails here and not later in the card
+        view.get_panel()
+        return Answer(
+            agents=self._agents, context=self._context, data=self._data,
+            editor=type(self._editor)(component=view) if self._editor is not None else None,
+            llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
+            source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
+            status=self.status, truncated_at=self.truncated_at, value=self.value, view=view,
+        )
+
     def to_cell(self) -> None:
         """Put answer.code into a new cell below this one, in Jupyter."""
         code = self.code
@@ -771,12 +800,8 @@ class Answer(param.Parameterized):
             self._card = Column(*parts)
         elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
-            if isinstance(self.view, hvPlotView) and self.view.kwargs.get("responsive"):
-                # A responsive plot stretches to its container, and a notebook
-                # output has no height to give it, so it would collapse
-                parts.append(Column(self.view, min_height=400, sizing_mode="stretch_both"))
-            elif self.view is not None:
-                parts.append(self.view)
+            if self.view is not None:
+                parts.append(self._chart_part(self.view))
             if self._cap_note:
                 parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
             if self.sql:
@@ -785,13 +810,39 @@ class Answer(param.Parameterized):
                     sizing_mode="stretch_width",
                 ))
             if (chart_spec := self._chart_spec()) is not None:
-                language, text = chart_spec
-                parts.append(Card(
-                    Markdown(f"```{language}\n{text}\n```"), title="Spec", collapsed=True,
-                    sizing_mode="stretch_width",
-                ))
+                parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
             self._card = Column(*parts)
         return self._card
+
+    def _chart_part(self, view: View):
+        if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
+            # A responsive plot stretches to its container, and a notebook
+            # output has no height to give it, so it would collapse
+            return Column(view, min_height=400, sizing_mode="stretch_both")
+        return view
+
+    def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
+        """The chart's spec, editable, with a button that redraws the chart from it."""
+        editor = CodeEditor(
+            value=text, language=language, sizing_mode="stretch_width",
+            height=min(400, 22 * (text.count("\n") + 2)),
+        )
+        error = Alert(severity="error", visible=False, sizing_mode="stretch_width")
+
+        def redraw(event):
+            try:
+                redrawn = self.with_spec(editor.value)
+            except Exception as e:
+                error.param.update(object=f"{type(e).__name__}: {e}", visible=True)
+                return
+            error.visible = False
+            # The card shows this answer, so it takes the redrawn chart
+            self.param.update(spec=redrawn.spec, view=redrawn.view)
+            self._editor = redrawn._editor
+            self._card[chart_index] = self._chart_part(redrawn.view)
+
+        button = Button(label="Redraw", icon="refresh", variant="outlined", on_click=redraw)
+        return Card(editor, error, button, title="Spec", collapsed=True, sizing_mode="stretch_width")
 
     def _chart_spec(self) -> tuple[str, str] | None:
         """
