@@ -1161,3 +1161,25 @@ def test_answer_data_imports_no_library_the_input_did_not_use():
         "assert not {'polars', 'geopandas', 'xarray'} & set(sys.modules), {'polars', 'geopandas', 'xarray'} & set(sys.modules)"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+class _RecordingLLM(MockLLM):
+    """A MockLLM that keeps the system prompt of every call."""
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        self.systems = [*getattr(self, "systems", []), system]
+        return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+
+
+async def test_column_descriptions_in_source_metadata_reach_the_sql_prompt():
+    source = read({"tiny": pd.DataFrame({"value": [1.0]})})
+    source.metadata = {"tiny": {"columns": {"value": "Euro amount of each sale"}}}
+    llm = _RecordingLLM()
+    SQLModel = make_sql_model([(source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum")), SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"]),
+        "The total is 1.",
+    ])
+    await aask(source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert any("Euro amount of each sale" in system for system in llm.systems)
+

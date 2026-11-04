@@ -211,6 +211,9 @@ class MetadataLookup(VectorLookupTool):
         columns = []
         if self.include_columns and (vector_columns := vector_info.get("columns", {})):
             for col_name, col_info in vector_columns.items():
+                # The entries are shared with tables_metadata, which a later
+                # lookup reads the description from, so pop from a copy
+                col_info = dict(col_info) if isinstance(col_info, dict) else {}
                 col_desc = col_info.pop("description", "")
                 column = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                 columns.append(column)
