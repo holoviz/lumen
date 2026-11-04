@@ -579,7 +579,7 @@ def test_answer_static_bundle_without_a_chart():
 
 def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
     def load(*args):
-        panel_extension._loaded_extensions.append("vega")
+        panel_extension._loaded_extensions.extend(args)
 
     with (
         patch("lumen.ai.answer._in_kernel", return_value=True),
@@ -590,14 +590,14 @@ def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
     ):
         assert chart_answer._repr_mimebundle_() == ({"text/html": "card"}, {})
         chart_answer._repr_mimebundle_()
-    extension.assert_called_once_with("vega")
+    extension.assert_called_once_with("vega", "codeeditor")
 
 
 def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_answer):
     pytest.importorskip("IPython")
     with (
         patch("lumen.ai.answer._in_kernel", return_value=True),
-        patch.object(panel_extension, "_loaded_extensions", ["vega"]),
+        patch.object(panel_extension, "_loaded_extensions", ["vega", "codeeditor"]),
         patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
         patch("IPython.display.display") as display,
     ):
