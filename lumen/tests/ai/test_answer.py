@@ -161,7 +161,7 @@ async def test_a_later_step_failing_keeps_the_working_query(frame_source):
     _alert, sql = answer.__panel__()
     assert sql.title == "SQL" and sql.collapsed
     assert "<details><summary>SQL</summary>" in answer._static_bundle(None)["text/html"]
-    with pytest.raises(ValueError, match="answer.retry"):
+    with pytest.raises(ValueError, match=r"answer\.retry"):
         await answer.arefine("Use a line")
 
 
@@ -741,7 +741,7 @@ def test_to_cell_puts_the_code_in_the_next_cell(chart_answer):
 
 
 def test_to_cell_needs_a_kernel(chart_answer):
-    with pytest.raises(RuntimeError, match="answer.code holds the code"):
+    with pytest.raises(RuntimeError, match=r"answer\.code holds the code"):
         chart_answer.to_cell()
 
 
