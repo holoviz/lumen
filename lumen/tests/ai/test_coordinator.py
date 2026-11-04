@@ -179,6 +179,9 @@ async def test_planner_unanswerable_plan_tells_the_chat_why(llm):
     assert plan.unanswerable == reason and len(plan) == 0
     assert any(str(message.object) == reason for message in planner.interface.objects)
 
+    await plan.execute()
+    assert plan.steps_layout.header[0].object == "ℹ️ The data cannot answer 'No data'"
+
 
 async def test_planner_empty_plan_with_validation(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
