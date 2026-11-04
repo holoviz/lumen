@@ -811,9 +811,9 @@ class Answer(param.Parameterized):
             gdf = gdf.to_crs("EPSG:4326")
         fields = [c for c in gdf.columns if c != gdf.geometry.name]
         numeric = [c for c in fields if pd.api.types.is_numeric_dtype(gdf[c])]
-        encoding: dict[str, Any] = {"tooltip": [{"field": f"properties.{c}"} for c in fields]}
+        encoding: dict[str, Any] = {"tooltip": [{"field": f"properties.{c}", "title": c} for c in fields]}
         if numeric:
-            encoding["color"] = {"field": f"properties.{numeric[0]}", "type": "quantitative"}
+            encoding["color"] = {"field": f"properties.{numeric[0]}", "type": "quantitative", "title": numeric[0]}
         return {
             "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
             "data": {"values": geometry_to_geojson(gdf)["features"]},

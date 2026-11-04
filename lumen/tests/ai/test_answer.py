@@ -872,6 +872,7 @@ def test_a_map_answer_gets_a_static_geoshape(crs):
     bundle = answer._chart_bundle()
     spec = bundle["application/vnd.vegalite.v5+json"]
     assert spec["mark"]["type"] == "geoshape" and spec["encoding"]["color"]["field"] == "properties.v"
+    assert spec["encoding"]["color"]["title"] == "v"
     lon, lat = spec["data"]["values"][0]["geometry"]["coordinates"]
     # Back in longitude and latitude, whatever CRS the answer came in
     assert abs(lon - 13.4) < 1e-6 and abs(lat - 52.5) < 1e-6
