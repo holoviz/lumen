@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import sys
 import time
 import warnings
 import weakref
@@ -28,6 +29,7 @@ import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import pandas as pd
 import panel as pn
 import param
+import sqlglot
 import yaml
 
 from panel.config import panel_extension
@@ -56,7 +58,7 @@ from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
-from .data import read
+from .data import input_kinds, read
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
@@ -696,6 +698,40 @@ class Answer(param.Parameterized):
         if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
             return None
         return self.pipeline.get_dataset()
+
+    @property
+    def data(self) -> Any:
+        """
+        The answer's data in the type it was asked with: polars or pyarrow
+        for polars or pyarrow input, the GeoDataFrame of gdf for GeoPandas
+        input and the Dataset of ds for xarray input, pandas otherwise.
+        When the query read tables of different types, pandas.
+        """
+        if self.pipeline is None:
+            return None
+        kinds = self._input_kinds()
+        if kinds == {"xarray"} and (ds := self.ds) is not None:
+            return ds
+        if kinds == {"geopandas"} and (gdf := self.gdf) is not None:
+            return gdf
+        df = as_pandas(self.pipeline.data)
+        # Input of that type means its library is already imported
+        if kinds == {"polars"}:
+            return sys.modules["polars"].from_pandas(df)
+        if kinds == {"pyarrow"}:
+            return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+        return df
+
+    def _input_kinds(self) -> set[str]:
+        """The libraries of the tables this answer's query read."""
+        kinds = input_kinds(self.source) if self.source is not None else {}
+        if None in kinds or not kinds:
+            return {kinds.get(None, "pandas")}
+        read = set(kinds)
+        if self.sql:
+            with suppress(sqlglot.errors.ParseError):
+                read &= {table.name for table in sqlglot.parse_one(self.sql, read="duckdb").find_all(sqlglot.exp.Table)}
+        return {kinds[table] for table in (read or kinds)}
 
     def to_file(self, path: str | Path) -> Path:
         """

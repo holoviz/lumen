@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from weakref import WeakKeyDictionary
 
 import duckdb
 import pandas as pd
@@ -30,6 +31,19 @@ if TYPE_CHECKING:
         str | Path | Source | Pipeline | pd.DataFrame | pl.DataFrame | pa.Table
         | xr.Dataset | xr.DataArray | duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation
     )
+
+
+# The library each table was read from, e.g. "polars", so an answer can give
+# its data back in the same type. Weak, so it never keeps a Source alive.
+_INPUT_KINDS: WeakKeyDictionary[Source, dict[str | None, str]] = WeakKeyDictionary()
+
+
+def input_kinds(source: Source) -> dict[str | None, str]:
+    """
+    The library each table of a source read with `read` came from, keyed
+    by table name, or by None when one object made the whole source.
+    """
+    return _INPUT_KINDS.get(source, {})
 
 
 def _is_frame(obj) -> bool:
@@ -77,6 +91,8 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
             f"The data resolved to {len(sources)} sources but read returns "
             "one. Call read once per source."
         )
+    items = data.items() if isinstance(data, dict) else [(None, data)]
+    _INPUT_KINDS[sources[0]] = {name: type(value).__module__.split(".")[0] for name, value in items}
     return sources[0]
 
 

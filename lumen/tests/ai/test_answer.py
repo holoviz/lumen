@@ -1063,3 +1063,63 @@ def test_card_gives_a_responsive_plot_a_height(frame_source, responsive):
     view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value", responsive=responsive)
     card = Answer(question="?", status="success", pipeline=pipeline, view=view).__panel__()
     assert (card[0].min_height == 400) is responsive
+
+
+def _answer_over(data, sql):
+    source = read(data)
+    pipeline = Pipeline(source=source.create_sql_expr_source({"result": sql}), table="result")
+    return Answer(question="?", status="success", source=source, sql=sql, pipeline=pipeline)
+
+
+def test_answer_data_is_pandas_for_pandas_input(frame_source):
+    answer = _answer_over({"t": pd.DataFrame({"a": [1, 2]})}, "SELECT a FROM t")
+    assert isinstance(answer.data, pd.DataFrame) and answer.data.a.tolist() == [1, 2]
+
+
+def test_answer_data_is_polars_for_polars_input():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a * 2 AS b FROM data")
+    assert isinstance(answer.data, pl.DataFrame) and answer.data["b"].to_list() == [2, 4]
+
+
+def test_answer_data_is_pyarrow_for_pyarrow_input():
+    pa = pytest.importorskip("pyarrow")
+    answer = _answer_over({"t": pa.table({"a": [1, 2]})}, "SELECT a FROM t")
+    assert isinstance(answer.data, pa.Table) and answer.data.column_names == ["a"]
+
+
+def test_answer_data_is_a_geodataframe_for_geopandas_input():
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    places = gpd.GeoDataFrame({"n": ["a"]}, geometry=[Point(13.4, 52.5)], crs="EPSG:4326")
+    answer = _answer_over({"places": places}, "SELECT n, geometry FROM places")
+    assert isinstance(answer.data, gpd.GeoDataFrame) and answer.data.crs.to_epsg() == 4326
+
+
+def test_answer_data_is_a_dataset_for_xarray_input():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+    grid = xr.Dataset({"t": (("lat", "lon"), np.arange(6.0).reshape(2, 3))}, coords={"lat": [0.0, 1.0], "lon": [0.0, 1.0, 2.0]})
+    answer = _answer_over({"t": grid}, "SELECT lat, lon, t FROM t")
+    assert isinstance(answer.data, xr.Dataset) and dict(answer.data.sizes) == {"lat": 2, "lon": 3}
+
+
+def test_answer_data_follows_the_tables_the_query_read():
+    pl = pytest.importorskip("polars")
+    data = {"fast": pl.DataFrame({"a": [1]}), "plain": pd.DataFrame({"b": [2]})}
+    assert isinstance(_answer_over(data, "SELECT a FROM fast").data, pl.DataFrame)
+    # Tables of two types read together come back as pandas
+    mixed = _answer_over(data, "SELECT a, b FROM fast CROSS JOIN plain")
+    assert type(mixed.data) is pd.DataFrame
+
+
+def test_answer_data_imports_no_library_the_input_did_not_use():
+    code = (
+        "import sys, pandas as pd, lumen; from lumen.ai.answer import Answer; from lumen.pipeline import Pipeline\n"
+        "src = lumen.read({'t': pd.DataFrame({'a': [1]})})\n"
+        "p = Pipeline(source=src.create_sql_expr_source({'r': 'SELECT a FROM t'}), table='r')\n"
+        "Answer(question='?', status='success', source=src, sql='SELECT a FROM t', pipeline=p).data\n"
+        "assert not {'polars', 'geopandas', 'xarray'} & set(sys.modules), {'polars', 'geopandas', 'xarray'} & set(sys.modules)"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
