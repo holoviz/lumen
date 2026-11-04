@@ -164,6 +164,8 @@ async def test_a_gridded_map_gets_coastlines_not_tiles():
         {"pipeline": pipe}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"}
     )
     assert "tiles" not in spec and spec["coastline"] is True
+    image = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "image", "x": "lon", "y": "lat", "z": "t"})
+    assert image["kind"] == "quadmesh"
 
 
 async def test_a_large_grid_is_rasterized(monkeypatch):

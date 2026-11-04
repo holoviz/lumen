@@ -165,6 +165,10 @@ class hvPlotAgent(BaseViewAgent):
             # polar rows; coastlines on longitude and latitude show it whole
             spec.pop("tiles", None)
             spec.setdefault("coastline", True)
+            # Projecting an image resamples it, which needs scipy or pykdtree;
+            # a quadmesh projects its cell corners and needs neither
+            if spec["kind"] == "image":
+                spec["kind"] = "quadmesh"
         if spec.get("geo"):
             # A map keeps the aspect of its data, which a responsive plot can
             # only meet by zooming far out or in to fill its container; a fixed
