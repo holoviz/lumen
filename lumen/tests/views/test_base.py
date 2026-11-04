@@ -677,6 +677,9 @@ def test_vegalite_view_geometry_as_geoshape_data():
     assert obj['data'] == {'name': 'geo'}
     assert len(obj['datasets']['geo']) == 2
     assert obj['datasets']['geo'][0]['properties']['pop'] == 1
+    # Clockwise, or Vega fills everything outside the polygon
+    ring = obj['datasets']['geo'][0]['geometry']['coordinates'][0]
+    assert sum((x2 - x1) * (y2 + y1) for (x1, y1), (x2, y2) in zip(ring, ring[1:])) > 0
     json.dumps(obj['datasets'])
     _serialize(view)
 

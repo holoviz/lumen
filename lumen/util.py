@@ -854,5 +854,12 @@ def geometry_to_geojson(df):
     geometry emit a FeatureCollection instead. ``default=str`` is required
     because to_json defers to json.dumps, which cannot encode the Timestamps
     and Decimals a SQL source yields.
+
+    Polygons are wound clockwise, as Vega's d3-geo expects: on its sphere a
+    counter-clockwise ring, the GeoJSON convention shapely follows, encloses
+    everything outside the shape, and the map fills solid.
     """
+    shapely = try_import("shapely", load=False)
+    geometry = df.geometry.name
+    df = df.assign(**{geometry: shapely.orient_polygons(df.geometry.array, exterior_cw=True)})
     return json.loads(df.to_json(default=str))
