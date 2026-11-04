@@ -685,7 +685,7 @@ class Answer(param.Parameterized):
             from lonboard import viz
             return viz(gdf)
         if importlib.util.find_spec("geoviews") is not None:
-            return gdf.hvplot(geo=True, tiles="CartoLight")
+            return gdf.hvplot(geo=True, tiles="OSM")
         return gdf.hvplot()
 
     def explore(self, **params) -> ExplorerUI:

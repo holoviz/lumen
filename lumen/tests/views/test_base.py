@@ -830,7 +830,7 @@ def _points_view(**params):
 
 def test_hvplot_view_draws_tiles_under_a_geo_plot():
     pytest.importorskip("geoviews")
-    plot = _points_view(geo=True, tiles="CartoLight").get_plot(_points_view().get_data())
+    plot = _points_view(geo=True, tiles="OSM").get_plot(_points_view().get_data())
     assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
     # geo reaches hvPlot, so the points are projected geoviews points, not plain ones
     points = [el for el in plot if type(el).__name__ == "Points"]
@@ -841,7 +841,7 @@ def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
     import importlib.util
     real = importlib.util.find_spec
     monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "geoviews" else real(name, *a))
-    view = _points_view(geo=True, tiles="CartoLight")
+    view = _points_view(geo=True, tiles="OSM")
     plot = view.get_plot(view.get_data())
     assert type(plot).__name__ == "Points"
     assert "needs geoviews" in caplog.text

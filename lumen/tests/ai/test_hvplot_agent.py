@@ -128,7 +128,7 @@ def _geo_pipeline(crs):
 
 async def test_lon_lat_geometry_gets_a_basemap():
     spec = await hvPlotAgent()._extract_spec({"pipeline": _geo_pipeline("EPSG:4326")}, {"kind": "points", "c": "v"})
-    assert spec["geo"] is True and spec["tiles"] == "CartoLight"
+    assert spec["geo"] is True and spec["tiles"] == "OSM"
 
 
 async def test_projected_geometry_gets_no_basemap():
@@ -140,7 +140,7 @@ async def test_lon_lat_columns_get_a_basemap_unless_turned_off():
     df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9]})
     pipe = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
     spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "points", "x": "lon", "y": "lat"})
-    assert spec["tiles"] == "CartoLight"
+    assert spec["tiles"] == "OSM"
     off = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "points", "x": "lon", "y": "lat", "geo": False})
     assert "tiles" not in off
 

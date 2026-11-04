@@ -159,7 +159,7 @@ class hvPlotAgent(BaseViewAgent):
             # Longitude and latitude read best on a basemap
             spec.setdefault("geo", True)
             if spec["geo"]:
-                spec.setdefault("tiles", "CartoLight")
+                spec.setdefault("tiles", "OSM")
         if spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
             spec["rasterize"] = True
         if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):

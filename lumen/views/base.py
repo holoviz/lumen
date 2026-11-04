@@ -1026,7 +1026,7 @@ class hvPlotBaseView(View):
 
     tiles = param.Parameter(default=None, doc="""
         Basemap tiles under a geographic plot (geo=True), e.g. True or
-        'CartoLight'. Needs geoviews; without it the plot has no basemap.""")
+        'OSM'. Needs geoviews; without it the plot has no basemap.""")
 
     _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
