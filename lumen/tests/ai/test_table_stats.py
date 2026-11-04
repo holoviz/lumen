@@ -304,6 +304,26 @@ class TestStore:
     async def test_schedule_without_loop_is_noop(self, duckdb_source):
         assert await asyncio.to_thread(TableStatsStore(cache_dir=None).schedule, duckdb_source, ["orders"]) == []
 
+    def test_a_loop_closed_before_the_task_finishes_raises_nothing(self, duckdb_source):
+        """A short-lived loop, e.g. one a script ran while building the UI, leaves
+        a started task behind that Python closes later, outside any loop."""
+        store = TableStatsStore(cache_dir=None)
+
+        async def start():
+            store.schedule(duckdb_source, ["orders"])
+            await asyncio.sleep(0)  # the task starts and waits for a slot
+
+        raised = []
+        loop = asyncio.new_event_loop()
+        with patch("sys.unraisablehook", lambda unraisable: raised.append(unraisable.exc_value)):
+            with patch.object(store, "_async_slot", return_value=asyncio.Semaphore(0)):
+                loop.run_until_complete(start())
+            loop.close()
+            store._tasks.clear()
+            # Collected once nothing holds the task, outside any loop
+            gc.collect()
+        assert not raised
+
 
 # ---------------------------------------------------------------
 # Rendering
