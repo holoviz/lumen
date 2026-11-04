@@ -8,7 +8,7 @@ values. A bar chart needs a discrete `x` with few values: never draw one against
 price or a measurement, and never against a column the query grouped by without bucketing it first. Pick the
 categorical column the user meant, or use a histogram to show how a continuous column is distributed. If column has `format: geometry`, set `kind` from its `geometry_type`: `polygons` for Polygon or
 MultiPolygon, `paths` for LineString or MultiLineString, otherwise `points`, and set `z` to the column the
-shapes are coloured by, e.g. a choropleth's value.
+shapes are coloured by, e.g. a choropleth's value. Points are coloured by `z` too.
 
 To color a dense scatter or point cloud by a category, set `by` to that column and `datashade=True`; this
 aggregates per pixel and blends the categories sharing one, instead of drawing points on top of each other.

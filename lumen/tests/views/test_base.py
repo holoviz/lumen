@@ -1,4 +1,5 @@
 import importlib.util
+import itertools
 import json
 
 from pathlib import Path
@@ -665,6 +666,12 @@ def _serialize(view):
     return Serializer().encode(view.get_panel().get_root())
 
 
+def test_hvplot_view_colours_points_by_z():
+    view = _points_view(z="lat")
+    plot = view.get_plot(view.get_data())
+    assert plot.opts.get().kwargs['color'] == 'lat'
+
+
 @requires_geopandas
 def test_hvplot_view_colours_geometry_by_z():
     view = hvPlotView(pipeline=_geo_pipeline(), z='pop')
@@ -686,7 +693,7 @@ def test_vegalite_view_geometry_as_geoshape_data():
     assert obj['datasets']['geo'][0]['properties']['pop'] == 1
     # Clockwise, or Vega fills everything outside the polygon
     ring = obj['datasets']['geo'][0]['geometry']['coordinates'][0]
-    assert sum((x2 - x1) * (y2 + y1) for (x1, y1), (x2, y2) in zip(ring, ring[1:])) > 0
+    assert sum((x2 - x1) * (y2 + y1) for (x1, y1), (x2, y2) in itertools.pairwise(ring)) > 0
     json.dumps(obj['datasets'])
     _serialize(view)
 

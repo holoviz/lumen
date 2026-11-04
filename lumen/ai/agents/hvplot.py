@@ -1,5 +1,7 @@
 from typing import Any
 
+import pandas as pd
+
 import param
 
 from pydantic import BaseModel
@@ -7,7 +9,7 @@ from pydantic.fields import FieldInfo
 
 from ...util import is_geodataframe
 from ...views import hvPlotView
-from ...views.base import GRIDDED_KINDS, VALUE_AGGREGATORS
+from ...views.base import BAR_KINDS, GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..translate import param_to_pydantic
@@ -111,10 +113,11 @@ class hvPlotAgent(BaseViewAgent):
         else:
             spec.pop("groupby", None)
         # z belongs to the gridded kinds, plus heatmap, which takes the same
-        # column as C, and to maps, which colour their shapes by it. Elsewhere
-        # hvPlot only warns that it is unused, which is a warning nobody reads.
+        # column as C, and to points and maps, which are coloured by it.
+        # Elsewhere hvPlot only warns that it is unused, which is a warning
+        # nobody reads.
         kind = spec.get("kind")
-        if kind not in GRIDDED_KINDS and kind != "heatmap" and not geometry:
+        if kind not in (*GRIDDED_KINDS, "heatmap", "points", "scatter") and not geometry:
             spec.pop("z", None)
         # Reducing a value column needs one named, and the spec has no field for
         # it, so an aggregator asking for that has nothing to work on.
@@ -140,6 +143,30 @@ class hvPlotAgent(BaseViewAgent):
             else:
                 spec.pop(field, None)
 
+    @staticmethod
+    def _complete_axes(spec: dict[str, Any], data: pd.DataFrame) -> None:
+        """Fill in what the model left out where the data settles it."""
+        x, y = spec.get("x"), spec.get("y")
+        # Without x a bar chart is drawn against the row index; with one text
+        # column there is only one thing x can mean
+        labels = [c for c in data.columns if not pd.api.types.is_numeric_dtype(data[c])]
+        if spec.get("kind") in BAR_KINDS and x is None and len(labels) == 1:
+            spec["x"] = labels[0]
+        # Longitude and latitude covering every pair once are a grid, which
+        # points draw as a cloud of dots with no value on them
+        if (
+            spec.get("kind") in ("points", "scatter") and _is_lon_lat(spec, data)
+            and not is_geodataframe(data) and len(data) > 1
+            and data[x].nunique() * data[y].nunique() == len(data)
+        ):
+            spec["kind"] = "quadmesh"
+        values = [
+            c for c in data.columns
+            if c not in (x, y) and pd.api.types.is_numeric_dtype(data[c])
+        ]
+        if spec.get("kind") in GRIDDED_KINDS and "z" not in spec and len(values) == 1:
+            spec["z"] = values[0]
+
     async def _extract_spec(self, context: TContext, spec: dict[str, Any]):
         pipeline = context["pipeline"]
         spec = {key: val for key, val in spec.items() if val is not None}
@@ -158,6 +185,7 @@ class hvPlotAgent(BaseViewAgent):
         # off a chart without them
         spec.setdefault("grid", True)
         self._drop_unknown_columns(spec, set(data.columns))
+        self._complete_axes(spec, data)
         if _is_lon_lat(spec, data):
             # Longitude and latitude read best on a basemap
             spec.setdefault("geo", True)

@@ -179,6 +179,28 @@ async def test_a_gridded_map_gets_coastlines_not_tiles():
     assert image["kind"] == "quadmesh"
 
 
+def test_a_bar_chart_without_x_takes_its_text_column():
+    spec = {"kind": "barh", "y": "density"}
+    hvPlotAgent._complete_axes(spec, pd.DataFrame({"region": ["a", "b"], "density": [1.0, 2.0]}))
+    assert spec["x"] == "region"
+
+
+def test_points_covering_a_lon_lat_grid_become_a_quadmesh():
+    grid = pd.DataFrame({"lon": [0.0, 1.0, 0.0, 1.0], "lat": [0.0, 0.0, 1.0, 1.0], "t": [1.0, 2.0, 3.0, 4.0]})
+    spec = {"kind": "points", "x": "lon", "y": "lat"}
+    hvPlotAgent._complete_axes(spec, grid)
+    assert spec["kind"] == "quadmesh" and spec["z"] == "t"
+    quakes = pd.DataFrame({"lon": [0.0, 1.0, 2.0], "lat": [0.0, 1.0, 2.0], "mag": [4.0, 5.0, 6.0]})
+    spec = {"kind": "points", "x": "lon", "y": "lat"}
+    hvPlotAgent._complete_axes(spec, quakes)
+    assert spec["kind"] == "points" and "z" not in spec
+
+
+async def test_points_keep_the_column_they_are_coloured_by(pipeline):
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipeline}, {"kind": "scatter", "x": "x", "y": "y", "z": "y"})
+    assert spec["z"] == "y"
+
+
 async def test_a_large_grid_is_rasterized(monkeypatch):
     import lumen.ai.agents.hvplot as hvplot_agent
     monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)

@@ -1018,8 +1018,9 @@ class hvPlotBaseView(View):
 
     z = param.Selector(doc="""
         Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf),
-        or the column a map of geometry colours its shapes by. Internally mapped to
-        hvPlot's C= for kind='heatmap', c= for geometry and z= for other kinds.""")
+        or the column points and map shapes are coloured by. Internally mapped to
+        hvPlot's C= for kind='heatmap', c= for points and geometry and z= for other
+        kinds.""")
 
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
@@ -1344,7 +1345,8 @@ class hvPlotView(hvPlotBaseView):
         if self.streaming:
             processed['stream'] = self._data_stream
         if z is not None:
-            processed['C' if self.kind == 'heatmap' else 'z'] = z
+            # heatmap takes it as C, points are coloured by c
+            processed[{'heatmap': 'C', 'points': 'c', 'scatter': 'c'}.get(self.kind, 'z')] = z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
         # needs has to be put back explicitly.
         if self.datashade:
