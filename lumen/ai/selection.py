@@ -49,6 +49,10 @@ def with_click(spec: dict) -> dict:
     if not fields or any(p.get("name") == CLICK for p in target.get("params", [])):
         return spec
     target = {**target, "params": [*target.get("params", []), {"name": CLICK, "select": {"type": "point", "fields": fields}}]}
+    if "opacity" not in encoding:
+        # The clicked mark stays solid and the others fade; with nothing
+        # clicked the selection is empty and every mark is solid
+        target["encoding"] = {**encoding, "opacity": {"condition": {"param": CLICK, "value": 1}, "value": 0.35}}
     return {**spec, "layer": [target, *spec["layer"][1:]]} if "layer" in spec else target
 
 

@@ -1766,6 +1766,9 @@ def test_a_vega_lite_chart_reports_clicks_on_its_dimension_fields():
         "color": {"field": "island", "type": "nominal"},
     }}
     assert _with_click(spec)["params"] == [{"name": CLICK, "select": {"type": "point", "fields": ["category", "island"]}}]
+    assert _with_click(spec)["encoding"]["opacity"] == {"condition": {"param": CLICK, "value": 1}, "value": 0.35}
+    faded = {**spec, "encoding": {**spec["encoding"], "opacity": {"value": 0.5}}}
+    assert _with_click(faded)["encoding"]["opacity"] == {"value": 0.5}
     layered = _with_click({"encoding": spec["encoding"], "layer": [{"mark": "bar"}, {"mark": "text"}]})
     assert layered["layer"][0]["params"][0]["select"]["fields"] == ["category", "island"]
     assert "params" not in layered["layer"][1]
