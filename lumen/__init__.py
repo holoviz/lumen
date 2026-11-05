@@ -23,12 +23,13 @@ __all__ = [
 ]
 
 
-def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
+def read(data: DataT | list[DataT] | dict[str, DataT], **options) -> Source:
     """
     Load data into a single Lumen Source.
 
-    See :func:`lumen.ai.data.read` for the data it accepts.
+    See :func:`lumen.ai.data.read` for the data it accepts and the
+    ``variables``, ``sel`` and ``bbox`` options for remote data.
     """
     # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
     from .ai.data import read
-    return read(data)
+    return read(data, **options)
