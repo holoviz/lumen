@@ -283,6 +283,7 @@ compared with about 90 seconds using Antigravity's own default. Run
 |----------|---------------|-------------|
 | **Kilo** | `kilo-auto/free` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **OpenRouter** | `openai/gpt-6-luna` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
+| **Cheaper Inference** | `gpt-5.4-mini` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, DeepSeek, and more through a single API key. |
 | **AWS Bedrock** | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Enterprise gateway providing access to models from Anthropic, Amazon, Qwen, DeepSeek, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
@@ -323,6 +324,25 @@ llm = lmai.llm.OpenRouter(
         "default": {"model": "openai/gpt-6-luna"},
         "sql": {"model": "deepseek/deepseek-v4-pro-0813"},
         "vega_lite": {"model": "qwen/qwen3.8-flash"},
+    }
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
+```
+
+### Cheaper Inference
+
+Cheaper Inference provides an OpenAI-compatible API for routing requests to models from multiple providers.
+
+``` py title="Cheaper Inference configuration"
+import lumen.ai as lmai
+
+llm = lmai.llm.CheaperInference(
+    model_kwargs={
+        "default": {"model": "gpt-5.4-mini"},
+        "sql": {"model": "claude-sonnet-5"},
+        "vega_lite": {"model": "deepseek-v4-flash"},
     }
 )
 
@@ -393,6 +413,7 @@ The default values for each provider are:
 | `AICatalyst` | `AI_CATALYST_API_KEY` |
 | `Groq` | `GROQ_API_KEY` |
 | `Kilo` | `KILO_API_KEY` |
+| `CheaperInference` | `CHEAPER_INFERENCE_API_KEY` |
 | `Ollama`, `LlamaCpp`, `MLX`, `AINavigator` | *(none required)* |
 
 ### Checking available models

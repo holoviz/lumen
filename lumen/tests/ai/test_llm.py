@@ -19,9 +19,9 @@ try:
     from lumen.ai.agents.vega_lite import VegaLiteAgent
     from lumen.ai.llm import (
         MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
-        ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM,
-        LlamaCpp, Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter,
-        WebLLM, is_image_rejection,
+        CheaperInference, ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo,
+        LiteLLM, LlamaCpp, Llm, LlmCli, Message, MistralAI, Ollama, OpenAI,
+        OpenRouter, WebLLM, is_image_rejection,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -802,8 +802,8 @@ def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
 
 
 @pytest.mark.parametrize("provider", [
-    OpenAI, OpenRouter, AzureOpenAI, MistralAI, Anthropic, AnthropicBedrock,
-    Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
+    OpenAI, OpenRouter, CheaperInference, AzureOpenAI, MistralAI, Anthropic,
+    AnthropicBedrock, Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
 ], ids=lambda cls: cls.__name__)
 def test_default_model_is_selectable(provider):
     """Opening the settings dialog rewrites model_kwargs to select_models[0]

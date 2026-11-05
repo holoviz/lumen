@@ -185,6 +185,7 @@ LLM_PROVIDERS = {
     'litellm': 'LiteLLM',
     'openrouter': 'OpenRouter',
     'kilo': 'Kilo',
+    'cheaper-inference': 'CheaperInference',
     'codex-cli': 'CodexCli',
     'claude-code': 'ClaudeCode',
     'copilot-cli': 'CopilotCli',
@@ -4504,3 +4505,64 @@ class Kilo(OpenAI):
             log_debug(f"Kilo's upstream rejected a structured request; switching to {Mode.MD_JSON.name}")
             self.mode = Mode.MD_JSON
             return await super().run_client(model_spec, messages, **kwargs)
+
+
+class CheaperInference(OpenAI):
+    """
+    An LLM implementation using the Cheaper Inference API.
+
+    Cheaper Inference provides an OpenAI-compatible endpoint that routes
+    requests to models from multiple providers. Set the
+    ``CHEAPER_INFERENCE_API_KEY`` environment variable or pass ``api_key``
+    directly. The provider is auto-detected when
+    ``CHEAPER_INFERENCE_API_KEY`` is present, or can be selected explicitly
+    with ``--provider cheaper-inference``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["cheaper-inference"]
+
+    display_name = param.String(
+        default="Cheaper Inference",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://api.cheaperinference.com/v1",
+        doc="The Cheaper Inference API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "gpt-5.4-mini"},
+    })
+
+    select_models = param.List(default=[
+        "gpt-5.4-mini",
+        "gpt-5.4",
+        "gpt-6-luna",
+        "claude-sonnet-5",
+        "claude-haiku-5.5",
+        "gemini-3.8-flash",
+        "deepseek-v4-flash",
+        "glm-5.3",
+    ], constant=True, doc="Available Cheaper Inference models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Cheaper Inference."""
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        response = requests.get(
+            f"{self.endpoint.rstrip('/')}/models",
+            headers=headers,
+            timeout=5,
+        )
+        if response.status_code != 200:
+            return set()
+
+        return {
+            model["id"]
+            for model in response.json().get("data", [])
+            if model.get("id")
+        }
