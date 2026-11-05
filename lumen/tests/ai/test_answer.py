@@ -2042,3 +2042,12 @@ def test_the_drawn_hvplot_chart_reports_clicks(frame_source, many_points, kind, 
     answer.__panel__().get_root()
     plots = [plot for plot, _ in view._panel._plots.values()]
     assert any(callback in [type(c).__name__ for c in plot.callbacks] for plot in plots)
+
+
+def test_a_map_with_a_time_slider_says_so_and_a_rasterized_grid_is_not_called_points():
+    times = pd.date_range("2020-01-01", periods=3, freq="D")
+    frame = pd.DataFrame([(t, x, y, 1.0) for t in times for x in (0.0, 1.0) for y in (0.0, 1.0)], columns=["time", "lon", "lat", "v"])
+    pipeline = Pipeline(source=read({"grid": frame}), table="grid")
+    view = hvPlotView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="v", groupby=["time"], rasterize=True)
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    assert answer._cap_note == "The chart has a slider over 3 time steps."

@@ -1787,10 +1787,17 @@ class Answer(param.Parameterized):
                 "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
             )
         rows = 0 if self.pipeline is None or self.view is None else len(self.pipeline.data)
-        if isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize")):
+        dense = isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize"))
+        if dense and self.view.kind in ("scatter", "points", "line"):
+            # A rasterized grid is cells drawn at screen resolution, not points
             shown = "blending the categories where they overlap" if self.view.by else "so each pixel shows how many fall there"
             notes.append(f"The chart draws {rows:,} points as a density image, {shown}.")
-        elif rows > LARGE_POINTS and _point_chart(self.view) is not None:
+        if isinstance(self.view, hvPlotView) and self.view.groupby and self.pipeline is not None:
+            # A static output shows no slider, so say there is one
+            steps = ", ".join(f"{self.pipeline.data[col].nunique()} {col} steps" for col in self.view.groupby if col in self.pipeline.data)
+            if steps:
+                notes.append(f"The chart has a slider over {steps}.")
+        if rows > LARGE_POINTS and _point_chart(self.view) is not None:
             notes.append(
                 f"The chart draws all {rows:,} points, which can be slow. "
                 "Install datashader to draw them as a density image instead."
