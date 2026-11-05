@@ -1057,6 +1057,7 @@ class SQLAgent(BaseLumenAgent):
         The frame is None only when every attempt failed.
         """
         timed_out = False
+        reviewed = False
         for i in range(max_retries):
             if attempt is not None:
                 # Kept current so a failure reports the query that last ran
@@ -1082,6 +1083,21 @@ class SQLAgent(BaseLumenAgent):
                     max_tool_rounds=REVISE_TOOL_ROUNDS,
                 )
                 continue
+            if not reviewed and i < max_retries - 1:
+                # Once, as in submit_sql: the revision is accepted as it comes back
+                reviewed = True
+                read = None if source.dialect == "any" else source.dialect
+                read_tables = {
+                    table.name for table in sqlglot.parse_one(sql_query, read=read).find_all(sqlglot.exp.Table)
+                } & set(source.get_tables())
+                if findings := review_sql(sql_query, self._table_facts(source, sorted(read_tables)), read):
+                    step.stream("\n\n⚠️ " + " ".join(findings))
+                    sql_query = await self.revise(
+                        "Check this query before it runs: " + " ".join(findings), messages, context,
+                        spec=sql_query, language=f"sql.{source.dialect}", discovery_context=discovery_context,
+                        tools=tools, max_tool_rounds=REVISE_TOOL_ROUNDS,
+                    )
+                    continue
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 validated = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
