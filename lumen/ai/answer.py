@@ -30,7 +30,6 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import holoviews as hv
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
 import pandas as pd
