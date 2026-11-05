@@ -147,7 +147,7 @@ Context: No local weather table; `SourceLookup`, `SourceAgent`, and `ChatAgent` 
 ## Tools
 {% for tool in tools %}
 {%- set missing_reqs = [] %}
-{%- for req in tool.input_schema.__required_keys__ %}
+{%- for req in tool.input_schema.__required_keys__ | sort %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
@@ -167,7 +167,7 @@ Conditions for use:
 ## Agents
 {% for agent in agents %}
 {%- set missing_reqs = [] %}
-{%- for req in agent.input_schema.__required_keys__ %}
+{%- for req in agent.input_schema.__required_keys__ | sort %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
