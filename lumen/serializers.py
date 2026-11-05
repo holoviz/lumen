@@ -34,7 +34,8 @@ class CSVSerializer(Serializer):
         index = list(data.index.names)
         if len(index) == 1 and index[0] is None:
             index = False
-        data.to_csv(csv, index=bool(index))
+        # The same text on every platform; os.linesep would give \r\n on Windows
+        data.to_csv(csv, index=bool(index), lineterminator="\n")
         csv.seek(0)
         return {
             'data': csv.read(),
