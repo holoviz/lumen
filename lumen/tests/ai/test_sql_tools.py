@@ -517,3 +517,34 @@ async def test_sql_prompt_is_unchanged_for_plain_tables(sql_context, test_messag
     plain = await _main_prompt(sql_context, test_messages, llm)
     off = await _main_prompt(sql_context, test_messages, llm, has_geometry=False, gridded=False)
     assert plain == off
+
+
+async def test_submit_sql_reviews_a_degree_buffer_once():
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+
+    from lumen.ai.data import read
+    source = read({"places": gpd.GeoDataFrame({"n": ["a"]}, geometry=[Point(13.4, 52.5)], crs="EPSG:4326")})
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
+    checked = {}
+    submit = agent._submit_sql_tool({(source.name, "places"): source}, checked)
+    query = "SELECT ST_Buffer(geometry, 500) AS area FROM places"
+    output = make_sql_model([(source.name, "places")])(query=query, table_slug="x", tables=["places"])
+
+    with pytest.raises(ValueError, match=r"(?s)Check this query before it runs: ST_Buffer\(geometry, \.\.\., 500\) works in degrees.*submit it again unchanged"):
+        await submit.validate(output)
+    # Resubmitted unchanged, it runs: the model may mean degrees
+    await submit.validate(output)
+    assert checked["sql"].startswith("SELECT")
+
+
+async def test_submit_sql_reviews_a_kelvin_column_compared_with_celsius():
+    xr = pytest.importorskip("xarray")
+    from lumen.sources.xarray_sql import XArraySQLSource
+    ds = xr.Dataset({"air": (["lat"], [280.0, 300.0], {"units": "K"})}, coords={"lat": [10.0, 20.0]})
+    source = XArraySQLSource(_dataset=ds)
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
+    submit = agent._submit_sql_tool({(source.name, "air"): source}, {})
+    output = make_sql_model([(source.name, "air")])(query="SELECT lat FROM air WHERE air > 25", table_slug="x", tables=["air"])
+    with pytest.raises(ValueError, match=r"air is in k, so 25 looks like degrees Celsius \(298.15 K\)"):
+        await submit.validate(output)
