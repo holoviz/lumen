@@ -29,7 +29,7 @@ answer
 
 ## The answer
 
-An `Answer` renders as a card with the text, the chart, and collapsed SQL and Spec sections: the query, and the Vega-Lite or hvPlot spec the chart was drawn from. It also holds:
+An `Answer` renders as a card with the text, the chart, and collapsed SQL, Spec and Steps sections: the query, the Vega-Lite or hvPlot spec the chart was drawn from, and each step with how long it took. It also holds:
 
 | Field | What it is |
 |-------|------------|
@@ -37,10 +37,14 @@ An `Answer` renders as a card with the text, the chart, and collapsed SQL and Sp
 | `sql` | The query that produced the data |
 | `data` | The result in the type you asked with: polars for polars input, pyarrow for pyarrow, a GeoDataFrame or xarray Dataset for GeoPandas or xarray, pandas otherwise |
 | `pipeline` | A Pipeline over the result, e.g. `answer.pipeline.data` |
+| `chart` | The chart to keep working with: an Altair chart for Vega-Lite (needs `altair`), the HoloViews object for hvPlot, so `answer.chart + other` and `.opts(...)` work |
+| `to_vega()` | The chart as a self-contained Vega-Lite spec with its data |
 | `view` / `spec` | The chart as a Lumen View and its Vega-Lite spec |
 | `plan` / `status` | The steps the planner ran and how they ended: `"success"`, `"error"` or `"unanswerable"` |
 | `error` | Why the question failed or cannot be answered |
 | `usage` | Tokens and, when the provider prices them, the cost of the answer's LLM calls, e.g. `answer.usage.input_tokens`; the card ends with a one-line summary |
+| `result` | The answer in the type asked for with `returns=`, see below |
+| `why` / `trace` | The planner's reasoning, and each step as it ran: actor, instruction, what it needed and provided, seconds, LLM calls and its SQL. `answer.plan.graph()` and `answer.plan.to_mermaid()` give how the steps feed each other |
 
 While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop it; Lumen cancels the question and its LLM calls.
 
@@ -87,8 +91,28 @@ answer.error   # e.g. "No table records beak colour."
 
 `answer.data` follows the input only for data read with `lumen.read`; for a Source built by hand it is pandas. Claude Code reports the cost of its calls at API prices, which is not what a subscription is billed.
 
+## Typed answers
+
+Ask with `returns=` to get the answer as a value rather than prose:
+
+``` py
+from pydantic import BaseModel
+
+count = source.ask("How many penguins were measured in 2008?", returns=int)
+count.result  # 114
+
+class Heaviest(BaseModel):
+    species: str
+    body_mass_g: float
+
+source.ask("Which species is heaviest on average?", returns=Heaviest).result
+```
+
+A result already in the shape of the type is used as it is, with no extra LLM call: one cell for a number or a string, one column for a list, one row for a model. Otherwise one more LLM call reads the type from the written answer, and from the rows when `share="sample"`. It can round: asking for `int` when the data says 38.5 gives 38 or 39. An answer that cannot be read as the type has status `"error"`.
+
 ## Rerun, export, explore
 
+- `answer.compile(params=["year"])` turns the query into a function with no LLM: `count = answer.compile(["year"])`, then `count(year=2009)` runs the same query for 2009. Each parameter is a column the query compares with values: one value, a `(low, high)` pair for `BETWEEN`, or a list for `IN`. Values are bound as query parameters, never written into the SQL. It works on DuckDB sources, which `lumen.read` gives.
 - `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results.
 - `answer.to_cell()` puts that code into a new cell below, in Jupyter.
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
