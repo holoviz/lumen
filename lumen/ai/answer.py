@@ -1128,13 +1128,17 @@ class Answer(param.Parameterized):
             view = VegaLiteView(pipeline=pipeline, spec=spec)
         else:
             view = type(self.view)(pipeline=pipeline, **{key: value for key, value in spec.items() if key != "type"})
+        # An edit can turn a chart into a scatter of every row, as an answer can
+        dense = _density_view(view, pipeline)
+        vega = dense is view and self.spec is not None
+        view = dense
         # Drawn now, so a spec the view cannot draw fails here and not later in the card
         view.get_panel()
         return Answer(
             agents=self._agents, context=self._context, data=self._data,
-            editor=type(self._editor)(component=view) if self._editor is not None else None,
+            editor=type(self._editor)(component=view) if self._editor is not None and vega else None,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
-            source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
+            source=self.source, spec=view.spec if vega else None, sql=self.sql,
             status=self.status, truncated_at=self.truncated_at, usage=UsageCollector(),
             value=self.value, view=view,
         )

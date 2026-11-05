@@ -2002,3 +2002,12 @@ def test_a_tap_on_a_density_image_selects_the_nearest_point(many_points):
     data = many_points.data
     stream.event(x=data["x"].iloc[7], y=data["y"].iloc[7])
     assert answer.selection.index.tolist() == [7]
+
+
+def test_an_edit_to_a_large_scatter_chart_is_drawn_as_a_density_image(many_points):
+    pytest.importorskip("datashader")
+    bars = VegaLiteView(pipeline=many_points, spec={"mark": "bar", "encoding": {
+        "x": {"field": "kind"}, "y": {"field": "y", "aggregate": "mean"}}})
+    answer = Answer(question="?", status="success", pipeline=many_points, view=bars, spec=bars.spec)
+    redrawn = answer.with_spec(_point_spec())
+    assert isinstance(redrawn.view, hvPlotView) and redrawn.view.datashade and redrawn.spec is None
