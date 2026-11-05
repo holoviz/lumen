@@ -158,3 +158,17 @@ def test_the_planner_prompt_is_the_same_in_every_process(seeds):
     ]
     assert "Blocked, requires: `data`, `pipeline`, `table`" in prompts[0]
     assert prompts[0] == prompts[1]
+
+
+async def test_a_plain_language_check_replays_its_query(tmp_path):
+    from lumen.ai.checks import acheck
+
+    class RuleLLM(MockLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            return response_model(query="SELECT * FROM tiny WHERE value < 10")
+
+    path = tmp_path / "check.json"
+    with record(RuleLLM(), path) as llm:
+        recorded = await acheck(_source(), "no value under 10", llm=llm)
+    replayed = await acheck(_source(), "no value under 10", llm=ReplayLLM(path))
+    assert replayed.sql == recorded.sql and replayed.count == recorded.count == 1
