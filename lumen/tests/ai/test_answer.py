@@ -8,7 +8,7 @@ import threading
 import time
 import warnings
 
-from typing import get_args
+from typing import Any, get_args
 from unittest.mock import AsyncMock, patch
 
 import pandas as pd
@@ -1385,6 +1385,7 @@ async def test_editing_a_frame_after_reading_it_cannot_make_a_cached_answer_stal
     frame.loc[0, "value"] = 99.0
     assert source.execute("SELECT SUM(value) AS total FROM tiny").iloc[0, 0] == 3.0
 
+
 async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch):
     monkeypatch.setattr(answer_module, "_ANSWER_CACHE_ROWS", 4)
     configure(cache=True)
@@ -1393,3 +1394,138 @@ async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch
         answer.pipeline = Pipeline(source=frame_source, table="tiny")  # three rows each
         answer_module._answer_cache[next(reversed(answer_module._answer_cache))] = answer
     assert len(answer_module._answer_cache) <= 2
+
+
+class _TypingLLM(MockLLM):
+    """Answers the plan and SQL from its responses, and the typed result with result."""
+
+    result = None
+    typed_prompt = None
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        if response_model is not None and response_model.__name__ == "Result":
+            self.typed_prompt = messages[-1]["content"]
+            return response_model(result=self.result)
+        return await super().invoke(messages, system, response_model, **kwargs)
+
+
+def _sql_answer(llm, source, query):
+    SQLModel = make_sql_model([(source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Query"), ("ChatAgent", "Explain")),
+        SQLModel(query=query, table_slug="tiny_result", tables=["tiny"]),
+        "The answer is in the data.",
+    ])
+
+
+@pytest.mark.parametrize("query, returns, expected", [
+    ("SELECT SUM(value) AS total FROM tiny", int, 38),
+    ("SELECT SUM(value) AS total FROM tiny", float, 38.0),
+    ("SELECT DISTINCT category FROM tiny ORDER BY category", list[str], ["A", "B"]),
+    ("SELECT category, SUM(value) AS total FROM tiny GROUP BY category ORDER BY category",
+     dict[str, float] | list[dict[str, Any]], [{"category": "A", "total": 18.0}, {"category": "B", "total": 20.0}]),
+])
+async def test_returns_takes_a_result_already_in_the_shape_without_an_llm_call(frame_source, query, returns, expected):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, query)
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=returns)
+    assert answer.status == "success" and answer.result == expected
+    assert type(answer.result) is type(expected)
+    assert llm._index == 3 and llm.typed_prompt is None
+
+
+async def test_returns_a_model_from_a_matching_row(frame_source):
+    from pydantic import BaseModel
+
+    class Total(BaseModel):
+        category: str
+        total: float
+
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT 'B' AS category, MAX(value) AS total FROM tiny")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=Total)
+    assert answer.result == Total(category="B", total=20.0)
+
+
+async def test_returns_reads_the_type_from_the_answer_when_the_data_has_another_shape(frame_source):
+    llm = _TypingLLM()
+    llm.result = "B"
+    _sql_answer(llm, frame_source, "SELECT category, SUM(value) AS total FROM tiny GROUP BY category")
+    answer = await aask(frame_source, "Which category is largest?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=str)
+    assert answer.status == "success" and answer.result == "B"
+    assert "Which category is largest?" in llm.typed_prompt and "category,total" in llm.typed_prompt
+
+
+async def test_returns_never_takes_one_cell_of_a_larger_result(frame_source):
+    """Two rows are not one int; the typed call decides, not the first cell."""
+    llm = _TypingLLM()
+    llm.result = 2
+    _sql_answer(llm, frame_source, "SELECT COUNT(*) AS n FROM tiny GROUP BY category")
+    answer = await aask(frame_source, "How many categories?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    assert answer.result == 2 and llm.typed_prompt is not None
+
+
+async def test_returns_keeps_data_out_of_the_typed_prompt_unless_samples_are_shared(frame_source):
+    llm = _TypingLLM()
+    llm.result = "B"
+    _sql_answer(llm, frame_source, "SELECT category, SUM(value) AS total FROM tiny GROUP BY category")
+    configure(share="schema")
+    try:
+        await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=str)
+    finally:
+        configure(share="sample")
+    assert "category,total" not in llm.typed_prompt
+
+
+async def test_an_answer_that_is_not_the_type_becomes_an_error(frame_source):
+    class Refusing(_TypingLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if response_model is not None and response_model.__name__ == "Result":
+                raise ValueError("no number in the answer")
+            return await super().invoke(messages, system, response_model, **kwargs)
+
+    llm = Refusing()
+    _sql_answer(llm, frame_source, "SELECT 'many' AS category")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    assert answer.status == "error" and "could not be read as int" in answer.error
+    assert answer.result is None and answer.sql
+
+
+async def test_returns_is_part_of_the_cache_key(frame_source):
+    configure(cache=True)
+    try:
+        llm = _TypingLLM()
+        _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+        first = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+        _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+        other = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=float)
+        again = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    finally:
+        configure(cache=False)
+        clear_cache()
+    assert not other.cached and other.result == 38.0
+    assert again.cached and again.result == 38 and again._returns is int
+
+
+async def test_a_planned_answer_is_typed_when_run(frame_source):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], confirm=True, returns=int)
+    assert answer.status == "planned" and answer.result is None
+    await answer.arun()
+    assert answer.result == 38
+
+
+async def test_retry_asks_for_the_same_type(frame_source):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    assert (await answer.aretry()).result == 38
+
+
+async def test_chat_ask_takes_returns(frame_source):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()]).aask("?", returns=int)
+    assert answer.result == 38

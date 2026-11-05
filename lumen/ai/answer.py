@@ -43,6 +43,7 @@ from panel_material_ui import (
     Alert, Button, Card, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
+from pydantic import TypeAdapter, ValidationError, create_model
 
 from .. import __version__
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -187,15 +188,17 @@ def _prompt_version() -> str:
     return sha.hexdigest()
 
 
-def _cache_key(source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None) -> str:
-    """What decides an answer: the question, the data, the model, the agents and the prompts."""
+def _cache_key(
+    source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None, returns: Any = None,
+) -> str:
+    """What decides an answer: the question, the data, the model, the agents, the prompts and the type."""
     parts = (
         " ".join(question.lower().split()), str(id(source)), source._get_source_hash(),
         # Columns, types, row counts and descriptions, so a schema change or describe() misses
         json.dumps(source.get_metadata(None), sort_keys=True, default=str),
         type(llm).__name__, json.dumps(llm.model_kwargs, sort_keys=True, default=str),
         ",".join(type(agent).__name__ for agent in agents), sharing.share, str(sharing.mask_pii),
-        str(sorted(visible_slugs or [])), _prompt_version(),
+        str(sorted(visible_slugs or [])), _prompt_version(), repr(returns),
     )
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
@@ -317,6 +320,62 @@ async def _execute(
     for record in (*usage.records, *run_usage.records):
         answer.usage.add(record)
     return answer, out_context
+
+
+def _shapes(df: pd.DataFrame | None) -> list:
+    """
+    The result in each shape a type could take it in: the cell of a
+    one-cell result, the values of a one-column one, the row of a one-row
+    one, and the rows as records. Only the shapes the result has.
+    """
+    if df is None or df.empty:
+        return []
+    # object dtype hands back Python numbers rather than numpy ones
+    records = df.astype(object).where(df.notna(), None).to_dict("records")
+    shapes: list = []
+    if len(df.columns) == 1:
+        column = [row[df.columns[0]] for row in records]
+        shapes += [column[0]] if len(column) == 1 else []
+        shapes.append(column)
+    if len(records) == 1:
+        shapes.append(records[0])
+    shapes.append(records)
+    return shapes
+
+
+async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
+    """
+    Fill answer.result with the answer as the type asked for. A result
+    already in a shape the type takes is validated as it is, with no LLM
+    call; otherwise one structured call reads the type from the written
+    answer. An answer that cannot be read as the type becomes an error.
+    """
+    answer._returns = returns
+    if answer.status != "success":
+        return
+    adapter = TypeAdapter(returns)
+    df = None if answer.pipeline is None else as_pandas(answer.pipeline.data)
+    for shape in _shapes(df):
+        with suppress(ValidationError):
+            answer.result = adapter.validate_python(shape)
+            return
+    name = returns.__name__ if isinstance(returns, type) else str(returns)
+    content = f"Question: {answer.question}\n\nAnswer: {answer.value}"
+    if df is not None and sharing.share == "sample":
+        content += f"\n\nThe data the answer was written from:\n{df.head(20).to_csv(index=False)}"
+    try:
+        with llm.capture_usage() as usage:
+            out = await llm.invoke(
+                [{"role": "user", "content": content}],
+                system=f"Give the answer as {name}, using only the answer and data given.",
+                response_model=create_model("Result", result=(returns, ...)),
+            )
+    except Exception as e:
+        answer.param.update(status="error", error=f"The answer could not be read as {name}: {format_error(e)}")
+        return
+    for record in usage.records:
+        answer.usage.add(record)
+    answer.result = out.result
 
 
 def _records(data: Any) -> Any:
@@ -503,7 +562,7 @@ def _build_answer(
 
 async def aask(
     data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
-    confirm: bool = False,
+    confirm: bool = False, returns: Any = None,
 ) -> Answer:
     """
     Ask a question of some data and wait for the Answer.
@@ -523,29 +582,35 @@ async def aask(
     confirm: bool
         Stop once the question is planned and return an Answer with status
         "planned" that lists its steps; answer.run() runs them.
+    returns: type | None
+        The type to give the answer in as answer.result, e.g. int,
+        list[str] or a pydantic model. A result already in that shape is
+        used as it is; otherwise one more LLM call reads it from the answer.
 
     Returns
     -------
     Answer
     """
-    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm)
+    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm, returns)
 
 
 async def _aask_messages(
     data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
-    llm: Llm | None, agents: list | None, confirm: bool = False,
+    llm: Llm | None, agents: list | None, confirm: bool = False, returns: Any = None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
     # A retry or a preview is asked for a fresh answer, so neither is cached
     key = None
     if _settings["cache"] and len(messages) == 1 and not confirm:
-        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs)
+        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs, returns)
         if (hit := _answer_cache.get(key)) is not None:
             _answer_cache.move_to_end(key)
             return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    if returns is not None:
+        await _typed(answer, returns, planner.llm)
     if key is not None and answer.status == "success":
         _answer_cache[key] = answer
         while len(_answer_cache) > _ANSWER_CACHE_SIZE or _cached_rows() > _ANSWER_CACHE_ROWS:
@@ -555,7 +620,7 @@ async def _aask_messages(
 
 def ask(
     data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
-    confirm: bool = False,
+    confirm: bool = False, returns: Any = None,
 ) -> Answer:
     """
     Ask a question of some data and return the Answer.
@@ -563,7 +628,7 @@ def ask(
     Takes the same arguments as aask, and works whether or not an event
     loop is already running, e.g. in a Jupyter notebook.
     """
-    return _run(aask(data, question, llm=llm, agents=agents, confirm=confirm))
+    return _run(aask(data, question, llm=llm, agents=agents, confirm=confirm, returns=returns))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -596,7 +661,7 @@ class Chat(param.Parameterized):
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
-    async def aask(self, question: str, *, confirm: bool = False) -> Answer:
+    async def aask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """
         Ask the next question and wait for the Answer. With confirm, the
         Answer is "planned" and joins the conversation once it is run.
@@ -609,6 +674,8 @@ class Chat(param.Parameterized):
             context = dict(self._context)
         messages = [*self._messages, {"role": "user", "content": question}]
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
+        if returns is not None:
+            await _typed(answer, returns, planner.llm)
         if answer.status == "planned":
             answer._chat = (self, messages)
         else:
@@ -623,9 +690,9 @@ class Chat(param.Parameterized):
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
 
-    def ask(self, question: str, *, confirm: bool = False) -> Answer:
+    def ask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self.aask(question, confirm=confirm))
+        return _run(self.aask(question, confirm=confirm, returns=returns))
 
 
 class Answer(param.Parameterized):
@@ -672,6 +739,10 @@ class Answer(param.Parameterized):
     value = param.String(default="", doc="""
         The written answer.""")
 
+    result = param.Parameter(default=None, doc="""
+        The answer as the type asked for with returns=, e.g. an int or a
+        pydantic model; None when no type was asked for.""")
+
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
@@ -695,6 +766,8 @@ class Answer(param.Parameterized):
         self._pending: tuple[Planner, dict[str, Any]] | None = None
         self._chat: tuple[Chat, list[dict[str, str]]] | None = None
         self._crs_warned = False
+        # The type asked for, so run and retry give the answer in it too
+        self._returns = None
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -744,6 +817,8 @@ class Answer(param.Parameterized):
             planner, self.plan, self.question, context, self._data, self._agents, self.usage,
         )
         self._take(done)
+        if self._returns is not None:
+            await _typed(self, self._returns, planner.llm)
         if self._chat is not None:
             chat, messages = self._chat
             chat._record(self, messages, out_context)
@@ -761,6 +836,7 @@ class Answer(param.Parameterized):
             llm=self._llm, sql_failed=self._sql_failed,
         )
         copy.param.update(cached=True, usage=UsageCollector())
+        copy._returns = self._returns
         return copy
 
     def _take(self, other: Answer) -> None:
@@ -824,7 +900,7 @@ class Answer(param.Parameterized):
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
         data = self.source if self._data is None else self._data
-        return await _aask_messages(data, self.question, messages, self._llm, self._agents)
+        return await _aask_messages(data, self.question, messages, self._llm, self._agents, returns=self._returns)
 
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
