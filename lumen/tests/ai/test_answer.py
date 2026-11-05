@@ -1759,7 +1759,7 @@ def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable
 
 
 def test_a_vega_lite_chart_reports_clicks_on_its_dimension_fields():
-    from lumen.ai.answer import CLICK, _with_click
+    from lumen.ai.selection import CLICK, with_click as _with_click
     spec = {"mark": "bar", "encoding": {
         "x": {"field": "category", "type": "nominal"},
         "y": {"field": "value", "aggregate": "mean", "type": "quantitative"},
@@ -1775,7 +1775,7 @@ def test_a_vega_lite_chart_reports_clicks_on_its_dimension_fields():
 
 
 def test_a_click_on_a_vega_lite_chart_selects_its_rows_and_shows_the_ask_box(chart_answer):
-    from lumen.ai.answer import CLICK
+    from lumen.ai.selection import CLICK
     chart_answer.pipeline = chart_answer.view.pipeline
     card = chart_answer.__panel__()
     box = card[2]
@@ -1867,7 +1867,7 @@ def test_ask_about_needs_rows_and_shared_values(chart_answer):
 
 
 def test_ask_about_withholds_personal_columns():
-    from lumen.ai.answer import _about
+    from lumen.ai.selection import about as _about
     configure(mask_pii=True)
     try:
         text = _about("Who?", pd.DataFrame({"email": ["a@b.com"], "value": [1]}))
@@ -1905,3 +1905,16 @@ def test_a_pick_on_a_lonboard_map_selects_the_row():
     m = answer.map()
     m.layers[0].selected_index = 1
     assert len(answer.selection) == 1 and answer.selection.index[0] == answer.gdf.index[1]
+
+
+def test_the_click_selection_stays_out_of_the_spec_and_survives_a_redraw(chart_answer):
+    from lumen.ai.selection import CLICK
+    chart_answer.pipeline = chart_answer.view.pipeline
+    chart_answer.__panel__()
+    pane = chart_answer.view._panel
+    assert "params" not in chart_answer.view.spec and "params" not in chart_answer._chart_spec()[1]
+    # A redraw, e.g. on a filter, draws the spec without the selection again
+    pane.object = {key: value for key, value in pane.object.items() if key != "params"}
+    assert CLICK in pane._selections
+    pane.selection.param.update(**{CLICK: [{"category": "B"}]})
+    assert list(chart_answer.selection["category"]) == ["B"]
