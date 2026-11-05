@@ -10,8 +10,8 @@ import logging
 import weakref
 
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import panel as pn
