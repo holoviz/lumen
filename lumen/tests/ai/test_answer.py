@@ -840,6 +840,13 @@ def test_answer_chart_of_a_vega_lite_answer_is_an_altair_chart(chart_answer, mon
     assert built == [chart_answer.to_vega()]
 
 
+def test_the_static_card_of_a_concatenated_chart_has_its_image(chart_answer):
+    layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}
+    chart_answer.view.spec = chart_answer.spec = {"hconcat": [layer, layer]}
+    html_card = chart_answer._static_bundle(chart_answer._chart_bundle())["text/html"]
+    assert '<img src="data:image/png;base64,' in html_card and "width=" not in html_card
+
+
 def test_answer_to_vega_sizes_only_the_views_that_take_a_size(chart_answer):
     assert (chart_answer.to_vega()["width"], chart_answer.to_vega()["height"]) == (600, 400)
     layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}

@@ -1492,9 +1492,11 @@ class Answer(param.Parameterized):
             card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:
             bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
-            width = chart["application/vnd.vegalite.v5+json"]["width"]
-            # Rendered at twice the size for sharpness, shown at the spec width
-            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}" width="{width}" style="max-width: 100%">')
+            # Rendered at twice the size for sharpness, shown at the spec
+            # width; a faceted or concatenated chart has none of its own
+            width = chart["application/vnd.vegalite.v5+json"].get("width")
+            size = f' width="{width}"' if width else ""
+            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}"{size} style="max-width: 100%">')
         if self._cap_note:
             card.append(f"<p><em>{html.escape(self._cap_note)}</em></p>")
         if self.sql:
