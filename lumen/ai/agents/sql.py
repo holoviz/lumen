@@ -32,6 +32,8 @@ from ..llm import Message, SubmitTool
 from ..models import RetrySpec
 from ..schemas import Metaset, resolve_table_slug
 from ..sharing import shares_values
+from ..sql_review import TableFacts, geographic_crs, review_sql
+from ..table_stats import get_stats_store
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
 from ..utils import (
@@ -1464,6 +1466,33 @@ class SQLAgent(BaseLumenAgent):
                 raise ValueError(f"Unknown source/table pair: {source.name!r}/{table!r}")
         return source, tables
 
+    @staticmethod
+    def _table_facts(source: BaseSQLSource, tables: list[str]) -> dict[str, TableFacts]:
+        """The geometry CRSs and CF units the SQL review checks a query against."""
+        facts = {}
+        for table in tables:
+            stats = get_stats_store().get(source, table)
+            if stats is not None:
+                # Cached, so the review costs no query: GEOMETRY('EPSG:4326') and the like
+                geometry = {
+                    column.name: geographic_crs(column.type) for column in stats.columns
+                    if (column.type or "").upper().startswith("GEOMETRY")
+                }
+            else:
+                try:
+                    # One row is enough for the CRS; the full schema would scan the table
+                    schema = source.get_schema(table, limit=1)
+                except Exception:
+                    # The review is advice; a table it cannot describe is skipped
+                    continue
+                geometry = {
+                    column: bool(props.get("geographic")) for column, props in schema.items()
+                    if isinstance(props, dict) and props.get("format") == "geometry"
+                }
+            units = source.column_units(table) if isinstance(source, XArraySQLSource) else {}
+            facts[table] = TableFacts(geometry=geometry, units=units)
+        return facts
+
     def _submit_sql_tool(
         self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any]
     ) -> SubmitTool:
@@ -1485,6 +1514,15 @@ class SQLAgent(BaseLumenAgent):
                 raise ValueError(
                     "The query reads no table. Select from the tables listed in `tables` "
                     "instead of returning literal values."
+                )
+            findings = review_sql(output.query, self._table_facts(source, tables), read)
+            if findings and checked.get("review") != output.query:
+                # Asked once, like the empty result: the model may know better,
+                # e.g. a buffer in degrees on purpose, and resubmits unchanged
+                checked["review"] = output.query
+                raise ValueError(
+                    "Check this query before it runs: " + " ".join(findings)
+                    + " If it is right as it is, submit it again unchanged."
                 )
             sql_query = clean_sql(output.query.strip(), source.dialect, prettify=True)
             limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
