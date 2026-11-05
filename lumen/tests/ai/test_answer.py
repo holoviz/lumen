@@ -509,12 +509,12 @@ async def test_ask_inside_a_running_loop(llm, frame_source):
 async def test_source_and_pipeline_methods_delegate(frame_source):
     pipeline = Pipeline(source=frame_source, table="tiny")
     with patch("lumen.ai.answer.ask") as sync_ask, patch("lumen.ai.answer.aask", new_callable=AsyncMock) as async_ask:
-        frame_source.ask("q", llm="x")
+        frame_source.ask("q", llm="x", returns=int)
         pipeline.ask("q")
         await frame_source.aask("q")
         await pipeline.aask("q", llm="x")
     assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
-    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None, "confirm": False}
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None, "confirm": False, "returns": int}
     assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
 
 
@@ -850,7 +850,7 @@ def test_answer_to_vega_sizes_only_the_views_that_take_a_size(chart_answer):
 def test_answer_chart_without_altair_says_how_to_get_it(chart_answer, monkeypatch):
     monkeypatch.setitem(sys.modules, "altair", None)
     with pytest.raises(ImportError, match="pip install altair"):
-        chart_answer.chart
+        _ = chart_answer.chart
 
 
 def test_answer_to_vega_inlines_the_data(chart_answer):
@@ -1496,7 +1496,7 @@ async def test_returns_is_part_of_the_cache_key(frame_source):
     try:
         llm = _TypingLLM()
         _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
-        first = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+        await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
         _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
         other = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=float)
         again = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
@@ -1529,3 +1529,66 @@ async def test_chat_ask_takes_returns(frame_source):
     _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
     answer = await chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()]).aask("?", returns=int)
     assert answer.result == 38
+
+
+@pytest.fixture
+def penguins_answer():
+    frame = pd.DataFrame({
+        "year": [2007, 2008, 2008, 2009], "island": ["A", "B", "A", "B"], "body mass": [1.0, 2.0, 3.0, 4.0],
+    })
+    sql = (
+        "SELECT COUNT(*) AS n FROM penguins WHERE year = 2008 AND island IN ('A', 'B') "
+        'AND "body mass" BETWEEN 0 AND 10'
+    )
+    return Answer(question="How many in 2008?", status="success", source=read({"penguins": frame}), sql=sql)
+
+
+def test_compile_reruns_the_query_with_new_values_and_no_llm(penguins_answer):
+    count = penguins_answer.compile(["year", "island", "body mass"])
+    assert count().iloc[0, 0] == 2
+    assert count(year=2009).iloc[0, 0] == 1
+    assert count(island=["A"]).iloc[0, 0] == 1
+    assert count(**{"body mass": (2.5, 10)}).iloc[0, 0] == 1
+
+
+def test_compile_defaults_are_the_answers_values(penguins_answer):
+    import inspect
+    count = penguins_answer.compile(["year", "island"])
+    params = inspect.signature(count).parameters
+    assert {name: p.default for name, p in params.items()} == {"year": 2008, "island": ["A", "B"]}
+    assert "$p0" in count.sql and "2008" not in count.sql
+    assert count.__doc__.startswith("How many in 2008?")
+
+
+def test_compile_binds_values_instead_of_writing_them_into_the_sql(penguins_answer):
+    count = penguins_answer.compile(["island"])
+    assert count(island=["x'; DROP TABLE penguins; --"]).iloc[0, 0] == 0
+    assert penguins_answer.source.execute("SELECT COUNT(*) FROM penguins").iloc[0, 0] == 4
+
+
+def test_compile_names_the_columns_it_can_take(penguins_answer):
+    with pytest.raises(ValueError, match=r"no column 'sex'.*island, year"):
+        penguins_answer.compile(["sex"])
+    with pytest.raises(TypeError, match="Unknown arguments"):
+        penguins_answer.compile(["year"])(island=["A"])
+
+
+def test_compile_refuses_a_column_compared_with_several_values():
+    source = read({"t": pd.DataFrame({"year": [2007, 2008]})})
+    answer = Answer(question="?", status="success", source=source, sql="SELECT * FROM t WHERE year >= 2007 AND year < 2009")
+    with pytest.raises(ValueError, match="different values"):
+        answer.compile(["year"])
+
+
+def test_compile_returns_the_input_type():
+    pl = pytest.importorskip("polars")
+    source = read({"t": pl.DataFrame({"year": [2007, 2008]})})
+    answer = Answer(question="?", status="success", source=source, sql="SELECT * FROM t WHERE year = 2007")
+    assert isinstance(answer.compile(["year"])(year=2008), pl.DataFrame)
+
+
+def test_compile_needs_a_query_that_worked(frame_source):
+    with pytest.raises(ValueError, match="no query that worked"):
+        Answer(question="?", status="success").compile()
+    with pytest.raises(ValueError, match="no query that worked"):
+        Answer(question="?", status="error", sql="SELECT 1", sql_failed=True, source=frame_source).compile()

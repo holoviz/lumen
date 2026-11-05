@@ -8,6 +8,7 @@ import base64
 import hashlib
 import html
 import importlib.util
+import inspect
 import json
 import logging
 import math
@@ -18,6 +19,7 @@ import warnings
 import weakref
 
 from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import (
     CancelledError as FutureCancelledError, ThreadPoolExecutor,
     TimeoutError as FutureTimeoutError,
@@ -44,6 +46,7 @@ from panel_material_ui import (
 )
 from panel_material_ui.chat import ChatMessage
 from pydantic import TypeAdapter, ValidationError, create_model
+from sqlglot import exp
 
 from .. import __version__
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -51,6 +54,7 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
+from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
 from ..util import (
@@ -376,6 +380,50 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     for record in usage.records:
         answer.usage.add(record)
     answer.result = out.result
+
+
+def _literal(node: exp.Expression | None) -> exp.Expression | None:
+    """The literal a value is, inside a cast such as DATE '2024-01-01' too, or None."""
+    inner = node.this if isinstance(node, exp.Cast) else node
+    if isinstance(inner, exp.Literal) or (isinstance(inner, exp.Neg) and isinstance(inner.this, exp.Literal)):
+        return inner
+    return None
+
+
+def _literals(node: exp.Expression) -> tuple[str, Any] | None:
+    """
+    What a comparison compares its column with, as (kind, values): one
+    value, a BETWEEN pair or an IN list. None when that is not literals.
+    """
+    if isinstance(node, exp.In):
+        literals = [_literal(e) for e in node.expressions]
+        return None if not literals or None in literals else ("in", tuple(e.to_py() for e in literals))
+    if isinstance(node, exp.Between):
+        low, high = _literal(node.args["low"]), _literal(node.args["high"])
+        return None if low is None or high is None else ("between", (low.to_py(), high.to_py()))
+    literal = _literal(node.expression)
+    return None if literal is None else ("value", literal.to_py())
+
+
+def _parameterize(node: exp.Expression, kind: str, name: str) -> None:
+    """Put the named parameter where the comparison had its literals."""
+    if kind == "in":
+        # One list parameter, whatever the number of values asked for later
+        node.replace(exp.func("list_contains", exp.Placeholder(this=name), node.this.copy(), dialect="duckdb"))
+    elif kind == "between":
+        _literal(node.args["low"]).replace(exp.Placeholder(this=f"{name}_low"))
+        _literal(node.args["high"]).replace(exp.Placeholder(this=f"{name}_high"))
+    else:
+        _literal(node.expression).replace(exp.Placeholder(this=name))
+
+
+def _binder(kind: str, name: str) -> Callable[[Any], dict[str, Any]]:
+    """How an argument's value becomes the query's parameters."""
+    if kind == "between":
+        return lambda value: {f"{name}_low": value[0], f"{name}_high": value[1]}
+    if kind == "in":
+        return lambda value: {name: list(value)}
+    return lambda value: {name: value}
 
 
 def _records(data: Any) -> Any:
@@ -952,13 +1000,76 @@ class Answer(param.Parameterized):
             return ds
         if kinds == {"geopandas"} and (gdf := self.gdf) is not None:
             return gdf
-        df = as_pandas(self.pipeline.data)
+        return self._as_input_type(as_pandas(self.pipeline.data), kinds)
+
+    def _as_input_type(self, df: pd.DataFrame, kinds: set[str]) -> Any:
         # Input of that type means its library is already imported
         if kinds == {"polars"}:
             return sys.modules["polars"].from_pandas(df)
         if kinds == {"pyarrow"}:
             return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
         return df
+
+    def compile(self, params: list[str] | None = None) -> Callable[..., Any]:
+        """
+        The answer's query as a function that runs without an LLM.
+
+        Each name in params is a column the query compares with values,
+        e.g. ``year = 2008``, ``year BETWEEN 2008 AND 2009`` or
+        ``island IN ('Biscoe', 'Dream')``; it becomes a keyword argument
+        that defaults to those values, a pair for BETWEEN and a list for
+        IN. ``f()`` gives this answer's data and ``f(year=2009)`` the same
+        query for 2009, in the type the question was asked with. Values
+        are bound as query parameters, never written into the SQL.
+        """
+        if not self.sql or self._sql_failed or self.source is None:
+            raise ValueError("This answer has no query that worked to compile.")
+        if not isinstance(self.source, DuckDBSource):
+            # ponytail: DuckDB named parameters only; other engines bind differently
+            raise ValueError("compile needs a DuckDB source, such as one from lumen.read.")
+        tree = sqlglot.parse_one(self.sql, read="duckdb")
+        defaults: dict[str, Any] = {}
+        binders: dict[str, Callable[[Any], dict[str, Any]]] = {}
+        for i, name in enumerate(params or []):
+            nodes = [
+                node for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
+                if isinstance(node.this, exp.Column) and node.this.name == name
+            ]
+            values = {_literals(node) for node in nodes} - {None}
+            if not values:
+                compared = sorted({
+                    node.this.name for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
+                    if isinstance(node.this, exp.Column) and _literals(node) is not None
+                })
+                raise ValueError(f"The query compares no column {name!r} with a value. It compares: {', '.join(compared) or 'none'}.")
+            if len(values) > 1:
+                raise ValueError(f"The query compares {name!r} with different values in different places, so one argument cannot stand for them.")
+            (kind, default), = values
+            defaults[name] = {"in": list, "between": tuple}.get(kind, lambda value: value)(default)
+            # Columns can have names a parameter cannot, e.g. with spaces
+            for node in nodes:
+                _parameterize(node, kind, f"p{i}")
+            binders[name] = _binder(kind, f"p{i}")
+        sql = tree.sql("duckdb")
+        source, kinds = self.source, self._input_kinds()
+
+        def run(**kwargs: Any) -> Any:
+            unknown = set(kwargs) - set(defaults)
+            if unknown:
+                raise TypeError(f"Unknown arguments {sorted(unknown)}; this query takes {sorted(defaults)}.")
+            bound: dict[str, Any] = {}
+            for name, value in {**defaults, **kwargs}.items():
+                bound.update(binders[name](value))
+            return self._as_input_type(source.execute(sql, bound), kinds)
+
+        if all(name.isidentifier() for name in defaults):
+            # A column such as "body mass" can still be passed with **{...}
+            run.__signature__ = inspect.Signature([
+                inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=value) for name, value in defaults.items()
+            ])
+        run.__doc__ = f"{self.question}\n\n{sql}"
+        run.sql = sql
+        return run
 
     def _input_kinds(self) -> set[str]:
         """The libraries of the tables this answer's query read."""
