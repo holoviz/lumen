@@ -101,7 +101,8 @@ def format_output(output: Any, spec: dict | None = None, load_spec: str = "yaml.
         except (TypeError, yaml.YAMLError):
             return None, None
     read_code = [
-        f'yaml_spec = """\n{spec}"""',
+        # Raw, so the escapes YAML writes (\t, \r) reach YAML rather than Python
+        f'yaml_spec = r"""\n{spec}"""',
         f'spec = {load_spec}',
     ]
     if isinstance(component, Pipeline):
