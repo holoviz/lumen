@@ -2513,3 +2513,72 @@ def test_cli_version_reports_the_installed_version(monkeypatch, capsys):
         main()
 
     assert capsys.readouterr().out.strip() == f"Lumen AI {__version__}"
+
+
+def _bar_editor(source):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    table = source.get_tables()[0]
+    data = source.get(table)
+    column = next(c for c in data.columns if not pd.api.types.is_numeric_dtype(data[c]))
+    view = VegaLiteView(
+        pipeline=Pipeline(source=source, table=table),
+        spec={"mark": "bar", "encoding": {"x": {"field": column, "type": "nominal"}}},
+    )
+    return VegaLiteEditor(component=view), column, data
+
+
+async def test_a_click_in_an_exploration_chart_asks_the_chat_about_it(explorer_ui, monkeypatch):
+    from lumen.ai.selection import CLICK
+    editor, column, data = _bar_editor(explorer_ui.context["source"])
+    sent = []
+    monkeypatch.setattr(explorer_ui.interface, "send", lambda message, **kwargs: sent.append((message, kwargs)))
+    box = explorer_ui._ask_box(editor)
+    assert not box.visible and "params" not in editor.component.spec
+
+    value = data[column].iloc[0]
+    editor.component._panel.selection.param.update(**{CLICK: [{column: value}]})
+    assert box.visible
+    _selected, (question, ask), _answers = box
+    question.value_input = "What is this?"
+    ask.clicks += 1
+    await async_wait_until(lambda: len(sent) == 1)
+    message, kwargs = sent[0]
+    assert kwargs == {"respond": True}
+    assert message.startswith("What is this?\n\nThis is about") and str(value) in message
+
+
+async def test_an_exploration_chart_tab_ends_with_the_ask_box(explorer_ui, monkeypatch):
+    editor, _column, _data = _bar_editor(explorer_ui.context["source"])
+    exploration = SimpleNamespace(plan=[SimpleNamespace(views=[editor])])
+    monkeypatch.setattr(explorer_ui, "_render_pop_out", lambda *args: Row())
+    _title, tab = explorer_ui._render_view(exploration, editor)
+    assert isinstance(tab[1], VSplit) and not tab[-1].visible and len(tab) == 3
+
+
+async def test_an_exploration_table_tab_has_no_ask_box(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    exploration = explorer_ui._explorations.items[1]['view']
+    await async_wait_until(lambda: len(exploration.plan.views) > 0)
+    sql_output = next(v for v in exploration.plan.views if isinstance(v, SQLEditor))
+    _title, tab = explorer_ui._render_view(exploration, sql_output)
+    assert len(tab) == 2
+
+
+async def test_a_click_on_a_point_in_an_exploration_finds_its_row_by_number(explorer_ui):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.ai.selection import CLICK, Selected, watch_clicks
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    source = read({"birds": pd.DataFrame({"bill": [58.0, 46.5], "flipper": [181.0, 207.0], "species": ["A", "B"]})})
+    view = VegaLiteView(pipeline=Pipeline(source=source, table="birds"), spec={"mark": "point", "encoding": {
+        "x": {"field": "flipper", "type": "quantitative"}, "y": {"field": "bill", "type": "quantitative"},
+        "color": {"field": "species", "type": "nominal"}}})
+    editor = VegaLiteEditor(component=view)
+    box = explorer_ui._ask_box(editor)
+    # Vega-Lite sends whole floats as JSON integers
+    editor.component._panel.selection.param.update(**{CLICK: [{"bill": 58}, {"flipper": 181}, {"species": "A"}]})
+    assert box.visible and box[0].object == "**Selected:** bill: 58, flipper: 181, species: A"

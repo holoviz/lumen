@@ -36,6 +36,7 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import log, try_import_xarray
+from ..views import View
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -61,6 +62,9 @@ from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Section
+from .selection import (
+    Selected, about, ask_box, watch_clicks,
+)
 from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
@@ -2513,8 +2517,10 @@ class ExplorerUI(UI):
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
         editor = view.editor
+        # Last in the tab, so the pop-out lookups still find the body at index 1
+        box = [self._ask_box(view)] if isinstance(view.component, View) else []
         if editor is None:
-            view = Column(controls, view)
+            view = Column(controls, view, *box)
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
@@ -2533,7 +2539,7 @@ class ExplorerUI(UI):
         # the Column's body (a watcher swaps it in and out) rather than wrapped
         # in a reactive pane, so the pop-out helpers still find it as a VSplit.
         filter_paper = getattr(view, "_filter_paper", None)
-        view = Column(controls, vsplit)
+        view = Column(controls, vsplit, *box)
         if filter_paper is not None:
             def _toggle_filter_pane(event):
                 if event.new:
@@ -2547,6 +2553,21 @@ class ExplorerUI(UI):
             filter_paper.param.watch(_toggle_filter_pane, "visible")
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
+
+    def _ask_box(self, view: LumenEditor) -> Column:
+        """
+        A box for asking about a point clicked or selected on the view's
+        chart; the question and the point's rows go to the chat as the next
+        message, so the follow-up runs in this exploration.
+        """
+        selected = Selected()
+        # Kept on the editor so the streams live as long as the chart
+        view._click_streams = watch_clicks(view.component, lambda rows: setattr(selected, "selection", rows))
+
+        async def ask(question: str):
+            self.interface.send(about(question, selected.selection), respond=True)
+
+        return ask_box(selected, ask)
 
     def _vsplit_has_view(self, content, view) -> bool:
         # The body is the editor/table VSplit, or - when filters are active - a

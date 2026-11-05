@@ -75,6 +75,7 @@ from .llm import (
     Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
 )
 from .report import ActorTask, Report
+from .selection import about, ask_box, watch_clicks
 from .sharing import sharing
 from .story import _prose_to_html
 from .ui import ExplorerUI
@@ -462,6 +463,58 @@ def _binder(kind: str, name: str) -> Callable[[Any], dict[str, Any]]:
     return lambda value: {name: value}
 
 
+#: Rows a Vega-Lite scatter or line chart draws before the answer draws a
+#: density image instead; Vega-Lite inlines every row and slows above this
+LARGE_POINTS = 5_000
+
+_POINT_KINDS = {"point": "scatter", "circle": "scatter", "square": "scatter", "tick": "scatter", "line": "line"}
+
+
+def _point_chart(view: View) -> tuple[str, dict] | None:
+    """For a single Vega-Lite scatter or line chart of raw rows, its hvPlot kind and encoding."""
+    if not isinstance(view, VegaLiteView):
+        return None
+    spec = view.spec
+    if any(key in spec for key in ("layer", "facet", "repeat", "concat", "hconcat", "vconcat")):
+        return None
+    mark = spec.get("mark")
+    kind = _POINT_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
+    encoding = spec.get("encoding", {})
+    axes = [encoding.get(axis) for axis in ("x", "y")]
+    if kind is None or not all(isinstance(a, dict) and a.get("field") for a in axes):
+        return None
+    if any(key in a for a in axes for key in ("aggregate", "bin")):
+        return None
+    return kind, encoding
+
+
+def _density_view(view: View, pipeline: Pipeline | None) -> View:
+    """
+    A Vega-Lite scatter or line chart of more than LARGE_POINTS rows, drawn
+    instead with hvPlot and datashader as a density image, which stays fast
+    however many rows there are. Coloured by a category, the categories are
+    blended; otherwise each pixel counts its points. Anything else, or
+    without datashader, is returned as it is.
+    """
+    chart = _point_chart(view)
+    if chart is None or pipeline is None or len(pipeline.data) <= LARGE_POINTS:
+        return view
+    if importlib.util.find_spec("datashader") is None:
+        return view
+    kind, encoding = chart
+    params: dict[str, Any] = dict(
+        pipeline=view.pipeline, kind=kind, x=encoding["x"]["field"], y=encoding["y"]["field"],
+        responsive=True, height=400, title=view.spec.get("title", ""),
+    )
+    color = encoding.get("color", {})
+    if color.get("field") and color.get("type") == "nominal":
+        # rasterize keeps one number per pixel and loses the category
+        params.update(by=color["field"], datashade=True)
+    else:
+        params.update(rasterize=True, cnorm="log")
+    return hvPlotView(**params)
+
+
 def _records(data: Any) -> Any:
     """
     A frame as JSON records, with missing values as null. JSON has no
@@ -616,6 +669,9 @@ def _build_answer(
     editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
     editor = editors[-1] if editors else None
     view = None if editor is None else editor.component
+    if view is not None and (dense := _density_view(view, context.get("pipeline"))) is not view:
+        # The Vega-Lite editor cannot edit the hvPlot chart that replaced it
+        view, editor = dense, None
     value = str(messages[-1].object) if messages else ""
     if not value.strip() and view is None and context.get("sql") is None:
         # A plan can finish without a step that queries or answers, e.g. one
@@ -861,13 +917,17 @@ class Chat(param.Parameterized):
         Ask the next question and wait for the Answer. With confirm, the
         Answer is "planned" and joins the conversation once it is run.
         """
+        return await self._aask(question, question, confirm=confirm, returns=returns)
+
+    async def _aask(self, question: str, content: str, confirm: bool = False, returns: Any = None) -> Answer:
+        """Ask question, sending content as the message, e.g. the question with the rows it is about."""
         agents = _settings["agents"] if self._agents is None else self._agents
         planner = _planner(self._source, self._llm or _default_llm(), agents)
         if self._context is None:
             context = _fresh_context(planner, self._source, self._visible_slugs)
         else:
             context = dict(self._context)
-        messages = [*self._messages, {"role": "user", "content": question}]
+        messages = [*self._messages, {"role": "user", "content": content}]
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
         if returns is not None:
             await _typed(answer, returns, planner.llm)
@@ -879,6 +939,7 @@ class Chat(param.Parameterized):
 
     def _record(self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any]) -> None:
         self.answers = [*self.answers, answer]
+        answer._conversation = self
         if answer.status == "error":
             # The next question starts from the last answer that worked
             return
@@ -934,6 +995,10 @@ class Answer(param.Parameterized):
     value = param.String(default="", doc="""
         The written answer.""")
 
+    selection = param.DataFrame(default=None, allow_None=True, doc="""
+        The rows clicked or box-selected on the chart or map, which
+        ask_about asks about; None when nothing is selected.""")
+
     result = param.Parameter(default=None, doc="""
         The answer as the type asked for with returns=, e.g. an int or a
         pydantic model; None when no type was asked for.""")
@@ -963,6 +1028,10 @@ class Answer(param.Parameterized):
         self._crs_warned = False
         # The type asked for, so run and retry give the answer in it too
         self._returns = None
+        # The chat this answer is part of, so a question about it follows up there
+        self._conversation: Chat | None = None
+        # What reports clicks on the chart, kept alive with the answer
+        self._streams: list = []
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -1059,13 +1128,17 @@ class Answer(param.Parameterized):
             view = VegaLiteView(pipeline=pipeline, spec=spec)
         else:
             view = type(self.view)(pipeline=pipeline, **{key: value for key, value in spec.items() if key != "type"})
+        # An edit can turn a chart into a scatter of every row, as an answer can
+        dense = _density_view(view, pipeline)
+        vega = dense is view and self.spec is not None
+        view = dense
         # Drawn now, so a spec the view cannot draw fails here and not later in the card
         view.get_panel()
         return Answer(
             agents=self._agents, context=self._context, data=self._data,
-            editor=type(self._editor)(component=view) if self._editor is not None else None,
+            editor=type(self._editor)(component=view) if self._editor is not None and vega else None,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
-            source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
+            source=self.source, spec=view.spec if vega else None, sql=self.sql,
             status=self.status, truncated_at=self.truncated_at, usage=UsageCollector(),
             value=self.value, view=view,
         )
@@ -1182,6 +1255,57 @@ class Answer(param.Parameterized):
             ))
         return steps
 
+    async def aask_about(self, question: str, rows: Any = None) -> Answer:
+        """
+        Ask a follow-up about some rows of this answer's data: the
+        selection, clicked or box-selected on the chart, unless rows says
+        which (a DataFrame, a dict or list of dicts, or row positions). The
+        LLM answers from the rows when they hold what is asked, and
+        otherwise queries the data filtered on their values. In a chat, the
+        question joins the conversation. Returns the new Answer.
+        """
+        rows = self._selected(rows)
+        content = about(question, rows)
+        if self._conversation is not None:
+            return await self._conversation._aask(question, content)
+        outcome = self.value + (f"\n\nThe SQL was:\n{self.sql}" if self.sql else "")
+        messages = [
+            {"role": "user", "content": self.question}, {"role": "assistant", "content": outcome},
+            {"role": "user", "content": content},
+        ]
+        data = self.source if self._data is None else self._data
+        return await _aask_messages(data, question, messages, self._llm, self._agents)
+
+    def ask_about(self, question: str, rows: Any = None) -> Answer:
+        """Ask a follow-up about the selected rows and return the Answer. See aask_about."""
+        return _run(self.aask_about(question, rows))
+
+    def _selected(self, rows: Any) -> pd.DataFrame:
+        """The rows a question is about, as a DataFrame."""
+        if rows is None:
+            if self.selection is None or self.selection.empty:
+                raise ValueError("Nothing is selected. Click a point on the chart, or pass rows=.")
+            return self.selection
+        if isinstance(rows, pd.DataFrame):
+            return rows
+        if isinstance(rows, dict):
+            return pd.DataFrame([rows])
+        if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+            return pd.DataFrame(rows)
+        if self.pipeline is None:
+            raise ValueError("This answer has no data to pick rows from.")
+        return as_pandas(self.pipeline.data).iloc[list(rows)]
+
+    async def _ask_from_box(self, question: str) -> Any:
+        """Ask from the card's box; in the chat widget the answer joins the conversation."""
+        answer = await self.aask_about(question)
+        chat = self._conversation
+        if chat is not None and chat._interface is not None:
+            chat._interface.send(answer.question, user="User", respond=False)
+            chat._interface.send(answer.__panel__(), user="Lumen", respond=False)
+            return None
+        return answer.__panel__()
+
     def compile(self, params: list[str] | None = None) -> Callable[..., Any]:
         """
         The answer's query as a function that runs without an LLM.
@@ -1293,7 +1417,12 @@ class Answer(param.Parameterized):
         if importlib.util.find_spec("lonboard") is not None:
             # Deferred: lonboard is optional, and heavy to import
             from lonboard import viz
-            return viz(gdf)
+            m = viz(gdf)
+            for layer in m.layers:
+                layer.observe(lambda change: setattr(
+                    self, "selection", None if change.new is None else gdf.iloc[[change.new]]
+                ), names="selected_index")
+            return m
         if importlib.util.find_spec("geoviews") is not None:
             return gdf.hvplot(geo=True, tiles="OSM")
         return gdf.hvplot()
@@ -1422,6 +1551,7 @@ class Answer(param.Parameterized):
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self._chart_part(self.view))
+                parts.append(ask_box(self, self._ask_from_box))
             if self._cap_note:
                 parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
             if self.sql:
@@ -1511,6 +1641,7 @@ class Answer(param.Parameterized):
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
                 severity="error", sizing_mode="stretch_width",
             )
+        self._streams += watch_clicks(view, lambda rows: setattr(self, "selection", rows))
         if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
             # A responsive plot stretches to its container, and a notebook
             # output has no height to give it, so it would collapse
@@ -1648,12 +1779,23 @@ class Answer(param.Parameterized):
 
     @property
     def _cap_note(self) -> str:
-        if self.truncated_at is None:
-            return ""
-        return (
-            f"The data stops at the first {self.truncated_at:,} rows. "
-            "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
-        )
+        """Notes on how much of the data the answer holds and draws."""
+        notes = []
+        if self.truncated_at is not None:
+            notes.append(
+                f"The data stops at the first {self.truncated_at:,} rows. "
+                "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
+            )
+        rows = 0 if self.pipeline is None or self.view is None else len(self.pipeline.data)
+        if isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize")):
+            shown = "blending the categories where they overlap" if self.view.by else "so each pixel shows how many fall there"
+            notes.append(f"The chart draws {rows:,} points as a density image, {shown}.")
+        elif rows > LARGE_POINTS and _point_chart(self.view) is not None:
+            notes.append(
+                f"The chart draws all {rows:,} points, which can be slow. "
+                "Install datashader to draw them as a density image instead."
+            )
+        return " ".join(notes)
 
     def _sql_html(self) -> str:
         # A failed query is what the reader needs to see, so it starts open

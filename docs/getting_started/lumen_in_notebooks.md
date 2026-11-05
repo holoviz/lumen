@@ -105,6 +105,23 @@ def test_penguins_in_2008():
 
 `cassette` replays by default. Run the tests once with `LUMEN_AI_RECORD=1` to record with your LLM (or pass one, `cassette(path, llm)`), and commit the JSON file. A call that was not recorded, e.g. after a prompt changed, raises `MissingRecording` naming the closest recorded one; record again. `record(llm, path)` and `ReplayLLM(path)` are the two halves, for use outside a `with` block. Calls the LLM makes to tools are replayed as their final answer, without running the tools again.
 
+## Ask about a point
+
+Click a point, bar or shape on an answer's chart, or drag a box over several on an hvPlot chart or map, and a box under the chart asks about it: "what is this?", "why is it so high?", "show its history". On a grid or a density image, a click picks the nearest cell or point. The clicked rows are in `answer.selection`, and the same works from code:
+
+``` py
+answer.ask_about("Why is this one so high?")             # (1)!
+answer.ask_about("Show its history", rows={"island": "Dream"})
+```
+
+1. Asks about `answer.selection`; `rows=` takes a DataFrame, a dict, a list of dicts or row positions instead.
+
+The LLM gets the question, the rows (up to 20, with personal-looking columns withheld under `mask_pii`) and the answer before, and answers from the rows when they hold what is asked, querying the data filtered on them otherwise. In a chat, or in the chat UI's explorations, the follow-up joins the conversation. It sends row values, so it needs `share="sample"`. Static outputs (PNG, a saved notebook) have no box.
+
+## Large results
+
+A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.
+
 ## Change the chart
 
 ``` py
