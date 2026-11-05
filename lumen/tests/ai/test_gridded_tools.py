@@ -80,11 +80,12 @@ def test_the_sql_uses_the_grids_own_dimension_names():
     assert len(source.execute(sql)) == 4
 
 
-def test_a_calendar_sql_cannot_date_is_named_instead_of_guessed():
+@pytest.mark.parametrize("calendar", ["360_day", "noleap"])
+def test_a_calendar_sql_cannot_date_is_named_instead_of_guessed(calendar):
     pytest.importorskip("cftime")
-    _source, tools = _tools(_grid(calendar="360_day"))
+    _source, tools = _tools(_grid(calendar=calendar))
     message = tools["climatology"]("air")
-    assert "360_day calendar" in message and "SELECT" not in message
+    assert f"{calendar} calendar" in message and "SELECT" not in message
 
 
 def test_an_unknown_table_lists_the_gridded_tables():

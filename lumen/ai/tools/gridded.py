@@ -70,9 +70,9 @@ class _Grid:
     @property
     def dated(self) -> bool:
         """Whether SQL sees the time column as timestamps, so dates and EXTRACT work."""
-        return self.time is not None and self.calendar in (
-            None, "standard", "gregorian", "proleptic_gregorian", "noleap", "365_day", "all_leap", "366_day",
-        )
+        # Only these: xarray-sql stores other calendars' dates as time elapsed
+        # in that calendar, so a noleap 2050-01-01 reads as 2049-12-12 in SQL
+        return self.time is not None and self.calendar in (None, "standard", "gregorian", "proleptic_gregorian")
 
     def need(self, *dims: str) -> str | None:
         """A message naming what the grid lacks for an operation, or None."""
