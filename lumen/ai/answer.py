@@ -1183,6 +1183,11 @@ class Answer(param.Parameterized):
             spec["data"] = dict(data, values=_records(data["values"]))
         if isinstance(spec.get("datasets"), dict):
             spec["datasets"] = {name: _records(values) for name, values in spec["datasets"].items()}
+        if any(key in spec for key in ("facet", "repeat", "concat", "hconcat", "vconcat")):
+            # Vega-Lite allows no top-level size on these; their views size themselves
+            spec.pop("width", None)
+            spec.pop("height", None)
+            return spec
         for dim, size in (("width", 600), ("height", 400)):
             if spec.get(dim, "container") == "container":
                 spec[dim] = size
