@@ -117,3 +117,13 @@ async def test_overview_says_when_its_statistics_are_from_a_sample(messy_source,
     assert overview.sampled == {"birds": 10_000}
     assert "from a sample of 10,000 rows" in overview.__panel__()[0].object
     assert "from a sample of 10,000 rows" in overview._repr_mimebundle_()["text/html"]
+
+
+async def test_overview_prompt_has_names_only_when_nothing_is_shared(messy_source):
+    llm = QuestionsLLM()
+    configure(share="none")
+    try:
+        await aoverview(messy_source, llm=llm)
+    finally:
+        configure(share="sample")
+    assert llm.prompt == "Table birds:\nweight\ncolony\nwing"

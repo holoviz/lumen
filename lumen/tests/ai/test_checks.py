@@ -85,3 +85,14 @@ async def test_a_check_keeps_the_input_type():
 
 def test_source_check_works_in_a_plain_test(penguins):
     assert penguins.check("SELECT * FROM penguins WHERE species IS NULL")
+
+
+async def test_a_plain_language_rule_sends_names_only_when_nothing_is_shared(penguins):
+    from lumen.ai.answer import configure
+    llm = RuleLLM()
+    configure(share="none")
+    try:
+        await acheck(penguins, "no penguin weighs under 2 kg", llm=llm)
+    finally:
+        configure(share="sample")
+    assert "penguins: species, body_mass_g" in llm.prompt and "(" not in llm.prompt.split("Tables and columns:")[1]

@@ -137,7 +137,12 @@ def _first_rows(source: Source, table: str) -> pd.DataFrame:
 
 
 def _describe(table: str, rows: int | None, columns: pd.DataFrame) -> str:
-    """The table for the questions prompt: ranges only when values may be shared."""
+    """
+    The table for the questions prompt, as much as sharing allows: names
+    only for "none", types and row counts for "schema", ranges for "sample".
+    """
+    if sharing.share == "none":
+        return f"Table {table}:\n" + "\n".join(columns["column"])
     keep = ["column", "type"] + (["min", "max"] if sharing.share == "sample" else [])
     return f"Table {table} ({rows if rows is not None else 'unknown'} rows):\n" + columns[keep].to_csv(index=False)
 

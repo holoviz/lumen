@@ -19,6 +19,7 @@ from .answer import (
     _as_input_type, _default_llm, _read_kinds, _run,
 )
 from .llm import Llm
+from .sharing import sharing
 from .utils import format_error
 
 #: Offending rows kept on a result; count has them all
@@ -74,8 +75,13 @@ def _is_sql(rule: str) -> bool:
 async def _rule_sql(source: Source, rule: str, table: str | None, llm: Llm) -> str:
     """One LLM call writing the query that returns the rows breaking a rule."""
     tables = [table] if table else source.get_tables()
+    # share="none" allows names only
+    typed = sharing.share != "none"
     schemas = "\n".join(
-        f"{name}: " + ", ".join(f"{column} ({prop.get('type')})" for column, prop in source.get_schema(name).items() if column != "__len__")
+        f"{name}: " + ", ".join(
+            f"{column} ({prop.get('type')})" if typed else column
+            for column, prop in source.get_schema(name).items() if column != "__len__"
+        )
         for name in tables
     )
     model = create_model("Check", query=(str, Field(description=(
