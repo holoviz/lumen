@@ -761,6 +761,8 @@ class TestMetasetFixes:
     async def test_legacy_schema_methods_warn(self, duckdb_source):
         slug = f"{duckdb_source.name}{SEP}orders"
         metaset = Metaset(query=None, catalog={slug: TableCatalogEntry(slug, 1, [], source=duckdb_source)})
+        # pytest.warns would also catch what earlier tests' garbage warns when collected
+        gc.collect()
         with pytest.warns(DeprecationWarning, match="ensure_schemas"):
             await metaset.ensure_schemas()
         assert slug in metaset.stats
