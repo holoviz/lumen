@@ -138,11 +138,15 @@ def first_month(expected: int) -> Callable[[pd.DataFrame, Answer], bool]:
     return check
 
 
-def declines(df: pd.DataFrame, answer: Answer) -> bool:
-    """No data invented for a column that does not exist."""
-    invented = any("elev" in str(col).lower() for col in df.columns) and bool(numbers(df))
-    declined = ("no ", "not ", "n't", "cannot", "unavailable")
-    return not invented and any(word in answer.value.lower().replace("’", "'") for word in declined)
+def declines(missing: str) -> Callable[[pd.DataFrame, Answer], bool]:
+    """No numbers invented for something the data does not hold, and the answer says so."""
+    def check(df, answer):
+        if answer.status == "unanswerable":
+            return True
+        invented = any(missing in str(col).lower() for col in df.columns) and bool(numbers(df))
+        declined = ("no ", "not ", "n't", "cannot", "unavailable")
+        return not invented and any(word in answer.value.lower().replace("’", "'") for word in declined)
+    return check
 
 
 @dataclass
@@ -204,7 +208,51 @@ def spatial_cases(f: dict[str, gpd.GeoDataFrame]) -> list[Case]:
              "What is the total ground area of all parcels in square kilometres?", any_close(parcel_km2, 0.02),
              f"SELECT SUM(ST_Area({to_area.format(crs='EPSG:3857')})) / 1e6 AS km2 FROM parcels",
              "SELECT SUM(ST_Area(geometry)) / 1e6 AS km2 FROM parcels"),
-        Case("spatial", "unanswerable", "spatial", "What is the elevation in metres of Berlin?", declines),
+        Case("spatial", "unanswerable", "spatial", "What is the elevation in metres of Berlin?", declines("elev")),
+        *_more_spatial_cases(f),
+    ]
+
+
+def _more_spatial_cases(f: dict[str, gpd.GeoDataFrame]) -> list[Case]:
+    """Traps the review and the CRS rules are for: degree buffers, map metres, joins, densities."""
+    places, regions, roads, parcels = f["places"], f["regions"], f["roads"], f["parcels"]
+    paris = CITIES["Paris"]
+    lon, lat = places.geometry.x, places.geometry.y
+    near_paris = int(((great_circle_km(paris[0], paris[1], lon, lat) <= 400) & (places.name != "Paris")).sum())
+    crossing_south = int(gpd.sjoin(roads, regions[regions.region == "South"], predicate="intersects").road.nunique())
+    centres = parcels.centroid.to_crs(4326)
+    p0, p9 = centres.iloc[0], centres.iloc[9]
+    parcel_gap_km = float(great_circle_km(p0.x, p0.y, p9.x, p9.y))
+    joined = gpd.sjoin(places, regions, predicate="within")
+    area = dict(zip(regions.region, regions.to_crs(6933).area / 1e6, strict=False))
+    density = {r: float(pop) / area[r] for r, pop in joined.groupby("region").population.sum().items()}
+    paris_geom = "(SELECT geometry FROM places WHERE name = 'Paris')"
+    sphere = "ST_Distance_Sphere(ST_FlipCoordinates({a}), ST_FlipCoordinates({b}))"
+    to_area = "ST_Transform(r.geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true)"
+    centre = "ST_Transform(ST_Centroid(geometry), 'EPSG:3857', 'EPSG:4326', always_xy := true)"
+    return [
+        Case("spatial", "degree_buffer", "spatial",
+             "How many places are within 400 km of Paris, not counting Paris itself?", any_close(near_paris, 0),
+             f"SELECT COUNT(*) AS n FROM places WHERE name <> 'Paris' AND {sphere.format(a='geometry', b=paris_geom)} <= 400000",
+             f"SELECT COUNT(*) AS n FROM places WHERE name <> 'Paris' AND ST_DWithin(geometry, {paris_geom}, 400000)"),
+        Case("spatial", "lines_cross_polygon", "spatial",
+             "How many roads pass through the South region?", any_close(crossing_south, 0),
+             "SELECT COUNT(DISTINCT r.road) AS n FROM roads r JOIN regions g ON ST_Intersects(r.geometry, g.geometry) WHERE g.region = 'South'",
+             "SELECT COUNT(*) AS n FROM roads r CROSS JOIN regions g WHERE g.region = 'South'"),
+        Case("spatial", "map_metres", "spatial",
+             "How far apart on the ground, in kilometres, are the centres of parcels P0 and P9?", any_close(parcel_gap_km, 0.02),
+             f"SELECT ST_Distance_Sphere(ST_FlipCoordinates(a.c), ST_FlipCoordinates(b.c)) / 1000 AS km FROM "
+             f"(SELECT {centre} AS c FROM parcels WHERE parcel = 'P0') a, (SELECT {centre} AS c FROM parcels WHERE parcel = 'P9') b",
+             "SELECT ST_Distance(ST_Centroid(a.geometry), ST_Centroid(b.geometry)) / 1000 AS km FROM parcels a, parcels b "
+             "WHERE a.parcel = 'P0' AND b.parcel = 'P9'"),
+        Case("spatial", "population_density", "spatial",
+             "What is the population density of the places in each region, in people per square kilometre of the region?",
+             per_key(density, 0.02),
+             f"SELECT r.region, SUM(p.population) / (ST_Area({to_area}) / 1e6) AS density FROM places p "
+             "JOIN regions r ON ST_Within(p.geometry, r.geometry) GROUP BY r.region, r.geometry",
+             "SELECT r.region, SUM(p.population) / ST_Area(r.geometry) AS density FROM places p "
+             "JOIN regions r ON ST_Within(p.geometry, r.geometry) GROUP BY r.region, r.geometry"),
+        Case("spatial", "unanswerable_coast", "spatial", "Which of these places lie on the coast?", declines("coast")),
     ]
 
 
@@ -237,6 +285,7 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
              f"SELECT {day} AS day, {weighted.format(v='air')} AS w FROM air GROUP BY 1 ORDER BY w DESC LIMIT 1",
              f"SELECT {day} AS day, AVG(air) AS w FROM air GROUP BY 1 ORDER BY w DESC LIMIT 1"),
     ]
+    cases += _more_air_cases(air)
     if era5 is None:
         return cases
     t = era5.t2m
@@ -284,6 +333,77 @@ def gridded_cases(air: xr.Dataset, era5: xr.Dataset | None) -> list[Case]:
     return cases
 
 
+def _more_air_cases(air: xr.Dataset) -> list[Case]:
+    """Units, anomalies and latitude bands on the NCEP air temperature grid."""
+    a = air.air
+    weights = np.cos(np.deg2rad(a.lat))
+    above_20c = int((a > 293.15).sum())
+    band = a.sel(lat=slice(50, 30))
+    per_step = a.weighted(weights).mean(("lat", "lon"))
+    last_anomaly = float(per_step.isel(time=-1) - per_step.mean())
+    weighted = "SUM(air * COS(RADIANS(lat))) / SUM(COS(RADIANS(lat)))"
+    return [
+        Case("gridded", "kelvin_threshold", "air",
+             "How many grid cells, counting every time step, were warmer than 20 degrees Celsius?", any_close(above_20c, 0),
+             "SELECT COUNT(*) AS n FROM air WHERE air - 273.15 > 20", "SELECT COUNT(*) AS n FROM air WHERE air > 20"),
+        Case("gridded", "latitude_band", "air",
+             "What is the area-weighted mean air temperature in Kelvin between latitudes 30 and 50?",
+             any_close(float(band.weighted(np.cos(np.deg2rad(band.lat))).mean()), 0.0005),
+             f"SELECT {weighted} AS k FROM air WHERE lat BETWEEN 30 AND 50",
+             "SELECT AVG(air) AS k FROM air WHERE lat BETWEEN 30 AND 50"),
+        Case("gridded", "last_step_anomaly", "air",
+             "How far, in Kelvin, was the area-weighted mean air temperature at the last time step from its mean over all time steps?",
+             any_close(last_anomaly, 0.03),
+             f"SELECT w - AVG(w) OVER () AS anomaly FROM (SELECT time, {weighted} AS w FROM air GROUP BY time) ORDER BY time DESC LIMIT 1",
+             "SELECT AVG(air) - (SELECT AVG(air) FROM air) AS anomaly FROM air WHERE time = (SELECT MAX(time) FROM air)"),
+        Case("gridded", "unanswerable_rain", "air", "How much rain fell over this grid?", declines("rain")),
+    ]
+
+
+def era5_like() -> xr.Dataset:
+    """A grid named as ARCO-ERA5 names it: latitude, longitude, valid_time, in Kelvin."""
+    rng = np.random.default_rng(1)
+    lat = np.linspace(60, -60, 7)
+    values = 288 + 15 * np.cos(np.deg2rad(lat))[None, :, None] + rng.normal(0, 1, (4, 7, 8))
+    return xr.Dataset(
+        {"t2m": (["valid_time", "latitude", "longitude"], values, {"units": "K", "long_name": "2 metre temperature"})},
+        coords={"valid_time": pd.date_range("2020-07-01", periods=4, freq="6h"),
+                "latitude": ("latitude", lat, {"units": "degrees_north"}),
+                "longitude": ("longitude", np.arange(0, 360, 45.0), {"units": "degrees_east"})},
+    )
+
+
+def noleap_grid() -> xr.Dataset:
+    """A year of daily temperature on a CMIP noleap calendar, warmest in July."""
+    times = xr.date_range("2050-01-01", periods=365, freq="D", calendar="noleap", use_cftime=True)
+    doy = np.arange(365)
+    values = 285 + 12 * np.cos(2 * np.pi * (doy - 196) / 365)
+    return xr.Dataset(
+        {"tas": (["time", "lat", "lon"], np.broadcast_to(values[:, None, None], (365, 2, 2)).copy(), {"units": "K"})},
+        coords={"time": times, "lat": [10.0, 20.0], "lon": [0.0, 10.0]},
+    )
+
+
+def extra_grid_cases() -> list[Case]:
+    """Grids the defaults do not fit: ERA5's own names, and a model calendar."""
+    e = era5_like().t2m
+    weighted_c = float(e.weighted(np.cos(np.deg2rad(e.latitude))).mean()) - 273.15
+    monthly = noleap_grid().tas.mean(("lat", "lon")).groupby("time.month").mean()
+    return [
+        Case("gridded", "era5_names", "era5_like",
+             "What is the area-weighted mean 2 m temperature in degrees Celsius?", any_close(weighted_c, 0.01),
+             'SELECT SUM(t2m * COS(RADIANS(latitude))) / SUM(COS(RADIANS(latitude))) - 273.15 AS c FROM t2m',
+             "SELECT AVG(t2m) - 273.15 AS c FROM t2m"),
+        # xarray-sql stores noleap dates as time elapsed in that calendar, so SQL
+        # reads 2050-01-01 as 2049-12-12 and EXTRACT(MONTH) gives June; naming
+        # the calendar problem is as right as finding July some other way
+        Case("gridded", "noleap_warmest_month", "noleap",
+             "Which month has the highest mean temperature?",
+             lambda df, answer: first_month(int(monthly.idxmax()))(df, answer)
+             or any(word in answer.value.lower() for word in ("noleap", "calendar"))),
+    ]
+
+
 def selfcheck(cases: list[Case], sources: dict) -> bool:
     """Each reference SQL must pass its check and each trap SQL must fail it."""
     ok = True
@@ -314,15 +434,19 @@ async def run_case(case: Case, source, llm) -> dict:
 
 async def main(args):
     import hvsampledata
-    llm = {"kilo": Kilo, "claude-code": ClaudeCode}[args.llm]()
+    llm_cls = {"kilo": Kilo, "claude-code": ClaudeCode}[args.llm]
+    llm = llm_cls(model_kwargs={"default": {"model": args.model}}) if args.model else llm_cls()
+    model = args.model or llm.model_kwargs.get("default", {}).get("model", "default")
     era5 = xr.open_dataset(args.era5) if args.era5 else None
     air = hvsampledata.air_temperature("xarray")
     sources = {
         "spatial": lumen.read(spatial_fixture()),
         "air": lumen.read({"air": air}),
         **({"era5": lumen.read({"t2m": era5})} if era5 is not None else {}),
+        "era5_like": lumen.read({"t2m": era5_like()}),
+        "noleap": lumen.read({"tas": noleap_grid()}),
     }
-    cases = spatial_cases(spatial_fixture()) + gridded_cases(air, era5)
+    cases = spatial_cases(spatial_fixture()) + gridded_cases(air, era5) + extra_grid_cases()
     if args.selfcheck:
         raise SystemExit(0 if selfcheck(cases, sources) else 1)
     if args.only:
@@ -336,13 +460,17 @@ async def main(args):
     for suite in sorted({r["suite"] for r in results}):
         rows = [r for r in results if r["suite"] == suite]
         print(f"{suite}: {sum(r['passed'] for r in rows)}/{len(rows)} passed")
+    passed = sum(r["passed"] for r in results)
+    # One line per run, to paste into a table of pass rates by model
+    print(f"| {args.llm} | {model} | {passed}/{len(results)} | {100 * passed / max(len(results), 1):.0f}% |")
     if args.out:
-        Path(args.out).write_text(json.dumps({"llm": args.llm, "results": results}, indent=1))
+        Path(args.out).write_text(json.dumps({"llm": args.llm, "model": model, "results": results}, indent=1))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--llm", choices=["kilo", "claude-code"], default="kilo")
+    parser.add_argument("--model", help="The model the LLM provider runs, recorded with the results")
     parser.add_argument("--era5", help="NetCDF or Zarr with t2m(time, lat, lon)")
     parser.add_argument("--only", choices=["spatial", "gridded"])
     parser.add_argument("--repeat", type=int, default=1)
