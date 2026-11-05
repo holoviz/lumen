@@ -90,6 +90,21 @@ source.check("no penguin weighs under 2 kg")  # (2)!
 
 The result is falsy when rows break the rule, so `assert source.check(...)` works in pytest and its failure message shows the rule, the query, the count and the first rows. `result.rows` holds up to 1,000 of them in the type the data was read in, and `result.raise_()` raises the same message outside pytest. Only read-only queries run. To keep a test free of LLM calls, paste the `result.sql` of a plain-language rule into the test.
 
+## Test code that asks
+
+`lumen.ai.testing` records a real LLM's answers once and replays them, so tests of code built on `ask` run offline, fast and the same every time:
+
+``` py
+from lumen.ai.testing import cassette
+
+def test_penguins_in_2008():
+    with cassette("tests/cassettes/penguins_2008.json") as llm:
+        answer = source.ask("How many penguins were measured in 2008?", llm=llm, returns=int)
+    assert answer.result == 114
+```
+
+`cassette` replays by default. Run the tests once with `LUMEN_AI_RECORD=1` to record with your LLM (or pass one, `cassette(path, llm)`), and commit the JSON file. A call that was not recorded, e.g. after a prompt changed, raises `MissingRecording` naming the closest recorded one; record again. `record(llm, path)` and `ReplayLLM(path)` are the two halves, for use outside a `with` block. Calls the LLM makes to tools are replayed as their final answer, without running the tools again.
+
 ## Change the chart
 
 ``` py
