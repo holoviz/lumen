@@ -946,6 +946,42 @@ class Answer(param.Parameterized):
             return gdf.hvplot(geo=True, tiles="OSM")
         return gdf.hvplot()
 
+    @property
+    def chart(self) -> Any:
+        """
+        The chart as an object to keep working with: an Altair Chart for a
+        Vega-Lite answer, the HoloViews object for an hvPlot one, so it can
+        be composed with ``+`` and ``*`` or restyled with ``.opts``. None
+        when the answer has no chart.
+        """
+        if self.view is None:
+            return None
+        if self.spec is None:
+            return self.view.get_plot(self.view.get_data())
+        try:
+            # Deferred: altair is optional
+            import altair as alt
+        except ImportError as e:
+            raise ImportError(
+                "answer.chart needs altair for a Vega-Lite chart: pip install altair. "
+                "answer.to_vega() gives the spec without it."
+            ) from e
+        spec = self.to_vega()
+        # Chart.from_dict only takes single-view specs
+        kinds = {"layer": "LayerChart", "facet": "FacetChart", "repeat": "RepeatChart",
+                 "hconcat": "HConcatChart", "vconcat": "VConcatChart", "concat": "ConcatChart"}
+        kind = next((name for key, name in kinds.items() if key in spec), "Chart")
+        return getattr(alt, kind).from_dict(spec)
+
+    def to_vega(self) -> dict:
+        """
+        The chart as a self-contained Vega-Lite spec, data inlined. An
+        hvPlot map is given as a Vega-Lite map of its geometry.
+        """
+        if (spec := self._vega_lite_spec() or self._geoshape_spec()) is None:
+            raise ValueError("This answer has no Vega-Lite chart; answer.chart gives an hvPlot one.")
+        return spec
+
     def explore(self, **params) -> ExplorerUI:
         """
         Open this answer in the Lumen chat UI: an ExplorerUI on the same

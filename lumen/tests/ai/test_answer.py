@@ -803,6 +803,74 @@ def test_answer_spec_of_an_hvplot_chart_is_its_yaml(frame_source):
     assert language == "yaml" and "kind: bar" in text and "pipeline" not in text
 
 
+def test_answer_chart_of_an_hvplot_answer_is_its_holoviews_object(frame_source):
+    import holoviews as hv
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    chart = Answer(question="?", status="success", pipeline=pipeline, view=view).chart
+    assert isinstance(chart, hv.Bars)
+    assert list(chart.data["value"]) == [10.5, 20.0, 7.5]
+    assert isinstance(chart + chart, hv.Layout)
+
+
+@pytest.mark.parametrize("key, kind", [
+    (None, "Chart"), ("layer", "LayerChart"), ("facet", "FacetChart"), ("hconcat", "HConcatChart"),
+])
+def test_answer_chart_of_a_vega_lite_answer_is_an_altair_chart(chart_answer, monkeypatch, key, kind):
+    built = []
+
+    class TopLevel:
+        @classmethod
+        def from_dict(cls, spec):
+            built.append(spec)
+            return cls()
+
+    altair = type(sys)("altair")
+    for name in ("Chart", "LayerChart", "FacetChart", "RepeatChart", "HConcatChart", "VConcatChart", "ConcatChart"):
+        setattr(altair, name, type(name, (TopLevel,), {}))
+    # Panel's Vega pane checks for altair charts through altair.api
+    altair.api = type(sys)("altair.api")
+    altair.api.TopLevelMixin = TopLevel
+    monkeypatch.setitem(sys.modules, "altair", altair)
+    layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}
+    spec = {None: chart_answer.spec, "layer": {"layer": [layer]}, "facet": {"facet": {"field": "category"}, "spec": layer},
+            "hconcat": {"hconcat": [layer, layer]}}[key]
+    chart_answer.view.spec = chart_answer.spec = spec
+    assert type(chart_answer.chart).__name__ == kind
+    assert built == [chart_answer.to_vega()]
+
+
+def test_answer_to_vega_sizes_only_the_views_that_take_a_size(chart_answer):
+    assert (chart_answer.to_vega()["width"], chart_answer.to_vega()["height"]) == (600, 400)
+    layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}
+    chart_answer.view.spec = chart_answer.spec = {"hconcat": [layer, layer]}
+    assert "width" not in chart_answer.to_vega() and "height" not in chart_answer.to_vega()
+
+
+def test_answer_chart_without_altair_says_how_to_get_it(chart_answer, monkeypatch):
+    monkeypatch.setitem(sys.modules, "altair", None)
+    with pytest.raises(ImportError, match="pip install altair"):
+        chart_answer.chart
+
+
+def test_answer_to_vega_inlines_the_data(chart_answer):
+    spec = chart_answer.to_vega()
+    assert spec["mark"] == "bar"
+    assert [row["value"] for row in spec["data"]["values"]] == [10.5, 20.0, 7.5]
+    assert chart_answer.spec.get("data") is None
+
+
+def test_answer_without_a_chart_has_no_chart_or_vega(frame_source):
+    answer = Answer(question="?", value="Ten rows.", sql="SELECT 1", status="success")
+    assert answer.chart is None
+    with pytest.raises(ValueError, match="no Vega-Lite chart"):
+        answer.to_vega()
+
+
+def test_pn_panel_of_an_answer_is_its_card(chart_answer):
+    assert pn.panel(chart_answer) is chart_answer.__panel__()
+
+
 def test_answer_without_a_chart_has_no_spec(frame_source):
     answer = Answer(question="?", value="Ten rows.", sql="SELECT 1", status="success")
     assert answer._chart_spec() is None
