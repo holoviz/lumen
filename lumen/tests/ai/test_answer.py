@@ -1660,3 +1660,54 @@ def test_a_plan_that_did_not_run_has_no_timings(chart_answer):
 def test_an_answer_without_a_plan_has_no_trace():
     answer = Answer(question="?", status="success")
     assert answer.trace == [] and answer.why == "" and answer._steps_text == ""
+
+
+def _total_responses(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    return [
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ]
+
+
+async def test_a_question_typed_into_the_chat_widget_joins_the_chat(llm, frame_source):
+    llm.set_responses(_total_responses(frame_source))
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    widget = conversation.__panel__()
+    assert widget is conversation.__panel__()
+
+    widget.send("Total value?")
+    await async_wait_until(lambda: len(conversation.answers) == 1, timeout=10000)
+    (answer,) = conversation.answers
+    await async_wait_until(lambda: widget.objects[-1].object is answer.__panel__(), timeout=10000)
+
+    assert answer.value == "The total value is 38."
+    assert [message.object for message in widget.objects][0] == "Total value?"
+    assert conversation._messages[-1] == {"role": "assistant", "content": "The total value is 38."}
+
+
+def test_the_chat_widget_starts_with_the_answers_so_far(chart_answer, frame_source):
+    conversation = chat(frame_source)
+    conversation.answers = [chart_answer]
+    widget = conversation.__panel__()
+    question, card = widget.objects
+    assert question.object == "Value by category?" and card.object is chart_answer.__panel__()
+
+
+async def test_a_failed_call_in_the_chat_widget_shows_an_error(frame_source):
+    class Failing(MockLLM):
+        async def invoke(self, *args, **kwargs):
+            raise RuntimeError("rate limited")
+
+    conversation = chat(frame_source, llm=Failing(), agents=[ChatAgent(), SQLAgent()])
+    reply = await conversation._reply("Total value?", "User", conversation.__panel__())
+    assert reply.severity == "error" and "rate limited" in reply.object
+
+
+def test_a_chat_outside_a_kernel_is_its_answers_as_html(chart_answer, frame_source):
+    conversation = chat(frame_source)
+    conversation.answers = [chart_answer]
+    bundle = conversation._repr_mimebundle_()
+    assert bundle["text/plain"] == "Chat(answers=1)"
+    assert "<h3>Value by category?</h3>" in bundle["text/html"] and "<img" in bundle["text/html"]

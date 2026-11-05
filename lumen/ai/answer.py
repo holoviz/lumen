@@ -43,7 +43,7 @@ from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Card, Column, Row,
+    Alert, Button, Card, ChatInterface, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
 from pydantic import TypeAdapter, ValidationError, create_model
@@ -94,6 +94,18 @@ def _in_kernel() -> bool:
         return get_ipython().kernel is not None
     except AttributeError:  # no IPython at all, or a terminal IPython
         return False
+
+
+def _load_extensions() -> None:
+    """
+    Load what answer cards need, on first display rather than on import, so
+    lumen.ai stays quiet in scripts and in front-ends that never show one.
+    Checked per extension: a plain pn.extension() leaves Vega out, and the
+    Spec section's editor needs codeeditor.
+    """
+    missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
+    if missing:
+        pn.extension(*missing)
 
 
 def _is_spatial(source: Source) -> bool:
@@ -723,9 +735,51 @@ class Chat(param.Parameterized):
         self._agents = agents
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
+        self._interface: ChatInterface | None = None
 
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
+
+    def __panel__(self) -> ChatInterface:
+        """
+        The conversation as a chat widget. A question typed into it is asked
+        with chat.aask, so the widget and chat.ask share one history.
+        """
+        if self._interface is None:
+            self._interface = ChatInterface(
+                callback=self._reply, callback_user="Lumen", show_rerun=False, show_undo=False,
+                sizing_mode="stretch_width", height=600,
+            )
+            for answer in self.answers:
+                self._interface.send(answer.question, user="User", respond=False)
+                self._interface.send(answer.__panel__(), user="Lumen", respond=False)
+        return self._interface
+
+    async def _reply(self, contents: str, user: str, instance: ChatInterface):
+        try:
+            answer = await self.aask(contents)
+        except Exception as e:
+            # A failed call, e.g. a rate limit, must not leave the widget dead
+            return Alert(object=format_error(e), title="Lumen could not answer", severity="error")
+        return answer.__panel__()
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        if not _in_kernel():
+            return {"text/plain": repr(self), "text/html": self._html()}
+        _load_extensions()
+        try:
+            bundle = self.__panel__()._repr_mimebundle_(include, exclude)
+        except ImportError:
+            # VS Code renders Panel through jupyter_bokeh, which may be missing
+            bundle = None
+        return bundle or {"text/plain": repr(self), "text/html": self._html()}
+
+    def _html(self) -> str:
+        """Each question as a heading over its answer's static card."""
+        return "\n".join(
+            f"<h3>{html.escape(answer.question)}</h3>\n{answer._static_bundle(answer._chart_bundle())['text/html']}"
+            for answer in self.answers
+        )
 
     async def aask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """
@@ -1582,13 +1636,7 @@ class Answer(param.Parameterized):
     def _repr_mimebundle_(self, include=None, exclude=None):
         if not _in_kernel():
             return self._static_bundle(self._chart_bundle())
-        # Loaded on first display, not on import, so lumen.ai stays
-        # quiet in scripts and in front-ends that never show an Answer.
-        # Checked per extension: a plain pn.extension() leaves Vega out,
-        # and the Spec section's editor needs codeeditor.
-        missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
-        if missing:
-            pn.extension(*missing)
+        _load_extensions()
         try:
             bundle = self.__panel__()._repr_mimebundle_(include, exclude)
         except ImportError:
