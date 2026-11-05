@@ -266,7 +266,8 @@ class Plan(Section):
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
             if self.unanswerable:
-                steps_title.object = f"ℹ️ The data cannot answer {self.title!r}"
+                # \u2139 is the information emoji, escaped since it looks like an i
+                steps_title.object = f"\u2139\ufe0f The data cannot answer {self.title!r}"
             elif self.status == "success":
                 steps_title.object = f"✅ Successfully completed {self.title!r}"
             else:
