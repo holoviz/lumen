@@ -741,6 +741,20 @@ def test_mirrors_not_in_tables_from_spec():
     assert source.mirrors == {}
 
 
+def test_to_spec_without_tables(tmp_path):
+    uri = str(tmp_path / 'test.db')
+    with duckdb.connect(uri) as connection:
+        connection.execute("CREATE TABLE penguins AS SELECT 1 AS a")
+    source = DuckDBSource(uri=uri)
+    assert source.get_tables() == ['penguins']
+
+    spec = source.to_spec()
+
+    assert 'tables' not in spec
+    restored = DuckDBSource.from_spec(spec)
+    assert restored.get_tables() == ['penguins']
+
+
 def test_create_sql_expr_source_with_params(sample_csv_files):
     """Test that create_sql_expr_source accepts and uses params correctly."""
     files = sample_csv_files
