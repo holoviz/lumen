@@ -30,6 +30,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import holoviews as hv
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
 import pandas as pd
@@ -75,7 +76,7 @@ from .llm import (
     Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
 )
 from .report import ActorTask, Report
-from .sharing import sharing
+from .sharing import shares_values, sharing
 from .story import _prose_to_html
 from .ui import ExplorerUI
 from .usage import UsageCollector
@@ -460,6 +461,52 @@ def _binder(kind: str, name: str) -> Callable[[Any], dict[str, Any]]:
     if kind == "in":
         return lambda value: {name: list(value)}
     return lambda value: {name: value}
+
+
+#: The Vega-Lite selection a click on an answer's chart reports
+CLICK = "lumen_click"
+
+#: Rows of a selection a follow-up prompt shows
+ABOUT_ROWS = 20
+
+
+def _with_click(spec: dict) -> dict:
+    """
+    The spec with a point selection on the fields that tell its marks apart,
+    so a click reports the clicked mark's keys. Aggregated, binned and
+    time-unit fields are left out, since no row of the data holds them as
+    drawn. A faceted or concatenated spec is returned as it is.
+    """
+    if any(key in spec for key in ("facet", "repeat", "concat", "hconcat", "vconcat")):
+        return spec
+    target = spec["layer"][0] if "layer" in spec else spec
+    encoding = target.get("encoding") or spec.get("encoding") or {}
+    fields = sorted({
+        channel["field"] for channel in encoding.values()
+        if isinstance(channel, dict) and isinstance(channel.get("field"), str)
+        and not any(key in channel for key in ("aggregate", "bin", "timeUnit"))
+    })
+    if not fields or any(p.get("name") == CLICK for p in target.get("params", [])):
+        return spec
+    target = {**target, "params": [*target.get("params", []), {"name": CLICK, "select": {"type": "point", "fields": fields}}]}
+    return {**spec, "layer": [target, *spec["layer"][1:]]} if "layer" in spec else target
+
+
+def _about(question: str, rows: pd.DataFrame) -> str:
+    """The follow-up message: the question, the rows it is about, and how to use them."""
+    if sharing.share != "sample":
+        raise ValueError(
+            f"ask_about sends the selected rows to the LLM, which share={sharing.share!r} does not allow. "
+            "Use lumen.ai.configure(share='sample') to ask about them."
+        )
+    columns = [c for c in rows.columns if shares_values(str(c), rows[c].head(ABOUT_ROWS).tolist())]
+    shown = "" if len(rows) <= ABOUT_ROWS else f" (the first {ABOUT_ROWS} shown)"
+    return (
+        f"{question}\n\nThis is about {len(rows)} row{'s' if len(rows) != 1 else ''} of the previous answer's data"
+        f"{shown}:\n{rows[columns].head(ABOUT_ROWS).to_csv(index=False)}\n"
+        "If these rows hold what is asked, answer from them without a new query. "
+        "Otherwise query the data, filtering on these rows' values."
+    )
 
 
 def _records(data: Any) -> Any:
@@ -861,13 +908,17 @@ class Chat(param.Parameterized):
         Ask the next question and wait for the Answer. With confirm, the
         Answer is "planned" and joins the conversation once it is run.
         """
+        return await self._aask(question, question, confirm=confirm, returns=returns)
+
+    async def _aask(self, question: str, content: str, confirm: bool = False, returns: Any = None) -> Answer:
+        """Ask question, sending content as the message, e.g. the question with the rows it is about."""
         agents = _settings["agents"] if self._agents is None else self._agents
         planner = _planner(self._source, self._llm or _default_llm(), agents)
         if self._context is None:
             context = _fresh_context(planner, self._source, self._visible_slugs)
         else:
             context = dict(self._context)
-        messages = [*self._messages, {"role": "user", "content": question}]
+        messages = [*self._messages, {"role": "user", "content": content}]
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
         if returns is not None:
             await _typed(answer, returns, planner.llm)
@@ -879,6 +930,7 @@ class Chat(param.Parameterized):
 
     def _record(self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any]) -> None:
         self.answers = [*self.answers, answer]
+        answer._conversation = self
         if answer.status == "error":
             # The next question starts from the last answer that worked
             return
@@ -934,6 +986,10 @@ class Answer(param.Parameterized):
     value = param.String(default="", doc="""
         The written answer.""")
 
+    selection = param.DataFrame(default=None, allow_None=True, doc="""
+        The rows clicked or box-selected on the chart or map, which
+        ask_about asks about; None when nothing is selected.""")
+
     result = param.Parameter(default=None, doc="""
         The answer as the type asked for with returns=, e.g. an int or a
         pydantic model; None when no type was asked for.""")
@@ -963,6 +1019,10 @@ class Answer(param.Parameterized):
         self._crs_warned = False
         # The type asked for, so run and retry give the answer in it too
         self._returns = None
+        # The chat this answer is part of, so a question about it follows up there
+        self._conversation: Chat | None = None
+        # What reports clicks on the chart, kept alive with the answer
+        self._streams: list = []
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -1182,6 +1242,148 @@ class Answer(param.Parameterized):
             ))
         return steps
 
+    async def aask_about(self, question: str, rows: Any = None) -> Answer:
+        """
+        Ask a follow-up about some rows of this answer's data: the
+        selection, clicked or box-selected on the chart, unless rows says
+        which (a DataFrame, a dict or list of dicts, or row positions). The
+        LLM answers from the rows when they hold what is asked, and
+        otherwise queries the data filtered on their values. In a chat, the
+        question joins the conversation. Returns the new Answer.
+        """
+        rows = self._selected(rows)
+        content = _about(question, rows)
+        if self._conversation is not None:
+            return await self._conversation._aask(question, content)
+        outcome = self.value + (f"\n\nThe SQL was:\n{self.sql}" if self.sql else "")
+        messages = [
+            {"role": "user", "content": self.question}, {"role": "assistant", "content": outcome},
+            {"role": "user", "content": content},
+        ]
+        data = self.source if self._data is None else self._data
+        return await _aask_messages(data, question, messages, self._llm, self._agents)
+
+    def ask_about(self, question: str, rows: Any = None) -> Answer:
+        """Ask a follow-up about the selected rows and return the Answer. See aask_about."""
+        return _run(self.aask_about(question, rows))
+
+    def _selected(self, rows: Any) -> pd.DataFrame:
+        """The rows a question is about, as a DataFrame."""
+        if rows is None:
+            if self.selection is None or self.selection.empty:
+                raise ValueError("Nothing is selected. Click a point on the chart, or pass rows=.")
+            return self.selection
+        if isinstance(rows, pd.DataFrame):
+            return rows
+        if isinstance(rows, dict):
+            return pd.DataFrame([rows])
+        if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+            return pd.DataFrame(rows)
+        if self.pipeline is None:
+            raise ValueError("This answer has no data to pick rows from.")
+        return as_pandas(self.pipeline.data).iloc[list(rows)]
+
+    def _select_keys(self, keys: dict[str, Any]) -> None:
+        """Select the data rows matching the keys a click on a Vega-Lite chart reported."""
+        df = as_pandas(self.pipeline.data)
+        keys = {key: value for key, value in keys.items() if key in df.columns}
+        if not keys:
+            self.selection = None
+            return
+        mask = pd.Series(True, index=df.index)
+        for key, value in keys.items():
+            if pd.api.types.is_datetime64_any_dtype(df[key]) and isinstance(value, (int, float)):
+                # Vega-Lite reports a date as milliseconds since the epoch
+                mask &= df[key] == pd.to_datetime(value, unit="ms")
+            else:
+                mask &= df[key].astype(str) == str(value)
+        self.selection = df[mask]
+
+    def _watch_clicks(self, view: View) -> None:
+        """
+        Report clicks and box selections on the view's chart into
+        selection: Vega-Lite through its point selection, hvPlot through
+        Selection1D for points, bars and shapes, and Tap for grids, where
+        the nearest cell is the row.
+        """
+        pane = view._panel
+        if isinstance(pane, Vega):
+            if CLICK in pane._selections:
+                def on_click(event):
+                    # One click reports each field as its own {field: value}
+                    keys = {k: v for item in event.new or [] if isinstance(item, dict) for k, v in item.items()}
+                    self._select_keys(keys) if keys else setattr(self, "selection", None)
+                pane.selection.param.watch(on_click, CLICK)
+            return
+        if not isinstance(pane, pn.pane.HoloViews):
+            return
+        element = pane.object
+        if isinstance(element, hv.Overlay):
+            # The data layer, not the basemap tiles under it
+            layers = [layer for layer in element if not isinstance(layer, hv.Tiles)]
+            element = layers[-1] if layers else element
+        if isinstance(element, (hv.Points, hv.Scatter, hv.Bars, hv.Polygons, hv.Path)):
+            element.opts(tools=["tap", "box_select"])
+            stream = hv.streams.Selection1D(source=element)
+            data = element.dframe()
+
+            def on_select(index):
+                self.selection = data.iloc[index] if index else None
+            stream.add_subscriber(on_select)
+        elif isinstance(element, (hv.QuadMesh, hv.Image, hv.DynamicMap)):
+            stream = hv.streams.Tap(source=element)
+            x, y = (dim.name for dim in element.kdims[:2]) if len(element.kdims) >= 2 else (view.x, view.y)
+
+            def on_select(x=None, y=None, xcol=x, ycol=y):
+                df = as_pandas(self.pipeline.data)
+                if x is None or y is None or xcol not in df or ycol not in df:
+                    return
+                nearest = ((df[xcol] - x) ** 2 + (df[ycol] - y) ** 2).idxmin()
+                self.selection = df.loc[[nearest]]
+            stream.add_subscriber(on_select)
+        else:
+            return
+        self._streams.append(stream)
+
+    def _ask_box(self) -> Column:
+        """Under the chart: what is selected, and a box to ask about it, shown once something is."""
+        selected = Markdown(sizing_mode="stretch_width")
+        question = pn.widgets.TextInput(placeholder="Ask about this, e.g. what is this?", sizing_mode="stretch_width")
+        ask = Button(label="Ask", variant="contained")
+        answers = Column(sizing_mode="stretch_width")
+        box = Column(selected, Row(question, ask, sizing_mode="stretch_width"), answers, visible=False, sizing_mode="stretch_width")
+
+        def on_selection(event):
+            rows = event.new
+            box.visible = rows is not None and not rows.empty
+            if box.visible:
+                first = ", ".join(f"{k}: {v}" for k, v in rows.iloc[0].items())
+                selected.object = f"**Selected:** {first}" if len(rows) == 1 else f"**Selected:** {len(rows)} rows"
+
+        async def on_ask(event):
+            if not question.value_input.strip():
+                return
+            ask.loading = True
+            try:
+                answer = await self.aask_about(question.value_input.strip())
+            except Exception as e:
+                answers.append(Alert(object=format_error(e), title="Lumen could not answer", severity="error"))
+            else:
+                chat = self._conversation
+                if chat is not None and chat._interface is not None:
+                    # In the chat widget the follow-up belongs in the conversation
+                    chat._interface.send(answer.question, user="User", respond=False)
+                    chat._interface.send(answer.__panel__(), user="Lumen", respond=False)
+                else:
+                    answers.append(answer.__panel__())
+                question.value = question.value_input = ""
+            finally:
+                ask.loading = False
+
+        self.param.watch(on_selection, "selection")
+        ask.on_click(on_ask)
+        return box
+
     def compile(self, params: list[str] | None = None) -> Callable[..., Any]:
         """
         The answer's query as a function that runs without an LLM.
@@ -1293,7 +1495,12 @@ class Answer(param.Parameterized):
         if importlib.util.find_spec("lonboard") is not None:
             # Deferred: lonboard is optional, and heavy to import
             from lonboard import viz
-            return viz(gdf)
+            m = viz(gdf)
+            for layer in m.layers:
+                layer.observe(lambda change: setattr(
+                    self, "selection", None if change.new is None else gdf.iloc[[change.new]]
+                ), names="selected_index")
+            return m
         if importlib.util.find_spec("geoviews") is not None:
             return gdf.hvplot(geo=True, tiles="OSM")
         return gdf.hvplot()
@@ -1422,6 +1629,7 @@ class Answer(param.Parameterized):
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self._chart_part(self.view))
+                parts.append(self._ask_box())
             if self._cap_note:
                 parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
             if self.sql:
@@ -1511,6 +1719,11 @@ class Answer(param.Parameterized):
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
                 severity="error", sizing_mode="stretch_width",
             )
+        if isinstance(view, VegaLiteView):
+            view.spec = _with_click(view.spec)
+        # Builds the pane the view shows, so clicks on it can be watched
+        view.panel  # noqa: B018
+        self._watch_clicks(view)
         if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
             # A responsive plot stretches to its container, and a notebook
             # output has no height to give it, so it would collapse

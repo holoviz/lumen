@@ -735,8 +735,9 @@ def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_an
 def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     card = chart_answer.__panel__()
     assert card is chart_answer.__panel__()
-    text, _chart, sql, spec = card
+    text, _chart, ask_box, sql, spec = card
     assert text.object.startswith("**B** is largest.")
+    assert not ask_box.visible
     assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
     assert spec.title == "Spec" and spec.collapsed
     code = spec[0].object
@@ -888,7 +889,7 @@ def test_answer_without_a_chart_has_no_spec(frame_source):
 
 def test_answer_card_skips_empty_text(chart_answer):
     chart_answer.value = ""
-    assert len(chart_answer.__panel__()) == 3
+    assert len(chart_answer.__panel__()) == 4
 
 
 def test_importing_answer_does_not_load_the_panel_extension():
@@ -1755,3 +1756,152 @@ def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable
     assert titles == ["## Value by category?", "## Total value?", "## Wingspan?"]
     assert refinable_answer._editor in report.views
     assert "## Total value?" in report.to_notebook()
+
+
+def test_a_vega_lite_chart_reports_clicks_on_its_dimension_fields():
+    from lumen.ai.answer import CLICK, _with_click
+    spec = {"mark": "bar", "encoding": {
+        "x": {"field": "category", "type": "nominal"},
+        "y": {"field": "value", "aggregate": "mean", "type": "quantitative"},
+        "color": {"field": "island", "type": "nominal"},
+    }}
+    assert _with_click(spec)["params"] == [{"name": CLICK, "select": {"type": "point", "fields": ["category", "island"]}}]
+    layered = _with_click({"encoding": spec["encoding"], "layer": [{"mark": "bar"}, {"mark": "text"}]})
+    assert layered["layer"][0]["params"][0]["select"]["fields"] == ["category", "island"]
+    assert "params" not in layered["layer"][1]
+    facet = {"facet": {"field": "island"}, "spec": spec}
+    assert _with_click(facet) is facet
+    assert _with_click(_with_click(spec)) == _with_click(spec)
+
+
+def test_a_click_on_a_vega_lite_chart_selects_its_rows_and_shows_the_ask_box(chart_answer):
+    from lumen.ai.answer import CLICK
+    chart_answer.pipeline = chart_answer.view.pipeline
+    card = chart_answer.__panel__()
+    box = card[2]
+    pane = chart_answer.view._panel
+    assert not box.visible and CLICK in pane._selections
+
+    pane.selection.param.update(**{CLICK: [{"category": "A"}]})
+    assert list(chart_answer.selection["value"]) == [10.5, 7.5]
+    assert box.visible and box[0].object == "**Selected:** 2 rows"
+
+    pane.selection.param.update(**{CLICK: [{"category": "B"}]})
+    assert box[0].object == "**Selected:** category: B, value: 20.0"
+    pane.selection.param.update(**{CLICK: []})
+    assert chart_answer.selection is None and not box.visible
+
+
+def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="scatter", x="category", y="value")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    (stream,) = answer._streams
+    stream.event(index=[1, 2])
+    assert list(answer.selection["value"]) == [20.0, 7.5]
+    stream.event(index=[])
+    assert answer.selection is None
+
+
+def test_a_tap_on_a_grid_selects_the_nearest_cell():
+    _grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    answer.view = hvPlotView(pipeline=answer.pipeline, kind="quadmesh", x="lon", y="lat", z="t")
+    answer.__panel__()
+    (stream,) = answer._streams
+    stream.event(x=2.2, y=19.0)
+    (row,) = answer.selection.to_dict("records")
+    assert (row["lon"], row["lat"]) == (2.0, 20.0)
+
+
+async def test_ask_about_sends_the_rows_and_the_answer_before(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "That is category A, at 10.5."])
+    original = Answer(
+        question="Values by category?", value="A and B.", sql="SELECT * FROM tiny", status="success",
+        source=frame_source, pipeline=Pipeline(source=frame_source, table="tiny"), llm=llm,
+        agents=[ChatAgent(), SQLAgent()],
+    )
+    sent = []
+    invoke = llm.invoke
+
+    async def recording(messages, *args, **kwargs):
+        sent.append(messages)
+        return await invoke(messages, *args, **kwargs)
+
+    llm.invoke = recording
+    answer = await original.aask_about("What is this?", rows=[0])
+    assert answer.value == "That is category A, at 10.5." and answer.sql is None
+    assert answer.question == "What is this?"
+    history, latest = sent[0]
+    # The planner folds the earlier turns into one history message
+    assert "Values by category?" in history["content"] and "SELECT * FROM tiny" in history["content"]
+    assert latest["content"].startswith("What is this?\n\nThis is about 1 row")
+    assert "category,value\nA,10.5" in latest["content"]
+
+
+async def test_ask_about_in_a_chat_joins_the_chat(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT category, SUM(value) AS total FROM tiny GROUP BY category", table_slug="totals", tables=["tiny"]),
+        SQLModel(query="SELECT * FROM tiny WHERE category = 'A'", table_slug="only_a", tables=["tiny"]),
+    ])
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    first = await conversation.aask("Total value per category?")
+    follow_up = await first.aask_about("Show its rows", rows={"category": "A", "total": 18.0})
+    assert conversation.answers == [first, follow_up] and follow_up.question == "Show its rows"
+    history, latest = llm.plan_calls[-1]
+    assert "User: Total value per category?" in history["content"]
+    assert latest["content"].startswith("Show its rows\n\nThis is about 1 row") and "A,18.0" in latest["content"]
+    assert "category = 'A'" in follow_up.sql
+
+
+def test_ask_about_needs_rows_and_shared_values(chart_answer):
+    with pytest.raises(ValueError, match="Nothing is selected"):
+        chart_answer.ask_about("What is this?")
+    configure(share="schema")
+    try:
+        with pytest.raises(ValueError, match="share='schema' does not allow"):
+            chart_answer.ask_about("What is this?", rows={"category": "A"})
+    finally:
+        configure(share="sample")
+
+
+def test_ask_about_withholds_personal_columns():
+    from lumen.ai.answer import _about
+    configure(mask_pii=True)
+    try:
+        text = _about("Who?", pd.DataFrame({"email": ["a@b.com"], "value": [1]}))
+    finally:
+        configure(mask_pii=False)
+    assert "a@b.com" not in text and "value\n1" in text
+
+
+def test_the_static_card_has_no_ask_box(chart_answer):
+    html_card = chart_answer._static_bundle(chart_answer._chart_bundle())["text/html"]
+    assert "Ask about this" not in html_card
+
+
+async def test_the_ask_box_asks_about_the_selection(chart_answer, monkeypatch):
+    chart_answer.pipeline = chart_answer.view.pipeline
+    asked = []
+
+    async def aask_about(question, rows=None):
+        asked.append((question, list(chart_answer.selection["category"])))
+        return Answer(question=question, value="Category B.", status="success")
+
+    monkeypatch.setattr(chart_answer, "aask_about", aask_about)
+    box = chart_answer.__panel__()[2]
+    chart_answer.selection = chart_answer.pipeline.data.iloc[[1]]
+    _selected, (question, ask), answers = box
+    question.value_input = "What is this?"
+    ask.clicks += 1
+    await async_wait_until(lambda: len(answers) == 1)
+    assert asked == [("What is this?", ["B"])] and answers[0][0].object == "Category B."
+
+
+def test_a_pick_on_a_lonboard_map_selects_the_row():
+    pytest.importorskip("lonboard")
+    answer = _geo_answer()
+    m = answer.map()
+    m.layers[0].selected_index = 1
+    assert len(answer.selection) == 1 and answer.selection.index[0] == answer.gdf.index[1]
