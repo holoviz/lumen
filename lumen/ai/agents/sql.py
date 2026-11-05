@@ -36,6 +36,7 @@ from ..sql_review import TableFacts, geographic_crs, review_sql
 from ..table_stats import get_stats_store
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
+from ..tools.gridded import gridded_sql_tools
 from ..utils import (
     PROFILE_SAMPLE_ROWS, clean_sql, describe_data, format_error,
     format_unknown_name, get_frame, get_pipeline, log_debug,
@@ -1000,7 +1001,7 @@ class SQLAgent(BaseLumenAgent):
     # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
     # request may both apply this in-place filter and open a new SQL exploration
     # (see make_apply_filter_tool for the known limitation / follow-up).
-    llm_tools = param.List(default=[make_apply_filter_llm_tool])
+    llm_tools = param.List(default=[make_apply_filter_llm_tool, gridded_sql_tools])
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
