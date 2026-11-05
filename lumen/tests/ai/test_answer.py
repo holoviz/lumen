@@ -249,8 +249,9 @@ async def test_error_card_shows_the_message_and_open_sql(frame_source):
     with _failing_sql(fail_times=9):
         answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
 
-    alert, sql = answer.__panel__()
+    alert, sql, steps = answer.__panel__()
     assert alert.severity == "error" and "column nope" in alert.object
+    assert steps.title == "Steps" and steps.collapsed
     assert not sql.collapsed and "SELECT nope FROM tiny" in sql[0].object
     html = answer._static_bundle(None)["text/html"]
     assert "column nope not found" in html
@@ -271,7 +272,7 @@ async def test_a_later_step_failing_keeps_the_working_query(frame_source):
     assert answer.error == "ValueError: chart spec is invalid"
     assert "SUM(value)" in answer.sql
     assert answer.pipeline.data.iloc[0, 0] == 38.0
-    _alert, sql = answer.__panel__()
+    _alert, sql, _steps = answer.__panel__()
     assert sql.title == "SQL" and sql.collapsed
     assert "<details><summary>SQL</summary>" in answer._static_bundle(None)["text/html"]
     with pytest.raises(ValueError, match=r"answer\.retry"):
@@ -1599,3 +1600,63 @@ def test_compile_needs_a_query_that_worked(frame_source):
         Answer(question="?", status="success").compile()
     with pytest.raises(ValueError, match="no query that worked"):
         Answer(question="?", status="error", sql="SELECT 1", sql_failed=True, source=frame_source).compile()
+
+
+async def test_answer_trace_has_each_step_as_it_ran(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        _costing(llm, SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]), 10, None),
+        _costing(llm, "The total value is 38.", 10, None),
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    sql_step, chat_step = answer.trace
+    assert (sql_step.actor, chat_step.actor) == ("SQLAgent", "ChatAgent")
+    assert sql_step.status == chat_step.status == "success"
+    assert sql_step.seconds > 0 and chat_step.seconds > 0
+    assert sql_step.llm_calls == chat_step.llm_calls == 1
+    assert "SUM(value)" in sql_step.sql and chat_step.sql is None
+    assert "sql" in sql_step.provides and "source" in sql_step.requires and chat_step.provides == ("chat",)
+    assert answer.why == "Query then explain"
+
+
+def test_plan_graph_follows_what_steps_need():
+    plan = Plan(
+        ActorTask(SQLAgent(), title="Query", instruction="Query"),
+        ActorTask(VegaLiteAgent(n_doc_pages=0), title="Chart", instruction="Chart"),
+        ActorTask(ChatAgent(), title="Explain", instruction="Explain"),
+        title="Chart it",
+    )
+    assert plan.graph() == [("Query", "Chart", "data"), ("Query", "Chart", "pipeline"), ("Query", "Chart", "table")]
+    mermaid = plan.to_mermaid()
+    assert mermaid.startswith("graph TD") and 's0["Query"]' in mermaid and "s0 -->|pipeline| s1" in mermaid
+    assert 's2["Explain"]' in mermaid
+
+
+async def test_answer_steps_card_lists_the_trace(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    steps = next(part for part in answer.__panel__() if isinstance(part, Card) and part.title == "Steps")
+    assert steps.collapsed
+    text = steps[0].object
+    assert text.startswith("*Query then explain*") and "1. **SQLAgent**: Sum value · " in text
+    assert "<summary>Steps</summary>" in answer._static_bundle(None)["text/html"]
+
+
+def test_a_plan_that_did_not_run_has_no_timings(chart_answer):
+    agent = VegaLiteAgent(n_doc_pages=0)
+    answer = Answer(question="?", status="planned", plan=Plan(ActorTask(agent, title="Chart", instruction="Chart"), title="Chart"))
+    (step,) = answer.trace
+    assert step.seconds is None and step.llm_calls is None
+    assert answer._steps_text.endswith("Chart · not run")
+
+
+def test_an_answer_without_a_plan_has_no_trace():
+    answer = Answer(question="?", status="success")
+    assert answer.trace == [] and answer.why == "" and answer._steps_text == ""

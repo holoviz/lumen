@@ -25,6 +25,7 @@ from concurrent.futures import (
     TimeoutError as FutureTimeoutError,
 )
 from contextlib import ExitStack, contextmanager, suppress
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -687,6 +688,23 @@ def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None 
     return Chat(data, llm=llm, agents=agents)
 
 
+@dataclass(frozen=True)
+class Step:
+    """One step of an answer's plan, as it ran."""
+
+    title: str
+    actor: str
+    instruction: str
+    status: str
+    #: None for a step that did not run
+    seconds: float | None
+    llm_calls: int | None
+    requires: tuple[str, ...]
+    provides: tuple[str, ...]
+    #: The query, for a step that wrote one
+    sql: str | None
+
+
 class Chat(param.Parameterized):
     """
     A conversation with a Source or Pipeline. Each question sees the earlier
@@ -1010,6 +1028,38 @@ class Answer(param.Parameterized):
             return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
         return df
 
+    @property
+    def why(self) -> str:
+        """
+        Why the answer took the steps it did: the planner's account of the
+        question, and for an unanswerable one the reason.
+        """
+        if self.plan is None:
+            return ""
+        return "\n\n".join(part for part in (self.plan.reasoning, self.plan.unanswerable) if part)
+
+    @property
+    def trace(self) -> list[Step]:
+        """
+        Each step of the plan as it ran: its actor and instruction, what it
+        needed and provided, how long it took, how many LLM calls it made
+        and the query it wrote. answer.plan.graph() gives how the steps
+        feed each other.
+        """
+        if self.plan is None:
+            return []
+        steps = []
+        for i, task in enumerate(self.plan):
+            seconds, calls = self.plan._runs.get(i, (None, None))
+            provides = task.output_schema.__required_keys__ | task.output_schema.__optional_keys__
+            steps.append(Step(
+                title=task.title, actor=type(task.actor).__name__, instruction=task.instruction,
+                status=task.status, seconds=seconds, llm_calls=calls,
+                requires=tuple(sorted(task.input_schema.__required_keys__)), provides=tuple(sorted(provides)),
+                sql=task.out_context.get("sql") if "sql" in provides else None,
+            ))
+        return steps
+
     def compile(self, params: list[str] | None = None) -> Callable[..., Any]:
         """
         The answer's query as a function that runs without an LLM.
@@ -1266,9 +1316,27 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
+        if self._steps_text:
+            parts.append(Card(
+                Markdown(self._steps_text, sizing_mode="stretch_width"), title="Steps", collapsed=True,
+                sizing_mode="stretch_width",
+            ))
         if self._usage_note:
             parts.append(self._usage_pane())
         return parts
+
+    @property
+    def _steps_text(self) -> str:
+        """The why and each step as it ran, as Markdown; nothing for a plan with no steps."""
+        lines = []
+        for i, step in enumerate(self.trace, 1):
+            facts = [f"{step.seconds:.1f} s"] if step.seconds is not None else ["not run"]
+            if step.llm_calls:
+                facts.append(f"{step.llm_calls} LLM call{'s' if step.llm_calls > 1 else ''}")
+            lines.append(f"{i}. **{step.actor}**: {step.title} · {', '.join(facts)}")
+        if not lines:
+            return ""
+        return "\n\n".join(part for part in (f"*{self.plan.reasoning}*" if self.plan.reasoning else "", "\n".join(lines)) if part)
 
     @property
     def _plan_steps(self) -> str:
@@ -1503,6 +1571,8 @@ class Answer(param.Parameterized):
             card.append(self._sql_html())
         if chart_spec is not None:
             card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
+        if self._steps_text:
+            card.append(f"<details><summary>Steps</summary>{_prose_to_html(self._steps_text)}</details>")
         if self._usage_note:
             card.append(f"<p><small>{html.escape(self._usage_note)}</small></p>")
             bundle["text/markdown"] += f"\n\n*{self._usage_note}*"

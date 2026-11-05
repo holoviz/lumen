@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -39,6 +40,7 @@ from ..tools import (
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..tools.monty import make_monty_llm_tool
+from ..usage import capture_usage
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
     mutate_user_message, normalized_name, print_task_exception,
@@ -75,7 +77,38 @@ class Plan(Section):
         Why the data cannot answer the question, when the planner found
         that it cannot; the plan then has no steps.""")
 
+    reasoning = param.String(default="", doc="""
+        The planner's account of the question, which led to these steps.""")
+
     _tasks = param.List(item_type=ActorTask)
+
+    # For each step run: (seconds, LLM calls), by the step's index
+    _runs = param.Dict(default={})
+
+    def graph(self) -> list[tuple[str, str, str]]:
+        """
+        How the steps feed each other, as (from step, to step, key) edges:
+        a step that needs or can use a key gets it from the latest step
+        before it that provides it.
+        """
+        edges = []
+        tasks = list(self)
+        for j, task in enumerate(tasks):
+            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
+                provider = next((
+                    earlier for earlier in reversed(tasks[:j])
+                    if key in earlier.output_schema.__required_keys__ | earlier.output_schema.__optional_keys__
+                ), None)
+                if provider is not None:
+                    edges.append((provider.title, task.title, key))
+        return edges
+
+    def to_mermaid(self) -> str:
+        """The steps and how they feed each other, as a Mermaid flowchart."""
+        ids = {task.title: f"s{i}" for i, task in enumerate(self)}
+        lines = ["graph TD"] + [f'    {ids[task.title]}["{task.title.replace(chr(34), chr(39))}"]' for task in self]
+        lines += [f"    {ids[source]} -->|{key}| {ids[target]}" for source, target, key in self.graph()]
+        return "\n".join(lines)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
@@ -120,6 +153,17 @@ class Plan(Section):
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
+        start = time.monotonic()
+        # The agent's own LLM is the one it calls, set by the coordinator
+        llm = task.actor.llm or task.llm or self.llm
+        with capture_usage(llm) if llm is not None else nullcontext() as usage:
+            try:
+                return await self._run_actor_task(i, task, context, **kwargs)
+            finally:
+                calls = None if usage is None else len(usage.records)
+                self._runs = {**self._runs, i: (time.monotonic() - start, calls)}
+
+    async def _run_actor_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         if task.status == "success":
             return task.views, task.out_context
 

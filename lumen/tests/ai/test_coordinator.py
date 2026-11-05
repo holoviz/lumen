@@ -1074,3 +1074,15 @@ def test_chat_steps_shrink_with_a_narrow_chat_column():
 
     assert step.min_width is None
     assert step.sizing_mode == "stretch_width"
+
+
+async def test_planner_keeps_its_reasoning_on_the_plan(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Clear", yes=False),
+        plan_model(chain_of_thought="A greeting, so chat back.", title="Hello", steps=[
+            {"actor": "ChatAgent", "instruction": "Say hello", "title": "Hello"},
+        ]),
+    ])
+    plan = await Planner(llm=llm).respond([{'role': 'user', 'content': 'Hello?'}], {})
+    assert plan.reasoning == "A greeting, so chat back."
