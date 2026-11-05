@@ -463,6 +463,58 @@ def _binder(kind: str, name: str) -> Callable[[Any], dict[str, Any]]:
     return lambda value: {name: value}
 
 
+#: Rows a Vega-Lite scatter or line chart draws before the answer draws a
+#: density image instead; Vega-Lite inlines every row and slows above this
+LARGE_POINTS = 5_000
+
+_POINT_KINDS = {"point": "scatter", "circle": "scatter", "square": "scatter", "tick": "scatter", "line": "line"}
+
+
+def _point_chart(view: View) -> tuple[str, dict] | None:
+    """For a single Vega-Lite scatter or line chart of raw rows, its hvPlot kind and encoding."""
+    if not isinstance(view, VegaLiteView):
+        return None
+    spec = view.spec
+    if any(key in spec for key in ("layer", "facet", "repeat", "concat", "hconcat", "vconcat")):
+        return None
+    mark = spec.get("mark")
+    kind = _POINT_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
+    encoding = spec.get("encoding", {})
+    axes = [encoding.get(axis) for axis in ("x", "y")]
+    if kind is None or not all(isinstance(a, dict) and a.get("field") for a in axes):
+        return None
+    if any(key in a for a in axes for key in ("aggregate", "bin")):
+        return None
+    return kind, encoding
+
+
+def _density_view(view: View, pipeline: Pipeline | None) -> View:
+    """
+    A Vega-Lite scatter or line chart of more than LARGE_POINTS rows, drawn
+    instead with hvPlot and datashader as a density image, which stays fast
+    however many rows there are. Coloured by a category, the categories are
+    blended; otherwise each pixel counts its points. Anything else, or
+    without datashader, is returned as it is.
+    """
+    chart = _point_chart(view)
+    if chart is None or pipeline is None or len(pipeline.data) <= LARGE_POINTS:
+        return view
+    if importlib.util.find_spec("datashader") is None:
+        return view
+    kind, encoding = chart
+    params: dict[str, Any] = dict(
+        pipeline=view.pipeline, kind=kind, x=encoding["x"]["field"], y=encoding["y"]["field"],
+        responsive=True, height=400, title=view.spec.get("title", ""),
+    )
+    color = encoding.get("color", {})
+    if color.get("field") and color.get("type") == "nominal":
+        # rasterize keeps one number per pixel and loses the category
+        params.update(by=color["field"], datashade=True)
+    else:
+        params.update(rasterize=True, cnorm="log")
+    return hvPlotView(**params)
+
+
 def _records(data: Any) -> Any:
     """
     A frame as JSON records, with missing values as null. JSON has no
@@ -617,6 +669,9 @@ def _build_answer(
     editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
     editor = editors[-1] if editors else None
     view = None if editor is None else editor.component
+    if view is not None and (dense := _density_view(view, context.get("pipeline"))) is not view:
+        # The Vega-Lite editor cannot edit the hvPlot chart that replaced it
+        view, editor = dense, None
     value = str(messages[-1].object) if messages else ""
     if not value.strip() and view is None and context.get("sql") is None:
         # A plan can finish without a step that queries or answers, e.g. one
@@ -1720,12 +1775,23 @@ class Answer(param.Parameterized):
 
     @property
     def _cap_note(self) -> str:
-        if self.truncated_at is None:
-            return ""
-        return (
-            f"The data stops at the first {self.truncated_at:,} rows. "
-            "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
-        )
+        """Notes on how much of the data the answer holds and draws."""
+        notes = []
+        if self.truncated_at is not None:
+            notes.append(
+                f"The data stops at the first {self.truncated_at:,} rows. "
+                "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
+            )
+        rows = 0 if self.pipeline is None or self.view is None else len(self.pipeline.data)
+        if isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize")):
+            shown = "blending the categories where they overlap" if self.view.by else "so each pixel shows how many fall there"
+            notes.append(f"The chart draws {rows:,} points as a density image, {shown}.")
+        elif rows > LARGE_POINTS and _point_chart(self.view) is not None:
+            notes.append(
+                f"The chart draws all {rows:,} points, which can be slow. "
+                "Install datashader to draw them as a density image instead."
+            )
+        return " ".join(notes)
 
     def _sql_html(self) -> str:
         # A failed query is what the reader needs to see, so it starts open

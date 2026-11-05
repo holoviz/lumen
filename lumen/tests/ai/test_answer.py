@@ -1918,3 +1918,87 @@ def test_the_click_selection_stays_out_of_the_spec_and_survives_a_redraw(chart_a
     assert CLICK in pane._selections
     pane.selection.param.update(**{CLICK: [{"category": "B"}]})
     assert list(chart_answer.selection["category"]) == ["B"]
+
+
+@pytest.fixture
+def many_points():
+    import numpy as np
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({"x": rng.random(6_000), "y": rng.random(6_000), "kind": rng.choice(["a", "b"], 6_000)})
+    return Pipeline(source=read({"points": frame}), table="points")
+
+
+def _point_spec(mark="point", color=True, **x):
+    encoding = {"x": {"field": "x", "type": "quantitative", **x}, "y": {"field": "y", "type": "quantitative"}}
+    if color:
+        encoding["color"] = {"field": "kind", "type": "nominal"}
+    return {"mark": mark, "encoding": encoding}
+
+
+@pytest.mark.parametrize("mark, color, kind", [("point", True, "scatter"), ({"type": "circle"}, False, "scatter"), ("line", True, "line")])
+def test_a_large_scatter_or_line_chart_is_drawn_as_a_density_image(many_points, mark, color, kind):
+    pytest.importorskip("datashader")
+    from lumen.ai.answer import _density_view
+    view = _density_view(VegaLiteView(pipeline=many_points, spec=_point_spec(mark, color)), many_points)
+    assert isinstance(view, hvPlotView) and view.kind == kind and (view.x, view.y) == ("x", "y")
+    if color:
+        assert view.datashade and view.by == ["kind"]
+    else:
+        assert view.kwargs["rasterize"] and not view.datashade
+    import holoviews as hv
+    assert isinstance(view.get_plot(view.get_data()), hv.DynamicMap)
+
+
+@pytest.mark.parametrize("spec", [
+    {"mark": "bar", "encoding": {"x": {"field": "kind"}, "y": {"field": "y", "aggregate": "mean"}}},
+    _point_spec(aggregate="mean"),
+    {"layer": [_point_spec()]},
+])
+def test_other_large_charts_stay_vega_lite(many_points, spec):
+    from lumen.ai.answer import _density_view
+    view = VegaLiteView(pipeline=many_points, spec=spec)
+    assert _density_view(view, many_points) is view
+
+
+def test_a_small_scatter_chart_stays_vega_lite(frame_source):
+    from lumen.ai.answer import _density_view
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = VegaLiteView(pipeline=pipeline, spec={"mark": "point", "encoding": {
+        "x": {"field": "category", "type": "nominal"}, "y": {"field": "value", "type": "quantitative"}}})
+    assert _density_view(view, pipeline) is view
+
+
+def test_without_datashader_a_large_chart_stays_and_says_how_to_draw_it(many_points, monkeypatch):
+    from lumen.ai.answer import _density_view
+    real = answer_module.importlib.util.find_spec
+    monkeypatch.setattr(answer_module.importlib.util, "find_spec", lambda name: None if name == "datashader" else real(name))
+    view = VegaLiteView(pipeline=many_points, spec=_point_spec())
+    assert _density_view(view, many_points) is view
+    answer = Answer(question="?", status="success", pipeline=many_points, view=view, spec=view.spec)
+    assert "draws all 6,000 points" in answer._cap_note and "Install datashader" in answer._cap_note
+
+
+def test_an_answer_with_a_large_scatter_chart_gets_the_density_chart_and_a_note(many_points):
+    pytest.importorskip("datashader")
+    from lumen.ai.answer import _build_answer
+    view = VegaLiteView(pipeline=many_points, spec=_point_spec())
+    plan = Plan(title="Points")
+    answer = _build_answer(
+        "Where are the points?", plan, [VegaLiteEditor(component=view)], {"pipeline": many_points, "sql": "SELECT * FROM points"},
+        many_points.source, MockLLM(), None, None,
+    )
+    assert isinstance(answer.view, hvPlotView) and answer.spec is None and answer._editor is None
+    assert answer._cap_note == "The chart draws 6,000 points as a density image, blending the categories where they overlap."
+    assert answer._cap_note in answer._static_bundle(None)["text/html"]
+
+
+def test_a_tap_on_a_density_image_selects_the_nearest_point(many_points):
+    pytest.importorskip("datashader")
+    from lumen.ai.answer import _density_view
+    view = _density_view(VegaLiteView(pipeline=many_points, spec=_point_spec(color=False)), many_points)
+    answer = Answer(question="?", status="success", pipeline=many_points, view=view)
+    answer.__panel__()
+    (stream,) = answer._streams
+    data = many_points.data
+    stream.event(x=data["x"].iloc[7], y=data["y"].iloc[7])
+    assert answer.selection.index.tolist() == [7]
