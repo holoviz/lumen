@@ -40,11 +40,12 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    docx_add_chart, docx_add_markdown, docx_add_table, format_output,
-    make_md_cell, make_preamble, write_notebook,
+    docx_add_chart, docx_add_markdown, docx_add_table, format_function_call,
+    format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
+from .tools.base import FunctionCall, capture_function_calls
 from .utils import (
     content_to_text, extract_block_source, get_block_names, set_content_text,
     wrap_logfire_on_method,
@@ -876,6 +877,28 @@ class Section(TaskGroup):
         self._view.remove(loader)
 
 
+def export_outputs(group: TaskGroup, include_header: bool = True, include_calls: bool = False) -> list:
+    """
+    The outputs of a task group in task order, skipping tasks discarded from
+    the export. With ``include_calls``, the FunctionTool calls a task made
+    come right after its heading.
+    """
+    outputs = list(group._header) if include_header else []
+    for task in group:
+        if not task.include_in_export:
+            continue
+        if isinstance(task, TaskGroup):
+            outputs += export_outputs(task, include_calls=include_calls)
+            continue
+        views = list(task.views)
+        if include_calls:
+            # Keep the task's own heading ahead of its calls
+            n = len(getattr(task, "_header", []))
+            views[n:n] = getattr(task, "function_calls", [])
+        outputs += views
+    return outputs
+
+
 class Report(TaskGroup):
     """
     A `Report` is a `TaskGroup` consisting of a sequence of `Section` objects.
@@ -1132,20 +1155,17 @@ class Report(TaskGroup):
     def _append_section_views(self, views, section):
         if not section.include_in_export:
             return
-        views += self._selected_views(section)
+        views += self._selected_views(section, include_calls=True)
 
-    def _selected_views(self, group, include_header=True):
+    def _selected_views(self, group, include_header=True, include_calls=False):
         """
         The views of a task group, skipping sections discarded from the export.
         Walks the tasks rather than reading ``group.views`` so that a nested
         section's selection is honoured, not just a top level one's.
+        With ``include_calls``, each FunctionTool call follows its task's
+        heading, for exports that can repeat it.
         """
-        views = list(group._header) if include_header else []
-        for task in group:
-            if not task.include_in_export:
-                continue
-            views += self._selected_views(task) if isinstance(task, TaskGroup) else list(task.views)
-        return views
+        return export_outputs(group, include_header=include_header, include_calls=include_calls)
 
     def _export_view(self):
         # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
@@ -1192,6 +1212,8 @@ class Report(TaskGroup):
                 cell = make_md_cell(out.object)
             elif isinstance(out, LumenEditor):
                 cell, ext = format_output(out)
+            elif isinstance(out, FunctionCall):
+                cell = format_function_call(out, cells)
             elif isinstance(out, str):
                 cell = make_md_cell(out)
             elif isinstance(out, ChatMessage):
@@ -1476,6 +1498,8 @@ class ActorTask(ExecutableTask):
         views = params.get("views", None)
         out_context = params.get("out_context", None)
         super().__init__(actor=actor, **params)
+        # The calls a FunctionTool actor made, so a notebook can repeat them
+        self.function_calls: list[FunctionCall] = []
         if views and out_context:
             self._add_outputs(views, out_context)
 
@@ -1536,6 +1560,7 @@ class ActorTask(ExecutableTask):
 
         messages = self._render_message_history(context)
         subcontext = merge_contexts(self.input_schema, [self.context, context])
+        self.function_calls = []
         with self.actor.param.update(
             interface=self.interface,
             llm=self.actor.llm or self.llm,
@@ -1543,7 +1568,12 @@ class ActorTask(ExecutableTask):
         ):
             try:
                 kwargs["step_title"] = self.title
-                outputs, out_context = await self.actor.respond(messages, subcontext, **kwargs)
+                with capture_function_calls() as calls:
+                    outputs, out_context = await self.actor.respond(messages, subcontext, **kwargs)
+                if isinstance(self.actor, FunctionTool):
+                    self.function_calls = [
+                        call for call in calls if call.function is self.actor.function
+                    ]
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
