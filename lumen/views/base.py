@@ -1637,13 +1637,15 @@ class VegaLiteView(View):
         the top level, so looking only at ``spec['data']`` would miss it, inject
         the table as primary data, and leave the lookup's named dataset
         unregistered -- which renders the boundaries with every value null.
+        Naming the table outright (``data: {name: ...}``) counts too: nothing
+        would register that name otherwise, and Vega-Lite renders zero rows.
         """
         if isinstance(node, list):
             return any(cls._declares_own_data(item) for item in node)
         if not isinstance(node, dict):
             return False
         data = node.get("data")
-        if isinstance(data, dict) and ("url" in data or "inline" in data):
+        if isinstance(data, dict) and ({"url", "inline", "name"} & data.keys()):
             return True
         return any(cls._declares_own_data(value) for value in node.values())
 
@@ -1679,6 +1681,32 @@ class VegaLiteView(View):
 
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
+
+    @classmethod
+    def _register_named_datasets(cls, node: Any, datasets: dict, value: Any) -> None:
+        """
+        Register the pipeline's rows under every dataset the spec names.
+
+        A layer can ask for the table with ``data: {name: ...}`` instead of a
+        url or inline values. Nothing registers that name, so Vega-Lite
+        resolves it to zero rows and draws nothing -- with no error anywhere.
+        Only one table is registered per view, so every name-only dataset node
+        the spec declares, and does not already supply itself, gets the table.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._register_named_datasets(item, datasets, value)
+            return
+        if not isinstance(node, dict):
+            return
+        data = node.get("data")
+        if (
+            isinstance(data, dict) and set(data) == {"name"}
+            and data["name"] not in datasets
+        ):
+            datasets[data["name"]] = value
+        for v in node.values():
+            cls._register_named_datasets(v, datasets, value)
 
     def _coerce_temporal(self, spec: Any, df: pd.DataFrame) -> Any:
         """
@@ -1791,6 +1819,7 @@ class VegaLiteView(View):
             if 'data' not in spec and any('data' not in layer for layer in spec.get('layer', [])):
                 spec['data'] = {'name': self.pipeline.table}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
+            self._register_named_datasets(spec, datasets, datasets[self.pipeline.table])
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
             # geoshape consumes GeoJSON features, so fields then live under
