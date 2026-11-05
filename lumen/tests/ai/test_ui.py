@@ -1331,7 +1331,7 @@ class TestResolveData:
     def test_resolve_data_duckdb_connection_string(self):
         """Test resolving a DuckDB connection string."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.duckdb'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
@@ -1348,7 +1348,7 @@ class TestResolveData:
     def test_resolve_data_db_file_duckdb(self):
         """Test resolving a .db file that is actually DuckDB."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.db'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
@@ -1489,7 +1489,7 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_netcdf_file(self):
         """Test resolving a NetCDF file creates XArraySQLSource."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
             try:
@@ -1510,7 +1510,7 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_mixed_xarray_and_csv(self):
         """Test that .nc creates separate source while .csv goes to DuckDB."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
             try:
