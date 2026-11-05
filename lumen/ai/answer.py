@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
+import nbformat
 import pandas as pd
 import panel as pn
 import param
@@ -43,7 +44,7 @@ from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Card, Column, Row,
+    Alert, Button, Card, ChatInterface, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
 from pydantic import TypeAdapter, ValidationError, create_model
@@ -69,11 +70,11 @@ from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .data import input_kinds, read
 from .editors import LumenEditor
-from .export import format_output, make_preamble
+from .export import format_output, make_md_cell, make_preamble
 from .llm import (
     Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
 )
-from .report import ActorTask
+from .report import ActorTask, Report
 from .sharing import sharing
 from .story import _prose_to_html
 from .ui import ExplorerUI
@@ -94,6 +95,18 @@ def _in_kernel() -> bool:
         return get_ipython().kernel is not None
     except AttributeError:  # no IPython at all, or a terminal IPython
         return False
+
+
+def _load_extensions() -> None:
+    """
+    Load what answer cards need, on first display rather than on import, so
+    lumen.ai stays quiet in scripts and in front-ends that never show one.
+    Checked per extension: a plain pn.extension() leaves Vega out, and the
+    Spec section's editor needs codeeditor.
+    """
+    missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
+    if missing:
+        pn.extension(*missing)
 
 
 def _is_spatial(source: Source) -> bool:
@@ -381,6 +394,28 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     for record in usage.records:
         answer.usage.add(record)
     answer.result = out.result
+
+
+def _read_kinds(source: Source | None, sql: str | None) -> set[str]:
+    """The libraries of the tables a query read, as lumen.read recorded them."""
+    kinds = input_kinds(source) if source is not None else {}
+    if None in kinds or not kinds:
+        return {kinds.get(None, "pandas")}
+    read = set(kinds)
+    if sql:
+        with suppress(sqlglot.errors.ParseError):
+            read &= {table.name for table in sqlglot.parse_one(sql, read="duckdb").find_all(sqlglot.exp.Table)}
+    return {kinds[table] for table in (read or kinds)}
+
+
+def _as_input_type(df: pd.DataFrame, kinds: set[str]) -> Any:
+    """A result in the library its input came in: polars, pyarrow or pandas."""
+    # Input of that type means its library is already imported
+    if kinds == {"polars"}:
+        return sys.modules["polars"].from_pandas(df)
+    if kinds == {"pyarrow"}:
+        return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+    return df
 
 
 def _literal(node: exp.Expression | None) -> exp.Expression | None:
@@ -723,9 +758,103 @@ class Chat(param.Parameterized):
         self._agents = agents
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
+        self._interface: ChatInterface | None = None
 
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
+
+    def __panel__(self) -> ChatInterface:
+        """
+        The conversation as a chat widget. A question typed into it is asked
+        with chat.aask, so the widget and chat.ask share one history.
+        """
+        if self._interface is None:
+            self._interface = ChatInterface(
+                callback=self._reply, callback_user="Lumen", show_rerun=False, show_undo=False,
+                sizing_mode="stretch_width", height=600,
+            )
+            for answer in self.answers:
+                self._interface.send(answer.question, user="User", respond=False)
+                self._interface.send(answer.__panel__(), user="Lumen", respond=False)
+        return self._interface
+
+    async def _reply(self, contents: str, user: str, instance: ChatInterface):
+        try:
+            answer = await self.aask(contents)
+        except Exception as e:
+            # A failed call, e.g. a rate limit, must not leave the widget dead
+            return Alert(object=format_error(e), title="Lumen could not answer", severity="error")
+        return answer.__panel__()
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        if not _in_kernel():
+            return {"text/plain": repr(self), "text/html": self._html()}
+        _load_extensions()
+        try:
+            bundle = self.__panel__()._repr_mimebundle_(include, exclude)
+        except ImportError:
+            # VS Code renders Panel through jupyter_bokeh, which may be missing
+            bundle = None
+        return bundle or {"text/plain": repr(self), "text/html": self._html()}
+
+    def to_html(self, path: str | Path | None = None) -> str:
+        """
+        The conversation as one HTML page: each question over its answer,
+        chart as an image, SQL and spec. Returns the page, and writes it to
+        path when given.
+        """
+        page = (
+            '<!doctype html>\n<html><head><meta charset="utf-8"><title>Lumen chat</title></head>'
+            f"<body>\n{self._html()}\n</body></html>\n"
+        )
+        if path is not None:
+            Path(path).write_text(page, encoding="utf-8")
+        return page
+
+    def to_notebook(self, path: str | Path | None = None) -> str:
+        """
+        The conversation as a notebook: each question and answer, then Lumen
+        code that rebuilds its chart, or else its data, with no LLM. In-memory
+        data is embedded, as in answer.code. Returns the notebook as JSON
+        text, and writes it to path when given.
+        """
+        cells, extensions = [], []
+        for answer in self.answers:
+            text = answer.value if not answer.error else f"{answer.value}\n\n{answer.error}"
+            cells.append(make_md_cell(f"## {answer.question}\n\n{text}"))
+            component = answer.view if answer.view is not None else answer.pipeline
+            if answer.status != "success" or component is None:
+                continue
+            cell, extension = format_output(component)
+            if cell is not None:
+                cells.append(cell)
+            if extension and extension not in extensions:
+                extensions.append(extension)
+        notebook = nbformat.v4.new_notebook(cells=[*make_preamble("", extensions=extensions), *cells])
+        text = nbformat.writes(notebook)
+        if path is not None:
+            Path(path).write_text(text, encoding="utf-8")
+        return text
+
+    def to_report(self, title: str | None = None) -> Report:
+        """
+        The conversation as a Lumen Report, with its own to_html, to_notebook
+        and to_docx: each question and answer, and the chart where there is
+        one. An answer with a table but no chart is in it as text only.
+        """
+        views: list = []
+        for answer in self.answers:
+            views.append(Markdown(f"## {answer.question}\n\n{answer.value}", sizing_mode="stretch_width"))
+            if answer._editor is not None:
+                views.append(answer._editor)
+        return Report.from_views(views, title=title)
+
+    def _html(self) -> str:
+        """Each question as a heading over its answer's static card."""
+        return "\n".join(
+            f"<h3>{html.escape(answer.question)}</h3>\n{answer._static_bundle(answer._chart_bundle())['text/html']}"
+            for answer in self.answers
+        )
 
     async def aask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """
@@ -1018,15 +1147,8 @@ class Answer(param.Parameterized):
             return ds
         if kinds == {"geopandas"} and (gdf := self.gdf) is not None:
             return gdf
-        return self._as_input_type(as_pandas(self.pipeline.data), kinds)
+        return _as_input_type(as_pandas(self.pipeline.data), kinds)
 
-    def _as_input_type(self, df: pd.DataFrame, kinds: set[str]) -> Any:
-        # Input of that type means its library is already imported
-        if kinds == {"polars"}:
-            return sys.modules["polars"].from_pandas(df)
-        if kinds == {"pyarrow"}:
-            return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
-        return df
 
     @property
     def why(self) -> str:
@@ -1110,7 +1232,7 @@ class Answer(param.Parameterized):
             bound: dict[str, Any] = {}
             for name, value in {**defaults, **kwargs}.items():
                 bound.update(binders[name](value))
-            return self._as_input_type(source.execute(sql, bound), kinds)
+            return _as_input_type(source.execute(sql, bound), kinds)
 
         if all(name.isidentifier() for name in defaults):
             # A column such as "body mass" can still be passed with **{...}
@@ -1123,14 +1245,7 @@ class Answer(param.Parameterized):
 
     def _input_kinds(self) -> set[str]:
         """The libraries of the tables this answer's query read."""
-        kinds = input_kinds(self.source) if self.source is not None else {}
-        if None in kinds or not kinds:
-            return {kinds.get(None, "pandas")}
-        read = set(kinds)
-        if self.sql:
-            with suppress(sqlglot.errors.ParseError):
-                read &= {table.name for table in sqlglot.parse_one(self.sql, read="duckdb").find_all(sqlglot.exp.Table)}
-        return {kinds[table] for table in (read or kinds)}
+        return _read_kinds(self.source, self.sql)
 
     def to_file(self, path: str | Path) -> Path:
         """
@@ -1582,13 +1697,7 @@ class Answer(param.Parameterized):
     def _repr_mimebundle_(self, include=None, exclude=None):
         if not _in_kernel():
             return self._static_bundle(self._chart_bundle())
-        # Loaded on first display, not on import, so lumen.ai stays
-        # quiet in scripts and in front-ends that never show an Answer.
-        # Checked per extension: a plain pn.extension() leaves Vega out,
-        # and the Spec section's editor needs codeeditor.
-        missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
-        if missing:
-            pn.extension(*missing)
+        _load_extensions()
         try:
             bundle = self.__panel__()._repr_mimebundle_(include, exclude)
         except ImportError:

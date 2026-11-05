@@ -1660,3 +1660,98 @@ def test_a_plan_that_did_not_run_has_no_timings(chart_answer):
 def test_an_answer_without_a_plan_has_no_trace():
     answer = Answer(question="?", status="success")
     assert answer.trace == [] and answer.why == "" and answer._steps_text == ""
+
+
+def _total_responses(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    return [
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ]
+
+
+async def test_a_question_typed_into_the_chat_widget_joins_the_chat(llm, frame_source):
+    llm.set_responses(_total_responses(frame_source))
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    widget = conversation.__panel__()
+    assert widget is conversation.__panel__()
+
+    widget.send("Total value?")
+    await async_wait_until(lambda: len(conversation.answers) == 1, timeout=10000)
+    (answer,) = conversation.answers
+    await async_wait_until(lambda: widget.objects[-1].object is answer.__panel__(), timeout=10000)
+
+    assert answer.value == "The total value is 38."
+    assert [message.object for message in widget.objects][0] == "Total value?"
+    assert conversation._messages[-1] == {"role": "assistant", "content": "The total value is 38."}
+
+
+def test_the_chat_widget_starts_with_the_answers_so_far(chart_answer, frame_source):
+    conversation = chat(frame_source)
+    conversation.answers = [chart_answer]
+    widget = conversation.__panel__()
+    question, card = widget.objects
+    assert question.object == "Value by category?" and card.object is chart_answer.__panel__()
+
+
+async def test_a_failed_call_in_the_chat_widget_shows_an_error(frame_source):
+    class Failing(MockLLM):
+        async def invoke(self, *args, **kwargs):
+            raise RuntimeError("rate limited")
+
+    conversation = chat(frame_source, llm=Failing(), agents=[ChatAgent(), SQLAgent()])
+    reply = await conversation._reply("Total value?", "User", conversation.__panel__())
+    assert reply.severity == "error" and "rate limited" in reply.object
+
+
+def test_a_chat_outside_a_kernel_is_its_answers_as_html(chart_answer, frame_source):
+    conversation = chat(frame_source)
+    conversation.answers = [chart_answer]
+    bundle = conversation._repr_mimebundle_()
+    assert bundle["text/plain"] == "Chat(answers=1)"
+    assert "<h3>Value by category?</h3>" in bundle["text/html"] and "<img" in bundle["text/html"]
+
+
+@pytest.fixture
+def two_answer_chat(refinable_answer, frame_source):
+    table = Answer(
+        question="Total value?", value="The total is 38.", status="success", source=frame_source,
+        sql="SELECT SUM(value) AS total FROM tiny",
+        pipeline=Pipeline(source=frame_source, table="tiny"),
+    )
+    failed = Answer(question="Wingspan?", value="Lumen could not answer 'Wingspan?'.", error="No such column", status="error")
+    conversation = chat(frame_source)
+    conversation.answers = [refinable_answer, table, failed]
+    return conversation
+
+
+def test_chat_to_html_is_one_page_of_every_answer(two_answer_chat, tmp_path):
+    page = two_answer_chat.to_html(tmp_path / "chat.html")
+    assert page.startswith("<!doctype html>") and (tmp_path / "chat.html").read_text(encoding="utf-8") == page
+    for heading in ("Value by category?", "Total value?", "Wingspan?"):
+        assert f"<h3>{heading}</h3>" in page
+    assert "SUM(value)" in page and "No such column" in page
+
+
+def test_chat_to_notebook_runs_without_an_llm(two_answer_chat, tmp_path):
+    import nbformat
+    text = two_answer_chat.to_notebook(tmp_path / "chat.ipynb")
+    notebook = nbformat.reads(text, as_version=4)
+    nbformat.validate(notebook)
+    markdown = [cell.source for cell in notebook.cells if cell.cell_type == "markdown"]
+    assert markdown[0].startswith("## Value by category?") and "No such column" in markdown[2]
+    code = "\n".join(cell.source for cell in notebook.cells if cell.cell_type == "code")
+    # Bare expressions such as `view` are fine in a script; their objects are what count
+    script = code + "\nassert isinstance(view, lm.views.View) and len(pipeline.data) == 3\n"
+    (tmp_path / "chat.py").write_text(script)
+    subprocess.run([sys.executable, str(tmp_path / "chat.py")], check=True, cwd=tmp_path, timeout=300)
+
+
+def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable_answer):
+    report = two_answer_chat.to_report("Penguins")
+    assert report.title == "Penguins"
+    titles = [view.object.splitlines()[0] for view in report.views if isinstance(view, pn.pane.Markdown)]
+    assert titles == ["## Value by category?", "## Total value?", "## Wingspan?"]
+    assert refinable_answer._editor in report.views
+    assert "## Total value?" in report.to_notebook()

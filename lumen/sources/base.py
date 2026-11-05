@@ -54,7 +54,9 @@ if TYPE_CHECKING:
     from panel.viewable import Viewable
 
     from ..ai.answer import Answer, Chat
+    from ..ai.checks import CheckResult
     from ..ai.llm import Llm
+    from ..ai.overview import Overview
 
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
@@ -757,6 +759,29 @@ class Source(MultiTypeComponent):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import chat
         return chat(self, llm=llm, agents=agents)
+
+    def overview(self, *, questions: bool = True, llm: Llm | None = None) -> Overview:
+        """
+        A first look at this source: each table's columns with their
+        types, nulls and ranges, what looks wrong in the data, and five
+        questions to ask it, as buttons in a notebook. questions=False
+        skips the one LLM call that writes them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.overview import overview
+        return overview(self, questions=questions, llm=llm)
+
+    def check(self, rule: str, table: str | None = None, *, llm: Llm | None = None) -> CheckResult:
+        """
+        Check a rule the data should keep and return the rows that break
+        it. rule is a SELECT returning those rows, or a rule in plain
+        language that one LLM call turns into one. The result is falsy when
+        rows break the rule, so ``assert source.check(...)`` works in pytest
+        and its message shows them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.checks import check
+        return check(self, rule, table, llm=llm)
 
     def get_tables(self) -> list[str]:
         """
