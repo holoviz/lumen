@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 
     from ..ai.answer import Answer, Chat
     from ..ai.llm import Llm
+    from ..ai.overview import Overview
 
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
@@ -757,6 +758,17 @@ class Source(MultiTypeComponent):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import chat
         return chat(self, llm=llm, agents=agents)
+
+    def overview(self, *, questions: bool = True, llm: Llm | None = None) -> Overview:
+        """
+        A first look at this source: each table's columns with their
+        types, nulls and ranges, what looks wrong in the data, and five
+        questions to ask it, as buttons in a notebook. questions=False
+        skips the one LLM call that writes them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.overview import overview
+        return overview(self, questions=questions, llm=llm)
 
     def get_tables(self) -> list[str]:
         """
