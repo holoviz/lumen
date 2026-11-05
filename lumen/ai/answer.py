@@ -396,6 +396,28 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     answer.result = out.result
 
 
+def _read_kinds(source: Source | None, sql: str | None) -> set[str]:
+    """The libraries of the tables a query read, as lumen.read recorded them."""
+    kinds = input_kinds(source) if source is not None else {}
+    if None in kinds or not kinds:
+        return {kinds.get(None, "pandas")}
+    read = set(kinds)
+    if sql:
+        with suppress(sqlglot.errors.ParseError):
+            read &= {table.name for table in sqlglot.parse_one(sql, read="duckdb").find_all(sqlglot.exp.Table)}
+    return {kinds[table] for table in (read or kinds)}
+
+
+def _as_input_type(df: pd.DataFrame, kinds: set[str]) -> Any:
+    """A result in the library its input came in: polars, pyarrow or pandas."""
+    # Input of that type means its library is already imported
+    if kinds == {"polars"}:
+        return sys.modules["polars"].from_pandas(df)
+    if kinds == {"pyarrow"}:
+        return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+    return df
+
+
 def _literal(node: exp.Expression | None) -> exp.Expression | None:
     """The literal a value is, inside a cast such as DATE '2024-01-01' too, or None."""
     inner = node.this if isinstance(node, exp.Cast) else node
@@ -1125,15 +1147,8 @@ class Answer(param.Parameterized):
             return ds
         if kinds == {"geopandas"} and (gdf := self.gdf) is not None:
             return gdf
-        return self._as_input_type(as_pandas(self.pipeline.data), kinds)
+        return _as_input_type(as_pandas(self.pipeline.data), kinds)
 
-    def _as_input_type(self, df: pd.DataFrame, kinds: set[str]) -> Any:
-        # Input of that type means its library is already imported
-        if kinds == {"polars"}:
-            return sys.modules["polars"].from_pandas(df)
-        if kinds == {"pyarrow"}:
-            return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
-        return df
 
     @property
     def why(self) -> str:
@@ -1217,7 +1232,7 @@ class Answer(param.Parameterized):
             bound: dict[str, Any] = {}
             for name, value in {**defaults, **kwargs}.items():
                 bound.update(binders[name](value))
-            return self._as_input_type(source.execute(sql, bound), kinds)
+            return _as_input_type(source.execute(sql, bound), kinds)
 
         if all(name.isidentifier() for name in defaults):
             # A column such as "body mass" can still be passed with **{...}
@@ -1230,14 +1245,7 @@ class Answer(param.Parameterized):
 
     def _input_kinds(self) -> set[str]:
         """The libraries of the tables this answer's query read."""
-        kinds = input_kinds(self.source) if self.source is not None else {}
-        if None in kinds or not kinds:
-            return {kinds.get(None, "pandas")}
-        read = set(kinds)
-        if self.sql:
-            with suppress(sqlglot.errors.ParseError):
-                read &= {table.name for table in sqlglot.parse_one(self.sql, read="duckdb").find_all(sqlglot.exp.Table)}
-        return {kinds[table] for table in (read or kinds)}
+        return _read_kinds(self.source, self.sql)
 
     def to_file(self, path: str | Path) -> Path:
         """
