@@ -2566,3 +2566,19 @@ async def test_an_exploration_table_tab_has_no_ask_box(explorer_ui):
     sql_output = next(v for v in exploration.plan.views if isinstance(v, SQLEditor))
     _title, tab = explorer_ui._render_view(exploration, sql_output)
     assert len(tab) == 2
+
+
+async def test_a_click_on_a_point_in_an_exploration_finds_its_row_by_number(explorer_ui):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.ai.selection import CLICK, Selected, watch_clicks
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    source = read({"birds": pd.DataFrame({"bill": [58.0, 46.5], "flipper": [181.0, 207.0], "species": ["A", "B"]})})
+    view = VegaLiteView(pipeline=Pipeline(source=source, table="birds"), spec={"mark": "point", "encoding": {
+        "x": {"field": "flipper", "type": "quantitative"}, "y": {"field": "bill", "type": "quantitative"},
+        "color": {"field": "species", "type": "nominal"}}})
+    editor = VegaLiteEditor(component=view)
+    box = explorer_ui._ask_box(editor)
+    # Vega-Lite sends whole floats as JSON integers
+    editor.component._panel.selection.param.update(**{CLICK: [{"bill": 58}, {"flipper": 181}, {"species": "A"}]})
+    assert box.visible and box[0].object == "**Selected:** bill: 58.0, flipper: 181.0, species: A"
