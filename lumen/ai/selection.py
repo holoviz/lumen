@@ -180,7 +180,8 @@ def ask_box(owner: param.Parameterized, ask: Callable[[str], Awaitable[Any]]) ->
         rows = event.new
         box.visible = rows is not None and not rows.empty
         if box.visible:
-            first = ", ".join(f"{k}: {v}" for k, v in rows.iloc[0].items())
+            # Floats to a readable precision; the question gets the full values
+            first = ", ".join(f"{k}: {v:.6g}" if isinstance(v, float) else f"{k}: {v}" for k, v in rows.iloc[0].items())
             selected.object = f"**Selected:** {first}" if len(rows) == 1 else f"**Selected:** {len(rows)} rows"
 
     async def on_ask(event):

@@ -2581,4 +2581,4 @@ async def test_a_click_on_a_point_in_an_exploration_finds_its_row_by_number(expl
     box = explorer_ui._ask_box(editor)
     # Vega-Lite sends whole floats as JSON integers
     editor.component._panel.selection.param.update(**{CLICK: [{"bill": 58}, {"flipper": 181}, {"species": "A"}]})
-    assert box.visible and box[0].object == "**Selected:** bill: 58.0, flipper: 181.0, species: A"
+    assert box.visible and box[0].object == "**Selected:** bill: 58, flipper: 181, species: A"

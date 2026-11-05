@@ -1790,7 +1790,7 @@ def test_a_click_on_a_vega_lite_chart_selects_its_rows_and_shows_the_ask_box(cha
     assert box.visible and box[0].object == "**Selected:** 2 rows"
 
     pane.selection.param.update(**{CLICK: [{"category": "B"}]})
-    assert box[0].object == "**Selected:** category: B, value: 20.0"
+    assert box[0].object == "**Selected:** category: B, value: 20"
     pane.selection.param.update(**{CLICK: []})
     assert chart_answer.selection is None and not box.visible
 
