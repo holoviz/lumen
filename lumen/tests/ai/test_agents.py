@@ -772,6 +772,12 @@ async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source,
     assert "first:" in message and "second:" in message
 
 
+async def test_code_prompt_mode_refuses_without_interface(llm):
+    agent = VegaLiteAgent(llm=llm, code_execution="prompt")
+    with pytest.raises(RuntimeError, match="needs an interface"):
+        await agent._execute_code("chart = None", pd.DataFrame({"A": [1]}))
+
+
 async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):
     """VegaLiteAgent Altair (code) mode returns one editor per generated chart."""
 

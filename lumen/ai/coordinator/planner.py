@@ -391,7 +391,10 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         follow_up_type = await self._check_follow_up_question(messages, context)
-        self._clarification_enabled = await self._check_clarification_needed(messages, context)
+        # Clarifying needs someone to answer, so a headless planner skips the check
+        self._clarification_enabled = (
+            self.interface is not None and await self._check_clarification_needed(messages, context)
+        )
         await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
         pre_plan_output["follow_up_type"] = follow_up_type
