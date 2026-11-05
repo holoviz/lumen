@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
+import nbformat
 import pandas as pd
 import panel as pn
 import param
@@ -69,11 +70,11 @@ from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .data import input_kinds, read
 from .editors import LumenEditor
-from .export import format_output, make_preamble
+from .export import format_output, make_md_cell, make_preamble
 from .llm import (
     Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
 )
-from .report import ActorTask
+from .report import ActorTask, Report
 from .sharing import sharing
 from .story import _prose_to_html
 from .ui import ExplorerUI
@@ -773,6 +774,58 @@ class Chat(param.Parameterized):
             # VS Code renders Panel through jupyter_bokeh, which may be missing
             bundle = None
         return bundle or {"text/plain": repr(self), "text/html": self._html()}
+
+    def to_html(self, path: str | Path | None = None) -> str:
+        """
+        The conversation as one HTML page: each question over its answer,
+        chart as an image, SQL and spec. Returns the page, and writes it to
+        path when given.
+        """
+        page = (
+            '<!doctype html>\n<html><head><meta charset="utf-8"><title>Lumen chat</title></head>'
+            f"<body>\n{self._html()}\n</body></html>\n"
+        )
+        if path is not None:
+            Path(path).write_text(page, encoding="utf-8")
+        return page
+
+    def to_notebook(self, path: str | Path | None = None) -> str:
+        """
+        The conversation as a notebook: each question and answer, then Lumen
+        code that rebuilds its chart, or else its data, with no LLM. In-memory
+        data is embedded, as in answer.code. Returns the notebook as JSON
+        text, and writes it to path when given.
+        """
+        cells, extensions = [], []
+        for answer in self.answers:
+            text = answer.value if not answer.error else f"{answer.value}\n\n{answer.error}"
+            cells.append(make_md_cell(f"## {answer.question}\n\n{text}"))
+            component = answer.view if answer.view is not None else answer.pipeline
+            if answer.status != "success" or component is None:
+                continue
+            cell, extension = format_output(component)
+            if cell is not None:
+                cells.append(cell)
+            if extension and extension not in extensions:
+                extensions.append(extension)
+        notebook = nbformat.v4.new_notebook(cells=[*make_preamble("", extensions=extensions), *cells])
+        text = nbformat.writes(notebook)
+        if path is not None:
+            Path(path).write_text(text, encoding="utf-8")
+        return text
+
+    def to_report(self, title: str | None = None) -> Report:
+        """
+        The conversation as a Lumen Report, with its own to_html, to_notebook
+        and to_docx: each question and answer, and the chart where there is
+        one. An answer with a table but no chart is in it as text only.
+        """
+        views: list = []
+        for answer in self.answers:
+            views.append(Markdown(f"## {answer.question}\n\n{answer.value}", sizing_mode="stretch_width"))
+            if answer._editor is not None:
+                views.append(answer._editor)
+        return Report.from_views(views, title=title)
 
     def _html(self) -> str:
         """Each question as a heading over its answer's static card."""

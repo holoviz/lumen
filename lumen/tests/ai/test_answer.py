@@ -1711,3 +1711,47 @@ def test_a_chat_outside_a_kernel_is_its_answers_as_html(chart_answer, frame_sour
     bundle = conversation._repr_mimebundle_()
     assert bundle["text/plain"] == "Chat(answers=1)"
     assert "<h3>Value by category?</h3>" in bundle["text/html"] and "<img" in bundle["text/html"]
+
+
+@pytest.fixture
+def two_answer_chat(refinable_answer, frame_source):
+    table = Answer(
+        question="Total value?", value="The total is 38.", status="success", source=frame_source,
+        sql="SELECT SUM(value) AS total FROM tiny",
+        pipeline=Pipeline(source=frame_source, table="tiny"),
+    )
+    failed = Answer(question="Wingspan?", value="Lumen could not answer 'Wingspan?'.", error="No such column", status="error")
+    conversation = chat(frame_source)
+    conversation.answers = [refinable_answer, table, failed]
+    return conversation
+
+
+def test_chat_to_html_is_one_page_of_every_answer(two_answer_chat, tmp_path):
+    page = two_answer_chat.to_html(tmp_path / "chat.html")
+    assert page.startswith("<!doctype html>") and (tmp_path / "chat.html").read_text(encoding="utf-8") == page
+    for heading in ("Value by category?", "Total value?", "Wingspan?"):
+        assert f"<h3>{heading}</h3>" in page
+    assert "SUM(value)" in page and "No such column" in page
+
+
+def test_chat_to_notebook_runs_without_an_llm(two_answer_chat, tmp_path):
+    import nbformat
+    text = two_answer_chat.to_notebook(tmp_path / "chat.ipynb")
+    notebook = nbformat.reads(text, as_version=4)
+    nbformat.validate(notebook)
+    markdown = [cell.source for cell in notebook.cells if cell.cell_type == "markdown"]
+    assert markdown[0].startswith("## Value by category?") and "No such column" in markdown[2]
+    code = "\n".join(cell.source for cell in notebook.cells if cell.cell_type == "code")
+    # Bare expressions such as `view` are fine in a script; their objects are what count
+    script = code + "\nassert isinstance(view, lm.views.View) and len(pipeline.data) == 3\n"
+    (tmp_path / "chat.py").write_text(script)
+    subprocess.run([sys.executable, str(tmp_path / "chat.py")], check=True, cwd=tmp_path, timeout=300)
+
+
+def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable_answer):
+    report = two_answer_chat.to_report("Penguins")
+    assert report.title == "Penguins"
+    titles = [view.object.splitlines()[0] for view in report.views if isinstance(view, pn.pane.Markdown)]
+    assert titles == ["## Value by category?", "## Total value?", "## Wingspan?"]
+    assert refinable_answer._editor in report.views
+    assert "## Total value?" in report.to_notebook()
