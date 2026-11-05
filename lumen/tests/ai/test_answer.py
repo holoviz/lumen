@@ -2014,3 +2014,13 @@ def test_an_edit_to_a_large_scatter_chart_is_drawn_as_a_density_image(many_point
     answer = Answer(question="?", status="success", pipeline=many_points, view=bars, spec=bars.spec)
     redrawn = answer.with_spec(_point_spec())
     assert isinstance(redrawn.view, hvPlotView) and redrawn.view.datashade and redrawn.spec is None
+
+
+def test_a_click_on_a_point_matches_its_numbers_as_numbers():
+    from lumen.ai.selection import _matching
+    df = pd.DataFrame({"bill": [58.0, 46.5], "species": ["Chinstrap", "Gentoo"], "year": [2007, 2008]})
+    # Vega-Lite sends JSON numbers: a whole float arrives as 58, not 58.0
+    assert _matching(df, {"bill": 58, "species": "Chinstrap"}).index.tolist() == [0]
+    assert _matching(df, {"year": 2008}).index.tolist() == [1]
+    dates = pd.DataFrame({"time": pd.to_datetime(["2024-06-01", "2024-07-01"])})
+    assert _matching(dates, {"time": 1717200000000}).index.tolist() == [0]

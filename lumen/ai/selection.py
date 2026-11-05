@@ -80,11 +80,15 @@ def _matching(df: pd.DataFrame, keys: dict[str, Any]) -> pd.DataFrame | None:
         return None
     mask = pd.Series(True, index=df.index)
     for key, value in keys.items():
-        if pd.api.types.is_datetime64_any_dtype(df[key]) and isinstance(value, (int, float)):
+        column = df[key]
+        if pd.api.types.is_datetime64_any_dtype(column) and isinstance(value, (int, float)):
             # Vega-Lite reports a date as milliseconds since the epoch
-            mask &= df[key] == pd.to_datetime(value, unit="ms")
+            mask &= column == pd.to_datetime(value, unit="ms")
+        elif pd.api.types.is_numeric_dtype(column) and isinstance(value, (int, float)):
+            # As numbers: 58 from the JSON is 58.0 in the column, though not as text
+            mask &= column == value
         else:
-            mask &= df[key].astype(str) == str(value)
+            mask &= column.astype(str) == str(value)
     return df[mask]
 
 
