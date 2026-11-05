@@ -1800,7 +1800,7 @@ def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
     view = hvPlotView(pipeline=pipeline, kind="scatter", x="category", y="value")
     answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
     answer.__panel__()
-    (stream,) = answer._streams
+    stream = answer._streams[-1]
     stream.event(index=[1, 2])
     assert list(answer.selection["value"]) == [20.0, 7.5]
     stream.event(index=[])
@@ -1811,7 +1811,7 @@ def test_a_tap_on_a_grid_selects_the_nearest_cell():
     _grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
     answer.view = hvPlotView(pipeline=answer.pipeline, kind="quadmesh", x="lon", y="lat", z="t")
     answer.__panel__()
-    (stream,) = answer._streams
+    stream = answer._streams[-1]
     stream.event(x=2.2, y=19.0)
     (row,) = answer.selection.to_dict("records")
     assert (row["lon"], row["lat"]) == (2.0, 20.0)
@@ -2001,7 +2001,7 @@ def test_a_tap_on_a_density_image_selects_the_nearest_point(many_points):
     view = _density_view(VegaLiteView(pipeline=many_points, spec=_point_spec(color=False)), many_points)
     answer = Answer(question="?", status="success", pipeline=many_points, view=view)
     answer.__panel__()
-    (stream,) = answer._streams
+    stream = answer._streams[-1]
     data = many_points.data
     stream.event(x=data["x"].iloc[7], y=data["y"].iloc[7])
     assert answer.selection.index.tolist() == [7]
@@ -2024,3 +2024,21 @@ def test_a_click_on_a_point_matches_its_numbers_as_numbers():
     assert _matching(df, {"year": 2008}).index.tolist() == [1]
     dates = pd.DataFrame({"time": pd.to_datetime(["2024-06-01", "2024-07-01"])})
     assert _matching(dates, {"time": 1717200000000}).index.tolist() == [0]
+
+
+
+@pytest.mark.parametrize("kind, callback", [("scatter", "Selection1DCallback"), ("density", "TapCallback")])
+def test_the_drawn_hvplot_chart_reports_clicks(frame_source, many_points, kind, callback):
+    """The view draws its plot again on render; the stream has to follow the plot that is shown."""
+    if kind == "density":
+        pytest.importorskip("datashader")
+        from lumen.ai.answer import _density_view
+        pipeline = many_points
+        view = _density_view(VegaLiteView(pipeline=pipeline, spec=_point_spec()), pipeline)
+    else:
+        pipeline = Pipeline(source=frame_source, table="tiny")
+        view = hvPlotView(pipeline=pipeline, kind="scatter", x="category", y="value")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__().get_root()
+    plots = [plot for plot, _ in view._panel._plots.values()]
+    assert any(callback in [type(c).__name__ for c in plot.callbacks] for plot in plots)

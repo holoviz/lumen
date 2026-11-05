@@ -125,7 +125,20 @@ def watch_clicks(view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> 
         return []
     if not isinstance(pane, pn.pane.HoloViews):
         return []
-    element = pane.object
+    streams: list = []
+
+    def attach(obj):
+        # The view draws its plot again on render, so each new plot gets its own stream
+        if (stream := _hv_stream(obj, view, on_rows)) is not None:
+            streams.append(stream)
+
+    attach(pane.object)
+    pane.param.watch(lambda event: attach(event.new), "object")
+    return streams
+
+
+def _hv_stream(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> Any:
+    """A stream reporting clicks on a HoloViews plot as rows, or None for a plot it cannot read."""
     if isinstance(element, hv.Overlay):
         # The data layer, not the basemap tiles under it
         layers = [layer for layer in element if not isinstance(layer, hv.Tiles)]
@@ -135,7 +148,7 @@ def watch_clicks(view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> 
         stream = hv.streams.Selection1D(source=element)
         data = element.dframe()
         stream.add_subscriber(lambda index: on_rows(data.iloc[index] if index else None))
-        return [stream]
+        return stream
     if isinstance(element, (hv.QuadMesh, hv.Image, hv.DynamicMap)):
         stream = hv.streams.Tap(source=element)
         xcol, ycol = (dim.name for dim in element.kdims[:2]) if len(element.kdims) >= 2 else (view.x, view.y)
@@ -147,8 +160,8 @@ def watch_clicks(view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> 
             nearest = ((df[xcol] - x) ** 2 + (df[ycol] - y) ** 2).idxmin()
             on_rows(df.loc[[nearest]])
         stream.add_subscriber(on_tap)
-        return [stream]
-    return []
+        return stream
+    return None
 
 
 def ask_box(owner: param.Parameterized, ask: Callable[[str], Awaitable[Any]]) -> Column:
