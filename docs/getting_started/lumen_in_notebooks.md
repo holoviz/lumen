@@ -27,6 +27,14 @@ answer
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
+## Look at the data first
+
+``` py
+source.overview()
+```
+
+The overview lists each table's columns with their types, nulls, distinct counts and ranges, flags what looks wrong in the first 5,000 rows (missing values, duplicate rows, padded text, numbers stored as text, constant columns, outliers) and suggests five questions. In a notebook each question is a button that asks it and shows the answer below. Writing the questions is one LLM call, sent only what `share` allows; `source.overview(questions=False)` skips it. For a large table the distinct counts and ranges come from a sample, and the overview says so.
+
 ## The answer
 
 An `Answer` renders as a card with the text, the chart, and collapsed SQL, Spec and Steps sections: the query, the Vega-Lite or hvPlot spec the chart was drawn from, and each step with how long it took. It also holds:
@@ -57,6 +65,30 @@ chat.ask("Only keep the species above 4000 g")  # (1)!
 ```
 
 1. Each follow-up sees the earlier questions and runs on the data the last answer left.
+
+Displaying `chat` in a notebook shows it as a chat widget, starting with the answers so far. A question typed into it is asked with `chat.ask`, so the widget and your code share one conversation.
+
+To keep a conversation:
+
+| Method | What you get |
+|--------|--------------|
+| `chat.to_html("chat.html")` | One page: each question over its answer, the chart as an image, the SQL and the spec |
+| `chat.to_notebook("chat.ipynb")` | Each question and answer, then Lumen code that rebuilds its chart or data with no LLM |
+| `chat.to_report("Penguins")` | A Lumen Report of the answers and their charts, with its own `to_html`, `to_notebook` and `to_docx` |
+
+## Check the data
+
+`source.check` takes a rule the data should keep and returns the rows that break it:
+
+``` py
+source.check("SELECT * FROM penguins WHERE body_mass_g <= 0")  # (1)!
+source.check("no penguin weighs under 2 kg")  # (2)!
+```
+
+1. A SELECT returning the offending rows runs as written, with no LLM.
+2. A rule in plain language costs one LLM call, which writes that SELECT; `result.sql` holds it.
+
+The result is falsy when rows break the rule, so `assert source.check(...)` works in pytest and its failure message shows the rule, the query, the count and the first rows. `result.rows` holds up to 1,000 of them in the type the data was read in, and `result.raise_()` raises the same message outside pytest. Only read-only queries run. To keep a test free of LLM calls, paste the `result.sql` of a plain-language rule into the test.
 
 ## Change the chart
 
