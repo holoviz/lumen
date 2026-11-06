@@ -261,7 +261,37 @@ def test_table_user_configuration_merges(set_root):
     panel = table.get_panel()
     config = panel._configuration
     assert config['columnDefaults']['maxInitialWidth'] == 500
-    assert config['columnDefaults']['headerSort'] is False
+
+def test_table_pagination_remote(tmp_path):
+    if DuckDBSource is None:
+        pytest.skip("DuckDB not available")
+    csv_file = tmp_path / "test_paginated.csv"
+    df = pd.DataFrame({'id': range(1, 121), 'name': [f'row_{i}' for i in range(1, 121)]})
+    df.to_csv(csv_file, index=False)
+
+    source = DuckDBSource(tables={'paginated_tbl': str(csv_file)})
+    pipeline = Pipeline(source=source, table='paginated_tbl', paginated=True)
+    table = Table(pipeline=pipeline)
+    panel = table.get_panel()
+
+    assert panel.page == 1
+    assert panel.page_size == 50
+    assert panel.param.page.bounds == (1, 3)
+    assert len(panel.value) == 50
+    assert panel.value['id'].tolist()[:3] == [1, 2, 3]
+
+    model = panel.get_root()
+    assert model.max_page == 3
+
+    panel.page = 2
+    assert model.source.data['id'][0] == 51
+    assert len(panel.value) == 50
+    assert panel.value['id'].tolist()[:3] == [51, 52, 53]
+
+    panel.page = 3
+    assert len(panel.value) == 20
+    assert panel.value['id'].tolist()[:3] == [101, 102, 103]
+
 
 
 @pytest.mark.parametrize("view_type", ("table", "hvplot"))

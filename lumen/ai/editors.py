@@ -819,6 +819,8 @@ class SQLEditor(LumenEditor):
     ) -> str:
         spec_dict = deepcopy(spec_dict)
         spec_dict["source"]["tables"][component.table] = sql_spec
+        if getattr(component, "paginated", False):
+            spec_dict["paginated"] = True
         return type(component).from_spec(spec_dict)
 
     def __panel__(self):
