@@ -6,11 +6,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import importlib.util
 import json
 import logging
 import os
 import threading
 import time
+import warnings
 import weakref
 
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -19,6 +21,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import pandas as pd
 import panel as pn
 import param
@@ -43,11 +46,13 @@ from ..sources.base import BaseSQLSource
 from ..sources.data import JOINED_GRIDS, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
-from ..util import geometry_columns, log
-from ..views import VegaLiteView, View
+from ..util import (
+    as_pandas, geometry_columns, geometry_to_geojson, is_geodataframe, log,
+)
+from ..views import VegaLiteView, View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
-from .agents.hvplot import hvPlotAgent
+from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .editors import LumenEditor
@@ -80,22 +85,27 @@ def _in_kernel() -> bool:
         return False
 
 
-def _has_geometry(source: Source) -> bool:
+def _is_spatial(source: Source) -> bool:
+    """Whether a table has geometry, or longitude and latitude columns."""
     # Only SQL sources can be probed without loading data. DuckDB returns
     # GEOMETRY as a GeoDataFrame only when geopandas is installed, which is
     # also what hvPlot needs to draw it.
     if not isinstance(source, BaseSQLSource):
         return False
-    return any(
-        geometry_columns(source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) LIMIT 0"))
-        for table in source.get_tables()
-    )
+    for table in source.get_tables():
+        empty = source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) LIMIT 0")
+        columns = {str(c).lower() for c in empty.columns}
+        if geometry_columns(empty) or (columns & LON_NAMES and columns & LAT_NAMES):
+            return True
+    return False
 
 
 async def _default_agents(source: Source) -> list:
     agents = [ChatAgent(), SQLAgent(), VegaLiteAgent()]
-    # The probe queries every table, which can be slow on a remote database
-    if isinstance(source, XArraySQLSource) or await asyncio.to_thread(_has_geometry, source):
+    # Maps and grids can go to hvPlot, which draws them on basemap tiles and
+    # rasterizes large grids; Vega-Lite stays for every other chart, and for
+    # refine. The probe queries every table, which can be slow on a remote database.
+    if isinstance(source, XArraySQLSource) or await asyncio.to_thread(_is_spatial, source):
         agents.append(hvPlotAgent())
     return agents
 
@@ -606,6 +616,7 @@ class Answer(param.Parameterized):
         self._context = context or {}
         # Whether sql is the query that failed, rather than one that worked
         self._sql_failed = sql_failed
+        self._crs_warned = False
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -702,6 +713,98 @@ class Answer(param.Parameterized):
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
         return _run(self.aretry(hint))
+
+    @property
+    def gdf(self) -> Any:
+        """
+        The answer's data as a GeoDataFrame with its CRS, or None when it has
+        no geometry. Warns once when the geometry has no CRS but its
+        coordinates look like longitude and latitude.
+        """
+        data = None if self.pipeline is None else self.pipeline.data
+        if not is_geodataframe(data):
+            return None
+        if data.crs is None and not self._crs_warned and len(data):
+            west, south, east, north = data.total_bounds
+            if -180 <= west <= east <= 360 and -90 <= south <= north <= 90:
+                warnings.warn(
+                    "This geometry has no CRS but looks like longitude and latitude. "
+                    "Set it with answer.gdf.set_crs('EPSG:4326') if so.", stacklevel=2,
+                )
+                self._crs_warned = True
+        return data
+
+    @property
+    def ds(self) -> Any:
+        """
+        The answer's data as an xarray Dataset, for an answer about a grid,
+        or None otherwise. xarray-sql builds it from the answer's query,
+        so it keeps the grid's dimensions instead of a long table.
+        """
+        if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
+            return None
+        return self.pipeline.get_dataset()
+
+    def to_file(self, path: str | Path, *, overwrite: bool = False) -> Path:
+        """
+        Write the answer's data to a file, in the format its extension names:
+        ``.parquet`` (GeoParquet when the data has geometry), ``.geojson``,
+        ``.gpkg`` and ``.csv`` for tables, ``.zarr`` and ``.nc`` for grids.
+        Raises FileExistsError for a path that exists unless ``overwrite``
+        is set, and warns when the data was cut at ``max_rows``. Returns
+        the path.
+        """
+        path = Path(path)
+        suffix = path.suffix.lower()
+        if path.exists() and not overwrite:
+            raise FileExistsError(f"{path} exists. Pass overwrite=True to replace it.")
+        if self.truncated_at is not None:
+            warnings.warn(
+                f"The answer's data stops at the first {self.truncated_at:,} rows, so the file holds only those. "
+                "Raise it with lumen.ai.configure(max_rows=...).",
+                stacklevel=2,
+            )
+        if suffix in (".zarr", ".nc"):
+            ds = self.ds
+            if ds is None:
+                raise ValueError(f"{suffix} files hold grids, and this answer is a table. Use .parquet or .csv.")
+            if suffix == ".zarr":
+                # Consolidated metadata is not part of the Zarr 3 format
+                ds.to_zarr(path, mode="w", consolidated=False)
+            else:
+                ds.to_netcdf(path)
+            return path
+        if self.pipeline is None:
+            raise ValueError("This answer has no data to write.")
+        gdf = self.gdf
+        data = gdf if gdf is not None else as_pandas(self.pipeline.data)
+        if suffix == ".parquet":
+            data.to_parquet(path)
+        elif suffix in (".geojson", ".gpkg"):
+            if gdf is None:
+                raise ValueError(f"{suffix} files hold geometry, and this answer has none. Use .parquet or .csv.")
+            gdf.to_file(path, driver="GeoJSON" if suffix == ".geojson" else "GPKG")
+        elif suffix == ".csv":
+            data.to_csv(path, index=False)
+        else:
+            raise ValueError(f"Cannot write {suffix!r} files. Use .parquet, .geojson, .gpkg, .csv, .zarr or .nc.")
+        return path
+
+    def map(self) -> Any:
+        """
+        An interactive map of the answer's geometry: lonboard's when it is
+        installed, otherwise hvPlot's, on a basemap when geoviews is installed.
+        """
+        gdf = self.gdf
+        if gdf is None:
+            raise ValueError("This answer has no geometry to map.")
+        if importlib.util.find_spec("lonboard") is not None:
+            # Deferred: lonboard is optional, and heavy to import
+            from lonboard import viz
+            return viz(gdf)
+        if importlib.util.find_spec("geoviews") is not None:
+            return gdf.hvplot(geo=True, tiles="OSM")
+        return gdf.hvplot()
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -823,6 +926,10 @@ class Answer(param.Parameterized):
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
                 severity="error", sizing_mode="stretch_width",
             )
+        if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
+            # A responsive plot stretches to its container, and a notebook
+            # output has no height to give it, so it would collapse
+            return Column(view, min_height=400, sizing_mode="stretch_both")
         return view
 
     def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
@@ -901,9 +1008,36 @@ class Answer(param.Parameterized):
                 spec[dim] = size
         return spec
 
+    def _geoshape_spec(self) -> dict | None:
+        """
+        The answer's geometry as a Vega-Lite map, for answers drawn with
+        hvPlot, which have no static form of their own.
+        """
+        gdf = self.gdf
+        if gdf is None or not len(gdf):
+            return None
+        if gdf.crs is not None and not gdf.crs.is_geographic:
+            # Vega's projections expect longitude and latitude
+            gdf = gdf.to_crs("EPSG:4326")
+        fields = [c for c in gdf.columns if c != gdf.geometry.name]
+        numeric = [c for c in fields if pd.api.types.is_numeric_dtype(gdf[c])]
+        encoding: dict[str, Any] = {"tooltip": [{"field": f"properties.{c}", "title": c} for c in fields]}
+        if numeric:
+            encoding["color"] = {"field": f"properties.{numeric[0]}", "type": "quantitative", "title": numeric[0]}
+        return {
+            "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+            "data": {"values": geometry_to_geojson(gdf, clockwise=True)["features"]},
+            "mark": {"type": "geoshape", "stroke": "white", "strokeWidth": 0.5},
+            "projection": {"type": "mercator"},
+            "encoding": encoding,
+            "title": self.question,
+            "width": 600,
+            "height": 400,
+        }
+
     def _chart_bundle(self) -> dict | None:
         """The chart as interactive Vega-Lite, with a PNG for viewers that cannot run it."""
-        if (spec := self._vega_lite_spec()) is None:
+        if (spec := self._vega_lite_spec() or self._geoshape_spec()) is None:
             return None
         title = spec.get("title", "")
         if isinstance(title, dict):

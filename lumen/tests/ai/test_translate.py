@@ -618,3 +618,12 @@ def test_excluded_names_do_not_return_via_the_parent():
 
     assert "secret" not in properties
     assert {"kept", "own"} <= set(properties)
+
+
+def test_selector_with_none_default_accepts_null():
+    class Plot(param.Parameterized):
+        y = param.Selector(default=None, objects=["a", "b"])
+
+    model = param_to_pydantic(Plot)["Plot"]
+    assert model(y=None).y is None
+    assert model(y="a").y == "a"
