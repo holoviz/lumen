@@ -95,14 +95,14 @@ def format_output(output: Any, spec: dict | None = None, load_spec: str = "yaml.
         return None, None
 
     with config.param.update(serializer='csv'):
-        # replace |2- |3- |4-... etc with | for a cleaner look
         try:
-            spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec() if spec is None else spec, sort_keys=False))
+            spec = yaml.dump(component.to_spec() if spec is None else spec, sort_keys=False)
         except (TypeError, yaml.YAMLError):
             return None, None
     read_code = [
-        # Raw, so the escapes YAML writes (\t, \r) reach YAML rather than Python
-        f'yaml_spec = r"""\n{spec}"""',
+        # A repr, not a triple-quoted string, so no value in the data or SQL
+        # can end the string and run as code
+        f'yaml_spec = {spec!r}',
         f'spec = {load_spec}',
     ]
     if isinstance(component, Pipeline):
