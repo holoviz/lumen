@@ -24,7 +24,7 @@ from lumen.ai.answer import (
     ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
-from lumen.ai.data import read
+from lumen.sources.data import read
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline

@@ -32,7 +32,7 @@ from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
-from .data import read
+from ..sources.data import read
 from .editors import LumenEditor
 from .llm import (
     Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
@@ -40,7 +40,7 @@ from .llm import (
 from .story import _prose_to_html
 
 if TYPE_CHECKING:
-    from .data import DataT
+    from ..sources.data import DataT
 
 
 def _in_kernel() -> bool:

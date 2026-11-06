@@ -34,6 +34,7 @@ from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
+from ..sources.data import resolve_data
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import log, try_import_xarray
 from .agents import (
@@ -51,7 +52,6 @@ from .controls import (
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
-from .data import resolve_data
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
@@ -69,7 +69,7 @@ from .utils import (
 from .vector_store import VectorStore
 
 if TYPE_CHECKING:
-    from .data import DataT
+    from ..sources.data import DataT
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
