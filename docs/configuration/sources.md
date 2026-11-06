@@ -28,17 +28,25 @@ ui.servable()
 `ExplorerUI` and `lumen.read` also take data you already have in Python. A dict key names the table.
 
 ``` py title="DataFrames and datasets"
+import hvsampledata
 import lumen
-import pandas as pd
+import lumen.ai as lmai
 
-df = pd.read_csv('penguins.csv')
-source = lumen.read({'penguins': df})  # (1)!
-source.get('penguins')
+df = hvsampledata.penguins("pandas")
+source = lumen.read({"penguins": df})  # (1)!
+source.get("penguins")
 
-ui = lmai.ExplorerUI(data={'penguins': df})
+ui = lmai.ExplorerUI(data=[
+    lumen.read({
+        "penguins": df,
+        "states": hvsampledata.us_states("geopandas"),  # a GeoDataFrame
+    }),
+    hvsampledata.air_temperature("xarray"),  # an xarray Dataset, kept apart as a grid (2)
+])
 ```
 
 1. `lumen.read` returns one Source. It accepts pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets and DataArrays, DuckDB connections and relations, plus the paths and URLs above.
+2. Xarray data in the same dict as other tables is joined into DuckDB, which loses the gridded source that `answer.ds` and the gridded tools rely on. Passing it as its own list item keeps it a gridded source.
 
 ### Ask from a notebook
 
@@ -223,10 +231,13 @@ ui = lmai.ExplorerUI(data=source)
 ui.servable()
 ```
 
-Each data variable in the dataset becomes a separate SQL table with coordinate columns:
+Each data variable in the dataset becomes a separate SQL table with coordinate columns. To try it without a file, read the sample air temperature grid:
 
 ``` py title="Direct SQL queries"
-source = XArraySQLSource(uri='air_temperature.nc')
+import hvsampledata
+import lumen
+
+source = lumen.read({"air": hvsampledata.air_temperature("xarray")})
 source.get_tables()  # ['air']
 
 df = source.execute(

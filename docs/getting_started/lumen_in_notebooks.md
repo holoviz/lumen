@@ -7,7 +7,7 @@ Ask your data questions from a notebook cell and get back an answer, the SQL tha
 ## Load data and ask
 
 ``` bash
-pip install "lumen[ai-openai]" hvsampledata
+pip install "lumen[ai-openai]" "hvsampledata>=0.1.5"
 ```
 
 ``` py title="Ask a question"
@@ -84,9 +84,30 @@ if answer.status == "error":
 
 ## Maps and grids
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/holoviz/lumen/blob/main/examples/notebooks/maps_and_grids.ipynb)
+
 ``` bash
-pip install geopandas geoviews lonboard
+pip install "lumen[ai-openai,xarray,geo]" "hvsampledata>=0.1.5" lonboard
 ```
+
+``` py title="Shapes, points and a grid"
+import hvsampledata
+import lumen
+
+from lumen.ai.llm import Kilo
+
+states = lumen.read({"states": hvsampledata.us_states("geopandas")})
+quakes = lumen.read({"quakes": hvsampledata.earthquakes("pandas")})
+air = lumen.read({"air": hvsampledata.air_temperature("xarray")})
+
+income = states.ask("Map median household income by state", llm=Kilo())  # (1)!
+quake_map = quakes.ask("Map the earthquakes, coloured by magnitude", llm=Kilo())  # (2)!
+mean_air = air.ask("Map the mean air temperature in degrees Celsius", llm=Kilo())  # (3)!
+```
+
+1. US states are polygons in a GeoDataFrame, so the answer is a choropleth on a basemap.
+2. A table with `lat` and `lon` columns is drawn as points on a basemap.
+3. The air temperature grid is drawn as a quadmesh over coastlines.
 
 An answer over a table with a geometry column, or over an xarray Dataset, has a few more fields:
 
@@ -96,6 +117,13 @@ An answer over a table with a geometry column, or over an xarray Dataset, has a 
 | `ds` | The result as an xarray Dataset, for answers over gridded data, or `None` |
 | `to_file(path)` | Writes the result by extension (it will not replace an existing file unless you pass `overwrite=True`, and warns when the data was cut at `max_rows`): `.parquet` (GeoParquet when there is geometry), `.geojson`, `.gpkg`, `.csv`, or `.zarr` and `.nc` for gridded answers |
 | `map()` | The geometry on an interactive map: lonboard when installed, otherwise hvPlot on a basemap |
+
+``` py
+income.gdf.head()               # a GeoDataFrame in EPSG:4326
+income.to_file("income.parquet")  # GeoParquet, CRS kept
+income.map()                    # lonboard, or hvPlot on a basemap
+mean_air.ds                     # an xarray Dataset on lat and lon
+```
 
 Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
 
