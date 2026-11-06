@@ -4,6 +4,7 @@ import pandas as pd
 import panel as pn
 
 import lumen.ai as lmai
+
 from lumen.ai.agents import ChatAgent
 
 
