@@ -453,6 +453,39 @@ def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
     assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
 
 
+def _layered_spec(layer_data):
+    return {"layer": [{"data": layer_data, "mark": "bar", "encoding": {"x": {"field": "A", "type": "quantitative"}}}]}
+
+
+def test_vega_layer_naming_an_unknown_dataset_gets_the_table(set_root):
+    """A layer naming a dataset that was never registered draws nothing and
+    raises nothing, so it is left to inherit the table's data."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _layered_spec({"name": "avg_by_group"})
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert "data" not in final_spec["layer"][0]
+    assert len(final_spec["data"]["values"]) == len(pipeline.data)
+    assert spec["layer"][0]["data"] == {"name": "avg_by_group"}
+
+
+@pytest.mark.parametrize("layer_data", [
+    {"name": "populations"},
+    {"values": [{"A": 1}]},
+    {"sphere": True},
+], ids=["registered-name", "inline-values", "generator"])
+def test_vega_layer_with_resolvable_data_is_left_alone(set_root, layer_data):
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = dict(_layered_spec(layer_data), datasets={"populations": [{"A": 1}]})
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == layer_data
+
+
 def test_vega_datasets_are_not_accumulated_across_renders(set_root):
     """self.spec is reused between renders, so registering into its own datasets
     dict would leave a DataFrame behind on the caller's spec."""

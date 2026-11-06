@@ -1680,6 +1680,27 @@ class VegaLiteView(View):
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
 
+    @classmethod
+    def _drop_dangling_view_data(cls, node: Any, known: set[str]) -> None:
+        """
+        Drop, in place, data on a layer or concatenated view that only names a
+        dataset nobody registered, so the view inherits the table's data.
+
+        A model sometimes gives the table a name of its own on a layer, e.g.
+        ``{"name": "avg_mass_by_species"}``. Vega-Lite accepts it and then
+        draws an empty chart with no error.
+        """
+        if not isinstance(node, dict):
+            return
+        for key in ("layer", "concat", "hconcat", "vconcat"):
+            for view in node.get(key) or []:
+                if not isinstance(view, dict):
+                    continue
+                data = view.get("data")
+                if isinstance(data, dict) and data.keys() <= {"name", "format"} and data.get("name") not in known:
+                    del view["data"]
+                cls._drop_dangling_view_data(view, known)
+
     def _coerce_temporal(self, spec: Any, df: pd.DataFrame) -> Any:
         """
         Recursively walk the spec. If an encoding channel references a field that
@@ -1791,6 +1812,7 @@ class VegaLiteView(View):
             if 'data' not in spec and any('data' not in layer for layer in spec.get('layer', [])):
                 spec['data'] = {'name': self.pipeline.table}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
+            self._drop_dangling_view_data(spec, set(datasets))
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
             # geoshape consumes GeoJSON features, so fields then live under
@@ -1802,6 +1824,7 @@ class VegaLiteView(View):
             datasets = dict(self.spec.get('datasets', {}), **{name: features})
             encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
+            self._drop_dangling_view_data(spec, set(spec.get('datasets', {})))
             encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
 

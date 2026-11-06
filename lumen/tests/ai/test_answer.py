@@ -1,8 +1,11 @@
 import asyncio
 import base64
+import json
 import logging
 import subprocess
 import sys
+import threading
+import time
 
 from typing import get_args
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,14 +21,22 @@ except ModuleNotFoundError:
 from panel.config import panel_extension
 from panel.tests.util import async_wait_until
 
-from lumen.ai.agents import ChatAgent, SQLAgent
+import lumen.ai.answer as answer_module
+
+from lumen.ai.actor import NullStep
+from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _busy, _default_agents, _default_llm, _planner, _planners,
-    _resolve, aask, ask, chat,
+    Answer, _busy, _default_agents, _default_llm, _loop, _planner, _planners,
+    _records, _resolve, _run, _StatusLine, aask, ask, chat,
 )
+from lumen.ai.config import QueryError, RetriesExceededError
+from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
+from lumen.ai.editors import VegaLiteEditor
+from lumen.ai.models import ReplaceLine, RetrySpec
+from lumen.ai.report import ActorTask
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -71,7 +82,7 @@ async def test_aask_answers_with_sql_and_text(llm, frame_source):
     assert answer.view is None and answer.spec is None
 
 
-async def test_aask_raises_when_the_plan_fails(llm, frame_source):
+async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):
     def fail():
         raise RuntimeError("LLM unavailable")
 
@@ -79,8 +90,106 @@ async def test_aask_raises_when_the_plan_fails(llm, frame_source):
         _plan(("ChatAgent", "Explain")),
         fail, fail, fail, fail,
     ])
-    with pytest.raises(RuntimeError, match="could not answer 'Total value\\?'"):
-        await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert answer.value == "Lumen could not answer 'Total value?': 'Explain' failed."
+    assert "LLM unavailable" in answer.error
+    assert repr(answer).startswith("Answer(status='error'")
+
+
+def _failing_sql(fail_times=1):
+    """Patch SQLAgent.respond to fail like a query that never ran, then work."""
+    original = SQLAgent.respond
+    calls = []
+
+    async def respond(self, *args, **kwargs):
+        calls.append(1)
+        if len(calls) <= fail_times:
+            raise QueryError("BinderException: column nope not found", "SELECT nope FROM tiny")
+        return await original(self, *args, **kwargs)
+
+    return patch.object(SQLAgent, "respond", new=respond)
+
+
+async def test_failed_sql_is_kept_on_the_error_answer(frame_source):
+    llm = FollowUpLLM([])
+    with _failing_sql(fail_times=9):
+        answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert answer.sql == "SELECT nope FROM tiny"
+    assert "column nope not found" in answer.error
+    assert answer.pipeline is None and answer.view is None
+
+
+async def test_error_answer_prints_no_traceback(frame_source, capsys):
+    with _failing_sql(fail_times=9):
+        answer = await aask(frame_source, "Total value?", llm=FollowUpLLM([]), agents=[ChatAgent(), SQLAgent()])
+    assert answer.status == "error"
+    assert "Traceback" not in capsys.readouterr().err
+
+
+async def test_error_card_shows_the_message_and_open_sql(frame_source):
+    llm = FollowUpLLM([])
+    with _failing_sql(fail_times=9):
+        answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    alert, sql = answer.__panel__()
+    assert alert.severity == "error" and "column nope" in alert.object
+    assert not sql.collapsed and "SELECT nope FROM tiny" in sql[0].object
+    html = answer._static_bundle(None)["text/html"]
+    assert "column nope not found" in html
+    assert "<details open><summary>Failed SQL</summary>" in html
+
+
+async def test_a_later_step_failing_keeps_the_working_query(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="total", tables=["tiny"])])
+
+    async def respond(self, *args, **kwargs):
+        raise RetriesExceededError("Maximum number of retries exceeded.") from ValueError("chart spec is invalid")
+
+    with patch.object(ChatAgent, "respond", new=respond):
+        answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "error"
+    assert answer.error == "ValueError: chart spec is invalid"
+    assert "SUM(value)" in answer.sql
+    assert answer.pipeline.data.iloc[0, 0] == 38.0
+    _alert, sql = answer.__panel__()
+    assert sql.title == "SQL" and sql.collapsed
+    assert "<details><summary>SQL</summary>" in answer._static_bundle(None)["text/html"]
+    with pytest.raises(ValueError, match="answer.retry"):
+        await answer.arefine("Use a line")
+
+
+async def test_retry_sends_the_hint_after_the_failure(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="total", tables=["tiny"])])
+    with _failing_sql(fail_times=1):
+        failed = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        fixed = await failed.aretry(hint="The column is called value")
+
+    assert failed.status == "error" and fixed.status == "success"
+    assert fixed.question == "Total value?"
+    assert fixed.pipeline.data.iloc[0, 0] == 38.0
+    history, latest = llm.plan_calls[-1]
+    assert "SELECT nope FROM tiny" in history["content"]
+    assert latest == {"role": "user", "content": "The column is called value"}
+
+
+async def test_chat_does_not_build_on_an_error_answer(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([SQLModel(query="SELECT COUNT(*) AS n FROM tiny", table_slug="n", tables=["tiny"])])
+    conversation = frame_source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    with _failing_sql(fail_times=1):
+        failed = await conversation.aask("Broken?")
+        second = await conversation.aask("How many rows?")
+
+    assert conversation.answers == [failed, second]
+    assert failed.status == "error" and second.status == "success"
+    assert llm.plan_calls[-1] == [{"role": "user", "content": "How many rows?"}]
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
@@ -267,6 +376,78 @@ def chart_answer(frame_source):
     )
 
 
+@pytest.fixture
+def refinable_answer(chart_answer, llm):
+    """The chart answer as a run leaves it: with its editor and the Vega-Lite task."""
+    agent = VegaLiteAgent(n_doc_pages=0)
+    return Answer(
+        editor=VegaLiteEditor(component=chart_answer.view), llm=llm,
+        plan=Plan(ActorTask(agent, title="Chart", instruction="Chart"), title="Chart"),
+        **{k: getattr(chart_answer, k) for k in ("question", "value", "sql", "spec", "view", "status", "source")},
+    )
+
+
+def _line_edit(llm, line_no, line):
+    llm.set_responses([RetrySpec(chain_of_thought="Change the mark", edits=[ReplaceLine(line_no=line_no, line=line)])])
+
+
+async def test_refine_changes_the_chart_with_one_llm_call(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    with patch.object(SQLAgent, "respond", side_effect=AssertionError("refine must not query")):
+        refined = await refinable_answer.arefine("Use a line")
+
+    assert llm._index == 1
+    assert refined.spec["mark"] == "line" and refined.view.spec["mark"] == "line"
+    assert refinable_answer.spec["mark"] == "bar" and refinable_answer.view.spec["mark"] == "bar"
+    assert refined.sql == refinable_answer.sql and refined.question == refinable_answer.question
+
+
+async def test_refine_can_be_refined_again(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    once = await refinable_answer.arefine("Use a line")
+    _line_edit(llm, 8, "mark: point")
+    twice = await once.arefine("Use points")
+    assert (once.spec["mark"], twice.spec["mark"]) == ("line", "point")
+
+
+async def test_refined_answer_explores_with_its_new_chart(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    refined = await refinable_answer.arefine("Use a line")
+    assert refined._views == [refined._editor]
+    assert refinable_answer._editor not in refined._views
+
+
+async def test_retrying_a_chat_answer_keeps_the_conversation(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    _chat_only(llm)
+    second = await conversation.aask("Only A")
+
+    _chat_only(llm)
+    with patch("lumen.ai.answer._respond", new=AsyncMock(wraps=answer_module._respond)) as respond:
+        retried = await second.aretry()
+
+    messages = respond.call_args.args[2]
+    assert [m["content"] for m in messages if m["role"] == "user"] == ["How many rows?", "Only A"]
+    assert conversation.answers[-1] is retried and len(conversation.answers) == 3
+
+
+def test_refine_from_sync_code(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: area")
+    assert refinable_answer.refine("Use an area").spec["mark"] == "area"
+
+
+@pytest.mark.parametrize("missing", ["spec", "editor"])
+async def test_refine_needs_a_vega_lite_chart(refinable_answer, missing):
+    if missing == "spec":
+        refinable_answer.spec = None
+    else:
+        refinable_answer._editor = None
+    with pytest.raises(ValueError, match="refine changes a Vega-Lite chart"):
+        await refinable_answer.arefine("Use a line")
+
+
 def test_answer_code_rebuilds_the_chart_without_an_llm(chart_answer):
     namespace = {}
     exec(chart_answer.code, namespace)
@@ -340,6 +521,18 @@ def test_answer_static_bundle_outside_a_kernel(chart_answer):
     assert "<strong>B</strong> is largest." in html
     assert f'src="data:image/png;base64,{bundle["image/png"]}" width="600"' in html
     assert "<details><summary>SQL</summary><pre><code>SELECT * FROM tiny</code></pre></details>" in html
+
+
+def test_answer_static_spec_sends_missing_values_as_null():
+    source = read({"fuels": pd.DataFrame({"year": [1900, 1950], "coal": [1.0, 2.0], "gas": [float("nan"), 3.0]})})
+    view = VegaLiteView(pipeline=Pipeline(source=source, table="fuels"), spec={"mark": "area", "encoding": {
+        "x": {"field": "year", "type": "quantitative"}, "y": {"field": "gas", "type": "quantitative"},
+    }})
+    answer = Answer(question="?", spec=view.spec, view=view, status="success")
+    spec = answer._chart_bundle()["application/vnd.vegalite.v5+json"]
+    # Strict JSON, which a kernel message and the Vega stack both need
+    json.dumps(spec, allow_nan=False)
+    assert [row["gas"] for row in spec["data"]["values"]] == [None, 3.0]
 
 
 def test_answer_static_spec_keeps_data_given_by_url(frame_source):
@@ -509,3 +702,97 @@ class FollowUpLLM(MockLLM):
         if name:
             return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
         return "Done."
+
+
+class FakeShell:
+    def __init__(self):
+        self.next_inputs = []
+
+    def set_next_input(self, text, replace=False):
+        self.next_inputs.append((text, replace))
+
+
+def test_to_cell_puts_the_code_in_the_next_cell(chart_answer):
+    shell = FakeShell()
+    with patch("lumen.ai.answer._in_kernel", return_value=True), patch("IPython.get_ipython", return_value=shell):
+        chart_answer.to_cell()
+    assert shell.next_inputs == [(chart_answer.code, False)]
+
+
+def test_to_cell_needs_a_kernel(chart_answer):
+    with pytest.raises(RuntimeError, match="answer.code holds the code"):
+        chart_answer.to_cell()
+
+
+def test_to_cell_needs_code():
+    with pytest.raises(ValueError, match="no chart or data"):
+        Answer(question="?", status="success").to_cell()
+
+
+class FakeHandle:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, obj, raw=False):
+        self.updates.append(obj["text/plain"])
+
+
+async def test_run_shows_the_current_step_in_place():
+    handle = FakeHandle()
+
+    async def question():
+        with NullStep().add("Generating SQL..."):
+            pass
+        await asyncio.sleep(0.6)
+        return "done"
+
+    with patch("lumen.ai.answer._in_kernel", return_value=True), \
+            patch("IPython.display.display", return_value=handle) as display:
+        assert _run(question()) == "done"
+
+    display.assert_called_once()
+    assert any(text.startswith("Generating SQL (") for text in handle.updates)
+    assert handle.updates[-1] == ""
+
+
+async def test_run_cancels_the_question_on_interrupt():
+    ended = []
+
+    async def question():
+        try:
+            await asyncio.sleep(30)
+        finally:
+            ended.append(asyncio.current_task().cancelling())
+
+    _loop()  # started once, on the first sync ask
+    threads = threading.active_count()
+    start = time.monotonic()
+    with patch.object(_StatusLine, "show", side_effect=KeyboardInterrupt), pytest.raises(KeyboardInterrupt):
+        _run(question())
+
+    # The interrupt returns at once, and the task is cancelled on the loop
+    assert time.monotonic() - start < 5
+    await async_wait_until(lambda: ended == [1])
+    assert threading.active_count() == threads
+
+
+async def test_run_names_the_first_step_until_one_reports():
+    handle = FakeHandle()
+
+    async def revise():
+        await asyncio.sleep(0.4)
+
+    with patch("lumen.ai.answer._in_kernel", return_value=True), \
+            patch("IPython.display.display", return_value=handle) as display:
+        _run(revise(), "Revising the chart")
+
+    assert display.call_args.args[0] == {"text/plain": "Revising the chart"}
+    assert any(text.startswith("Revising the chart (") for text in handle.updates)
+
+
+def test_records_turn_every_missing_value_into_null():
+    frame = pd.DataFrame({
+        "f32": pd.Series([1.0, float("nan")], dtype="float32"),
+        "ints": pd.Series([1, None], dtype="Int64"),
+    })
+    assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]

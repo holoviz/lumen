@@ -105,6 +105,21 @@ class DeterministicError(Exception):
     """
 
 
+class QueryError(Exception):
+    """
+    Raised when every attempt at a SQL query failed, keeping the last
+    query so it can be shown next to the error.
+    """
+
+    def __init__(self, message: str, sql: str):
+        super().__init__(message)
+        self.sql = sql
+
+
+class DeterministicQueryError(QueryError, DeterministicError):
+    """A QueryError that regenerating the query cannot fix."""
+
+
 class EmptyResultError(ValueError):
     """
     Raised when a query returns no rows, so the model can check its filters.

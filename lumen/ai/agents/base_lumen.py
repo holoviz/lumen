@@ -7,7 +7,7 @@ from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..editors import LumenEditor
 from ..llm import Message
-from ..models import RetrySpec
+from ..models import RetrySpec, revision_lines
 from ..schemas import slug_to_table_name
 from ..utils import apply_changes, retry_llm_output
 from .base import Agent
@@ -91,18 +91,24 @@ class BaseLumenAgent(Agent):
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
-        result = await self._invoke_prompt(
-            "revise_output",
-            messages,
-            context,
-            model_spec="edit",
-            numbered_text=numbered_text,
-            language=language,
-            feedback=instruction,
-            errors=errors,
-            revise_table=revise_table,
-            **kwargs
-        )
+        # A missing op is read from YAML keys, which SQL lines (a::INT,
+        # '00:00') only seem to have, so SQL edits default to replace
+        token = revision_lines.set(lines if language == "yaml" else None)
+        try:
+            result = await self._invoke_prompt(
+                "revise_output",
+                messages,
+                context,
+                model_spec="edit",
+                numbered_text=numbered_text,
+                language=language,
+                feedback=instruction,
+                errors=errors,
+                revise_table=revise_table,
+                **kwargs
+            )
+        finally:
+            revision_lines.reset(token)
         new_spec_raw = apply_changes(lines, result.edits)
         # SQL is not YAML: a round trip truncates at '#' (e.g. '80651 Route #271').
         if language and language.startswith("sql"):

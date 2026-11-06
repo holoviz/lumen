@@ -876,7 +876,14 @@ def _kilo_rejection(body: dict) -> openai.BadRequestError:
     )
 
 
-async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch):
+KILO_TOOL_CHOICE_ERROR = {
+    "error": "This model does not support a required or named tool choice. Remove it and retry.",
+    "type": "invalid_request_error",
+}
+
+
+@pytest.mark.parametrize("rejection", [KILO_UPSTREAM_ERROR, KILO_TOOL_CHOICE_ERROR], ids=["upstream", "tool-choice"])
+async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch, rejection):
     """The free tier's upstream rejects a forced tool call, so Kilo asks for
     JSON in plain text instead and keeps doing so."""
     llm = Kilo()
@@ -885,7 +892,7 @@ async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch):
     async def fake_send(self, _model_spec, _messages, **kwargs):
         modes.append(self.mode)
         if self.mode is not Mode.MD_JSON:
-            raise _kilo_rejection(KILO_UPSTREAM_ERROR)
+            raise _kilo_rejection(rejection)
         return "ok"
 
     monkeypatch.setattr(OpenAI, "_send", fake_send)
@@ -951,6 +958,25 @@ async def test_rejected_image_is_dropped_and_vision_disabled(monkeypatch, error)
     assert sent[1] == [["describe"]]
     assert llm._supports_vision is False
     assert OpenAI._supports_vision is True
+
+
+async def test_images_resent_after_vision_is_disabled_are_dropped(monkeypatch):
+    """A tool loop keeps its own messages, so the next round resends the image
+    the model already rejected; it must go out as text only."""
+    llm = OpenAI(model_kwargs={"default": {"model": "text-only"}})
+    sent: list[list] = []
+
+    async def fake_send(self, _model_spec, messages, **kwargs):
+        sent.append([m["content"] for m in messages])
+        if any(isinstance(c, list) and any(isinstance(p, Image) for p in c) for c in sent[-1]):
+            raise RuntimeError("instructor gave up") from _bad_request({"error": KILO_TEXT_ONLY}, KILO_TEXT_ONLY)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    round_messages = [{"role": "user", "content": ["describe", _make_test_image()]}]
+    await llm.run_client("default", round_messages)
+    await llm.run_client("default", round_messages)
+
+    assert sent[-1] == [["describe"]]
 
 
 @pytest.mark.parametrize("message", [

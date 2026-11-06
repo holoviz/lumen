@@ -20,7 +20,8 @@ from ...sources.duckdb import DuckDBSource
 from ...transforms.sql import SQLLimit
 from ...util import as_narwhals, as_pandas, is_lazyframe
 from ..config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError, EmptyResultError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError,
+    DeterministicQueryError, EmptyResultError, MissingContextError, QueryError,
     RequestBudgetExceededError,
 )
 from ..context import ContextModel, TContext
@@ -1021,6 +1022,7 @@ class SQLAgent(BaseLumenAgent):
         max_retries: int = 2,
         discovery_context: str | None = None,
         tools: list[FunctionTool] | None = None,
+        attempt: dict[str, t.Any] | None = None,
     ) -> tuple[str, pd.DataFrame | None]:
         """Validate and potentially fix SQL query.
 
@@ -1029,6 +1031,9 @@ class SQLAgent(BaseLumenAgent):
         """
         timed_out = False
         for i in range(max_retries):
+            if attempt is not None:
+                # Kept current so a failure reports the query that last ran
+                attempt["sql"] = sql_query
             try:
                 # Reject non-query statements before clean_sql can discard trailing statements.
                 try:
@@ -1560,6 +1565,7 @@ class SQLAgent(BaseLumenAgent):
                 validated_sql, preview = await self._validate_sql(
                     context, sql_query, expr_slug, source, messages,
                     step, discovery_context=discovery_context, tools=tool_list,
+                    attempt=attempt,
                 )
             attempt["sql"] = validated_sql
 
@@ -1705,5 +1711,16 @@ class SQLAgent(BaseLumenAgent):
                 raise RequestBudgetExceededError(
                     f"SQL request exceeded its {self.request_timeout}s time limit.{budget.last_error()}"
                 ) from e
+            except (MissingContextError, RequestBudgetExceededError):
+                raise
+            except Exception as e:
+                last = attempts[-1] if attempts else {}
+                if last.get("sql") is None:
+                    raise
+                # Carries the failed query to callers that show errors, e.g.
+                # lumen.ai.ask, with the attempt's own error rather than the
+                # retry wrapper's "Maximum number of retries exceeded."
+                error_cls = DeterministicQueryError if isinstance(e, DeterministicError) else QueryError
+                raise error_cls(last.get("error", str(e)), last["sql"]) from e
         out_context = t.cast(SQLOutputs, await out.render_context())
         return [out], out_context

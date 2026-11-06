@@ -15,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Callable, Generator, Iterator
+from contextvars import ContextVar
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
@@ -409,7 +410,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -446,7 +447,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             time.sleep(sleep)
 
@@ -1216,6 +1217,23 @@ def format_msg_content(content: Any) -> str:
                 parts.append(f"<{type(item).__name__}[{id(item)}]>")
         return " + ".join(parts)
     return f"<{type(content).__name__}[{id(content)}]>"
+
+
+#: Set while lumen.ai.ask answers a question: it hands errors back in the
+#: Answer, so their tracebacks are only logged at debug level
+errors_in_result: ContextVar[bool] = ContextVar("errors_in_result", default=False)
+
+
+def print_task_exception(e: BaseException) -> None:
+    """
+    Print a failed task's traceback to the console, or log it at debug
+    level while the caller gets the error back, e.g. as an Answer with
+    status "error".
+    """
+    if errors_in_result.get():
+        log.debug("Task failed", exc_info=e)
+    else:
+        traceback.print_exception(e)
 
 
 def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
