@@ -28,6 +28,7 @@ from ..context import (
 from ..llm import Message
 from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
+from ..sharing import shares_values
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import (
@@ -478,6 +479,7 @@ class Planner(Coordinator):
             previous_actors=previous_actors,
             previous_plans=previous_plans,
             follow_up_type=follow_up_type,
+            values_visible=shares_values(),
         )
         stream_plan = partial(
             self._stream_plan, messages, model_spec=model_spec, plan_model=plan_model, llm_tools=llm_tools, step=step

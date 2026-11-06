@@ -7,6 +7,7 @@ from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 import pandas as pd
+import param
 import pytest
 
 try:
@@ -22,7 +23,6 @@ from panel_material_ui import (
 )
 from pydantic import ValidationError
 
-from lumen.ai.actor import LLMUser, NullStep
 from lumen.ai.agents import (
     ChatAgent, SourceAgent, SQLAgent, ValidationAgent,
 )
@@ -132,19 +132,37 @@ async def test_planner_headless_answers_without_interface(llm, caplog):
     assert outputs[-1].object == "Hello there!"
     assert "Hello Reply..." in caplog.messages
     planner._check_clarification_needed.assert_not_awaited()
-    with pytest.raises(ValueError, match="headless"):
+    with pytest.raises(RuntimeError, match="headless"):
         planner.__panel__()
 
 
-def test_llm_user_step_without_interface_logs_its_title(caplog):
-    class Probe(LLMUser):
-        interface = None
-        steps_layout = None
-        _null_step = NullStep()
+def test_actor_step_without_interface_logs_its_title(caplog):
+    with caplog.at_level(logging.INFO, logger="lumen"):
+        with ChatAgent(interface=None)._add_step(title="Loading data", success_title="Loaded data") as step:
+            step.stream("ignored")
+    assert caplog.messages == ["Loading data", "Loaded data"]
 
-    with caplog.at_level(logging.INFO, logger="lumen"), Probe()._add_step(title="Loading data") as step:
-        step.stream("ignored")
-    assert caplog.messages == ["Loading data"]
+
+def test_actor_step_without_interface_logs_failure_as_warning(caplog):
+    with caplog.at_level(logging.INFO, logger="lumen"), pytest.raises(RuntimeError):
+        with ChatAgent(interface=None)._add_step(title="Loading data") as step:
+            step.failed_title = "Could not load data"
+            raise RuntimeError("boom")
+    assert [(r.levelno, r.message) for r in caplog.records] == [
+        (logging.INFO, "Loading data"), (logging.WARNING, "Could not load data"),
+    ]
+
+
+def test_coordinator_headless_rejects_an_interface():
+    with pytest.raises(ValueError, match="headless"):
+        Planner(headless=True, interface=ChatFeed())
+
+
+def test_coordinator_headless_subclass_default():
+    class HeadlessPlanner(Planner):
+        headless = param.Boolean(default=True, constant=True)
+
+    assert HeadlessPlanner().interface is None
 
 
 async def test_planner_headless_raises_planning_errors(llm):

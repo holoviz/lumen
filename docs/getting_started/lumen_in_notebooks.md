@@ -7,7 +7,7 @@ Ask your data questions from a notebook cell and get back an answer, the SQL tha
 ## Load data and ask
 
 ``` bash
-pip install "lumen[ai-openai]" hvsampledata
+pip install "lumen[ai-openai]" "hvsampledata>=0.1.5"
 ```
 
 ``` py title="Ask a question"
@@ -23,7 +23,7 @@ answer
 
 1. `Kilo()` serves free models without an account. With an API key such as `OPENAI_API_KEY` set, leave out `llm=` and Lumen uses that provider.
 
-`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict lands in one source so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
+`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict except a ready-made Source lands in one source, so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
@@ -42,7 +42,7 @@ An `Answer` renders as a card with the text, the chart, and collapsed SQL and Sp
 | `error` | Why the question failed or cannot be answered |
 | `usage` | Tokens and, when the provider prices them, the cost of the answer's LLM calls, e.g. `answer.usage.input_tokens`; the card ends with a one-line summary |
 
-While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop it; Lumen cancels the question and its LLM calls.
+While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop a `source.ask(...)` or `chat.ask(...)`; Lumen cancels the question and its LLM calls. An awaited `aask` is cancelled like any other task.
 
 ## Follow up
 
@@ -89,7 +89,7 @@ answer.error   # e.g. "No table records beak colour."
 
 ## Rerun, export, explore
 
-- `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results.
+- `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results. Source settings go in as they are, so check it for credentials (a database URI with a password, say) before sharing it.
 - `answer.to_cell()` puts that code into a new cell below, in Jupyter.
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
@@ -115,7 +115,7 @@ plan.status   # "planned"
 plan.run()    # the same answer object, now with its result
 ```
 
-**Cache answers.** With `configure(cache=True)`, asking the same question of the same data and model again returns the earlier answer straight away, marked "From the answer cache". The key covers the question, the data's columns, types, row counts and descriptions, the model, the agents, the sharing settings and Lumen's prompts. Frames are copied when `lumen.read` reads them, so editing a DataFrame afterwards changes no answer; a file or database whose values change while its row count stays the same is not noticed, so call `lumen.ai.clear_cache()` after such a change. Up to 128 answers and 2,000,000 rows of their data are kept, oldest dropped first.
+**Cache answers.** With `configure(cache=True)`, asking the same question of the same Source or Pipeline and model again returns the earlier answer straight away, marked "From the answer cache". The key covers the question, the data's columns, types, row counts and descriptions as Lumen last read them, the model's and agents' settings, the row cap, the sharing settings and Lumen's prompts. Lumen caches a source's metadata, so a file or database whose values change, or whose row count changes after the first question, is not noticed: call `lumen.ai.clear_cache()` after such a change. Data you pass as a DataFrame or dict is read afresh for each question, so those answers are never cached. A cache hit gets its own pipeline and chart, so a filter added to one does not show in another. Retries are never cached. Up to 128 answers and 2,000,000 rows of their data are kept, oldest dropped first.
 
 **Ask from a cell.** The `%%lumen` magic takes the source and the question; `{name}` fills in a variable:
 
@@ -135,7 +135,7 @@ Which species was heaviest in {year}?
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/holoviz/lumen/blob/main/examples/notebooks/maps_and_grids.ipynb)
 
 ``` bash
-pip install "lumen[ai-openai,xarray]" hvsampledata geopandas geoviews lonboard
+pip install "lumen[ai-openai,xarray,geo]" "hvsampledata>=0.1.5" lonboard
 ```
 
 ``` py title="Shapes, points and a grid"
@@ -163,7 +163,7 @@ An answer over a table with a geometry column, or over an xarray Dataset, has a 
 |-------|------------|
 | `gdf` | The result as a GeoDataFrame with its CRS, or `None` without geometry. Warns once when the geometry looks like longitude and latitude but has no CRS |
 | `ds` | The result as an xarray Dataset, for answers over gridded data, or `None` |
-| `to_file(path)` | Writes the result by extension: `.parquet` (GeoParquet when there is geometry), `.geojson`, `.gpkg`, `.csv`, or `.zarr` and `.nc` for gridded answers |
+| `to_file(path)` | Writes the result by extension (it will not replace an existing file unless you pass `overwrite=True`, and warns when the data was cut at `max_rows`): `.parquet` (GeoParquet when there is geometry), `.geojson`, `.gpkg`, `.csv`, or `.zarr` and `.nc` for gridded answers |
 | `map()` | The geometry on an interactive map: lonboard when installed, otherwise hvPlot on a basemap |
 
 ``` py
@@ -173,7 +173,7 @@ income.map()                    # lonboard, or hvPlot on a basemap
 mean_air.ds                     # an xarray Dataset on lat and lon
 ```
 
-Maps need geoviews: without it they are drawn on plain axes. Large grids are rasterized. Where the card cannot render, such as a saved notebook, a map answer falls back to a static Vega-Lite map.
+Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
 
 ## Settings
 
@@ -215,14 +215,18 @@ pip install jupyter_bokeh
 
 ## What Lumen runs
 
-Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on, so asking a question cannot execute arbitrary code on your machine.
+Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on. The SQL runs in DuckDB, which can read files on your machine (`read_text('/...')`, say), and what a query returns reaches the LLM as far as `share` allows.
 
-What the LLM sees of your data is up to `share`:
+## What goes to the LLM provider
+
+`ask` uses the first provider whose API key is set in the environment, unless you pass `llm=`. What that provider sees of your data is up to `share`:
 
 | `share` | The LLM sees |
 |---------|--------------|
 | `"sample"` (default) | Values: summaries of results, value counts, ranges, examples and chart images |
 | `"schema"` | Table and column names, types, row counts and null fractions, but no values |
-| `"none"` | Table and column names only |
+| `"none"` | Table and column names, and row counts |
+
+The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them.
 
 The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.
