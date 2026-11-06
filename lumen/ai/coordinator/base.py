@@ -28,7 +28,7 @@ from ..actor import Actor
 from ..agents import (
     Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
-from ..config import PROMPTS_DIR, MissingContextError
+from ..config import PROMPTS_DIR, ROADMAP_TAG, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
@@ -97,7 +97,7 @@ class Plan(Section):
         todos = "\n".join(todos_list)
 
         roadmap_system = (
-            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            f"{ROADMAP_TAG}\n{indent(todos, '  ')}\n</roadmap>\n"
             "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
         )
         if user_query is None:
@@ -387,8 +387,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         constant=True,
         doc="""
         Whether to run without a ChatInterface, e.g. from a notebook or a
-        script. Step titles are then logged to the ``lumen`` logger at INFO
-        level instead of being rendered.""",
+        script. Step titles are then logged to the ``lumen`` logger instead
+        of being rendered: start and success at INFO, failure at WARNING.
+        ``interface`` cannot be given at the same time.""",
     )
 
     within_ui = param.Boolean(
@@ -424,7 +425,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        if interface is None and not params.get("headless"):
+        headless = params.get("headless", self.param.headless.default)
+        if headless and interface is not None:
+            raise ValueError("A headless Coordinator takes no interface; pass one or the other.")
+        if interface is None and not headless:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
@@ -622,6 +626,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return obj
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
+        """
+        Plan a response to the conversation.
+
+        With an interface the history comes from it. Headless, the planner
+        only sees ``messages``, so a follow-up needs the earlier turns in
+        ``messages`` and the earlier plan as ``context["prev_plan"]``.
+        """
         context = {"agent_tool_contexts": [], **context}
         headless = self.interface is None
         with nullcontext() if headless else self.interface.param.update(loading=True):
@@ -681,7 +692,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     def __panel__(self):
         if self.interface is None:
-            raise ValueError("A headless Coordinator has no interface to display.")
+            raise RuntimeError("A headless Coordinator has no interface to display.")
         return self.interface
 
     async def sync(self, context: TContext | None):
