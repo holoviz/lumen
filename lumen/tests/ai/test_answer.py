@@ -40,6 +40,7 @@ from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask
+from lumen.ai.sharing import sharing
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -227,6 +228,7 @@ def fresh_settings(monkeypatch):
     _env_llm.cache_clear()
     # Plain assignment: monkeypatch would restore the Parameter object itself
     SQLAgent.max_rows = max_rows
+    sharing.param.update(share="sample", mask_pii=False)
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
