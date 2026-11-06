@@ -772,6 +772,12 @@ async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source,
     assert "first:" in message and "second:" in message
 
 
+async def test_code_prompt_mode_refuses_without_interface(llm):
+    agent = VegaLiteAgent(llm=llm, code_execution="prompt")
+    with pytest.raises(RuntimeError, match="needs an interface"):
+        await agent._execute_code("chart = None", pd.DataFrame({"A": [1]}))
+
+
 async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):
     """VegaLiteAgent Altair (code) mode returns one editor per generated chart."""
 
@@ -1521,3 +1527,15 @@ def test_exploration_tool_doc_quotes_every_name():
     doc = make_run_exploration_sql_tool(sources).function.__doc__
     assert "one of `src_a`, `src_b`." in doc
     assert doc.count("`") % 2 == 0
+
+
+async def test_sql_revise_without_op_replaces_a_line_with_a_cast(llm):
+    """SQL casts look like YAML keys, so a missing op must not become an insert."""
+    llm.set_responses([lambda: RetrySpec.model_validate({
+        "chain_of_thought": "Cast b instead",
+        "edits": [{"line_no": 1, "line": "SELECT b::INT AS a"}],
+    })])
+    revised = await BaseLumenAgent.revise(
+        SQLAgent(llm=llm), "Use b", [], {}, spec="SELECT a::INT AS a\nFROM t", language="sql"
+    )
+    assert revised == "SELECT b::INT AS a\nFROM t"

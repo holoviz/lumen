@@ -216,9 +216,23 @@ async def test_points_keep_the_column_they_are_coloured_by(pipeline):
 
 
 async def test_a_large_grid_is_rasterized(monkeypatch):
+    pytest.importorskip("datashader")
     import lumen.ai.agents.hvplot as hvplot_agent
     monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)
     df = pd.DataFrame({"x": [0.0, 1.0, 0.0, 1.0], "y": [0.0, 0.0, 1.0, 1.0], "t": [1.0, 2.0, 3.0, 4.0]})
     pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
     spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "x", "y": "y", "z": "t"})
     assert spec["rasterize"] is True
+
+
+async def test_without_datashader_a_large_grid_is_not_rasterized(monkeypatch):
+    import importlib.util
+
+    import lumen.ai.agents.hvplot as hvplot_agent
+    monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "datashader" else real(name, *a))
+    df = pd.DataFrame({"x": [0.0, 1.0, 0.0, 1.0], "y": [0.0, 0.0, 1.0, 1.0], "t": [1.0, 2.0, 3.0, 4.0]})
+    pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "x", "y": "y", "z": "t"})
+    assert "rasterize" not in spec

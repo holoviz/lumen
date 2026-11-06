@@ -2,84 +2,71 @@
 
 {%- block instructions %}
 ## Instructions
-{% if memory.get('sql') and 'sql' not in previous_keys %}
-Analyze if SQL query matches user's request by checking:
-1. What user asked for
-2. What SQL actually does (read carefully)
-3. If they align
+Check whether outputs from current plan answer user's latest message. Earlier messages context only: follow-up like "now only 2024" keeps earlier chart, grouping and metric.
 
-VALID = SQL implements user's intent correctly
-- Check actual SQL syntax, not assumptions
-- Verify GROUP BY, WHERE, SELECT match request
-- Accept reasonable interpretations; do not over-interpret `limit` (100,000 default)
-- When data fetched from external source, table already scoped to fetched parameters. `SELECT *` or unfiltered query against such table valid if data overview shows requested rows present.
-{% endif %}
+One check per explicit requirement in latest message: chart type, orientation, fields, grouping, filter, aggregation, metric, sort, limit, colors, labels, question to answer. Include earlier requirements only when latest message changes them. When assistant response states facts about results, add one check: those claims match results. When current plan produced SQL or a view, at least one check; for vague request, check the reasonable reading ("show sales" → sales shown).
+Evidence: quote spec key and value, SQL clause or response sentence, and say what it does. Titles, subtitles and plan descriptions state intent, not what was built. Satisfied only when evidence shows requirement met.
+
+Not requirements:
+- Choices user did not specify: titles, colors, labels, aliases, rounding, extra columns, sort order, default row `limit` (100,000)
+- Reasonable reading of vague request ("trend" as monthly line, "top" as ranked by main metric)
+- SQL dialect; query already ran
+- Values absent from data overview, a capped summary (`'...'` marks omitted enum values)
+- Fewer rows than requested top N when data has fewer matches
+- Data never loaded; clarifying question when request ambiguous
+{%- if memory.get('source_actions') %}
+- Unfiltered query on table fetched from external source: fetch already scoped it
+{%- endif %}
 {% if memory.get('view') and 'view' not in previous_keys %}
-Analyze if generated view and responses match user's request.
+
+View already rendered. Edit of existing chart ("bigger points", "sort ascending"): previous version not shown, so requested property present counts as satisfied.
 {% endif %}
-{% if memory.get('listing') and 'listing' not in previous_keys %}
-Listing of items displayed to user. VALID if matches what they asked to see.
-{% endif %}
-{% if 'chat' not in previous_keys %}
-Analyze if assistant's response addresses user's request given available context.
-VALID = response uses available context to answer; do not penalize missing data never loaded or available.
-Clarifying question IS valid response when user's request ambiguous or when assistant lacks sufficient context to act directly.
+{% if memory.get('chat') and 'chat' not in previous_keys and ((memory.get('sql') and 'sql' not in previous_keys) or (memory.get('view') and 'view' not in previous_keys)) %}
+
+User sees result table{% if memory.get('view') and 'view' not in previous_keys %} and chart{% endif %} beside response, so response need not restate values.
 {% endif %}
 {%- if memory.get('clarifications') %}
-Clarifications collected from user during planning. User's answers refine or override original request. Validate against CLARIFIED intent, not original ambiguous request.
+
+Clarifications collected during planning refine or override request; check against them.
 {%- endif %}
-Items labeled "(From previous plan)" leftover context from earlier plan. May provide useful background, but validate current plan's outputs directly against user's request.
+{%- if previous_keys %}
+
+Items labeled "(From previous plan)" are background; do not check them.
+{%- endif %}
+
+## Output
+Fill `checks` first; `chain_of_thought` one sentence; `suggestions` only for unsatisfied checks.
 {%- endblock -%}
 
 {%- block examples %}
-## Examples (illustrative — `data`, `sales`, `region` etc. placeholders, not real tables/columns)
+## Examples (illustrative — `data`, `sales`, `region` are placeholders, not real tables/columns)
 {% if memory.get('sql') and 'sql' not in previous_keys -%}
-User: "by region?"
-SQL: SELECT region, SUM(sales) FROM data GROUP BY region
-VALID - has GROUP BY region
-
-User: "by region?"
-SQL: SELECT SUM(sales) FROM data
-INVALID - missing GROUP BY region
-
-User: "top 5"
-SQL: SELECT * FROM data ORDER BY revenue DESC LIMIT 5
-VALID - has LIMIT 5
-
-User: "show 1000 rows"
-SQL: SELECT * FROM data LIMIT 50
-INVALID - wrong LIMIT value
-
-User: "total by state"
-SQL: SELECT state, SUM(amount) FROM data GROUP BY state
-VALID - groups by state with SUM
+"by region?" / `SELECT region, SUM(sales) FROM data GROUP BY region` → "by region": `GROUP BY region` → satisfied
+"by region?" / `SELECT SUM(sales) FROM data` → "by region": not found, single total → unsatisfied
 {% endif %}
-{% if 'chat' not in previous_keys -%}
-User: "Summarize survey results" → Response with field breakdowns and patterns → VALID
-User: "What are top selling products?" → Generic discussion, no rankings → INVALID
-User: "Show me data" → Response listing available columns and asking what to explore → VALID (clarifying question when request ambiguous)
+{% if memory.get('chat') and 'chat' not in previous_keys -%}
+"which region sold most?" / results: North highest; response: "South" → claims match results: South named, North highest → unsatisfied
+"Show me data" / response lists columns, asks what to explore → no explicit requirement, no claims about results; checks empty
 {% endif %}
 {% if memory.get('view') and 'view' not in previous_keys -%}
-User: "bar chart of sales by region" → bar mark with region on x, sales on y → VALID
-User: "line chart over time" → bar chart with no time axis → INVALID
+"line chart over time" / spec: mark bar, no temporal field → "line chart": `mark: bar` → unsatisfied; "over time": no temporal encoding → unsatisfied
+"make the points bigger" (edit) / spec: `mark.size: 100` → "bigger points": size set → satisfied
 {% endif %}
 {%- endblock -%}
 
 {%- block context %}
 ## Context
-Current context contains keys: {{ ", ".join(memory) }}
-
-{%- if memory.get('sql') %}
+{% if memory.get('sql') %}
 {% if 'sql' in previous_keys %}(From previous plan) {% endif %}SQL: `{{ memory['sql'] }}`
 {%- endif -%}
 {%- if memory.get('data') is not none %}
-Data Overview:
+{% if 'data' in previous_keys %}(From previous plan) {% endif %}Data overview (summary of query result, not full rows):
 {{ memory["data"] }}
 {%- endif -%}
 {% if memory.get('view') %}
 {% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View:
 ```yaml
-{{ memory["view"] | json_to_yaml }}
+{{ (view_spec if view_spec is defined else memory["view"]) | json_to_yaml }}
 ```
 {%- endif -%}
 {#- Render the ChatAgent's typed output (memory['chat']) rather than the
@@ -99,13 +86,6 @@ Listing displayed:
 Clarifications collected:
 {%- for clarification in memory['clarifications'] %}
 {{ clarification }}
-{%- endfor %}
-{%- endif -%}
-
-{%- if memory.get('source_actions') %}
-Configured external data sources:
-{%- for name, info in memory['source_actions'].items() %}
-- {{ name }}: {{ info.get('description', '(no description)') }}
 {%- endfor %}
 {%- endif -%}
 {%- endblock -%}

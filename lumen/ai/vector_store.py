@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import importlib
+import importlib.util
 import io
 import json
 import os
@@ -20,13 +21,19 @@ import param
 import semchunk
 
 from panel import cache as pn_cache, state as pn_state
-from tqdm import tqdm
 
 from .actor import PROMPTS_DIR, LLMUser
 from .config import get_markitdown
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
 from .utils import log_debug
+
+# tqdm.auto draws notebook widgets, which need ipywidgets; without it tqdm
+# warns on every bar, so plain text bars are the better fallback
+if importlib.util.find_spec("ipywidgets"):
+    from tqdm.auto import tqdm
+else:
+    from tqdm import tqdm
 
 
 def _metadata_value_matches_filter(metadata_value: Any, filter_value: Any) -> bool:

@@ -4,6 +4,7 @@ import inspect
 import io
 import logging
 import sqlite3
+import subprocess
 import sys
 import tempfile
 
@@ -46,7 +47,6 @@ from lumen.ai.agents.vega_lite import (
 )
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
-from lumen.ai.data import read, resolve_data
 from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.llm import (
     PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
@@ -58,6 +58,7 @@ from lumen.ai.ui import UI, Exploration, ExplorerUI
 from lumen.command.ai import LumenAIServe, main
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read, resolve_data
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
 
@@ -148,6 +149,14 @@ async def explorer_ui_with_error(explorer_ui):
     await explorer_ui._execute_plan(plan)
 
     yield explorer_ui
+
+async def test_unanswerable_plan_is_not_executed_in_the_chat_ui(explorer_ui):
+    plan = Plan(title="Elevation", unanswerable="No table holds elevation.", context=explorer_ui.context)
+    explorer_ui._coordinator.respond = AsyncMock(return_value=plan)
+    explorer_ui._execute_plan = AsyncMock()
+    await explorer_ui._chat_invoke("How high?", "User", explorer_ui.interface)
+    explorer_ui._execute_plan.assert_not_awaited()
+
 
 async def test_explorer_ui_initialization(explorer_ui):
     """Test that ExplorerUI initializes correctly."""
@@ -1156,12 +1165,6 @@ class TestResolveData:
         assert result[0].get_tables() == ['penguins', 'birds']
         pd.testing.assert_frame_equal(result[0].get('birds'), df)
 
-    def test_resolve_data_pipeline_is_listed_as_a_table(self):
-        source = DuckDBSource.from_df({'tiny': pd.DataFrame({'a': [1, 2]})})
-        result = resolve_data({'tiny_copy': Pipeline(source=source, table='tiny')})
-        assert result[0].get_tables() == ['tiny_copy']
-        assert list(result[0].get('tiny_copy')['a']) == [1, 2]
-
     def test_resolve_data_unnamed_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
         result = resolve_data([df, df])
@@ -1568,6 +1571,13 @@ def test_read_mixed_dict_joins_a_frame_a_grid_and_a_connection(tmp_path):
     assert conn.execute('SELECT table_name FROM information_schema.tables').fetchall() == [('orders',)]
 
 
+def test_read_mixed_connection_table_clashing_with_a_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE people AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'people' has the same name"):
+        read({'people': pd.DataFrame({'a': [2]}), 'shop': conn})
+
+
 def test_read_two_grids_share_one_source():
     xr = pytest.importorskip('xarray')
     pytest.importorskip('xarray_sql')
@@ -1665,6 +1675,29 @@ def test_read_several_sources_raises():
     first, second = DuckDBSource(uri=':memory:', tables={}), DuckDBSource(uri=':memory:', tables={})
     with pytest.raises(ValueError, match='resolved to 2 sources'):
         read([first, second])
+
+
+def test_read_duckdb_connection_leaves_it_open():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE t AS SELECT 1 AS a')
+    read(conn).close()
+    assert conn.execute('SELECT a FROM t').fetchone() == (1,)
+
+
+def test_read_pipeline_lists_its_table():
+    pipeline = Pipeline(source=DuckDBSource.from_df({'t': pd.DataFrame({'a': [1, 2]})}), table='t')
+    source = read({'t': pipeline})
+    assert source.get_tables() == ['t']
+    assert list(source.get('t')['a']) == [1, 2]
+    assert len(read(pipeline).get(pipeline.name)) == 2
+
+
+def test_lumen_read_does_not_import_lumen_ai():
+    code = (
+        "import sys, lumen, pandas as pd; lumen.read(pd.DataFrame({'a': [1]})); "
+        "assert 'lumen.ai' not in sys.modules"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
 
 
 def test_lumen_read_is_exposed():

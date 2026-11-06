@@ -312,6 +312,18 @@ def test_claude_code_records_the_usage_it_reports():
     assert usage.cost_usd == 0.0125 and claude.usage.records == [usage]
 
 
+def test_claude_code_names_the_model_that_cost_the_most():
+    claude = ClaudeCode()
+    output = json.dumps({
+        "result": "Ready", "is_error": False,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "modelUsage": {"claude-haiku-5-5": {"costUSD": 0.001}, "claude-opus-5-5": {"costUSD": 0.02}},
+    })
+    with claude.capture_usage() as scope:
+        claude._decode_output(output)
+    assert scope.records[0].model == "claude-opus-5-5"
+
+
 async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
     spawned = []
     create_subprocess = asyncio.create_subprocess_exec
