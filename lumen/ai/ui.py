@@ -2181,7 +2181,7 @@ class ExplorerUI(UI):
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
         await self.add_plan_exploration(plan)
 
-    async def add_plan_exploration(self, plan: Plan):
+    async def add_plan_exploration(self, plan: Plan, views: list | None = None):
         """
         Show an executed Plan as a new exploration, with its views and its
         output context, so follow-up questions continue from it.
@@ -2191,11 +2191,14 @@ class ExplorerUI(UI):
         plan: Plan
             A Plan that has already been executed, e.g. ``answer.plan``
             from ``source.ask(...)``.
+        views: list | None
+            The views to show instead of the plan's own, e.g. with a
+            refined chart in place of the one the plan made.
         """
         prev = self._explorations.value
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
-            self._add_views(exploration, items=plan.views)
+            self._add_views(exploration, items=plan.views if views is None else views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _propagate_sources_to_exploration(self, global_context: TContext):

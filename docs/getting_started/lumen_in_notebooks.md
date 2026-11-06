@@ -40,7 +40,7 @@ An `Answer` renders as a card with the text, the chart and a collapsed SQL secti
 | `plan` / `status` | The steps the planner ran and how they ended |
 | `error` | Why the question failed, when `status` is `"error"` |
 
-While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop it; Lumen cancels the question and its LLM calls.
+While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop a `source.ask(...)` or `chat.ask(...)`; Lumen cancels the question and its LLM calls. An awaited `aask` is cancelled like any other task.
 
 ## Follow up
 

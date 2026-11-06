@@ -462,7 +462,7 @@ class TaskGroup(Task):
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
-                print_task_exception(e, self.interface)
+                print_task_exception(e)
                 self.status = "error"
                 new_context = {"__error__": str(e), "__error_type__": type(e), "__exception__": e}
                 task.out_context = new_context

@@ -21,13 +21,15 @@ except ModuleNotFoundError:
 from panel.config import panel_extension
 from panel.tests.util import async_wait_until
 
+import lumen.ai.answer as answer_module
+
 from lumen.ai.actor import NullStep
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     Answer, _busy, _default_agents, _default_llm, _loop, _planner, _planners,
-    _resolve, _run, _StatusLine, aask, ask, chat,
+    _records, _resolve, _run, _StatusLine, aask, ask, chat,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -408,6 +410,29 @@ async def test_refine_can_be_refined_again(refinable_answer, llm):
     assert (once.spec["mark"], twice.spec["mark"]) == ("line", "point")
 
 
+async def test_refined_answer_explores_with_its_new_chart(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    refined = await refinable_answer.arefine("Use a line")
+    assert refined._views == [refined._editor]
+    assert refinable_answer._editor not in refined._views
+
+
+async def test_retrying_a_chat_answer_keeps_the_conversation(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    _chat_only(llm)
+    second = await conversation.aask("Only A")
+
+    _chat_only(llm)
+    with patch("lumen.ai.answer._respond", new=AsyncMock(wraps=answer_module._respond)) as respond:
+        retried = await second.aretry()
+
+    messages = respond.call_args.args[2]
+    assert [m["content"] for m in messages if m["role"] == "user"] == ["How many rows?", "Only A"]
+    assert conversation.answers[-1] is retried and len(conversation.answers) == 3
+
+
 def test_refine_from_sync_code(refinable_answer, llm):
     _line_edit(llm, 8, "mark: area")
     assert refinable_answer.refine("Use an area").spec["mark"] == "area"
@@ -763,3 +788,11 @@ async def test_run_names_the_first_step_until_one_reports():
 
     assert display.call_args.args[0] == {"text/plain": "Revising the chart"}
     assert any(text.startswith("Revising the chart (") for text in handle.updates)
+
+
+def test_records_turn_every_missing_value_into_null():
+    frame = pd.DataFrame({
+        "f32": pd.Series([1.0, float("nan")], dtype="float32"),
+        "ints": pd.Series([1, None], dtype="Int64"),
+    })
+    assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]

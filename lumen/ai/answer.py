@@ -7,7 +7,6 @@ import asyncio
 import base64
 import html
 import logging
-import math
 import threading
 import time
 import weakref
@@ -18,6 +17,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import panel as pn
 import param
 
@@ -50,7 +50,7 @@ from .llm import (
 )
 from .report import ActorTask
 from .ui import ExplorerUI
-from .utils import format_error
+from .utils import errors_in_result, format_error
 
 if TYPE_CHECKING:
     from ..sources.data import DataT
@@ -173,6 +173,7 @@ async def _respond(
     """
     _busy.add(planner)
     try:
+        token = errors_in_result.set(True)
         with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
             await planner.sync(context)
             plan = await planner.respond(messages, context)
@@ -180,6 +181,7 @@ async def _respond(
                 raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
             outputs, out_context = await plan.execute()
     finally:
+        errors_in_result.reset(token)
         _busy.discard(planner)
     answer = _build_answer(
         question, plan, outputs, out_context, context["source"], planner.llm, data, agents,
@@ -198,7 +200,7 @@ def _records(data: Any) -> Any:
     if records is None:
         return data
     return [
-        {key: None if isinstance(value, float) and math.isnan(value) else value for key, value in row.items()}
+        {key: None if pd.api.types.is_scalar(value) and pd.isna(value) else value for key, value in row.items()}
         for row in records
     ]
 
@@ -244,7 +246,6 @@ def _run(coro, first_step: str = "Planning"):
         return await coro
 
     future = asyncio.run_coroutine_threadsafe(tracked(), _loop())
-    # ponytail: aask has no status line, add one if async callers want it
     with _StatusLine(first_step) as status:
         try:
             while True:
@@ -286,7 +287,10 @@ def _build_answer(
 ) -> Answer:
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        exc = context.get("__exception__")
+        # Read once and dropped: its traceback keeps every frame's data alive
+        exc = context.pop("__exception__", None)
+        for task in plan:
+            task.out_context.pop("__exception__", None)
         error = context.get("__error__", "")
         if isinstance(exc, RetriesExceededError) and exc.__cause__ is not None:
             # The last attempt's error says what went wrong; the wrapper does not
@@ -352,6 +356,9 @@ async def aask(
     Returns
     -------
     Answer
+        A question Lumen cannot answer gives an Answer with status "error"
+        and the reason in ``error``, rather than raising, so it can be
+        retried with ``answer.retry()``.
     """
     return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents)
 
@@ -373,8 +380,9 @@ def ask(
     """
     Ask a question of some data and return the Answer.
 
-    Takes the same arguments as aask, and works whether or not an event
-    loop is already running, e.g. in a Jupyter notebook: the question runs
+    Takes the same arguments as aask and, like it, returns an Answer with
+    status "error" instead of raising when the question fails. Works
+    whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
     return _run(aask(data, question, llm=llm, agents=agents))
@@ -412,13 +420,19 @@ class Chat(param.Parameterized):
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
-        planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
-        if self._context is None:
-            context = _fresh_context(planner, self._source, self._visible_slugs)
-        else:
-            context = dict(self._context)
         messages = [*self._messages, {"role": "user", "content": question}]
+        return await self._turn(question, messages, self._messages, self._context)
+
+    async def _turn(
+        self, question: str, messages: list[dict[str, str]],
+        history: list[dict[str, str]], prior: dict[str, Any] | None,
+    ) -> Answer:
+        """Answer messages from the conversation as it stood (history and its context), and record the turn."""
+        planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
+        context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        # So answer.retry() asks again within this conversation
+        answer._chat, answer._history = self, (history, prior)
         self.answers = [*self.answers, answer]
         if answer.status == "error":
             # The next question starts from the last answer that worked
@@ -477,6 +491,11 @@ class Answer(param.Parameterized):
         self._card = None
         self._llm = llm
         self._visible_slugs = visible_slugs
+        # Set by a Chat, so retry stays in the conversation
+        self._chat: Chat | None = None
+        self._history: tuple[list[dict[str, str]], dict[str, Any] | None] = ([], None)
+        # The plan's views with refined charts swapped in, for explore
+        self._views: list | None = None
         # What was asked and with which agents, so retry asks the same way
         self._data = data
         self._agents = agents
@@ -505,12 +524,18 @@ class Answer(param.Parameterized):
         # The Planner only sets the agent's LLM while a plan runs
         with actor.param.update(llm=actor.llm or self._llm):
             editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
-        return Answer(
+        refined = Answer(
             agents=self._agents, context=self._context, data=self._data, editor=editor,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
             source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
             value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
         )
+        refined._chat, refined._history = self._chat, self._history
+        views = self.plan.views if self._views is None else self._views
+        refined._views = [editor if view is self._editor else view for view in views]
+        if self._editor not in views:
+            refined._views.append(editor)
+        return refined
 
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
@@ -538,6 +563,9 @@ class Answer(param.Parameterized):
             if self.sql:
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
+        if self._chat is not None:
+            history, prior = self._history
+            return await self._chat._turn(self.question, [*history, *messages], history, prior)
         data = self.source if self._data is None else self._data
         return await _aask_messages(data, self.question, messages, self._llm, self._agents)
 
@@ -560,7 +588,7 @@ class Answer(param.Parameterized):
 
         async def seed():
             ui.interface.send(self.question, respond=False)
-            await ui.add_plan_exploration(self.plan)
+            await ui.add_plan_exploration(self.plan, views=self._views)
 
         # onload runs it inside the served session once the page is up, so
         # the browser receives the changes; state.execute ran it outside the

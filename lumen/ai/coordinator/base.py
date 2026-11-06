@@ -184,11 +184,11 @@ class Plan(Section):
                 task.out_context["__error__"] = error_msg
                 return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
-            print_task_exception(e, self.interface)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
-            print_task_exception(e, self.interface)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task failed due to an internal error"
             raise e
 

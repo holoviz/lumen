@@ -1527,3 +1527,15 @@ def test_exploration_tool_doc_quotes_every_name():
     doc = make_run_exploration_sql_tool(sources).function.__doc__
     assert "one of `src_a`, `src_b`." in doc
     assert doc.count("`") % 2 == 0
+
+
+async def test_sql_revise_without_op_replaces_a_line_with_a_cast(llm):
+    """SQL casts look like YAML keys, so a missing op must not become an insert."""
+    llm.set_responses([lambda: RetrySpec.model_validate({
+        "chain_of_thought": "Cast b instead",
+        "edits": [{"line_no": 1, "line": "SELECT b::INT AS a"}],
+    })])
+    revised = await BaseLumenAgent.revise(
+        SQLAgent(llm=llm), "Use b", [], {}, spec="SELECT a::INT AS a\nFROM t", language="sql"
+    )
+    assert revised == "SELECT b::INT AS a\nFROM t"
