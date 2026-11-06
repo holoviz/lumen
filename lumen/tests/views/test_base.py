@@ -453,6 +453,27 @@ def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
     assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
 
 
+def test_vega_layer_naming_the_table_registers_the_dataset(set_root):
+    """A layer referencing the table as data: {name: ...} drew nothing on main:
+    the name counted as neither url nor inline data, so the rows were injected
+    as top-level values and then overridden by the layer's undefined dataset."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    point = {
+        "mark": "point",
+        "encoding": {
+            "longitude": {"field": "A", "type": "nominal"},
+            "latitude": {"field": "B", "type": "quantitative"},
+        },
+    }
+    spec = {"projection": {"type": "albersUsa"}, "layer": [{"data": {"name": "test"}, **point}]}
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == {"name": "test"}
+    pd.testing.assert_frame_equal(final_spec["datasets"]["test"], pipeline.data)
+
+
 def test_vega_datasets_are_not_accumulated_across_renders(set_root):
     """self.spec is reused between renders, so registering into its own datasets
     dict would leave a DataFrame behind on the caller's spec."""
