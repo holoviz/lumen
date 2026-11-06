@@ -29,7 +29,7 @@ answer
 
 ## The answer
 
-An `Answer` renders as a card with the text, the chart and a collapsed SQL section. It also holds:
+An `Answer` renders as a card with the text, the chart, and collapsed SQL and Spec sections: the query, and the Vega-Lite or hvPlot spec the chart was drawn from. It also holds:
 
 | Field | What it is |
 |-------|------------|
@@ -61,6 +61,8 @@ answer.refine("Color the bars by species and sort them by mass")  # (1)!
 
 1. `refine` changes only the chart, with one LLM call and no new SQL. It returns a new answer and leaves the old one as it was.
 
+To change the chart by hand, open the card's Spec section, press Edit, change the spec and press Redraw. `answer.with_spec(...)` does the same from code, taking the spec as a dict or as JSON or YAML text, and needs no LLM.
+
 ## When a question fails
 
 A question that cannot be answered still returns an `Answer`, with `status` set to `"error"`. Its card shows the error and the failed SQL, open. Ask again with a hint:
@@ -80,6 +82,27 @@ if answer.status == "error":
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
+## Settings
+
+`lumen.ai.configure` sets the defaults for every question in the session. A question's own `llm=` or `agents=` still wins.
+
+``` py
+from lumen.ai import configure
+from lumen.ai.llm import Kilo
+
+configure(llm=Kilo(), max_rows=100_000, share="schema", mask_pii=True)
+```
+
+| Setting | Environment variable | What it does |
+|---------|----------------------|--------------|
+| `llm` | `LUMEN_AI_PROVIDER`, `LUMEN_AI_MODEL` | The LLM, e.g. `LUMEN_AI_PROVIDER=kilo`. Without either, the first provider with an API key |
+| `agents` | | The agents the planner may use |
+| `max_rows` | | Rows an answer's data holds, as a LIMIT on its query (1,000,000 by default, `None` for all). The card notes when a result hits it |
+| `share` | `LUMEN_AI_SHARE` | What of the data prompts contain, see below |
+| `mask_pii` | `LUMEN_AI_MASK_PII` | Withhold the values of columns that look like personal data |
+
+Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sales": "data/*.parquet"})` does not load the data into memory. Name tables with a dict, as there; a bare path names the table after the whole path.
+
 ## Where answers render
 
 | Front end | What you get |
@@ -98,8 +121,18 @@ pip install jupyter_bokeh
 
 ## What Lumen runs
 
-Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on. The SQL runs in DuckDB, which can read files on your machine (`read_text('/...')`, say), and query results go to the LLM.
+Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on. The SQL runs in DuckDB, which can read files on your machine (`read_text('/...')`, say), and what a query returns reaches the LLM as far as `share` allows.
 
 ## What goes to the LLM provider
 
-`ask` uses the first provider whose API key is set in the environment, unless you pass `llm=`. That provider receives your tables' schemas, column statistics and sample rows, and a sample of each query result, so only ask about data you may send there.
+`ask` uses the first provider whose API key is set in the environment, unless you pass `llm=`. What that provider sees of your data is up to `share`:
+
+| `share` | The LLM sees |
+|---------|--------------|
+| `"sample"` (default) | Values: summaries of results, value counts, ranges, examples and chart images |
+| `"schema"` | Table and column names, types, row counts and null fractions, but no values |
+| `"none"` | Table and column names, and row counts |
+
+The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them.
+
+The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.

@@ -6,7 +6,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import json
 import logging
+import os
 import threading
 import time
 import weakref
@@ -15,18 +17,22 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 import panel as pn
 import param
+import yaml
 
 from markdown_it import MarkdownIt
 from panel.config import panel_extension
 from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
-from panel_material_ui import Alert, Card, Column
+from panel.widgets import CodeEditor
+from panel_material_ui import (
+    Alert, Button, Card, Column, Row,
+)
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -36,8 +42,9 @@ from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.data import JOINED_GRIDS, read
 from ..sources.xarray_sql import XArraySQLSource
+from ..transforms.sql import SQLLimit
 from ..util import geometry_columns, log
-from ..views import View
+from ..views import VegaLiteView, View
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
@@ -46,9 +53,10 @@ from .coordinator import Plan, Planner
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
-    Llm, get_available_llm, quiet_retries, signed_in_cli_hint,
+    Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
 from .report import ActorTask
+from .sharing import sharing
 from .ui import ExplorerUI
 from .utils import errors_in_result, format_error
 
@@ -92,18 +100,89 @@ async def _default_agents(source: Source) -> list:
     return agents
 
 
+# Set through configure, and used by every question that does not pass its own
+_settings: dict[str, Any] = {"agents": None, "llm": None}
+
+_UNSET: Any = object()
+
+
+def configure(
+    *, llm: Llm | None = _UNSET, agents: list | None = _UNSET, max_rows: int | None = _UNSET,
+    share: Literal["sample", "schema", "none"] | None = None, mask_pii: bool | None = None,
+) -> dict[str, Any]:
+    """
+    Set the defaults for ask, aask and chat in this session.
+
+    A question's own llm= or agents= still wins, and None goes back to
+    the automatic choice. Without either set here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
+    LLM, and otherwise the first provider with an API key set.
+
+    max_rows caps the rows an answer's data holds (1,000,000 by
+    default), as a LIMIT on its query; None lifts the cap.
+
+    share sets what of the data prompts contain: "sample" (values, as
+    before), "schema" (structure, no values) or "none" (names and row counts only).
+    mask_pii withholds the values of columns that look like personal
+    data. Both apply to the chat UI too; see lumen.ai.sharing.
+
+    Returns the settings now in effect.
+    """
+    if llm is not _UNSET:
+        _settings["llm"] = llm
+    if agents is not _UNSET:
+        _settings["agents"] = agents
+    if max_rows is not _UNSET:
+        # The class default, so every SQLAgent without its own value uses it
+        SQLAgent.max_rows = max_rows
+    sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
+    return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
+
+
+def _without_values(spec: Any) -> Any:
+    """A Vega-Lite spec without its inline data, at any depth (layers, concats)."""
+    if isinstance(spec, list):
+        return [_without_values(item) for item in spec]
+    if not isinstance(spec, dict):
+        return spec
+    return {
+        key: {k: v for k, v in value.items() if k != "values"} if key == "data" and isinstance(value, dict)
+        else _without_values(value)
+        for key, value in spec.items() if key != "datasets"
+    }
+
+
+def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
+    """The row cap the pipeline's data stopped at, if the cap cut it short."""
+    limits = [] if pipeline is None else [
+        t.limit for t in pipeline.sql_transforms if isinstance(t, SQLLimit) and t.limit is not None
+    ]
+    # The run has already loaded the data, so its length costs no query
+    if not limits or len(pipeline.data) < limits[0]:
+        return None
+    # Exactly at the cap: one row past it tells a cut-off result from one that fits
+    past = f"SELECT 1 FROM ({pipeline.source.get_sql_expr(pipeline.table)}) AS capped LIMIT 1 OFFSET {limits[0]}"
+    return limits[0] if len(pipeline.source.execute(past)) else None
+
+
+def _default_llm() -> Llm:
+    if _settings["llm"] is not None:
+        return _settings["llm"]
+    return _env_llm(os.environ.get("LUMEN_AI_PROVIDER"), os.environ.get("LUMEN_AI_MODEL"))
+
+
 # One instance for every ask, so its client and the request fixes it
 # learns from provider errors carry over from question to question
 @cache
-def _default_llm() -> Llm:
-    llm_cls = get_available_llm()
+def _env_llm(provider: str | None, model: str | None) -> Llm:
+    llm_cls = get_available_llm() if provider is None else llm_class(provider)
     if llm_cls is None:
         raise RuntimeError(
             "No LLM provider found. Pass llm=lumen.ai.llm.Kilo() for free models without an "
             f"account{signed_in_cli_hint()}, or set an API key such as OPENAI_API_KEY or "
             "GROQ_API_KEY and restart the kernel."
         )
-    return llm_cls()
+    # The same model_kwargs the CLI builds for --model
+    return llm_cls(model_kwargs={"default": {"model": model}}) if model else llm_cls()
 
 
 @cache
@@ -315,6 +394,15 @@ def _build_answer(
     editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
     editor = editors[-1] if editors else None
     view = None if editor is None else editor.component
+    value = str(messages[-1].object) if messages else ""
+    if not value.strip() and view is None and context.get("sql") is None:
+        # A plan can finish without a step that queries or answers, e.g. one
+        # that only looks up the tables; that is no answer, so say so
+        return Answer(
+            agents=agents, data=data, llm=llm, plan=plan, question=question, source=source,
+            error="The plan finished without querying the data or writing an answer.",
+            status="error", value=f"Lumen could not answer {question!r}.",
+        )
     return Answer(
         agents=agents,
         context=context,
@@ -329,7 +417,8 @@ def _build_answer(
         source=source,
         sql=context.get("sql"),
         status=plan.status,
-        value=str(messages[-1].object) if messages else "",
+        truncated_at=_row_cap_hit(context.get("pipeline")),
+        value=value,
         view=view,
     )
 
@@ -368,7 +457,7 @@ async def _aask_messages(
     llm: Llm | None, agents: list | None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
-    planner = await _planner(source, llm or _default_llm(), agents)
+    planner = await _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents)
     return answer
@@ -414,12 +503,19 @@ class Chat(param.Parameterized):
         self._agents = agents
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
+        # The sharing level the context was built under
+        self._level: tuple[str, bool] | None = None
 
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
+        if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
+            # The context's summaries and the replies were written under
+            # another sharing level, so only the questions carry over
+            self._context = None
+            self._messages = [m for m in self._messages if m["role"] == "user"]
         messages = [*self._messages, {"role": "user", "content": question}]
         return await self._turn(question, messages, self._messages, self._context)
 
@@ -428,7 +524,8 @@ class Chat(param.Parameterized):
         history: list[dict[str, str]], prior: dict[str, Any] | None,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
-        planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
+        agents = _settings["agents"] if self._agents is None else self._agents
+        planner = await _planner(self._source, self._llm or _default_llm(), agents)
         context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
         # So answer.retry() asks again within this conversation
@@ -439,6 +536,7 @@ class Chat(param.Parameterized):
             return answer
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
+        self._level = (sharing.share, sharing.mask_pii)
         return answer
 
     def ask(self, question: str) -> Answer:
@@ -474,6 +572,10 @@ class Answer(param.Parameterized):
 
     status = param.String(doc="""
         The status of the executed Plan.""")
+
+    truncated_at = param.Integer(default=None, allow_None=True, doc="""
+        The row cap the data stopped at, when the result had more rows.
+        lumen.ai.configure(max_rows=...) sets the cap.""")
 
     value = param.String(default="", doc="""
         The written answer.""")
@@ -540,6 +642,34 @@ class Answer(param.Parameterized):
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
         return _run(self.arefine(instruction), "Revising the chart")
+
+    def with_spec(self, spec: dict | str) -> Answer:
+        """
+        Redraw the chart from an edited spec, without the LLM or a new
+        query. Takes the spec as the card's Spec section shows it, as a
+        dict or as JSON or YAML text. Returns a new Answer.
+        """
+        if self.view is None:
+            raise ValueError("This answer has no chart to redraw.")
+        if isinstance(spec, str):
+            # JSON is YAML too, so one parser reads either form
+            spec = yaml.safe_load(spec)
+        if not isinstance(spec, dict):
+            raise ValueError("The spec must be a mapping of the chart's options, as JSON or YAML.")
+        pipeline = self.view.pipeline
+        if self.spec is not None:
+            view = VegaLiteView(pipeline=pipeline, spec=spec)
+        else:
+            view = type(self.view)(pipeline=pipeline, **{key: value for key, value in spec.items() if key != "type"})
+        # Drawn now, so a spec the view cannot draw fails here and not later in the card
+        view.get_panel()
+        return Answer(
+            agents=self._agents, context=self._context, data=self._data,
+            editor=type(self._editor)(component=view) if self._editor is not None else None,
+            llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
+            source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
+            status=self.status, truncated_at=self.truncated_at, value=self.value, view=view,
+        )
 
     def to_cell(self) -> None:
         """Put answer.code into a new cell below this one, in Jupyter."""
@@ -669,14 +799,91 @@ class Answer(param.Parameterized):
         elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
-                parts.append(self.view)
+                parts.append(self._chart_part(self.view))
+            if self._cap_note:
+                parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
             if self.sql:
                 parts.append(Card(
                     Markdown(f"```sql\n{self.sql}\n```"), title="SQL", collapsed=True,
                     sizing_mode="stretch_width",
                 ))
+            if (chart_spec := self._chart_spec()) is not None:
+                parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
             self._card = Column(*parts)
         return self._card
+
+    def _chart_part(self, view: View):
+        try:
+            # Drawn here, because inside the card a failure only becomes a
+            # notification once the chat UI has turned those on, and a
+            # notebook shows none, so the chart would just be missing
+            view.get_panel()
+        except Exception as e:
+            return Alert(
+                object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
+                severity="error", sizing_mode="stretch_width",
+            )
+        return view
+
+    def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
+        """
+        The chart's spec as a code block, which has a copy button, and an
+        Edit button that swaps in an editor to change the spec and redraw.
+        Unlike with_spec, which returns a new Answer, a redraw here changes
+        this answer, since the card shows it.
+        """
+        code = Markdown(f"```{language}\n{text}\n```", sizing_mode="stretch_width")
+        edit = Button(label="Edit", icon="edit", variant="outlined")
+        editor = CodeEditor(
+            value=text, language=language, sizing_mode="stretch_width", visible=False,
+            theme="github_dark" if pn.config.theme == "dark" else "github_light_default",
+            height=min(400, 16 * (text.count("\n") + 1) + 24),
+        )
+        error = Alert(severity="error", visible=False, sizing_mode="stretch_width")
+        redraw = Button(label="Redraw", icon="refresh", variant="contained")
+        cancel = Button(label="Cancel", variant="text")
+        actions = Row(redraw, cancel, visible=False)
+
+        def editing(on: bool):
+            code.visible = edit.visible = not on
+            editor.visible = actions.visible = on
+            if not on:
+                error.visible = False
+
+        def start(event):
+            editor.value = self._chart_spec()[1]
+            editing(True)
+
+        def apply(event):
+            try:
+                redrawn = self.with_spec(editor.value)
+            except Exception as e:
+                error.param.update(object=f"{type(e).__name__}: {e}", visible=True)
+                return
+            # The card shows this answer, so it takes the redrawn chart
+            self.param.update(spec=redrawn.spec, view=redrawn.view)
+            self._editor = redrawn._editor
+            self._card[chart_index] = self._chart_part(redrawn.view)
+            code.object = "```{}\n{}\n```".format(*self._chart_spec())
+            editing(False)
+
+        edit.on_click(start)
+        redraw.on_click(apply)
+        cancel.on_click(lambda event: editing(False))
+        return Card(code, edit, editor, error, actions, title="Spec", collapsed=True, sizing_mode="stretch_width")
+
+    def _chart_spec(self) -> tuple[str, str] | None:
+        """
+        The spec the chart was drawn from, as (language, text): JSON for
+        Vega-Lite, the view's YAML for hvPlot. Data values are left out,
+        so a large result does not flood it.
+        """
+        if self.view is None:
+            return None
+        if self.spec is not None:
+            return "json", json.dumps(_without_values(self.spec), indent=2, default=str)
+        spec = {key: value for key, value in self.view.to_spec().items() if key != "pipeline"}
+        return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
 
     def _vega_lite_spec(self) -> dict | None:
         """The chart as a self-contained Vega-Lite spec, data inlined."""
@@ -709,8 +916,17 @@ class Answer(param.Parameterized):
 
     @property
     def _text(self) -> str:
-        """The written answer, followed by the error for a failed question."""
-        return f"{self.value}\n\n{self.error}" if self.error else self.value
+        """The written answer, followed by the error or the row cap note."""
+        return "\n\n".join(part for part in (self.value, self.error, self._cap_note) if part)
+
+    @property
+    def _cap_note(self) -> str:
+        if self.truncated_at is None:
+            return ""
+        return (
+            f"The data stops at the first {self.truncated_at:,} rows. "
+            "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
+        )
 
     def _sql_html(self) -> str:
         # A failed query is what the reader needs to see, so it starts open
@@ -722,6 +938,9 @@ class Answer(param.Parameterized):
         # A viewer shows one mime type per output, so the HTML carries the
         # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
+        chart_spec = self._chart_spec()
+        if chart_spec is not None:
+            sql += f"\n\n```{chart_spec[0]}\n{chart_spec[1]}\n```"
         bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
         card = [_MARKDOWN.render(self.value)] if self.value else []
         if self.error:
@@ -731,8 +950,12 @@ class Answer(param.Parameterized):
             width = chart["application/vnd.vegalite.v5+json"]["width"]
             # Rendered at twice the size for sharpness, shown at the spec width
             card.append(f'<img src="data:image/png;base64,{chart["image/png"]}" width="{width}" style="max-width: 100%">')
+        if self._cap_note:
+            card.append(f"<p><em>{html.escape(self._cap_note)}</em></p>")
         if self.sql:
             card.append(self._sql_html())
+        if chart_spec is not None:
+            card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
         bundle["text/html"] = "\n".join(card)
         return bundle
 
@@ -741,9 +964,11 @@ class Answer(param.Parameterized):
             return self._static_bundle(self._chart_bundle())
         # Loaded on first display, not on import, so lumen.ai stays
         # quiet in scripts and in front-ends that never show an Answer.
-        # Checked per extension: a plain pn.extension() leaves Vega out.
-        if "vega" not in panel_extension._loaded_extensions:
-            pn.extension("vega")
+        # Checked per extension: a plain pn.extension() leaves Vega out,
+        # and the Spec section's editor needs codeeditor.
+        missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
+        if missing:
+            pn.extension(*missing)
         try:
             bundle = self.__panel__()._repr_mimebundle_(include, exclude)
         except ImportError:

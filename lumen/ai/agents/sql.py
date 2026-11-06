@@ -30,6 +30,7 @@ from ..editors import LumenEditor, SQLEditor
 from ..llm import Message, SubmitTool
 from ..models import RetrySpec
 from ..schemas import Metaset, resolve_table_slug
+from ..sharing import shares_values, sharing
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
 from ..utils import (
@@ -545,12 +546,26 @@ async def execute_distinct_values(
         if len(matches) != 1:
             return format_unknown_name("column", column, known)
         column = matches[0]
+    withheld = f"The values of {column!r} are withheld: the column looks like personal data."
+    if not shares_values(column):
+        return withheld
     try:
-        sql = build_distinct_values_sql(source.get_sql_expr(table_name), column, source.dialect, like, limit)
+        expr = source.get_sql_expr(table_name)
+        if like and sharing.mask_pii:
+            # Judge the column by its own values, not the ones matching like,
+            # or "no values" against "withheld" would tell what it contains
+            sample = as_pandas(await source.execute_with_timeout(
+                build_distinct_values_sql(expr, column, source.dialect, None, limit), timeout
+            ))
+            if not shares_values(column, sample.iloc[:, 0].tolist()):
+                return withheld
+        sql = build_distinct_values_sql(expr, column, source.dialect, like, limit)
         df = as_pandas(await source.execute_with_timeout(sql, timeout))
     except Exception as e:
         return format_error(e)
     rows = list(df.itertuples(index=False, name=None))
+    if not shares_values(column, [value for value, _ in rows]):
+        return withheld
     truncated = len(rows) > limit
     rows = rows[:limit]
     matching = f" containing {like!r}" if like else ""
@@ -947,6 +962,10 @@ class SQLAgent(BaseLumenAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
+    max_rows = param.Integer(default=1_000_000, bounds=(1, None), allow_None=True, doc="""
+        Most rows a final query returns, applied as a LIMIT on the query so
+        a large result never loads in full. None returns every row.""")
+
     max_request_llm_calls = param.Integer(default=40, bounds=(1, None), doc="""
         Maximum LLM calls one SQL request may spend across all attempts, tool
         rounds and revisions. Checked before each attempt.""")
@@ -1220,7 +1239,7 @@ class SQLAgent(BaseLumenAgent):
 
         # Create pipeline
         if is_final:
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            sql_transforms = [SQLLimit(limit=self.max_rows, write=source.dialect, pretty=True, identify=False)]
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
         else:
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
@@ -1418,8 +1437,13 @@ class SQLAgent(BaseLumenAgent):
             if catalog_exceeds_prompt(metaset, self.schema_tables_shown):
                 tools.append(make_browse_data_catalog_tool(metaset))
             tools.append(make_load_table_schemas_tool(metaset))
-        tools.append(make_distinct_values_tool(sources, metaset, timeout=self.query_timeout))
-        tools.append(make_run_exploration_sql_tool(sources, timeout=self.query_timeout))
+        if shares_values():
+            # Both return row values, which the sharing level keeps out.
+            # Exploration rows can carry personal data under any alias, so
+            # masking keeps that tool out too; distinct_values masks by column.
+            tools.append(make_distinct_values_tool(sources, metaset, timeout=self.query_timeout))
+            if not sharing.mask_pii:
+                tools.append(make_run_exploration_sql_tool(sources, timeout=self.query_timeout))
         return tools
 
     def _resolve_output_tables(
@@ -1482,10 +1506,13 @@ class SQLAgent(BaseLumenAgent):
                 # Asked once, since an empty answer is often correct and a model
                 # pushed to find rows tends to loosen the filters the user asked for.
                 checked["empty"] = sql_query
+                check_values = (
+                    "the literal values (distinct_values)" if shares_values() else "the filters against the schema"
+                )
                 raise ValueError(
                     "The query returned no rows. If its filters match the question, submit "
                     "it again unchanged; an empty result is a valid answer. Otherwise check "
-                    "the literal values (distinct_values) and fix the filters."
+                    f"{check_values} and fix the filters."
                 )
             checked.update(output=output, source=source, tables=tables, sql=sql_query, preview=preview)
 
@@ -1582,12 +1609,13 @@ class SQLAgent(BaseLumenAgent):
                 # rewriting pass. Constant columns and outliers are reported but
                 # must not provoke a query rewrite. A single aggregated row gives
                 # the lint nothing to work with.
-                if self.clean_data and not sql_is_scalar_aggregate(validated_sql, source.dialect):
+                # Findings quote values, so they only reach the model when values may
+                if self.clean_data and shares_values() and not sql_is_scalar_aggregate(validated_sql, source.dialect):
                     actionable = lint_data(preview, actionable_only=True, capped=capped)
 
             # Scalar aggregates are profiled too: AVG over -9999 placeholders
             # is wrong and nothing in its one-row result shows it.
-            if self.clean_data and sql_contains_aggregates(validated_sql, source.dialect):
+            if self.clean_data and shares_values() and sql_contains_aggregates(validated_sql, source.dialect):
                 source_findings = await self._profile_source_rows(source, tables, validated_sql)
                 findings += source_findings
                 actionable += source_findings
