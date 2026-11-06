@@ -4,8 +4,8 @@ import pandas as pd
 import panel as pn
 
 import lumen.ai as lmai
-
 from lumen.ai.agents import ChatAgent
+
 
 # ==========================================================
 # 1. PANEL CONFIGURATION
@@ -39,6 +39,7 @@ pn.config.raw_css.append("""
         padding: 16px;
         min-height: 115px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        box-sizing: border-box;
     }
 
     .section-card {
@@ -47,6 +48,7 @@ pn.config.raw_css.append("""
         border-radius: 12px;
         padding: 18px;
         margin-bottom: 15px;
+        box-sizing: border-box;
     }
 
     .anomaly-card {
@@ -55,6 +57,68 @@ pn.config.raw_css.append("""
         border-left: 5px solid #ea580c;
         border-radius: 10px;
         padding: 18px;
+    }
+
+    /* Main two-column layout */
+    .dashboard-layout {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: flex-start !important;
+        width: 100%;
+        gap: 16px;
+        box-sizing: border-box;
+    }
+
+    .dashboard-main,
+    .assistant-column {
+        flex: 1 1 0 !important;
+        width: calc(50% - 8px) !important;
+        max-width: calc(50% - 8px) !important;
+        min-width: 0 !important;
+        box-sizing: border-box;
+    }
+
+    .dashboard-main,
+    .assistant-column,
+    .assistant-panel {
+        align-self: flex-start !important;
+        margin-top: 0 !important;
+    }
+
+    .assistant-column,
+    .assistant-panel {
+        min-width: 0 !important;
+        box-sizing: border-box;
+    }
+
+    .assistant-panel {
+        width: 100%;
+        padding: 12px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+    }
+
+    /* Prevent child content from exceeding its column */
+    .dashboard-main > *,
+    .assistant-column > *,
+    .assistant-panel > * {
+        min-width: 0;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    @media (max-width: 900px) {
+        .dashboard-layout {
+            flex-direction: column !important;
+        }
+
+        .dashboard-main,
+        .assistant-column {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex-basis: auto !important;
+        }
     }
 """)
 
@@ -70,7 +134,6 @@ regions = ["North", "South", "East", "West"]
 records = []
 
 for hour in range(24):
-
     for region in regions:
 
         latency = np.random.normal(45, 8)
@@ -226,7 +289,7 @@ alert_card = create_metric_card(
 )
 
 
-# Two-column KPI layout prevents cards from becoming too narrow.
+# Two-column KPI layout
 metrics = pn.GridBox(
     latency_card,
     packet_loss_card,
@@ -282,7 +345,6 @@ alert_table = pn.widgets.Tabulator(
 )
 
 alerts_section = pn.Column(
-
     pn.pane.Markdown("### 🚨 Active Network Alerts"),
 
     pn.pane.Markdown(
@@ -352,7 +414,6 @@ else:
 
 
 anomaly_section = pn.Column(
-
     pn.pane.Markdown("### 🔍 Anomaly Investigation"),
 
     anomaly_details,
@@ -367,17 +428,11 @@ anomaly_section = pn.Column(
 # ==========================================================
 
 dashboard = pn.Column(
-
     header,
-
     metrics,
-
     latency_section,
-
     alerts_section,
-
     anomaly_section,
-
     sizing_mode="stretch_width"
 )
 
@@ -386,31 +441,45 @@ dashboard = pn.Column(
 # 10. AI INVESTIGATION ASSISTANT
 # ==========================================================
 
-chat_ui = lmai.ExplorerUI(
+class DashboardExplorerUI(lmai.ExplorerUI):
+    """Keep the navigation drawer collapsed when new explorations are added.
 
+    ExplorerUI's default _cleanup_explorations implementation opens the
+    navigation drawer when the first exploration is created. This override
+    preserves its conversation-synchronization behavior without that
+    automatic drawer-opening step.
+    """
+
+    async def _cleanup_explorations(self, event):
+        if len(event.new) <= len(event.old):
+            return
+
+        for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
+            if old is new:
+                continue
+            if i == self._last_synced:
+                await self._update_conversation()
+            break
+
+
+chat_ui = DashboardExplorerUI(
     data=data,
-
     default_agents=[ChatAgent],
-
     title="Network AI Assistant",
-
     suggestions=[
         "Why did network latency increase?",
-
         "Which region has the highest packet loss?",
-
         "Explain the critical network alerts.",
-
         "Summarize network performance across regions.",
-
         "Investigate the North region anomaly at hour 18.",
-
         "Compare network performance across all four regions.",
-
         "What could cause high latency and packet loss?"
     ]
 )
 
+print("ExplorerUI class:", type(chat_ui).__name__)
+print("Navigation drawer state:", chat_ui._nav_drawer.open)
+print("Navigation drawer width:", chat_ui._nav_drawer.size)
 
 chat_panel = pn.panel(
     chat_ui,
@@ -423,19 +492,10 @@ chat_panel = pn.panel(
 # ==========================================================
 
 assistant_section = pn.Column(
-
-    pn.pane.Markdown("### 🤖 AI Investigation Assistant"),
-
-    pn.pane.Markdown(
-        """
-        Explore network data and investigate unusual patterns
-        using the AI assistant.
-        """
-    ),
-
     chat_panel,
-
-    sizing_mode="stretch_width"
+    sizing_mode="stretch_width",
+    min_width=0,
+    css_classes=["assistant-panel"],
 )
 
 
@@ -443,21 +503,26 @@ assistant_section = pn.Column(
 # 12. RESPONSIVE MAIN LAYOUT
 # ==========================================================
 
+dashboard_column = pn.Column(
+    dashboard,
+    sizing_mode="stretch_width",
+    min_width=0,
+    css_classes=["dashboard-main"],
+)
+
+assistant_column = pn.Column(
+    assistant_section,
+    sizing_mode="stretch_width",
+    min_width=0,
+    css_classes=["assistant-column"],
+)
+
 main_layout = pn.Row(
-
-    pn.Column(
-        dashboard,
-        sizing_mode="stretch_width",
-        min_width=450
-    ),
-
-    pn.Column(
-        assistant_section,
-        sizing_mode="stretch_width",
-        min_width=400
-    ),
-
-    sizing_mode="stretch_width"
+    dashboard_column,
+    assistant_column,
+    sizing_mode="stretch_width",
+    min_height=800,
+    css_classes=["dashboard-layout"],
 )
 
 
@@ -466,9 +531,7 @@ main_layout = pn.Row(
 # ==========================================================
 
 app = pn.template.MaterialTemplate(
-
     title="Network Operations Center",
-
     main_max_width="1600px"
 )
 
