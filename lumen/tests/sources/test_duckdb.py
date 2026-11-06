@@ -1948,3 +1948,56 @@ def test_result_geometry_crs_is_left_unset_when_ambiguous():
         "UNION ALL SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) FROM places)"
     )
     assert source.execute(query).crs is None
+
+
+@pytest.fixture
+def described_source():
+    return DuckDBSource.from_df({"orders": pd.DataFrame({"amount": [1.0, 2.0], "status": ["paid", "open"]})})
+
+
+def test_describe_sets_table_and_column_descriptions(described_source):
+    assert described_source.describe("orders", "One row per order", columns={"amount": "Order value in EUR"}) is described_source
+    metadata = described_source.get_metadata("orders")
+    assert metadata["description"] == "One row per order"
+    assert metadata["columns"]["amount"]["description"] == "Order value in EUR"
+    assert metadata["columns"]["amount"]["data_type"]  # the generated keys stay
+
+
+def test_describe_again_replaces_the_text(described_source):
+    described_source.describe("orders", columns={"amount": "Old"})
+    described_source.describe("orders", columns={"amount": {"description": "New"}})
+    assert described_source.get_metadata("orders")["columns"]["amount"]["description"] == "New"
+
+
+def test_describe_rejects_unknown_tables_and_columns(described_source):
+    with pytest.raises(ValueError, match="the tables are"):
+        described_source.describe("missing", "x")
+    with pytest.raises(ValueError, match=r"No column \['amnt'\] in 'orders'; it has \['amount', 'status'\]"):
+        described_source.describe("orders", columns={"amnt": "x"})
+
+
+def test_describe_wins_over_a_description_the_database_has(described_source):
+    generated = described_source.get_metadata("orders")
+    generated["description"] = "From the database"
+    with patch.object(type(described_source), "_get_table_metadata", return_value={"orders": generated}):
+        described_source._metadata_cache = {}
+        described_source.describe("orders", "Mine")
+        assert described_source.get_metadata("orders")["description"] == "Mine"
+
+
+def test_describe_keeps_the_data_cache(described_source):
+    described_source.get("orders")
+    cached = dict(described_source._cache)
+    described_source.describe("orders", "One row per order")
+    assert described_source._cache == cached and described_source.descriptions["orders"]["description"] == "One row per order"
+
+
+def test_describe_survives_a_round_trip_through_the_spec(described_source):
+    generated = described_source.get_metadata("orders")
+    generated["description"] = "From the database"
+    described_source.describe("orders", "Mine", columns={"amount": "Order value in EUR"})
+    restored = DuckDBSource.from_spec(described_source.to_spec())
+    with patch.object(DuckDBSource, "_get_table_metadata", return_value={"orders": generated}):
+        metadata = restored.get_metadata("orders")
+    assert metadata["description"] == "Mine"
+    assert metadata["columns"]["amount"]["description"] == "Order value in EUR"

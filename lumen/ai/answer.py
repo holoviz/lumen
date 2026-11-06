@@ -5,18 +5,23 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import html
 import importlib.util
 import json
 import logging
 import os
+import re
 import threading
 import time
 import warnings
 import weakref
 
+from collections import OrderedDict
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from contextlib import ExitStack, suppress
+from contextlib import (
+    ExitStack, contextmanager, nullcontext, suppress,
+)
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -39,6 +44,7 @@ from panel_material_ui import (
 )
 from panel_material_ui.chat import ChatMessage
 
+from .. import __version__
 from ..config import SOURCE_TABLE_SEPARATOR, config
 from ..pipeline import Pipeline
 from ..serializers import Serializer
@@ -54,7 +60,7 @@ from ..views import VegaLiteView, View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
-from .config import QueryError, RetriesExceededError
+from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .editors import LumenEditor
 from .export import format_output, make_preamble
@@ -113,7 +119,18 @@ async def _default_agents(source: Source) -> list:
 
 
 # Set through configure, and used by every question that does not pass its own
-_settings: dict[str, Any] = {"agents": None, "llm": None}
+_settings: dict[str, Any] = {
+    "agents": None, "llm": None,
+    "cache": os.environ.get("LUMEN_AI_CACHE", "").lower() in ("1", "true", "yes"),
+}
+
+# Finished answers by question, data, model and prompt version, kept for
+# configure(cache=True). A cached Answer holds its source, so its id stays
+# unique for as long as the entry lives.
+_answer_cache: OrderedDict[str, Answer] = OrderedDict()
+_ANSWER_CACHE_SIZE = 128
+# Each cached answer holds its result, so the rows across them are bounded too
+_ANSWER_CACHE_ROWS = 2_000_000
 
 _UNSET: Any = object()
 
@@ -121,6 +138,7 @@ _UNSET: Any = object()
 def configure(
     *, llm: Llm | None = _UNSET, agents: list | None = _UNSET, max_rows: int | None = _UNSET,
     share: Literal["sample", "schema", "none"] | None = None, mask_pii: bool | None = None,
+    cache: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
@@ -137,17 +155,79 @@ def configure(
     mask_pii withholds the values of columns that look like personal
     data. Both apply to the chat UI too; see lumen.ai.sharing.
 
+    cache keeps answers in memory, so asking the same question of the same
+    data with the same model again returns the answer without LLM calls.
+    LUMEN_AI_CACHE=1 turns it on too; clear_cache() empties it.
+
     Returns the settings now in effect.
     """
     if llm is not _UNSET:
         _settings["llm"] = llm
     if agents is not _UNSET:
         _settings["agents"] = agents
+    if cache is not None:
+        _settings["cache"] = cache
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
         SQLAgent.max_rows = max_rows
     sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
     return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
+
+
+def _clone(obj: Any, **overrides) -> Any:
+    """A new instance of a Lumen component with the same parameter values, or those given."""
+    # None is left out so the parameter takes its default: a list parameter's default is [], not None
+    values = {key: value for key, value in obj.param.values().items() if key != "name" and value is not None}
+    return type(obj)(**{**values, **overrides})
+
+
+def _cached_rows() -> int:
+    # The data is already loaded, so its length costs no query
+    return sum(len(answer.pipeline.data) for answer in _answer_cache.values() if answer.pipeline is not None)
+
+
+def clear_cache() -> None:
+    """Forget the answers configure(cache=True) kept."""
+    _answer_cache.clear()
+
+
+@cache
+def _prompt_version() -> str:
+    """Lumen's version and a hash of its prompt templates, read once per process."""
+    sha = hashlib.sha256(__version__.encode())
+    for path in sorted(PROMPTS_DIR.rglob("*.jinja2")):
+        sha.update(path.read_bytes())
+    return sha.hexdigest()
+
+
+_SECRET_PARAM = re.compile(r"key|secret|token|password|credential", re.IGNORECASE)
+
+
+def _fingerprint(obj: param.Parameterized) -> str:
+    """
+    The plain settings of a component, e.g. an LLM's endpoint and temperature
+    or an agent's own limits, as a string. Secrets and objects such as the
+    interface or another LLM are left out.
+    """
+    settings = {
+        key: value for key, value in obj.param.values().items()
+        if key != "name" and not _SECRET_PARAM.search(key)
+        and isinstance(value, (str, int, float, bool, type(None), list, dict))
+    }
+    return type(obj).__name__ + json.dumps(settings, sort_keys=True, default=str)
+
+
+def _cache_key(source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None) -> str:
+    """What decides an answer: the question, the data, the model, the agents and the prompts."""
+    parts = (
+        " ".join(question.lower().split()), str(id(source)), source._get_source_hash(),
+        # Columns, types, row counts and descriptions, so a schema change or describe() misses
+        json.dumps(source.get_metadata(None), sort_keys=True, default=str),
+        _fingerprint(llm), json.dumps(llm.model_kwargs, sort_keys=True, default=str),
+        *(_fingerprint(agent) for agent in agents), str(SQLAgent.max_rows), sharing.share, str(sharing.mask_pii),
+        str(sorted(visible_slugs or [])), _prompt_version(),
+    )
+    return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
 
 def _without_values(spec: Any) -> Any:
@@ -254,42 +334,77 @@ def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | N
     return context
 
 
+@contextmanager
+def _asking(planner: Planner):
+    """
+    Mark the planner busy, so a concurrent question gets one of its own, hand
+    errors back in the Answer rather than printing their tracebacks, and quiet
+    instructor's per-attempt retry log, for the length of the block.
+    """
+    _busy.add(planner)
+    token = errors_in_result.set(True)
+    try:
+        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
+            yield
+    finally:
+        errors_in_result.reset(token)
+        _busy.discard(planner)
+
+
+@contextmanager
+def _counting(planner: Planner):
+    """Collect the usage of every LLM the planner and its agents use, each LLM once."""
+    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
+    usage = UsageCollector()
+    with ExitStack() as stack:
+        scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
+        try:
+            yield usage
+        finally:
+            for scope in scopes:
+                for record in scope.records:
+                    usage.add(record)
+
+
 async def _respond(
     planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any],
-    data: DataT | Pipeline, agents: list | None,
+    data: DataT | Pipeline, agents: list | None, confirm: bool = False,
 ) -> tuple[Answer, dict[str, Any]]:
     """
     Run one question through the Planner, returning the Answer and the
     context it left. A failed plan gives an Answer with status "error".
+    With confirm, stop after planning and return a "planned" Answer.
     """
-    # An agent given its own LLM is counted too, each LLM once
-    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
-    _busy.add(planner)
-    token = errors_in_result.set(True)
-    try:
-        with ExitStack() as stack:
-            scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
-            if log.getEffectiveLevel() > logging.DEBUG:
-                stack.enter_context(quiet_retries())
-            await planner.sync(context)
-            plan = await planner.respond(messages, context)
-            if plan is None:
-                raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-            if plan.unanswerable:
-                outputs, out_context = [], context
-            else:
-                outputs, out_context = await plan.execute()
-    finally:
-        errors_in_result.reset(token)
-        _busy.discard(planner)
+    with _asking(planner), _counting(planner) as usage:
+        await planner.sync(context)
+        plan = await planner.respond(messages, context)
+    if plan is None:
+        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+    if confirm and not plan.unanswerable:
+        answer = Answer(
+            agents=agents, data=data, llm=planner.llm, plan=plan, question=question,
+            source=context["source"], status="planned", usage=usage,
+            visible_slugs=context.get("visible_slugs"),
+        )
+        answer._pending = (planner, context)
+        return answer, context
+    return await _execute(planner, plan, question, context, data, agents, usage)
+
+
+async def _execute(
+    planner: Planner, plan: Plan, question: str, context: dict[str, Any], data: DataT | Pipeline,
+    agents: list | None, usage: UsageCollector,
+) -> tuple[Answer, dict[str, Any]]:
+    """Run a plan and build its Answer, adding the run's usage to the planning's."""
+    with _asking(planner), _counting(planner) as run_usage:
+        outputs, out_context = ([], context) if plan.unanswerable else await plan.execute()
     answer = _build_answer(
         question, plan, outputs, out_context, context["source"], planner.llm, data, agents,
         context.get("visible_slugs"),
     )
     answer.usage = UsageCollector()
-    for scope in scopes:
-        for record in scope.records:
-            answer.usage.add(record)
+    for record in (*usage.records, *run_usage.records):
+        answer.usage.add(record)
     return answer, out_context
 
 
@@ -453,7 +568,8 @@ def _build_answer(
 
 
 async def aask(
-    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
+    confirm: bool = False,
 ) -> Answer:
     """
     Ask a question of some data and wait for the Answer.
@@ -470,6 +586,9 @@ async def aask(
     agents: list | None
         The agents the Planner may use. Defaults to SQL and Vega-Lite, plus
         hvPlot for gridded data or tables with geometry.
+    confirm: bool
+        Stop once the question is planned and return an Answer with status
+        "planned" that lists its steps; answer.run() runs them.
 
     Returns
     -------
@@ -478,22 +597,37 @@ async def aask(
         and the reason in ``error``, rather than raising, so it can be
         retried with ``answer.retry()``.
     """
-    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents)
+    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm)
 
 
 async def _aask_messages(
     data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
-    llm: Llm | None, agents: list | None,
+    llm: Llm | None, agents: list | None, confirm: bool = False, use_cache: bool = True,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = await _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
+    # A retry or a preview is asked for a fresh answer, so neither is cached.
+    # Nor is data read here from a frame or a dict: each question reads its own
+    # copy, so no later question could hit it and it would only hold that copy.
+    key = None
+    reusable = isinstance(data, Source | Pipeline)
+    if _settings["cache"] and use_cache and reusable and len(messages) == 1 and not confirm:
+        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs)
+        if (hit := _answer_cache.get(key)) is not None:
+            _answer_cache.move_to_end(key)
+            return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, messages, context, data, agents)
+    answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    if key is not None and answer.status == "success":
+        _answer_cache[key] = answer
+        while len(_answer_cache) > _ANSWER_CACHE_SIZE or _cached_rows() > _ANSWER_CACHE_ROWS:
+            _answer_cache.popitem(last=False)
     return answer
 
 
 def ask(
-    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
+    confirm: bool = False,
 ) -> Answer:
     """
     Ask a question of some data and return the Answer.
@@ -503,7 +637,7 @@ def ask(
     whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(aask(data, question, llm=llm, agents=agents))
+    return _run(aask(data, question, llm=llm, agents=agents, confirm=confirm))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -538,39 +672,48 @@ class Chat(param.Parameterized):
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
-    async def aask(self, question: str) -> Answer:
-        """Ask the next question and wait for the Answer."""
+    async def aask(self, question: str, *, confirm: bool = False) -> Answer:
+        """
+        Ask the next question and wait for the Answer. With confirm, the
+        Answer is "planned" and joins the conversation once it is run.
+        """
         if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
             # The context's summaries and the replies were written under
             # another sharing level, so only the questions carry over
             self._context = None
             self._messages = [m for m in self._messages if m["role"] == "user"]
         messages = [*self._messages, {"role": "user", "content": question}]
-        return await self._turn(question, messages, self._messages, self._context)
+        return await self._turn(question, messages, self._messages, self._context, confirm)
 
     async def _turn(
         self, question: str, messages: list[dict[str, str]],
-        history: list[dict[str, str]], prior: dict[str, Any] | None,
+        history: list[dict[str, str]], prior: dict[str, Any] | None, confirm: bool = False,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
         agents = _settings["agents"] if self._agents is None else self._agents
         planner = await _planner(self._source, self._llm or _default_llm(), agents)
         context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
-        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
         # So answer.retry() asks again within this conversation
-        answer._chat, answer._history = self, (history, prior)
+        answer._conversation, answer._history = self, (history, prior)
+        if answer.status == "planned":
+            answer._chat = (self, messages)
+        else:
+            self._record(answer, messages, out_context)
+        return answer
+
+    def _record(self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any]) -> None:
         self.answers = [*self.answers, answer]
         if answer.status == "error":
             # The next question starts from the last answer that worked
-            return answer
+            return
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
         self._level = (sharing.share, sharing.mask_pii)
-        return answer
 
-    def ask(self, question: str) -> Answer:
+    def ask(self, question: str, *, confirm: bool = False) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self.aask(question))
+        return _run(self.aask(question, confirm=confirm))
 
 
 class Answer(param.Parameterized):
@@ -607,6 +750,9 @@ class Answer(param.Parameterized):
         The row cap the data stopped at, when the result had more rows.
         lumen.ai.configure(max_rows=...) sets the cap.""")
 
+    cached = param.Boolean(default=False, doc="""
+        Whether the answer came from configure(cache=True), with no LLM calls.""")
+
     usage = param.ClassSelector(class_=UsageCollector, default=None, allow_None=True, doc="""
         The tokens and, when the provider prices them, the cost of the LLM
         calls this answer made, e.g. answer.usage.input_tokens.""")
@@ -628,7 +774,7 @@ class Answer(param.Parameterized):
         self._llm = llm
         self._visible_slugs = visible_slugs
         # Set by a Chat, so retry stays in the conversation
-        self._chat: Chat | None = None
+        self._conversation: Chat | None = None
         self._history: tuple[list[dict[str, str]], dict[str, Any] | None] = ([], None)
         # The plan's views with refined charts swapped in, for explore
         self._views: list | None = None
@@ -640,6 +786,9 @@ class Answer(param.Parameterized):
         self._context = context or {}
         # Whether sql is the query that failed, rather than one that worked
         self._sql_failed = sql_failed
+        # For a planned answer: what running it needs, and the chat it joins
+        self._pending: tuple[Planner, dict[str, Any]] | None = None
+        self._chat: tuple[Chat, list[dict[str, str]]] | None = None
         self._crs_warned = False
 
     async def arefine(self, instruction: str) -> Answer:
@@ -668,7 +817,7 @@ class Answer(param.Parameterized):
             source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
             usage=usage, value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
         )
-        refined._chat, refined._history = self._chat, self._history
+        refined._conversation, refined._history = self._conversation, self._history
         views = self.plan.views if self._views is None else self._views
         refined._views = [editor if view is self._editor else view for view in views]
         if self._editor not in views:
@@ -678,6 +827,65 @@ class Answer(param.Parameterized):
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
         return _run(self.arefine(instruction), "Revising the chart")
+
+    async def arun(self) -> Answer:
+        """
+        Run the steps of an answer asked with confirm=True, exactly as
+        planned, and fill this answer in with the result. Returns it.
+
+        Unlike refine, which returns a new answer and keeps the old one, a
+        planned answer has no result worth keeping, so it becomes the result:
+        the variable you held and the card on screen both show it.
+        """
+        if self._pending is None:
+            raise ValueError("Only an answer asked with confirm=True can be run, and only once.")
+        planner, context = self._pending
+        # Cleared only once it ran, so a cancelled run can be run again
+        done, out_context = await _execute(
+            planner, self.plan, self.question, context, self._data, self._agents, self.usage,
+        )
+        self._pending = None
+        self._take(done)
+        if self._chat is not None:
+            chat, messages = self._chat
+            chat._record(self, messages, out_context)
+        return self
+
+    def run(self) -> Answer:
+        """Run a planned answer and return it. See arun."""
+        return _run(self.arun(), "Running the plan")
+
+    def _cached_copy(self) -> Answer:
+        """
+        This answer again, for a cache hit, with its own card, pipeline and
+        chart, so a filter added to one hit shows up in no other, and no calls
+        counted. The plan is shared: it only records what ran.
+        """
+        values = {key: value for key, value in self.param.values().items() if key != "name"}
+        pipeline, view, editor = self.pipeline, self.view, self._editor
+        if pipeline is not None:
+            pipeline = _clone(
+                pipeline, filters=[_clone(f) for f in pipeline.filters],
+                transforms=[_clone(t) for t in pipeline.transforms],
+                sql_transforms=[_clone(t) for t in pipeline.sql_transforms],
+            )
+        if view is not None:
+            view = _clone(view, pipeline=pipeline)
+            editor = None if editor is None else type(editor)(component=view)
+        copy = Answer(
+            **{**values, "pipeline": pipeline, "view": view},
+            agents=self._agents, context=self._context, data=self._data, editor=editor,
+            llm=self._llm, sql_failed=self._sql_failed,
+        )
+        copy.param.update(cached=True, usage=UsageCollector())
+        return copy
+
+    def _take(self, other: Answer) -> None:
+        """Become the answer this planned one ran to, card included."""
+        self.param.update({key: value for key, value in other.param.values().items() if key != "name"})
+        self._editor, self._context, self._sql_failed = other._editor, other._context, other._sql_failed
+        if self._card is not None:
+            self._card[:] = self._card_parts()
 
     def with_spec(self, spec: dict | str) -> Answer:
         """
@@ -732,11 +940,11 @@ class Answer(param.Parameterized):
             if self.sql:
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
-        if self._chat is not None:
+        if self._conversation is not None:
             history, prior = self._history
-            return await self._chat._turn(self.question, [*history, *messages], history, prior)
+            return await self._conversation._turn(self.question, [*history, *messages], history, prior)
         data = self.source if self._data is None else self._data
-        return await _aask_messages(data, self.question, messages, self._llm, self._agents)
+        return await _aask_messages(data, self.question, messages, self._llm, self._agents, use_cache=False)
 
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
@@ -960,7 +1168,14 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None and self.status in ("error", "unanswerable"):
+        if self._card is None:
+            self._card = Column(*self._card_parts())
+        return self._card
+
+    def _card_parts(self) -> list:
+        if self.status == "planned":
+            return self._planned_parts()
+        if self.status in ("error", "unanswerable"):
             # The data lacking what was asked is not a failure, so it is not red
             severity = "info" if self.status == "unanswerable" else "error"
             parts = [Alert(object=self.error, severity=severity, title=self.value, sizing_mode="stretch_width")]
@@ -969,10 +1184,7 @@ class Answer(param.Parameterized):
                     Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
                     collapsed=not self._sql_failed, sizing_mode="stretch_width",
                 ))
-            if self._usage_note:
-                parts.append(self._usage_pane())
-            self._card = Column(*parts)
-        elif self._card is None:
+        else:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self._chart_part(self.view))
@@ -985,14 +1197,44 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
-            if self._usage_note:
-                parts.append(self._usage_pane())
-            self._card = Column(*parts)
-        return self._card
+        if self._usage_note:
+            parts.append(self._usage_pane())
+        return parts
+
+    @property
+    def _plan_steps(self) -> str:
+        """The planned steps as a numbered Markdown list."""
+        return "\n".join(
+            f"{i}. **{type(task.actor).__name__}**: {task.instruction}" for i, task in enumerate(self.plan, 1)
+        )
+
+    def _planned_parts(self) -> list:
+        run = Button(label="Run", icon="play_arrow", variant="contained")
+
+        async def on_run(event):
+            run.loading = True
+            try:
+                await self.arun()
+            finally:
+                run.loading = False
+
+        run.on_click(on_run)
+        parts = [
+            Alert(
+                object=self._plan_steps, title=f"Planned: {self.plan.title}", severity="info",
+                sizing_mode="stretch_width",
+            ),
+            run,
+        ]
+        if self._usage_note:
+            parts.append(self._usage_pane())
+        return parts
 
     @property
     def _usage_note(self) -> str:
         """One line on what the answer cost, or nothing when no call was counted."""
+        if self.cached:
+            return "From the answer cache, no LLM calls"
         if self.usage is None or not self.usage.records:
             return ""
         note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
@@ -1142,6 +1384,8 @@ class Answer(param.Parameterized):
     @property
     def _text(self) -> str:
         """The written answer, followed by the error or the row cap note."""
+        if self.status == "planned":
+            return f"Planned: {self.plan.title}\n\n{self._plan_steps}\n\nRun it with answer.run()."
         return "\n\n".join(part for part in (self.value, self.error, self._cap_note) if part)
 
     @property
@@ -1167,7 +1411,8 @@ class Answer(param.Parameterized):
         if chart_spec is not None:
             sql += f"\n\n```{chart_spec[0]}\n{chart_spec[1]}\n```"
         bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
-        card = [_MARKDOWN.render(self.value)] if self.value else []
+        prose = self._text if self.status == "planned" else self.value
+        card = [_MARKDOWN.render(prose)] if prose else []
         if self.error:
             card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:

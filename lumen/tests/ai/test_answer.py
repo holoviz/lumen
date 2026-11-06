@@ -33,7 +33,7 @@ from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     Answer, _busy, _default_agents, _default_llm, _env_llm, _loop, _planner,
     _planners, _records, _resolve, _run, _StatusLine, aask, ask, chat,
-    configure,
+    clear_cache, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -312,10 +312,11 @@ async def test_chat_does_not_build_on_an_error_answer(frame_source):
 @pytest.fixture(autouse=True)
 def fresh_settings(monkeypatch):
     """No test sees another's configure() call, environment or cached LLM."""
-    monkeypatch.setattr(answer_module, "_settings", {"agents": None, "llm": None})
+    monkeypatch.setattr(answer_module, "_settings", {"agents": None, "llm": None, "cache": False})
     monkeypatch.delenv("LUMEN_AI_PROVIDER", raising=False)
     monkeypatch.delenv("LUMEN_AI_MODEL", raising=False)
     _env_llm.cache_clear()
+    clear_cache()
     max_rows = SQLAgent.max_rows
     yield
     _env_llm.cache_clear()
@@ -351,7 +352,9 @@ async def test_configure_sets_the_agents(llm, frame_source):
     answer = await aask(frame_source, "How many rows?", llm=llm)
     assert answer._agents is None
     assert _planners.get(frame_source) is None  # explicit agents get their own Planner
-    assert configure() == {"agents": agents, "llm": None, "mask_pii": False, "max_rows": 1_000_000, "share": "sample"}
+    assert configure() == {
+        "agents": agents, "cache": False, "llm": None, "mask_pii": False, "max_rows": 1_000_000, "share": "sample",
+    }
 
 
 async def _ask_every_row(source):
@@ -585,7 +588,7 @@ async def test_source_and_pipeline_methods_delegate(frame_source):
         await frame_source.aask("q")
         await pipeline.aask("q", llm="x")
     assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
-    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None}
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None, "confirm": False}
     assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
 
 
@@ -1297,6 +1300,167 @@ def test_answer_data_imports_no_library_the_input_did_not_use():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
+class _RecordingLLM(MockLLM):
+    """A MockLLM that keeps the system prompt of every call."""
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        self.systems = [*getattr(self, "systems", []), system]
+        return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+
+
+async def test_column_descriptions_in_source_metadata_reach_the_sql_prompt():
+    source = read({"tiny": pd.DataFrame({"value": [1.0]})})
+    source.metadata = {"tiny": {"columns": {"value": "Euro amount of each sale"}}}
+    llm = _RecordingLLM()
+    SQLModel = make_sql_model([(source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum")), SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"]),
+        "The total is 1.",
+    ])
+    await aask(source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert any("Euro amount of each sale" in system for system in llm.systems)
+
+
+async def test_described_text_reaches_the_sql_prompt_even_after_a_first_question(frame_source):
+    llm = _RecordingLLM()
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    sql_step = lambda: SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum")), sql_step(), "The total is 38.",
+        _plan(("SQLAgent", "Sum")), sql_step(), "The total is 38.",
+    ])
+    agents = [ChatAgent(), SQLAgent()]
+
+    await aask(frame_source, "Total value?", llm=llm, agents=agents)
+    assert not any("Euro amount" in system for system in llm.systems)
+    frame_source.describe("tiny", "Sales by category", columns={"value": "Euro amount of each sale"})
+    await aask(frame_source, "Total value?", llm=llm, agents=agents)
+
+    later = llm.systems[3:]
+    assert any("Euro amount of each sale" in system for system in later)
+    assert any("Sales by category" in system for system in later)
+
+
+async def test_confirm_returns_the_plan_without_running_it(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _costing(llm, _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")), 100, 0.001),
+        _costing(llm, SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="t", tables=["tiny"]), 200, 0.002),
+        _costing(llm, "The total value is 38.", 50, 0.0005),
+    ])
+
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()], confirm=True)
+
+    assert answer.status == "planned" and llm._index == 1  # planned, nothing ran
+    assert "1. **SQLAgent**: Sum value" in answer._plan_steps and "2. **ChatAgent**: Explain" in answer._plan_steps
+    card = answer.__panel__()
+    assert card[0].title == "Planned: Total value" and card[1].label == "Run"
+    assert "Run it with answer.run()" in answer._static_bundle(None)["text/markdown"]
+
+    assert await answer.arun() is answer
+    assert answer.status == "success" and answer.value == "The total value is 38."
+    assert "SUM(value)" in answer.sql and llm._index == 3  # planning was not paid twice
+    assert answer.usage.input_tokens == 350  # planning and running together
+    assert answer.__panel__() is card and card[0].object.startswith("The total value is 38.")
+    with pytest.raises(ValueError, match="only once"):
+        await answer.arun()
+
+
+async def test_an_unanswerable_question_is_not_held_for_confirmation(llm, frame_source):
+    llm.set_responses([_plan(unanswerable="No table has an elevation column.")])
+    answer = await aask(frame_source, "Elevation?", llm=llm, agents=[ChatAgent(), SQLAgent()], confirm=True)
+    assert answer.status == "unanswerable"
+
+
+def test_only_a_planned_answer_runs(chart_answer):
+    with pytest.raises(ValueError, match="confirm=True"):
+        chart_answer.run()
+
+
+async def test_a_planned_chat_question_joins_the_chat_when_run(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "Ten rows."])
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    planned = await conversation.aask("How many rows?", confirm=True)
+    assert conversation.answers == []
+    await planned.arun()
+    assert conversation.answers == [planned] and conversation._messages[-1]["content"] == "Ten rows."
+
+
+def _cached_ask(llm, source, question="How many rows?"):
+    _chat_only(llm)
+    return aask(source, question, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+
+async def test_a_cached_question_makes_no_llm_calls(llm, frame_source):
+    configure(cache=True)
+    first = await _cached_ask(llm, frame_source)
+    calls = llm._index
+    again = await aask(frame_source, "  how many  ROWS? ", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert llm._index == calls and again is not first
+    assert again.cached and again.value == first.value == "Three rows."
+    assert again._usage_note == "From the answer cache, no LLM calls"
+    assert again.__panel__() is not first.__panel__()
+
+
+async def test_the_cache_is_off_unless_configured(llm, frame_source):
+    await _cached_ask(llm, frame_source)
+    second = await _cached_ask(llm, frame_source)
+    assert not second.cached and llm._index == 2
+
+
+@pytest.mark.parametrize("change", ["describe", "model", "prompts", "source"])
+async def test_a_change_that_could_alter_the_answer_misses_the_cache(llm, frame_source, change):
+    configure(cache=True)
+    await _cached_ask(llm, frame_source)
+    source = frame_source
+    if change == "describe":
+        frame_source.describe("tiny", "Sales by category")
+    elif change == "model":
+        llm.model_kwargs = {"default": {"model": "another"}}
+    elif change == "source":
+        source = read({"tiny": pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})})
+    with patch("lumen.ai.answer._prompt_version", return_value="edited" if change == "prompts" else answer_module._prompt_version()):
+        again = await _cached_ask(llm, source)
+    assert not again.cached
+
+
+async def test_failed_answers_are_not_cached(llm, frame_source):
+    configure(cache=True)
+    llm.set_responses([_plan(("ChatAgent", "Explain")), ""])
+    await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    again = await _cached_ask(llm, frame_source, "Total?")
+    assert not again.cached
+
+
+async def test_the_cache_keeps_only_the_latest_answers(llm, frame_source, monkeypatch):
+    monkeypatch.setattr(answer_module, "_ANSWER_CACHE_SIZE", 2)
+    configure(cache=True)
+    for question in ("One?", "Two?", "Three?"):
+        await _cached_ask(llm, frame_source, question)
+    assert len(answer_module._answer_cache) == 2
+    assert not (await _cached_ask(llm, frame_source, "One?")).cached
+    clear_cache()
+    assert not answer_module._answer_cache
+
+
+async def test_editing_a_frame_after_reading_it_cannot_make_a_cached_answer_stale(llm):
+    """lumen.read copies frames into DuckDB, so a later edit changes no answer."""
+    frame = pd.DataFrame({"category": ["A", "B"], "value": [1.0, 2.0]})
+    source = read({"tiny": frame})
+    frame.loc[0, "value"] = 99.0
+    assert source.execute("SELECT SUM(value) AS total FROM tiny").iloc[0, 0] == 3.0
+
+async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch):
+    monkeypatch.setattr(answer_module, "_ANSWER_CACHE_ROWS", 4)
+    configure(cache=True)
+    for question in ("One?", "Two?", "Three?"):
+        answer = await _cached_ask(llm, frame_source, question)
+        answer.pipeline = Pipeline(source=frame_source, table="tiny")  # three rows each
+        answer_module._answer_cache[next(reversed(answer_module._answer_cache))] = answer
+    assert len(answer_module._answer_cache) <= 2
+
+
 def test_records_turn_every_missing_value_into_null():
     frame = pd.DataFrame({
         "f32": pd.Series([1.0, float("nan")], dtype="float32"),
@@ -1319,3 +1483,44 @@ def test_answer_data_follows_a_list_of_polars_frames():
     pipeline = Pipeline(source=source.create_sql_expr_source({"r": "SELECT a FROM data"}), table="r")
     answer = Answer(question="?", status="success", source=source, sql="SELECT a FROM data", pipeline=pipeline)
     assert isinstance(answer.data, pl.DataFrame)
+
+
+async def test_a_frame_asked_twice_stores_nothing_in_the_cache(llm):
+    configure(cache=True)
+    frame = pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})
+    for _ in range(3):
+        _chat_only(llm)
+        answer = await aask(frame, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        assert not answer.cached
+    assert not answer_module._answer_cache
+
+
+async def test_retry_without_a_hint_is_not_served_from_the_cache(llm, frame_source):
+    configure(cache=True)
+    first = await _cached_ask(llm, frame_source)
+    _chat_only(llm)
+    retried = await first.aretry()
+    assert not retried.cached and retried.value == "Three rows." and llm._index == 2
+
+
+async def test_changing_max_rows_or_an_agents_own_setting_misses_the_cache(llm, frame_source):
+    configure(cache=True)
+    await _cached_ask(llm, frame_source)
+    configure(max_rows=7)
+    assert not (await _cached_ask(llm, frame_source)).cached
+    other_agents = [ChatAgent(), SQLAgent(max_rows=3)]
+    _chat_only(llm)
+    assert not (await aask(frame_source, "How many rows?", llm=llm, agents=other_agents)).cached
+
+
+async def test_a_cache_hit_has_its_own_pipeline_and_chart(llm):
+    configure(cache=True)
+    source = read({"tiny": pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})})
+    pipeline = Pipeline(source=source, table="tiny")
+    answer = Answer(question="Q?", status="success", source=source, pipeline=pipeline,
+                    view=hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value"))
+    copy = answer._cached_copy()
+    assert copy.pipeline is not answer.pipeline and copy.view is not answer.view
+    assert copy.view.pipeline is copy.pipeline
+    copy.pipeline.filters.append(ConstantFilter(field="category", value="A"))
+    assert answer.pipeline.filters == []
