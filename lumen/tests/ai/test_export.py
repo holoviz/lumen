@@ -8,9 +8,9 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.sources.data import read
 from lumen.ai.export import format_output, make_preamble
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read
 
 
 @pytest.mark.parametrize("linesep", ["\n", "\r\n"])

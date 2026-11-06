@@ -26,11 +26,17 @@ from lumen.ai.answer import (
     _resolve, aask, ask, chat,
 )
 from lumen.ai.coordinator.planner import make_plan_model
-from lumen.sources.data import read
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
+
+<<<<<<< HEAD
 from lumen.tests.ai.conftest import MockLLM
+
+=======
+from lumen.sources.data import read
+
+>>>>>>> feat/ask
 from lumen.tests.utils import Polygon, gpd
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView
