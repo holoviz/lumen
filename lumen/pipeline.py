@@ -226,6 +226,28 @@ class Pipeline(Viewer, Component):
     def _update_refs(self, *events: param.parameterized.Event):
         self._update_data()
 
+    def ask(self, question: str, *, llm=None, agents=None):
+        """
+        Ask this pipeline's table a question with Lumen AI and return the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from .ai.answer import ask
+        return ask(self, question, llm=llm, agents=agents)
+
+    async def aask(self, question: str, *, llm=None, agents=None):
+        """
+        Ask this pipeline's table a question with Lumen AI and await the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from .ai.answer import aask
+        return await aask(self, question, llm=llm, agents=agents)
+
     def __panel__(self) -> Row:
         controls = self.control_panel
         # Tabulator reads .index and .iloc, so it needs real pandas. This is

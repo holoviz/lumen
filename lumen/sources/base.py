@@ -660,6 +660,28 @@ class Source(MultiTypeComponent):
         """
         return None
 
+    def ask(self, question: str, *, llm=None, agents=None):
+        """
+        Ask this source a question with Lumen AI and return the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask
+        return ask(self, question, llm=llm, agents=agents)
+
+    async def aask(self, question: str, *, llm=None, agents=None):
+        """
+        Ask this source a question with Lumen AI and await the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask
+        return await aask(self, question, llm=llm, agents=agents)
+
     def get_tables(self) -> list[str]:
         """
         Returns the list of tables available on this source.
