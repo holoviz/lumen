@@ -16,7 +16,7 @@ import warnings
 import weakref
 
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from contextlib import ExitStack, nullcontext, suppress
+from contextlib import ExitStack, suppress
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
