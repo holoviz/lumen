@@ -36,14 +36,17 @@ df = hvsampledata.penguins("pandas")
 source = lumen.read({"penguins": df})  # (1)!
 source.get("penguins")
 
-ui = lmai.ExplorerUI(data={
-    "penguins": df,
-    "states": hvsampledata.us_states("geopandas"),  # a GeoDataFrame
-    "air": hvsampledata.air_temperature("xarray"),  # an xarray Dataset
-})
+ui = lmai.ExplorerUI(data=[
+    lumen.read({
+        "penguins": df,
+        "states": hvsampledata.us_states("geopandas"),  # a GeoDataFrame
+    }),
+    hvsampledata.air_temperature("xarray"),  # an xarray Dataset, kept apart as a grid (2)
+])
 ```
 
 1. `lumen.read` returns one Source. It accepts pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets and DataArrays, DuckDB connections and relations, plus the paths and URLs above.
+2. Xarray data in the same dict as other tables is joined into DuckDB, which loses the gridded source that `answer.ds` and the gridded tools rely on. Passing it as its own list item keeps it a gridded source.
 
 ### Ask from a notebook
 

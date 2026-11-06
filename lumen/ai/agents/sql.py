@@ -30,7 +30,7 @@ from ..editors import LumenEditor, SQLEditor
 from ..llm import Message, SubmitTool
 from ..models import RetrySpec
 from ..schemas import Metaset, resolve_table_slug
-from ..sharing import shares_values
+from ..sharing import shares_values, sharing
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
 from ..utils import (
@@ -546,14 +546,26 @@ async def execute_distinct_values(
         if len(matches) != 1:
             return format_unknown_name("column", column, known)
         column = matches[0]
+    withheld = f"The values of {column!r} are withheld: the column looks like personal data."
+    if not shares_values(column):
+        return withheld
     try:
-        sql = build_distinct_values_sql(source.get_sql_expr(table_name), column, source.dialect, like, limit)
+        expr = source.get_sql_expr(table_name)
+        if like and sharing.mask_pii:
+            # Judge the column by its own values, not the ones matching like,
+            # or "no values" against "withheld" would tell what it contains
+            sample = as_pandas(await source.execute_with_timeout(
+                build_distinct_values_sql(expr, column, source.dialect, None, limit), timeout
+            ))
+            if not shares_values(column, sample.iloc[:, 0].tolist()):
+                return withheld
+        sql = build_distinct_values_sql(expr, column, source.dialect, like, limit)
         df = as_pandas(await source.execute_with_timeout(sql, timeout))
     except Exception as e:
         return format_error(e)
     rows = list(df.itertuples(index=False, name=None))
     if not shares_values(column, [value for value, _ in rows]):
-        return f"The values of {column!r} are withheld: the column looks like personal data."
+        return withheld
     truncated = len(rows) > limit
     rows = rows[:limit]
     matching = f" containing {like!r}" if like else ""
@@ -1426,9 +1438,12 @@ class SQLAgent(BaseLumenAgent):
                 tools.append(make_browse_data_catalog_tool(metaset))
             tools.append(make_load_table_schemas_tool(metaset))
         if shares_values():
-            # Both return row values, which the sharing level keeps out
+            # Both return row values, which the sharing level keeps out.
+            # Exploration rows can carry personal data under any alias, so
+            # masking keeps that tool out too; distinct_values masks by column.
             tools.append(make_distinct_values_tool(sources, metaset, timeout=self.query_timeout))
-            tools.append(make_run_exploration_sql_tool(sources, timeout=self.query_timeout))
+            if not sharing.mask_pii:
+                tools.append(make_run_exploration_sql_tool(sources, timeout=self.query_timeout))
         return tools
 
     def _resolve_output_tables(
@@ -1491,10 +1506,13 @@ class SQLAgent(BaseLumenAgent):
                 # Asked once, since an empty answer is often correct and a model
                 # pushed to find rows tends to loosen the filters the user asked for.
                 checked["empty"] = sql_query
+                check_values = (
+                    "the literal values (distinct_values)" if shares_values() else "the filters against the schema"
+                )
                 raise ValueError(
                     "The query returned no rows. If its filters match the question, submit "
                     "it again unchanged; an empty result is a valid answer. Otherwise check "
-                    "the literal values (distinct_values) and fix the filters."
+                    f"{check_values} and fix the filters."
                 )
             checked.update(output=output, source=source, tables=tables, sql=sql_query, preview=preview)
 

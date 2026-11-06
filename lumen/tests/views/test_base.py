@@ -675,6 +675,34 @@ def test_hvplot_view_sizes_points_by_a_column():
     assert size.apply(Dataset(view.get_data())).max() == 24
 
 
+def test_hvplot_view_gives_a_constant_size_column_one_size():
+    from lumen.sources.base import InMemorySource
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9], "n": [7, 7]})
+    pipeline = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    view = hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", size="n")
+    # hvPlot's size is the square root of the area s=12 asked for
+    assert view.get_plot(view.get_data()).opts.get().kwargs["size"] == pytest.approx(12 ** 0.5)
+
+
+@requires_geopandas
+@pytest.mark.parametrize("version", ["2.2.0", "2.0.7"])
+def test_geometry_to_geojson_winds_clockwise_only_when_asked(monkeypatch, version):
+    import shapely
+
+    from lumen.util import geometry_to_geojson
+    ccw = Polygon([(0, 0), (1, 0), (1, 1)])
+    gdf = gpd.GeoDataFrame({"geometry": [ccw]}, crs="EPSG:4326")
+    monkeypatch.setattr(shapely, "__version__", version)
+    if version == "2.0.7":
+        monkeypatch.delattr(shapely, "orient_polygons", raising=False)
+
+    def ring(frame, **kw):
+        coords = geometry_to_geojson(frame, **kw)["features"][0]["geometry"]["coordinates"][0]
+        return shapely.geometry.LinearRing(coords)
+
+    assert ring(gdf).is_ccw and not ring(gdf, clockwise=True).is_ccw
+
+
 def test_hvplot_view_colours_points_by_z():
     view = _points_view(z="lat")
     plot = view.get_plot(view.get_data())
