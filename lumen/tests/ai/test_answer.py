@@ -467,6 +467,26 @@ async def test_answer_explore_opens_the_ui_on_the_answer(llm, frame_source):
     assert ui.interface.objects[0].object == "Total value?"
 
 
+async def test_answer_explore_keeps_a_pipeline_answer_to_its_table(llm):
+    source = read({"tiny": pd.DataFrame({"value": [1.0]}), "other": pd.DataFrame({"x": [1]})})
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "One row.", "One row."])
+    answer = await aask(Pipeline(source=source, table="tiny"), "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    ui = answer.explore()
+    await async_wait_until(lambda: len(ui._explorations.items) == 2)
+    assert ui.context["visible_slugs"] == {f"{source.name}{SOURCE_TABLE_SEPARATOR}tiny"}
+
+
+def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    answer = Answer(source=source, pipeline=Pipeline(source=source, table="climate"))
+    with pytest.raises(ValueError, match="joins xarray data"):
+        answer.code
+
+
 class FollowUpLLM(MockLLM):
     """Replies by response model, and records what each Plan call was sent."""
 

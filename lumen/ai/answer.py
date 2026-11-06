@@ -37,7 +37,7 @@ from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
-from ..sources.data import read
+from ..sources.data import JOINED_GRIDS, read
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
@@ -173,7 +173,9 @@ async def _respond(
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
-    answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm)
+    answer = _build_answer(
+        question, plan, outputs, out_context, context["source"], planner.llm, context.get("visible_slugs")
+    )
     return answer, out_context
 
 
@@ -213,7 +215,8 @@ def _write_tables(spec: Any, data_dir: Path) -> None:
 
 
 def _build_answer(
-    question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm
+    question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
+    visible_slugs: set[str] | None = None,
 ) -> Answer:
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
     views = [
@@ -223,6 +226,7 @@ def _build_answer(
     view = views[-1] if views else None
     return Answer(
         llm=llm,
+        visible_slugs=visible_slugs,
         pipeline=context.get("pipeline"),
         plan=plan,
         question=question,
@@ -358,10 +362,11 @@ class Answer(param.Parameterized):
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
-    def __init__(self, llm: Llm | None = None, **params):
+    def __init__(self, llm: Llm | None = None, visible_slugs: set[str] | None = None, **params):
         super().__init__(**params)
         self._card = None
         self._llm = llm
+        self._visible_slugs = visible_slugs
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -369,6 +374,11 @@ class Answer(param.Parameterized):
         Source and LLM, with the answer as its first exploration. Keyword
         arguments go to ExplorerUI.
         """
+        if self._visible_slugs is not None:
+            # Keep a pipeline's answer scoped to its table. ExplorerUI shows
+            # every table it has not seen yet, so mark them all as seen.
+            known = {f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{t}" for t in self.source.get_tables()}
+            params["context"] = {"visible_slugs": set(self._visible_slugs), "_known_slugs": known, **params.get("context", {})}
         ui = ExplorerUI(data=self.source, llm=self._llm, **params)
 
         async def seed():
@@ -389,7 +399,7 @@ class Answer(param.Parameterized):
         per table under ``data/``, so the script stays small however large
         the data is. Returns the path of the script.
         """
-        component = self.view if self.view is not None else self.pipeline
+        component = self._rebuilt()
         if component is None:
             raise ValueError("This answer has no chart or data to export.")
         directory = Path(directory)
@@ -407,6 +417,16 @@ class Answer(param.Parameterized):
         script.write_text(f"{preamble.source}\n\n{cell.source}\n")
         return script
 
+    def _rebuilt(self) -> View | Pipeline | None:
+        """The chart, or else the data, that code and export rebuild."""
+        if self.source in JOINED_GRIDS:
+            raise ValueError(
+                "This answer's data joins xarray data into DuckDB, and those tables live only "
+                "in memory, so they cannot be rebuilt from a spec. Read the xarray data on its "
+                "own for answer.code and answer.export."
+            )
+        return self.view if self.view is not None else self.pipeline
+
     @property
     def code(self) -> str:
         """
@@ -415,9 +435,11 @@ class Answer(param.Parameterized):
         No LLM is called. In-memory data is embedded in the spec, so the
         code runs anywhere Lumen is installed; for a large table use
         ``export``, which keeps the data in Parquet files beside a small
-        script. File-based sources keep their absolute paths.
+        script. File-based sources keep their absolute paths. Source specs
+        go in as they are, so a database URI or initializer holding a
+        password ends up in the code.
         """
-        component = self.view if self.view is not None else self.pipeline
+        component = self._rebuilt()
         if component is None:
             return ""
         cell, extension = format_output(component)

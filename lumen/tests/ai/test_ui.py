@@ -1563,6 +1563,13 @@ def test_read_mixed_dict_joins_a_frame_a_grid_and_a_connection(tmp_path):
     assert conn.execute('SELECT table_name FROM information_schema.tables').fetchall() == [('orders',)]
 
 
+def test_read_mixed_connection_table_clashing_with_a_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE people AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'people' has the same name"):
+        read({'people': pd.DataFrame({'a': [2]}), 'shop': conn})
+
+
 def test_read_two_grids_share_one_source():
     xr = pytest.importorskip('xarray')
     pytest.importorskip('xarray_sql')

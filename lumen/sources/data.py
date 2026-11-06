@@ -4,6 +4,8 @@ connections) into Lumen Sources.
 """
 from __future__ import annotations
 
+import weakref
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -217,6 +219,11 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         # shared source, so Lumen never writes into the user's database
         for _, conn in connections:
             for (table,) in conn.execute("SHOW TABLES").fetchall():
+                if table in frames or table in tables or table in mirrors or table in grids:
+                    raise ValueError(
+                        f"The DuckDB connection's table {table!r} has the same name as "
+                        "another entry. Rename one of them."
+                    )
                 frames[table] = pa.table(conn.table(table).arrow())
     else:
         # On its own a connection is used as is, and a grid keeps the
@@ -267,6 +274,12 @@ def _add_grids(source: DuckDBSource, grids: dict) -> None:
         # Read lazily: DuckDB pulls record batches from the Dataset per query
         source._connection.from_arrow(arrow_dataset(ds)).to_view(name)
         source.tables[name] = f'SELECT * FROM "{name}"'
+    JOINED_GRIDS.add(source)
+
+
+#: Sources with xarray data joined in. Those tables live only on the
+#: connection, so the source cannot be rebuilt from its spec.
+JOINED_GRIDS: weakref.WeakSet[Source] = weakref.WeakSet()
 
 def _resolve_geo_source(src: str, extension: str) -> Source:
     """Load a geospatial file into an in-memory DuckDBSource.

@@ -70,7 +70,7 @@ answer.explore()          # (4)!
 ```
 
 1. Each follow-up sees the earlier questions and runs on the data the last answer left.
-2. Lumen code that rebuilds the chart or data without an LLM. In-memory data is embedded; files keep their paths.
+2. Lumen code that rebuilds the chart or data without an LLM. In-memory data is embedded; files keep their paths. Source settings go in as they are, so check the code for credentials (a database URI with a password, say) before sharing it.
 3. Writes `my_answer/answer.py` and the in-memory data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 4. Opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
