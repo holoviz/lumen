@@ -25,10 +25,10 @@ from lumen.ai.answer import (
     _resolve, aask, ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
-from lumen.sources.data import read
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read
 from lumen.tests.utils import Polygon, gpd
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView
