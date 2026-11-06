@@ -14,7 +14,7 @@ from .transforms.base import Transform
 from .views.base import View
 
 if TYPE_CHECKING:
-    from .ai.data import DataT
+    from .sources.data import DataT
 
 # Declared so type checkers treat these as public now that lumen ships py.typed
 __all__ = [
