@@ -285,6 +285,30 @@ async def test_no_note_below_the_cap(ten_rows):
     assert answer.truncated_at is None and "stops at" not in answer._text
 
 
+async def test_a_result_of_exactly_max_rows_is_not_reported_as_cut(ten_rows):
+    configure(max_rows=10)
+    answer = await _ask_every_row(ten_rows)
+    assert len(answer.pipeline.data) == 10 and answer.truncated_at is None
+
+
+def test_chart_spec_leaves_out_inline_data_at_any_depth():
+    from lumen.ai.answer import _without_values
+
+    spec = {"data": {"values": [1]}, "layer": [{"data": {"values": [2], "name": "x"}, "mark": "bar"}], "datasets": {"d": [3]}}
+    assert _without_values(spec) == {"data": {}, "layer": [{"data": {"name": "x"}, "mark": "bar"}]}
+
+
+async def test_chat_forgets_context_built_under_another_sharing_level(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    assert conversation._context is not None
+    configure(share="schema")
+    _chat_only(llm)
+    await conversation.aask("And again?")
+    assert [m["role"] for m in conversation._messages] == ["user", "user", "assistant"]
+
+
 async def test_max_rows_none_returns_every_row(ten_rows):
     configure(max_rows=4)
     configure(max_rows=None)

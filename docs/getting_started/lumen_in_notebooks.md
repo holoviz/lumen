@@ -131,6 +131,8 @@ Lumen only writes SQL and declarative chart specs, and shows both to you. It nev
 |---------|--------------|
 | `"sample"` (default) | Values: summaries of results, value counts, ranges, examples and chart images |
 | `"schema"` | Table and column names, types, row counts and null fractions, but no values |
-| `"none"` | Table and column names only |
+| `"none"` | Table and column names, and row counts |
+
+The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them.
 
 The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.

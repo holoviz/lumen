@@ -17,7 +17,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
 import panel as pn
@@ -107,29 +107,29 @@ _UNSET: Any = object()
 
 
 def configure(
-    *, llm: Llm | None = None, agents: list | None = None, max_rows: int | None = _UNSET,
-    share: str | None = None, mask_pii: bool | None = None,
+    *, llm: Llm | None = _UNSET, agents: list | None = _UNSET, max_rows: int | None = _UNSET,
+    share: Literal["sample", "schema", "none"] | None = None, mask_pii: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
 
-    A question's own llm= or agents= still wins. Without either set
-    here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
+    A question's own llm= or agents= still wins, and None goes back to
+    the automatic choice. Without either set here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
     LLM, and otherwise the first provider with an API key set.
 
     max_rows caps the rows an answer's data holds (1,000,000 by
     default), as a LIMIT on its query; None lifts the cap.
 
     share sets what of the data prompts contain: "sample" (values, as
-    before), "schema" (structure, no values) or "none" (names only).
+    before), "schema" (structure, no values) or "none" (names and row counts only).
     mask_pii withholds the values of columns that look like personal
     data. Both apply to the chat UI too; see lumen.ai.sharing.
 
     Returns the settings now in effect.
     """
-    if llm is not None:
+    if llm is not _UNSET:
         _settings["llm"] = llm
-    if agents is not None:
+    if agents is not _UNSET:
         _settings["agents"] = agents
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
@@ -138,13 +138,30 @@ def configure(
     return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
 
 
+def _without_values(spec: Any) -> Any:
+    """A Vega-Lite spec without its inline data, at any depth (layers, concats)."""
+    if isinstance(spec, list):
+        return [_without_values(item) for item in spec]
+    if not isinstance(spec, dict):
+        return spec
+    return {
+        key: {k: v for k, v in value.items() if k != "values"} if key == "data" and isinstance(value, dict)
+        else _without_values(value)
+        for key, value in spec.items() if key != "datasets"
+    }
+
+
 def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
     """The row cap the pipeline's data stopped at, if the cap cut it short."""
     limits = [] if pipeline is None else [
         t.limit for t in pipeline.sql_transforms if isinstance(t, SQLLimit) and t.limit is not None
     ]
     # The run has already loaded the data, so its length costs no query
-    return limits[0] if limits and len(pipeline.data) >= limits[0] else None
+    if not limits or len(pipeline.data) < limits[0]:
+        return None
+    # Exactly at the cap: one row past it tells a cut-off result from one that fits
+    past = f"SELECT 1 FROM ({pipeline.source.get_sql_expr(pipeline.table)}) AS capped LIMIT 1 OFFSET {limits[0]}"
+    return limits[0] if len(pipeline.source.execute(past)) else None
 
 
 def _default_llm() -> Llm:
@@ -486,12 +503,19 @@ class Chat(param.Parameterized):
         self._agents = agents
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
+        # The sharing level the context was built under
+        self._level: tuple[str, bool] | None = None
 
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
+        if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
+            # The context's summaries and the replies were written under
+            # another sharing level, so only the questions carry over
+            self._context = None
+            self._messages = [m for m in self._messages if m["role"] == "user"]
         messages = [*self._messages, {"role": "user", "content": question}]
         return await self._turn(question, messages, self._messages, self._context)
 
@@ -512,6 +536,7 @@ class Chat(param.Parameterized):
             return answer
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
+        self._level = (sharing.share, sharing.mask_pii)
         return answer
 
     def ask(self, question: str) -> Answer:
@@ -804,6 +829,8 @@ class Answer(param.Parameterized):
         """
         The chart's spec as a code block, which has a copy button, and an
         Edit button that swaps in an editor to change the spec and redraw.
+        Unlike with_spec, which returns a new Answer, a redraw here changes
+        this answer, since the card shows it.
         """
         code = Markdown(f"```{language}\n{text}\n```", sizing_mode="stretch_width")
         edit = Button(label="Edit", icon="edit", variant="outlined")
@@ -854,10 +881,7 @@ class Answer(param.Parameterized):
         if self.view is None:
             return None
         if self.spec is not None:
-            spec = {key: value for key, value in self.spec.items() if key != "datasets"}
-            if isinstance(spec.get("data"), dict) and "values" in spec["data"]:
-                spec["data"] = {key: value for key, value in spec["data"].items() if key != "values"}
-            return "json", json.dumps(spec, indent=2, default=str)
+            return "json", json.dumps(_without_values(self.spec), indent=2, default=str)
         spec = {key: value for key, value in self.view.to_spec().items() if key != "pipeline"}
         return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
 
