@@ -31,19 +31,13 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import read
+from ..sources.data import JOINED_GRIDS, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import geometry_columns, log
 from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
-
-<<<<<<< HEAD
-from ..sources.data import JOINED_GRIDS, read
-
-=======
->>>>>>> feat/ask
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
