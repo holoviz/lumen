@@ -7,9 +7,10 @@ import asyncio
 import base64
 import html
 import logging
+import threading
 import weakref
 
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import panel as pn
 import param
 
+from markdown_it import MarkdownIt
 from panel.config import panel_extension
 from panel.io.state import state
 from panel.pane import Markdown, Vega
@@ -35,17 +37,20 @@ from ..views import View
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .coordinator import Plan, Planner
-from .data import read
+from ..sources.data import read
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
-    Llm, get_available_llm, quiet_retry_log, signed_in_cli_hint,
+    Llm, get_available_llm, quiet_retries, signed_in_cli_hint,
 )
-from .story import _prose_to_html
 from .ui import ExplorerUI
 
 if TYPE_CHECKING:
-    from .data import DataT
+    from ..sources.data import DataT
+
+
+# HTML off: the answer is LLM output and goes into the notebook's text/html
+_MARKDOWN = MarkdownIt("gfm-like", {"html": False})
 
 
 def _in_kernel() -> bool:
@@ -72,9 +77,10 @@ def _has_geometry(source: Source) -> bool:
     )
 
 
-def _default_agents(source: Source) -> list:
+async def _default_agents(source: Source) -> list:
     agents = [ChatAgent(), SQLAgent(), VegaLiteAgent()]
-    if isinstance(source, XArraySQLSource) or _has_geometry(source):
+    # The probe queries every table, which can be slow on a remote database
+    if isinstance(source, XArraySQLSource) or await asyncio.to_thread(_has_geometry, source):
         agents.append(hvPlotAgent())
     return agents
 
@@ -93,18 +99,37 @@ def _default_llm() -> Llm:
     return llm_cls()
 
 
+@cache
+def _loop() -> asyncio.AbstractEventLoop:
+    """
+    The event loop every sync ask runs on. The cached LLM client and
+    Planners hold connections and asyncio objects bound to the loop they
+    first ran on, so a fresh loop per call would break them.
+    """
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, name="lumen-ask", daemon=True).start()
+    return loop
+
+
 # One Planner per Source, freed with it. Building a Planner and syncing its
 # metadata costs about half a second, and a reused one sends the LLM exactly
 # the prompts a fresh one would.
 _planners: weakref.WeakKeyDictionary[Source, Planner] = weakref.WeakKeyDictionary()
 
+# Planners answering a question right now. respond keeps per-question state
+# on the Planner, so a concurrent question gets one of its own.
+_busy: weakref.WeakSet[Planner] = weakref.WeakSet()
 
-def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
+
+async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
     if agents is not None:
         return Planner(llm=llm, agents=agents, headless=True)
     planner = _planners.get(source)
-    if planner is None or planner.llm is not llm:
-        planner = _planners[source] = Planner(llm=llm, agents=_default_agents(source), headless=True)
+    if planner is not None and planner.llm is llm and planner not in _busy:
+        return planner
+    planner = Planner(llm=llm, agents=await _default_agents(source), headless=True)
+    if (cached := _planners.get(source)) is None or cached not in _busy:
+        _planners[source] = planner
     return planner
 
 
@@ -113,14 +138,18 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
     if not isinstance(data, Pipeline):
         return (data if isinstance(data, Source) else read(data)), None
     if data.filters or data.transforms or data.sql_transforms:
-        # The rows the pipeline selects have to be what gets queried
-        return read({data.table: data}), None
+        # The rows the pipeline selects have to be what gets queried. The
+        # copy follows the pipeline's updates, so one per pipeline is enough,
+        # and it is freed with the pipeline.
+        if (source := data.__dict__.get("_ask_source")) is None:
+            source = data._ask_source = read({data.table: data})
+        return source, None
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
 
 def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | None) -> dict[str, Any]:
-    # Starts from the Planner's own context (its vector stores) so nothing
-    # one question adds is seen by an unrelated one
+    # Starts from the Planner's own context, which holds only its shared
+    # vector stores, so nothing one question adds is seen by an unrelated one
     context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
     if visible_slugs is not None:
         context["visible_slugs"] = visible_slugs
@@ -131,13 +160,16 @@ async def _respond(
     planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any]
 ) -> tuple[Answer, dict[str, Any]]:
     """Run one question through the Planner, returning the Answer and the context it left."""
-    if log.getEffectiveLevel() > logging.DEBUG:
-        quiet_retry_log()
-    await planner.sync(context)
-    plan = await planner.respond(messages, context)
-    if plan is None:
-        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-    outputs, out_context = await plan.execute()
+    _busy.add(planner)
+    try:
+        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
+            await planner.sync(context)
+            plan = await planner.respond(messages, context)
+            if plan is None:
+                raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+            outputs, out_context = await plan.execute()
+    finally:
+        _busy.discard(planner)
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
@@ -146,21 +178,16 @@ async def _respond(
 
 
 def _run(coro):
-    """Run a coroutine to completion from sync code, inside Jupyter or not."""
+    """
+    Run a coroutine to completion from sync code, inside Jupyter or not: it
+    runs on Lumen's own background loop, and an interrupt cancels it.
+    """
+    future = asyncio.run_coroutine_threadsafe(coro, _loop())
     try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        loop_running = False
-    else:
-        loop_running = True
-    # Run outside the except block, or every error raised by the question
-    # would also print a chained "no running event loop" traceback
-    if not loop_running:
-        return asyncio.run(coro)
-    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
-    # in a worker thread instead of patching the loop with nest_asyncio
-    with ThreadPoolExecutor(1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        return future.result()
+    except KeyboardInterrupt:
+        future.cancel()
+        raise
 
 
 def _write_tables(spec: Any, data_dir: Path) -> None:
@@ -232,7 +259,7 @@ async def aask(
     Answer
     """
     source, visible_slugs = _resolve(data)
-    planner = _planner(source, llm or _default_llm(), agents)
+    planner = await _planner(source, llm or _default_llm(), agents)
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
     return answer
@@ -245,7 +272,8 @@ def ask(
     Ask a question of some data and return the Answer.
 
     Takes the same arguments as aask, and works whether or not an event
-    loop is already running, e.g. in a Jupyter notebook.
+    loop is already running, e.g. in a Jupyter notebook: the question runs
+    on Lumen's own background loop. An interrupt cancels it.
     """
     return _run(aask(data, question, llm=llm, agents=agents))
 
@@ -281,7 +309,7 @@ class Chat(param.Parameterized):
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
-        planner = _planner(self._source, self._llm or _default_llm(), self._agents)
+        planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
         if self._context is None:
             context = _fresh_context(planner, self._source, self._visible_slugs)
         else:
@@ -450,7 +478,7 @@ class Answer(param.Parameterized):
         # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
         bundle = {"text/plain": repr(self), "text/markdown": f"{self.value}{sql}"}
-        card = [_prose_to_html(self.value)] if self.value else []
+        card = [_MARKDOWN.render(self.value)] if self.value else []
         if chart is not None:
             bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
             width = chart["application/vnd.vegalite.v5+json"]["width"]

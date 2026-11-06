@@ -4,6 +4,7 @@ import inspect
 import io
 import logging
 import sqlite3
+import subprocess
 import sys
 import tempfile
 
@@ -46,7 +47,6 @@ from lumen.ai.agents.vega_lite import (
 )
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
-from lumen.ai.data import read, resolve_data
 from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.llm import (
     PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
@@ -58,6 +58,7 @@ from lumen.ai.ui import UI, Exploration, ExplorerUI
 from lumen.command.ai import LumenAIServe, main
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read, resolve_data
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
 
@@ -1156,12 +1157,6 @@ class TestResolveData:
         assert result[0].get_tables() == ['penguins', 'birds']
         pd.testing.assert_frame_equal(result[0].get('birds'), df)
 
-    def test_resolve_data_pipeline_is_listed_as_a_table(self):
-        source = DuckDBSource.from_df({'tiny': pd.DataFrame({'a': [1, 2]})})
-        result = resolve_data({'tiny_copy': Pipeline(source=source, table='tiny')})
-        assert result[0].get_tables() == ['tiny_copy']
-        assert list(result[0].get('tiny_copy')['a']) == [1, 2]
-
     def test_resolve_data_unnamed_dataframes(self):
         df = pd.DataFrame({'a': [1, 2, 3]})
         result = resolve_data([df, df])
@@ -1331,7 +1326,7 @@ class TestResolveData:
     def test_resolve_data_duckdb_connection_string(self):
         """Test resolving a DuckDB connection string."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.duckdb'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
@@ -1348,7 +1343,7 @@ class TestResolveData:
     def test_resolve_data_db_file_duckdb(self):
         """Test resolving a .db file that is actually DuckDB."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.db'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
@@ -1489,7 +1484,7 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_netcdf_file(self):
         """Test resolving a NetCDF file creates XArraySQLSource."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
             try:
@@ -1510,7 +1505,7 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_mixed_xarray_and_csv(self):
         """Test that .nc creates separate source while .csv goes to DuckDB."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
             try:
@@ -1608,6 +1603,29 @@ def test_read_several_sources_raises():
     first, second = DuckDBSource(uri=':memory:', tables={}), DuckDBSource(uri=':memory:', tables={})
     with pytest.raises(ValueError, match='resolved to 2 sources'):
         read([first, second])
+
+
+def test_read_duckdb_connection_leaves_it_open():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE t AS SELECT 1 AS a')
+    read(conn).close()
+    assert conn.execute('SELECT a FROM t').fetchone() == (1,)
+
+
+def test_read_pipeline_lists_its_table():
+    pipeline = Pipeline(source=DuckDBSource.from_df({'t': pd.DataFrame({'a': [1, 2]})}), table='t')
+    source = read({'t': pipeline})
+    assert source.get_tables() == ['t']
+    assert list(source.get('t')['a']) == [1, 2]
+    assert len(read(pipeline).get(pipeline.name)) == 2
+
+
+def test_lumen_read_does_not_import_lumen_ai():
+    code = (
+        "import sys, lumen, pandas as pd; lumen.read(pd.DataFrame({'a': [1]})); "
+        "assert 'lumen.ai' not in sys.modules"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
 
 
 def test_lumen_read_is_exposed():

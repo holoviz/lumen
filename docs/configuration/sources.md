@@ -57,7 +57,7 @@ answer  # (1)!
 
 The `Answer` holds `value` (the text), `sql`, `spec` (the Vega-Lite spec), `pipeline` (a Pipeline over the result), `view` (the chart as a Lumen View), `plan` and `status`. `pipeline.ask(...)` limits the question to that table and its filters, and `await source.aask(...)` is the async form.
 
-`ask` uses the first LLM provider with an API key set, or pass `llm=`. It only writes SQL and declarative chart specs, both shown to you; it never runs LLM-written Python.
+`ask` uses the first LLM provider whose API key is set in the environment, or pass `llm=`. That provider receives your tables' schemas, column statistics and sample rows, and a sample of each query result, so only point it at data you may send there. `ask` only writes SQL and declarative chart specs, both shown to you; it never runs LLM-written Python.
 
 ``` py title="Follow up, rerun, keep exploring"
 chat = source.chat()
