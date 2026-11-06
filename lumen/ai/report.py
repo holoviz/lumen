@@ -39,11 +39,12 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    docx_add_chart, docx_add_markdown, docx_add_table, format_output,
-    make_md_cell, make_preamble, write_notebook,
+    docx_add_chart, docx_add_markdown, docx_add_table, format_function_call,
+    format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
+from .tools.base import FunctionCall
 from .utils import (
     content_to_text, extract_block_source, get_block_names, set_content_text,
     wrap_logfire_on_method,
@@ -80,6 +81,11 @@ def _export_header(section, status_source, variant="h3"):
         _export_checkbox(section, status_source), title,
         align="center", sizing_mode="stretch_width",
     )
+
+
+def _renderable_views(views):
+    """Exclude notebook-only FunctionCall metadata from rendered reports."""
+    return [view for view in views if not isinstance(view, FunctionCall)]
 
 
 class Task(Viewer):
@@ -1157,7 +1163,7 @@ class Report(TaskGroup):
         cards = [
             (
                 section.title,
-                Column(*self._selected_views(section, include_header=False), sizing_mode="stretch_width"),
+                Column(*_renderable_views(self._selected_views(section, include_header=False)), sizing_mode="stretch_width"),
             )
             for section in self if section.include_in_export
         ]
@@ -1180,9 +1186,11 @@ class Report(TaskGroup):
             )
         cells, extensions = [], ['tabulator']
         pending_headers = []
-        for out in self._export_views:
+        for index, out in enumerate(self._export_views):
             cell = ext = None
-            if isinstance(out, Typography):
+            if isinstance(out, FunctionCall):
+                cell = format_function_call(out, index)
+            elif isinstance(out, Typography):
                 # Buffer headers; only emit them if followed by exportable content
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
                 prefix = f"{'#'*level} " if level else ''
@@ -1248,7 +1256,7 @@ class Report(TaskGroup):
                 doc.add_heading(heading, level=level or 1)
             pending.clear()
 
-        for out in self._export_views:
+        for out in _renderable_views(self._export_views):
             if isinstance(out, Typography):
                 obj = out.object or ""
                 if out.variant and out.variant.startswith('h'):
@@ -1494,6 +1502,7 @@ class ActorTask(ExecutableTask):
         self.out_context = dict(self.out_context, **(await editor.render_context()))
 
     def _add_outputs(self, views: list, context: TContext):
+        function_calls = [view for view in views if isinstance(view, FunctionCall)]
         # Handle Tool specific behaviors
         if isinstance(self.actor, Tool):
             # Handle View/Viewable results regardless of agent type
@@ -1519,7 +1528,7 @@ class ActorTask(ExecutableTask):
                 continue
             view.param.watch(self._update_spec, ["spec", "_context_updated"])
 
-        self.views = self._header + views
+        self.views = self._header + function_calls + views
         rendered = []
         for view in views:
             out = self._render_output(view)

@@ -24,7 +24,7 @@ from ..views.base import View
 from .agents.story import StoryAgent, StoryState, build_catalog
 from .config import get_markitdown
 from .editors import LumenEditor
-from .report import Report
+from .report import Report, _renderable_views
 
 # The same engine as panel.pane.Markdown, so a paragraph reads identically in
 # the editor and in the exports.
@@ -290,7 +290,7 @@ class StoryReport(Report):
             elif value.include_in_export:
                 cards.append((
                     value.title,
-                    Column(*self._selected_views(value, include_header=False), sizing_mode="stretch_width"),
+                    Column(*_renderable_views(self._selected_views(value, include_header=False)), sizing_mode="stretch_width"),
                 ))
         return Accordion(
             *cards, active=list(range(len(cards))), sizing_mode="stretch_width",

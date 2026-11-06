@@ -1,5 +1,6 @@
 import asyncio
 
+from dataclasses import dataclass
 from types import FunctionType
 from typing import Any, TypedDict
 
@@ -16,6 +17,19 @@ from ..llm import Message
 from ..translate import function_to_model
 
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
+
+
+@dataclass
+class FunctionCall:
+    """
+    Internal metadata for reproducing an executed FunctionTool call.
+    """
+
+    function: Any
+    arguments: dict[str, Any]
+    context_arguments: set[str]
+    provides: list[str]
+    result_is_dict: bool
 
 
 def define_tool(
@@ -157,6 +171,7 @@ class FunctionTool(Tool):
         model_kwargs = {}
         if any(field not in self.requires and field not in kwargs for field in self._model.model_fields):
             model_kwargs = await self._invoke_prompt("main", messages, context, response_model=self._model, max_retries=3)
+        context_arguments = set(self.requires)
         arguments = dict(model_kwargs, **{k: context[k] for k in self.requires}, **kwargs)
         if param.parameterized.iscoroutinefunction(self.function):
             result = await self.function(**arguments)
@@ -177,10 +192,14 @@ class FunctionTool(Tool):
                 out_model[self.provides[0]] = result
             else:
                 out_model.update({key: result[key] for key in self.provides})
-        return [self.formatter.format(
+        output = self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
+        )
+        return [output, FunctionCall(
+            self.function, arguments, context_arguments, list(self.provides),
+            isinstance(result, dict),
         )], out_model
 
 
@@ -271,6 +290,16 @@ class ToolUser(Actor):
         for tool in self._tools.get(prompt_name, []) or self.tools:
             if all(requirement in context for requirement in tool.input_schema.__required_keys__):
                 tool_context = await tool.respond(messages, context)
+                if (
+                    isinstance(tool_context, tuple) and len(tool_context) == 2
+                    and isinstance(tool_context[0], list)
+                    and any(isinstance(item, FunctionCall) for item in tool_context[0])
+                ):
+                    outputs, out_context = tool_context
+                    tool_context = (
+                        [item for item in outputs if not isinstance(item, FunctionCall)],
+                        out_context,
+                    )
                 if tool_context:
                     tools_context += f"\n{tool_context}"
         return tools_context

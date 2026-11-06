@@ -1,4 +1,5 @@
 import base64
+import inspect
 import os
 import re
 
@@ -18,6 +19,7 @@ from ..pipeline import Pipeline
 from ..util import as_pandas
 from ..views import View
 from .editors import LumenEditor
+from .tools.base import FunctionCall
 
 
 def make_md_cell(text: str):
@@ -77,6 +79,51 @@ def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) 
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
+
+def format_function_call(call: FunctionCall, index: int = 0):
+    """Render an executed FunctionTool call as reproducible Python code."""
+    function = call.function
+    module = function.__module__
+    name = function.__name__
+    qualname = function.__qualname__
+    importable = (
+        module != "__main__"
+        and all(part.isidentifier() for part in module.split("."))
+        and name.isidentifier()
+        and qualname == name
+    )
+    arguments = ", ".join(
+        f"{argument}={argument if argument in call.context_arguments else repr(value)}"
+        for argument, value in call.arguments.items()
+    )
+    invocation = f"{name}({arguments})"
+    lines = []
+    if importable:
+        lines.append(f"from {module} import {name}")
+    else:
+        try:
+            source = dedent(inspect.getsource(function)).rstrip()
+        except (OSError, TypeError):
+            source = None
+        if source is None or not name.isidentifier():
+            return nbformat.v4.new_code_cell(
+                source=f"# Could not reproduce {function!r}: source is unavailable"
+            )
+        lines.append(source)
+
+    if call.provides and (len(call.provides) > 1 or call.result_is_dict):
+        result_name = f"_lumen_function_result_{index}"
+        lines.extend([
+            "",
+            f"{result_name} = {invocation}",
+            *[f"{provided} = {result_name}[{provided!r}]" for provided in call.provides],
+        ])
+    elif call.provides:
+        lines.extend(["", f"{call.provides[0]} = {invocation}"])
+    else:
+        lines.extend(["", invocation])
+    return nbformat.v4.new_code_cell(source="\n".join(lines))
+
 def format_output(output: Any):
     ext = None
     code = []
@@ -115,8 +162,10 @@ def format_output(output: Any):
 
 def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
-    for out in outputs:
-        if isinstance(out, Markdown):
+    for index, out in enumerate(outputs):
+        if isinstance(out, FunctionCall):
+            cells.append(format_function_call(out, index))
+        elif isinstance(out, Markdown):
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)
