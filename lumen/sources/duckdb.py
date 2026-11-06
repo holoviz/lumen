@@ -116,6 +116,8 @@ class DuckDBSource(BaseSQLSource):
         connection = params.pop('_connection', None)
         params["read_only"] = params.get('read_only', params.get("uri") not in (None, ':memory:'))
         super().__init__(**params)
+        # A connection handed in belongs to the caller, so close() leaves it open
+        self._owns_connection = not connection
         if connection:
             self._connection = connection
         else:
@@ -762,5 +764,6 @@ class DuckDBSource(BaseSQLSource):
         connection leaks and properly clean up server-side resources.
         """
         if self._connection is not None:
-            self._connection.close()
+            if self._owns_connection:
+                self._connection.close()
             self._connection = None

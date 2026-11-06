@@ -485,7 +485,7 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     pytest.importorskip("xarray_sql")
     import numpy as np
 
-    from lumen.ai.data import read
+    from lumen.sources.data import read
     grid = xr.Dataset({"t": (("x",), np.arange(3.0))}, coords={"x": [0, 1, 2]})
     alone = read(grid)
     assert is_gridded({(alone.name, "t"): alone})
@@ -517,3 +517,10 @@ async def test_sql_prompt_is_unchanged_for_plain_tables(sql_context, test_messag
     plain = await _main_prompt(sql_context, test_messages, llm)
     off = await _main_prompt(sql_context, test_messages, llm, has_geometry=False, gridded=False)
     assert plain == off
+
+
+def test_has_geometry_counts_only_the_tables_of_the_sources():
+    metaset = _metaset_with("geometry")
+    here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
+    assert has_geometry(metaset, {("src", "t"): here}) is True
+    assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
