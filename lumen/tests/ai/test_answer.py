@@ -1,10 +1,11 @@
+import asyncio
 import base64
 import logging
 import subprocess
 import sys
 
 from typing import get_args
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -20,8 +21,8 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _default_llm, _planner, _planners, _resolve, aask,
-    ask,
+    Answer, _busy, _default_agents, _default_llm, _planner, _planners,
+    _resolve, aask, ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.sources.data import read
@@ -105,35 +106,45 @@ async def test_aask_reuses_one_planner_per_source(llm, frame_source):
     assert "metaset" not in planner.context
 
 
-def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
-    first = _planner(frame_source, llm, None)
-    assert _planner(frame_source, llm, None) is first
-    assert _planner(frame_source, type(llm)(), None) is not first
-    assert _planner(frame_source, llm, [ChatAgent()]) is not _planner(frame_source, llm, [ChatAgent()])
+async def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    assert await _planner(frame_source, llm, None) is first
+    assert await _planner(frame_source, type(llm)(), None) is not first
+    assert await _planner(frame_source, llm, [ChatAgent()]) is not await _planner(frame_source, llm, [ChatAgent()])
 
 
-def test_default_agents_plain_table(frame_source):
-    agents = _default_agents(frame_source)
+async def test_a_busy_planner_is_not_shared(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    _busy.add(first)
+    try:
+        assert await _planner(frame_source, llm, None) is not first
+    finally:
+        _busy.discard(first)
+    assert await _planner(frame_source, llm, None) is first
+
+
+async def test_default_agents_plain_table(frame_source):
+    agents = await _default_agents(frame_source)
     assert [type(a).__name__ for a in agents] == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
 
 
-def test_default_agents_add_hvplot_for_gridded_data():
+async def test_default_agents_add_hvplot_for_gridded_data():
     xr = pytest.importorskip("xarray")
     pytest.importorskip("xarray_sql")
     ds = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
-    assert any(isinstance(a, hvPlotAgent) for a in _default_agents(read(ds)))
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read(ds)))
 
 
-def test_default_agents_add_hvplot_for_geometry():
+async def test_default_agents_add_hvplot_for_geometry():
     if gpd is None:
         pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])])
-    assert any(isinstance(a, hvPlotAgent) for a in _default_agents(read({"shapes": gdf})))
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read({"shapes": gdf})))
 
 
-def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
+async def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
     with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
-        assert any(isinstance(a, hvPlotAgent) for a in _default_agents(frame_source))
+        assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(frame_source))
 
 
 def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
@@ -149,6 +160,7 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
     assert visible is None
     assert source.get_tables() == ["tiny"]
     assert sorted(source.get("tiny")["value"]) == [7.5, 10.5]
+    assert _resolve(pipeline)[0] is source
 
 
 def _chat_only(llm):
@@ -171,14 +183,48 @@ def test_ask_errors_do_not_chain_the_loop_check(frame_source):
     assert info.value.__context__ is None
 
 
-async def test_aask_quiets_instructor_retry_log(llm, frame_source, monkeypatch):
-    logger = logging.getLogger("instructor.v2.retry")
-    monkeypatch.setattr(logger, "level", logging.NOTSET)
+async def test_aask_quiets_instructor_retry_log_only_while_asking(llm, frame_source, monkeypatch, caplog):
     # ExplorerUI tests in the same process leave Lumen's logger at DEBUG
     monkeypatch.setattr(lumen_log, "level", logging.WARNING)
-    _chat_only(llm)
-    await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
-    assert logger.level == logging.CRITICAL
+    logger = logging.getLogger("instructor.v2.retry")
+
+    def reply():
+        logger.error("retrying")
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    with caplog.at_level(logging.ERROR, logger="instructor.v2.retry"):
+        await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        logger.error("outside")
+    assert caplog.messages == ["outside"]
+
+
+def test_sync_ask_runs_every_question_on_one_loop(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    for _ in range(2):
+        llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+        ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops[0] is loops[1]
+
+
+def test_interrupting_sync_ask_cancels_the_question(frame_source):
+    future = MagicMock()
+    future.result.side_effect = KeyboardInterrupt
+    with patch("lumen.ai.answer.aask", new=MagicMock()), \
+            patch("lumen.ai.answer.asyncio.run_coroutine_threadsafe", return_value=future):
+        with pytest.raises(KeyboardInterrupt):
+            ask(frame_source, "q")
+    future.cancel.assert_called_once()
+
+
+def test_answer_html_escapes_html_in_the_answer():
+    html = Answer(value="Hi <script>alert(1)</script>")._static_bundle(None)["text/html"]
+    assert "<script>" not in html
 
 
 async def test_ask_inside_a_running_loop(llm, frame_source):
@@ -195,7 +241,7 @@ async def test_source_and_pipeline_methods_delegate(frame_source):
         await frame_source.aask("q")
         await pipeline.aask("q", llm="x")
     assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
-    assert sync_ask.call_args_list[0].kwargs == {"llm": "x"}
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None}
     assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
 
 
