@@ -14,13 +14,10 @@ import pyarrow as pa
 from narwhals.dependencies import is_polars_dataframe, is_pyarrow_table
 
 from ..pipeline import Pipeline
-from ..sources import Source
-from ..sources.duckdb import DuckDBSource
-from ..sources.xarray_sql import XArraySQLSource
 from ..util import normalize_table_name, try_import_xarray
-from .config import PROVIDED_SOURCE_NAME
-from .controls.ingest.constants import XARRAY_EXTENSIONS
-from .controls.ingest.utils import read_geo_file
+from .base import Source
+from .duckdb import DuckDBSource
+from .xarray_sql import XARRAY_EXTENSIONS, XArraySQLSource
 
 if TYPE_CHECKING:
     import polars as pl
@@ -30,6 +27,9 @@ if TYPE_CHECKING:
         str | Path | Source | Pipeline | pd.DataFrame | pl.DataFrame | pa.Table
         | xr.Dataset | xr.DataArray | duckdb.DuckDBPyConnection | duckdb.DuckDBPyRelation
     )
+
+#: Name of the source that holds the files and pipelines handed to Lumen
+PROVIDED_SOURCE_NAME = "ProvidedSource00000"
 
 
 def _is_frame(obj) -> bool:
@@ -57,9 +57,13 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         A file path or URL, a Source, a Pipeline, a DataFrame (pandas,
         polars, GeoPandas), a pyarrow Table, an xarray Dataset or
         DataArray, a DuckDB connection or relation, or a list or dict
-        of these. Frames in a list or dict share one source. A dict key
-        names a frame's table, a DataArray's variable or a DuckDB
-        connection's source. A DuckDB relation is read into memory.
+        of these. Frames in a list or dict share one source, and so do
+        files and pipelines. A dict key names a frame's, file's or
+        pipeline's table, a DataArray's variable or a DuckDB connection's
+        source; it is ignored for a Source and an xarray Dataset. A DuckDB
+        relation is read into memory. A DuckDB connection is used as is
+        and left open by ``source.close()``, and a source built on one
+        cannot be rebuilt from its spec.
 
     Returns
     -------
@@ -68,8 +72,11 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     sources = resolve_data(data)
     if len(sources) != 1:
         raise ValueError(
-            f"The data resolved to {len(sources)} sources but read returns "
-            "one. Call read once per source."
+            f"The data resolved to {len(sources)} sources but read returns one: "
+            "Sources, xarray data and DuckDB connections each stay their own "
+            "source, and frames do not share one with files or pipelines. Call "
+            "read once per source, or pass the list to ExplorerUI, which takes "
+            "several."
         )
     return sources[0]
 
@@ -214,7 +221,8 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
             initializers=initializers,
             mirrors=mirrors,
             name=PROVIDED_SOURCE_NAME,
-            tables=tables,
+            # A mirror is ingested as a table of its own name, which get_tables lists only from tables
+            tables={**tables, **{name: f'SELECT * FROM "{name}"' for name in mirrors}},
             uri=':memory:'
         )
         sources.append(source)
@@ -231,6 +239,9 @@ def _resolve_geo_source(src: str, extension: str) -> Source:
     path = Path(src).absolute()
     if not path.exists():
         raise FileNotFoundError(f"Data file not found: {src}")
+
+    # Deferred: the upload helpers live in lumen.ai, which only geo files need
+    from ..ai.controls.ingest.utils import read_geo_file
 
     alias = normalize_table_name(path.stem)
     with open(path, 'rb') as f:

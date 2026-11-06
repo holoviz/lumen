@@ -4,6 +4,7 @@ import inspect
 import io
 import logging
 import sqlite3
+import subprocess
 import sys
 import tempfile
 
@@ -46,7 +47,6 @@ from lumen.ai.agents.vega_lite import (
 )
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
-from lumen.ai.data import read, resolve_data
 from lumen.ai.editors import MultiChartEditor, SQLEditor
 from lumen.ai.llm import (
     PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
@@ -58,6 +58,7 @@ from lumen.ai.ui import UI, Exploration, ExplorerUI
 from lumen.command.ai import LumenAIServe, main
 from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read, resolve_data
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
 
@@ -1563,6 +1564,29 @@ def test_read_names_a_dataarray_from_its_key():
 def test_read_several_sources_raises():
     with pytest.raises(ValueError, match='resolved to 2 sources'):
         read([pd.DataFrame({'a': [1]}), duckdb.connect()])
+
+
+def test_read_duckdb_connection_leaves_it_open():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE t AS SELECT 1 AS a')
+    read(conn).close()
+    assert conn.execute('SELECT a FROM t').fetchone() == (1,)
+
+
+def test_read_pipeline_lists_its_table():
+    pipeline = Pipeline(source=DuckDBSource.from_df({'t': pd.DataFrame({'a': [1, 2]})}), table='t')
+    source = read({'t': pipeline})
+    assert source.get_tables() == ['t']
+    assert list(source.get('t')['a']) == [1, 2]
+    assert len(read(pipeline).get(pipeline.name)) == 2
+
+
+def test_lumen_read_does_not_import_lumen_ai():
+    code = (
+        "import sys, lumen, pandas as pd; lumen.read(pd.DataFrame({'a': [1]})); "
+        "assert 'lumen.ai' not in sys.modules"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
 
 
 def test_lumen_read_is_exposed():

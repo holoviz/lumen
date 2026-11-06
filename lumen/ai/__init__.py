@@ -1,5 +1,6 @@
 import panel as pn
 
+from ..sources.data import read  # noqa
 from . import (  # noqa
     actor, agents, embeddings, llm,
 )
