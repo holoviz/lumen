@@ -23,7 +23,7 @@ answer
 
 1. `Kilo()` serves free models without an account. With an API key such as `OPENAI_API_KEY` set, leave out `llm=` and Lumen uses that provider.
 
-`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict lands in one source so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
+`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict except a ready-made Source lands in one source, so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
@@ -40,7 +40,7 @@ An `Answer` renders as a card with the text, the chart, and collapsed SQL and Sp
 | `plan` / `status` | The steps the planner ran and how they ended |
 | `error` | Why the question failed, when `status` is `"error"` |
 
-While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop it; Lumen cancels the question and its LLM calls.
+While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop a `source.ask(...)` or `chat.ask(...)`; Lumen cancels the question and its LLM calls. An awaited `aask` is cancelled like any other task.
 
 ## Follow up
 
@@ -77,7 +77,7 @@ if answer.status == "error":
 
 ## Rerun, export, explore
 
-- `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results.
+- `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results. Source settings go in as they are, so check it for credentials (a database URI with a password, say) before sharing it.
 - `answer.to_cell()` puts that code into a new cell below, in Jupyter.
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
@@ -121,9 +121,11 @@ pip install jupyter_bokeh
 
 ## What Lumen runs
 
-Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on, so asking a question cannot execute arbitrary code on your machine.
+Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on. The SQL runs in DuckDB, which can read files on your machine (`read_text('/...')`, say), and what a query returns reaches the LLM as far as `share` allows.
 
-What the LLM sees of your data is up to `share`:
+## What goes to the LLM provider
+
+`ask` uses the first provider whose API key is set in the environment, unless you pass `llm=`. What that provider sees of your data is up to `share`:
 
 | `share` | The LLM sees |
 |---------|--------------|

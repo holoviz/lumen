@@ -27,8 +27,8 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     """
     Load data into a single Lumen Source.
 
-    See :func:`lumen.ai.data.read` for the data it accepts.
+    See :func:`lumen.sources.data.read` for the data it accepts.
     """
-    # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
-    from .ai.data import read
+    # Deferred: reading loads DuckDB, which import lumen avoids
+    from .sources.data import read
     return read(data)

@@ -12,12 +12,12 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import execute_distinct_values, make_sql_model
 from lumen.ai.agents.vega_lite import VegaLiteAgent
 from lumen.ai.answer import aask, configure
-from lumen.ai.data import read
 from lumen.ai.sharing import MASK, looks_like_pii, sharing
 from lumen.ai.table_stats import (
     EXACT, ColumnStats, TableStats, render_column,
 )
 from lumen.ai.utils import describe_data_sync, get_schema
+from lumen.sources.data import read
 from lumen.tests.ai.test_answer import FollowUpLLM
 
 # Values no prompt may contain unless sharing allows it

@@ -127,6 +127,16 @@ class AltairSpec(BaseModel):
     )
 
 
+#: Marks layered on a chart to annotate it, e.g. a threshold line or labels
+ANNOTATION_MARKS = {"rule", "text"}
+
+#: Encoding channels that place marks, which every layer shares
+POSITION_CHANNELS = {
+    "x", "y", "x2", "y2", "xOffset", "yOffset", "theta", "theta2", "radius", "radius2",
+    "longitude", "latitude", "longitude2", "latitude2", "row", "column", "facet",
+}
+
+
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -280,8 +290,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
                 # If marks are different, or if update has marks like 'rule', 'text'
                 # which are typically annotations, treat as append
-                annotation_marks = {'rule', 'text'}
-                if first_update_mark != first_base_mark or first_update_mark in annotation_marks:
+                if first_update_mark != first_base_mark or first_update_mark in ANNOTATION_MARKS:
                     is_append_operation = True
 
             if is_append_operation:
@@ -324,6 +333,19 @@ class VegaLiteAgent(BaseCodeAgent):
         # heatmap's rect and text layers; dropping it piles all cells onto one
         if "layer" in update_dict:
             result.pop("mark", None)
+            encoding = result.get("encoding")
+            if isinstance(encoding, dict) and result.get("layer"):
+                # Only positions are shared: a rule or text annotation must not
+                # inherit the chart's color or tooltip, so those move down into
+                # the chart's own layers
+                own = {k: v for k, v in encoding.items() if k not in POSITION_CHANNELS}
+                if own:
+                    result["encoding"] = {k: v for k, v in encoding.items() if k in POSITION_CHANNELS}
+                    result["layer"] = [
+                        layer if self._get_layer_mark_type(layer) in ANNOTATION_MARKS
+                        else {**layer, "encoding": {**own, **layer.get("encoding", {})}}
+                        for layer in result["layer"]
+                    ]
 
         return result
 
