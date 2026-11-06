@@ -66,8 +66,9 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         Every entry of a mixed dict lands in one DuckDB source, so they can
         be joined: frames (as pandas when mixed with files or pipelines),
         files, pipelines, xarray data (read lazily), and the tables of a
-        DuckDB connection, which are copied in so the user's database is
-        never written to. On its own, a connection is used as is and left
+        DuckDB connection, which are copied in under their own names (the
+        connection's dict key goes unused) so the user's database is never
+        written to. On its own, a connection is used as is and left
         open by ``source.close()``, a source built on one cannot be rebuilt
         from its spec, and xarray data keeps its gridded source.
 
