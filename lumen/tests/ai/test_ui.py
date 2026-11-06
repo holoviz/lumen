@@ -150,6 +150,14 @@ async def explorer_ui_with_error(explorer_ui):
 
     yield explorer_ui
 
+async def test_unanswerable_plan_is_not_executed_in_the_chat_ui(explorer_ui):
+    plan = Plan(title="Elevation", unanswerable="No table holds elevation.", context=explorer_ui.context)
+    explorer_ui._coordinator.respond = AsyncMock(return_value=plan)
+    explorer_ui._execute_plan = AsyncMock()
+    await explorer_ui._chat_invoke("How high?", "User", explorer_ui.interface)
+    explorer_ui._execute_plan.assert_not_awaited()
+
+
 async def test_explorer_ui_initialization(explorer_ui):
     """Test that ExplorerUI initializes correctly."""
     assert explorer_ui is not None

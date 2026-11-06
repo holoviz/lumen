@@ -35,10 +35,12 @@ An `Answer` renders as a card with the text, the chart, and collapsed SQL and Sp
 |-------|------------|
 | `value` | The written answer |
 | `sql` | The query that produced the data |
+| `data` | The result in the type you asked with: polars for polars input, pyarrow for pyarrow, a GeoDataFrame or xarray Dataset for GeoPandas or xarray, pandas otherwise |
 | `pipeline` | A Pipeline over the result, e.g. `answer.pipeline.data` |
 | `view` / `spec` | The chart as a Lumen View and its Vega-Lite spec |
-| `plan` / `status` | The steps the planner ran and how they ended |
-| `error` | Why the question failed, when `status` is `"error"` |
+| `plan` / `status` | The steps the planner ran and how they ended: `"success"`, `"error"` or `"unanswerable"` |
+| `error` | Why the question failed or cannot be answered |
+| `usage` | Tokens and, when the provider prices them, the cost of the answer's LLM calls, e.g. `answer.usage.input_tokens`; the card ends with a one-line summary |
 
 While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop a `source.ask(...)` or `chat.ask(...)`; Lumen cancels the question and its LLM calls. An awaited `aask` is cancelled like any other task.
 
@@ -74,6 +76,16 @@ if answer.status == "error":
 ```
 
 `retry()` without a hint asks the same question again. In a script, check `answer.status` before using the result.
+
+When the data does not hold what a question needs, such as a column or a year it lacks, the answer comes back with `status` set to `"unanswerable"` and `error` saying why, without running a query:
+
+``` py
+answer = source.ask("What is the average beak colour of each species?", llm=Kilo())
+answer.status  # "unanswerable"
+answer.error   # e.g. "No table records beak colour."
+```
+
+`answer.data` follows the input only for data read with `lumen.read`; for a Source built by hand it is pandas. Claude Code reports the cost of its calls at API prices, which is not what a subscription is billed.
 
 ## Rerun, export, explore
 
