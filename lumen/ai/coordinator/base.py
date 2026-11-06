@@ -5,6 +5,7 @@ import re
 import traceback
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
@@ -28,7 +29,7 @@ from ..actor import Actor
 from ..agents import (
     Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
-from ..config import PROMPTS_DIR, MissingContextError
+from ..config import PROMPTS_DIR, ROADMAP_TAG, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
@@ -96,7 +97,7 @@ class Plan(Section):
         todos = "\n".join(todos_list)
 
         roadmap_system = (
-            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            f"{ROADMAP_TAG}\n{indent(todos, '  ')}\n</roadmap>\n"
             "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
         )
         if user_query is None:
@@ -249,7 +250,7 @@ class Plan(Section):
                 retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs, out_context
 
-    async def execute(self, context: TContext = None, **kwargs) -> list[Any]:
+    async def execute(self, context: TContext = None, **kwargs) -> tuple[list[Any], TContext]:
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
@@ -380,6 +381,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
         Whether to show verbose output.""",
     )
 
+    headless = param.Boolean(
+        default=False,
+        constant=True,
+        doc="""
+        Whether to run without a ChatInterface, e.g. from a notebook or a
+        script. Step titles are then logged to the ``lumen`` logger instead
+        of being rendered: start and success at INFO, failure at WARNING.
+        ``interface`` cannot be given at the same time.""",
+    )
+
     within_ui = param.Boolean(
         default=False,
         constant=True,
@@ -413,7 +424,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        if interface is None:
+        headless = params.get("headless", self.param.headless.default)
+        if headless and interface is not None:
+            raise ValueError("A headless Coordinator takes no interface; pass one or the other.")
+        if interface is None and not headless:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
@@ -611,8 +625,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return obj
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
+        """
+        Plan a response to the conversation.
+
+        With an interface the history comes from it. Headless, the planner
+        only sees ``messages``, so a follow-up needs the earlier turns in
+        ``messages`` and the earlier plan as ``context["prev_plan"]``.
+        """
         context = {"agent_tool_contexts": [], **context}
-        with self.interface.param.update(loading=True):
+        headless = self.interface is None
+        with nullcontext() if headless else self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
                 with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
@@ -624,7 +646,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
             # Validation verdicts are about a previous plan, not part of the
             # conversation, and read as instructions if left in the history.
             exclude_users = ["help"] + [a.user for a in self.agents if isinstance(a, ValidationAgent)]
-            serialized = self.interface.serialize(
+            serialized = None if headless else self.interface.serialize(
                 exclude_users=exclude_users, custom_serializer=self._serialize, limit=10
             )
             messages = fuse_messages(serialized or messages, max_user_messages=self.history)
@@ -634,17 +656,19 @@ class Coordinator(Viewer, VectorLookupToolUser):
             agents = {normalized_name(agent): agent for agent in self.agents}
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
+            # Planner reports planning failures on the title, headless or not
             self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
-            todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
-            todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
-            self.steps_layout = Card(
-                header=todos_layout, collapsed=not self.verbose, variant="outlined",
-                sx={"bgcolor": "transparent"},
-            )
-            self.interface.stream(self.steps_layout, user="Planner")
+            if not headless:
+                todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
+                todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
+                self.steps_layout = Card(
+                    header=todos_layout, collapsed=not self.verbose, variant="outlined",
+                    sx={"bgcolor": "transparent"},
+                )
+                self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
-        if plan is not None:
+        if plan is not None and self.steps_layout is not None:
             self.steps_layout.header[0].object = "🧾 Checklist ready..."
             _, todos = plan.render_task_history(-1)
             self.steps_layout.header[1].object = todos
@@ -666,6 +690,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return result.yes
 
     def __panel__(self):
+        if self.interface is None:
+            raise RuntimeError("A headless Coordinator has no interface to display.")
         return self.interface
 
     async def sync(self, context: TContext | None):

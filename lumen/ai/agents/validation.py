@@ -3,9 +3,9 @@ from typing import Any, NotRequired
 import param
 
 from panel_material_ui import Button
-from pydantic import Field
+from pydantic import Field, PrivateAttr, computed_field
 
-from ..config import PROMPTS_DIR
+from ..config import PROMPTS_DIR, ROADMAP_TAG
 from ..context import ContextModel, TContext, input_dependency_keys
 from ..llm import Message
 from ..models import BaseModel
@@ -13,21 +13,44 @@ from ..utils import content_to_text, log_debug
 from .base import Agent
 
 
+class RequirementCheck(BaseModel):
+    """One requirement checked against the outputs."""
+
+    requirement: str = Field(description="What the user asked for, in their words.")
+    evidence: str = Field(description="Spec key/value, SQL clause or sentence that addresses it and what it does, in under 25 words; 'not found' if none.")
+    satisfied: bool
+
+
+# The verdict is derived from per-requirement checks rather than asked for:
+# a single yes/no (reasoning off) was judged from the request's wording and
+# chart titles, while the same model answered each property correctly when
+# asked about it directly.
 class QueryCompletionValidation(BaseModel):
-    """Validation of whether the executed plan answered the user's query"""
+    """Whether the executed plan answered the user's latest message."""
 
-    chain_of_thought: str = Field(
-        description="Restate intent and results succinctly; then explain your reasoning as to why you will be answering yes or no.")
+    checks: list[RequirementCheck] = Field(
+        default_factory=list, description="One per explicit requirement; empty only when the request names none and no SQL or view was produced.")
 
-    missing_elements: list[str] = Field(
-        default_factory=list,
-        description="List of specific elements from the user's query that weren't addressed"
-    )
+    chain_of_thought: str = Field(default="", description="One sentence summing up the checks.")
+
     suggestions: list[str] = Field(
-        default_factory=list,
-        description="Suggestions for additional steps that could complete the query if not fully answered"
-    )
-    correct: bool = Field(description="True if query correctly solves user request, otherwise False.")
+        default_factory=list, description="Steps that would satisfy the unsatisfied checks.")
+
+    # Set by the agent, not the LLM: when the current plan produced SQL or a
+    # view, there is always something to check, so empty checks fail.
+    _require_checks: bool = PrivateAttr(default=False)
+
+    @computed_field
+    @property
+    def missing_elements(self) -> list[str]:
+        return [f"{c.requirement}: {c.evidence}" for c in self.checks if not c.satisfied]
+
+    @computed_field
+    @property
+    def correct(self) -> bool:
+        if not self.checks:
+            return not self._require_checks
+        return all(c.satisfied for c in self.checks)
 
 
 class ValidationInputs(ContextModel):
@@ -91,22 +114,61 @@ class ValidationAgent(Agent):
         current-plan outputs from previous-plan leftovers.
         """
         ctx = await super()._gather_prompt_context(prompt_name, messages, context, **kwargs)
+        ctx["previous_keys"] = self._previous_keys(context)
+        if context.get("view"):
+            ctx["view_spec"] = self._compact_view(context["view"])
+        return ctx
 
+    def _previous_keys(self, context: TContext) -> set[str]:
         plan = context.get("plan")
         previous_keys = set()
-        if plan is not None:
-            required_keys = set()
-            for task in plan:
-                if task.actor is not self:
-                    required_keys |= input_dependency_keys(task.input_schema)
-            produced = {k for task in plan for k in task.out_context}
-            for key in ("chat", "sql", "view", "listing"):
-                if key in context and key not in produced:
-                    if key in required_keys:
-                        continue
-                    previous_keys.add(key)
-        ctx["previous_keys"] = previous_keys
-        return ctx
+        if plan is None:
+            return previous_keys
+        required_keys = set()
+        for task in plan:
+            if task.actor is not self:
+                required_keys |= input_dependency_keys(task.input_schema)
+        produced = {k for task in plan for k in task.out_context}
+        for key in ("chat", "sql", "data", "view", "listing"):
+            if key in context and key not in produced and key not in required_keys:
+                previous_keys.add(key)
+        return previous_keys
+
+    @staticmethod
+    def _compact_view(view: Any) -> Any:
+        # The pipeline's source repeats the SQL shown separately, and the theme
+        # palette and sizing are boilerplate the user never asks about. Pipeline
+        # filters and transforms and mark-level config stay, since a requested
+        # filter or color can live there.
+        if not isinstance(view, dict):
+            return view
+        view = {k: v for k, v in view.items() if k not in ("sizing_mode", "min_height")}
+        pipeline = view.get("pipeline")
+        if isinstance(pipeline, dict):
+            view["pipeline"] = {
+                k: v for k, v in pipeline.items()
+                if k == "table" or (k in ("filters", "transforms") and v)
+            }
+        spec = view.get("spec")
+        if isinstance(spec, dict):
+            config = spec.get("config")
+            spec = {
+                k: v for k, v in spec.items()
+                if k not in ("config", "$schema") and not (k in ("width", "height") and v == "container")
+            }
+            if isinstance(config, dict) and config.get("mark"):
+                spec["config"] = {"mark": config["mark"]}
+            view["spec"] = spec
+        return view
+
+    @staticmethod
+    def _without_roadmap(messages: list[Message]) -> list[Message]:
+        # The roadmap describes each step as done, and the model took that as
+        # evidence instead of reading the outputs.
+        return [
+            msg for msg in messages
+            if not (msg.get("role") == "system" and str(msg.get("content", "")).lstrip().startswith(ROADMAP_TAG))
+        ]
 
     async def respond(
         self,
@@ -124,7 +186,7 @@ class ValidationAgent(Agent):
             interface.send(f"Follow these suggestions to fulfill the original intent:\n\n> {text_content}\n\n{suggestions_list}")
 
         try:
-            result = await self._invoke_prompt("main", messages, context)
+            result = await self._invoke_prompt("main", self._without_roadmap(messages), context)
         except Exception as e:
             # Validation is a quality gate, not part of the answer: the plan's
             # actual outputs were already produced/displayed. If the structured
@@ -135,21 +197,30 @@ class ValidationAgent(Agent):
                 f"ValidationAgent could not run; treating plan as complete: "
                 f"{type(e).__name__}: {e}"
             )
+            # No checks and _require_checks left False, so this passes.
             result = QueryCompletionValidation(
                 chain_of_thought=(
                     "Validation could not be completed due to an LLM error; "
                     "treating the executed plan as complete."
                 ),
-                correct=True,
             )
             return [result], {"validation_result": result}
 
+        previous_keys = self._previous_keys(context)
+        result._require_checks = any(
+            context.get(key) and key not in previous_keys for key in ("sql", "view")
+        )
         if result.correct:
             return [result], {"validation_result": result}
 
-        response_parts = [f"**Query Validation: ✗ Incomplete** - {result.chain_of_thought}"]
+        header = "**Query Validation: ✗ Incomplete**"
+        if result.chain_of_thought:
+            header += f" - {result.chain_of_thought}"
+        response_parts = [header]
         if result.missing_elements:
-            response_parts.append(f"**Missing Elements:** {', '.join(result.missing_elements)}")
+            response_parts.append("**Missing Elements:**\n" + "\n".join(f"- {m}" for m in result.missing_elements))
+        elif not result.checks:
+            response_parts.append("**Missing Elements:** no requirement was checked against the outputs.")
         if result.suggestions:
             response_parts.append("**Suggested Next Steps:**")
             for i, suggestion in enumerate(result.suggestions, 1):

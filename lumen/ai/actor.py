@@ -2,7 +2,8 @@ import datetime
 import inspect
 
 from abc import abstractmethod
-from contextlib import nullcontext
+from contextlib import contextmanager
+from logging import getLogger
 from pathlib import Path
 from types import FunctionType
 from typing import Any
@@ -74,13 +75,39 @@ def _merge_prompt_tools(
     return merged if merged else None
 
 
+#: Where steps report without an interface, e.g. from a notebook or script
+_progress = getLogger("lumen")
+
+
 class NullStep:
 
-    def __init__(self):
+    def __init__(self, success_title: str | None = None):
         self.status = None
+        self.success_title = success_title
+        self.failed_title = None
 
     def stream(self, text, **kwargs):
         log_debug(f"[NullStep] {text}")
+
+    @contextmanager
+    def add(self, title: str, success_title: str | None = None, **kwargs):
+        """
+        A step that reports to the ``lumen`` logger instead of an interface:
+        the title at INFO when it starts, then its success title at INFO or
+        its failed title at WARNING when it ends.
+        """
+        step = NullStep(success_title)
+        if title:
+            _progress.info(title)
+        try:
+            yield step
+        except BaseException as e:
+            _progress.warning(step.failed_title or f"{title or 'Step'} failed: {e}")
+            raise
+        if step.success_title:
+            _progress.info(step.success_title)
+        elif step.failed_title:
+            _progress.warning(step.failed_title)
 
 
 class LLMUser(param.Parameterized):
@@ -213,12 +240,13 @@ class LLMUser(param.Parameterized):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
@@ -447,10 +475,11 @@ class Actor(LLMUser):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""

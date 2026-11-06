@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import bokeh.command.subcommands.serve as bokeh_serve
 import duckdb
 import numpy as np
+import pandas as pd
 import pytest
 import requests
 
@@ -1140,6 +1141,33 @@ class TestResolveData:
         assert result[0] is test_source
         assert result[1] is source2
 
+    def test_resolve_data_dataframe(self):
+        """A DataFrame becomes a queryable table instead of being dropped."""
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = UI._resolve_data(df)
+        assert len(result) == 1
+        assert result[0].get_tables() == ['data']
+        pd.testing.assert_frame_equal(result[0].get('data'), df)
+
+    def test_resolve_data_named_dataframes(self):
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = UI._resolve_data({'penguins': df, 'birds': df})
+        assert len(result) == 1
+        assert result[0].get_tables() == ['penguins', 'birds']
+        pd.testing.assert_frame_equal(result[0].get('birds'), df)
+
+    def test_resolve_data_unnamed_dataframes(self):
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = UI._resolve_data([df, df])
+        assert result[0].get_tables() == ['data_0', 'data_1']
+
+    def test_resolve_data_named_source(self, test_source):
+        assert UI._resolve_data({'sales': test_source}) == [test_source]
+
+    def test_resolve_data_unsupported_type_raises(self):
+        with pytest.raises(TypeError, match="Cannot load data of type object"):
+            UI._resolve_data(object())
+
     def test_resolve_data_csv_file_string(self):
         """Test resolving a CSV file path string."""
         result = UI._resolve_data('data.csv')
@@ -1297,7 +1325,7 @@ class TestResolveData:
     def test_resolve_data_duckdb_connection_string(self):
         """Test resolving a DuckDB connection string."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.duckdb'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
@@ -1314,7 +1342,7 @@ class TestResolveData:
     def test_resolve_data_db_file_duckdb(self):
         """Test resolving a .db file that is actually DuckDB."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.db'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
@@ -1455,7 +1483,7 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_netcdf_file(self):
         """Test resolving a NetCDF file creates XArraySQLSource."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
             try:
@@ -1476,7 +1504,7 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_mixed_xarray_and_csv(self):
         """Test that .nc creates separate source while .csv goes to DuckDB."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
             try:
