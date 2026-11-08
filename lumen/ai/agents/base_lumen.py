@@ -7,9 +7,9 @@ from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..editors import LumenEditor
 from ..llm import Message
-from ..models import RetrySpec
+from ..models import RetrySpec, ViewRetrySpec
 from ..schemas import slug_to_table_name
-from ..utils import apply_changes, retry_llm_output
+from ..utils import apply_changes, describe_data, retry_llm_output
 from .base import Agent
 
 SPEC_TYPE_MAP = {
@@ -91,16 +91,24 @@ class BaseLumenAgent(Agent):
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
+        # A view edit can only reshape the rows the view already has; show them,
+        # and let the model raise MissingContextError when the feedback needs a new query.
+        view_data, response_model = None, None
+        if view is not None and isinstance(view.component, View) and view.component.pipeline is not None:
+            view_data = await describe_data(view.component.get_data())
+            response_model = ViewRetrySpec
         result = await self._invoke_prompt(
             "revise_output",
             messages,
             context,
+            response_model=response_model,
             model_spec="edit",
             numbered_text=numbered_text,
             language=language,
             feedback=instruction,
             errors=errors,
             revise_table=revise_table,
+            view_data=view_data,
             **kwargs
         )
         new_spec_raw = apply_changes(lines, result.edits)

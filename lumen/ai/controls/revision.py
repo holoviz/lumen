@@ -9,6 +9,7 @@ from panel_material_ui import (
 )
 
 from ...config import load_yaml
+from ..config import MissingContextError
 from ..utils import generate_diff
 
 
@@ -117,6 +118,12 @@ class RetryControls(RevisionControls):
                 new_spec = await self.task.actor.revise(
                     self.instruction, messages, self.task.out_context, self.view
                 )
+        except MissingContextError as e:
+            # Editing the view can't add data it doesn't have, so ask the
+            # coordinator to answer the instruction as a follow-up instead.
+            self._report_status(f"{e}\n\nRunning it as a new request instead.", title="Needs new data")
+            self.interface.send(self.instruction, user="User")
+            return
         except Exception as e:
             self._report_status(f"```\n{e}\n```", title="❌ Failed to generate revisions")
             raise
