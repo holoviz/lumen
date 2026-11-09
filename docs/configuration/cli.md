@@ -117,6 +117,7 @@ If not specified, Lumen auto-detects from environment variables. When no key is 
 | `bedrock` | AWS credentials |
 | `anthropic-bedrock` | AWS credentials |
 | `openrouter` | `OPENROUTER_API_KEY` |
+| `orcarouter` | `ORCAROUTER_API_KEY` |
 | `kilo` | `KILO_API_KEY` |
 | `litellm` | Keys for the providers it routes to |
 | `ai-catalyst` | `AI_CATALYST_API_KEY` |

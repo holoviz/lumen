@@ -20,10 +20,10 @@ Lumen works with any LLM provider. Choose the approach that fits your needs:
 
 - ☁️ **Cloud providers** — OpenAI, Anthropic, Google, Mistral, Azure, Groq (easiest to get started)
 - 🖥️ **Locally hosted** — Ollama, Llama.cpp, MLX (free, runs on your machine, no API keys)
-- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, LiteLLM, AWS Bedrock (unified interface, many providers and models)
+- 🔀 **Router/Multi-provider** — Kilo, OpenRouter, OrcaRouter, LiteLLM, AWS Bedrock (unified interface, many providers and models)
 - 💻 **Coding CLIs** — Codex, Claude Code, GitHub Copilot, Antigravity (use a CLI you are already signed in to, no API key)
 
-`pip install lumen` is all you need for OpenAI, every OpenAI-compatible provider (OpenRouter, Kilo, Groq, Ollama, AI Navigator, AI Catalyst) and the coding CLIs. Anthropic, Google, Mistral, AWS Bedrock, Llama.cpp and LiteLLM need their client library, which the matching extra below installs.
+`pip install lumen` is all you need for OpenAI, every OpenAI-compatible provider (OpenRouter, OrcaRouter, Kilo, Groq, Ollama, AI Navigator, AI Catalyst) and the coding CLIs. Anthropic, Google, Mistral, AWS Bedrock, Llama.cpp and LiteLLM need their client library, which the matching extra below installs.
 
 ---
 
@@ -384,6 +384,48 @@ Use a unified interface to access multiple LLM providers and models.
             "default": {"model": "openai/gpt-6-luna"},
             "edit": {"model": "deepseek/deepseek-v4-pro-0813"},
             "sql": {"model": "qwen/qwen3.8-flash"},
+        }
+    )
+    ui = lmai.ExplorerUI(data='data.csv', llm=llm)
+    ui.servable()
+    ```
+
+=== "OrcaRouter"
+
+    ```bash
+    pip install lumen
+    export ORCAROUTER_API_KEY=sk-orca-...
+    ```
+
+    [OrcaRouter](https://www.orcarouter.ai/) provides an OpenAI-compatible API for accessing models from multiple providers through a single API key, with automatic routing and failover.
+
+    **Get your API key:**
+
+    1. Visit [orcarouter.ai](https://www.orcarouter.ai/) and create an account
+    2. Copy your API key from the dashboard
+    3. Set environment variable:
+
+    ```bash
+    # macOS/Linux
+    export ORCAROUTER_API_KEY='sk-orca-your-key-here'
+
+    # Windows PowerShell
+    $env:ORCAROUTER_API_KEY='sk-orca-your-key-here'
+
+    # Windows CMD
+    set ORCAROUTER_API_KEY=sk-orca-your-key-here
+    ```
+
+    Then use OrcaRouter with any supported model:
+
+    ```python
+    import lumen.ai as lmai
+
+    llm = lmai.llm.OrcaRouter(
+        model_kwargs={
+            "default": {"model": "orcarouter/auto"},
+            "sql": {"model": "anthropic/claude-sonnet-5.5"},
+            "vega_lite": {"model": "google/gemini-3.1-pro-preview"},
         }
     )
     ui = lmai.ExplorerUI(data='data.csv', llm=llm)
