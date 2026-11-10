@@ -70,12 +70,23 @@ def _lint_sentinels(df: pd.DataFrame) -> list[str]:
     numeric = df.select_dtypes(include="number")
     if numeric.empty:
         return []
-    counts = numeric.isin(LINT_SENTINELS).sum()
-    hits = {col: f"{int(count)} rows" for col, count in counts.items() if count}
+    hits, found = {}, set()
+    for col, values in numeric.items():
+        sentinel = values.isin(LINT_SENTINELS)
+        if not sentinel.any():
+            continue
+        # A placeholder sits outside the range of the real values; one inside
+        # it is ordinary data, e.g. customer 9999 among ids 1 to 21,390.
+        others = values[~sentinel].dropna()
+        if not others.empty:
+            sentinel &= (values < others.min()) | (values > others.max())
+        if count := int(sentinel.sum()):
+            hits[col] = f"{count} rows"
+            found.update(values[sentinel].unique().tolist())
     if not hits:
         return []
     return [
-        f"Placeholder numbers {list(LINT_SENTINELS)} appear as data in "
+        f"Placeholder numbers {sorted(found)} appear as data in "
         f"{_format_column_hits(hits)}; they almost certainly encode missing values."
     ]
 
@@ -153,7 +164,9 @@ def _lint_outliers(df: pd.DataFrame) -> list[str]:
     return [f"IQR outliers in {_format_column_hits(hits)}."]
 
 
-def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = False) -> list[str]:
+def lint_data(
+    df: pd.DataFrame, actionable_only: bool = False, capped: bool = False, columns: set[str] | None = None
+) -> list[str]:
     """
     Report data-quality problems in a query result, phrased so an LLM can fix them in SQL.
 
@@ -172,6 +185,10 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = Fa
         Constant columns and outliers are not checked, since an ordered
         prefix is often constant in its sort key and need not be
         representative of the rest.
+    columns : set[str] | None
+        Lowercased names of the only columns to report on. Rows still count
+        as duplicates only when every column matches, since rows that agree
+        on a few columns are usually distinct records.
 
     Returns
     -------
@@ -196,10 +213,14 @@ def lint_data(df: pd.DataFrame, actionable_only: bool = False, capped: bool = Fa
         # profiler that reported different problems on each run would be noise.
         df = df.sample(PROFILE_SAMPLE_ROWS, random_state=0)
 
+    rows = df
+    if columns is not None:
+        df = df[[col for col in df.columns if str(col).lower() in columns]]
+
     findings = []
     for check in checks:
         try:
-            findings.extend(check(df))
+            findings.extend(check(rows if check is _lint_duplicates else df))
         except Exception as e:
             # Profiling must never break a query that already succeeded. Object
             # columns holding lists, dicts or geometries make several of the

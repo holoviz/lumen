@@ -12,7 +12,6 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
-import pyarrow as pa
 import sqlglot
 
 from ..config import config
@@ -32,6 +31,8 @@ from .base import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    import polars as pl
+    import pyarrow as pa
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
@@ -424,15 +425,17 @@ class DuckDBSource(BaseSQLSource):
         return spec
 
     @classmethod
-    def from_df(cls, tables: dict[str, pd.DataFrame], **kwargs):
+    def from_df(cls, tables: dict[str, pd.DataFrame | pa.Table | pl.DataFrame], **kwargs):
         """
         Creates an ephemeral, in-memory DuckDBSource containing the
         supplied dataframe.
 
         Arguments
         ---------
-        tables: dict[str, pandas.DataFrame]
-            A dictionary mapping from table names to DataFrames
+        tables: dict[str, pandas.DataFrame | pyarrow.Table | polars.DataFrame]
+            A dictionary mapping from table names to DataFrames. Frames
+            other than pandas are read through the Arrow stream, without
+            a conversion to pandas.
         kwargs: any
             Additional keyword arguments for the source
 
@@ -443,10 +446,13 @@ class DuckDBSource(BaseSQLSource):
         source = DuckDBSource(uri=':memory:', ephemeral=True, **kwargs)
         table_defs = {}
         for name, df in tables.items():
-            # DuckDB occasionally has issues with the new pandas string dtype
-            for col in df.select_dtypes(include=['string']).columns:
-                df[col] = df[col].astype(object)
-            source._ingest_table(name, df)
+            if isinstance(df, pd.DataFrame):
+                # DuckDB occasionally has issues with the new pandas string dtype
+                for col in df.select_dtypes(include=['string']).columns:
+                    df[col] = df[col].astype(object)
+                source._ingest_table(name, df)
+            else:
+                source._connection.from_arrow(df).to_view(name)
             table_defs[name] = source.sql_expr.format(table=name)
         source.tables = table_defs
         return source
@@ -625,7 +631,13 @@ class DuckDBSource(BaseSQLSource):
         other library would hold the column as opaque bytes, drop it from the
         schema, and render a blank map with nothing raising.
         """
-        rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+        if backend in ('polars', 'pyarrow'):
+            # Through a relation on every version: what execute() returns
+            # has no pl() or arrow() on duckdb 2. pandas stays on execute()
+            # since relations lack fetch_df on duckdb 1.2.
+            rel = cursor.sql(sql_expr, params=params)
+        else:
+            rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
             d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
             for d in rel.description if str(d[1]).startswith('GEOMETRY')
@@ -635,12 +647,7 @@ class DuckDBSource(BaseSQLSource):
             if backend == 'polars':
                 return rel.pl()
             if backend == 'pyarrow':
-                # Through pa.table because arrow() returns a Table up to
-                # duckdb 1.3 and a RecordBatchReader from 1.4, and
-                # Pipeline.data rejects the reader. Not fetch_arrow_table,
-                # which 1.5 deprecates and the suite turns that into an
-                # error, nor to_arrow_table, which 1.4 does not have.
-                return pa.table(rel.arrow())
+                return rel.to_arrow_table()
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(

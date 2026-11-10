@@ -31,9 +31,9 @@ The declarative Lumen data model further sets it apart from other tools, making 
 
 ## Getting started
 
-Lumen works with Python 3 and above on Linux, Windows, or Mac. The recommended way to install Lumen is using the [`conda`](https://conda.pydata.org/docs/) command provided by [Anaconda](https://docs.continuum.io/anaconda/install) or [`Miniconda`](https://conda.pydata.org/miniconda.html):
+Lumen works with Python 3.11 and above on Linux, Windows, or Mac. The recommended way to install Lumen is using the [`conda`](https://conda.pydata.org/docs/) command provided by [Anaconda](https://docs.continuum.io/anaconda/install) or [`Miniconda`](https://conda.pydata.org/miniconda.html):
 
-    conda install -c pyviz lumen
+    conda install -c conda-forge lumen
 
 or using PyPI:
 

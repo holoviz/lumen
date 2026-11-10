@@ -40,10 +40,46 @@ class TestLintData:
         findings = lint_data(df)
         assert any("1 of 4 rows are exact duplicates" in f for f in findings)
 
+    def test_duplicates_judged_on_whole_rows_when_columns_given(self):
+        """Records that only agree on the reported columns are not duplicates."""
+        df = pd.DataFrame({"id": [1, 2, 3], "species": ["a", "a", "b"], "mass": [10, 10, 20]})
+        assert not any("duplicates" in f for f in lint_data(df, columns={"species", "mass"}))
+        repeated = pd.concat([df, df.iloc[[0]]])
+        assert any("1 of 4 rows are exact duplicates" in f for f in lint_data(repeated, columns={"species"}))
+
+    def test_columns_limit_per_column_checks(self):
+        df = pd.DataFrame({"temp": [12.5, 13.0, 14.0], "unused": [-9999.0, 1.0, -9999.0]})
+        assert lint_data(df, actionable_only=True, columns={"temp"}) == []
+
     def test_sentinel_numbers_reported(self):
         df = pd.DataFrame({"temp": [12.5, 13.0, -9999.0, 14.0, -9999.0, 15.0]})
         findings = lint_data(df)
         assert any("Placeholder numbers" in f and '"temp" (2 rows)' in f for f in findings)
+
+    def test_sentinel_inside_value_range_not_reported(self):
+        # Customer 9999 is an ordinary id among ids 12 to 21390, not a placeholder
+        df = pd.DataFrame({
+            "customer_id": [12, 845, 9999, 9999, 15020, 21390],
+            "revenue": [80.0, 35.5, 60.0, 67.36, 20.0, 41.0],
+        })
+        assert not any("Placeholder numbers" in f for f in lint_data(df))
+
+    def test_sentinel_message_names_only_flagged_values(self):
+        # 9999 sits inside the range of the other values, so only -9999 is a placeholder
+        df = pd.DataFrame({"x": [-9999, 5, 9999, 20000, 30]})
+        findings = [f for f in lint_data(df) if "Placeholder numbers" in f]
+        assert len(findings) == 1
+        assert "[-9999]" in findings[0]
+        assert "9999," not in findings[0].replace("-9999", "")
+
+    def test_sentinel_nullable_dtype_reported(self):
+        df = pd.DataFrame({"a": pd.array([1, 2, None, -9999, 5], dtype="Int64")})
+        assert any('"a" (1 rows)' in f for f in lint_data(df))
+
+    def test_sentinel_only_column_reported(self):
+        df = pd.DataFrame({"reading": [-9999.0, -9999.0, None]})
+        findings = lint_data(df)
+        assert any("Placeholder numbers" in f and '"reading" (2 rows)' in f for f in findings)
 
     def test_untrimmed_and_empty_text_reported(self):
         df = pd.DataFrame({"name": ["alice", " bob ", "", "dave"]})

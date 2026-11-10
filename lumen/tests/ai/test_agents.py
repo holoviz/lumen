@@ -152,7 +152,7 @@ async def test_list_agent_uses_configured_user():
 @pytest.fixture
 def duckdb_source():
     duckdb_source = DuckDBSource(
-        initializers=["INSTALL sqlite;", "LOAD sqlite;", f"SET home_directory='{root}';"],
+        initializers=[f"SET home_directory='{root}';"],
         root=root,
         tables={"test_sql": f"SELECT A, B, C, D::TIMESTAMP_NS AS D FROM READ_CSV('{root + '/test.csv'}')"},
     )
@@ -770,6 +770,12 @@ async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source,
         await agent.respond(test_messages, context)
     message = str(excinfo.value.__cause__)
     assert "first:" in message and "second:" in message
+
+
+async def test_code_prompt_mode_refuses_without_interface(llm):
+    agent = VegaLiteAgent(llm=llm, code_execution="prompt")
+    with pytest.raises(RuntimeError, match="needs an interface"):
+        await agent._execute_code("chart = None", pd.DataFrame({"A": [1]}))
 
 
 async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):

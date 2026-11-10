@@ -7,6 +7,8 @@ import pandas as pd
 import panel as pn
 import pytest
 
+from bokeh.core.serialization import Serializer
+
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource, InMemorySource
@@ -615,27 +617,54 @@ def test_deckgl_view_geometry_as_geojson():
     json.dumps(data)  # must be serializable
 
 
-@requires_geopandas
-def test_vegalite_view_geometry_as_geoshape_data():
-    """VegaLiteView emits a GeoDataFrame as a FeatureCollection with the
-    format.property geoshape needs, rather than an unserializable frame."""
+def _geo_pipeline():
     gdf = gpd.GeoDataFrame(
-        {'pop': [1, 2],
+        {'name': ['a', 'b'], 'pop': [1, 2],
          'date': [pd.Timestamp('2026-06-15'), pd.Timestamp('2026-06-15')],
          'geometry': [
              Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
         crs='EPSG:4326',
     )
-    pipeline = Pipeline(source=InMemorySource(tables={'geo': gdf}), table='geo')
+    return Pipeline(source=InMemorySource(tables={'geo': gdf}), table='geo')
+
+
+def _serialize(view):
+    return Serializer().encode(view.get_panel().get_root())
+
+
+@requires_geopandas
+def test_vegalite_view_geometry_as_geoshape_data():
+    """VegaLiteView hands a GeoDataFrame to the Vega pane as a list of GeoJSON
+    features, the one geometry form the pane passes through untouched."""
     spec = {'mark': 'geoshape',
             'encoding': {'color': {'field': 'properties.pop', 'type': 'quantitative'}}}
-    data = VegaLiteView(pipeline=pipeline, spec=spec)._get_params()['object']['data']
+    view = VegaLiteView(pipeline=_geo_pipeline(), spec=spec)
+    obj = view._get_params()['object']
 
-    assert data['format'] == {'type': 'json', 'property': 'features'}
-    assert data['values']['type'] == 'FeatureCollection'
-    assert len(data['values']['features']) == 2
-    assert data['values']['features'][0]['properties']['pop'] == 1
-    json.dumps(data)  # must be serializable
+    assert obj['data'] == {'name': 'geo'}
+    assert len(obj['datasets']['geo']) == 2
+    assert obj['datasets']['geo'][0]['properties']['pop'] == 1
+    json.dumps(obj['datasets'])
+    _serialize(view)
+
+
+@requires_geopandas
+def test_vegalite_view_geometry_joined_to_external_boundaries():
+    """A spec that brings its own boundaries receives the table without its
+    shapely geometry column, which Bokeh cannot send to the browser."""
+    spec = {
+        'data': {'url': 'https://example.com/boundaries.json',
+                 'format': {'type': 'topojson', 'feature': 'regions'}},
+        'transform': [{'lookup': 'properties.name',
+                       'from': {'data': {'name': 'geo'}, 'key': 'name', 'fields': ['pop']}}],
+        'mark': 'geoshape',
+        'encoding': {'color': {'field': 'pop', 'type': 'quantitative'}},
+    }
+    view = VegaLiteView(pipeline=_geo_pipeline(), spec=spec)
+    dataset = view._get_params()['object']['datasets']['geo']
+
+    assert dataset['geometry'].tolist() == ['POLYGON ((0 0, 1 0, 1 1, 0 0))', 'POLYGON ((2 0, 3 0, 3 1, 2 0))']
+    _serialize(view)
 
 
 @requires_geopandas
@@ -648,6 +677,27 @@ def test_vegalite_view_plain_frame_unchanged():
 
     assert 'format' not in data
     assert data['values'].equals(df)
+
+
+def test_vegalite_view_escapes_dotted_column_fields():
+    df = pd.DataFrame({'date': [1, 2], 'nino3.4_anom': [0.5, 1.5]})
+    pipeline = Pipeline(source=InMemorySource(tables={'nino': df}), table='nino')
+    spec = {'transform': [{'fold': ['nino3.4_anom'], 'as': ['region', 'anomaly']}], 'layer': [{
+        'mark': 'line',
+        'encoding': {
+            'x': {'field': 'date'},
+            'y': {'field': 'nino3.4_anom'},
+            'tooltip': [{'field': 'nino3.4_anom'}, {'field': 'not.a.column'}],
+        },
+    }]}
+    view = VegaLiteView(pipeline=pipeline, spec=spec)
+    encoding = view._get_params()['object']['layer'][0]['encoding']
+
+    assert encoding['x']['field'] == 'date'
+    assert encoding['y']['field'] == 'nino3\\.4_anom'
+    assert encoding['tooltip'] == [{'field': 'nino3\\.4_anom'}, {'field': 'not.a.column'}]
+    assert view.spec['layer'][0]['encoding']['y']['field'] == 'nino3.4_anom'
+    assert view._get_params()['object']['transform'][0]['fold'] == ['nino3\\.4_anom']
 
 
 @requires_geopandas
