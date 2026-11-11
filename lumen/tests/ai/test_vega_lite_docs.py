@@ -15,7 +15,7 @@ from lumen.ai.agents.vega_lite import (
     DocumentationMatch, DocumentationSelection, VegaLiteAgent,
 )
 from lumen.ai.config import PROMPTS_DIR
-from lumen.ai.retrieval import uncovered_documentation_queries
+from lumen.ai.retrieval import documentation_coverage
 from lumen.ai.utils import render_template
 
 
@@ -74,9 +74,19 @@ def test_documentation_coverage_ignores_negative_and_property_headings():
         {"text": "Resize the brush selection", "metadata": {"section_title": "`zoom`"}},
     ]
 
-    assert uncovered_documentation_queries(
+    assert documentation_coverage(
         ["scatter", "brush selection", "tooltip"], pages,
-    ) == ["brush selection", "tooltip"]
+    ) == {"scatter": pages[0]}
+
+
+def test_chart_title_promotion_keeps_selected_sections():
+    transform = {"metadata": {"section_title": "View-level Transform Property"}}
+    example = {"metadata": {"section_title": "Example: Density Plot"}}
+    context = {"metadata": {"section_title": "Scale Ranges"}}
+
+    assert VegaLiteAgent._prioritize_chart_documentation(
+        "Make a density plot of delivery times", [transform, example, context],
+    ) == [example, transform, context]
 
 
 def _base_context(doc_pages=None):

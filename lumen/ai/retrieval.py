@@ -9,7 +9,7 @@ from itertools import zip_longest
 from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
-_STOP_WORDS = frozenset({
+RETRIEVAL_STOP_WORDS = frozenset({
     "a", "an", "and", "by", "controlled", "create", "data", "for", "from",
     "in", "make", "of", "on", "show", "the", "to", "use", "with",
 })
@@ -60,7 +60,7 @@ def _candidate_text(document: dict) -> str:
 
 def _query_concepts(query: str) -> list[set[str]]:
     """Return independently matchable terms from a natural-language request."""
-    return [{token} for token in _tokens(query) - _STOP_WORDS]
+    return [{token} for token in _tokens(query) - RETRIEVAL_STOP_WORDS]
 
 
 def _intent_score(concepts: list[set[str]], candidate_tokens: set[str]) -> float:
@@ -84,7 +84,7 @@ def focused_document_queries(query: str, limit: int = 4) -> list[str]:
     """
     clauses = []
     for clause in _CLAUSE_SPLIT_RE.split(query.lower().replace("-", " ")):
-        terms = [term for term in _TOKEN_RE.findall(clause) if term not in _STOP_WORDS]
+        terms = [term for term in _TOKEN_RE.findall(clause) if term not in RETRIEVAL_STOP_WORDS]
         # ``chart`` and ``plot`` add little when a clause already names a more
         # specific feature, but retain them for a request that contains nothing
         # else (for example, "make a chart").
@@ -100,8 +100,8 @@ def focused_document_queries(query: str, limit: int = 4) -> list[str]:
     return list(dict.fromkeys(clauses))[:limit]
 
 
-def uncovered_documentation_queries(queries: list[str], pages: list[dict]) -> list[str]:
-    """Find clauses without positive textual evidence in the selected sections."""
+def documentation_coverage(queries: list[str], pages: list[dict]) -> dict[str, dict]:
+    """Return the first section with positive textual evidence for each covered clause."""
     evidence = []
     for page in pages:
         metadata = page.get("metadata") or {}
@@ -110,14 +110,18 @@ def uncovered_documentation_queries(queries: list[str], pages: list[dict]) -> li
         # implementing the operation itself.
         if heading.startswith("`") or _tokens(heading) & {"disable", "remove", "suppress"}:
             continue
-        evidence.append(_tokens(" ".join((
+        evidence.append((page, _tokens(" ".join((
             metadata.get("page_title") or "", heading,
             metadata.get("description") or "", page["text"],
-        ))))
-    return [
-        query for query in queries
-        if not any(_tokens(query) <= terms for terms in evidence)
-    ]
+        )))))
+    coverage = {}
+    for query in queries:
+        query_tokens = _tokens(query)
+        for page, terms in evidence:
+            if query_tokens <= terms:
+                coverage[query] = page
+                break
+    return coverage
 
 
 def documentation_shortlist(candidates: list[dict], preferred: list[dict]) -> list[dict]:
