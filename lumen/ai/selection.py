@@ -208,12 +208,24 @@ def _hv_streams(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None
         element = grids[-1] if grids else element
     if isinstance(element, (hv.QuadMesh, hv.Image, hv.DynamicMap)):
         stream = hv.streams.Tap(source=element)
-        xcol, ycol = (dim.name for dim in element.kdims[:2]) if len(element.kdims) >= 2 else (view.x, view.y)
+        # A DynamicMap's kdims are its slider dimensions, not its axes
+        if view.x and view.y:
+            xcol, ycol = view.x, view.y
+        else:
+            xcol, ycol = (dim.name for dim in element.kdims[:2])
 
         def on_tap(x=None, y=None):
             df = as_pandas(view.pipeline.data)
             if x is None or y is None or xcol not in df or ycol not in df:
                 return
+            # The plot on screen, which the slider steps; the stream's source can be a copy of it
+            shown = view._panel.object
+            if isinstance(shown, hv.DynamicMap) and shown.kdims and shown.current_key is not None:
+                # Only the step the slider shows, not every step's cells
+                key = shown.current_key if isinstance(shown.current_key, tuple) else (shown.current_key,)
+                for dim, value in zip(shown.kdims, key, strict=False):
+                    if dim.name in df:
+                        df = df[df[dim.name] == value]
             on_rows(df.loc[[_nearest(df, xcol, ycol, x, y)]])
         stream.add_subscriber(on_tap)
         return [stream]
