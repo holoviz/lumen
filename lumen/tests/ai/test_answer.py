@@ -1489,6 +1489,13 @@ def _cached_ask(llm, source, question="How many rows?"):
     return aask(source, question, llm=llm, agents=[ChatAgent(), SQLAgent()])
 
 
+async def test_editing_the_first_answer_does_not_change_a_later_hit(llm, frame_source):
+    configure(cache=True)
+    first = await _cached_ask(llm, frame_source)
+    first.value = "edited"
+    assert (await _cached_ask(llm, frame_source)).value == "Three rows."
+
+
 async def test_a_cached_question_makes_no_llm_calls(llm, frame_source):
     configure(cache=True)
     first = await _cached_ask(llm, frame_source)

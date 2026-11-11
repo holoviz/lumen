@@ -684,7 +684,8 @@ async def _aask_messages(
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
     if key is not None and answer.status == "success":
-        _answer_cache[key] = answer
+        # A copy, so changes to the answer handed back reach no later hit
+        _answer_cache[key] = answer._cached_copy()
         while len(_answer_cache) > _ANSWER_CACHE_SIZE or _cached_rows() > _ANSWER_CACHE_ROWS:
             _answer_cache.popitem(last=False)
     return answer
