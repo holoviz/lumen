@@ -32,7 +32,7 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import JOINED_GRIDS, read
+from ..sources.data import joins_grids, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import geometry_columns, log
 from ..views import View
@@ -477,7 +477,7 @@ class Answer(param.Parameterized):
 
     def _rebuilt(self) -> View | Pipeline | None:
         """The chart, or else the data, that code and export rebuild."""
-        if self.source in JOINED_GRIDS:
+        if joins_grids(self.source) or joins_grids(self.pipeline and self.pipeline.source):
             raise ValueError(
                 "This answer's data joins xarray data into DuckDB, and those tables live only "
                 "in memory, so they cannot be rebuilt from a spec. Read the xarray data on its "

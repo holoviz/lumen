@@ -540,6 +540,24 @@ def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
         answer.code
 
 
+async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    SQLModel = make_sql_model([(source.name, "climate")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT x, temp FROM climate", table_slug="temps", tables=["climate"]),
+        SQLModel(query="SELECT * FROM climate WHERE temp > 1", table_slug="warm", tables=["climate"]),
+    ])
+    conversation = source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    await conversation.aask("Temperatures?")
+    follow_up = await conversation.aask("Only the warm ones")
+    assert follow_up.source is not source
+    with pytest.raises(ValueError, match="joins xarray data"):
+        follow_up.code
+
+
 class FollowUpLLM(MockLLM):
     """Replies by response model, and records what each Plan call was sent."""
 

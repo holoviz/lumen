@@ -286,6 +286,14 @@ def _add_grids(source: DuckDBSource, grids: dict) -> None:
 #: connection, so the source cannot be rebuilt from its spec.
 JOINED_GRIDS: weakref.WeakSet[Source] = weakref.WeakSet()
 
+
+def joins_grids(source: Source | None) -> bool:
+    """Whether source has xarray data joined in, itself or through a source derived from it."""
+    # A derived source (a follow-up's SQL result) shares the connection
+    return isinstance(source, DuckDBSource) and any(
+        source._connection is joined._connection for joined in JOINED_GRIDS
+    )
+
 def _resolve_geo_source(src: str, extension: str) -> Source:
     """Load a geospatial file into an in-memory DuckDBSource.
 
