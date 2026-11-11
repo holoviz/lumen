@@ -15,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Callable, Generator, Iterator
+from contextvars import ContextVar
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
@@ -410,8 +411,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        # Retried, so only worth a look when debugging
-                        log.debug("Retrying after error", exc_info=e)
+                        print_task_exception(e)
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -448,8 +448,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        # Retried, so only worth a look when debugging
-                        log.debug("Retrying after error", exc_info=e)
+                        print_task_exception(e)
                         if sleep:
                             time.sleep(sleep)
 
@@ -1236,13 +1235,18 @@ def format_msg_content(content: Any) -> str:
     return f"<{type(content).__name__}[{id(content)}]>"
 
 
-def print_task_exception(e: BaseException, interface: Any) -> None:
+#: Set while lumen.ai.ask answers a question: it hands errors back in the
+#: Answer, so their tracebacks are only logged at debug level
+errors_in_result: ContextVar[bool] = ContextVar("errors_in_result", default=False)
+
+
+def print_task_exception(e: BaseException) -> None:
     """
-    Print a failed task's traceback to the server console. Without an
-    interface the caller gets the error back in the result, e.g. an
-    Answer with status "error", so it is only logged at debug level.
+    Print a failed task's traceback to the console, or log it at debug
+    level while the caller gets the error back, e.g. as an Answer with
+    status "error".
     """
-    if interface is None:
+    if errors_in_result.get():
         log.debug("Task failed", exc_info=e)
     else:
         traceback.print_exception(e)

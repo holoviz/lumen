@@ -29,7 +29,7 @@ from ..actor import Actor
 from ..agents import (
     Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
-from ..config import PROMPTS_DIR, MissingContextError
+from ..config import PROMPTS_DIR, ROADMAP_TAG, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
@@ -85,29 +85,35 @@ class Plan(Section):
     # For each step run: (seconds, LLM calls), by the step's index
     _runs = param.Dict(default={})
 
+    def _edges(self) -> list[tuple[int, int, str]]:
+        """graph's edges by step index, which stay apart when titles repeat."""
+        edges = []
+        tasks = list(self)
+        for j, task in enumerate(tasks):
+            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
+                provider = next((
+                    i for i in reversed(range(j))
+                    if key in tasks[i].output_schema.__required_keys__ | tasks[i].output_schema.__optional_keys__
+                ), None)
+                if provider is not None:
+                    edges.append((provider, j, key))
+        return edges
+
     def graph(self) -> list[tuple[str, str, str]]:
         """
         How the steps feed each other, as (from step, to step, key) edges:
         a step that needs or can use a key gets it from the latest step
         before it that provides it.
         """
-        edges = []
         tasks = list(self)
-        for j, task in enumerate(tasks):
-            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
-                provider = next((
-                    earlier for earlier in reversed(tasks[:j])
-                    if key in earlier.output_schema.__required_keys__ | earlier.output_schema.__optional_keys__
-                ), None)
-                if provider is not None:
-                    edges.append((provider.title, task.title, key))
-        return edges
+        return [(tasks[i].title, tasks[j].title, key) for i, j, key in self._edges()]
 
     def to_mermaid(self) -> str:
         """The steps and how they feed each other, as a Mermaid flowchart."""
-        ids = {task.title: f"s{i}" for i, task in enumerate(self)}
-        lines = ["graph TD"] + [f'    {ids[task.title]}["{task.title.replace(chr(34), chr(39))}"]' for task in self]
-        lines += [f"    {ids[source]} -->|{key}| {ids[target]}" for source, target, key in self.graph()]
+        # Inside a quoted label only a quote or a line break ends it early
+        labels = [" ".join(task.title.split()).replace('"', "#quot;") for task in self]
+        lines = ["graph TD"] + [f'    s{i}["{label}"]' for i, label in enumerate(labels)]
+        lines += [f"    s{i} -->|{key}| s{j}" for i, j, key in self._edges()]
         return "\n".join(lines)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
@@ -134,7 +140,7 @@ class Plan(Section):
         todos = "\n".join(todos_list)
 
         roadmap_system = (
-            f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
+            f"{ROADMAP_TAG}\n{indent(todos, '  ')}\n</roadmap>\n"
             "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
         )
         if user_query is None:
@@ -153,6 +159,9 @@ class Plan(Section):
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
+        if task.status == "success":
+            # A rerun, e.g. from explore, skips the step, so its timing stands
+            return await self._run_actor_task(i, task, context, **kwargs)
         start = time.monotonic()
         # The agent's own LLM is the one it calls, set by the coordinator
         llm = task.actor.llm or task.llm or self.llm
@@ -232,11 +241,11 @@ class Plan(Section):
                 task.out_context["__error__"] = error_msg
                 return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
-            print_task_exception(e, self.interface)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
-            print_task_exception(e, self.interface)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task failed due to an internal error"
             raise e
 
@@ -438,8 +447,9 @@ class Coordinator(Viewer, VectorLookupToolUser):
         constant=True,
         doc="""
         Whether to run without a ChatInterface, e.g. from a notebook or a
-        script. Step titles are then logged to the ``lumen`` logger at INFO
-        level instead of being rendered.""",
+        script. Step titles are then logged to the ``lumen`` logger instead
+        of being rendered: start and success at INFO, failure at WARNING.
+        ``interface`` cannot be given at the same time.""",
     )
 
     within_ui = param.Boolean(
@@ -475,7 +485,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        if interface is None and not params.get("headless"):
+        headless = params.get("headless", self.param.headless.default)
+        if headless and interface is not None:
+            raise ValueError("A headless Coordinator takes no interface; pass one or the other.")
+        if interface is None and not headless:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
@@ -673,6 +686,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return obj
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
+        """
+        Plan a response to the conversation.
+
+        With an interface the history comes from it. Headless, the planner
+        only sees ``messages``, so a follow-up needs the earlier turns in
+        ``messages`` and the earlier plan as ``context["prev_plan"]``.
+        """
         context = {"agent_tool_contexts": [], **context}
         headless = self.interface is None
         with nullcontext() if headless else self.interface.param.update(loading=True):
@@ -712,7 +732,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if plan is not None and plan.unanswerable and not headless:
             self.interface.stream(plan.unanswerable, user="Planner")
         if plan is not None and self.steps_layout is not None:
-            self.steps_layout.header[0].object = "🧾 Checklist ready..."
+            # \u2139 is the information emoji, escaped since it looks like an i
+            self.steps_layout.header[0].object = (
+                f"\u2139\ufe0f The data cannot answer {plan.title!r}" if plan.unanswerable else "🧾 Checklist ready..."
+            )
             _, todos = plan.render_task_history(-1)
             self.steps_layout.header[1].object = todos
         return plan
@@ -734,7 +757,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     def __panel__(self):
         if self.interface is None:
-            raise ValueError("A headless Coordinator has no interface to display.")
+            raise RuntimeError("A headless Coordinator has no interface to display.")
         return self.interface
 
     async def sync(self, context: TContext | None):

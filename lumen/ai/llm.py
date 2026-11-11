@@ -15,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from functools import lru_cache, partial
 from pathlib import Path
@@ -314,6 +315,24 @@ def quiet_retry_log():
     itself, so that log only duplicates it.
     """
     logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
+
+
+_quiet_retries = contextvars.ContextVar("quiet_retries", default=False)
+logging.getLogger("instructor.v2.retry").addFilter(lambda record: not _quiet_retries.get())
+
+
+@contextmanager
+def quiet_retries():
+    """
+    Silence instructor's per-attempt error log for the code run inside,
+    including the tasks it starts, without changing the logger for the rest
+    of the process.
+    """
+    token = _quiet_retries.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retries.reset(token)
 
 
 def signed_in_cli_hint() -> str:
@@ -2071,7 +2090,10 @@ class ClaudeCode(LlmCli):
             raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
         if "result" not in response:
             raise ValueError("Claude Code CLI response did not include a result.")
-        model = next(iter(response.get("modelUsage") or {}), "claude-code")
+        # The CLI can use several models, e.g. a small one for side tasks;
+        # the one that cost the most is the one that wrote the answer
+        used = response.get("modelUsage") or {}
+        model = max(used, key=lambda name: (used[name] or {}).get("costUSD") or 0, default="claude-code")
         if (usage := parse_usage(response, "anthropic", model, {})) is not None:
             # The CLI prices its own calls, so no pricing table is needed
             cost = response.get("total_cost_usd")
