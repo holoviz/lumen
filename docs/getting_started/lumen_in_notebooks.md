@@ -23,7 +23,7 @@ answer
 
 1. `Kilo()` serves free models without an account. With an API key such as `OPENAI_API_KEY` set, leave out `llm=` and Lumen uses that provider.
 
-`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict except a ready-made Source lands in one source, so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
+`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables and puts them in one source, so a question can join them. A ready-made Source can't be mixed into the dict; pass it on its own. See [Data Sources](../configuration/sources.md#in-memory-data).
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
@@ -158,6 +158,8 @@ Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sa
 | marimo | A static card with the answer, a PNG and the SQL. Pick the Vega-Lite output in the cell's output menu for the interactive chart |
 | Python REPL or script | Echoing `answer` shows its status and first line; `answer.value` and `answer.sql` hold the full text |
 
+The PNG and plain-output fallbacks cover Vega-Lite charts only. An hvPlot chart (gridded data, geometry) shows in the interactive card and nowhere else.
+
 For VS Code, install the widget bridge into the same environment as the kernel:
 
 ``` bash
@@ -178,6 +180,6 @@ Lumen only writes SQL and declarative chart specs, and shows both to you. It nev
 | `"schema"` | Table and column names, types, row counts and null fractions, but no values |
 | `"none"` | Table and column names, and row counts |
 
-The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them.
+The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them. It is a best-effort heuristic: columns are judged by name, and a renamed column (`first_name AS who`) is only caught when its values look like emails, phone numbers, SSNs or IP addresses. For data that must not leave your machine, use `share="schema"` or `"none"`.
 
 The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.

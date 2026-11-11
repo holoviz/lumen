@@ -105,9 +105,9 @@ LineEdit = Annotated[
     Field(discriminator="op")
 ]
 
-# The lines a RetrySpec edits, set while revising, so an edit that leaves
-# out its op can be read against the line it points at
-revision_lines: ContextVar[list[str] | None] = ContextVar("revision_lines", default=None)
+# The lines a RetrySpec edits and whether they are YAML, set while revising,
+# so an edit that leaves out its op can be read against the line it points at
+revision_lines: ContextVar[tuple[list[str], bool] | None] = ContextVar("revision_lines", default=None)
 
 
 def _line_key(line: str) -> tuple[str, str] | None:
@@ -118,13 +118,20 @@ def _line_key(line: str) -> tuple[str, str] | None:
     return line[:len(line) - len(stripped)], stripped.split(":", 1)[0]
 
 
-def _infer_op(edit: dict[str, Any], lines: list[str] | None) -> str:
+def _infer_op(edit: dict[str, Any], revision: tuple[list[str], bool] | None) -> str:
     if "line" not in edit:
         return "delete"
+    if revision is None:
+        # Without the text, assume a change
+        return "replace"
+    lines, is_yaml = revision
     line_no = edit.get("line_no")
-    if lines is None or not isinstance(line_no, int) or not 1 <= line_no <= len(lines):
-        # Past the end can only add a line; without the text, assume a change
-        return "replace" if lines is None else "insert"
+    if not isinstance(line_no, int) or not 1 <= line_no <= len(lines):
+        # Past the end can only add a line, e.g. LIMIT 10 after a query
+        return "insert"
+    if not is_yaml:
+        # SQL lines (a::INT, '00:00') only seem to have YAML keys
+        return "replace"
     old, new = _line_key(lines[line_no - 1]), _line_key(edit["line"])
     # A different key at that spot adds a line, e.g. color: before x:
     return "insert" if old is not None and new is not None and old != new else "replace"
@@ -148,9 +155,9 @@ class RetrySpec(BaseModel):
         # it is read from the edit and the line it points at
         if not isinstance(edits, list):
             return edits
-        lines = revision_lines.get()
+        revision = revision_lines.get()
         return [
-            {**edit, "op": _infer_op(edit, lines)}
+            {**edit, "op": _infer_op(edit, revision)}
             if isinstance(edit, dict) and "op" not in edit else edit
             for edit in edits
         ]
