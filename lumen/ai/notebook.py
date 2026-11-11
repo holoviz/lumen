@@ -38,8 +38,10 @@ def _parse(line: str) -> tuple[str, str, bool, str]:
     while match := _FLAG.match(rest):
         if match.group(1):
             confirm = True
-        else:
+        elif match.group(2).isidentifier():
             name = match.group(2)
+        else:
+            raise UsageError(f"--as needs a variable name, not {match.group(2)!r}: {_USAGE}")
         rest = rest[match.end():]
     return source, name, confirm, rest.strip()
 
@@ -56,6 +58,11 @@ class LumenMagics(Magics):
         if cell is None:
             # IPython has already filled in {name} on a magic's line
             question = words
+        elif words:
+            raise UsageError(
+                f"%%lumen takes only the source and flags on its line, but got {words!r}; "
+                f"put the question in the cell. {_USAGE}"
+            )
         else:
             try:
                 question = cell.strip().format_map(namespace)

@@ -42,6 +42,8 @@ def test_line_magic_asks_the_rest_of_the_line(shell):
     ("nothing", "Rows?", "No variable named 'nothing'"),
     ("penguins", "Rows in {month}?", "names {month}"),
     ("penguins", "   ", "Write the question"),
+    ("penguins heaviest", "Rows?", "put the question in the cell"),
+    ("penguins --as --confirm", "Rows?", "--as needs a variable name"),
 ])
 def test_magic_errors_say_what_to_fix(shell, line, cell, message):
     with patch("lumen.ai.notebook.ask") as ask, pytest.raises(UsageError, match=message):
