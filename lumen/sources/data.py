@@ -63,14 +63,16 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         names a frame's, file's or pipeline's table, a DataArray's variable
         or a DuckDB connection's source; it is ignored for a Source and an
         xarray Dataset. A DuckDB relation is read into memory.
-        Every entry of a mixed dict lands in one DuckDB source, so they can
-        be joined: frames (as pandas when mixed with files or pipelines),
+        Apart from those named below, every entry of a mixed dict lands in
+        one DuckDB source, so they can be joined: frames (as pandas when mixed with files or pipelines),
         files, pipelines, xarray data (read lazily), and the tables of a
         DuckDB connection, which are copied in under their own names (the
         connection's dict key goes unused) so the user's database is never
         written to. On its own, a connection is used as is and left
         open by ``source.close()``, a source built on one cannot be rebuilt
-        from its spec, and xarray data keeps its gridded source.
+        from its spec, and xarray data keeps its gridded source. A Source,
+        and a geo, xarray or database file or a database URI, always stays
+        its own source.
 
     Returns
     -------
@@ -80,8 +82,9 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     if len(sources) != 1:
         raise ValueError(
             f"The data resolved to {len(sources)} sources but read returns one: "
-            "a Source passed in stays its own source. Call read once per source, "
-            "or pass the list to ExplorerUI, which takes several."
+            "Sources, geo, xarray and database files, and database URIs each stay "
+            "their own source. Call read once per source, or pass the list to "
+            "ExplorerUI, which takes several."
         )
     return sources[0]
 
