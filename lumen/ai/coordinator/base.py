@@ -85,29 +85,35 @@ class Plan(Section):
     # For each step run: (seconds, LLM calls), by the step's index
     _runs = param.Dict(default={})
 
+    def _edges(self) -> list[tuple[int, int, str]]:
+        """graph's edges by step index, which stay apart when titles repeat."""
+        edges = []
+        tasks = list(self)
+        for j, task in enumerate(tasks):
+            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
+                provider = next((
+                    i for i in reversed(range(j))
+                    if key in tasks[i].output_schema.__required_keys__ | tasks[i].output_schema.__optional_keys__
+                ), None)
+                if provider is not None:
+                    edges.append((provider, j, key))
+        return edges
+
     def graph(self) -> list[tuple[str, str, str]]:
         """
         How the steps feed each other, as (from step, to step, key) edges:
         a step that needs or can use a key gets it from the latest step
         before it that provides it.
         """
-        edges = []
         tasks = list(self)
-        for j, task in enumerate(tasks):
-            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
-                provider = next((
-                    earlier for earlier in reversed(tasks[:j])
-                    if key in earlier.output_schema.__required_keys__ | earlier.output_schema.__optional_keys__
-                ), None)
-                if provider is not None:
-                    edges.append((provider.title, task.title, key))
-        return edges
+        return [(tasks[i].title, tasks[j].title, key) for i, j, key in self._edges()]
 
     def to_mermaid(self) -> str:
         """The steps and how they feed each other, as a Mermaid flowchart."""
-        ids = {task.title: f"s{i}" for i, task in enumerate(self)}
-        lines = ["graph TD"] + [f'    {ids[task.title]}["{task.title.replace(chr(34), chr(39))}"]' for task in self]
-        lines += [f"    {ids[source]} -->|{key}| {ids[target]}" for source, target, key in self.graph()]
+        # Inside a quoted label only a quote or a line break ends it early
+        labels = [" ".join(task.title.split()).replace('"', "#quot;") for task in self]
+        lines = ["graph TD"] + [f'    s{i}["{label}"]' for i, label in enumerate(labels)]
+        lines += [f"    s{i} -->|{key}| s{j}" for i, j, key in self._edges()]
         return "\n".join(lines)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:

@@ -1938,6 +1938,18 @@ def test_plan_graph_follows_what_steps_need():
     assert 's2["Explain"]' in mermaid
 
 
+def test_mermaid_keeps_steps_with_the_same_title_apart():
+    plan = Plan(
+        ActorTask(SQLAgent(), title="Query", instruction="Query"),
+        ActorTask(SQLAgent(), title="Query", instruction="Query"),
+        ActorTask(ChatAgent(), title='Say "why"\nnow', instruction="Explain"),
+        title="Twice",
+    )
+    mermaid = plan.to_mermaid()
+    assert 's0["Query"]' in mermaid and 's1["Query"]' in mermaid
+    assert 's2["Say #quot;why#quot; now"]' in mermaid
+
+
 async def test_answer_steps_card_lists_the_trace(llm, frame_source):
     SQLModel = make_sql_model([(frame_source.name, "tiny")])
     llm.set_responses([
