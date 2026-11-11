@@ -120,7 +120,7 @@ An answer over a table with a geometry column, or over an xarray Dataset, has a 
 
 ``` py
 income.gdf.head()               # a GeoDataFrame in EPSG:4326
-income.to_file("income.parquet")  # GeoParquet, CRS kept
+income.to_file("income.parquet", overwrite=True)  # GeoParquet, CRS kept
 income.map()                    # lonboard, or hvPlot on a basemap
 mean_air.ds                     # an xarray Dataset on lat and lon
 ```
