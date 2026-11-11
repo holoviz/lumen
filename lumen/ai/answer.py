@@ -611,6 +611,10 @@ class Answer(param.Parameterized):
         """
         Ask the question again, optionally with a hint on what to change,
         e.g. after an error or a wrong result. Returns a new Answer.
+
+        In a chat, the retry follows the conversation as it stood when this
+        answer was asked, so retrying an older answer drops the turns after
+        it from what later questions see.
         """
         return await _on_loop(self._aretry(hint))
 
