@@ -22,6 +22,7 @@ GRID = {"air": TableFacts(units={"air": "degK", "lat": "degrees_north"})}
     ("SELECT * FROM places, parks", "places and parks both have geometry but are joined without a spatial predicate"),
     ("SELECT * FROM places CROSS JOIN parks", "joined without a spatial predicate"),
     ("SELECT * FROM air WHERE air > 30", "air is in degk, so 30 looks like degrees Celsius (303.15 K)"),
+    ("SELECT * FROM air WHERE 30 < air", "air is in degk, so 30 looks like degrees Celsius (303.15 K)"),
     ("SELECT ST_Area_Spheroid(geometry) FROM parks", "reads points as (latitude, longitude)"),
     ("SELECT ST_Area(geometry) FROM parks", "ST_Area(ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true))"),
     ("SELECT ST_Length(geometry) FROM parks", "ST_Length_Spheroid(ST_FlipCoordinates(geometry))"),

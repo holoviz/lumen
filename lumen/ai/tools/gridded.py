@@ -29,6 +29,7 @@ _CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
 #: Spellings CF files use for the units above
 _ALIASES = {
     "k": "K", "degk": "K", "kelvin": "K", "degc": "degC", "celsius": "degC", "deg_c": "degC",
+    "degrees_celsius": "degC", "degree_celsius": "degC",
     "°c": "degC", "pa": "Pa", "hpa": "hPa", "mbar": "hPa", "m": "m", "mm": "mm",
     "kg m-2 s-1": "kg m-2 s-1", "kg m**-2 s**-1": "kg m-2 s-1", "mm/day": "mm day-1", "mm day-1": "mm day-1",
     "m s-1": "m s-1", "m s**-1": "m s-1", "m/s": "m s-1", "km/h": "km h-1", "km h-1": "km h-1",
@@ -45,7 +46,8 @@ class _Grid:
         ds = source._dataset
         var = ds[table]
         self.table, self.variable = table, table
-        self.units = var.attrs.get("units", "")
+        # str: a units attribute need not be a string
+        self.units = str(var.attrs.get("units", ""))
 
         def find(units: set[str], names: set[str]) -> str | None:
             for dim in var.dims:

@@ -123,3 +123,8 @@ def test_a_derived_table_is_not_a_grid():
 def test_a_climatology_by_quarter():
     source, tools = _tools(_grid())
     assert "EXTRACT(QUARTER FROM" in tools["climatology"]("air", period="quarter")
+
+
+def test_convert_units_reads_degrees_celsius_spelled_out():
+    source, tools = _tools(_grid(units="degrees_Celsius"))
+    assert '"air" + 273.15' in tools["convert_units"]("air", "K")

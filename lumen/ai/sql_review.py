@@ -192,11 +192,15 @@ def _unpredicated_joins(tree: exp.Expression, tables: dict[str, TableFacts]) -> 
 
 def _unit_mismatches(tree: exp.Expression, tables: dict[str, TableFacts]) -> list[str]:
     """A Kelvin column compared with a value that looks like Celsius, or the other way round."""
-    units = {col: unit.lower() for facts in tables.values() for col, unit in facts.units.items()}
+    # str: a units attribute need not be a string
+    units = {col: str(unit).lower() for facts in tables.values() for col, unit in facts.units.items()}
     findings = []
     seen = set()
     for comparison in tree.find_all(exp.GT, exp.GTE, exp.LT, exp.LTE, exp.EQ, exp.NEQ):
         column, value = comparison.this, _number(comparison.expression)
+        if not isinstance(column, exp.Column):
+            # Written the other way round, e.g. 25 < air
+            column, value = comparison.expression, _number(comparison.this)
         if not isinstance(column, exp.Column) or value is None or column.name not in units:
             continue
         unit = units[column.name]
