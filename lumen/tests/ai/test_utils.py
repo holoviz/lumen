@@ -1113,8 +1113,8 @@ def test_column_tooltips(sql, columns, expected):
 SPEC_LINES = ["encoding:", "  x:", "    field: species", "  y:", "    field: mass", "mark: bar"]
 
 
-def _revision(edits, lines=SPEC_LINES):
-    token = revision_lines.set(lines)
+def _revision(edits, lines=SPEC_LINES, is_yaml=True):
+    token = revision_lines.set((lines, is_yaml))
     try:
         return RetrySpec.model_validate({"chain_of_thought": "Change it", "edits": edits})
     finally:
@@ -1137,6 +1137,13 @@ def test_edit_without_op_on_another_key_is_an_insert():
 def test_edit_without_op_past_the_end_is_an_insert_and_without_line_a_delete():
     spec = _revision([{"line_no": 7, "line": "width: 400"}, {"line_no": 3}])
     assert [type(e) for e in spec.edits] == [InsertLine, DeleteLine]
+
+
+def test_sql_edit_without_op_is_a_replace_unless_past_the_end():
+    lines = ["SELECT a::INT AS a", "FROM t"]
+    spec = _revision([{"line_no": 1, "line": "SELECT b::INT AS a"}, {"line_no": 3, "line": "LIMIT 10"}], lines, is_yaml=False)
+    assert [type(e) for e in spec.edits] == [ReplaceLine, InsertLine]
+    assert apply_changes(lines, spec.edits).splitlines() == ["SELECT b::INT AS a", "FROM t", "LIMIT 10"]
 
 
 def test_edit_with_op_is_left_alone():

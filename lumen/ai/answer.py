@@ -40,7 +40,7 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import JOINED_GRIDS, read
+from ..sources.data import joins_grids, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
 from ..util import geometry_columns, log
@@ -55,7 +55,7 @@ from .export import format_output, make_preamble
 from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
-from .report import ActorTask
+from .report import ActorTask, TaskGroup
 from .sharing import sharing
 from .ui import ExplorerUI
 from .utils import errors_in_result, format_error
@@ -159,9 +159,15 @@ def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
     # The run has already loaded the data, so its length costs no query
     if not limits or len(pipeline.data) < limits[0]:
         return None
-    # Exactly at the cap: one row past it tells a cut-off result from one that fits
-    past = f"SELECT 1 FROM ({pipeline.source.get_sql_expr(pipeline.table)}) AS capped LIMIT 1 OFFSET {limits[0]}"
-    return limits[0] if len(pipeline.source.execute(past)) else None
+    # Exactly at the cap: one row more tells a cut-off result from one that
+    # fits. Only this case queries again; SQLLimit writes the source's dialect.
+    over = SQLLimit(limit=limits[0] + 1, write=pipeline.source.dialect)
+    try:
+        rows = pipeline.source.get(pipeline.table, sql_transforms=[over])
+    except Exception as e:
+        log.debug(f"Could not check whether the answer was cut at {limits[0]} rows: {e}")
+        return None
+    return limits[0] if len(rows) > limits[0] else None
 
 
 def _default_llm() -> Llm:
@@ -185,16 +191,26 @@ def _env_llm(provider: str | None, model: str | None) -> Llm:
     return llm_cls(model_kwargs={"default": {"model": model}}) if model else llm_cls()
 
 
+_LOOP_LOCK = threading.Lock()
+_LOOP_THREAD = "lumen-ask"
+
+
 @cache
+def _new_loop() -> asyncio.AbstractEventLoop:
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, name=_LOOP_THREAD, daemon=True).start()
+    return loop
+
+
 def _loop() -> asyncio.AbstractEventLoop:
     """
-    The event loop every sync ask runs on. The cached LLM client and
-    Planners hold connections and asyncio objects bound to the loop they
-    first ran on, so a fresh loop per call would break them.
+    The event loop every question runs on, ask's and aask's alike. The
+    cached LLM client and Planners hold connections and asyncio objects
+    bound to the loop they first ran on, so one loop has to serve them all.
     """
-    loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, name="lumen-ask", daemon=True).start()
-    return loop
+    # Locked so two threads asking at once do not each start a loop
+    with _LOOP_LOCK:
+        return _new_loop()
 
 
 # One Planner per Source, freed with it. Building a Planner and syncing its
@@ -205,6 +221,22 @@ _planners: weakref.WeakKeyDictionary[Source, Planner] = weakref.WeakKeyDictionar
 # Planners answering a question right now. respond keeps per-question state
 # on the Planner, so a concurrent question gets one of its own.
 _busy: weakref.WeakSet[Planner] = weakref.WeakSet()
+
+
+def _after_fork() -> None:
+    # The loop's thread does not survive a fork, and everything cached
+    # holds objects bound to that loop, so the child starts over
+    _new_loop.cache_clear()
+    _planners.clear()
+    _env_llm.cache_clear()
+    _LOOP_LOCK.release()
+
+
+if os.name == "posix":  # Windows cannot fork
+    # Held across the fork, so the child never inherits it locked
+    os.register_at_fork(
+        before=_LOOP_LOCK.acquire, after_in_parent=_LOOP_LOCK.release, after_in_child=_after_fork,
+    )
 
 
 async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
@@ -225,10 +257,15 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
         return (data if isinstance(data, Source) else read(data)), None
     if data.filters or data.transforms or data.sql_transforms:
         # The rows the pipeline selects have to be what gets queried. The
-        # copy follows the pipeline's updates, so one per pipeline is enough,
-        # and it is freed with the pipeline.
-        if (source := data.__dict__.get("_ask_source")) is None:
-            source = data._ask_source = read({data.table: data})
+        # copy follows the pipeline's updates, so one per pipeline and table
+        # is enough, and it is freed with the pipeline.
+        table, source = data.__dict__.get("_ask_source", (None, None))
+        if source is None or table != data.table:
+            source = read({data.table: data})
+            data._ask_source = (data.table, source)
+            # The Planner's metadata describes the rows of the first
+            # question, so new rows need a new Planner
+            data.param.watch(lambda event, source=source: _planners.pop(source, None), "data")
         return source, None
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
@@ -317,6 +354,11 @@ def _run(coro, first_step: str = "Planning"):
     runs on Lumen's own background loop, an interrupt cancels it, and in
     Jupyter a status line shows first_step until a step reports itself.
     """
+    if threading.current_thread().name == _LOOP_THREAD:
+        coro.close()
+        raise RuntimeError(
+            "ask would wait on the loop it runs on and never return; use await aask instead."
+        )
     titles: list[str] = []
 
     async def tracked():
@@ -336,6 +378,17 @@ def _run(coro, first_step: str = "Planning"):
             # Cancels the task on the loop, as the report stop button does
             future.cancel()
             raise
+
+
+async def _on_loop(coro):
+    """
+    Await a coroutine on Lumen's loop, which the cached LLM client and
+    Planners are bound to. Cancelling this await cancels it there too.
+    """
+    loop = _loop()
+    if asyncio.get_running_loop() is loop:
+        return await coro
+    return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
 
 
 def _write_tables(spec: Any, data_dir: Path) -> None:
@@ -360,6 +413,14 @@ def _write_tables(spec: Any, data_dir: Path) -> None:
         _write_tables(value, data_dir)
 
 
+def _drop_exceptions(group: TaskGroup) -> None:
+    """Drop the exceptions failed tasks keep, in nested groups too."""
+    for task in group:
+        task.out_context.pop("__exception__", None)
+        if isinstance(task, TaskGroup):
+            _drop_exceptions(task)
+
+
 def _build_answer(
     question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
     data: DataT | Pipeline, agents: list | None, visible_slugs: set[str] | None = None,
@@ -368,8 +429,7 @@ def _build_answer(
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         # Read once and dropped: its traceback keeps every frame's data alive
         exc = context.pop("__exception__", None)
-        for task in plan:
-            task.out_context.pop("__exception__", None)
+        _drop_exceptions(plan)
         error = context.get("__error__", "")
         if isinstance(exc, RetriesExceededError) and exc.__cause__ is not None:
             # The last attempt's error says what went wrong; the wrapper does not
@@ -449,7 +509,7 @@ async def aask(
         and the reason in ``error``, rather than raising, so it can be
         retried with ``answer.retry()``.
     """
-    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents)
+    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
 
 
 async def _aask_messages(
@@ -474,7 +534,7 @@ def ask(
     whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(aask(data, question, llm=llm, agents=agents))
+    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -511,6 +571,9 @@ class Chat(param.Parameterized):
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
+        return await _on_loop(self._aask(question))
+
+    async def _aask(self, question: str) -> Answer:
         if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
             # The context's summaries and the replies were written under
             # another sharing level, so only the questions carry over
@@ -541,7 +604,7 @@ class Chat(param.Parameterized):
 
     def ask(self, question: str) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self.aask(question))
+        return _run(self._aask(question))
 
 
 class Answer(param.Parameterized):
@@ -571,7 +634,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan.""")
+        The status of the executed Plan. A question that fails raises
+        instead of returning an Answer, so this is "success".""")
 
     truncated_at = param.Integer(default=None, allow_None=True, doc="""
         The row cap the data stopped at, when the result had more rows.
@@ -612,6 +676,9 @@ class Answer(param.Parameterized):
         Change the chart, e.g. its colors, title or encodings, without
         querying the data again. Returns a new Answer.
         """
+        return await _on_loop(self._arefine(instruction))
+
+    async def _arefine(self, instruction: str) -> Answer:
         actor = next((
             task.actor for task in self.plan or []
             if isinstance(task, ActorTask) and isinstance(task.actor, VegaLiteAgent)
@@ -641,7 +708,7 @@ class Answer(param.Parameterized):
 
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
-        return _run(self.arefine(instruction), "Revising the chart")
+        return _run(self._arefine(instruction), "Revising the chart")
 
     def with_spec(self, spec: dict | str) -> Answer:
         """
@@ -686,7 +753,14 @@ class Answer(param.Parameterized):
         """
         Ask the question again, optionally with a hint on what to change,
         e.g. after an error or a wrong result. Returns a new Answer.
+
+        In a chat, the retry follows the conversation as it stood when this
+        answer was asked, so retrying an older answer drops the turns after
+        it from what later questions see.
         """
+        return await _on_loop(self._aretry(hint))
+
+    async def _aretry(self, hint: str | None = None) -> Answer:
         messages = [{"role": "user", "content": self.question}]
         if hint:
             outcome = f"That failed: {self.error}" if self.status == "error" else self.value
@@ -701,7 +775,7 @@ class Answer(param.Parameterized):
 
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
-        return _run(self.aretry(hint))
+        return _run(self._aretry(hint))
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -754,7 +828,7 @@ class Answer(param.Parameterized):
 
     def _rebuilt(self) -> View | Pipeline | None:
         """The chart, or else the data, that code and export rebuild."""
-        if self.source in JOINED_GRIDS:
+        if joins_grids(self.source) or joins_grids(self.pipeline and self.pipeline.source):
             raise ValueError(
                 "This answer's data joins xarray data into DuckDB, and those tables live only "
                 "in memory, so they cannot be rebuilt from a spec. Read the xarray data on its "
