@@ -243,6 +243,11 @@ async def test_a_gridded_map_over_time_gets_a_time_slider():
     assert len(widgets) == 1 and len(widgets[0].options) == 3
 
 
+def test_time_dimension_reads_columns_that_are_not_strings():
+    data = pd.DataFrame({0: [1, 2], "lon": [0.0, 1.0]})
+    assert hvPlotAgent._time_dimension({"x": "lon"}, data) is None
+
+
 async def test_a_map_of_one_time_step_has_no_slider():
     spec = await hvPlotAgent()._extract_spec(
         {"pipeline": _grid_frames(steps=1)}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},

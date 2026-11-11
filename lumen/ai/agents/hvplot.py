@@ -101,12 +101,13 @@ class hvPlotAgent(BaseViewAgent):
     @staticmethod
     def _time_dimension(spec: dict[str, Any], data: Any) -> str | None:
         """The time column a gridded map's data spans more than one step of, unless it is already an axis."""
-        taken = {spec.get("x"), spec.get("y"), *(spec.get("groupby") or []), *([spec["by"]] if isinstance(spec.get("by"), str) else spec.get("by") or [])}
+        # by and groupby are lists by now, see _drop_unknown_columns
+        taken = {spec.get("x"), spec.get("y"), *(spec.get("groupby") or []), *(spec.get("by") or [])}
         for column in data.columns:
             if column in taken:
                 continue
             dtype = data[column].dtype
-            is_time = pd.api.types.is_datetime64_any_dtype(dtype) or column.lower() in ("time", "valid_time", "date")
+            is_time = pd.api.types.is_datetime64_any_dtype(dtype) or str(column).lower() in ("time", "valid_time", "date")
             if is_time and data[column].nunique() > 1:
                 return column
         return None
