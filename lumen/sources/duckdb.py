@@ -118,6 +118,8 @@ class DuckDBSource(BaseSQLSource):
         super().__init__(**params)
         # A connection handed in belongs to the caller, so close() leaves it open
         self._owns_connection = not connection
+        # The Pipelines mirrored in, and the watchers re-ingesting their data
+        self._mirror_watchers: list = []
         if connection:
             self._connection = connection
         else:
@@ -190,7 +192,7 @@ class DuckDBSource(BaseSQLSource):
                         df[col] = df[col].astype(object)
                     self._ingest_table(table, df)
                     self._set_cache(df, table)
-                mirror.param.watch(update, 'data')
+                self._mirror_watchers.append((mirror, mirror.param.watch(update, 'data')))
             df = as_pandas(df)
             try:
                 for col in df.select_dtypes(include=['string']).columns:
@@ -198,6 +200,12 @@ class DuckDBSource(BaseSQLSource):
                 self._ingest_table(table, df)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
+
+    def stop_mirroring(self) -> None:
+        """Stop re-ingesting mirrored Pipelines when their data changes; the tables keep what they hold."""
+        for mirror, watcher in self._mirror_watchers:
+            mirror.param.unwatch(watcher)
+        self._mirror_watchers = []
 
     @property
     def connection(self):

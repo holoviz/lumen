@@ -1,5 +1,6 @@
 import asyncio
 import traceback
+import weakref
 
 from typing import Annotated, Any
 
@@ -117,10 +118,12 @@ class MetadataLookup(VectorLookupTool):
 
     _item_type_name = "tables"
 
-    # Class variable to track which sources are currently being processed
-    _sources_in_progress = {}
-    _sources_processed = {}
-    _source_provenance = {}
+    # Class variables tracking the sources each vector store has processed.
+    # Keyed weakly on the store: an id() can be reused once a store is freed,
+    # and a new store would then skip its sync and stay without metadata.
+    _sources_in_progress = weakref.WeakKeyDictionary()
+    _sources_processed = weakref.WeakKeyDictionary()
+    _source_provenance = weakref.WeakKeyDictionary()
     _progress_lock = asyncio.Lock()  # Lock for thread-safe access
 
     input_schema = MetadataLookupInputs
@@ -257,28 +260,28 @@ class MetadataLookup(VectorLookupTool):
         provenance_chain = tuple(self._get_provenance_chain(context))
 
         # Use class variable to track which sources are currently being processed
-        vector_store_id = id(self.vector_store)
+        store = self.vector_store
 
         async with self._progress_lock:
-            if vector_store_id not in self._sources_in_progress:
-                self._sources_in_progress[vector_store_id] = set()
-            if vector_store_id not in self._sources_processed:
-                self._sources_processed[vector_store_id] = {}
-            if vector_store_id not in self._source_provenance:
-                self._source_provenance[vector_store_id] = {}
+            if store not in self._sources_in_progress:
+                self._sources_in_progress[store] = set()
+            if store not in self._sources_processed:
+                self._sources_processed[store] = {}
+            if store not in self._source_provenance:
+                self._source_provenance[store] = {}
 
         log_debug(f"[MetadataLookup] Starting _update_vector_store for {len(sources)} sources")
 
         for source in sources:
             async with self._progress_lock:
-                source_provenance = self._source_provenance[vector_store_id].setdefault(
+                source_provenance = self._source_provenance[store].setdefault(
                     source.name, provenance_chain
                 )
                 # Skip this source if already processed with the same (or more) tables
                 current_table_count = len(source.get_tables())
                 source_key = source.name
-                known_count = self._sources_processed[vector_store_id].get(source_key, 0)
-                if source_key in self._sources_in_progress[vector_store_id]:
+                known_count = self._sources_processed[store].get(source_key, 0)
+                if source_key in self._sources_in_progress[store]:
                     log_debug(f"[MetadataLookup] Skipping source {source.name} - already in progress")
                     continue
                 if known_count >= current_table_count:
@@ -288,8 +291,8 @@ class MetadataLookup(VectorLookupTool):
                     continue
 
                 # Mark this source as in progress with current table count
-                self._sources_in_progress[vector_store_id].add(source_key)
-                self._sources_processed[vector_store_id][source_key] = current_table_count
+                self._sources_in_progress[store].add(source_key)
+                self._sources_processed[store][source_key] = current_table_count
                 processed_sources.append(source_key)
                 log_debug(f"[MetadataLookup] Processing source {source.name}")
 
@@ -331,11 +334,11 @@ class MetadataLookup(VectorLookupTool):
                 )
 
         if tasks:
-            await self._mark_ready_when_done(tasks, vector_store_id, processed_sources)
+            await self._mark_ready_when_done(tasks, store, processed_sources)
         else:
             self._ready = self._initialized = True
             # No tasks to wait for, so clean up immediately
-            self._cleanup_sources_in_progress(vector_store_id, processed_sources)
+            self._cleanup_sources_in_progress(store, processed_sources)
 
     def _handle_ready_task_done(self, task):
         super()._handle_ready_task_done(task)
@@ -364,7 +367,13 @@ class MetadataLookup(VectorLookupTool):
         except TimeoutError:
             log_debug(f"[MetadataLookup] Timeout waiting for {len(pending_tasks)} in-flight update task(s)")
 
-    def _cleanup_sources_in_progress(self, vector_store_id, processed_sources):
+    @classmethod
+    def forget(cls, store) -> None:
+        """Forget what was synced into a store, so the next sync into it runs in full."""
+        for cache in (cls._sources_in_progress, cls._sources_processed, cls._source_provenance):
+            cache.pop(store, None)
+
+    def _cleanup_sources_in_progress(self, store, processed_sources):
         """Clean up the sources_in_progress tracking after tasks are completed."""
 
         async def _async_cleanup():
@@ -372,16 +381,16 @@ class MetadataLookup(VectorLookupTool):
                 try:
                     log_debug(f"[MetadataLookup] Cleaning up sources: {processed_sources}")
                     for source_key in processed_sources:
-                        if vector_store_id in self._sources_in_progress:
-                            self._sources_in_progress[vector_store_id].discard(source_key)
+                        if store in self._sources_in_progress:
+                            self._sources_in_progress[store].discard(source_key)
                             log_debug(f"[MetadataLookup] Removed {source_key} from in-progress")
 
                 except Exception as e:
                     log_debug(f"[MetadataLookup] Error cleaning up sources_in_progress: {e!s}")
                     # Force cleanup on error
-                    if vector_store_id in self._sources_in_progress:
+                    if store in self._sources_in_progress:
                         for source_key in processed_sources:
-                            self._sources_in_progress[vector_store_id].discard(source_key)
+                            self._sources_in_progress[store].discard(source_key)
 
         # Schedule the async cleanup and store the task reference
         # This prevents the task from being garbage collected
@@ -389,7 +398,7 @@ class MetadataLookup(VectorLookupTool):
         # Optionally, we can add error handling for the task
         cleanup_task.add_done_callback(lambda t: t.exception() if t.done() else None)
 
-    async def _mark_ready_when_done(self, tasks, vector_store_id=None, processed_sources=None):
+    async def _mark_ready_when_done(self, tasks, store=None, processed_sources=None):
         """Wait for all tasks to complete, collect results for batch upsert, and mark the tool as ready."""
         try:
             log_debug(f"[MetadataLookup] Waiting for {len(tasks)} tasks to complete")
@@ -427,8 +436,8 @@ class MetadataLookup(VectorLookupTool):
             raise
         finally:
             # Clean up sources_in_progress after tasks are done, even if there was an error
-            if vector_store_id is not None and processed_sources:
-                self._cleanup_sources_in_progress(vector_store_id, processed_sources)
+            if store is not None and processed_sources:
+                self._cleanup_sources_in_progress(store, processed_sources)
 
     async def _query_documents(
         self,
