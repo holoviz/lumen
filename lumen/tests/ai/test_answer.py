@@ -1844,6 +1844,22 @@ def test_compile_returns_the_input_type():
     assert isinstance(answer.compile(["year"])(year=2008), pl.DataFrame)
 
 
+def test_compile_keeps_the_row_cap(penguins_answer):
+    configure(max_rows=2)
+    rows = penguins_answer.compile()
+    answer = Answer(question="?", status="success", source=penguins_answer.source, sql="SELECT * FROM penguins")
+    assert len(answer.compile()()) == 2 and rows().iloc[0, 0] == 2
+
+
+def test_compile_reads_tables_only_the_pipeline_source_has(penguins_answer):
+    derived = penguins_answer.source.create_sql_expr_source({"only_2008": "SELECT * FROM penguins WHERE year = 2008"})
+    answer = Answer(
+        question="?", status="success", source=penguins_answer.source, sql="SELECT COUNT(*) AS n FROM only_2008",
+        pipeline=Pipeline(source=derived, table="only_2008"),
+    )
+    assert answer.compile()().iloc[0, 0] == 2
+
+
 def test_compile_needs_a_query_that_worked(frame_source):
     with pytest.raises(ValueError, match="no query that worked"):
         Answer(question="?", status="success").compile()

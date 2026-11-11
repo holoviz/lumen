@@ -1302,10 +1302,16 @@ class Answer(param.Parameterized):
         """
         if not self.sql or self._sql_failed or self.source is None:
             raise ValueError("This answer has no query that worked to compile.")
-        if not isinstance(self.source, DuckDBSource):
+        # The query can read tables an earlier step made, which only the
+        # pipeline's source holds
+        source = self.source if self.pipeline is None else self.pipeline.source
+        if not isinstance(source, DuckDBSource):
             # ponytail: DuckDB named parameters only; other engines bind differently
             raise ValueError("compile needs a DuckDB source, such as one from lumen.read.")
-        tree = sqlglot.parse_one(self.sql, read="duckdb")
+        try:
+            tree = sqlglot.parse_one(self.sql, read="duckdb")
+        except sqlglot.errors.ParseError as e:
+            raise ValueError(f"The answer's query could not be parsed for compile: {e}") from e
         defaults: dict[str, Any] = {}
         binders: dict[str, Callable[[Any], dict[str, Any]]] = {}
         for i, name in enumerate(params or []):
@@ -1328,8 +1334,12 @@ class Answer(param.Parameterized):
             for node in nodes:
                 _parameterize(node, kind, f"p{i}")
             binders[name] = _binder(kind, f"p{i}")
-        sql = tree.sql("duckdb")
-        source, kinds = self.source, self._input_kinds()
+        # Without parameters the query runs as written, untouched by sqlglot
+        sql = tree.sql("duckdb") if params else self.sql
+        if SQLAgent.max_rows is not None:
+            # The same row cap as the answer's own data
+            sql = SQLLimit(limit=SQLAgent.max_rows, write="duckdb").apply(sql)
+        kinds = self._input_kinds()
 
         def run(**kwargs: Any) -> Any:
             unknown = set(kwargs) - set(defaults)
