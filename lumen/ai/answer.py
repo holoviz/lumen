@@ -944,7 +944,8 @@ class Answer(param.Parameterized):
                 sql_transforms=[_clone(t) for t in pipeline.sql_transforms],
             )
         if view is not None:
-            view = _clone(view, pipeline=pipeline)
+            # Keywords that are not params, e.g. hvPlot's responsive or grid
+            view = _clone(view, pipeline=pipeline, **view.kwargs)
             editor = None if editor is None else type(editor)(component=view)
         copy = Answer(
             **{**values, "pipeline": pipeline, "view": view},

@@ -1615,10 +1615,11 @@ async def test_a_cache_hit_has_its_own_pipeline_and_chart(llm):
     source = read({"tiny": pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})})
     pipeline = Pipeline(source=source, table="tiny")
     answer = Answer(question="Q?", status="success", source=source, pipeline=pipeline,
-                    view=hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value"))
+                    view=hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value", responsive=True, grid=True))
     copy = answer._cached_copy()
     assert copy.pipeline is not answer.pipeline and copy.view is not answer.view
     assert copy.view.pipeline is copy.pipeline
+    assert copy.view.kwargs == {"responsive": True, "grid": True}
     copy.pipeline.filters.append(ConstantFilter(field="category", value="A"))
     assert answer.pipeline.filters == []
 
