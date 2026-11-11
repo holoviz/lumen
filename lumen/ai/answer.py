@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import logging
+import os
 import threading
 import weakref
 
@@ -31,7 +32,7 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import JOINED_GRIDS, read
+from ..sources.data import joins_grids, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import geometry_columns, log
 from ..views import View
@@ -99,16 +100,26 @@ def _default_llm() -> Llm:
     return llm_cls()
 
 
+_LOOP_LOCK = threading.Lock()
+_LOOP_THREAD = "lumen-ask"
+
+
 @cache
+def _new_loop() -> asyncio.AbstractEventLoop:
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, name=_LOOP_THREAD, daemon=True).start()
+    return loop
+
+
 def _loop() -> asyncio.AbstractEventLoop:
     """
-    The event loop every sync ask runs on. The cached LLM client and
-    Planners hold connections and asyncio objects bound to the loop they
-    first ran on, so a fresh loop per call would break them.
+    The event loop every question runs on, ask's and aask's alike. The
+    cached LLM client and Planners hold connections and asyncio objects
+    bound to the loop they first ran on, so one loop has to serve them all.
     """
-    loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, name="lumen-ask", daemon=True).start()
-    return loop
+    # Locked so two threads asking at once do not each start a loop
+    with _LOOP_LOCK:
+        return _new_loop()
 
 
 # One Planner per Source, freed with it. Building a Planner and syncing its
@@ -119,6 +130,22 @@ _planners: weakref.WeakKeyDictionary[Source, Planner] = weakref.WeakKeyDictionar
 # Planners answering a question right now. respond keeps per-question state
 # on the Planner, so a concurrent question gets one of its own.
 _busy: weakref.WeakSet[Planner] = weakref.WeakSet()
+
+
+def _after_fork() -> None:
+    # The loop's thread does not survive a fork, and everything cached
+    # holds objects bound to that loop, so the child starts over
+    _new_loop.cache_clear()
+    _planners.clear()
+    _default_llm.cache_clear()
+    _LOOP_LOCK.release()
+
+
+if os.name == "posix":  # Windows cannot fork
+    # Held across the fork, so the child never inherits it locked
+    os.register_at_fork(
+        before=_LOOP_LOCK.acquire, after_in_parent=_LOOP_LOCK.release, after_in_child=_after_fork,
+    )
 
 
 async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
@@ -139,10 +166,15 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
         return (data if isinstance(data, Source) else read(data)), None
     if data.filters or data.transforms or data.sql_transforms:
         # The rows the pipeline selects have to be what gets queried. The
-        # copy follows the pipeline's updates, so one per pipeline is enough,
-        # and it is freed with the pipeline.
-        if (source := data.__dict__.get("_ask_source")) is None:
-            source = data._ask_source = read({data.table: data})
+        # copy follows the pipeline's updates, so one per pipeline and table
+        # is enough, and it is freed with the pipeline.
+        table, source = data.__dict__.get("_ask_source", (None, None))
+        if source is None or table != data.table:
+            source = read({data.table: data})
+            data._ask_source = (data.table, source)
+            # The Planner's metadata describes the rows of the first
+            # question, so new rows need a new Planner
+            data.param.watch(lambda event, source=source: _planners.pop(source, None), "data")
         return source, None
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
@@ -184,12 +216,28 @@ def _run(coro):
     Run a coroutine to completion from sync code, inside Jupyter or not: it
     runs on Lumen's own background loop, and an interrupt cancels it.
     """
+    if threading.current_thread().name == _LOOP_THREAD:
+        coro.close()
+        raise RuntimeError(
+            "ask would wait on the loop it runs on and never return; use await aask instead."
+        )
     future = asyncio.run_coroutine_threadsafe(coro, _loop())
     try:
         return future.result()
     except KeyboardInterrupt:
         future.cancel()
         raise
+
+
+async def _on_loop(coro):
+    """
+    Await a coroutine on Lumen's loop, which the cached LLM client and
+    Planners are bound to. Cancelling this await cancels it there too.
+    """
+    loop = _loop()
+    if asyncio.get_running_loop() is loop:
+        return await coro
+    return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
 
 
 def _write_tables(spec: Any, data_dir: Path) -> None:
@@ -239,6 +287,16 @@ def _build_answer(
     )
 
 
+async def _aask(
+    data: DataT | Pipeline, question: str, llm: Llm | None, agents: list | None
+) -> Answer:
+    source, visible_slugs = _resolve(data)
+    planner = await _planner(source, llm or _default_llm(), agents)
+    context = _fresh_context(planner, source, visible_slugs)
+    answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
+    return answer
+
+
 async def aask(
     data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
 ) -> Answer:
@@ -262,11 +320,7 @@ async def aask(
     -------
     Answer
     """
-    source, visible_slugs = _resolve(data)
-    planner = await _planner(source, llm or _default_llm(), agents)
-    context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
-    return answer
+    return await _on_loop(_aask(data, question, llm, agents))
 
 
 def ask(
@@ -279,7 +333,7 @@ def ask(
     loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(aask(data, question, llm=llm, agents=agents))
+    return _run(_aask(data, question, llm, agents))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -313,6 +367,9 @@ class Chat(param.Parameterized):
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
+        return await _on_loop(self._aask(question))
+
+    async def _aask(self, question: str) -> Answer:
         planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
         if self._context is None:
             context = _fresh_context(planner, self._source, self._visible_slugs)
@@ -327,7 +384,7 @@ class Chat(param.Parameterized):
 
     def ask(self, question: str) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self.aask(question))
+        return _run(self._aask(question))
 
 
 class Answer(param.Parameterized):
@@ -354,7 +411,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan.""")
+        The status of the executed Plan. A question that fails raises
+        instead of returning an Answer, so this is "success".""")
 
     value = param.String(default="", doc="""
         The written answer.""")
@@ -419,7 +477,7 @@ class Answer(param.Parameterized):
 
     def _rebuilt(self) -> View | Pipeline | None:
         """The chart, or else the data, that code and export rebuild."""
-        if self.source in JOINED_GRIDS:
+        if joins_grids(self.source) or joins_grids(self.pipeline and self.pipeline.source):
             raise ValueError(
                 "This answer's data joins xarray data into DuckDB, and those tables live only "
                 "in memory, so they cannot be rebuilt from a spec. Read the xarray data on its "
