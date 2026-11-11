@@ -1339,6 +1339,18 @@ def test_answer_data_is_polars_for_polars_input():
     assert isinstance(answer.data, pl.DataFrame) and answer.data["b"].to_list() == [2, 4]
 
 
+def test_answer_data_in_polars_does_not_rerun_the_answers_pipeline():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a FROM data")
+    assert len(answer.pipeline.data) == 2
+    events = []
+    answer.pipeline.param.watch(events.append, "data")
+    answer.pipeline.source.param.watch(events.append, ["dataframe_backend", "cache_data"])
+    assert isinstance(answer.data, pl.DataFrame)
+    assert events == []
+    assert answer.pipeline.source.dataframe_backend != "polars"
+
+
 def test_answer_data_is_pyarrow_for_pyarrow_input():
     pa = pytest.importorskip("pyarrow")
     answer = _answer_over({"t": pa.table({"a": [1, 2]})}, "SELECT a FROM t")

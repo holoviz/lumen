@@ -874,8 +874,11 @@ class Answer(param.Parameterized):
         """The pipeline's data read in polars or pyarrow by the source itself, with no pandas stop on the way."""
         pipeline = self.pipeline
         source = pipeline.source
-        # A fresh Pipeline, as the answer's own holds its data already read as pandas
-        with source.param.update(dataframe_backend=backend, cache_data=False):
+        # A fresh Pipeline, as the answer's own holds its data already read as
+        # pandas. The settings are reload params, so their events are discarded:
+        # otherwise each change clears the source's caches and reruns pipelines.
+        with param.parameterized.discard_events(source), \
+                source.param.update(dataframe_backend=backend, cache_data=False):
             return Pipeline(
                 source=source, table=pipeline.table, filters=pipeline.filters, transforms=pipeline.transforms,
                 sql_transforms=pipeline.sql_transforms, dataframe_backend=backend,
