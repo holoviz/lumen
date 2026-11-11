@@ -129,10 +129,11 @@ class AltairSpec(BaseModel):
 #: Marks layered on a chart to annotate it, e.g. a threshold line or labels
 ANNOTATION_MARKS = {"rule", "text"}
 
-#: Encoding channels that place marks, which every layer shares
-POSITION_CHANNELS = {
-    "x", "y", "x2", "y2", "xOffset", "yOffset", "theta", "theta2", "radius", "radius2",
-    "longitude", "latitude", "longitude2", "latitude2", "row", "column", "facet",
+#: Encoding channels that style a chart's marks, which a rule or text
+#: annotation layered over it must not inherit
+STYLE_CHANNELS = {
+    "color", "fill", "stroke", "opacity", "fillOpacity", "strokeOpacity",
+    "strokeWidth", "strokeDash", "size", "shape", "tooltip",
 }
 
 
@@ -334,12 +335,12 @@ class VegaLiteAgent(BaseCodeAgent):
             result.pop("mark", None)
             encoding = result.get("encoding")
             if isinstance(encoding, dict) and result.get("layer"):
-                # Only positions are shared: a rule or text annotation must not
-                # inherit the chart's color or tooltip, so those move down into
-                # the chart's own layers
-                own = {k: v for k, v in encoding.items() if k not in POSITION_CHANNELS}
+                # A rule or text annotation must not inherit the chart's color
+                # or tooltip, so those move down into the chart's own layers.
+                # Other channels stay shared, e.g. the text a heatmap's labels show.
+                own = {k: v for k, v in encoding.items() if k in STYLE_CHANNELS}
                 if own:
-                    result["encoding"] = {k: v for k, v in encoding.items() if k in POSITION_CHANNELS}
+                    result["encoding"] = {k: v for k, v in encoding.items() if k not in STYLE_CHANNELS}
                     result["layer"] = [
                         layer if self._get_layer_mark_type(layer) in ANNOTATION_MARKS
                         else {**layer, "encoding": {**own, **layer.get("encoding", {})}}
