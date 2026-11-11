@@ -28,7 +28,7 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
-from ..sharing import shares_values
+from ..sharing import shares_values, sharing
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
@@ -125,6 +125,17 @@ class AltairSpec(BaseModel):
         min_length=1,
         description="One or more chart specifications. Return several charts only when the request spans distinct metrics or relationships that should not share a single plot; otherwise return exactly one."
     )
+
+
+#: Marks layered on a chart to annotate it, e.g. a threshold line or labels
+ANNOTATION_MARKS = {"rule", "text"}
+
+#: Encoding channels that style a chart's marks, which a rule or text
+#: annotation layered over it must not inherit
+STYLE_CHANNELS = {
+    "color", "fill", "stroke", "opacity", "fillOpacity", "strokeOpacity",
+    "strokeWidth", "strokeDash", "size", "shape", "tooltip",
+}
 
 
 class VegaLiteAgent(BaseCodeAgent):
@@ -280,8 +291,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
                 # If marks are different, or if update has marks like 'rule', 'text'
                 # which are typically annotations, treat as append
-                annotation_marks = {'rule', 'text'}
-                if first_update_mark != first_base_mark or first_update_mark in annotation_marks:
+                if first_update_mark != first_base_mark or first_update_mark in ANNOTATION_MARKS:
                     is_append_operation = True
 
             if is_append_operation:
@@ -324,6 +334,19 @@ class VegaLiteAgent(BaseCodeAgent):
         # heatmap's rect and text layers; dropping it piles all cells onto one
         if "layer" in update_dict:
             result.pop("mark", None)
+            encoding = result.get("encoding")
+            if isinstance(encoding, dict) and result.get("layer"):
+                # A rule or text annotation must not inherit the chart's color
+                # or tooltip, so those move down into the chart's own layers.
+                # Other channels stay shared, e.g. the text a heatmap's labels show.
+                own = {k: v for k, v in encoding.items() if k in STYLE_CHANNELS}
+                if own:
+                    result["encoding"] = {k: v for k, v in encoding.items() if k not in STYLE_CHANNELS}
+                    result["layer"] = [
+                        layer if self._get_layer_mark_type(layer) in ANNOTATION_MARKS
+                        else {**layer, "encoding": {**own, **layer.get("encoding", {})}}
+                        for layer in result["layer"]
+                    ]
 
         return result
 
@@ -390,8 +413,9 @@ class VegaLiteAgent(BaseCodeAgent):
         content as a plain-text message.
         """
         fallback = messages + [{"role": "user", "content": content}]
-        # A chart image shows the data's values
-        if not self.llm._supports_vision or not shares_values():
+        # A chart image shows the data's values and labels, e.g. customer
+        # names, so masking keeps it out too
+        if not self.llm._supports_vision or not shares_values() or sharing.mask_pii:
             return fallback
         if out is None or not isinstance(out, VegaLiteEditor):
             return fallback

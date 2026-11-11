@@ -17,6 +17,12 @@ from ..transforms.sql import SQLFilter
 from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
 
+#: File extensions xarray reads (NetCDF, HDF5, Zarr and GRIB)
+XARRAY_EXTENSIONS = (
+    "nc", "nc4", "netcdf", "h5", "hdf5", "he5", "zarr",
+    "grib", "grib2", "grb", "grb2",
+)
+
 
 def _calendar(coord: Any) -> str | None:
     """The calendar of a time coordinate, cftime or numpy, or None for any other."""

@@ -62,7 +62,7 @@ Use `{{ dialect }}` SQL dialect.
 {%- if has_geometry is defined and has_geometry %}
 
 ## Spatial SQL
-A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitude/latitude.
+A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitude/latitude; `OGC:CRS84` (GeoParquet's default) is longitude/latitude too.
 - Points are `ST_Point(lon, lat)`, longitude first.
 - `ST_Distance`, `ST_Area`, `ST_Length` and `ST_Buffer` work in the units of the CRS, so on EPSG:4326 they return degrees. Never report those as metres or kilometres, and never buffer in degrees.
 - Distances in metres: `ST_Distance_Sphere(ST_FlipCoordinates(a), ST_FlipCoordinates(b))`. The sphere and spheroid functions (`ST_Distance_Sphere`, `ST_Distance_Spheroid`, `ST_Length_Spheroid`, `ST_Area_Spheroid`) read points as (lat, lon), so flip lon/lat geometry first; without the flip the result is wrong but looks plausible.
@@ -83,7 +83,7 @@ Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as co
 - Temperatures stored in Kelvin (units `K` or `degK`, or values around 200 to 320) convert to Celsius with `- 273.15`.
 - Check the longitude range in the schema: on a 0 to 360 grid, a box from -10 to 10 is `lon >= 350 OR lon <= 10`.
 - Monthly climatology: `GROUP BY EXTRACT(MONTH FROM time)`; an anomaly is the value minus the climatology for its month.
-- The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`.
+- The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`, with x first moved into the grid's longitude range (on a 0 to 360 grid, add 360 to a negative x).
 {%- endif %}
 {%- endblock -%}
 

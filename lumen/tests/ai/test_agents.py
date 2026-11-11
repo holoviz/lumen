@@ -772,6 +772,12 @@ async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source,
     assert "first:" in message and "second:" in message
 
 
+async def test_code_prompt_mode_refuses_without_interface(llm):
+    agent = VegaLiteAgent(llm=llm, code_execution="prompt")
+    with pytest.raises(RuntimeError, match="needs an interface"):
+        await agent._execute_code("chart = None", pd.DataFrame({"A": [1]}))
+
+
 async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):
     """VegaLiteAgent Altair (code) mode returns one editor per generated chart."""
 
@@ -1527,7 +1533,7 @@ async def test_sql_agent_validate_reviews_an_area_in_degrees_once(llm):
     gpd = pytest.importorskip("geopandas")
     from shapely.geometry import Polygon
 
-    from lumen.ai.data import read
+    from lumen.sources.data import read
     source = read({"parks": gpd.GeoDataFrame({"p": ["x"]}, geometry=[Polygon([(13, 52), (14, 52), (14, 53)])], crs="EPSG:4326")})
     agent = SQLAgent(llm=llm)
     agent.revise = AsyncMock(return_value="SELECT ST_Area_Spheroid(geometry) AS area FROM parks")
@@ -1538,3 +1544,15 @@ async def test_sql_agent_validate_reviews_an_area_in_degrees_once(llm):
     assert "ST_Area(geometry) returns square degrees" in agent.revise.await_args.args[0]
     assert agent.revise.await_count == 1 and "ST_AREA_SPHEROID" in sql.upper()
     assert result["area"].iloc[0] > 1e9
+
+
+async def test_sql_revise_without_op_replaces_a_line_with_a_cast(llm):
+    """SQL casts look like YAML keys, so a missing op must not become an insert."""
+    llm.set_responses([lambda: RetrySpec.model_validate({
+        "chain_of_thought": "Cast b instead",
+        "edits": [{"line_no": 1, "line": "SELECT b::INT AS a"}],
+    })])
+    revised = await BaseLumenAgent.revise(
+        SQLAgent(llm=llm), "Use b", [], {}, spec="SELECT a::INT AS a\nFROM t", language="sql"
+    )
+    assert revised == "SELECT b::INT AS a\nFROM t"

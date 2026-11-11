@@ -23,7 +23,7 @@ answer
 
 1. `Kilo()` serves free models without an account. With an API key such as `OPENAI_API_KEY` set, leave out `llm=` and Lumen uses that provider.
 
-`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict lands in one source so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
+`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables and puts them in one source, so a question can join them. A ready-made Source can't be mixed into the dict; pass it on its own. See [Data Sources](../configuration/sources.md#in-memory-data).
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
@@ -40,7 +40,7 @@ An `Answer` renders as a card with the text, the chart, and collapsed SQL and Sp
 | `plan` / `status` | The steps the planner ran and how they ended |
 | `error` | Why the question failed, when `status` is `"error"` |
 
-While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop it; Lumen cancels the question and its LLM calls.
+While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop a `source.ask(...)` or `chat.ask(...)`; Lumen cancels the question and its LLM calls. An awaited `aask` is cancelled like any other task.
 
 ## Follow up
 
@@ -77,7 +77,7 @@ if answer.status == "error":
 
 ## Rerun, export, explore
 
-- `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results.
+- `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results. Source settings go in as they are, so check it for credentials (a database URI with a password, say) before sharing it.
 - `answer.to_cell()` puts that code into a new cell below, in Jupyter.
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
@@ -136,6 +136,8 @@ Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sa
 | marimo | A static card with the answer, a PNG and the SQL. Pick the Vega-Lite output in the cell's output menu for the interactive chart |
 | Python REPL or script | Echoing `answer` shows its status and first line; `answer.value` and `answer.sql` hold the full text |
 
+The PNG and plain-output fallbacks cover Vega-Lite charts only. An hvPlot chart (gridded data, geometry) shows in the interactive card and nowhere else.
+
 For VS Code, install the widget bridge into the same environment as the kernel:
 
 ``` bash
@@ -144,14 +146,18 @@ pip install jupyter_bokeh
 
 ## What Lumen runs
 
-Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on, so asking a question cannot execute arbitrary code on your machine.
+Lumen only writes SQL and declarative chart specs, and shows both to you. It never runs Python written by the LLM unless you turn code execution on. The SQL runs in DuckDB, which can read files on your machine (`read_text('/...')`, say), and what a query returns reaches the LLM as far as `share` allows.
 
-What the LLM sees of your data is up to `share`:
+## What goes to the LLM provider
+
+`ask` uses the first provider whose API key is set in the environment, unless you pass `llm=`. What that provider sees of your data is up to `share`:
 
 | `share` | The LLM sees |
 |---------|--------------|
 | `"sample"` (default) | Values: summaries of results, value counts, ranges, examples and chart images |
 | `"schema"` | Table and column names, types, row counts and null fractions, but no values |
-| `"none"` | Table and column names only |
+| `"none"` | Table and column names, and row counts |
+
+The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them. It is a best-effort heuristic: columns are judged by name, and a renamed column (`first_name AS who`) is only caught when its values look like emails, phone numbers, SSNs or IP addresses. For data that must not leave your machine, use `share="schema"` or `"none"`.
 
 The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.

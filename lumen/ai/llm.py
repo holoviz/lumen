@@ -15,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
@@ -314,6 +315,24 @@ def quiet_retry_log():
     itself, so that log only duplicates it.
     """
     logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
+
+
+_quiet_retries = contextvars.ContextVar("quiet_retries", default=False)
+logging.getLogger("instructor.v2.retry").addFilter(lambda record: not _quiet_retries.get())
+
+
+@contextmanager
+def quiet_retries():
+    """
+    Silence instructor's per-attempt error log for the code run inside,
+    including the tasks it starts, without changing the logger for the rest
+    of the process.
+    """
+    token = _quiet_retries.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retries.reset(token)
 
 
 def signed_in_cli_hint() -> str:
