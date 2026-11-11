@@ -53,7 +53,7 @@ answer = source.ask("What is the average body mass per species?")
 answer  # (1)!
 ```
 
-1. Renders a card with the answer, the chart and the SQL. Outside a live notebook it falls back to a Vega-Lite spec and a PNG.
+1. Renders a card with the answer, the chart and the SQL. Outside a live notebook a Vega-Lite chart falls back to its spec and a PNG; an hvPlot chart (grids, geometry) only shows in a live notebook.
 
 The `Answer` holds `value` (the text), `sql`, `spec` (the Vega-Lite spec), `pipeline` (a Pipeline over the result), `view` (the chart as a Lumen View), `plan` and `status`. `pipeline.ask(...)` limits the question to that table and its filters, and `await source.aask(...)` is the async form.
 
