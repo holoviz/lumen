@@ -32,7 +32,7 @@ from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
     _drop_exceptions, _env_llm, _loop, _planner, _planners, _records, _resolve,
-    _run, _StatusLine, aask, ask, chat, configure,
+    _row_cap_hit, _run, _StatusLine, aask, ask, chat, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -47,6 +47,7 @@ from lumen.pipeline import Pipeline
 from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
+from lumen.transforms.sql import SQLLimit
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView, hvPlotView
 
@@ -291,6 +292,13 @@ async def test_a_result_of_exactly_max_rows_is_not_reported_as_cut(ten_rows):
     configure(max_rows=10)
     answer = await _ask_every_row(ten_rows)
     assert len(answer.pipeline.data) == 10 and answer.truncated_at is None
+
+
+def test_a_failing_cap_check_does_not_break_the_answer(ten_rows):
+    pipeline = Pipeline(source=ten_rows, table="rows", sql_transforms=[SQLLimit(limit=10)])
+    assert len(pipeline.data) == 10
+    with patch.object(type(ten_rows), "get", side_effect=RuntimeError("warehouse down")):
+        assert _row_cap_hit(pipeline) is None
 
 
 def test_chart_spec_leaves_out_inline_data_at_any_depth():

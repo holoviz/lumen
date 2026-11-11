@@ -159,9 +159,15 @@ def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
     # The run has already loaded the data, so its length costs no query
     if not limits or len(pipeline.data) < limits[0]:
         return None
-    # Exactly at the cap: one row past it tells a cut-off result from one that fits
-    past = f"SELECT 1 FROM ({pipeline.source.get_sql_expr(pipeline.table)}) AS capped LIMIT 1 OFFSET {limits[0]}"
-    return limits[0] if len(pipeline.source.execute(past)) else None
+    # Exactly at the cap: one row more tells a cut-off result from one that
+    # fits. Only this case queries again; SQLLimit writes the source's dialect.
+    over = SQLLimit(limit=limits[0] + 1, write=pipeline.source.dialect)
+    try:
+        rows = pipeline.source.get(pipeline.table, sql_transforms=[over])
+    except Exception as e:
+        log.debug(f"Could not check whether the answer was cut at {limits[0]} rows: {e}")
+        return None
+    return limits[0] if len(rows) > limits[0] else None
 
 
 def _default_llm() -> Llm:
