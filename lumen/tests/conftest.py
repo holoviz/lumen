@@ -9,11 +9,11 @@ import panel as pn
 import pytest
 
 from bokeh.document import Document  # type: ignore
-from hvplot.tests.util import makeMixedDataFrame
 
 from lumen.config import config
 from lumen.sources.base import FileSource, Source
 from lumen.state import state
+from lumen.tests.utils import makeMixedDataFrame
 from lumen.util import try_import
 from lumen.variables.base import Variables
 
