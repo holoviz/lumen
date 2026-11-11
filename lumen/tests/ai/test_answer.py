@@ -2132,6 +2132,30 @@ def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
     assert answer.selection is None
 
 
+def test_a_box_over_a_by_chart_selects_across_its_categories():
+    source = read({"t": pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 2.0, 3.0, 4.0], "kind": ["a", "b", "a", "b"]})})
+    pipeline = Pipeline(source=source, table="t")
+    view = hvPlotView(pipeline=pipeline, kind="scatter", x="x", y="y", by="kind")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    first, second = answer._streams[-2:]
+    first.event(index=[0])
+    second.event(index=[1])
+    assert sorted(answer.selection["x"]) == [1.0, 4.0] and set(answer.selection["kind"]) == {"a", "b"}
+    first.event(index=[])
+    assert list(answer.selection["kind"]) == ["b"]
+
+
+def test_the_nearest_point_works_on_dates_and_scales_each_axis():
+    from lumen.ai.selection import _nearest
+    df = pd.DataFrame({
+        "when": pd.to_datetime(["2024-01-01", "2024-06-01", "2024-12-01"]), "value": [0.0, 1000.0, 2000.0],
+    })
+    # In data units the value axis would swamp the date; scaled, the date decides
+    tapped = pd.Timestamp("2024-11-20").value / 1e6
+    assert _nearest(df, "when", "value", tapped, 1100.0) == 2
+
+
 def test_a_tap_on_a_grid_selects_the_nearest_cell():
     _grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
     answer.view = hvPlotView(pipeline=answer.pipeline, kind="quadmesh", x="lon", y="lat", z="t")
@@ -2202,6 +2226,15 @@ def test_ask_about_withholds_personal_columns():
     finally:
         configure(mask_pii=False)
     assert "a@b.com" not in text and "value\n1" in text
+
+
+def test_ask_about_leaves_out_geometry_and_cuts_long_cells():
+    from lumen.ai.selection import about as _about
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    rows = gpd.GeoDataFrame({"name": ["x" * 500], "geometry": [Point(1, 2)]})
+    text = _about("What?", rows)
+    assert "POINT" not in text and "geometry" not in text and "x" * 201 not in text and "x" * 200 + "..." in text
 
 
 def test_the_static_card_has_no_ask_box(chart_answer):

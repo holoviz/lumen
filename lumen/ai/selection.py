@@ -18,7 +18,7 @@ from panel_material_ui import (
     Alert, Button, Column, Row,
 )
 
-from ..util import as_pandas
+from ..util import as_pandas, geometry_columns
 from ..views import View
 from .sharing import shares_values, sharing
 from .utils import format_error
@@ -28,6 +28,12 @@ CLICK = "lumen_click"
 
 #: Rows of a selection a follow-up prompt shows
 ABOUT_ROWS = 20
+
+#: Characters of one cell a follow-up prompt shows
+ABOUT_CELL = 200
+
+#: HoloViews elements whose glyphs a click or box selects
+_SELECTABLE = (hv.Points, hv.Scatter, hv.Bars, hv.Polygons, hv.Path)
 
 
 def with_click(spec: dict) -> dict:
@@ -63,11 +69,19 @@ def about(question: str, rows: pd.DataFrame) -> str:
             f"Asking about rows sends them to the LLM, which share={sharing.share!r} does not allow. "
             "Use lumen.ai.configure(share='sample') to ask about them."
         )
-    columns = [c for c in rows.columns if shares_values(str(c), rows[c].head(ABOUT_ROWS).tolist())]
-    shown = "" if len(rows) <= ABOUT_ROWS else f" (the first {ABOUT_ROWS} shown)"
+    # A shape's coordinates say little to the LLM and can run to megabytes
+    geometry = set(geometry_columns(rows))
+    columns = [
+        c for c in rows.columns
+        if c not in geometry and shares_values(str(c), rows[c].head(ABOUT_ROWS).tolist())
+    ]
+    shown = rows[columns].head(ABOUT_ROWS).map(
+        lambda v: v[:ABOUT_CELL] + "..." if isinstance(v, str) and len(v) > ABOUT_CELL else v
+    )
+    note = "" if len(rows) <= ABOUT_ROWS else f" (the first {ABOUT_ROWS} shown)"
     return (
         f"{question}\n\nThis is about {len(rows)} row{'s' if len(rows) != 1 else ''} of the previous answer's data"
-        f"{shown}:\n{rows[columns].head(ABOUT_ROWS).to_csv(index=False)}\n"
+        f"{note}:\n{shown.to_csv(index=False)}\n"
         "If these rows hold what is asked, answer from them without a new query. "
         "Otherwise query the data, filtering on these rows' values."
     )
@@ -129,26 +143,69 @@ def watch_clicks(view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> 
 
     def attach(obj):
         # The view draws its plot again on render, so each new plot gets its own stream
-        if (stream := _hv_stream(obj, view, on_rows)) is not None:
-            streams.append(stream)
+        streams.extend(_hv_streams(obj, view, on_rows))
 
     attach(pane.object)
     pane.param.watch(lambda event: attach(event.new), "object")
     return streams
 
 
-def _hv_stream(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> Any:
-    """A stream reporting clicks on a HoloViews plot as rows, or None for a plot it cannot read."""
+def _layers(element: Any) -> list[tuple[Any, pd.DataFrame]]:
+    """The selectable data layers of a plot, each with its rows, the basemap tiles left out."""
+    if isinstance(element, hv.NdOverlay):
+        # A by= chart: one layer per category, whose value is the overlay's key
+        names = [dim.name for dim in element.kdims]
+        return [
+            (layer, layer.dframe().assign(**dict(zip(names, key if isinstance(key, tuple) else (key,), strict=True))))
+            for key, layer in element.items() if isinstance(layer, _SELECTABLE)
+        ]
     if isinstance(element, hv.Overlay):
-        # The data layer, not the basemap tiles under it
-        layers = [layer for layer in element if not isinstance(layer, hv.Tiles)]
-        element = layers[-1] if layers else element
-    if isinstance(element, (hv.Points, hv.Scatter, hv.Bars, hv.Polygons, hv.Path)):
-        element.opts(tools=["tap", "box_select"])
-        stream = hv.streams.Selection1D(source=element)
-        data = element.dframe()
-        stream.add_subscriber(lambda index: on_rows(data.iloc[index] if index else None))
-        return stream
+        return [layer for item in element if not isinstance(item, hv.Tiles) for layer in _layers(item)]
+    return [(element, element.dframe())] if isinstance(element, _SELECTABLE) else []
+
+
+def _numeric(column: pd.Series, value: Any) -> tuple[pd.Series, float]:
+    """A column and a value on it as plain numbers, so distances can be taken on dates too."""
+    if pd.api.types.is_datetime64_any_dtype(column):
+        # Bokeh reports a date axis in milliseconds since the epoch
+        stamp = pd.to_datetime(value, unit="ms") if isinstance(value, (int, float)) else pd.Timestamp(value)
+        return column.astype("int64").astype(float), float(stamp.value)
+    return column.astype(float), float(value)
+
+
+def _nearest(df: pd.DataFrame, xcol: str, ycol: str, x: Any, y: Any) -> Any:
+    """The index of the row nearest a point, with each axis scaled by its range."""
+    distance = 0
+    for col, value in ((xcol, x), (ycol, y)):
+        column, value = _numeric(df[col], value)
+        span = (column.max() - column.min()) or 1.0
+        distance = distance + ((column - value) / span) ** 2
+    return distance.idxmin()
+
+
+def _hv_streams(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> list:
+    """The streams reporting clicks on a HoloViews plot as rows, none for a plot it cannot read."""
+    if layers := _layers(element):
+        # A box can cover several layers, so each layer's pick is kept and all are reported
+        picked: dict[int, pd.DataFrame] = {}
+
+        def report(i, data, index):
+            if index:
+                picked[i] = data.iloc[index]
+            else:
+                picked.pop(i, None)
+            on_rows(pd.concat(picked.values()) if picked else None)
+
+        streams = []
+        for i, (layer, data) in enumerate(layers):
+            layer.opts(tools=["tap", "box_select"])
+            stream = hv.streams.Selection1D(source=layer)
+            stream.add_subscriber(lambda index, i=i, data=data: report(i, data, index))
+            streams.append(stream)
+        return streams
+    if isinstance(element, (hv.Overlay, hv.NdOverlay)):
+        grids = [item for item in element.values() if not isinstance(item, hv.Tiles)]
+        element = grids[-1] if grids else element
     if isinstance(element, (hv.QuadMesh, hv.Image, hv.DynamicMap)):
         stream = hv.streams.Tap(source=element)
         xcol, ycol = (dim.name for dim in element.kdims[:2]) if len(element.kdims) >= 2 else (view.x, view.y)
@@ -157,11 +214,10 @@ def _hv_stream(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None]
             df = as_pandas(view.pipeline.data)
             if x is None or y is None or xcol not in df or ycol not in df:
                 return
-            nearest = ((df[xcol] - x) ** 2 + (df[ycol] - y) ** 2).idxmin()
-            on_rows(df.loc[[nearest]])
+            on_rows(df.loc[[_nearest(df, xcol, ycol, x, y)]])
         stream.add_subscriber(on_tap)
-        return stream
-    return None
+        return [stream]
+    return []
 
 
 def ask_box(owner: param.Parameterized, ask: Callable[[str], Awaitable[Any]]) -> Column:
