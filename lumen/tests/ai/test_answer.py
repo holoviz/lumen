@@ -29,15 +29,15 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
-    _loop, _planner, _planners, _records, _resolve, _run, _StatusLine, aask,
-    ask, chat,
+    _drop_exceptions, _loop, _planner, _planners, _records, _resolve, _run,
+    _StatusLine, aask, ask, chat,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
-from lumen.ai.report import ActorTask
+from lumen.ai.report import ActorTask, TaskGroup
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -868,3 +868,10 @@ def test_records_turn_every_missing_value_into_null():
         "ints": pd.Series([1, None], dtype="Int64"),
     })
     assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]
+
+
+def test_failed_answers_drop_exceptions_in_nested_task_groups():
+    inner = ActorTask(ChatAgent(), title="Explain")
+    inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
+    _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
+    assert inner.out_context == {"sql": "SELECT 1"}

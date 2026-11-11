@@ -49,7 +49,7 @@ from .export import format_output, make_preamble
 from .llm import (
     Llm, get_available_llm, quiet_retries, signed_in_cli_hint,
 )
-from .report import ActorTask
+from .report import ActorTask, TaskGroup
 from .ui import ExplorerUI
 from .utils import errors_in_result, format_error
 
@@ -329,6 +329,14 @@ def _write_tables(spec: Any, data_dir: Path) -> None:
         _write_tables(value, data_dir)
 
 
+def _drop_exceptions(group: TaskGroup) -> None:
+    """Drop the exceptions failed tasks keep, in nested groups too."""
+    for task in group:
+        task.out_context.pop("__exception__", None)
+        if isinstance(task, TaskGroup):
+            _drop_exceptions(task)
+
+
 def _build_answer(
     question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
     data: DataT | Pipeline, agents: list | None, visible_slugs: set[str] | None = None,
@@ -337,8 +345,7 @@ def _build_answer(
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         # Read once and dropped: its traceback keeps every frame's data alive
         exc = context.pop("__exception__", None)
-        for task in plan:
-            task.out_context.pop("__exception__", None)
+        _drop_exceptions(plan)
         error = context.get("__error__", "")
         if isinstance(exc, RetriesExceededError) and exc.__cause__ is not None:
             # The last attempt's error says what went wrong; the wrapper does not
