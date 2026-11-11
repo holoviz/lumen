@@ -534,6 +534,23 @@ def test_filter_change_drops_the_cached_planner(frame_source):
     assert _resolve(pipeline)[0] is source
 
 
+async def test_a_question_after_a_filter_change_syncs_the_new_planners_metadata(llm, frame_source):
+    from lumen.ai.tools import MetadataLookup
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    _chat_only(llm)
+    await aask(pipeline, "How many rows?", llm=llm)
+    source, _ = _resolve(pipeline)
+    store = _planners[source].context["vector_store"]
+    assert list(MetadataLookup._sources_processed[store].values()) == [1]
+    pipeline.filters[0].value = "B"
+    # Forgotten with its Planner, so no later store can be taken for it and skip its sync
+    assert store not in MetadataLookup._sources_processed
+    _chat_only(llm)
+    await aask(pipeline, "How many rows?", llm=llm)
+    new_store = _planners[source].context["vector_store"]
+    assert new_store is not store and list(MetadataLookup._sources_processed[new_store].values()) == [1]
+
+
 def test_table_change_rebuilds_the_filtered_source():
     source = read({
         "tiny": pd.DataFrame({"category": ["A", "B"], "value": [1, 2]}),
@@ -543,7 +560,7 @@ def test_table_change_rebuilds_the_filtered_source():
     first, _ = _resolve(pipeline)
     pipeline.table = "other"
     second, _ = _resolve(pipeline)
-    assert second is not first
+    assert second is not first and first._mirror_watchers == []
     assert second.get_tables() == ["other"]
     assert sorted(second.get("other")["value"]) == [3, 4]
 

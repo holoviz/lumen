@@ -172,7 +172,8 @@ async def test_prompts_mask_a_renamed_personal_column_by_its_values(frame):
     configure(mask_pii=True)
     prompts = await _prompts_for_a_question(frame, "SELECT email AS c, city FROM sales")
     assert "@example." not in prompts
-    assert SECRET_CITY in prompts
+    # A row of the result summary, which only the summary path writes
+    assert f"| {MASK} | {SECRET_CITY} |" in prompts
 
 
 def test_masking_leaves_out_the_exploration_tool_but_keeps_distinct_values():
