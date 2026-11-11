@@ -718,8 +718,8 @@ class DuckDBSource(BaseSQLSource):
         with self._connection.cursor() as cursor:
             return self._fetch_df(cursor, sql_query, params)
 
-    def fetch(self, sql_query: str, params: list | dict | None = None):
-        """Fetch query results in `dataframe_backend`, built by DuckDB itself.
+    def fetch(self, sql_query: str, params: list | dict | None = None, backend: str | None = None):
+        """Fetch query results in `dataframe_backend`, or backend if given, built by DuckDB itself.
 
         Not the inherited fetch, which reads through execute. Two reasons: the
         data path asks for date_as_object so a DATE stays a date rather than
@@ -732,7 +732,7 @@ class DuckDBSource(BaseSQLSource):
         with self._connection.cursor() as cursor:
             return self._fetch_df(
                 cursor, sql_query, params, date_as_object=True,
-                backend=self.dataframe_backend,
+                backend=backend or self.dataframe_backend,
             )
 
     def get_tables(self):
