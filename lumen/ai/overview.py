@@ -22,9 +22,10 @@ from .answer import (
 )
 from .data_quality import lint_data
 from .llm import Llm
-from .sharing import sharing
+from .sharing import shares_values, sharing
 from .table_stats import get_stats_store
 from .usage import UsageCollector
+from .utils import format_error
 
 #: Rows the quality checks read per table
 SAMPLE_ROWS = 5_000
@@ -103,6 +104,10 @@ class Overview(param.Parameterized):
             button.loading = True
             try:
                 answer = await self.source.aask(question)
+            except Exception as e:
+                # A click has no caller to raise to, e.g. on a rate limit
+                answers.append(Alert(object=format_error(e), title="Lumen could not answer", severity="error"))
+                return
             finally:
                 button.loading = False
             answers.append(answer.__panel__())
@@ -143,7 +148,15 @@ def _describe(table: str, rows: int | None, columns: pd.DataFrame) -> str:
     """
     if sharing.share == "none":
         return f"Table {table}:\n" + "\n".join(columns["column"])
-    keep = ["column", "type"] + (["min", "max"] if sharing.share == "sample" else [])
+    keep = ["column", "type"]
+    if sharing.share == "sample" and {"min", "max"} <= set(columns):
+        keep += ["min", "max"]
+        columns = columns.copy()
+        # Ranges are values too, e.g. of a birthdate or a phone number stored as int
+        hidden = [
+            not shares_values(row.column, [row.min, row.max]) for row in columns.itertuples()
+        ]
+        columns.loc[hidden, ["min", "max"]] = None
     return f"Table {table} ({rows if rows is not None else 'unknown'} rows):\n" + columns[keep].to_csv(index=False)
 
 

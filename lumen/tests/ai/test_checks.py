@@ -7,7 +7,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.checks import acheck
-from lumen.ai.data import read
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 
 
@@ -26,6 +26,7 @@ class RuleLLM(MockLLM):
 
     async def invoke(self, messages, system="", response_model=None, **kwargs):
         self.prompt = messages[-1]["content"]
+        self.asked_for = response_model.model_fields["query"].description
         return response_model(query=self.query)
 
 
@@ -39,6 +40,19 @@ async def test_a_sql_rule_that_breaks_returns_the_offending_rows(penguins):
     result = await acheck(penguins, "SELECT * FROM penguins WHERE body_mass_g <= 0")
     assert not result and result.count == 1
     assert result.rows.to_dict("records") == [{"species": "Chinstrap", "body_mass_g": -1}]
+
+
+async def test_a_rule_ending_in_a_semicolon_still_runs(penguins):
+    result = await acheck(penguins, "SELECT * FROM penguins WHERE body_mass_g <= 0;")
+    assert result.count == 1
+
+
+async def test_the_llm_writes_the_sources_own_dialect(penguins, monkeypatch):
+    llm = RuleLLM()
+    monkeypatch.setattr(type(penguins), "dialect", "postgres")
+    result = await acheck(penguins, "no penguin weighs under 2 kg", llm=llm)
+    assert result.count == 2
+    assert llm.asked_for.startswith("One postgres SELECT")
 
 
 async def test_a_failed_check_fails_an_assert_with_its_rows(penguins):

@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+from ....sources.xarray_sql import XARRAY_EXTENSIONS
+
 # ─────────────────────────────────────────────────────────────────────────────
 # File type constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-XARRAY_EXTENSIONS = (
-    "nc", "nc4", "netcdf", "h5", "hdf5", "he5", "zarr",
-    "grib", "grib2", "grb", "grb2",
-)
 
 TABLE_EXTENSIONS = ("csv", "parquet", "parq", "json", "xlsx", "geojson", "wkt", "zip", "html", "htm", *XARRAY_EXTENSIONS)
 
