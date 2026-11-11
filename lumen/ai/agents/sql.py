@@ -1083,7 +1083,11 @@ class SQLAgent(BaseLumenAgent):
         """
         timed_out = False
         reviewed = False
-        for i in range(max_retries):
+        # The review's revision is not a failed attempt, so it adds one
+        attempts = max_retries
+        for i in range(max_retries + 1):
+            if i >= attempts:
+                break
             if attempt is not None:
                 # Kept current so a failure reports the query that last ran
                 attempt["sql"] = sql_query
@@ -1100,7 +1104,7 @@ class SQLAgent(BaseLumenAgent):
                     step.stream(f"\n\n❌ SQL cleaning failed: {e}")
                 validate_read_only_sql(sql_query, source.dialect)
             except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
-                if i == max_retries - 1:
+                if i == attempts - 1:
                     raise
                 sql_query = await self.revise(
                     format_error(e), messages, context, spec=sql_query,
@@ -1116,6 +1120,7 @@ class SQLAgent(BaseLumenAgent):
                     table.name for table in sqlglot.parse_one(sql_query, read=read).find_all(sqlglot.exp.Table)
                 } & set(source.get_tables())
                 if findings := review_sql(sql_query, self._table_facts(source, sorted(read_tables)), read):
+                    attempts += 1
                     step.stream("\n\n⚠️ " + " ".join(findings))
                     sql_query = await self.revise(
                         "Check this query before it runs: " + " ".join(findings), messages, context,
@@ -1139,20 +1144,20 @@ class SQLAgent(BaseLumenAgent):
                         f"Table {table!r} is listed by source {source.name!r} "
                         f"but the engine cannot resolve it: {feedback}"
                     )
-                elif isinstance(e, QueryTimeoutError) and (timed_out or i == max_retries - 1):
+                elif isinstance(e, QueryTimeoutError) and (timed_out or i == attempts - 1):
                     unrecoverable = f"The revised query timed out as well: {feedback}"
                 else:
                     unrecoverable = None
                 if unrecoverable:
                     step.stream(f"\n\n❌ SQL validation failed: {unrecoverable}")
                     raise DeterministicError(unrecoverable) from e
-                if i == max_retries - 1:
-                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {feedback}")
+                if i == attempts - 1:
+                    step.stream(f"\n\n❌ SQL validation failed after {attempts} attempts: {feedback}")
                     raise
                 timed_out = timed_out or isinstance(e, QueryTimeoutError)
 
                 # Retry with LLM fix
-                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {feedback}")
+                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{attempts}): {feedback}")
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
