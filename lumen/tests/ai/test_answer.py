@@ -21,8 +21,8 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _busy, _default_agents, _default_llm, _planner, _planners,
-    _resolve, aask, ask,
+    _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
+    _loop, _planner, _planners, _resolve, aask, ask,
 )
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.config import SOURCE_TABLE_SEPARATOR
@@ -163,6 +163,29 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
     assert _resolve(pipeline)[0] is source
 
 
+def test_filter_change_drops_the_cached_planner(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    source, _ = _resolve(pipeline)
+    _planners[source] = MagicMock()
+    pipeline.filters[0].value = "B"
+    assert source not in _planners
+    assert _resolve(pipeline)[0] is source
+
+
+def test_table_change_rebuilds_the_filtered_source():
+    source = read({
+        "tiny": pd.DataFrame({"category": ["A", "B"], "value": [1, 2]}),
+        "other": pd.DataFrame({"category": ["A", "A"], "value": [3, 4]}),
+    })
+    pipeline = Pipeline(source=source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    first, _ = _resolve(pipeline)
+    pipeline.table = "other"
+    second, _ = _resolve(pipeline)
+    assert second is not first
+    assert second.get_tables() == ["other"]
+    assert sorted(second.get("other")["value"]) == [3, 4]
+
+
 def _chat_only(llm):
     llm.set_responses([
         _plan(("ChatAgent", "Explain")),
@@ -177,7 +200,7 @@ def test_ask_without_a_running_loop(llm, frame_source):
 
 
 def test_ask_errors_do_not_chain_the_loop_check(frame_source):
-    with patch("lumen.ai.answer.aask", side_effect=ValueError("boom")):
+    with patch("lumen.ai.answer._aask", side_effect=ValueError("boom")):
         with pytest.raises(ValueError) as info:
             ask(frame_source, "q")
     assert info.value.__context__ is None
@@ -212,10 +235,40 @@ def test_sync_ask_runs_every_question_on_one_loop(llm, frame_source):
     assert loops[0] is loops[1]
 
 
+async def test_aask_runs_on_the_loop_sync_ask_uses(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops == [_loop()]
+
+
+def test_ask_from_lumens_loop_raises_instead_of_deadlocking(frame_source):
+    async def nested():
+        ask(frame_source, "q")
+
+    with pytest.raises(RuntimeError, match="await aask"):
+        asyncio.run_coroutine_threadsafe(nested(), _loop()).result(timeout=5)
+
+
+def test_fork_resets_the_loop_and_caches(frame_source):
+    loop = _loop()
+    _planners[frame_source] = MagicMock()
+    _LOOP_LOCK.acquire()  # as the before-fork hook does
+    _after_fork()
+    assert frame_source not in _planners
+    assert _loop() is not loop
+    loop.call_soon_threadsafe(loop.stop)
+
+
 def test_interrupting_sync_ask_cancels_the_question(frame_source):
     future = MagicMock()
     future.result.side_effect = KeyboardInterrupt
-    with patch("lumen.ai.answer.aask", new=MagicMock()), \
+    with patch("lumen.ai.answer._aask", new=MagicMock()), \
             patch("lumen.ai.answer.asyncio.run_coroutine_threadsafe", return_value=future):
         with pytest.raises(KeyboardInterrupt):
             ask(frame_source, "q")

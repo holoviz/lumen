@@ -7,6 +7,7 @@ import asyncio
 import base64
 import html
 import logging
+import os
 import threading
 import weakref
 
@@ -94,16 +95,26 @@ def _default_llm() -> Llm:
     return llm_cls()
 
 
+_LOOP_LOCK = threading.Lock()
+_LOOP_THREAD = "lumen-ask"
+
+
 @cache
+def _new_loop() -> asyncio.AbstractEventLoop:
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, name=_LOOP_THREAD, daemon=True).start()
+    return loop
+
+
 def _loop() -> asyncio.AbstractEventLoop:
     """
-    The event loop every sync ask runs on. The cached LLM client and
-    Planners hold connections and asyncio objects bound to the loop they
-    first ran on, so a fresh loop per call would break them.
+    The event loop every question runs on, ask's and aask's alike. The
+    cached LLM client and Planners hold connections and asyncio objects
+    bound to the loop they first ran on, so one loop has to serve them all.
     """
-    loop = asyncio.new_event_loop()
-    threading.Thread(target=loop.run_forever, name="lumen-ask", daemon=True).start()
-    return loop
+    # Locked so two threads asking at once do not each start a loop
+    with _LOOP_LOCK:
+        return _new_loop()
 
 
 # One Planner per Source, freed with it. Building a Planner and syncing its
@@ -114,6 +125,22 @@ _planners: weakref.WeakKeyDictionary[Source, Planner] = weakref.WeakKeyDictionar
 # Planners answering a question right now. respond keeps per-question state
 # on the Planner, so a concurrent question gets one of its own.
 _busy: weakref.WeakSet[Planner] = weakref.WeakSet()
+
+
+def _after_fork() -> None:
+    # The loop's thread does not survive a fork, and everything cached
+    # holds objects bound to that loop, so the child starts over
+    _new_loop.cache_clear()
+    _planners.clear()
+    _default_llm.cache_clear()
+    _LOOP_LOCK.release()
+
+
+if os.name == "posix":  # Windows cannot fork
+    # Held across the fork, so the child never inherits it locked
+    os.register_at_fork(
+        before=_LOOP_LOCK.acquire, after_in_parent=_LOOP_LOCK.release, after_in_child=_after_fork,
+    )
 
 
 async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
@@ -134,10 +161,15 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
         return (data if isinstance(data, Source) else read(data)), None
     if data.filters or data.transforms or data.sql_transforms:
         # The rows the pipeline selects have to be what gets queried. The
-        # copy follows the pipeline's updates, so one per pipeline is enough,
-        # and it is freed with the pipeline.
-        if (source := data.__dict__.get("_ask_source")) is None:
-            source = data._ask_source = read({data.table: data})
+        # copy follows the pipeline's updates, so one per pipeline and table
+        # is enough, and it is freed with the pipeline.
+        table, source = data.__dict__.get("_ask_source", (None, None))
+        if source is None or table != data.table:
+            source = read({data.table: data})
+            data._ask_source = (data.table, source)
+            # The Planner's metadata describes the rows of the first
+            # question, so new rows need a new Planner
+            data.param.watch(lambda event, source=source: _planners.pop(source, None), "data")
         return source, None
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
@@ -159,6 +191,33 @@ def _build_answer(question: str, plan: Plan, outputs: list, context: dict[str, A
         value=str(messages[-1].object) if messages else "",
         view=view,
     )
+
+
+async def _aask(
+    data: DataT | Pipeline, question: str, llm: Llm | None, agents: list | None
+) -> Answer:
+    source, visible_slugs = _resolve(data)
+    planner = await _planner(source, llm or _default_llm(), agents)
+    _busy.add(planner)
+    try:
+        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
+            # Each question starts from the Planner's own context, which holds
+            # only its shared vector stores, so nothing one question adds is
+            # seen by the next
+            context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
+            if visible_slugs is not None:
+                context["visible_slugs"] = visible_slugs
+            await planner.sync(context)
+            plan = await planner.respond([{"role": "user", "content": question}], context)
+            if plan is None:
+                raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+            outputs, out_context = await plan.execute()
+    finally:
+        _busy.discard(planner)
+    if plan.status == "error":
+        failed = next((task.title for task in plan if task.status == "error"), plan.title)
+        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
+    return _build_answer(question, plan, outputs, out_context)
 
 
 async def aask(
@@ -184,28 +243,14 @@ async def aask(
     -------
     Answer
     """
-    source, visible_slugs = _resolve(data)
-    planner = await _planner(source, llm or _default_llm(), agents)
-    _busy.add(planner)
-    try:
-        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
-            # Each question starts from the Planner's own context, which holds
-            # only its shared vector stores, so nothing one question adds is
-            # seen by the next
-            context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
-            if visible_slugs is not None:
-                context["visible_slugs"] = visible_slugs
-            await planner.sync(context)
-            plan = await planner.respond([{"role": "user", "content": question}], context)
-            if plan is None:
-                raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-            outputs, out_context = await plan.execute()
-    finally:
-        _busy.discard(planner)
-    if plan.status == "error":
-        failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
-    return _build_answer(question, plan, outputs, out_context)
+    loop = _loop()
+    if asyncio.get_running_loop() is loop:
+        return await _aask(data, question, llm, agents)
+    # Run on Lumen's loop, which the cached LLM client and Planners are
+    # bound to; cancelling this await cancels the question there too
+    return await asyncio.wrap_future(
+        asyncio.run_coroutine_threadsafe(_aask(data, question, llm, agents), loop)
+    )
 
 
 def ask(
@@ -218,7 +263,12 @@ def ask(
     loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    future = asyncio.run_coroutine_threadsafe(aask(data, question, llm=llm, agents=agents), _loop())
+    loop = _loop()
+    if threading.current_thread().name == _LOOP_THREAD:
+        raise RuntimeError(
+            "ask would wait on the loop it runs on and never return; use await aask instead."
+        )
+    future = asyncio.run_coroutine_threadsafe(_aask(data, question, llm, agents), loop)
     try:
         return future.result()
     except KeyboardInterrupt:
@@ -247,7 +297,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan.""")
+        The status of the executed Plan. A question that fails raises
+        instead of returning an Answer, so this is "success".""")
 
     value = param.String(default="", doc="""
         The written answer.""")
