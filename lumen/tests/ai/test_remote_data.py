@@ -9,9 +9,9 @@ except ModuleNotFoundError:
 
 import duckdb
 
-import lumen.ai.data as data_module
+import lumen.sources.data as data_module
 
-from lumen.ai.data import read, resolve_data
+from lumen.sources.data import read, resolve_data
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.xarray_sql import XArraySQLSource
 

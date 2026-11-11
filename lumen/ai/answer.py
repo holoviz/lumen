@@ -8,24 +8,23 @@ import base64
 import html
 import json
 import logging
-import math
 import os
+import threading
 import time
 import weakref
 
-from concurrent.futures import (
-    CancelledError as FutureCancelledError, ThreadPoolExecutor,
-    TimeoutError as FutureTimeoutError,
-)
-from contextlib import suppress
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+import pandas as pd
 import panel as pn
 import param
 import yaml
 
+from markdown_it import MarkdownIt
 from panel.config import panel_extension
 from panel.io.state import state
 from panel.pane import Markdown, Vega
@@ -41,6 +40,7 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
+from ..sources.data import joins_grids, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
 from ..util import geometry_columns, log
@@ -50,20 +50,23 @@ from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
 from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
-from .data import read
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
-    Llm, get_available_llm, llm_class, quiet_retry_log, signed_in_cli_hint,
+    Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
-from .report import ActorTask
+from .report import ActorTask, TaskGroup
 from .sharing import sharing
-from .story import _prose_to_html
+from .tools import MetadataLookup
 from .ui import ExplorerUI
-from .utils import format_error
+from .utils import errors_in_result, format_error
 
 if TYPE_CHECKING:
-    from .data import DataT
+    from ..sources.data import DataT
+
+
+# HTML off: the answer is LLM output and goes into the notebook's text/html
+_MARKDOWN = MarkdownIt("gfm-like", {"html": False})
 
 
 def _in_kernel() -> bool:
@@ -90,9 +93,10 @@ def _has_geometry(source: Source) -> bool:
     )
 
 
-def _default_agents(source: Source) -> list:
+async def _default_agents(source: Source) -> list:
     agents = [ChatAgent(), SQLAgent(), VegaLiteAgent()]
-    if isinstance(source, XArraySQLSource) or _has_geometry(source):
+    # The probe queries every table, which can be slow on a remote database
+    if isinstance(source, XArraySQLSource) or await asyncio.to_thread(_has_geometry, source):
         agents.append(hvPlotAgent())
     return agents
 
@@ -104,29 +108,29 @@ _UNSET: Any = object()
 
 
 def configure(
-    *, llm: Llm | None = None, agents: list | None = None, max_rows: int | None = _UNSET,
-    share: str | None = None, mask_pii: bool | None = None,
+    *, llm: Llm | None = _UNSET, agents: list | None = _UNSET, max_rows: int | None = _UNSET,
+    share: Literal["sample", "schema", "none"] | None = None, mask_pii: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
 
-    A question's own llm= or agents= still wins. Without either set
-    here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
+    A question's own llm= or agents= still wins, and None goes back to
+    the automatic choice. Without either set here, LUMEN_AI_PROVIDER (e.g. "kilo") and LUMEN_AI_MODEL pick the
     LLM, and otherwise the first provider with an API key set.
 
     max_rows caps the rows an answer's data holds (1,000,000 by
     default), as a LIMIT on its query; None lifts the cap.
 
     share sets what of the data prompts contain: "sample" (values, as
-    before), "schema" (structure, no values) or "none" (names only).
+    before), "schema" (structure, no values) or "none" (names and row counts only).
     mask_pii withholds the values of columns that look like personal
     data. Both apply to the chat UI too; see lumen.ai.sharing.
 
     Returns the settings now in effect.
     """
-    if llm is not None:
+    if llm is not _UNSET:
         _settings["llm"] = llm
-    if agents is not None:
+    if agents is not _UNSET:
         _settings["agents"] = agents
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
@@ -135,13 +139,36 @@ def configure(
     return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
 
 
+def _without_values(spec: Any) -> Any:
+    """A Vega-Lite spec without its inline data, at any depth (layers, concats)."""
+    if isinstance(spec, list):
+        return [_without_values(item) for item in spec]
+    if not isinstance(spec, dict):
+        return spec
+    return {
+        key: {k: v for k, v in value.items() if k != "values"} if key == "data" and isinstance(value, dict)
+        else _without_values(value)
+        for key, value in spec.items() if key != "datasets"
+    }
+
+
 def _row_cap_hit(pipeline: Pipeline | None) -> int | None:
     """The row cap the pipeline's data stopped at, if the cap cut it short."""
     limits = [] if pipeline is None else [
         t.limit for t in pipeline.sql_transforms if isinstance(t, SQLLimit) and t.limit is not None
     ]
     # The run has already loaded the data, so its length costs no query
-    return limits[0] if limits and len(pipeline.data) >= limits[0] else None
+    if not limits or len(pipeline.data) < limits[0]:
+        return None
+    # Exactly at the cap: one row more tells a cut-off result from one that
+    # fits. Only this case queries again; SQLLimit writes the source's dialect.
+    over = SQLLimit(limit=limits[0] + 1, write=pipeline.source.dialect)
+    try:
+        rows = pipeline.source.get(pipeline.table, sql_transforms=[over])
+    except Exception as e:
+        log.debug(f"Could not check whether the answer was cut at {limits[0]} rows: {e}")
+        return None
+    return limits[0] if len(rows) > limits[0] else None
 
 
 def _default_llm() -> Llm:
@@ -165,19 +192,70 @@ def _env_llm(provider: str | None, model: str | None) -> Llm:
     return llm_cls(model_kwargs={"default": {"model": model}}) if model else llm_cls()
 
 
+_LOOP_LOCK = threading.Lock()
+_LOOP_THREAD = "lumen-ask"
+
+
+@cache
+def _new_loop() -> asyncio.AbstractEventLoop:
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, name=_LOOP_THREAD, daemon=True).start()
+    return loop
+
+
+def _loop() -> asyncio.AbstractEventLoop:
+    """
+    The event loop every question runs on, ask's and aask's alike. The
+    cached LLM client and Planners hold connections and asyncio objects
+    bound to the loop they first ran on, so one loop has to serve them all.
+    """
+    # Locked so two threads asking at once do not each start a loop
+    with _LOOP_LOCK:
+        return _new_loop()
+
+
 # One Planner per Source, freed with it. Building a Planner and syncing its
 # metadata costs about half a second, and a reused one sends the LLM exactly
 # the prompts a fresh one would.
 _planners: weakref.WeakKeyDictionary[Source, Planner] = weakref.WeakKeyDictionary()
 
+# Planners answering a question right now. respond keeps per-question state
+# on the Planner, so a concurrent question gets one of its own.
+_busy: weakref.WeakSet[Planner] = weakref.WeakSet()
 
-def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
+
+def _after_fork() -> None:
+    # The loop's thread does not survive a fork, and everything cached
+    # holds objects bound to that loop, so the child starts over
+    _new_loop.cache_clear()
+    _planners.clear()
+    _env_llm.cache_clear()
+    _LOOP_LOCK.release()
+
+
+if os.name == "posix":  # Windows cannot fork
+    # Held across the fork, so the child never inherits it locked
+    os.register_at_fork(
+        before=_LOOP_LOCK.acquire, after_in_parent=_LOOP_LOCK.release, after_in_child=_after_fork,
+    )
+
+
+async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
     if agents is not None:
         return Planner(llm=llm, agents=agents, headless=True)
     planner = _planners.get(source)
-    if planner is None or planner.llm is not llm:
-        planner = _planners[source] = Planner(llm=llm, agents=_default_agents(source), headless=True)
+    if planner is not None and planner.llm is llm and planner not in _busy:
+        return planner
+    planner = Planner(llm=llm, agents=await _default_agents(source), headless=True)
+    if (cached := _planners.get(source)) is None or cached not in _busy:
+        _planners[source] = planner
     return planner
+
+
+def _drop_planner(source: Source) -> None:
+    """Drop a source's cached Planner, and what its metadata lookup synced, so new rows are read afresh."""
+    if (planner := _planners.pop(source, None)) is not None:
+        MetadataLookup.forget(planner.context["vector_store"])
 
 
 def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
@@ -185,14 +263,28 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
     if not isinstance(data, Pipeline):
         return (data if isinstance(data, Source) else read(data)), None
     if data.filters or data.transforms or data.sql_transforms:
-        # The rows the pipeline selects have to be what gets queried
-        return read({data.table: data}), None
+        # The rows the pipeline selects have to be what gets queried. The
+        # copy follows the pipeline's updates, so one per pipeline and table
+        # is enough, and it is freed with the pipeline.
+        table, source, watcher = data.__dict__.get("_ask_source", (None, None, None))
+        if source is None or table != data.table:
+            if source is not None:
+                # The old table's copy keeps what it holds for earlier answers but stops following
+                source.stop_mirroring()
+                data.param.unwatch(watcher)
+                _drop_planner(source)
+            source = read({data.table: data})
+            # The Planner's metadata describes the rows of the first
+            # question, so new rows need a new Planner
+            watcher = data.param.watch(lambda event, source=source: _drop_planner(source), "data")
+            data._ask_source = (data.table, source, watcher)
+        return source, None
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
 
 def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | None) -> dict[str, Any]:
-    # Starts from the Planner's own context (its vector stores) so nothing
-    # one question adds is seen by an unrelated one
+    # Starts from the Planner's own context, which holds only its shared
+    # vector stores, so nothing one question adds is seen by an unrelated one
     context: dict[str, Any] = {**planner.context, "source": source, "sources": [source]}
     if visible_slugs is not None:
         context["visible_slugs"] = visible_slugs
@@ -207,14 +299,22 @@ async def _respond(
     Run one question through the Planner, returning the Answer and the
     context it left. A failed plan gives an Answer with status "error".
     """
-    if log.getEffectiveLevel() > logging.DEBUG:
-        quiet_retry_log()
-    await planner.sync(context)
-    plan = await planner.respond(messages, context)
-    if plan is None:
-        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-    outputs, out_context = await plan.execute()
-    answer = _build_answer(question, plan, outputs, out_context, context["source"], planner.llm, data, agents)
+    _busy.add(planner)
+    try:
+        token = errors_in_result.set(True)
+        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
+            await planner.sync(context)
+            plan = await planner.respond(messages, context)
+            if plan is None:
+                raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+            outputs, out_context = await plan.execute()
+    finally:
+        errors_in_result.reset(token)
+        _busy.discard(planner)
+    answer = _build_answer(
+        question, plan, outputs, out_context, context["source"], planner.llm, data, agents,
+        context.get("visible_slugs"),
+    )
     return answer, out_context
 
 
@@ -228,7 +328,7 @@ def _records(data: Any) -> Any:
     if records is None:
         return data
     return [
-        {key: None if isinstance(value, float) and math.isnan(value) else value for key, value in row.items()}
+        {key: None if pd.api.types.is_scalar(value) and pd.isna(value) else value for key, value in row.items()}
         for row in records
     ]
 
@@ -260,49 +360,26 @@ class _StatusLine:
             self._handle.update({"text/plain": ""}, raw=True)
 
 
-def _cancel(future, started: dict) -> None:
-    """Cancel the question's task, as the report stop button does, and wait for it to end."""
-    while "task" not in started and not future.done():
-        time.sleep(0.01)
-    if "task" in started:
-        task = started["task"]
-        task.get_loop().call_soon_threadsafe(task.cancel)
-    with suppress(Exception, asyncio.CancelledError, FutureCancelledError):
-        future.result()
-
-
 def _run(coro, first_step: str = "Planning"):
     """
-    Run a coroutine to completion from sync code, inside Jupyter or not.
-    In Jupyter a status line shows first_step until a step reports itself.
+    Run a coroutine to completion from sync code, inside Jupyter or not. It
+    runs on Lumen's own background loop, an interrupt cancels it, and in
+    Jupyter a status line shows first_step until a step reports itself.
     """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        loop_running = False
-    else:
-        loop_running = True
-    # Run outside the except block, or every error raised by the question
-    # would also print a chained "no running event loop" traceback
-    if not loop_running:
-        # asyncio.run already cancels the question on Ctrl-C
-        return asyncio.run(coro)
-
+    if threading.current_thread().name == _LOOP_THREAD:
+        coro.close()
+        raise RuntimeError(
+            "ask would wait on the loop it runs on and never return; use await aask instead."
+        )
     titles: list[str] = []
-    started: dict[str, asyncio.Task] = {}
 
     async def tracked():
-        started["task"] = asyncio.current_task()
         # Set inside the task, so the steps it runs inherit it
         step_title_callback.set(titles.append)
         return await coro
 
-    # A running loop (Jupyter) cannot be re-entered, so run on a fresh loop
-    # in a worker thread instead of patching the loop with nest_asyncio.
-    # The status line is updated from this thread, so it stays in the cell.
-    # ponytail: aask has no status line, add one if async callers want it
-    with ThreadPoolExecutor(1) as pool, _StatusLine(first_step) as status:
-        future = pool.submit(asyncio.run, tracked())
+    future = asyncio.run_coroutine_threadsafe(tracked(), _loop())
+    with _StatusLine(first_step) as status:
         try:
             while True:
                 try:
@@ -310,8 +387,20 @@ def _run(coro, first_step: str = "Planning"):
                 except FutureTimeoutError:
                     status.show(titles[-1] if titles else first_step)
         except KeyboardInterrupt:
-            _cancel(future, started)
+            # Cancels the task on the loop, as the report stop button does
+            future.cancel()
             raise
+
+
+async def _on_loop(coro):
+    """
+    Await a coroutine on Lumen's loop, which the cached LLM client and
+    Planners are bound to. Cancelling this await cancels it there too.
+    """
+    loop = _loop()
+    if asyncio.get_running_loop() is loop:
+        return await coro
+    return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
 
 
 def _write_tables(spec: Any, data_dir: Path) -> None:
@@ -336,13 +425,23 @@ def _write_tables(spec: Any, data_dir: Path) -> None:
         _write_tables(value, data_dir)
 
 
+def _drop_exceptions(group: TaskGroup) -> None:
+    """Drop the exceptions failed tasks keep, in nested groups too."""
+    for task in group:
+        task.out_context.pop("__exception__", None)
+        if isinstance(task, TaskGroup):
+            _drop_exceptions(task)
+
+
 def _build_answer(
     question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
-    data: DataT | Pipeline, agents: list | None,
+    data: DataT | Pipeline, agents: list | None, visible_slugs: set[str] | None = None,
 ) -> Answer:
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        exc = context.get("__exception__")
+        # Read once and dropped: its traceback keeps every frame's data alive
+        exc = context.pop("__exception__", None)
+        _drop_exceptions(plan)
         error = context.get("__error__", "")
         if isinstance(exc, RetriesExceededError) and exc.__cause__ is not None:
             # The last attempt's error says what went wrong; the wrapper does not
@@ -382,6 +481,7 @@ def _build_answer(
         data=data,
         editor=editor,
         llm=llm,
+        visible_slugs=visible_slugs,
         pipeline=context.get("pipeline"),
         plan=plan,
         question=question,
@@ -417,8 +517,11 @@ async def aask(
     Returns
     -------
     Answer
+        A question Lumen cannot answer gives an Answer with status "error"
+        and the reason in ``error``, rather than raising, so it can be
+        retried with ``answer.retry()``.
     """
-    return await _aask_messages(data, question, [{"role": "user", "content": question}], llm, agents)
+    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
 
 
 async def _aask_messages(
@@ -426,7 +529,7 @@ async def _aask_messages(
     llm: Llm | None, agents: list | None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
-    planner = _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
+    planner = await _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents)
     return answer
@@ -438,10 +541,12 @@ def ask(
     """
     Ask a question of some data and return the Answer.
 
-    Takes the same arguments as aask, and works whether or not an event
-    loop is already running, e.g. in a Jupyter notebook.
+    Takes the same arguments as aask and, like it, returns an Answer with
+    status "error" instead of raising when the question fails. Works
+    whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
+    on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(aask(data, question, llm=llm, agents=agents))
+    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -470,31 +575,48 @@ class Chat(param.Parameterized):
         self._agents = agents
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
+        # The sharing level the context was built under
+        self._level: tuple[str, bool] | None = None
 
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
     async def aask(self, question: str) -> Answer:
         """Ask the next question and wait for the Answer."""
-        agents = _settings["agents"] if self._agents is None else self._agents
-        planner = _planner(self._source, self._llm or _default_llm(), agents)
-        if self._context is None:
-            context = _fresh_context(planner, self._source, self._visible_slugs)
-        else:
-            context = dict(self._context)
+        return await _on_loop(self._aask(question))
+
+    async def _aask(self, question: str) -> Answer:
+        if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
+            # The context's summaries and the replies were written under
+            # another sharing level, so only the questions carry over
+            self._context = None
+            self._messages = [m for m in self._messages if m["role"] == "user"]
         messages = [*self._messages, {"role": "user", "content": question}]
+        return await self._turn(question, messages, self._messages, self._context)
+
+    async def _turn(
+        self, question: str, messages: list[dict[str, str]],
+        history: list[dict[str, str]], prior: dict[str, Any] | None,
+    ) -> Answer:
+        """Answer messages from the conversation as it stood (history and its context), and record the turn."""
+        agents = _settings["agents"] if self._agents is None else self._agents
+        planner = await _planner(self._source, self._llm or _default_llm(), agents)
+        context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        # So answer.retry() asks again within this conversation
+        answer._chat, answer._history = self, (history, prior)
         self.answers = [*self.answers, answer]
         if answer.status == "error":
             # The next question starts from the last answer that worked
             return answer
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
+        self._level = (sharing.share, sharing.mask_pii)
         return answer
 
     def ask(self, question: str) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self.aask(question))
+        return _run(self._aask(question))
 
 
 class Answer(param.Parameterized):
@@ -524,7 +646,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan.""")
+        The status of the executed Plan: "success", or "error" when the
+        question failed; error says why.""")
 
     truncated_at = param.Integer(default=None, allow_None=True, doc="""
         The row cap the data stopped at, when the result had more rows.
@@ -539,11 +662,18 @@ class Answer(param.Parameterized):
     def __init__(
         self, llm: Llm | None = None, data: DataT | Pipeline | None = None,
         agents: list | None = None, editor: LumenEditor | None = None,
-        context: dict[str, Any] | None = None, sql_failed: bool = False, **params,
+        context: dict[str, Any] | None = None, sql_failed: bool = False,
+        visible_slugs: set[str] | None = None, **params,
     ):
         super().__init__(**params)
         self._card = None
         self._llm = llm
+        self._visible_slugs = visible_slugs
+        # Set by a Chat, so retry stays in the conversation
+        self._chat: Chat | None = None
+        self._history: tuple[list[dict[str, str]], dict[str, Any] | None] = ([], None)
+        # The plan's views with refined charts swapped in, for explore
+        self._views: list | None = None
         # What was asked and with which agents, so retry asks the same way
         self._data = data
         self._agents = agents
@@ -558,6 +688,9 @@ class Answer(param.Parameterized):
         Change the chart, e.g. its colors, title or encodings, without
         querying the data again. Returns a new Answer.
         """
+        return await _on_loop(self._arefine(instruction))
+
+    async def _arefine(self, instruction: str) -> Answer:
         actor = next((
             task.actor for task in self.plan or []
             if isinstance(task, ActorTask) and isinstance(task.actor, VegaLiteAgent)
@@ -572,16 +705,22 @@ class Answer(param.Parameterized):
         # The Planner only sets the agent's LLM while a plan runs
         with actor.param.update(llm=actor.llm or self._llm):
             editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
-        return Answer(
+        refined = Answer(
             agents=self._agents, context=self._context, data=self._data, editor=editor,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
             source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
-            value=self.value, view=editor.component,
+            value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
         )
+        refined._chat, refined._history = self._chat, self._history
+        views = self.plan.views if self._views is None else self._views
+        refined._views = [editor if view is self._editor else view for view in views]
+        if self._editor not in views:
+            refined._views.append(editor)
+        return refined
 
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
-        return _run(self.arefine(instruction), "Revising the chart")
+        return _run(self._arefine(instruction), "Revising the chart")
 
     def with_spec(self, spec: dict | str) -> Answer:
         """
@@ -626,19 +765,29 @@ class Answer(param.Parameterized):
         """
         Ask the question again, optionally with a hint on what to change,
         e.g. after an error or a wrong result. Returns a new Answer.
+
+        In a chat, the retry follows the conversation as it stood when this
+        answer was asked, so retrying an older answer drops the turns after
+        it from what later questions see.
         """
+        return await _on_loop(self._aretry(hint))
+
+    async def _aretry(self, hint: str | None = None) -> Answer:
         messages = [{"role": "user", "content": self.question}]
         if hint:
             outcome = f"That failed: {self.error}" if self.status == "error" else self.value
             if self.sql:
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
+        if self._chat is not None:
+            history, prior = self._history
+            return await self._chat._turn(self.question, [*history, *messages], history, prior)
         data = self.source if self._data is None else self._data
         return await _aask_messages(data, self.question, messages, self._llm, self._agents)
 
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
-        return _run(self.aretry(hint))
+        return _run(self._aretry(hint))
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -646,11 +795,16 @@ class Answer(param.Parameterized):
         Source and LLM, with the answer as its first exploration. Keyword
         arguments go to ExplorerUI.
         """
+        if self._visible_slugs is not None:
+            # Keep a pipeline's answer scoped to its table. ExplorerUI shows
+            # every table it has not seen yet, so mark them all as seen.
+            known = {f"{self.source.name}{SOURCE_TABLE_SEPARATOR}{t}" for t in self.source.get_tables()}
+            params["context"] = {"visible_slugs": set(self._visible_slugs), "_known_slugs": known, **params.get("context", {})}
         ui = ExplorerUI(data=self.source, llm=self._llm, **params)
 
         async def seed():
             ui.interface.send(self.question, respond=False)
-            await ui.add_plan_exploration(self.plan)
+            await ui.add_plan_exploration(self.plan, views=self._views)
 
         # onload runs it inside the served session once the page is up, so
         # the browser receives the changes; state.execute ran it outside the
@@ -666,7 +820,7 @@ class Answer(param.Parameterized):
         per table under ``data/``, so the script stays small however large
         the data is. Returns the path of the script.
         """
-        component = self.view if self.view is not None else self.pipeline
+        component = self._rebuilt()
         if component is None:
             raise ValueError("This answer has no chart or data to export.")
         directory = Path(directory)
@@ -684,6 +838,16 @@ class Answer(param.Parameterized):
         script.write_text(f"{preamble.source}\n\n{cell.source}\n")
         return script
 
+    def _rebuilt(self) -> View | Pipeline | None:
+        """The chart, or else the data, that code and export rebuild."""
+        if joins_grids(self.source) or joins_grids(self.pipeline and self.pipeline.source):
+            raise ValueError(
+                "This answer's data joins xarray data into DuckDB, and those tables live only "
+                "in memory, so they cannot be rebuilt from a spec. Read the xarray data on its "
+                "own for answer.code and answer.export."
+            )
+        return self.view if self.view is not None else self.pipeline
+
     @property
     def code(self) -> str:
         """
@@ -692,9 +856,11 @@ class Answer(param.Parameterized):
         No LLM is called. In-memory data is embedded in the spec, so the
         code runs anywhere Lumen is installed; for a large table use
         ``export``, which keeps the data in Parquet files beside a small
-        script. File-based sources keep their absolute paths.
+        script. File-based sources keep their absolute paths. Source specs
+        go in as they are, so a database URI or initializer holding a
+        password ends up in the code.
         """
-        component = self.view if self.view is not None else self.pipeline
+        component = self._rebuilt()
         if component is None:
             return ""
         cell, extension = format_output(component)
@@ -749,6 +915,8 @@ class Answer(param.Parameterized):
         """
         The chart's spec as a code block, which has a copy button, and an
         Edit button that swaps in an editor to change the spec and redraw.
+        Unlike with_spec, which returns a new Answer, a redraw here changes
+        this answer, since the card shows it.
         """
         code = Markdown(f"```{language}\n{text}\n```", sizing_mode="stretch_width")
         edit = Button(label="Edit", icon="edit", variant="outlined")
@@ -799,10 +967,7 @@ class Answer(param.Parameterized):
         if self.view is None:
             return None
         if self.spec is not None:
-            spec = {key: value for key, value in self.spec.items() if key != "datasets"}
-            if isinstance(spec.get("data"), dict) and "values" in spec["data"]:
-                spec["data"] = {key: value for key, value in spec["data"].items() if key != "values"}
-            return "json", json.dumps(spec, indent=2, default=str)
+            return "json", json.dumps(_without_values(self.spec), indent=2, default=str)
         spec = {key: value for key, value in self.view.to_spec().items() if key != "pipeline"}
         return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
 
@@ -863,7 +1028,7 @@ class Answer(param.Parameterized):
         if chart_spec is not None:
             sql += f"\n\n```{chart_spec[0]}\n{chart_spec[1]}\n```"
         bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
-        card = [_prose_to_html(self.value)] if self.value else []
+        card = [_MARKDOWN.render(self.value)] if self.value else []
         if self.error:
             card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:

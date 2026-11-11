@@ -91,7 +91,7 @@ class BaseLumenAgent(Agent):
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
-        token = revision_lines.set(lines)
+        token = revision_lines.set((lines, language == "yaml"))
         try:
             result = await self._invoke_prompt(
                 "revise_output",

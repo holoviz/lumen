@@ -485,7 +485,7 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     pytest.importorskip("xarray_sql")
     import numpy as np
 
-    from lumen.ai.data import read
+    from lumen.sources.data import read
     grid = xr.Dataset({"t": (("x",), np.arange(3.0))}, coords={"x": [0, 1, 2]})
     alone = read(grid)
     assert is_gridded({(alone.name, "t"): alone})
@@ -494,12 +494,20 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     assert not is_gridded({(joined.name, "plain"): joined})
 
 
-async def _main_prompt(sql_context, test_messages, llm, **flags):
+async def _main_prompt(sql_context, test_messages, llm, tool_names=(), **flags):
     agent = SQLAgent(llm=llm)
     return await agent._render_prompt(
         "main", test_messages, await sql_context(), dialect="duckdb", is_final_step=True,
-        sql_plan_context=None, active_filters=None, tool_names=[], tool_rounds=6, **flags,
+        sql_plan_context=None, active_filters=None, tool_names=list(tool_names), tool_rounds=6, **flags,
     )
+
+
+async def test_sql_prompt_names_the_gridded_tools_only_when_offered(sql_context, test_messages, llm):
+    # A grid joined into DuckDB is gridded, but the tools only work on an xarray source
+    joined = await _main_prompt(sql_context, test_messages, llm, gridded=True)
+    assert "## Gridded SQL" in joined and "time_slice" not in joined
+    offered = await _main_prompt(sql_context, test_messages, llm, gridded=True, tool_names=["time_slice"])
+    assert "`time_slice`" in offered
 
 
 @pytest.mark.parametrize("flags, spatial, gridded", [
@@ -523,7 +531,7 @@ async def test_submit_sql_reviews_a_degree_buffer_once():
     gpd = pytest.importorskip("geopandas")
     from shapely.geometry import Point
 
-    from lumen.ai.data import read
+    from lumen.sources.data import read
     source = read({"places": gpd.GeoDataFrame({"n": ["a"]}, geometry=[Point(13.4, 52.5)], crs="EPSG:4326")})
     agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
     checked = {}
@@ -548,3 +556,10 @@ async def test_submit_sql_reviews_a_kelvin_column_compared_with_celsius():
     output = make_sql_model([(source.name, "air")])(query="SELECT lat FROM air WHERE air > 25", table_slug="x", tables=["air"])
     with pytest.raises(ValueError, match=r"air is in k, so 25 looks like degrees Celsius \(298.15 K\)"):
         await submit.validate(output)
+
+
+def test_has_geometry_counts_only_the_tables_of_the_sources():
+    metaset = _metaset_with("geometry")
+    here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
+    assert has_geometry(metaset, {("src", "t"): here}) is True
+    assert has_geometry(metaset, {("other", "u"): elsewhere}) is False

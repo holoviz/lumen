@@ -62,7 +62,7 @@ Use `{{ dialect }}` SQL dialect.
 {%- if has_geometry is defined and has_geometry %}
 
 ## Spatial SQL
-A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitude/latitude.
+A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitude/latitude; `OGC:CRS84` (GeoParquet's default) is longitude/latitude too.
 - Points are `ST_Point(lon, lat)`, longitude first.
 - `ST_Distance`, `ST_Area`, `ST_Length` and `ST_Buffer` work in the units of the CRS, so on EPSG:4326 they return degrees. Never report those as metres or kilometres, and never buffer in degrees.
 - Distances in metres: `ST_Distance_Sphere(ST_FlipCoordinates(a), ST_FlipCoordinates(b))`. The sphere and spheroid functions (`ST_Distance_Sphere`, `ST_Distance_Spheroid`, `ST_Length_Spheroid`, `ST_Area_Spheroid`) read points as (lat, lon), so flip lon/lat geometry first; without the flip the result is wrong but looks plausible.
@@ -76,14 +76,16 @@ A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitu
 
 ## Gridded SQL
 Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as columns and the data variables as values.
+{%- if tool_names is defined and 'time_slice' in tool_names %}
 - For a time slice, an area-weighted mean, a climatology, anomalies or a unit conversion, call the tool of that name (`time_slice`, `area_weighted_mean`, `climatology`, `anomaly`, `convert_units`) for SQL that uses this grid's own dimension names, calendar and units, then submit it or build on it.
+{%- endif %}
 - Select only the columns you need, never `SELECT *`.
 - Filter on the dimension columns (latitude, longitude and time ranges) so only the needed part of the grid is read.
 - A mean over latitudes must be area-weighted: `SUM(v * COS(RADIANS(lat))) / SUM(COS(RADIANS(lat)))`; `COS` takes radians, so never `COS(lat)`. A plain `AVG` over-weights the small cells near the poles. Use it for global or regional means unless the question asks for a plain average.
 - Temperatures stored in Kelvin (units `K` or `degK`, or values around 200 to 320) convert to Celsius with `- 273.15`.
 - Check the longitude range in the schema: on a 0 to 360 grid, a box from -10 to 10 is `lon >= 350 OR lon <= 10`.
 - Monthly climatology: `GROUP BY EXTRACT(MONTH FROM time)`; an anomaly is the value minus the climatology for its month.
-- The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`.
+- The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`, with x first moved into the grid's longitude range (on a 0 to 360 grid, add 360 to a negative x).
 {%- endif %}
 {%- endblock -%}
 
