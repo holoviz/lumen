@@ -1399,10 +1399,6 @@ class TestResolveData:
 
     def test_resolve_data_mixed_local_and_remote(self):
         """Test resolving a mix of local and remote files."""
-        if sys.platform == 'win32':
-            # Skip on Windows due to httpfs extension file locking issues in CI
-            pytest.skip("httpfs extension has file locking issues on Windows CI")
-
         result = resolve_data(['local.csv', 'https://example.com/remote.csv'])
         assert len(result) == 1
         source = result[0]
@@ -1576,6 +1572,13 @@ def test_read_mixed_connection_table_clashing_with_a_frame_raises():
     conn.execute('CREATE TABLE people AS SELECT 1 AS a')
     with pytest.raises(ValueError, match="'people' has the same name"):
         read({'people': pd.DataFrame({'a': [2]}), 'shop': conn})
+
+
+def test_read_mixed_connection_table_clashing_with_an_unnamed_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE data AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'data' has the same name"):
+        read([pd.DataFrame({'a': [2]}), conn])
 
 
 def test_read_two_grids_share_one_source():
