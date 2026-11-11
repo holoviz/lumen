@@ -153,6 +153,9 @@ class Plan(Section):
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
+        if task.status == "success":
+            # A rerun, e.g. from explore, skips the step, so its timing stands
+            return await self._run_actor_task(i, task, context, **kwargs)
         start = time.monotonic()
         # The agent's own LLM is the one it calls, set by the coordinator
         llm = task.actor.llm or task.llm or self.llm

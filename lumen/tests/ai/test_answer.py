@@ -1912,6 +1912,19 @@ async def test_answer_trace_has_each_step_as_it_ran(llm, frame_source):
     assert answer.why == "Query then explain"
 
 
+async def test_rerunning_a_plan_keeps_its_step_timings(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    before = [(step.seconds, step.llm_calls) for step in answer.trace]
+    await answer.plan.execute()
+    assert [(step.seconds, step.llm_calls) for step in answer.trace] == before
+
+
 def test_plan_graph_follows_what_steps_need():
     plan = Plan(
         ActorTask(SQLAgent(), title="Query", instruction="Query"),
