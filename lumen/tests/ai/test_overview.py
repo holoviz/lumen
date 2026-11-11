@@ -10,7 +10,7 @@ from panel.tests.util import async_wait_until
 from panel_material_ui import Button, FlexBox
 
 from lumen.ai.answer import Answer, configure
-from lumen.ai.data import read
+from lumen.sources.data import read
 from lumen.ai.overview import aoverview
 from lumen.tests.ai.conftest import MockLLM
 
@@ -87,6 +87,35 @@ async def test_clicking_a_question_asks_it_and_shows_the_answer(messy_source, mo
     answers = panel[-1]
     await async_wait_until(lambda: len(answers) == 1)
     assert asked == ["Question 2?"] and answers[0][0].object == "Forty birds."
+
+
+async def test_overview_prompt_hides_the_ranges_of_personal_data():
+    source = read({"people": pd.DataFrame({
+        "date_of_birth": pd.to_datetime(["1961-03-04", "1999-12-31"]), "score": [1.5, 9.5],
+    })})
+    llm = QuestionsLLM()
+    configure(mask_pii=True)
+    try:
+        await aoverview(source, llm=llm)
+    finally:
+        configure(mask_pii=False)
+    assert "1961" not in llm.prompt and "1999" not in llm.prompt and "9.5" in llm.prompt
+
+
+async def test_a_failed_question_button_shows_an_error(messy_source, monkeypatch):
+    overview = await aoverview(messy_source, llm=QuestionsLLM())
+
+    async def aask(question, **kwargs):
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr(messy_source, "aask", aask)
+    panel = overview.__panel__()
+    buttons = next(part for part in panel if isinstance(part, FlexBox))
+    buttons[0].clicks += 1
+    answers = panel[-1]
+    await async_wait_until(lambda: len(answers) == 1)
+    assert answers[0].severity == "error" and "rate limited" in answers[0].object
+    assert not buttons[0].loading
 
 
 async def test_overview_outside_a_kernel_is_html(messy_source):
