@@ -18,6 +18,12 @@ _MEASURES = {"ST_AREA", "ST_LENGTH", "ST_PERIMETER", "ST_DISTANCE"}
 #: Functions whose distance argument is in the units of the geometry's CRS
 _DISTANCES = {"ST_BUFFER", "ST_DWITHIN"}
 
+#: Functions that read points as (lat, lon), so lon/lat geometry has to be flipped first
+_LAT_LON = {
+    "ST_AREA_SPHEROID", "ST_LENGTH_SPHEROID", "ST_PERIMETER_SPHEROID", "ST_DISTANCE_SPHEROID",
+    "ST_DISTANCE_SPHERE", "ST_DWITHIN_SPHEROID",
+}
+
 #: Predicates that relate two geometries in a join
 _PREDICATES = {
     "ST_INTERSECTS", "ST_CONTAINS", "ST_WITHIN", "ST_DWITHIN", "ST_TOUCHES", "ST_OVERLAPS",
@@ -110,17 +116,29 @@ def review_sql(sql: str, tables: dict[str, TableFacts], dialect: str | None = "d
             if distance is not None and distance > 1:
                 findings.append(
                     f"{_SPELLING[name]}({col}, ..., {args[-1].sql()}) works in degrees: {col} is in longitude and latitude, so "
-                    f"{args[-1].sql()} means {args[-1].sql()} degrees, not metres. Transform it to a projected CRS "
-                    f"first, e.g. ST_Transform({col}, 'EPSG:4326', 'EPSG:3857', always_xy := true), or use "
-                    "ST_DWithin_Spheroid for a distance in metres."
+                    f"{args[-1].sql()} means {args[-1].sql()} degrees, not metres. Buffer in a projected CRS in "
+                    f"metres, e.g. ST_Transform({col}, 'EPSG:4326', 'EPSG:6933', always_xy := true) or a local UTM "
+                    "zone (not EPSG:3857, whose metres shrink away from the equator), or filter on "
+                    f"ST_Distance_Sphere(ST_FlipCoordinates({col}), ST_FlipCoordinates(other)) <= metres."
                 )
         elif name in _MEASURES and args and (col := _geographic_column(args[0], geographic)):
             unit = "square degrees" if name == "ST_AREA" else "degrees"
-            spheroid = {"ST_AREA": "ST_Area_Spheroid", "ST_LENGTH": "ST_Length_Spheroid",
-                        "ST_PERIMETER": "ST_Perimeter_Spheroid", "ST_DISTANCE": "ST_Distance_Spheroid"}[name]
+            # The sphere and spheroid functions read (lat, lon), so lon/lat
+            # geometry is flipped first; unflipped the result looks right but is not
+            fix = {
+                "ST_AREA": f"ST_Area(ST_Transform({col}, 'EPSG:4326', 'EPSG:6933', always_xy := true))",
+                "ST_LENGTH": f"ST_Length_Spheroid(ST_FlipCoordinates({col}))",
+                "ST_PERIMETER": f"ST_Perimeter_Spheroid(ST_FlipCoordinates({col}))",
+                "ST_DISTANCE": f"ST_Distance_Sphere(ST_FlipCoordinates({col}), ST_FlipCoordinates(other))",
+            }[name]
             findings.append(
                 f"{_SPELLING[name]}({col}) returns {unit}, since {col} is in longitude and latitude. Use "
-                f"{spheroid}({col}) for metres, or transform to a projected CRS first."
+                f"{fix} for metres."
+            )
+        elif name in _LAT_LON and args and (col := _geographic_column(args[0], geographic)):
+            findings.append(
+                f"{node.name}({col}) reads points as (latitude, longitude), but {col} is longitude first, "
+                f"so the result is wrong though it looks plausible. Flip it: {node.name}(ST_FlipCoordinates({col}), ...)."
             )
     findings += _unpredicated_joins(tree, tables)
     findings += _unit_mismatches(tree, tables)

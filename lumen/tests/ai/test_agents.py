@@ -1536,14 +1536,15 @@ async def test_sql_agent_validate_reviews_an_area_in_degrees_once(llm):
     from lumen.sources.data import read
     source = read({"parks": gpd.GeoDataFrame({"p": ["x"]}, geometry=[Polygon([(13, 52), (14, 52), (14, 53)])], crs="EPSG:4326")})
     agent = SQLAgent(llm=llm)
-    agent.revise = AsyncMock(return_value="SELECT ST_Area_Spheroid(geometry) AS area FROM parks")
+    agent.revise = AsyncMock(return_value="SELECT ST_Area_Spheroid(ST_FlipCoordinates(geometry)) AS area FROM parks")
     step = SimpleNamespace(stream=lambda msg: None)
 
     sql, result = await agent._validate_sql({}, "SELECT ST_Area(geometry) AS area FROM parks", "slug", source, [], step)
 
     assert "ST_Area(geometry) returns square degrees" in agent.revise.await_args.args[0]
     assert agent.revise.await_count == 1 and "ST_AREA_SPHEROID" in sql.upper()
-    assert result["area"].iloc[0] > 1e9
+    # The triangle over half the 1 x 1 degree box at 52-53 N is about 3,821 km²; unflipped it reads 5,976 km²
+    assert 3.70e9 < result["area"].iloc[0] < 3.86e9
 
 
 async def test_sql_revise_without_op_replaces_a_line_with_a_cast(llm):
