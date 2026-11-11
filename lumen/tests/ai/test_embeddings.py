@@ -1,6 +1,6 @@
 import numpy as np
 
-from lumen.ai.embeddings import NumpyEmbeddings
+from lumen.ai.embeddings import STOP_WORDS_RE, NumpyEmbeddings
 
 
 def test_numpy_embeddings_get_char_ngrams():
@@ -69,3 +69,8 @@ async def test_numpy_embeddings_longer_strings():
 
     # Different longer strings produce different embeddings
     assert result[0] != result[1]
+
+
+def test_stop_words_re_literal_escaping():
+    assert STOP_WORDS_RE.sub("", "co2") == "co2"
+    assert STOP_WORDS_RE.sub("", "inco") == "inco"

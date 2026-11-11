@@ -9,7 +9,7 @@ import time
 import warnings
 
 from typing import Any, get_args
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import panel as pn
@@ -28,24 +28,29 @@ import lumen.ai.answer as answer_module
 
 from lumen.ai.actor import NullStep
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
+from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _default_llm, _env_llm, _planner, _planners,
-    _resolve, _run, _StatusLine, aask, ask, chat, clear_cache, configure,
+    _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
+    _drop_exceptions, _env_llm, _fingerprint, _loop, _planner, _planners,
+    _records, _resolve, _row_cap_hit, _run, _StatusLine, aask, ask, chat,
+    clear_cache, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
-from lumen.ai.data import read
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
-from lumen.ai.report import ActorTask
+from lumen.ai.report import ActorTask, TaskGroup
+from lumen.ai.sharing import sharing
 from lumen.ai.usage import Usage, record_usage
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
+from lumen.transforms.sql import SQLLimit
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView, hvPlotView
 
@@ -320,6 +325,7 @@ def fresh_settings(monkeypatch):
     _env_llm.cache_clear()
     # Plain assignment: monkeypatch would restore the Parameter object itself
     SQLAgent.max_rows = max_rows
+    sharing.param.update(share="sample", mask_pii=False)
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
@@ -380,6 +386,37 @@ async def test_no_note_below_the_cap(ten_rows):
     assert answer.truncated_at is None and "stops at" not in answer._text
 
 
+async def test_a_result_of_exactly_max_rows_is_not_reported_as_cut(ten_rows):
+    configure(max_rows=10)
+    answer = await _ask_every_row(ten_rows)
+    assert len(answer.pipeline.data) == 10 and answer.truncated_at is None
+
+
+def test_a_failing_cap_check_does_not_break_the_answer(ten_rows):
+    pipeline = Pipeline(source=ten_rows, table="rows", sql_transforms=[SQLLimit(limit=10)])
+    assert len(pipeline.data) == 10
+    with patch.object(type(ten_rows), "get", side_effect=RuntimeError("warehouse down")):
+        assert _row_cap_hit(pipeline) is None
+
+
+def test_chart_spec_leaves_out_inline_data_at_any_depth():
+    from lumen.ai.answer import _without_values
+
+    spec = {"data": {"values": [1]}, "layer": [{"data": {"values": [2], "name": "x"}, "mark": "bar"}], "datasets": {"d": [3]}}
+    assert _without_values(spec) == {"data": {}, "layer": [{"data": {"name": "x"}, "mark": "bar"}]}
+
+
+async def test_chat_forgets_context_built_under_another_sharing_level(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    assert conversation._context is not None
+    configure(share="schema")
+    _chat_only(llm)
+    await conversation.aask("And again?")
+    assert [m["role"] for m in conversation._messages] == ["user", "user", "assistant"]
+
+
 async def test_max_rows_none_returns_every_row(ten_rows):
     configure(max_rows=4)
     configure(max_rows=None)
@@ -420,40 +457,57 @@ async def test_aask_reuses_one_planner_per_source(llm, frame_source):
     assert "metaset" not in planner.context
 
 
-def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
-    first = _planner(frame_source, llm, None)
-    assert _planner(frame_source, llm, None) is first
-    assert _planner(frame_source, type(llm)(), None) is not first
-    assert _planner(frame_source, llm, [ChatAgent()]) is not _planner(frame_source, llm, [ChatAgent()])
+async def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    assert await _planner(frame_source, llm, None) is first
+    assert await _planner(frame_source, type(llm)(), None) is not first
+    assert await _planner(frame_source, llm, [ChatAgent()]) is not await _planner(frame_source, llm, [ChatAgent()])
 
 
-def test_default_agents_plain_table(frame_source):
-    agents = _default_agents(frame_source)
+async def test_a_busy_planner_is_not_shared(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    _busy.add(first)
+    try:
+        assert await _planner(frame_source, llm, None) is not first
+    finally:
+        _busy.discard(first)
+    assert await _planner(frame_source, llm, None) is first
+
+
+async def test_default_agents_plain_table(frame_source):
+    agents = await _default_agents(frame_source)
     assert [type(a).__name__ for a in agents] == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
 
 
-def test_default_agents_use_hvplot_for_gridded_data():
+async def test_default_agents_add_hvplot_for_gridded_data():
     xr = pytest.importorskip("xarray")
     pytest.importorskip("xarray_sql")
     ds = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
-    assert [type(a).__name__ for a in _default_agents(read(ds))] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
+    assert [type(a).__name__ for a in await _default_agents(read(ds))] == ["ChatAgent", "SQLAgent", "VegaLiteAgent", "hvPlotAgent"]
 
 
-def test_default_agents_use_hvplot_for_geometry():
+async def test_default_agents_add_hvplot_for_geometry():
     if gpd is None:
         pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])])
-    assert [type(a).__name__ for a in _default_agents(read({"shapes": gdf}))] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read({"shapes": gdf})))
 
 
-def test_default_agents_use_hvplot_for_lon_lat_columns():
+async def test_default_agents_add_hvplot_for_lon_lat_columns():
     source = read({"quakes": pd.DataFrame({"Lat": [1.0], "lon": [2.0], "mag": [4.5]})})
-    assert [type(a).__name__ for a in _default_agents(source)] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
+    names = [type(a).__name__ for a in await _default_agents(source)]
+    assert names == ["ChatAgent", "SQLAgent", "VegaLiteAgent", "hvPlotAgent"]
 
 
-def test_default_agents_use_hvplot_when_a_table_has_geometry(frame_source):
+async def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
     with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
-        assert [type(a).__name__ for a in _default_agents(frame_source)] == ["ChatAgent", "SQLAgent", "hvPlotAgent"]
+        assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(frame_source))
+
+
+async def test_default_agents_skip_hvplot_when_the_probe_fails(frame_source):
+    with patch.object(type(frame_source), "execute", side_effect=RuntimeError("syntax error")):
+        names = [type(a).__name__ for a in await _default_agents(frame_source)]
+    assert names == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
 
 
 def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
@@ -469,6 +523,30 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
     assert visible is None
     assert source.get_tables() == ["tiny"]
     assert sorted(source.get("tiny")["value"]) == [7.5, 10.5]
+    assert _resolve(pipeline)[0] is source
+
+
+def test_filter_change_drops_the_cached_planner(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    source, _ = _resolve(pipeline)
+    _planners[source] = MagicMock()
+    pipeline.filters[0].value = "B"
+    assert source not in _planners
+    assert _resolve(pipeline)[0] is source
+
+
+def test_table_change_rebuilds_the_filtered_source():
+    source = read({
+        "tiny": pd.DataFrame({"category": ["A", "B"], "value": [1, 2]}),
+        "other": pd.DataFrame({"category": ["A", "A"], "value": [3, 4]}),
+    })
+    pipeline = Pipeline(source=source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    first, _ = _resolve(pipeline)
+    pipeline.table = "other"
+    second, _ = _resolve(pipeline)
+    assert second is not first
+    assert second.get_tables() == ["other"]
+    assert sorted(second.get("other")["value"]) == [3, 4]
 
 
 def _chat_only(llm):
@@ -485,20 +563,84 @@ def test_ask_without_a_running_loop(llm, frame_source):
 
 
 def test_ask_errors_do_not_chain_the_loop_check(frame_source):
-    with patch("lumen.ai.answer.aask", side_effect=ValueError("boom")):
+    with patch("lumen.ai.answer._aask_messages", side_effect=ValueError("boom")):
         with pytest.raises(ValueError) as info:
             ask(frame_source, "q")
     assert info.value.__context__ is None
 
 
-async def test_aask_quiets_instructor_retry_log(llm, frame_source, monkeypatch):
-    logger = logging.getLogger("instructor.v2.retry")
-    monkeypatch.setattr(logger, "level", logging.NOTSET)
+async def test_aask_quiets_instructor_retry_log_only_while_asking(llm, frame_source, monkeypatch, caplog):
     # ExplorerUI tests in the same process leave Lumen's logger at DEBUG
     monkeypatch.setattr(lumen_log, "level", logging.WARNING)
-    _chat_only(llm)
+    logger = logging.getLogger("instructor.v2.retry")
+
+    def reply():
+        logger.error("retrying")
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    with caplog.at_level(logging.ERROR, logger="instructor.v2.retry"):
+        await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        logger.error("outside")
+    assert caplog.messages == ["outside"]
+
+
+def test_sync_ask_runs_every_question_on_one_loop(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    for _ in range(2):
+        llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+        ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops[0] is loops[1]
+
+
+async def test_aask_runs_on_the_loop_sync_ask_uses(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
     await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
-    assert logger.level == logging.CRITICAL
+    assert loops == [_loop()]
+
+
+def test_ask_from_lumens_loop_raises_instead_of_deadlocking(frame_source):
+    async def nested():
+        ask(frame_source, "q")
+
+    with pytest.raises(RuntimeError, match="await aask"):
+        asyncio.run_coroutine_threadsafe(nested(), _loop()).result(timeout=5)
+
+
+def test_fork_resets_the_loop_and_caches(frame_source):
+    loop = _loop()
+    _planners[frame_source] = MagicMock()
+    _LOOP_LOCK.acquire()  # as the before-fork hook does
+    _after_fork()
+    assert frame_source not in _planners
+    assert _loop() is not loop
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_interrupting_sync_ask_cancels_the_question(frame_source):
+    future = MagicMock()
+    future.result.side_effect = KeyboardInterrupt
+    with patch("lumen.ai.answer._aask_messages", new=MagicMock()), \
+            patch("lumen.ai.answer.asyncio.run_coroutine_threadsafe", return_value=future):
+        with pytest.raises(KeyboardInterrupt):
+            ask(frame_source, "q")
+    future.cancel.assert_called_once()
+
+
+def test_answer_html_escapes_html_in_the_answer():
+    html = Answer(value="Hi <script>alert(1)</script>")._static_bundle(None)["text/html"]
+    assert "<script>" not in html
 
 
 async def test_ask_inside_a_running_loop(llm, frame_source):
@@ -571,6 +713,29 @@ async def test_refine_can_be_refined_again(refinable_answer, llm):
     _line_edit(llm, 8, "mark: point")
     twice = await once.arefine("Use points")
     assert (once.spec["mark"], twice.spec["mark"]) == ("line", "point")
+
+
+async def test_refined_answer_explores_with_its_new_chart(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    refined = await refinable_answer.arefine("Use a line")
+    assert refined._views == [refined._editor]
+    assert refinable_answer._editor not in refined._views
+
+
+async def test_retrying_a_chat_answer_keeps_the_conversation(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    _chat_only(llm)
+    second = await conversation.aask("Only A")
+
+    _chat_only(llm)
+    with patch("lumen.ai.answer._respond", new=AsyncMock(wraps=answer_module._respond)) as respond:
+        retried = await second.aretry()
+
+    messages = respond.call_args.args[2]
+    assert [m["content"] for m in messages if m["role"] == "user"] == ["How many rows?", "Only A"]
+    assert conversation.answers[-1] is retried and len(conversation.answers) == 3
 
 
 def test_refine_from_sync_code(refinable_answer, llm):
@@ -947,6 +1112,44 @@ async def test_answer_explore_opens_the_ui_on_the_answer(llm, frame_source):
     assert ui.interface.objects[0].object == "Total value?"
 
 
+async def test_answer_explore_keeps_a_pipeline_answer_to_its_table(llm):
+    source = read({"tiny": pd.DataFrame({"value": [1.0]}), "other": pd.DataFrame({"x": [1]})})
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "One row.", "One row."])
+    answer = await aask(Pipeline(source=source, table="tiny"), "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    ui = answer.explore()
+    await async_wait_until(lambda: len(ui._explorations.items) == 2)
+    assert ui.context["visible_slugs"] == {f"{source.name}{SOURCE_TABLE_SEPARATOR}tiny"}
+
+
+def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    answer = Answer(source=source, pipeline=Pipeline(source=source, table="climate"))
+    with pytest.raises(ValueError, match="joins xarray data"):
+        answer.code
+
+
+async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    SQLModel = make_sql_model([(source.name, "climate")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT x, temp FROM climate", table_slug="temps", tables=["climate"]),
+        SQLModel(query="SELECT * FROM climate WHERE temp > 1", table_slug="warm", tables=["climate"]),
+    ])
+    conversation = source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    await conversation.aask("Temperatures?")
+    follow_up = await conversation.aask("Only the warm ones")
+    assert follow_up.source is not source
+    with pytest.raises(ValueError, match="joins xarray data"):
+        follow_up.code
+
+
 class FollowUpLLM(MockLLM):
     """Replies by response model, and records what each Plan call was sent."""
 
@@ -1008,7 +1211,8 @@ async def test_run_shows_the_current_step_in_place():
     handle = FakeHandle()
 
     async def question():
-        NullStep().add("Generating SQL...")
+        with NullStep().add("Generating SQL..."):
+            pass
         await asyncio.sleep(0.6)
         return "done"
 
@@ -1030,13 +1234,15 @@ async def test_run_cancels_the_question_on_interrupt():
         finally:
             ended.append(asyncio.current_task().cancelling())
 
+    _loop()  # started once, on the first sync ask
     threads = threading.active_count()
     start = time.monotonic()
     with patch.object(_StatusLine, "show", side_effect=KeyboardInterrupt), pytest.raises(KeyboardInterrupt):
         _run(question())
 
+    # The interrupt returns at once, and the task is cancelled on the loop
     assert time.monotonic() - start < 5
-    assert ended == [1]
+    await async_wait_until(lambda: ended == [1])
     assert threading.active_count() == threads
 
 
@@ -1109,6 +1315,20 @@ def test_to_file_writes_geometry_with_its_crs(tmp_path, suffix):
     path = _geo_answer().to_file(tmp_path / f"places{suffix}")
     back = gpd.read_parquet(path) if suffix == ".parquet" else gpd.read_file(path)
     assert back.crs.to_epsg() == 4326 and list(back["n"]) == ["a", "b"]
+
+
+def test_to_file_refuses_to_overwrite_unless_asked(tmp_path, frame_source):
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"))
+    path = answer.to_file(tmp_path / "t.csv")
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        answer.to_file(path)
+    assert answer.to_file(path, overwrite=True) == path
+
+
+def test_to_file_warns_when_the_data_was_cut_at_max_rows(tmp_path, frame_source):
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"), truncated_at=2)
+    with pytest.warns(UserWarning, match="first 2 rows"):
+        answer.to_file(tmp_path / "t.csv")
 
 
 def test_to_file_writes_a_table(tmp_path, frame_source):
@@ -1197,6 +1417,18 @@ def test_answer_data_is_polars_for_polars_input():
     pl = pytest.importorskip("polars")
     answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a * 2 AS b FROM data")
     assert isinstance(answer.data, pl.DataFrame) and answer.data["b"].to_list() == [2, 4]
+
+
+def test_answer_data_in_polars_does_not_rerun_the_answers_pipeline():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a FROM data")
+    assert len(answer.pipeline.data) == 2
+    events = []
+    answer.pipeline.param.watch(events.append, "data")
+    answer.pipeline.source.param.watch(events.append, ["dataframe_backend", "cache_data"])
+    assert isinstance(answer.data, pl.DataFrame)
+    assert events == []
+    assert answer.pipeline.source.dataframe_backend != "polars"
 
 
 def test_answer_data_is_pyarrow_for_pyarrow_input():
@@ -1332,6 +1564,23 @@ async def test_a_planned_chat_question_joins_the_chat_when_run(llm, frame_source
 def _cached_ask(llm, source, question="How many rows?"):
     _chat_only(llm)
     return aask(source, question, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+
+async def test_editing_the_first_answer_does_not_change_a_later_hit(llm, frame_source):
+    configure(cache=True)
+    first = await _cached_ask(llm, frame_source)
+    first.value = "edited"
+    assert (await _cached_ask(llm, frame_source)).value == "Three rows."
+
+
+def test_fingerprint_counts_an_agents_own_llm_but_not_private_state():
+    agent = SQLAgent()
+    plain = _fingerprint(agent)
+    agent.llm = MockLLM(temperature=0.9)
+    with_llm = _fingerprint(agent)
+    assert with_llm != plain
+    agent.llm._ready = not agent.llm._ready
+    assert _fingerprint(agent) == with_llm
 
 
 async def test_a_cached_question_makes_no_llm_calls(llm, frame_source):
@@ -1660,3 +1909,76 @@ def test_a_plan_that_did_not_run_has_no_timings(chart_answer):
 def test_an_answer_without_a_plan_has_no_trace():
     answer = Answer(question="?", status="success")
     assert answer.trace == [] and answer.why == "" and answer._steps_text == ""
+
+
+def test_records_turn_every_missing_value_into_null():
+    frame = pd.DataFrame({
+        "f32": pd.Series([1.0, float("nan")], dtype="float32"),
+        "ints": pd.Series([1, None], dtype="Int64"),
+    })
+    assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]
+
+
+def test_answer_data_keeps_polars_dtypes_that_pandas_would_lose():
+    pl = pytest.importorskip("polars")
+    frame = pl.DataFrame({"a": pl.Series([1, None], dtype=pl.Int64), "c": pl.Series(["x", "y"], dtype=pl.Categorical)})
+    data = _answer_over({"t": frame}, "SELECT a FROM t").data
+    # Through pandas the nullable ints would have become floats
+    assert data.schema["a"] == pl.Int64 and data["a"].to_list() == [1, None]
+
+
+def test_answer_data_follows_a_list_of_polars_frames():
+    pl = pytest.importorskip("polars")
+    source = read([pl.DataFrame({"a": [1, 2]})])
+    pipeline = Pipeline(source=source.create_sql_expr_source({"r": "SELECT a FROM data"}), table="r")
+    answer = Answer(question="?", status="success", source=source, sql="SELECT a FROM data", pipeline=pipeline)
+    assert isinstance(answer.data, pl.DataFrame)
+
+
+async def test_a_frame_asked_twice_stores_nothing_in_the_cache(llm):
+    configure(cache=True)
+    frame = pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})
+    for _ in range(3):
+        _chat_only(llm)
+        answer = await aask(frame, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        assert not answer.cached
+    assert not answer_module._answer_cache
+
+
+async def test_retry_without_a_hint_is_not_served_from_the_cache(llm, frame_source):
+    configure(cache=True)
+    first = await _cached_ask(llm, frame_source)
+    _chat_only(llm)
+    retried = await first.aretry()
+    assert not retried.cached and retried.value == "Three rows." and llm._index == 2
+
+
+async def test_changing_max_rows_or_an_agents_own_setting_misses_the_cache(llm, frame_source):
+    configure(cache=True)
+    await _cached_ask(llm, frame_source)
+    configure(max_rows=7)
+    assert not (await _cached_ask(llm, frame_source)).cached
+    other_agents = [ChatAgent(), SQLAgent(max_rows=3)]
+    _chat_only(llm)
+    assert not (await aask(frame_source, "How many rows?", llm=llm, agents=other_agents)).cached
+
+
+async def test_a_cache_hit_has_its_own_pipeline_and_chart(llm):
+    configure(cache=True)
+    source = read({"tiny": pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})})
+    pipeline = Pipeline(source=source, table="tiny")
+    answer = Answer(question="Q?", status="success", source=source, pipeline=pipeline,
+                    view=hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value", responsive=True, grid=True))
+    copy = answer._cached_copy()
+    assert copy.pipeline is not answer.pipeline and copy.view is not answer.view
+    assert copy.view.pipeline is copy.pipeline
+    assert copy.view.kwargs == {"responsive": True, "grid": True}
+    copy.pipeline.filters.append(ConstantFilter(field="category", value="A"))
+    assert answer.pipeline.filters == []
+
+
+def test_failed_answers_drop_exceptions_in_nested_task_groups():
+    inner = ActorTask(ChatAgent(), title="Explain")
+    inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
+    _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
+    assert inner.out_context == {"sql": "SELECT 1"}

@@ -366,3 +366,27 @@ def test_turning_a_single_view_into_layers_drops_only_its_mark():
     merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
     assert "mark" not in merged
     assert merged["encoding"]["x"] == HEATMAP_XY["x"] and merged["encoding"]["y"] == HEATMAP_XY["y"]
+    rect, text = merged["layer"]
+    assert rect["encoding"]["color"] == {"field": "v"}
+    assert "color" not in text["encoding"] and "color" not in merged["encoding"]
+
+
+def test_a_rule_layer_does_not_inherit_the_chart_color_or_tooltip():
+    base = {"layer": [{"mark": "bar"}], "encoding": {**HEATMAP_XY, "color": {"field": "c"}, "tooltip": [{"field": "v"}]}}
+    threshold = {"layer": [{"mark": "rule", "encoding": {"y": {"datum": 5}}}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, threshold)
+    bar, rule = merged["layer"]
+    assert merged["encoding"] == HEATMAP_XY
+    assert bar["encoding"] == {"color": {"field": "c"}, "tooltip": [{"field": "v"}]}
+    assert rule["encoding"] == {"y": {"datum": 5}}
+
+
+def test_a_shared_text_channel_stays_with_the_label_layer():
+    # The usual heatmap: x, y and text shared, the rect adds color
+    base = {"mark": "rect", "encoding": {**HEATMAP_XY, "text": {"field": "v"}, "color": {"field": "v"}}}
+    labels = {"layer": [{"mark": "rect"}, {"mark": "text"}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
+    assert merged["encoding"] == {**HEATMAP_XY, "text": {"field": "v"}}
+    rect, text = merged["layer"]
+    assert rect["encoding"] == {"color": {"field": "v"}}
+    assert "encoding" not in text or "color" not in text["encoding"]
