@@ -52,7 +52,7 @@ ui = lmai.ExplorerUI(data=[
 
 A Source or Pipeline can answer questions directly with `source.ask(...)`, without the chat UI. See [Lumen in notebooks](../getting_started/lumen_in_notebooks.md).
 
-A dict passed to `lumen.read` can mix DataFrames, files, Pipelines, xarray data and a DuckDB connection; they become named tables of one source, so a question can join them. xarray data is read lazily, and a connection's tables are copied in so your database is never written to.
+A dict passed to `lumen.read` can mix DataFrames, files, Pipelines, xarray data and a DuckDB connection; they become named tables of one source, so a question can join them. xarray data is read lazily (joined this way it loses its gridded source, see note 2 above), and a connection's tables are copied in so your database is never written to.
 
 ## Supported sources
 

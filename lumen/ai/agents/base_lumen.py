@@ -91,9 +91,7 @@ class BaseLumenAgent(Agent):
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
         revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
-        # A missing op is read from YAML keys, which SQL lines (a::INT,
-        # '00:00') only seem to have, so SQL edits default to replace
-        token = revision_lines.set(lines if language == "yaml" else None)
+        token = revision_lines.set((lines, language == "yaml"))
         try:
             result = await self._invoke_prompt(
                 "revise_output",

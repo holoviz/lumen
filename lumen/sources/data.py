@@ -77,14 +77,16 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         names a frame's, file's or pipeline's table, a DataArray's variable
         or a DuckDB connection's source; it is ignored for a Source and an
         xarray Dataset. A DuckDB relation is read into memory.
-        Every entry of a mixed dict lands in one DuckDB source, so they can
-        be joined: frames (as pandas when mixed with files or pipelines),
+        Apart from those named below, every entry of a mixed dict lands in
+        one DuckDB source, so they can be joined: frames (as pandas when mixed with files or pipelines),
         files, pipelines, xarray data (read lazily), and the tables of a
         DuckDB connection, which are copied in under their own names (the
         connection's dict key goes unused) so the user's database is never
         written to. On its own, a connection is used as is and left
         open by ``source.close()``, a source built on one cannot be rebuilt
-        from its spec, and xarray data keeps its gridded source.
+        from its spec, and xarray data keeps its gridded source. A Source,
+        and a geo, xarray or database file or a database URI, always stays
+        its own source.
 
     Returns
     -------
@@ -94,8 +96,9 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     if len(sources) != 1:
         raise ValueError(
             f"The data resolved to {len(sources)} sources but read returns one: "
-            "a Source passed in stays its own source. Call read once per source, "
-            "or pass the list to ExplorerUI, which takes several."
+            "Sources, geo, xarray and database files, and database URIs each stay "
+            "their own source. Call read once per source, or pass the list to "
+            "ExplorerUI, which takes several."
         )
     if isinstance(data, dict):
         items = list(data.items())
@@ -238,7 +241,12 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
                 "DataArray, or a DuckDB connection or relation."
             )
 
-    entries = len(frames) + len(unnamed) + len(tables) + len(mirrors) + len(grids) + len(connections)
+    # Named first, so a connection table called data collides with them too
+    if len(unnamed) == 1:
+        frames["data"] = unnamed[0]
+    else:
+        frames.update({f"data_{i}": df for i, df in enumerate(unnamed)})
+    entries = len(frames) + len(tables) + len(mirrors) + len(grids) + len(connections)
     if entries > 1:
         # Mixed with other entries, a connection's tables are copied into the
         # shared source, so Lumen never writes into the user's database
@@ -257,10 +265,6 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         sources.extend(XArraySQLSource.from_dataset(ds) for ds in grids.values())
         grids = {}
 
-    if len(unnamed) == 1:
-        frames["data"] = unnamed[0]
-    else:
-        frames.update({f"data_{i}": df for i, df in enumerate(unnamed)})
     if frames and (tables or mirrors):
         # Mixed with files or pipelines, frames join the same connection as
         # mirrors, which DuckDBSource ingests and serializes as pandas
@@ -305,6 +309,14 @@ def _add_grids(source: DuckDBSource, grids: dict) -> None:
 #: Sources with xarray data joined in. Those tables live only on the
 #: connection, so the source cannot be rebuilt from its spec.
 JOINED_GRIDS: weakref.WeakSet[Source] = weakref.WeakSet()
+
+
+def joins_grids(source: Source | None) -> bool:
+    """Whether source has xarray data joined in, itself or through a source derived from it."""
+    # A derived source (a follow-up's SQL result) shares the connection
+    return isinstance(source, DuckDBSource) and any(
+        source._connection is joined._connection for joined in JOINED_GRIDS
+    )
 
 def _resolve_geo_source(src: str, extension: str) -> Source:
     """Load a geospatial file into an in-memory DuckDBSource.
