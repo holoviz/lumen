@@ -23,7 +23,10 @@ __all__ = [
 ]
 
 
-def read(data: DataT | list[DataT] | dict[str, DataT], **options) -> Source:
+def read(
+    data: DataT | list[DataT] | dict[str, DataT], *, variables: list[str] | None = None,
+    sel: dict | None = None, bbox: tuple[float, float, float, float] | None = None,
+) -> Source:
     """
     Load data into a single Lumen Source.
 
@@ -32,4 +35,4 @@ def read(data: DataT | list[DataT] | dict[str, DataT], **options) -> Source:
     """
     # Deferred: reading loads DuckDB, which import lumen avoids
     from .sources.data import read
-    return read(data, **options)
+    return read(data, variables=variables, sel=sel, bbox=bbox)
