@@ -494,12 +494,20 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     assert not is_gridded({(joined.name, "plain"): joined})
 
 
-async def _main_prompt(sql_context, test_messages, llm, **flags):
+async def _main_prompt(sql_context, test_messages, llm, tool_names=(), **flags):
     agent = SQLAgent(llm=llm)
     return await agent._render_prompt(
         "main", test_messages, await sql_context(), dialect="duckdb", is_final_step=True,
-        sql_plan_context=None, active_filters=None, tool_names=[], tool_rounds=6, **flags,
+        sql_plan_context=None, active_filters=None, tool_names=list(tool_names), tool_rounds=6, **flags,
     )
+
+
+async def test_sql_prompt_names_the_gridded_tools_only_when_offered(sql_context, test_messages, llm):
+    # A grid joined into DuckDB is gridded, but the tools only work on an xarray source
+    joined = await _main_prompt(sql_context, test_messages, llm, gridded=True)
+    assert "## Gridded SQL" in joined and "time_slice" not in joined
+    offered = await _main_prompt(sql_context, test_messages, llm, gridded=True, tool_names=["time_slice"])
+    assert "`time_slice`" in offered
 
 
 @pytest.mark.parametrize("flags, spatial, gridded", [
