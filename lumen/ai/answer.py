@@ -75,7 +75,7 @@ from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
 from .report import ActorTask, TaskGroup
-from .sharing import sharing
+from .sharing import mask_frame, sharing
 from .ui import ExplorerUI
 from .usage import UsageCollector
 from .utils import errors_in_result, format_error
@@ -504,7 +504,7 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     name = returns.__name__ if isinstance(returns, type) else str(returns)
     content = f"Question: {answer.question}\n\nAnswer: {answer.value}"
     if df is not None and sharing.share == "sample":
-        content += f"\n\nThe data the answer was written from:\n{df.head(20).to_csv(index=False)}"
+        content += f"\n\nThe data the answer was written from:\n{mask_frame(df.head(20)).to_csv(index=False)}"
     try:
         with llm.capture_usage() as usage:
             out = await llm.invoke(

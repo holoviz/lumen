@@ -1734,6 +1734,16 @@ async def test_returns_keeps_data_out_of_the_typed_prompt_unless_samples_are_sha
     assert "category,total" not in llm.typed_prompt
 
 
+async def test_returns_masks_personal_data_in_the_typed_prompt():
+    source = read({"tiny": pd.DataFrame({"email": ["ann@example.com", "bo@example.org"], "value": [1.0, 2.0]})})
+    llm = _TypingLLM()
+    llm.result = "ann"
+    _sql_answer(llm, source, "SELECT email, value FROM tiny")
+    configure(mask_pii=True)
+    await aask(source, "Whose is largest?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=str)
+    assert "@example." not in llm.typed_prompt and "value" in llm.typed_prompt
+
+
 async def test_an_answer_that_is_not_the_type_becomes_an_error(frame_source):
     class Refusing(_TypingLLM):
         async def invoke(self, messages, system="", response_model=None, **kwargs):
