@@ -234,6 +234,16 @@ def _fingerprint(obj: param.Parameterized) -> str:
     return type(obj).__name__ + json.dumps(settings, sort_keys=True, default=str) + own_llm
 
 
+def _type_key(returns: Any) -> str:
+    """
+    The type returns= asks for, by its schema and identity: a pydantic class
+    redefined in a notebook keeps its repr but is another class.
+    """
+    if returns is None:
+        return ""
+    return f"{id(returns)}:{json.dumps(TypeAdapter(returns).json_schema(), sort_keys=True)}"
+
+
 def _cache_key(
     source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None, returns: Any = None,
 ) -> str:
@@ -244,7 +254,7 @@ def _cache_key(
         json.dumps(source.get_metadata(None), sort_keys=True, default=str),
         _fingerprint(llm), json.dumps(llm.model_kwargs, sort_keys=True, default=str),
         *(_fingerprint(agent) for agent in agents), str(SQLAgent.max_rows), sharing.share, str(sharing.mask_pii),
-        str(sorted(visible_slugs or [])), _prompt_version(), repr(returns),
+        str(sorted(visible_slugs or [])), _prompt_version(), _type_key(returns),
     )
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 

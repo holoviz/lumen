@@ -33,8 +33,8 @@ from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
     _drop_exceptions, _env_llm, _fingerprint, _loop, _planner, _planners,
-    _records, _resolve, _row_cap_hit, _run, _StatusLine, aask, ask, chat,
-    clear_cache, configure,
+    _records, _resolve, _row_cap_hit, _run, _StatusLine, _type_key, aask, ask,
+    chat, clear_cache, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -1772,6 +1772,22 @@ async def test_returns_is_part_of_the_cache_key(frame_source):
         clear_cache()
     assert not other.cached and other.result == 38.0
     assert again.cached and again.result == 38 and again._returns is int
+
+
+def test_a_redefined_class_is_another_cache_key():
+    from pydantic import BaseModel
+
+    class Total(BaseModel):
+        total: float
+
+    first = Total
+
+    class Total(BaseModel):  # noqa: F811
+        total: float
+        note: str = ""
+
+    assert repr(first) == repr(Total)
+    assert _type_key(first) != _type_key(Total) and _type_key(first) == _type_key(first)
 
 
 async def test_a_planned_answer_is_typed_when_run(frame_source):
