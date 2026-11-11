@@ -30,16 +30,16 @@ from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _busy, _default_agents, _default_llm, _env_llm, _loop, _planner,
-    _planners, _records, _resolve, _run, _StatusLine, aask, ask, chat,
-    configure,
+    _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
+    _drop_exceptions, _env_llm, _loop, _planner, _planners, _records, _resolve,
+    _run, _StatusLine, aask, ask, chat, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
-from lumen.ai.report import ActorTask
+from lumen.ai.report import ActorTask, TaskGroup
 from lumen.ai.sharing import sharing
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
@@ -408,6 +408,29 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
     assert _resolve(pipeline)[0] is source
 
 
+def test_filter_change_drops_the_cached_planner(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    source, _ = _resolve(pipeline)
+    _planners[source] = MagicMock()
+    pipeline.filters[0].value = "B"
+    assert source not in _planners
+    assert _resolve(pipeline)[0] is source
+
+
+def test_table_change_rebuilds_the_filtered_source():
+    source = read({
+        "tiny": pd.DataFrame({"category": ["A", "B"], "value": [1, 2]}),
+        "other": pd.DataFrame({"category": ["A", "A"], "value": [3, 4]}),
+    })
+    pipeline = Pipeline(source=source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    first, _ = _resolve(pipeline)
+    pipeline.table = "other"
+    second, _ = _resolve(pipeline)
+    assert second is not first
+    assert second.get_tables() == ["other"]
+    assert sorted(second.get("other")["value"]) == [3, 4]
+
+
 def _chat_only(llm):
     llm.set_responses([
         _plan(("ChatAgent", "Explain")),
@@ -422,7 +445,7 @@ def test_ask_without_a_running_loop(llm, frame_source):
 
 
 def test_ask_errors_do_not_chain_the_loop_check(frame_source):
-    with patch("lumen.ai.answer.aask", side_effect=ValueError("boom")):
+    with patch("lumen.ai.answer._aask_messages", side_effect=ValueError("boom")):
         with pytest.raises(ValueError) as info:
             ask(frame_source, "q")
     assert info.value.__context__ is None
@@ -457,10 +480,40 @@ def test_sync_ask_runs_every_question_on_one_loop(llm, frame_source):
     assert loops[0] is loops[1]
 
 
+async def test_aask_runs_on_the_loop_sync_ask_uses(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops == [_loop()]
+
+
+def test_ask_from_lumens_loop_raises_instead_of_deadlocking(frame_source):
+    async def nested():
+        ask(frame_source, "q")
+
+    with pytest.raises(RuntimeError, match="await aask"):
+        asyncio.run_coroutine_threadsafe(nested(), _loop()).result(timeout=5)
+
+
+def test_fork_resets_the_loop_and_caches(frame_source):
+    loop = _loop()
+    _planners[frame_source] = MagicMock()
+    _LOOP_LOCK.acquire()  # as the before-fork hook does
+    _after_fork()
+    assert frame_source not in _planners
+    assert _loop() is not loop
+    loop.call_soon_threadsafe(loop.stop)
+
+
 def test_interrupting_sync_ask_cancels_the_question(frame_source):
     future = MagicMock()
     future.result.side_effect = KeyboardInterrupt
-    with patch("lumen.ai.answer.aask", new=MagicMock()), \
+    with patch("lumen.ai.answer._aask_messages", new=MagicMock()), \
             patch("lumen.ai.answer.asyncio.run_coroutine_threadsafe", return_value=future):
         with pytest.raises(KeyboardInterrupt):
             ask(frame_source, "q")
@@ -886,6 +939,24 @@ def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
         answer.code
 
 
+async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    SQLModel = make_sql_model([(source.name, "climate")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT x, temp FROM climate", table_slug="temps", tables=["climate"]),
+        SQLModel(query="SELECT * FROM climate WHERE temp > 1", table_slug="warm", tables=["climate"]),
+    ])
+    conversation = source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    await conversation.aask("Temperatures?")
+    follow_up = await conversation.aask("Only the warm ones")
+    assert follow_up.source is not source
+    with pytest.raises(ValueError, match="joins xarray data"):
+        follow_up.code
+
+
 class FollowUpLLM(MockLLM):
     """Replies by response model, and records what each Plan call was sent."""
 
@@ -1002,3 +1073,10 @@ def test_records_turn_every_missing_value_into_null():
         "ints": pd.Series([1, None], dtype="Int64"),
     })
     assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]
+
+
+def test_failed_answers_drop_exceptions_in_nested_task_groups():
+    inner = ActorTask(ChatAgent(), title="Explain")
+    inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
+    _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
+    assert inner.out_context == {"sql": "SELECT 1"}

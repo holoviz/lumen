@@ -23,7 +23,7 @@ answer
 
 1. `Kilo()` serves free models without an account. With an API key such as `OPENAI_API_KEY` set, leave out `llm=` and Lumen uses that provider.
 
-`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables, and everything in one dict except a ready-made Source lands in one source, so a question can join them. See [Data Sources](../configuration/sources.md#in-memory-data).
+`lumen.read` takes file paths and URLs, pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets, DuckDB connections, Sources and Pipelines. A dict names the tables and puts them in one source, so a question can join them. A ready-made Source can't be mixed into the dict; pass it on its own. See [Data Sources](../configuration/sources.md#in-memory-data).
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
@@ -112,6 +112,8 @@ Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sa
 | VS Code | The interactive card once `jupyter_bokeh` is installed in the kernel's environment. Without it, Panel prints an install hint and you get the answer, the Vega-Lite chart and the SQL as plain outputs |
 | marimo | A static card with the answer, a PNG and the SQL. Pick the Vega-Lite output in the cell's output menu for the interactive chart |
 | Python REPL or script | Echoing `answer` shows its status and first line; `answer.value` and `answer.sql` hold the full text |
+
+The PNG and plain-output fallbacks cover Vega-Lite charts only. An hvPlot chart (gridded data, geometry) shows in the interactive card and nowhere else.
 
 For VS Code, install the widget bridge into the same environment as the kernel:
 
