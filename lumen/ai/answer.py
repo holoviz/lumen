@@ -93,7 +93,12 @@ def _is_spatial(source: Source) -> bool:
     if not isinstance(source, BaseSQLSource):
         return False
     for table in source.get_tables():
-        empty = source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) LIMIT 0")
+        try:
+            # Aliased, as Postgres and MySQL require for a subquery
+            empty = source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) AS probe LIMIT 0")
+        except Exception as e:
+            log.debug(f"Could not probe {table!r} for geometry: {e}")
+            continue
         columns = {str(c).lower() for c in empty.columns}
         if geometry_columns(empty) or (columns & LON_NAMES and columns & LAT_NAMES):
             return True

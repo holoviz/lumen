@@ -407,6 +407,12 @@ async def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source)
         assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(frame_source))
 
 
+async def test_default_agents_skip_hvplot_when_the_probe_fails(frame_source):
+    with patch.object(type(frame_source), "execute", side_effect=RuntimeError("syntax error")):
+        names = [type(a).__name__ for a in await _default_agents(frame_source)]
+    assert names == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
+
+
 def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
     pipeline = Pipeline(source=frame_source, table="tiny")
     source, visible = _resolve(pipeline)
