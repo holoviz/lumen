@@ -149,7 +149,7 @@ def document():
 
 @pytest.fixture
 def cachedir():
-    tmp_dir = tempfile.TemporaryDirectory()
+    tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     yield tmp_dir.name
     tmp_dir.cleanup()
 
