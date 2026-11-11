@@ -19,11 +19,12 @@ from lumen.variables.base import Variables
 
 
 def pytest_configure():
-    # Install the sqlite extension once, before xdist starts its workers,
-    # so they don't race to download it; on Windows the loser fails with
+    # Install the extensions once, before xdist starts its workers,
+    # so they don't race to download them; on Windows the loser fails with
     # "Access is denied" moving the file into place.
     if (duckdb := try_import("duckdb")) and not os.environ.get("PYTEST_XDIST_WORKER"):
         duckdb.execute("INSTALL sqlite")
+        duckdb.execute("INSTALL httpfs")
 
 
 @pytest.fixture

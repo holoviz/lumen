@@ -60,11 +60,6 @@ from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
 
-# Parallel workers race to install the httpfs extension and Windows locks the file
-skip_httpfs_on_windows = pytest.mark.skipif(
-    sys.platform == 'win32', reason='httpfs extension has file locking issues on Windows CI'
-)
-
 
 @pytest.fixture
 def test_source():
@@ -1250,7 +1245,6 @@ class TestResolveData:
         # The value is a SQL query referencing the file
         assert 'path/to/data.csv' in source.tables['my_data']
 
-    @skip_httpfs_on_windows
     def test_resolve_data_remote_http_url(self):
         """Test resolving a remote HTTP URL (enables httpfs)."""
         result = UI._resolve_data('http://example.com/data.csv')
@@ -1261,7 +1255,6 @@ class TestResolveData:
         assert 'INSTALL httpfs;' in source.initializers
         assert 'LOAD httpfs;' in source.initializers
 
-    @skip_httpfs_on_windows
     def test_resolve_data_remote_https_url(self):
         """Test resolving a remote HTTPS URL (enables httpfs)."""
         result = UI._resolve_data('https://example.com/data.parquet')
@@ -1395,7 +1388,6 @@ class TestResolveData:
         # Local files should not have httpfs initializers
         assert source.initializers == []
 
-    @skip_httpfs_on_windows
     def test_resolve_data_mixed_local_and_remote(self):
         """Test resolving a mix of local and remote files."""
         result = UI._resolve_data(['local.csv', 'https://example.com/remote.csv'])
