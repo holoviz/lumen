@@ -50,6 +50,7 @@ from .llm import (
     Llm, get_available_llm, quiet_retries, signed_in_cli_hint,
 )
 from .report import ActorTask, TaskGroup
+from .tools import MetadataLookup
 from .ui import ExplorerUI
 from .utils import errors_in_result, format_error
 
@@ -167,6 +168,12 @@ async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
     return planner
 
 
+def _drop_planner(source: Source) -> None:
+    """Drop a source's cached Planner, and what its metadata lookup synced, so new rows are read afresh."""
+    if (planner := _planners.pop(source, None)) is not None:
+        MetadataLookup.forget(planner.context["vector_store"])
+
+
 def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
     """Return the Source to ask and the table slugs it is limited to."""
     if not isinstance(data, Pipeline):
@@ -175,13 +182,18 @@ def _resolve(data: DataT | Pipeline) -> tuple[Source, set[str] | None]:
         # The rows the pipeline selects have to be what gets queried. The
         # copy follows the pipeline's updates, so one per pipeline and table
         # is enough, and it is freed with the pipeline.
-        table, source = data.__dict__.get("_ask_source", (None, None))
+        table, source, watcher = data.__dict__.get("_ask_source", (None, None, None))
         if source is None or table != data.table:
+            if source is not None:
+                # The old table's copy keeps what it holds for earlier answers but stops following
+                source.stop_mirroring()
+                data.param.unwatch(watcher)
+                _drop_planner(source)
             source = read({data.table: data})
-            data._ask_source = (data.table, source)
             # The Planner's metadata describes the rows of the first
             # question, so new rows need a new Planner
-            data.param.watch(lambda event, source=source: _planners.pop(source, None), "data")
+            watcher = data.param.watch(lambda event, source=source: _drop_planner(source), "data")
+            data._ask_source = (data.table, source, watcher)
         return source, None
     return data.source, {f"{data.source.name}{SOURCE_TABLE_SEPARATOR}{data.table}"}
 
