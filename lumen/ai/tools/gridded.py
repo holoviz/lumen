@@ -93,7 +93,10 @@ def _quote(name: str) -> str:
 
 def gridded_tools(sources: list[XArraySQLSource]) -> list[FunctionTool]:
     """The gridded SQL tools for these sources' tables."""
-    tables = {table: source for source in sources for table in source.get_tables()}
+    # Only data variables: tables derived by a query have no grid attributes to read
+    tables = {
+        table: source for source in sources for table in source.get_tables() if table in source._dataset.data_vars
+    }
 
     def grid(table: str) -> _Grid | str:
         if table not in tables:

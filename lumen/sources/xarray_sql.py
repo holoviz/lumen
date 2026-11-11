@@ -391,6 +391,9 @@ class XArraySQLSource(BaseSQLSource):
 
     def column_units(self, table: str) -> dict[str, str]:
         """The CF units of a table's columns that declare them, by column name."""
+        if table not in self._dataset.data_vars:
+            # A table derived by a query, e.g. a follow-up's result, has no variable of its own
+            return {}
         var = self._dataset[table]
         units = {dim: self._dataset.coords[dim].attrs.get("units") for dim in var.dims if dim in self._dataset.coords}
         units[table] = var.attrs.get("units")
