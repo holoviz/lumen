@@ -1570,6 +1570,13 @@ def test_read_mixed_connection_table_clashing_with_a_frame_raises():
         read({'people': pd.DataFrame({'a': [2]}), 'shop': conn})
 
 
+def test_read_mixed_connection_table_clashing_with_an_unnamed_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE data AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'data' has the same name"):
+        read([pd.DataFrame({'a': [2]}), conn])
+
+
 def test_read_two_grids_share_one_source():
     xr = pytest.importorskip('xarray')
     pytest.importorskip('xarray_sql')

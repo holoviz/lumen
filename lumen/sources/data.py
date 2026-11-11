@@ -217,7 +217,12 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
                 "DataArray, or a DuckDB connection or relation."
             )
 
-    entries = len(frames) + len(unnamed) + len(tables) + len(mirrors) + len(grids) + len(connections)
+    # Named first, so a connection table called data collides with them too
+    if len(unnamed) == 1:
+        frames["data"] = unnamed[0]
+    else:
+        frames.update({f"data_{i}": df for i, df in enumerate(unnamed)})
+    entries = len(frames) + len(tables) + len(mirrors) + len(grids) + len(connections)
     if entries > 1:
         # Mixed with other entries, a connection's tables are copied into the
         # shared source, so Lumen never writes into the user's database
@@ -236,10 +241,6 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         sources.extend(XArraySQLSource.from_dataset(ds) for ds in grids.values())
         grids = {}
 
-    if len(unnamed) == 1:
-        frames["data"] = unnamed[0]
-    else:
-        frames.update({f"data_{i}": df for i, df in enumerate(unnamed)})
     if frames and (tables or mirrors):
         # Mixed with files or pipelines, frames join the same connection as
         # mirrors, which DuckDBSource ingests and serializes as pandas
