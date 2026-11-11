@@ -1391,10 +1391,6 @@ class TestResolveData:
 
     def test_resolve_data_mixed_local_and_remote(self):
         """Test resolving a mix of local and remote files."""
-        if sys.platform == 'win32':
-            # Skip on Windows due to httpfs extension file locking issues in CI
-            pytest.skip("httpfs extension has file locking issues on Windows CI")
-
         result = resolve_data(['local.csv', 'https://example.com/remote.csv'])
         assert len(result) == 1
         source = result[0]
