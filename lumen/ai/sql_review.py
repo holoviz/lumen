@@ -145,6 +145,20 @@ def review_sql(sql: str, tables: dict[str, TableFacts], dialect: str | None = "d
     return findings
 
 
+def _spatial(condition: exp.Expression | None) -> bool:
+    """Whether a join condition relates geometries: a spatial predicate, or a distance compared with a threshold."""
+    if condition is None:
+        return False
+    if any(_name(f) in _PREDICATES for f in condition.find_all(exp.Anonymous)):
+        return True
+    # e.g. ST_Distance_Sphere(a, b) <= 750000, the within-distance join
+    return any(
+        _name(f).startswith(("ST_DISTANCE", "ST_DWITHIN"))
+        for comparison in condition.find_all(exp.LT, exp.LTE, exp.GT, exp.GTE)
+        for f in comparison.find_all(exp.Anonymous, exp.StDistance)
+    )
+
+
 def _unpredicated_joins(tree: exp.Expression, tables: dict[str, TableFacts]) -> list[str]:
     """Joins of two tables that both have geometry, with neither a key nor a spatial predicate."""
     with_geometry = {name for name, facts in tables.items() if facts.geometry}
@@ -159,13 +173,13 @@ def _unpredicated_joins(tree: exp.Expression, tables: dict[str, TableFacts]) -> 
         if not isinstance(first, exp.Table) or first.name not in with_geometry:
             continue
         where = select.args.get("where")
-        spatial_where = where is not None and any(_name(f) in _PREDICATES for f in where.find_all(exp.Anonymous))
+        spatial_where = _spatial(where)
         for join in joins:
             other = join.this
             if not isinstance(other, exp.Table) or other.name not in with_geometry:
                 continue
             on, using = join.args.get("on"), join.args.get("using")
-            spatial_on = on is not None and any(_name(f) in _PREDICATES for f in on.find_all(exp.Anonymous))
+            spatial_on = _spatial(on)
             if spatial_on or spatial_where or using or (on is not None and not spatial_on and on.find(exp.EQ)):
                 continue
             findings.append(

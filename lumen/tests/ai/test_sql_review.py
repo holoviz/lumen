@@ -38,6 +38,7 @@ def test_review_finds_mistakes_that_run_without_error(sql, expected):
     "SELECT * FROM places JOIN parks ON ST_Within(places.geometry, parks.geometry)",
     "SELECT * FROM places, parks WHERE ST_Intersects(places.geometry, parks.geometry)",
     "SELECT * FROM places JOIN parks ON places.n = parks.p",
+    "SELECT * FROM places a JOIN parks b ON ST_Distance_Sphere(ST_FlipCoordinates(a.geometry), ST_FlipCoordinates(b.geometry)) <= 750000",
     "SELECT * FROM air WHERE air > 300",
     "SELECT * FROM air WHERE lat > 30",
     "not sql at all (",
