@@ -2281,6 +2281,7 @@ def test_a_large_scatter_or_line_chart_is_drawn_as_a_density_image(many_points, 
     {"mark": "bar", "encoding": {"x": {"field": "kind"}, "y": {"field": "y", "aggregate": "mean"}}},
     _point_spec(aggregate="mean"),
     {"layer": [_point_spec()]},
+    {**_point_spec(), "transform": [{"filter": "datum.y > 0.5"}]},
 ])
 def test_other_large_charts_stay_vega_lite(many_points, spec):
     from lumen.ai.answer import _density_view

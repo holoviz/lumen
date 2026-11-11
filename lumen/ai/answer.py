@@ -622,7 +622,8 @@ def _point_chart(view: View) -> tuple[str, dict] | None:
     if not isinstance(view, VegaLiteView):
         return None
     spec = view.spec
-    if any(key in spec for key in ("layer", "facet", "repeat", "concat", "hconcat", "vconcat")):
+    # A transform filters or computes fields, which the raw rows do not have
+    if any(key in spec for key in ("layer", "facet", "repeat", "concat", "hconcat", "vconcat", "transform")):
         return None
     mark = spec.get("mark")
     kind = _POINT_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
