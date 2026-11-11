@@ -109,3 +109,17 @@ def test_the_sql_agent_offers_the_tools_for_a_grid():
     assert {"area_weighted_mean", "climatology", "anomaly", "convert_units", "time_slice"} <= names
     tabular = DuckDBSource(tables={"t": "SELECT 1 AS x"})
     assert _merge_prompt_tools(agent.llm_tools, None, {"sources": [tabular]}) is None
+
+
+def test_a_derived_table_is_not_a_grid():
+    source = XArraySQLSource(_dataset=_grid())
+    derived = source.create_sql_expr_source({"warm": "SELECT * FROM air WHERE air > 270"})
+    assert "warm" in derived.get_tables() and derived.column_units("warm") == {}
+    tools = {tool.function.__name__: tool.function for tool in gridded_tools([derived])}
+    assert tools["climatology"]("warm").startswith("No gridded table 'warm'")
+    assert "air" in tools["climatology"]("air")
+
+
+def test_a_climatology_by_quarter():
+    source, tools = _tools(_grid())
+    assert "EXTRACT(QUARTER FROM" in tools["climatology"]("air", period="quarter")
