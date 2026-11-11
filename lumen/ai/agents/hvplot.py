@@ -1,3 +1,5 @@
+import importlib.util
+
 from typing import Any
 
 import pandas as pd
@@ -36,6 +38,7 @@ class hvPlotAgent(BaseViewAgent):
         default=[
             "Use for exploratory data analysis, interactive plots, and dynamic filtering",
             "Use for quick, iterative data visualization during analysis",
+            "Prefer over Vega-Lite for maps and gridded data",
             "Can render a geometry column (GeoDataFrame polygons/lines/points) as a "
             "2D map or choropleth, shading shapes by a value column; geometry whose "
             "schema is 'geographic' (a lat/lon CRS) and lon/lat points are drawn on "
@@ -205,9 +208,11 @@ class hvPlotAgent(BaseViewAgent):
             # height lets the width follow the data instead
             spec.pop("responsive")
             spec.setdefault("frame_height", 400)
-        if spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
+        # Rasterizing and datashading need datashader, which is not a dependency
+        datashader = importlib.util.find_spec("datashader") is not None
+        if datashader and spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
             spec["rasterize"] = True
-        if len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
+        if datashader and len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             if spec.get("by"):
                 # rasterize reduces to a single number per pixel, which throws
                 # away the category; datashade blends the ones sharing a pixel.

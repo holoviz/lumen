@@ -164,13 +164,13 @@ class Task(Viewer):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, logs the title and returns a nullcontext
-        that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return self._null_step.add(title) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
         self._view[:] = self._header
@@ -462,7 +462,7 @@ class TaskGroup(Task):
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
-                print_task_exception(e, self.interface)
+                print_task_exception(e)
                 self.status = "error"
                 new_context = {"__error__": str(e), "__error_type__": type(e), "__exception__": e}
                 task.out_context = new_context

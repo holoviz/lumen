@@ -34,6 +34,7 @@ from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
+from ..sources.data import resolve_data
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import log, try_import_xarray
 from ..views import View
@@ -52,7 +53,6 @@ from .controls import (
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
-from .data import resolve_data
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
@@ -73,7 +73,7 @@ from .utils import (
 from .vector_store import VectorStore
 
 if TYPE_CHECKING:
-    from .data import DataT
+    from ..sources.data import DataT
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
@@ -2185,7 +2185,7 @@ class ExplorerUI(UI):
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
         await self.add_plan_exploration(plan)
 
-    async def add_plan_exploration(self, plan: Plan):
+    async def add_plan_exploration(self, plan: Plan, views: list | None = None):
         """
         Show an executed Plan as a new exploration, with its views and its
         output context, so follow-up questions continue from it.
@@ -2195,11 +2195,14 @@ class ExplorerUI(UI):
         plan: Plan
             A Plan that has already been executed, e.g. ``answer.plan``
             from ``source.ask(...)``.
+        views: list | None
+            The views to show instead of the plan's own, e.g. with a
+            refined chart in place of the one the plan made.
         """
         prev = self._explorations.value
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
-            self._add_views(exploration, items=plan.views)
+            self._add_views(exploration, items=plan.views if views is None else views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
@@ -2832,5 +2835,6 @@ class ExplorerUI(UI):
             if not is_home:
                 context['prev_plan'] = exploration.plan
             plan = await self._coordinator.respond(messages, context)
-            if plan is not None:
+            # An unanswerable plan has no steps, and respond has told the user why
+            if plan is not None and not plan.unanswerable:
                 await self._execute_plan(plan)

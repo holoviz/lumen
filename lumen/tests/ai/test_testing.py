@@ -14,10 +14,10 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import aask
 from lumen.ai.coordinator.planner import make_plan_model
-from lumen.ai.data import read
 from lumen.ai.testing import (
     MissingRecording, ReplayLLM, cassette, record,
 )
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 
 
@@ -118,6 +118,76 @@ async def test_cassette_replays_unless_asked_to_record(tmp_path, monkeypatch):
         assert await llm.invoke([{"role": "user", "content": "Hello?"}]) == "hi"
 
 
+async def test_recording_again_replaces_the_old_calls_unless_appending(tmp_path):
+    path = tmp_path / "c.json"
+    for answer in ("old", "new"):
+        llm = MockLLM()
+        llm.set_responses([answer])
+        with record(llm, path):
+            await llm.invoke([{"role": "user", "content": f"{answer} prompt?"}])
+    calls = json.loads(path.read_text())["calls"]
+    assert [call["prompt"] for call in calls.values()] == ["new prompt?"]
+    llm = MockLLM()
+    llm.set_responses(["more"])
+    with record(llm, path, append=True):
+        await llm.invoke([{"role": "user", "content": "more prompt?"}])
+    assert len(json.loads(path.read_text())["calls"]) == 2
+
+
+async def test_a_recording_can_leave_the_prompts_out(tmp_path):
+    path = tmp_path / "c.json"
+    llm = MockLLM()
+    llm.set_responses(["hi"])
+    with record(llm, path, preview=False):
+        await llm.invoke([{"role": "user", "content": "Revenue of ACME Corp?"}])
+    assert "ACME" not in path.read_text()
+    assert await ReplayLLM(path).invoke([{"role": "user", "content": "Revenue of ACME Corp?"}]) == "hi"
+
+
+async def test_a_changed_response_model_misses_instead_of_failing_to_validate(tmp_path):
+    from pydantic import BaseModel
+
+    class Reply(BaseModel):
+        text: str
+
+    path = tmp_path / "c.json"
+    llm = MockLLM()
+    llm.set_responses([Reply(text="hi")])
+    question = [{"role": "user", "content": "Hello?"}]
+    with record(llm, path):
+        await llm.invoke(question, response_model=Reply)
+
+    class Reply(BaseModel):  # noqa: F811
+        text: str
+        count: int
+
+    with pytest.raises(MissingRecording):
+        await ReplayLLM(path).invoke(question, response_model=Reply)
+
+
+def test_a_block_that_raises_writes_no_cassette(tmp_path):
+    path = tmp_path / "c.json"
+    with pytest.raises(RuntimeError), record(MockLLM(), path):
+        raise RuntimeError("test failed")
+    assert not path.exists()
+
+
+def test_nested_recording_restores_the_outer_invoke(tmp_path):
+    llm = MockLLM()
+    with record(llm, tmp_path / "outer.json"):
+        outer = llm.invoke
+        with record(llm, tmp_path / "inner.json"):
+            assert llm.invoke is not outer
+        assert llm.invoke is outer
+    assert llm.invoke.__name__ == "invoke"
+
+
+@pytest.mark.parametrize("text, kept", [("MetadataLookup00348", False), ("CA94110", True), ("id_10234", True)])
+def test_only_generated_names_lose_their_counter(text, kept):
+    from lumen.ai.testing import _normalize
+    assert (_normalize(text) == text) is kept
+
+
 def test_a_cassette_from_another_version_is_refused(tmp_path):
     path = tmp_path / "old.json"
     path.write_text(json.dumps({"version": 0, "calls": {}}))
@@ -126,17 +196,19 @@ def test_a_cassette_from_another_version_is_refused(tmp_path):
 
 
 _PLANNER_PROMPT = '''
-import asyncio, sys
+import asyncio, os, sys
 import pandas as pd
 from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.answer import aask
-from lumen.ai.data import read
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 
 class Capture(MockLLM):
     async def invoke(self, messages, system="", **kwargs):
         sys.stdout.write(system + str(VegaLiteAgent()))
-        raise SystemExit(0)
+        sys.stdout.flush()
+        # The question runs on Lumen's loop thread, where SystemExit would not end the process
+        os._exit(0)
 
 source = read({"tiny": pd.DataFrame({"value": [1.0]})})
 asyncio.run(aask(source, "Total?", llm=Capture(), agents=[ChatAgent(), SQLAgent(), VegaLiteAgent(n_doc_pages=0)]))

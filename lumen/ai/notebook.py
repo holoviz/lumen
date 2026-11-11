@@ -14,18 +14,36 @@ previews the plan as ask(confirm=True) does.
 """
 from __future__ import annotations
 
-import argparse
-import shlex
+import re
 
 from IPython.core.error import UsageError
 from IPython.core.magic import Magics, line_cell_magic, magics_class
 
 from .answer import ask
 
-_parser = argparse.ArgumentParser(prog="%lumen", add_help=False, exit_on_error=False)
-_parser.add_argument("source")
-_parser.add_argument("--as", dest="name", default="_lumen")
-_parser.add_argument("--confirm", action="store_true")
+_USAGE = "%lumen source [--as name] [--confirm] question"
+_FLAG = re.compile(r"\s*--(?:(confirm)|as[ =]\s*(\S+))(?=\s|$)")
+
+
+def _parse(line: str) -> tuple[str, str, bool, str]:
+    """
+    The source, the name to keep the answer as, whether to confirm, and the
+    rest of the line verbatim. Only the source and the flags before the
+    question are parsed, so quotes and braces in the question are left alone.
+    """
+    source, _, rest = line.strip().partition(" ")
+    if not source or source.startswith("--"):
+        raise UsageError(f"Start with the variable to ask: {_USAGE}")
+    name, confirm = "_lumen", False
+    while match := _FLAG.match(rest):
+        if match.group(1):
+            confirm = True
+        elif match.group(2).isidentifier():
+            name = match.group(2)
+        else:
+            raise UsageError(f"--as needs a variable name, not {match.group(2)!r}: {_USAGE}")
+        rest = rest[match.end():]
+    return source, name, confirm, rest.strip()
 
 
 @magics_class
@@ -33,25 +51,31 @@ class LumenMagics(Magics):
 
     @line_cell_magic
     def lumen(self, line: str, cell: str | None = None):
-        try:
-            args, words = _parser.parse_known_args(shlex.split(line))
-        except (argparse.ArgumentError, ValueError) as e:
-            raise UsageError(f"%lumen source [--as name] [--confirm] question: {e}") from e
+        source, name, confirm, words = _parse(line)
         namespace = self.shell.user_ns
-        if args.source not in namespace:
-            raise UsageError(f"No variable named {args.source!r} to ask; read your data with lumen.read first.")
+        if source not in namespace:
+            raise UsageError(f"No variable named {source!r} to ask; read your data with lumen.read first.")
         if cell is None:
             # IPython has already filled in {name} on a magic's line
-            question = " ".join(words).strip()
+            question = words
+        elif words:
+            raise UsageError(
+                f"%%lumen takes only the source and flags on its line, but got {words!r}; "
+                f"put the question in the cell. {_USAGE}"
+            )
         else:
             try:
                 question = cell.strip().format_map(namespace)
             except KeyError as e:
                 raise UsageError(f"The question names {{{e.args[0]}}}, which is not a variable here.") from e
+            except (ValueError, IndexError, AttributeError) as e:
+                raise UsageError(
+                    f"The question has a brace that is not a variable ({e}); write {{{{ and }}}} for a literal brace."
+                ) from e
         if not question:
             raise UsageError("Write the question after the source, or in the cell below %%lumen.")
-        answer = ask(namespace[args.source], question, confirm=args.confirm)
-        namespace[args.name] = answer
+        answer = ask(namespace[source], question, confirm=confirm)
+        namespace[name] = answer
         return answer
 
 

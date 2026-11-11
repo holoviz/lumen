@@ -22,7 +22,7 @@ import hvsampledata
 
 import lumen
 
-from lumen.ai.answer import aask
+from lumen.ai.answer import aask, configure
 from lumen.ai.llm import ClaudeCode, Kilo
 
 QUESTIONS = {
@@ -68,6 +68,7 @@ def declined(answer) -> bool:
 
 async def main(args):
     llm = {"kilo": Kilo, "claude-code": ClaudeCode}[args.llm]()
+    configure(share=args.share)
     sources = {
         "penguins": lumen.read({"penguins": hvsampledata.penguins("pandas")}),
         "quakes": lumen.read({"quakes": hvsampledata.earthquakes("pandas")}),
@@ -95,12 +96,14 @@ async def main(args):
     print(f"impossible declined: {sum(r['declined'] for r in impossible)}/{len(impossible)}")
     print(f"answerable answered: {sum(not r['flagged'] and r['status'] == 'success' for r in answerable)}/{len(answerable)}")
     if args.out:
-        Path(args.out).write_text(json.dumps({"llm": args.llm, "results": results}, indent=1))
+        Path(args.out).write_text(json.dumps({"llm": args.llm, "share": args.share, "results": results}, indent=1))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--llm", choices=["kilo", "claude-code"], default="kilo")
+    parser.add_argument("--share", choices=["sample", "schema", "none"], default="sample",
+                        help="What the LLM may see of the data; below sample it cannot rule on a missing value")
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--out", help="Write the results as JSON")
     asyncio.run(main(parser.parse_args()))
