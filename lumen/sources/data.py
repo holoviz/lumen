@@ -57,11 +57,12 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         A file path or URL, a Source, a Pipeline, a DataFrame (pandas,
         polars, GeoPandas), a pyarrow Table, an xarray Dataset or
         DataArray, a DuckDB connection or relation, or a list or dict
-        of these. Frames in a list or dict share one source, and so do
-        files and pipelines. A dict key names a frame's, file's or
-        pipeline's table, a DataArray's variable or a DuckDB connection's
-        source; it is ignored for a Source and an xarray Dataset. A DuckDB
-        relation is read into memory. A DuckDB connection is used as is
+        of these. Frames in a list or dict share one source, and tabular
+        files (CSV, Parquet, JSON) and pipelines share another, so frames
+        and files together make two sources. A dict key names a frame's,
+        file's or pipeline's table, a DataArray's variable or a DuckDB
+        connection's source; it is ignored for a Source and an xarray
+        Dataset. A DuckDB relation is read into memory. A DuckDB connection is used as is
         and left open by ``source.close()``, and a source built on one
         cannot be rebuilt from its spec.
 
@@ -73,10 +74,10 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
     if len(sources) != 1:
         raise ValueError(
             f"The data resolved to {len(sources)} sources but read returns one: "
-            "Sources, xarray data and DuckDB connections each stay their own "
-            "source, and frames do not share one with files or pipelines. Call "
-            "read once per source, or pass the list to ExplorerUI, which takes "
-            "several."
+            "Sources, xarray data, DuckDB connections, geo files, database files "
+            "and database URIs each stay their own source, and frames do not "
+            "share one with files or pipelines. Call read once per source, or "
+            "pass the list to ExplorerUI, which takes several."
         )
     return sources[0]
 
