@@ -634,8 +634,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan. A question that fails raises
-        instead of returning an Answer, so this is "success".""")
+        The status of the executed Plan: "success", or "error" when the
+        question failed; error says why.""")
 
     truncated_at = param.Integer(default=None, allow_None=True, doc="""
         The row cap the data stopped at, when the result had more rows.
