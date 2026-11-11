@@ -134,10 +134,12 @@ class RecordingLLM(FollowUpLLM):
         return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
 
 
-async def _prompts_for_a_question(frame) -> str:
+async def _prompts_for_a_question(
+    frame, query="SELECT city, SUM(amount) AS total FROM sales GROUP BY city"
+) -> str:
     source = read({"sales": frame})
     SQLModel = make_sql_model([(source.name, "sales")])
-    llm = RecordingLLM([SQLModel(query="SELECT city, SUM(amount) AS total FROM sales GROUP BY city", table_slug="totals", tables=["sales"])])
+    llm = RecordingLLM([SQLModel(query=query, table_slug="totals", tables=["sales"])])
     with patch.object(SQLAgent, "_profile_source_rows", new=AsyncMock(return_value=[])):
         answer = await aask(source, "Total per city?", llm=llm, agents=[ChatAgent(), SQLAgent()])
     assert answer.status == "success"
@@ -162,6 +164,14 @@ async def test_prompts_mask_personal_data(frame):
     configure(mask_pii=True)
     prompts = await _prompts_for_a_question(frame)
     assert "ann@example.com" not in prompts
+    assert SECRET_CITY in prompts
+
+
+async def test_prompts_mask_a_renamed_personal_column_by_its_values(frame):
+    # The result summary only sees "c", so its values have to give it away
+    configure(mask_pii=True)
+    prompts = await _prompts_for_a_question(frame, "SELECT email AS c, city FROM sales")
+    assert "@example." not in prompts
     assert SECRET_CITY in prompts
 
 
