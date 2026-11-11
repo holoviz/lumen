@@ -214,12 +214,17 @@ def _fingerprint(obj: param.Parameterized) -> str:
     or an agent's own limits, as a string. Secrets and objects such as the
     interface or another LLM are left out.
     """
+    values = obj.param.values()
     settings = {
-        key: value for key, value in obj.param.values().items()
-        if key != "name" and not _SECRET_PARAM.search(key)
+        key: value for key, value in values.items()
+        # Private params, e.g. _ready, are state, not settings
+        if key != "name" and not key.startswith("_") and not _SECRET_PARAM.search(key)
         and isinstance(value, (str, int, float, bool, type(None), list, dict))
     }
-    return type(obj).__name__ + json.dumps(settings, sort_keys=True, default=str)
+    # An agent can bring an LLM of its own, which answers in place of the Planner's
+    llm = values.get("llm")
+    own_llm = _fingerprint(llm) if isinstance(llm, Llm) else ""
+    return type(obj).__name__ + json.dumps(settings, sort_keys=True, default=str) + own_llm
 
 
 def _cache_key(source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None) -> str:

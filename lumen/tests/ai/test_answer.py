@@ -32,8 +32,9 @@ from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
-    _drop_exceptions, _env_llm, _loop, _planner, _planners, _records, _resolve,
-    _row_cap_hit, _run, _StatusLine, aask, ask, chat, clear_cache, configure,
+    _drop_exceptions, _env_llm, _fingerprint, _loop, _planner, _planners,
+    _records, _resolve, _row_cap_hit, _run, _StatusLine, aask, ask, chat,
+    clear_cache, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -1494,6 +1495,16 @@ async def test_editing_the_first_answer_does_not_change_a_later_hit(llm, frame_s
     first = await _cached_ask(llm, frame_source)
     first.value = "edited"
     assert (await _cached_ask(llm, frame_source)).value == "Three rows."
+
+
+def test_fingerprint_counts_an_agents_own_llm_but_not_private_state():
+    agent = SQLAgent()
+    plain = _fingerprint(agent)
+    agent.llm = MockLLM(temperature=0.9)
+    with_llm = _fingerprint(agent)
+    assert with_llm != plain
+    agent.llm._ready = not agent.llm._ready
+    assert _fingerprint(agent) == with_llm
 
 
 async def test_a_cached_question_makes_no_llm_calls(llm, frame_source):
