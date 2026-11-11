@@ -908,6 +908,9 @@ class Answer(param.Parameterized):
         planned answer has no result worth keeping, so it becomes the result:
         the variable you held and the card on screen both show it.
         """
+        return await _on_loop(self._arun())
+
+    async def _arun(self) -> Answer:
         if self._pending is None:
             raise ValueError("Only an answer asked with confirm=True can be run, and only once.")
         planner, context = self._pending
@@ -924,7 +927,7 @@ class Answer(param.Parameterized):
 
     def run(self) -> Answer:
         """Run a planned answer and return it. See arun."""
-        return _run(self.arun(), "Running the plan")
+        return _run(self._arun(), "Running the plan")
 
     def _cached_copy(self) -> Answer:
         """
