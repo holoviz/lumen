@@ -22,6 +22,10 @@ GRID = {"air": TableFacts(units={"air": "degK", "lat": "degrees_north"})}
     ("SELECT * FROM places, parks", "places and parks both have geometry but are joined without a spatial predicate"),
     ("SELECT * FROM places CROSS JOIN parks", "joined without a spatial predicate"),
     ("SELECT * FROM air WHERE air > 30", "air is in degk, so 30 looks like degrees Celsius (303.15 K)"),
+    ("SELECT * FROM air WHERE 30 < air", "air is in degk, so 30 looks like degrees Celsius (303.15 K)"),
+    ("SELECT ST_Area_Spheroid(geometry) FROM parks", "reads points as (latitude, longitude)"),
+    ("SELECT ST_Area(geometry) FROM parks", "ST_Area(ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true))"),
+    ("SELECT ST_Length(geometry) FROM parks", "ST_Length_Spheroid(ST_FlipCoordinates(geometry))"),
 ])
 def test_review_finds_mistakes_that_run_without_error(sql, expected):
     (finding,) = review_sql(sql, {**PLACES, **GRID})
@@ -29,12 +33,13 @@ def test_review_finds_mistakes_that_run_without_error(sql, expected):
 
 
 @pytest.mark.parametrize("sql", [
-    "SELECT ST_Area_Spheroid(geometry) FROM parks",
+    "SELECT ST_Area_Spheroid(ST_FlipCoordinates(geometry)) FROM parks",
     "SELECT ST_Area(ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857')) FROM parks",
     "SELECT ST_Buffer(geometry, 0.01) FROM places",
     "SELECT * FROM places JOIN parks ON ST_Within(places.geometry, parks.geometry)",
     "SELECT * FROM places, parks WHERE ST_Intersects(places.geometry, parks.geometry)",
     "SELECT * FROM places JOIN parks ON places.n = parks.p",
+    "SELECT * FROM places a JOIN parks b ON ST_Distance_Sphere(ST_FlipCoordinates(a.geometry), ST_FlipCoordinates(b.geometry)) <= 750000",
     "SELECT * FROM air WHERE air > 300",
     "SELECT * FROM air WHERE lat > 30",
     "not sql at all (",

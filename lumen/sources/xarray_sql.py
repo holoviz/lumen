@@ -17,6 +17,12 @@ from ..transforms.sql import SQLFilter
 from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
 
+#: File extensions xarray reads (NetCDF, HDF5, Zarr and GRIB)
+XARRAY_EXTENSIONS = (
+    "nc", "nc4", "netcdf", "h5", "hdf5", "he5", "zarr",
+    "grib", "grib2", "grb", "grb2",
+)
+
 
 def _calendar(coord: Any) -> str | None:
     """The calendar of a time coordinate, cftime or numpy, or None for any other."""
@@ -385,6 +391,9 @@ class XArraySQLSource(BaseSQLSource):
 
     def column_units(self, table: str) -> dict[str, str]:
         """The CF units of a table's columns that declare them, by column name."""
+        if table not in self._dataset.data_vars:
+            # A table derived by a query, e.g. a follow-up's result, has no variable of its own
+            return {}
         var = self._dataset[table]
         units = {dim: self._dataset.coords[dim].attrs.get("units") for dim in var.dims if dim in self._dataset.coords}
         units[table] = var.attrs.get("units")

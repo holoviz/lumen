@@ -4,7 +4,7 @@ How much of the data Lumen AI shows the LLM.
 ``share`` sets the level for every prompt: ``"sample"`` sends row values,
 value counts, ranges and chart images, as Lumen always has; ``"schema"``
 sends table and column names, types, row counts and null fractions, but no
-values; ``"none"`` sends table and column names only. Queries still run on
+values; ``"none"`` sends table and column names and row counts only. Queries still run on
 the full data locally, so answers, tables and charts are unaffected; only
 what the model reads to write SQL and explanations changes.
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 
 from collections.abc import Iterable
 from itertools import pairwise
@@ -52,13 +53,35 @@ _PII_VALUE = re.compile(
 )
 
 
+def _env_share() -> str:
+    value = os.environ.get("LUMEN_AI_SHARE", "").strip().lower() or "sample"
+    if value not in SHARE_LEVELS:
+        # A typo must not break import lumen.ai, nor share more than meant
+        warnings.warn(
+            f"LUMEN_AI_SHARE={value!r} is not one of {', '.join(SHARE_LEVELS)}; sharing nothing (\"none\").",
+            stacklevel=2,
+        )
+        return "none"
+    return value
+
+
+def _env_mask_pii() -> bool:
+    value = os.environ.get("LUMEN_AI_MASK_PII", "").strip().lower()
+    if value in ("", "0", "false", "no", "off"):
+        return False
+    if value not in ("1", "true", "yes", "on"):
+        # A mistyped privacy flag masks rather than silently not masking
+        warnings.warn(f"LUMEN_AI_MASK_PII={value!r} is not a yes or no; masking personal data.", stacklevel=2)
+    return True
+
+
 class DataSharing(param.Parameterized):
 
-    share = param.Selector(default=os.environ.get("LUMEN_AI_SHARE", "sample"), objects=list(SHARE_LEVELS), doc="""
+    share = param.Selector(default=_env_share(), objects=list(SHARE_LEVELS), doc="""
         What of the data prompts may contain: "sample" (values), "schema"
-        (structure without values) or "none" (names only).""")
+        (structure without values) or "none" (names and row counts only).""")
 
-    mask_pii = param.Boolean(default=os.environ.get("LUMEN_AI_MASK_PII", "").lower() in ("1", "true"), doc="""
+    mask_pii = param.Boolean(default=_env_mask_pii(), doc="""
         Withhold the values of columns that look like personal data.""")
 
 
@@ -93,10 +116,8 @@ def mask_frame(df: pd.DataFrame) -> pd.DataFrame:
     if not sharing.mask_pii:
         return df
     sample = df.head(50)
-    masked = [
-        col for col in df.columns
-        if looks_like_pii(col, sample[col].dropna().tolist() if sample[col].dtype == object else ())
-    ]
+    # Every column: personal data also sits in pandas string and category columns
+    masked = [col for col in df.columns if looks_like_pii(col, sample[col].dropna().tolist())]
     if not masked:
         return df
     df = df.copy()

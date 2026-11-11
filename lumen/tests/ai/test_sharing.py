@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -12,12 +12,13 @@ from lumen.ai.agents import ChatAgent, SQLAgent
 from lumen.ai.agents.sql import execute_distinct_values, make_sql_model
 from lumen.ai.agents.vega_lite import VegaLiteAgent
 from lumen.ai.answer import aask, configure
-from lumen.ai.data import read
+from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.sharing import MASK, looks_like_pii, sharing
 from lumen.ai.table_stats import (
     EXACT, ColumnStats, TableStats, render_column,
 )
 from lumen.ai.utils import describe_data_sync, get_schema
+from lumen.sources.data import read
 from lumen.tests.ai.test_answer import FollowUpLLM
 
 # Values no prompt may contain unless sharing allows it
@@ -133,10 +134,12 @@ class RecordingLLM(FollowUpLLM):
         return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
 
 
-async def _prompts_for_a_question(frame) -> str:
+async def _prompts_for_a_question(
+    frame, query="SELECT city, SUM(amount) AS total FROM sales GROUP BY city"
+) -> str:
     source = read({"sales": frame})
     SQLModel = make_sql_model([(source.name, "sales")])
-    llm = RecordingLLM([SQLModel(query="SELECT city, SUM(amount) AS total FROM sales GROUP BY city", table_slug="totals", tables=["sales"])])
+    llm = RecordingLLM([SQLModel(query=query, table_slug="totals", tables=["sales"])])
     with patch.object(SQLAgent, "_profile_source_rows", new=AsyncMock(return_value=[])):
         answer = await aask(source, "Total per city?", llm=llm, agents=[ChatAgent(), SQLAgent()])
     assert answer.status == "success"
@@ -162,3 +165,83 @@ async def test_prompts_mask_personal_data(frame):
     prompts = await _prompts_for_a_question(frame)
     assert "ann@example.com" not in prompts
     assert SECRET_CITY in prompts
+
+
+async def test_prompts_mask_a_renamed_personal_column_by_its_values(frame):
+    # The result summary only sees "c", so its values have to give it away
+    configure(mask_pii=True)
+    prompts = await _prompts_for_a_question(frame, "SELECT email AS c, city FROM sales")
+    assert "@example." not in prompts
+    # A row of the result summary, which only the summary path writes
+    assert f"| {MASK} | {SECRET_CITY} |" in prompts
+
+
+def test_masking_leaves_out_the_exploration_tool_but_keeps_distinct_values():
+    configure(mask_pii=True)
+    names = {t.name for t in SQLAgent()._sql_tools({}, None)}
+    assert "distinct_values" in names and "run_exploration_sql" not in names
+
+
+async def test_distinct_values_like_does_not_reveal_a_personal_column(frame):
+    source = read({"t": frame})
+    configure(mask_pii=True)
+    sources = {(source.name, "t"): source}
+    # Hidden by the column's values, not by what `like` matches
+    renamed = pd.DataFrame({"contact": frame["email"]})
+    other = read({"c": renamed})
+    both = {(other.name, "c"): other}
+    assert "withheld" in await execute_distinct_values("c", "contact", like="zzz", sources=both)
+    assert "withheld" in await execute_distinct_values("c", "contact", like="ann", sources=both)
+    assert SECRET_CITY in await execute_distinct_values("t", "city", like="Zan", sources=sources)
+
+
+def test_mask_frame_masks_string_dtype_columns():
+    from lumen.ai.sharing import mask_frame
+
+    configure(mask_pii=True)
+    df = pd.DataFrame({"contact": pd.Series(["a@b.com", "c@d.org"], dtype="string"), "n": [1, 2]})
+    masked = mask_frame(df)
+    assert masked["contact"].tolist() == [MASK, MASK] and masked["n"].tolist() == [1, 2]
+
+
+def test_chart_image_is_not_sent_when_masking_personal_data():
+    agent = VegaLiteAgent()
+    agent.llm = FollowUpLLM([])
+    agent.llm._supports_vision = True
+    configure(mask_pii=True)
+    out = MagicMock(spec=VegaLiteEditor)
+    with patch.object(VegaLiteAgent, "_export_plot_image", side_effect=AssertionError("rendered")):
+        messages = agent._prepare_vision_messages([], out, "Polish it")
+    assert messages == [{"role": "user", "content": "Polish it"}]
+
+
+@pytest.mark.parametrize("env, expected", [("Schema", "schema"), (" NONE ", "none"), ("", "sample")])
+def test_share_env_is_normalised(monkeypatch, env, expected):
+    from lumen.ai.sharing import _env_share
+
+    monkeypatch.setenv("LUMEN_AI_SHARE", env)
+    assert _env_share() == expected
+
+
+def test_bad_share_env_warns_and_shares_nothing(monkeypatch):
+    from lumen.ai.sharing import _env_share
+
+    monkeypatch.setenv("LUMEN_AI_SHARE", "names")
+    with pytest.warns(UserWarning, match="LUMEN_AI_SHARE"):
+        assert _env_share() == "none"
+
+
+@pytest.mark.parametrize("env, expected", [("yes", True), ("ON", True), ("1", True), ("no", False), ("", False)])
+def test_mask_pii_env_accepts_usual_spellings(monkeypatch, env, expected):
+    from lumen.ai.sharing import _env_mask_pii
+
+    monkeypatch.setenv("LUMEN_AI_MASK_PII", env)
+    assert _env_mask_pii() is expected
+
+
+def test_configure_can_reset_llm_and_agents():
+    from lumen.ai.answer import _settings
+
+    configure(agents=[ChatAgent()])
+    configure(agents=None)
+    assert _settings["agents"] is None

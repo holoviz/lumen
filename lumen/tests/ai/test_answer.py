@@ -8,7 +8,7 @@ import threading
 import time
 
 from typing import get_args
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 import panel as pn
@@ -30,21 +30,24 @@ from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
-    Answer, _default_agents, _default_llm, _env_llm, _planner, _planners,
-    _resolve, _run, _StatusLine, aask, ask, chat, configure,
+    _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
+    _drop_exceptions, _env_llm, _loop, _planner, _planners, _records, _resolve,
+    _row_cap_hit, _run, _StatusLine, aask, ask, chat, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
 from lumen.ai.coordinator.planner import make_plan_model
-from lumen.ai.data import read
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
-from lumen.ai.report import ActorTask
+from lumen.ai.report import ActorTask, TaskGroup
+from lumen.ai.sharing import sharing
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
+from lumen.transforms.sql import SQLLimit
 from lumen.util import log as lumen_log
 from lumen.views.base import VegaLiteView, hvPlotView
 
@@ -226,6 +229,7 @@ def fresh_settings(monkeypatch):
     _env_llm.cache_clear()
     # Plain assignment: monkeypatch would restore the Parameter object itself
     SQLAgent.max_rows = max_rows
+    sharing.param.update(share="sample", mask_pii=False)
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
@@ -284,6 +288,37 @@ async def test_no_note_below_the_cap(ten_rows):
     assert answer.truncated_at is None and "stops at" not in answer._text
 
 
+async def test_a_result_of_exactly_max_rows_is_not_reported_as_cut(ten_rows):
+    configure(max_rows=10)
+    answer = await _ask_every_row(ten_rows)
+    assert len(answer.pipeline.data) == 10 and answer.truncated_at is None
+
+
+def test_a_failing_cap_check_does_not_break_the_answer(ten_rows):
+    pipeline = Pipeline(source=ten_rows, table="rows", sql_transforms=[SQLLimit(limit=10)])
+    assert len(pipeline.data) == 10
+    with patch.object(type(ten_rows), "get", side_effect=RuntimeError("warehouse down")):
+        assert _row_cap_hit(pipeline) is None
+
+
+def test_chart_spec_leaves_out_inline_data_at_any_depth():
+    from lumen.ai.answer import _without_values
+
+    spec = {"data": {"values": [1]}, "layer": [{"data": {"values": [2], "name": "x"}, "mark": "bar"}], "datasets": {"d": [3]}}
+    assert _without_values(spec) == {"data": {}, "layer": [{"data": {"name": "x"}, "mark": "bar"}]}
+
+
+async def test_chat_forgets_context_built_under_another_sharing_level(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    assert conversation._context is not None
+    configure(share="schema")
+    _chat_only(llm)
+    await conversation.aask("And again?")
+    assert [m["role"] for m in conversation._messages] == ["user", "user", "assistant"]
+
+
 async def test_max_rows_none_returns_every_row(ten_rows):
     configure(max_rows=4)
     configure(max_rows=None)
@@ -324,35 +359,45 @@ async def test_aask_reuses_one_planner_per_source(llm, frame_source):
     assert "metaset" not in planner.context
 
 
-def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
-    first = _planner(frame_source, llm, None)
-    assert _planner(frame_source, llm, None) is first
-    assert _planner(frame_source, type(llm)(), None) is not first
-    assert _planner(frame_source, llm, [ChatAgent()]) is not _planner(frame_source, llm, [ChatAgent()])
+async def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    assert await _planner(frame_source, llm, None) is first
+    assert await _planner(frame_source, type(llm)(), None) is not first
+    assert await _planner(frame_source, llm, [ChatAgent()]) is not await _planner(frame_source, llm, [ChatAgent()])
 
 
-def test_default_agents_plain_table(frame_source):
-    agents = _default_agents(frame_source)
+async def test_a_busy_planner_is_not_shared(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    _busy.add(first)
+    try:
+        assert await _planner(frame_source, llm, None) is not first
+    finally:
+        _busy.discard(first)
+    assert await _planner(frame_source, llm, None) is first
+
+
+async def test_default_agents_plain_table(frame_source):
+    agents = await _default_agents(frame_source)
     assert [type(a).__name__ for a in agents] == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
 
 
-def test_default_agents_add_hvplot_for_gridded_data():
+async def test_default_agents_add_hvplot_for_gridded_data():
     xr = pytest.importorskip("xarray")
     pytest.importorskip("xarray_sql")
     ds = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
-    assert any(isinstance(a, hvPlotAgent) for a in _default_agents(read(ds)))
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read(ds)))
 
 
-def test_default_agents_add_hvplot_for_geometry():
+async def test_default_agents_add_hvplot_for_geometry():
     if gpd is None:
         pytest.skip("geopandas is not installed")
     gdf = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])])
-    assert any(isinstance(a, hvPlotAgent) for a in _default_agents(read({"shapes": gdf})))
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read({"shapes": gdf})))
 
 
-def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
+async def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
     with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
-        assert any(isinstance(a, hvPlotAgent) for a in _default_agents(frame_source))
+        assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(frame_source))
 
 
 def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
@@ -368,6 +413,47 @@ def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
     assert visible is None
     assert source.get_tables() == ["tiny"]
     assert sorted(source.get("tiny")["value"]) == [7.5, 10.5]
+    assert _resolve(pipeline)[0] is source
+
+
+def test_filter_change_drops_the_cached_planner(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    source, _ = _resolve(pipeline)
+    _planners[source] = MagicMock()
+    pipeline.filters[0].value = "B"
+    assert source not in _planners
+    assert _resolve(pipeline)[0] is source
+
+
+async def test_a_question_after_a_filter_change_syncs_the_new_planners_metadata(llm, frame_source):
+    from lumen.ai.tools import MetadataLookup
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    _chat_only(llm)
+    await aask(pipeline, "How many rows?", llm=llm)
+    source, _ = _resolve(pipeline)
+    store = _planners[source].context["vector_store"]
+    assert MetadataLookup._sources_processed[store] == {source.name: 1}
+    pipeline.filters[0].value = "B"
+    # Forgotten with its Planner, so no later store can be taken for it and skip its sync
+    assert store not in MetadataLookup._sources_processed
+    _chat_only(llm)
+    await aask(pipeline, "How many rows?", llm=llm)
+    new_store = _planners[source].context["vector_store"]
+    assert new_store is not store and MetadataLookup._sources_processed[new_store] == {source.name: 1}
+
+
+def test_table_change_rebuilds_the_filtered_source():
+    source = read({
+        "tiny": pd.DataFrame({"category": ["A", "B"], "value": [1, 2]}),
+        "other": pd.DataFrame({"category": ["A", "A"], "value": [3, 4]}),
+    })
+    pipeline = Pipeline(source=source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    first, _ = _resolve(pipeline)
+    pipeline.table = "other"
+    second, _ = _resolve(pipeline)
+    assert second is not first and first._mirror_watchers == []
+    assert second.get_tables() == ["other"]
+    assert sorted(second.get("other")["value"]) == [3, 4]
 
 
 def _chat_only(llm):
@@ -384,20 +470,84 @@ def test_ask_without_a_running_loop(llm, frame_source):
 
 
 def test_ask_errors_do_not_chain_the_loop_check(frame_source):
-    with patch("lumen.ai.answer.aask", side_effect=ValueError("boom")):
+    with patch("lumen.ai.answer._aask_messages", side_effect=ValueError("boom")):
         with pytest.raises(ValueError) as info:
             ask(frame_source, "q")
     assert info.value.__context__ is None
 
 
-async def test_aask_quiets_instructor_retry_log(llm, frame_source, monkeypatch):
-    logger = logging.getLogger("instructor.v2.retry")
-    monkeypatch.setattr(logger, "level", logging.NOTSET)
+async def test_aask_quiets_instructor_retry_log_only_while_asking(llm, frame_source, monkeypatch, caplog):
     # ExplorerUI tests in the same process leave Lumen's logger at DEBUG
     monkeypatch.setattr(lumen_log, "level", logging.WARNING)
-    _chat_only(llm)
+    logger = logging.getLogger("instructor.v2.retry")
+
+    def reply():
+        logger.error("retrying")
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    with caplog.at_level(logging.ERROR, logger="instructor.v2.retry"):
+        await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        logger.error("outside")
+    assert caplog.messages == ["outside"]
+
+
+def test_sync_ask_runs_every_question_on_one_loop(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    for _ in range(2):
+        llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+        ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops[0] is loops[1]
+
+
+async def test_aask_runs_on_the_loop_sync_ask_uses(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
     await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
-    assert logger.level == logging.CRITICAL
+    assert loops == [_loop()]
+
+
+def test_ask_from_lumens_loop_raises_instead_of_deadlocking(frame_source):
+    async def nested():
+        ask(frame_source, "q")
+
+    with pytest.raises(RuntimeError, match="await aask"):
+        asyncio.run_coroutine_threadsafe(nested(), _loop()).result(timeout=5)
+
+
+def test_fork_resets_the_loop_and_caches(frame_source):
+    loop = _loop()
+    _planners[frame_source] = MagicMock()
+    _LOOP_LOCK.acquire()  # as the before-fork hook does
+    _after_fork()
+    assert frame_source not in _planners
+    assert _loop() is not loop
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_interrupting_sync_ask_cancels_the_question(frame_source):
+    future = MagicMock()
+    future.result.side_effect = KeyboardInterrupt
+    with patch("lumen.ai.answer._aask_messages", new=MagicMock()), \
+            patch("lumen.ai.answer.asyncio.run_coroutine_threadsafe", return_value=future):
+        with pytest.raises(KeyboardInterrupt):
+            ask(frame_source, "q")
+    future.cancel.assert_called_once()
+
+
+def test_answer_html_escapes_html_in_the_answer():
+    html = Answer(value="Hi <script>alert(1)</script>")._static_bundle(None)["text/html"]
+    assert "<script>" not in html
 
 
 async def test_ask_inside_a_running_loop(llm, frame_source):
@@ -470,6 +620,29 @@ async def test_refine_can_be_refined_again(refinable_answer, llm):
     _line_edit(llm, 8, "mark: point")
     twice = await once.arefine("Use points")
     assert (once.spec["mark"], twice.spec["mark"]) == ("line", "point")
+
+
+async def test_refined_answer_explores_with_its_new_chart(refinable_answer, llm):
+    _line_edit(llm, 8, "mark: line")
+    refined = await refinable_answer.arefine("Use a line")
+    assert refined._views == [refined._editor]
+    assert refinable_answer._editor not in refined._views
+
+
+async def test_retrying_a_chat_answer_keeps_the_conversation(llm, frame_source):
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    _chat_only(llm)
+    await conversation.aask("How many rows?")
+    _chat_only(llm)
+    second = await conversation.aask("Only A")
+
+    _chat_only(llm)
+    with patch("lumen.ai.answer._respond", new=AsyncMock(wraps=answer_module._respond)) as respond:
+        retried = await second.aretry()
+
+    messages = respond.call_args.args[2]
+    assert [m["content"] for m in messages if m["role"] == "user"] == ["How many rows?", "Only A"]
+    assert conversation.answers[-1] is retried and len(conversation.answers) == 3
 
 
 def test_refine_from_sync_code(refinable_answer, llm):
@@ -771,6 +944,44 @@ async def test_answer_explore_opens_the_ui_on_the_answer(llm, frame_source):
     assert ui.interface.objects[0].object == "Total value?"
 
 
+async def test_answer_explore_keeps_a_pipeline_answer_to_its_table(llm):
+    source = read({"tiny": pd.DataFrame({"value": [1.0]}), "other": pd.DataFrame({"x": [1]})})
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "One row.", "One row."])
+    answer = await aask(Pipeline(source=source, table="tiny"), "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    ui = answer.explore()
+    await async_wait_until(lambda: len(ui._explorations.items) == 2)
+    assert ui.context["visible_slugs"] == {f"{source.name}{SOURCE_TABLE_SEPARATOR}tiny"}
+
+
+def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    answer = Answer(source=source, pipeline=Pipeline(source=source, table="climate"))
+    with pytest.raises(ValueError, match="joins xarray data"):
+        answer.code
+
+
+async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
+    SQLModel = make_sql_model([(source.name, "climate")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT x, temp FROM climate", table_slug="temps", tables=["climate"]),
+        SQLModel(query="SELECT * FROM climate WHERE temp > 1", table_slug="warm", tables=["climate"]),
+    ])
+    conversation = source.chat(llm=llm, agents=[ChatAgent(), SQLAgent()])
+    await conversation.aask("Temperatures?")
+    follow_up = await conversation.aask("Only the warm ones")
+    assert follow_up.source is not source
+    with pytest.raises(ValueError, match="joins xarray data"):
+        follow_up.code
+
+
 class FollowUpLLM(MockLLM):
     """Replies by response model, and records what each Plan call was sent."""
 
@@ -832,7 +1043,8 @@ async def test_run_shows_the_current_step_in_place():
     handle = FakeHandle()
 
     async def question():
-        NullStep().add("Generating SQL...")
+        with NullStep().add("Generating SQL..."):
+            pass
         await asyncio.sleep(0.6)
         return "done"
 
@@ -854,13 +1066,15 @@ async def test_run_cancels_the_question_on_interrupt():
         finally:
             ended.append(asyncio.current_task().cancelling())
 
+    _loop()  # started once, on the first sync ask
     threads = threading.active_count()
     start = time.monotonic()
     with patch.object(_StatusLine, "show", side_effect=KeyboardInterrupt), pytest.raises(KeyboardInterrupt):
         _run(question())
 
+    # The interrupt returns at once, and the task is cancelled on the loop
     assert time.monotonic() - start < 5
-    assert ended == [1]
+    await async_wait_until(lambda: ended == [1])
     assert threading.active_count() == threads
 
 
@@ -876,3 +1090,18 @@ async def test_run_names_the_first_step_until_one_reports():
 
     assert display.call_args.args[0] == {"text/plain": "Revising the chart"}
     assert any(text.startswith("Revising the chart (") for text in handle.updates)
+
+
+def test_records_turn_every_missing_value_into_null():
+    frame = pd.DataFrame({
+        "f32": pd.Series([1.0, float("nan")], dtype="float32"),
+        "ints": pd.Series([1, None], dtype="Int64"),
+    })
+    assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]
+
+
+def test_failed_answers_drop_exceptions_in_nested_task_groups():
+    inner = ActorTask(ChatAgent(), title="Explain")
+    inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
+    _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
+    assert inner.out_context == {"sql": "SELECT 1"}

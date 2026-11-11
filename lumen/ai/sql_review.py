@@ -18,6 +18,12 @@ _MEASURES = {"ST_AREA", "ST_LENGTH", "ST_PERIMETER", "ST_DISTANCE"}
 #: Functions whose distance argument is in the units of the geometry's CRS
 _DISTANCES = {"ST_BUFFER", "ST_DWITHIN"}
 
+#: Functions that read points as (lat, lon), so lon/lat geometry has to be flipped first
+_LAT_LON = {
+    "ST_AREA_SPHEROID", "ST_LENGTH_SPHEROID", "ST_PERIMETER_SPHEROID", "ST_DISTANCE_SPHEROID",
+    "ST_DISTANCE_SPHERE", "ST_DWITHIN_SPHEROID",
+}
+
 #: Predicates that relate two geometries in a join
 _PREDICATES = {
     "ST_INTERSECTS", "ST_CONTAINS", "ST_WITHIN", "ST_DWITHIN", "ST_TOUCHES", "ST_OVERLAPS",
@@ -110,21 +116,47 @@ def review_sql(sql: str, tables: dict[str, TableFacts], dialect: str | None = "d
             if distance is not None and distance > 1:
                 findings.append(
                     f"{_SPELLING[name]}({col}, ..., {args[-1].sql()}) works in degrees: {col} is in longitude and latitude, so "
-                    f"{args[-1].sql()} means {args[-1].sql()} degrees, not metres. Transform it to a projected CRS "
-                    f"first, e.g. ST_Transform({col}, 'EPSG:4326', 'EPSG:3857', always_xy := true), or use "
-                    "ST_DWithin_Spheroid for a distance in metres."
+                    f"{args[-1].sql()} means {args[-1].sql()} degrees, not metres. Buffer in a projected CRS in "
+                    f"metres, e.g. ST_Transform({col}, 'EPSG:4326', 'EPSG:6933', always_xy := true) or a local UTM "
+                    "zone (not EPSG:3857, whose metres shrink away from the equator), or filter on "
+                    f"ST_Distance_Sphere(ST_FlipCoordinates({col}), ST_FlipCoordinates(other)) <= metres."
                 )
         elif name in _MEASURES and args and (col := _geographic_column(args[0], geographic)):
             unit = "square degrees" if name == "ST_AREA" else "degrees"
-            spheroid = {"ST_AREA": "ST_Area_Spheroid", "ST_LENGTH": "ST_Length_Spheroid",
-                        "ST_PERIMETER": "ST_Perimeter_Spheroid", "ST_DISTANCE": "ST_Distance_Spheroid"}[name]
+            # The sphere and spheroid functions read (lat, lon), so lon/lat
+            # geometry is flipped first; unflipped the result looks right but is not
+            fix = {
+                "ST_AREA": f"ST_Area(ST_Transform({col}, 'EPSG:4326', 'EPSG:6933', always_xy := true))",
+                "ST_LENGTH": f"ST_Length_Spheroid(ST_FlipCoordinates({col}))",
+                "ST_PERIMETER": f"ST_Perimeter_Spheroid(ST_FlipCoordinates({col}))",
+                "ST_DISTANCE": f"ST_Distance_Sphere(ST_FlipCoordinates({col}), ST_FlipCoordinates(other))",
+            }[name]
             findings.append(
                 f"{_SPELLING[name]}({col}) returns {unit}, since {col} is in longitude and latitude. Use "
-                f"{spheroid}({col}) for metres, or transform to a projected CRS first."
+                f"{fix} for metres."
+            )
+        elif name in _LAT_LON and args and (col := _geographic_column(args[0], geographic)):
+            findings.append(
+                f"{node.name}({col}) reads points as (latitude, longitude), but {col} is longitude first, "
+                f"so the result is wrong though it looks plausible. Flip it: {node.name}(ST_FlipCoordinates({col}), ...)."
             )
     findings += _unpredicated_joins(tree, tables)
     findings += _unit_mismatches(tree, tables)
     return findings
+
+
+def _spatial(condition: exp.Expression | None) -> bool:
+    """Whether a join condition relates geometries: a spatial predicate, or a distance compared with a threshold."""
+    if condition is None:
+        return False
+    if any(_name(f) in _PREDICATES for f in condition.find_all(exp.Anonymous)):
+        return True
+    # e.g. ST_Distance_Sphere(a, b) <= 750000, the within-distance join
+    return any(
+        _name(f).startswith(("ST_DISTANCE", "ST_DWITHIN"))
+        for comparison in condition.find_all(exp.LT, exp.LTE, exp.GT, exp.GTE)
+        for f in comparison.find_all(exp.Anonymous, exp.StDistance)
+    )
 
 
 def _unpredicated_joins(tree: exp.Expression, tables: dict[str, TableFacts]) -> list[str]:
@@ -141,13 +173,13 @@ def _unpredicated_joins(tree: exp.Expression, tables: dict[str, TableFacts]) -> 
         if not isinstance(first, exp.Table) or first.name not in with_geometry:
             continue
         where = select.args.get("where")
-        spatial_where = where is not None and any(_name(f) in _PREDICATES for f in where.find_all(exp.Anonymous))
+        spatial_where = _spatial(where)
         for join in joins:
             other = join.this
             if not isinstance(other, exp.Table) or other.name not in with_geometry:
                 continue
             on, using = join.args.get("on"), join.args.get("using")
-            spatial_on = on is not None and any(_name(f) in _PREDICATES for f in on.find_all(exp.Anonymous))
+            spatial_on = _spatial(on)
             if spatial_on or spatial_where or using or (on is not None and not spatial_on and on.find(exp.EQ)):
                 continue
             findings.append(
@@ -160,11 +192,15 @@ def _unpredicated_joins(tree: exp.Expression, tables: dict[str, TableFacts]) -> 
 
 def _unit_mismatches(tree: exp.Expression, tables: dict[str, TableFacts]) -> list[str]:
     """A Kelvin column compared with a value that looks like Celsius, or the other way round."""
-    units = {col: unit.lower() for facts in tables.values() for col, unit in facts.units.items()}
+    # str: a units attribute need not be a string
+    units = {col: str(unit).lower() for facts in tables.values() for col, unit in facts.units.items()}
     findings = []
     seen = set()
     for comparison in tree.find_all(exp.GT, exp.GTE, exp.LT, exp.LTE, exp.EQ, exp.NEQ):
         column, value = comparison.this, _number(comparison.expression)
+        if not isinstance(column, exp.Column):
+            # Written the other way round, e.g. 25 < air
+            column, value = comparison.expression, _number(comparison.this)
         if not isinstance(column, exp.Column) or value is None or column.name not in units:
             continue
         unit = units[column.name]

@@ -772,6 +772,12 @@ async def test_vegalite_agent_reports_why_every_chart_failed(llm, duckdb_source,
     assert "first:" in message and "second:" in message
 
 
+async def test_code_prompt_mode_refuses_without_interface(llm):
+    agent = VegaLiteAgent(llm=llm, code_execution="prompt")
+    with pytest.raises(RuntimeError, match="needs an interface"):
+        await agent._execute_code("chart = None", pd.DataFrame({"A": [1]}))
+
+
 async def test_vegalite_agent_altair_multiple(llm, duckdb_source, test_messages):
     """VegaLiteAgent Altair (code) mode returns one editor per generated chart."""
 
@@ -1527,14 +1533,39 @@ async def test_sql_agent_validate_reviews_an_area_in_degrees_once(llm):
     gpd = pytest.importorskip("geopandas")
     from shapely.geometry import Polygon
 
-    from lumen.ai.data import read
+    from lumen.sources.data import read
     source = read({"parks": gpd.GeoDataFrame({"p": ["x"]}, geometry=[Polygon([(13, 52), (14, 52), (14, 53)])], crs="EPSG:4326")})
     agent = SQLAgent(llm=llm)
-    agent.revise = AsyncMock(return_value="SELECT ST_Area_Spheroid(geometry) AS area FROM parks")
+    agent.revise = AsyncMock(return_value="SELECT ST_Area_Spheroid(ST_FlipCoordinates(geometry)) AS area FROM parks")
     step = SimpleNamespace(stream=lambda msg: None)
 
     sql, result = await agent._validate_sql({}, "SELECT ST_Area(geometry) AS area FROM parks", "slug", source, [], step)
 
     assert "ST_Area(geometry) returns square degrees" in agent.revise.await_args.args[0]
     assert agent.revise.await_count == 1 and "ST_AREA_SPHEROID" in sql.upper()
-    assert result["area"].iloc[0] > 1e9
+    # The triangle over half the 1 x 1 degree box at 52-53 N is about 3,821 km²; unflipped it reads 5,976 km²
+    assert 3.70e9 < result["area"].iloc[0] < 3.86e9
+
+
+async def test_sql_agent_review_revision_does_not_use_up_a_retry(llm):
+    from lumen.sources.data import read
+    source = read({"t": pd.DataFrame({"a": [1]})})
+    agent = SQLAgent(llm=llm)
+    # The review's revision breaks the query; one real retry is still left to fix it
+    agent.revise = AsyncMock(side_effect=["SELECT nope FROM t", "SELECT a FROM t"])
+    step = SimpleNamespace(stream=lambda msg: None)
+    with patch("lumen.ai.agents.sql.review_sql", side_effect=[["Looks wrong."], []]):
+        sql, result = await agent._validate_sql({}, "SELECT a FROM t", "slug", source, [], step)
+    assert agent.revise.await_count == 2 and result["a"].tolist() == [1]
+
+
+async def test_sql_revise_without_op_replaces_a_line_with_a_cast(llm):
+    """SQL casts look like YAML keys, so a missing op must not become an insert."""
+    llm.set_responses([lambda: RetrySpec.model_validate({
+        "chain_of_thought": "Cast b instead",
+        "edits": [{"line_no": 1, "line": "SELECT b::INT AS a"}],
+    })])
+    revised = await BaseLumenAgent.revise(
+        SQLAgent(llm=llm), "Use b", [], {}, spec="SELECT a::INT AS a\nFROM t", language="sql"
+    )
+    assert revised == "SELECT b::INT AS a\nFROM t"

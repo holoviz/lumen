@@ -29,12 +29,14 @@ _CONVERSIONS: dict[tuple[str, str], tuple[float, float]] = {
 #: Spellings CF files use for the units above
 _ALIASES = {
     "k": "K", "degk": "K", "kelvin": "K", "degc": "degC", "celsius": "degC", "deg_c": "degC",
+    "degrees_celsius": "degC", "degree_celsius": "degC",
     "°c": "degC", "pa": "Pa", "hpa": "hPa", "mbar": "hPa", "m": "m", "mm": "mm",
     "kg m-2 s-1": "kg m-2 s-1", "kg m**-2 s**-1": "kg m-2 s-1", "mm/day": "mm day-1", "mm day-1": "mm day-1",
     "m s-1": "m s-1", "m s**-1": "m s-1", "m/s": "m s-1", "km/h": "km h-1", "km h-1": "km h-1",
 }
 
-_PERIODS = {"month": "MONTH", "season": "QUARTER", "dayofyear": "DOY", "hour": "HOUR"}
+# Calendar quarters (JFM, AMJ, ...), not meteorological seasons (DJF, MAM, ...)
+_PERIODS = {"month": "MONTH", "quarter": "QUARTER", "dayofyear": "DOY", "hour": "HOUR"}
 
 
 class _Grid:
@@ -44,7 +46,8 @@ class _Grid:
         ds = source._dataset
         var = ds[table]
         self.table, self.variable = table, table
-        self.units = var.attrs.get("units", "")
+        # str: a units attribute need not be a string
+        self.units = str(var.attrs.get("units", ""))
 
         def find(units: set[str], names: set[str]) -> str | None:
             for dim in var.dims:
@@ -93,7 +96,10 @@ def _quote(name: str) -> str:
 
 def gridded_tools(sources: list[XArraySQLSource]) -> list[FunctionTool]:
     """The gridded SQL tools for these sources' tables."""
-    tables = {table: source for source in sources for table in source.get_tables()}
+    # Only data variables: tables derived by a query have no grid attributes to read
+    tables = {
+        table: source for source in sources for table in source.get_tables() if table in source._dataset.data_vars
+    }
 
     def grid(table: str) -> _Grid | str:
         if table not in tables:
@@ -140,9 +146,9 @@ def gridded_tools(sources: list[XArraySQLSource]) -> list[FunctionTool]:
             )
         return f"SELECT {mean} FROM {_quote(g.table)}{where}"
 
-    @define_tool(purpose="SQL for the climatology of a gridded variable: its mean per month, season, day of year or hour, per cell.")
-    def climatology(table: str, period: Literal["month", "season", "dayofyear", "hour"] = "month") -> str:
-        """SQL for a gridded variable's mean per month (or season, day of year, hour) at each grid cell."""
+    @define_tool(purpose="SQL for the climatology of a gridded variable: its mean per month, quarter, day of year or hour, per cell.")
+    def climatology(table: str, period: Literal["month", "quarter", "dayofyear", "hour"] = "month") -> str:
+        """SQL for a gridded variable's mean per month (or calendar quarter, day of year, hour) at each grid cell."""
         g = grid(table)
         if isinstance(g, str):
             return g
@@ -158,7 +164,7 @@ def gridded_tools(sources: list[XArraySQLSource]) -> list[FunctionTool]:
         )
 
     @define_tool(purpose="SQL for anomalies of a gridded variable: each value minus its cell's climatology for that period.")
-    def anomaly(table: str, period: Literal["month", "season", "dayofyear", "hour"] = "month") -> str:
+    def anomaly(table: str, period: Literal["month", "quarter", "dayofyear", "hour"] = "month") -> str:
         """SQL for each value of a gridded variable minus the mean of its cell for the same month (or other period)."""
         g = grid(table)
         if isinstance(g, str):
