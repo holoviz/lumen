@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import warnings
@@ -51,6 +52,7 @@ from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
 from ..sources.data import input_kinds, joins_grids, read
+from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
 from ..util import (
@@ -1101,18 +1103,23 @@ class Answer(param.Parameterized):
         return as_pandas(self.pipeline.data)
 
     def _fetch_as(self, backend: str) -> Any:
-        """The pipeline's data read in polars or pyarrow by the source itself, with no pandas stop on the way."""
+        """
+        The pipeline's data read in polars or pyarrow by DuckDB itself, with
+        no pandas stop on the way. The query runs on its own, so the shared
+        source is never changed and nothing watches it afterwards.
+        """
         pipeline = self.pipeline
         source = pipeline.source
-        # A fresh Pipeline, as the answer's own holds its data already read as
-        # pandas. The settings are reload params, so their events are discarded:
-        # otherwise each change clears the source's caches and reruns pipelines.
-        with param.parameterized.discard_events(source), \
-                source.param.update(dataframe_backend=backend, cache_data=False):
-            return Pipeline(
-                source=source, table=pipeline.table, filters=pipeline.filters, transforms=pipeline.transforms,
-                sql_transforms=pipeline.sql_transforms, dataframe_backend=backend,
-            ).data
+        if not isinstance(source, DuckDBSource) or pipeline.filters or pipeline.transforms:
+            # ponytail: filters or Python transforms only run through the Pipeline, so convert its pandas data
+            df = as_pandas(pipeline.data)
+            if backend == "polars":
+                return sys.modules["polars"].from_pandas(df)
+            return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+        sql = source.get_sql_expr(pipeline.table)
+        for transform in pipeline.sql_transforms:
+            sql = transform.apply(sql)
+        return source.fetch(sql, source.table_params.get(pipeline.table), backend=backend)
 
     def _input_kinds(self) -> set[str]:
         """The libraries of the tables this answer's query read."""

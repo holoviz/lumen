@@ -1372,6 +1372,19 @@ def test_answer_data_in_polars_does_not_rerun_the_answers_pipeline():
     assert answer.pipeline.source.dataframe_backend != "polars"
 
 
+def test_reading_answer_data_leaves_no_watchers_on_the_source():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a FROM data")
+    source = answer.pipeline.source
+    def watchers():
+        return sum(len(ws) for kinds in source.param.watchers.values() for ws in kinds.values())
+
+    before = watchers()
+    for _ in range(5):
+        assert answer.data["a"].to_list() == [1, 2]
+    assert watchers() == before
+
+
 def test_answer_data_is_pyarrow_for_pyarrow_input():
     pa = pytest.importorskip("pyarrow")
     answer = _answer_over({"t": pa.table({"a": [1, 2]})}, "SELECT a FROM t")
