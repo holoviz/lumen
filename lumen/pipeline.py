@@ -239,7 +239,8 @@ class Pipeline(Viewer, Component):
         """
         Ask this pipeline's table a question with Lumen AI and return the Answer.
 
-        See :func:`lumen.ai.answer.ask` for the keyword arguments.
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import ask
@@ -252,7 +253,8 @@ class Pipeline(Viewer, Component):
         """
         Ask this pipeline's table a question with Lumen AI and await the Answer.
 
-        See :func:`lumen.ai.answer.aask` for the keyword arguments.
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import aask

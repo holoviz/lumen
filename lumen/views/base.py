@@ -1352,8 +1352,10 @@ class hvPlotView(hvPlotBaseView):
         if self.streaming:
             processed['stream'] = self._data_stream
         if size is not None:
-            # Raw values, e.g. a population, would be sizes in pixels
-            processed['s'] = dim(size).norm() * 20 + 4
+            # Raw values, e.g. a population, would be sizes in pixels. A
+            # constant column has no range to scale over, so it gets one size.
+            constant = isinstance(df, pd.DataFrame) and df[size].nunique() <= 1
+            processed['s'] = 12 if constant else dim(size).norm() * 20 + 4
         if z is not None:
             # heatmap takes it as C, points are coloured by c
             processed[{'heatmap': 'C', 'points': 'c', 'scatter': 'c'}.get(self.kind, 'z')] = z
@@ -1853,7 +1855,7 @@ class VegaLiteView(View):
             # passes a list of features through untouched, but would turn a
             # FeatureCollection in data.values into columns.
             name = spec_data.get('name', self.pipeline.table)
-            features = geometry_to_geojson(df)['features']
+            features = geometry_to_geojson(df, clockwise=True)['features']
             datasets = dict(self.spec.get('datasets', {}), **{name: features})
             encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:

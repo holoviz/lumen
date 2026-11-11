@@ -10,10 +10,10 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "docx"]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "docx"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "docx"]
-test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "docx"]
+test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
+test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -100,6 +100,12 @@ zarr = "*"
 
 [feature.xarray.pypi-dependencies]
 xarray-sql = ">=0.3.1"
+
+[feature.geo.dependencies]
+datashader = "*"
+geopandas = "*"
+geoviews = "*"
+shapely = "*"
 
 # =============================================
 # =================== TESTS ===================

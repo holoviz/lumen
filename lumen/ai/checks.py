@@ -14,6 +14,7 @@ from pydantic import Field, create_model
 
 from ..sources import Source
 from ..sources.base import BaseSQLSource
+from ..transforms.sql import SQLLimit
 from .agents.sql import validate_read_only_sql
 from .answer import (
     _as_input_type, _default_llm, _read_kinds, _run,
@@ -58,10 +59,10 @@ class CheckResult:
         return self
 
 
-def _is_sql(rule: str) -> bool:
+def _is_sql(rule: str, dialect: str) -> bool:
     """Whether the rule is written as SQL rather than in plain language."""
     try:
-        statements = sqlglot.parse(rule, read="duckdb")
+        statements = sqlglot.parse(rule, read=dialect)
     except sqlglot.errors.ParseError:
         return False
     # Plain words can parse too, as a column with an alias or a comparison
@@ -85,7 +86,7 @@ async def _rule_sql(source: Source, rule: str, table: str | None, llm: Llm) -> s
         for name in tables
     )
     model = create_model("Check", query=(str, Field(description=(
-        "One DuckDB SELECT returning every row that breaks the rule, and no rows when the rule holds."
+        f"One {source.dialect} SELECT returning every row that breaks the rule, and no rows when the rule holds."
     ))))
     out = await llm.invoke(
         [{"role": "user", "content": f"Rule: {rule}\n\nTables and columns:\n{schemas}"}],
@@ -105,11 +106,15 @@ async def acheck(source: Source, rule: str, table: str | None = None, *, llm: Ll
     """
     if not isinstance(source, BaseSQLSource):
         raise ValueError("check runs SQL, so it needs a SQL source, such as one from lumen.read.")
-    sql = rule if _is_sql(rule) else await _rule_sql(source, rule, table, llm or _default_llm())
-    validate_read_only_sql(sql, "duckdb")
+    dialect = source.dialect
+    sql = rule if _is_sql(rule, dialect) else await _rule_sql(source, rule, table, llm or _default_llm())
+    # A trailing semicolon would end the query inside the wrappers below
+    sql = sql.strip().rstrip(";").strip()
+    validate_read_only_sql(sql, dialect)
+    limited = SQLLimit(limit=MAX_ROWS, write=dialect).apply(f"SELECT * FROM ({sql}) AS broken")
     try:
         count = int(source.execute(f"SELECT COUNT(*) FROM ({sql}) AS broken").iloc[0, 0])
-        rows = source.execute(f"SELECT * FROM ({sql}) AS broken LIMIT {MAX_ROWS}")
+        rows = source.execute(limited)
     except Exception as e:
         raise ValueError(f"The check's query failed: {format_error(e)}\n{sql}") from e
     return CheckResult(

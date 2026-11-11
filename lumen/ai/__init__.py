@@ -1,5 +1,6 @@
 import panel as pn
 
+from ..sources.data import read
 from . import (
     actor, agents, embeddings, llm,
 )
@@ -21,7 +22,7 @@ __all__ = [
     "DecisionModel", "DecisionResult", "DependencyResolver", "DuckDBVectorStore",
     "ExplorerUI", "Jev", "Noul", "NumpyVectorStore", "OpenRouterDecisionModel",
     "Planner", "Score", "aask", "actor", "agents", "ask", "chat", "clear_cache", "configure",
-    "embeddings", "llm",
+    "embeddings", "llm", "read",
 ]
 
 pn.chat.message.DEFAULT_AVATARS.update({

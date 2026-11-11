@@ -33,12 +33,14 @@ from pydantic import BaseModel
 from .llm import Llm, Message
 
 #: Bumped when the key or the file layout changes, so old cassettes miss
-CASSETTE_VERSION = 1
+CASSETTE_VERSION = 2
 
 # What changes from run to run without changing the question: the counter
-# param gives unnamed objects (MetadataLookup00348), UUIDs and addresses
+# param gives unnamed objects (MetadataLookup00348), UUIDs and addresses.
+# Only a class-style name takes the counter, so data such as CA94110 or
+# id_10234 is left alone.
 _VOLATILE = [
-    (re.compile(r"\b([A-Za-z_]+?)\d{5}\b"), r"\1#"),
+    (re.compile(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*)\d{5}\b"), r"\1#"),
     (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"), "<uuid>"),
     (re.compile(r"\b0x[0-9a-f]{6,}\b"), "0x#"),
 ]
@@ -56,9 +58,18 @@ def _normalize(text: str) -> str:
 
 def _key(messages: list[Message], system: str, response_model: type | None, model_spec: Any) -> str:
     """What identifies a call: its prompts, the type it returns and the model it asks."""
+    if response_model is None:
+        returns = None
+    elif isinstance(response_model, type) and issubclass(response_model, BaseModel):
+        # The fields, so a changed model misses instead of failing to validate
+        returns = response_model.model_json_schema()
+    else:
+        returns = response_model.__name__
     payload = json.dumps({
-        "messages": messages, "system": system, "model_spec": model_spec,
-        "response_model": None if response_model is None else response_model.__name__,
+        "messages": messages, "system": system, "response_model": returns,
+        # A routing config hands invoke the resolved settings, which a
+        # replay never sees, so only a named spec is part of the key
+        "model_spec": model_spec if isinstance(model_spec, str) else "default",
     }, sort_keys=True, default=str)
     return hashlib.sha256(_normalize(payload).encode()).hexdigest()
 
@@ -79,15 +90,24 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 @contextmanager
-def record(llm: Llm, path: str | Path) -> Iterator[Llm]:
+def record(llm: Llm, path: str | Path, *, append: bool = False, preview: bool = True) -> Iterator[Llm]:
     """
     Record every call llm makes inside the block into the cassette at
-    path, keeping what is already there. Streaming is turned off while
-    recording, so each call is stored as one whole response.
+    path, written once the block finishes without an error. The cassette
+    starts empty, so calls a changed prompt no longer makes do not linger;
+    with append the calls already in it are kept. Streaming is turned off
+    while recording, so each call is stored as one whole response.
+
+    The cassette holds every response and, with preview, the first 500
+    characters of each call's last message, which name the closest call
+    when a replay misses. Both can hold values from your data; pass
+    preview=False to keep the prompts out.
     """
     path = Path(path)
-    cassette = _load(path)
+    cassette = _load(path) if append else {"version": CASSETTE_VERSION, "calls": {}}
     invoke = llm.invoke
+    # An invoke set on the instance already, e.g. by an outer record
+    previous = llm.__dict__.get("invoke")
 
     async def recording(messages, system="", response_model=None, model_spec="default", **kwargs):
         output = await invoke(messages, system=system, response_model=response_model, model_spec=model_spec, **kwargs)
@@ -96,7 +116,8 @@ def record(llm: Llm, path: str | Path) -> Iterator[Llm]:
         else:
             response = {"text": output if isinstance(output, str) else llm._get_content(output)}
         call = cassette["calls"].setdefault(
-            _key(messages, system, response_model, model_spec), {"prompt": _prompt(messages), "responses": []},
+            _key(messages, system, response_model, model_spec),
+            {"prompt": _prompt(messages) if preview else "", "responses": []},
         )
         call["responses"].append(response)
         return output
@@ -107,10 +128,14 @@ def record(llm: Llm, path: str | Path) -> Iterator[Llm]:
     try:
         yield llm
     finally:
-        del llm.invoke
+        if previous is None:
+            del llm.invoke
+        else:
+            llm.invoke = previous
         llm._supports_stream, llm._supports_model_stream = streams
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(cassette, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    # Only a block that finished: a partial recording would replay a half test
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cassette, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
 class ReplayLLM(Llm):
@@ -144,7 +169,7 @@ class ReplayLLM(Llm):
         key = _key(messages, system, response_model, model_spec)
         call = self._calls.get(key)
         if call is None or self._used[key] >= len(call["responses"]):
-            prompts = [c["prompt"] for c in self._calls.values()]
+            prompts = [c["prompt"] for c in self._calls.values() if c["prompt"]]
             closest = difflib.get_close_matches(_prompt(messages), prompts, n=1, cutoff=0)
             hint = f"\n\nThe closest recorded call asked:\n{closest[0]}" if closest else ""
             raise MissingRecording(
@@ -159,16 +184,16 @@ class ReplayLLM(Llm):
 
 
 @contextmanager
-def cassette(path: str | Path, llm: Llm | None = None) -> Iterator[Llm]:
+def cassette(path: str | Path, llm: Llm | None = None, *, preview: bool = True) -> Iterator[Llm]:
     """
     An LLM for a test: one replaying the cassette at path, or with
     LUMEN_AI_RECORD=1 set, llm (or the one lumen.ai would pick) recording
-    into it.
+    into it. preview is passed on to record.
     """
     if os.environ.get("LUMEN_AI_RECORD", "").lower() in ("1", "true"):
         # Deferred: answer pulls in the Panel UI stack, which replaying never needs
         from .answer import _default_llm
-        with record(llm or _default_llm(), path) as recording:
+        with record(llm or _default_llm(), path, preview=preview) as recording:
             yield recording
     else:
         yield ReplayLLM(path)
