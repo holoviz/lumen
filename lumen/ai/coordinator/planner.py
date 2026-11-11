@@ -103,6 +103,16 @@ class RawStep(BaseModel):
         default="",
         description="Optional short label for this step; derived from the instruction if omitted.",
     )
+    documentation_queries: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description=(
+            "For VegaLiteAgent steps, provide up to three short documentation search queries "
+            "using the library's terminology. Use one concept per query so each can match "
+            "a single documentation section. Omit the library name, dataset names, and values. "
+            "Leave empty for other steps or if no rewrite is useful."
+        ),
+    )
 
     @model_validator(mode="after")
     def _default_title(self) -> RawStep:
@@ -563,6 +573,9 @@ class Planner(Coordinator):
                     actor=current_step.actor,
                     instruction=combined_instruction,
                     title=combined_title,
+                    documentation_queries=list(dict.fromkeys(
+                        query for step in consecutive_steps for query in step.documentation_queries
+                    ))[:3],
                 )
                 merged_steps.append(merged_step)
             else:
@@ -601,7 +614,10 @@ class Planner(Coordinator):
                 table_provided = True
                 unmet_dependencies -= provided
                 actors_in_graph.add("SQLAgent")
-            tasks.append(ActorTask(subagent, instruction=step.instruction, title=step.title))
+            tasks.append(ActorTask(
+                subagent, instruction=step.instruction, title=step.title,
+                documentation_queries=step.documentation_queries if key == "VegaLiteAgent" else [],
+            ))
             steps.append(step)
             actors_in_graph.add(key)
 

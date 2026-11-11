@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-from collections import Counter
+from collections import Counter, defaultdict
+from itertools import zip_longest
 from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -99,10 +100,50 @@ def focused_document_queries(query: str, limit: int = 4) -> list[str]:
     return list(dict.fromkeys(clauses))[:limit]
 
 
+def uncovered_documentation_queries(queries: list[str], pages: list[dict]) -> list[str]:
+    """Find clauses without positive textual evidence in the selected sections."""
+    evidence = []
+    for page in pages:
+        metadata = page.get("metadata") or {}
+        heading = metadata.get("section_title") or ""
+        # A setting or a section describing removal is weak evidence for
+        # implementing the operation itself.
+        if heading.startswith("`") or _tokens(heading) & {"disable", "remove", "suppress"}:
+            continue
+        evidence.append(_tokens(" ".join((
+            metadata.get("page_title") or "", heading,
+            metadata.get("description") or "", page["text"],
+        ))))
+    return [
+        query for query in queries
+        if not any(_tokens(query) <= terms for terms in evidence)
+    ]
+
+
+def documentation_shortlist(candidates: list[dict], preferred: list[dict]) -> list[dict]:
+    """Include alternate sections from the pages represented in the first pass."""
+    shortlist = preferred[:16]
+    groups = defaultdict(list)
+    for candidate in candidates:
+        metadata = candidate.get("metadata") or {}
+        if metadata.get("slug") and not str(metadata.get("section_title", "")).startswith("`"):
+            groups[metadata["slug"]].append(candidate)
+
+    slugs = list(dict.fromkeys(
+        slug for doc in shortlist if (slug := (doc.get("metadata") or {}).get("slug"))
+    ))[:3]
+    alternatives = [[doc for doc in groups[slug] if doc not in shortlist][:4] for slug in slugs]
+    # Interleave pages so one long reference page cannot take all the slots.
+    for row in zip_longest(*alternatives):
+        shortlist.extend(doc for doc in row if doc is not None)
+    return shortlist[:16]
+
+
 def fuse_ranked_documents(
     searches: list[tuple[str | None, list[dict]]],
     *,
     rank_constant: int = 60,
+    secondary_searches: list[list[dict]] | None = None,
 ) -> list[dict]:
     """Combine incomparable semantic and lexical rankings using RRF.
 
@@ -110,9 +151,14 @@ def fuse_ranked_documents(
     lexical retrieval. The latter is retained as transient metadata so the
     final selection can preserve requirements supported by exact textual
     evidence, without knowing anything about individual visualization features.
+    Secondary rankings contribute half weight and do not reserve coverage slots.
     """
     fused: dict[tuple, dict] = {}
-    for query, documents in searches:
+    weighted_searches = [(query, documents, 1.0) for query, documents in searches]
+    weighted_searches.extend(
+        (None, documents, 0.5) for documents in secondary_searches or ()
+    )
+    for query, documents, weight in weighted_searches:
         for rank, document in enumerate(documents, start=1):
             metadata = document.get("metadata") or {}
             key = (
@@ -136,7 +182,7 @@ def fuse_ranked_documents(
                     "query_scores": {},
                 }
             entry = fused[key]
-            contribution = 1 / (rank_constant + rank)
+            contribution = weight / (rank_constant + rank)
             entry["score"] += contribution
             if query and query not in entry["queries"]:
                 entry["queries"].append(query)

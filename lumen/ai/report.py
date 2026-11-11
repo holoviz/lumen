@@ -1469,6 +1469,7 @@ class ActorTask(ExecutableTask):
     """
 
     actor = param.ClassSelector(class_=Actor)
+    documentation_queries = param.List(default=[], item_type=str)
 
     level = 3
 
@@ -1543,6 +1544,8 @@ class ActorTask(ExecutableTask):
         ):
             try:
                 kwargs["step_title"] = self.title
+                if self.documentation_queries:
+                    kwargs["documentation_queries"] = self.documentation_queries
                 outputs, out_context = await self.actor.respond(messages, subcontext, **kwargs)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
