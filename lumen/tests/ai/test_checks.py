@@ -7,7 +7,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.checks import acheck
-from lumen.ai.data import read
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 
 
