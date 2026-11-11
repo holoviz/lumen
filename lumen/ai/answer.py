@@ -938,7 +938,8 @@ class Chat(param.Parameterized):
 
     async def _reply(self, contents: str, user: str, instance: ChatInterface):
         try:
-            answer = await self.aask(contents)
+            # The widget shows its own question and this reply, so _record does not
+            answer = await _on_loop(self._aask(contents, in_widget=True))
         except Exception as e:
             # A failed call, e.g. a rate limit, must not leave the widget dead
             return Alert(object=format_error(e), title="Lumen could not answer", severity="error")
@@ -1021,19 +1022,21 @@ class Chat(param.Parameterized):
         """
         return await _on_loop(self._aask(question, confirm, returns))
 
-    async def _aask(self, question: str, confirm: bool = False, returns: Any = None) -> Answer:
+    async def _aask(
+        self, question: str, confirm: bool = False, returns: Any = None, in_widget: bool = False,
+    ) -> Answer:
         if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
             # The context's summaries and the replies were written under
             # another sharing level, so only the questions carry over
             self._context = None
             self._messages = [m for m in self._messages if m["role"] == "user"]
         messages = [*self._messages, {"role": "user", "content": question}]
-        return await self._turn(question, messages, self._messages, self._context, confirm, returns)
+        return await self._turn(question, messages, self._messages, self._context, confirm, returns, in_widget)
 
     async def _turn(
         self, question: str, messages: list[dict[str, str]],
         history: list[dict[str, str]], prior: dict[str, Any] | None, confirm: bool = False,
-        returns: Any = None,
+        returns: Any = None, in_widget: bool = False,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
         agents = _settings["agents"] if self._agents is None else self._agents
@@ -1047,11 +1050,17 @@ class Chat(param.Parameterized):
         if answer.status == "planned":
             answer._chat = (self, messages)
         else:
-            self._record(answer, messages, out_context)
+            self._record(answer, messages, out_context, in_widget)
         return answer
 
-    def _record(self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any]) -> None:
+    def _record(
+        self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any], in_widget: bool = False,
+    ) -> None:
         self.answers = [*self.answers, answer]
+        if self._interface is not None and not in_widget:
+            # Asked from code: the widget shows it too, as one conversation
+            self._interface.send(answer.question, user="User", respond=False)
+            self._interface.send(answer.__panel__(), user="Lumen", respond=False)
         if answer.status == "error":
             # The next question starts from the last answer that worked
             return

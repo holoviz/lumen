@@ -2003,6 +2003,15 @@ async def test_a_question_typed_into_the_chat_widget_joins_the_chat(llm, frame_s
     assert conversation._messages[-1] == {"role": "assistant", "content": "The total value is 38."}
 
 
+async def test_a_question_asked_from_code_shows_in_the_open_widget(llm, frame_source):
+    llm.set_responses(_total_responses(frame_source))
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    widget = conversation.__panel__()
+    answer = await conversation.aask("Total value?")
+    question, card = widget.objects
+    assert question.object == "Total value?" and card.object is answer.__panel__()
+
+
 def test_the_chat_widget_starts_with_the_answers_so_far(chart_answer, frame_source):
     conversation = chat(frame_source)
     conversation.answers = [chart_answer]
