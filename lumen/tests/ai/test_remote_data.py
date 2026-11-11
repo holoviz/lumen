@@ -65,7 +65,7 @@ def _features(path, bbox_column):
     con.execute(f"""
         COPY (SELECT name, ST_Point(x, y) AS geometry{box}
               FROM (VALUES ('berlin', 13.4, 52.5), ('paris', 2.35, 48.86), ('potsdam', 13.06, 52.39)) t(name, x, y))
-        TO '{path}' (FORMAT PARQUET)
+        TO '{str(path).replace("'", "''")}' (FORMAT PARQUET)
     """)
 
 
@@ -92,3 +92,49 @@ def test_lumen_read_passes_the_options_on(tmp_path):
     path = tmp_path / "places.parquet"
     _features(path, True)
     assert sorted(lumen.read(str(path), bbox=(12.5, 52.0, 14.0, 53.0)).execute("SELECT name FROM places")["name"]) == ["berlin", "potsdam"]
+
+
+def test_a_box_is_scanned_once_and_kept_out_of_the_spec(tmp_path, monkeypatch):
+    path = tmp_path / "places.parquet"
+    _features(path, True)
+    source = read(str(path), bbox=(12.5, 52.0, 14.0, 53.0))
+    # The copy is made on the source's own connection, not replayed from its spec
+    assert not any("CREATE TABLE" in statement for statement in source.initializers)
+    assert sorted(source.execute("SELECT name FROM places")["name"]) == ["berlin", "potsdam"]
+
+
+def test_a_box_quotes_the_name_and_url(tmp_path):
+    path = tmp_path / "it's.parquet"
+    _features(path, False)
+    source = read({'odd"name': str(path)}, bbox=(12.5, 52.0, 14.0, 53.0))
+    assert len(source.execute('SELECT * FROM "odd""name"')) == 2
+
+
+@pytest.mark.parametrize("url, spatial", [
+    ("https://example.com/a.csv", False),
+    ("https://example.com/a.parquet", True),
+])
+def test_only_remote_parquet_loads_spatial(url, spatial):
+    (source,) = resolve_data(url)
+    assert ("LOAD spatial;" in source.initializers) is spatial and "LOAD httpfs;" in source.initializers
+
+
+def test_a_remote_zarr_store_names_every_missing_dependency(monkeypatch):
+    real = data_module.importlib.util.find_spec
+    monkeypatch.setattr(data_module.importlib.util, "find_spec", lambda name: None if name in ("aiohttp", "dask") else real(name))
+    with pytest.raises(ImportError, match="needs aiohttp, dask: pip install 'lumen\\[xarray\\]'"):
+        data_module._remote_grid("gs://b/x.zarr", ["t"], None)
+
+
+def test_a_bare_remote_zarr_store_warns_that_it_is_read_whole(monkeypatch):
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    monkeypatch.setattr(data_module.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(xr, "open_zarr", lambda url, chunks: xr.Dataset({"t": ("x", [1.0])}, coords={"x": [0]}))
+    with pytest.warns(UserWarning, match="Pass variables= and sel="):
+        data_module._remote_grid("gs://b/x.zarr", None, None)
+
+
+def test_buckets_in_two_regions_are_refused():
+    with pytest.raises(ValueError, match="different regions"):
+        resolve_data({"a": "s3://data-us-west-2/a.parquet", "b": "s3://data-eu-west-1/b.parquet"})

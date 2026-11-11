@@ -4,7 +4,9 @@ connections) into Lumen Sources.
 """
 from __future__ import annotations
 
+import importlib.util
 import re
+import warnings
 import weakref
 
 from pathlib import Path
@@ -70,11 +72,24 @@ def _https(url: str) -> str:
     return url
 
 
+#: What reading a remote Zarr store needs: the gridded source, zarr, HTTP access and lazy chunks
+_ZARR_MODULES = ("xarray", "xarray_sql", "zarr", "fsspec", "aiohttp", "dask")
+
+
 def _remote_grid(url: str, variables: list[str] | None, sel: dict | None) -> XArraySQLSource:
     """A public Zarr store as a gridded source, cut to the variables and coordinates asked for before SQL sees it."""
+    if missing := [name for name in _ZARR_MODULES if importlib.util.find_spec(name) is None]:
+        raise ImportError(
+            f"Reading a remote Zarr store needs {', '.join(missing)}: "
+            "pip install 'lumen[xarray]' fsspec aiohttp dask"
+        )
+    if not variables and not sel:
+        warnings.warn(
+            f"{url} is read whole: a remote store can hold hundreds of variables and terabytes, "
+            "and nothing bounds a query over it. Pass variables= and sel= to read only what you need.",
+            stacklevel=3,
+        )
     xr = try_import_xarray()
-    if xr is None:
-        raise ImportError("Reading a Zarr store needs xarray and zarr: pip install xarray zarr")
     # Lazy: only the metadata is read until a query needs values
     ds = xr.open_zarr(_https(url), chunks={})
     if variables:
@@ -89,27 +104,31 @@ def _remote_box(name: str, url: str, bbox: tuple[float, float, float, float]) ->
     The features of a (Geo)Parquet file or glob inside a box, copied into
     memory once, so questions about them do not read the remote files again.
     """
-    west, south, east, north = bbox
+    # Numbers only, as they go into the SQL
+    west, south, east, north = (float(v) for v in bbox)
     initializers = ["INSTALL httpfs;", "LOAD httpfs;", "INSTALL spatial;", "LOAD spatial;"]
     if region := _S3_REGION.match(url):
         initializers.append(f"SET s3_region='{region.group(1)}';")
-    con = duckdb.connect()
-    for statement in initializers:
-        con.execute(statement)
-    scan = f"read_parquet('{url}', hive_partitioning = true, union_by_name = true)"
+    table = name.replace('"', '""')
+    source = DuckDBSource(
+        initializers=initializers, name=PROVIDED_SOURCE_NAME, tables={name: f'SELECT * FROM "{table}"'}, uri=":memory:",
+    )
+    # One connection for the look and the copy, so the files are scanned once.
+    # The copy is not an initializer, so a spec or an export does not download it again.
+    con = source._connection
+    quoted = url.replace("'", "''")
+    scan = f"read_parquet('{quoted}', hive_partitioning = true, union_by_name = true)"
     columns = {row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {scan}").fetchall()}
-    con.close()
     if "bbox" in columns:
         # Overture's bbox column: compared in the scan, so row groups outside the box are skipped
         inside = f"bbox.xmin <= {east} AND bbox.xmax >= {west} AND bbox.ymin <= {north} AND bbox.ymax >= {south}"
     elif "geometry" in columns:
         inside = f"ST_Intersects(geometry, ST_MakeEnvelope({west}, {south}, {east}, {north}))"
     else:
+        source.close()
         raise ValueError(f"{url} has neither a bbox nor a geometry column to cut to a box.")
-    initializers.append(f'CREATE TABLE "{name}" AS SELECT * FROM {scan} WHERE {inside};')
-    return DuckDBSource(
-        initializers=initializers, name=PROVIDED_SOURCE_NAME, tables={name: f'SELECT * FROM "{name}"'}, uri=":memory:",
-    )
+    con.execute(f'CREATE TABLE "{table}" AS SELECT * FROM {scan} WHERE {inside}')
+    return source
 
 
 def _remote_name(url: str) -> str:
@@ -157,6 +176,9 @@ def read(
     bbox: tuple | None
         For (Geo)Parquet, the box (west, south, east, north) in longitude and
         latitude to keep; the features inside are read once into memory.
+        Without it a remote (Geo)Parquet file is queried in place, which
+        cannot skip row groups by Overture's bbox column and may download
+        whole files for every question.
 
     Public remote data is read without credentials: ``https://``, and
     ``s3://`` or ``gs://`` buckets that allow anonymous reads, e.g. Overture
@@ -354,10 +376,18 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
     elif frames or grids:
         sources.append(DuckDBSource.from_df(frames))
     if tables or mirrors:
-        initializers = ["INSTALL httpfs;", "LOAD httpfs;", "INSTALL spatial;", "LOAD spatial;"] if remote else []
-        # Remote GeoParquet arrives as GEOMETRY, which the ST_ functions need spatial for
+        initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
+        if remote and any(re.search(r"\.parq(uet)?$", t) for t in tables.values()):
+            # Remote GeoParquet arrives as GEOMETRY, which the ST_ functions
+            # need spatial for; a plain CSV does without the download
+            initializers += ["INSTALL spatial;", "LOAD spatial;"]
         regions = {m.group(1) for table in tables.values() if (m := _S3_REGION.match(table))}
-        initializers += [f"SET s3_region='{region}';" for region in sorted(regions)][:1]
+        if len(regions) > 1:
+            # DuckDB has one s3_region per connection
+            raise ValueError(
+                f"These buckets are in different regions ({', '.join(sorted(regions))}); read each with its own lumen.read."
+            )
+        initializers += [f"SET s3_region='{region}';" for region in regions]
         source = DuckDBSource(
             initializers=initializers,
             mirrors=mirrors,
