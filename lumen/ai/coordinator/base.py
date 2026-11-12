@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import traceback
 
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -42,7 +41,8 @@ from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..tools.monty import make_monty_llm_tool
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, truncate_to_tokens, wrap_logfire,
+    mutate_user_message, normalized_name, print_task_exception,
+    truncate_to_tokens, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -184,11 +184,11 @@ class Plan(Section):
                 task.out_context["__error__"] = error_msg
                 return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
-            traceback.print_exception(e)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
-            traceback.print_exception(e)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task failed due to an internal error"
             raise e
 
@@ -254,6 +254,7 @@ class Plan(Section):
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
+        context.pop("__exception__", None)
         context["plan"] = self
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(failed=self.status == "error")

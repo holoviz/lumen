@@ -126,6 +126,17 @@ class AltairSpec(BaseModel):
     )
 
 
+#: Marks layered on a chart to annotate it, e.g. a threshold line or labels
+ANNOTATION_MARKS = {"rule", "text"}
+
+#: Encoding channels that style a chart's marks, which a rule or text
+#: annotation layered over it must not inherit
+STYLE_CHANNELS = {
+    "color", "fill", "stroke", "opacity", "fillOpacity", "strokeOpacity",
+    "strokeWidth", "strokeDash", "size", "shape", "tooltip",
+}
+
+
 class VegaLiteAgent(BaseCodeAgent):
 
     conditions = param.List(
@@ -279,8 +290,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
                 # If marks are different, or if update has marks like 'rule', 'text'
                 # which are typically annotations, treat as append
-                annotation_marks = {'rule', 'text'}
-                if first_update_mark != first_base_mark or first_update_mark in annotation_marks:
+                if first_update_mark != first_base_mark or first_update_mark in ANNOTATION_MARKS:
                     is_append_operation = True
 
             if is_append_operation:
@@ -318,10 +328,24 @@ class VegaLiteAgent(BaseCodeAgent):
                 else:
                     result[key] = value
 
-        # If we're merging in a 'layer', remove conflicting top-level properties
+        # A top-level mark cannot sit beside layers, but a top-level encoding
+        # can and usually holds the x and y every layer shares, e.g. a
+        # heatmap's rect and text layers; dropping it piles all cells onto one
         if "layer" in update_dict:
             result.pop("mark", None)
-            result.pop("encoding", None)
+            encoding = result.get("encoding")
+            if isinstance(encoding, dict) and result.get("layer"):
+                # A rule or text annotation must not inherit the chart's color
+                # or tooltip, so those move down into the chart's own layers.
+                # Other channels stay shared, e.g. the text a heatmap's labels show.
+                own = {k: v for k, v in encoding.items() if k in STYLE_CHANNELS}
+                if own:
+                    result["encoding"] = {k: v for k, v in encoding.items() if k not in STYLE_CHANNELS}
+                    result["layer"] = [
+                        layer if self._get_layer_mark_type(layer) in ANNOTATION_MARKS
+                        else {**layer, "encoding": {**own, **layer.get("encoding", {})}}
+                        for layer in result["layer"]
+                    ]
 
         return result
 

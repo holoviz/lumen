@@ -2,7 +2,9 @@ import datetime
 import inspect
 
 from abc import abstractmethod
+from collections.abc import Callable
 from contextlib import contextmanager
+from contextvars import ContextVar
 from logging import getLogger
 from pathlib import Path
 from types import FunctionType
@@ -78,6 +80,10 @@ def _merge_prompt_tools(
 #: Where steps report without an interface, e.g. from a notebook or script
 _progress = getLogger("lumen")
 
+# Receives each step title of a run without an interface, e.g. so
+# lumen.ai.ask can show which step a question is on
+step_title_callback: ContextVar[Callable[[str], None] | None] = ContextVar("step_title_callback", default=None)
+
 
 class NullStep:
 
@@ -99,6 +105,8 @@ class NullStep:
         step = NullStep(success_title)
         if title:
             _progress.info(title)
+            if (callback := step_title_callback.get()) is not None:
+                callback(title)
         try:
             yield step
         except BaseException as e:

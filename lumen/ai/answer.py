@@ -9,13 +9,16 @@ import html
 import logging
 import os
 import threading
+import time
 import weakref
 
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import nullcontext
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import panel as pn
 import param
 
@@ -24,7 +27,7 @@ from panel.config import panel_extension
 from panel.io.state import state
 from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
-from panel_material_ui import Card, Column
+from panel_material_ui import Alert, Card, Column
 from panel_material_ui.chat import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -36,16 +39,20 @@ from ..sources.data import joins_grids, read
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import geometry_columns, log
 from ..views import View
+from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import hvPlotAgent
+from .config import QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .editors import LumenEditor
 from .export import format_output, make_preamble
 from .llm import (
     Llm, get_available_llm, quiet_retries, signed_in_cli_hint,
 )
+from .report import ActorTask, TaskGroup
 from .tools import MetadataLookup
 from .ui import ExplorerUI
+from .utils import errors_in_result, format_error
 
 if TYPE_CHECKING:
     from ..sources.data import DataT
@@ -201,11 +208,16 @@ def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | N
 
 
 async def _respond(
-    planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any]
+    planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any],
+    data: DataT | Pipeline, agents: list | None,
 ) -> tuple[Answer, dict[str, Any]]:
-    """Run one question through the Planner, returning the Answer and the context it left."""
+    """
+    Run one question through the Planner, returning the Answer and the
+    context it left. A failed plan gives an Answer with status "error".
+    """
     _busy.add(planner)
     try:
+        token = errors_in_result.set(True)
         with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
             await planner.sync(context)
             plan = await planner.respond(messages, context)
@@ -213,32 +225,87 @@ async def _respond(
                 raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
             outputs, out_context = await plan.execute()
     finally:
+        errors_in_result.reset(token)
         _busy.discard(planner)
-    if plan.status == "error":
-        failed = next((task.title for task in plan if task.status == "error"), plan.title)
-        raise RuntimeError(f"Lumen could not answer {question!r}: {failed!r} failed.")
     answer = _build_answer(
-        question, plan, outputs, out_context, context["source"], planner.llm, context.get("visible_slugs")
+        question, plan, outputs, out_context, context["source"], planner.llm, data, agents,
+        context.get("visible_slugs"),
     )
     return answer, out_context
 
 
-def _run(coro):
+def _records(data: Any) -> Any:
     """
-    Run a coroutine to completion from sync code, inside Jupyter or not: it
-    runs on Lumen's own background loop, and an interrupt cancels it.
+    A frame as JSON records, with missing values as null. JSON has no
+    NaN, and in a stacked chart one NaN blanks every series at that x.
+    Data that is not a frame, e.g. GeoJSON features, is returned as is.
+    """
+    records = ds_to_records(data)
+    if records is None:
+        return data
+    return [
+        {key: None if pd.api.types.is_scalar(value) and pd.isna(value) else value for key, value in row.items()}
+        for row in records
+    ]
+
+
+class _StatusLine:
+    """One output line, updated in place with the step a question is on."""
+
+    def __init__(self, first: str):
+        self._first = first
+        self._handle = None
+        self._shown = None
+        self._start = time.monotonic()
+
+    def __enter__(self) -> _StatusLine:
+        if _in_kernel():
+            # IPython is present, since this runs in a kernel
+            from IPython.display import display
+            self._handle = display({"text/plain": self._first}, raw=True, display_id=True)
+        return self
+
+    def show(self, title: str) -> None:
+        text = f"{title.rstrip('.')} ({time.monotonic() - self._start:.0f}s)"
+        if self._handle is not None and text != self._shown:
+            self._handle.update({"text/plain": text}, raw=True)
+            self._shown = text
+
+    def __exit__(self, *exc) -> None:
+        if self._handle is not None:
+            self._handle.update({"text/plain": ""}, raw=True)
+
+
+def _run(coro, first_step: str = "Planning"):
+    """
+    Run a coroutine to completion from sync code, inside Jupyter or not. It
+    runs on Lumen's own background loop, an interrupt cancels it, and in
+    Jupyter a status line shows first_step until a step reports itself.
     """
     if threading.current_thread().name == _LOOP_THREAD:
         coro.close()
         raise RuntimeError(
             "ask would wait on the loop it runs on and never return; use await aask instead."
         )
-    future = asyncio.run_coroutine_threadsafe(coro, _loop())
-    try:
-        return future.result()
-    except KeyboardInterrupt:
-        future.cancel()
-        raise
+    titles: list[str] = []
+
+    async def tracked():
+        # Set inside the task, so the steps it runs inherit it
+        step_title_callback.set(titles.append)
+        return await coro
+
+    future = asyncio.run_coroutine_threadsafe(tracked(), _loop())
+    with _StatusLine(first_step) as status:
+        try:
+            while True:
+                try:
+                    return future.result(timeout=0.25)
+                except FutureTimeoutError:
+                    status.show(titles[-1] if titles else first_step)
+        except KeyboardInterrupt:
+            # Cancels the task on the loop, as the report stop button does
+            future.cancel()
+            raise
 
 
 async def _on_loop(coro):
@@ -274,17 +341,52 @@ def _write_tables(spec: Any, data_dir: Path) -> None:
         _write_tables(value, data_dir)
 
 
+def _drop_exceptions(group: TaskGroup) -> None:
+    """Drop the exceptions failed tasks keep, in nested groups too."""
+    for task in group:
+        task.out_context.pop("__exception__", None)
+        if isinstance(task, TaskGroup):
+            _drop_exceptions(task)
+
+
 def _build_answer(
     question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
-    visible_slugs: set[str] | None = None,
+    data: DataT | Pipeline, agents: list | None, visible_slugs: set[str] | None = None,
 ) -> Answer:
+    if plan.status == "error":
+        failed = next((task.title for task in plan if task.status == "error"), plan.title)
+        # Read once and dropped: its traceback keeps every frame's data alive
+        exc = context.pop("__exception__", None)
+        _drop_exceptions(plan)
+        error = context.get("__error__", "")
+        if isinstance(exc, RetriesExceededError) and exc.__cause__ is not None:
+            # The last attempt's error says what went wrong; the wrapper does not
+            error = format_error(exc.__cause__)
+        sql_failed = isinstance(exc, QueryError)
+        return Answer(
+            agents=agents,
+            data=data,
+            error=error,
+            llm=llm,
+            # A later step failed, so the queried data is still worth having
+            pipeline=None if sql_failed else context.get("pipeline"),
+            plan=plan,
+            question=question,
+            source=source,
+            sql=exc.sql if sql_failed else context.get("sql"),
+            sql_failed=sql_failed,
+            status="error",
+            value=f"Lumen could not answer {question!r}: {failed!r} failed.",
+        )
     messages = [out for out in outputs if isinstance(out, ChatMessage)]
-    views = [
-        out.component for out in outputs
-        if isinstance(out, LumenEditor) and isinstance(out.component, View)
-    ]
-    view = views[-1] if views else None
+    editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
+    editor = editors[-1] if editors else None
+    view = None if editor is None else editor.component
     return Answer(
+        agents=agents,
+        context=context,
+        data=data,
+        editor=editor,
         llm=llm,
         visible_slugs=visible_slugs,
         pipeline=context.get("pipeline"),
@@ -297,16 +399,6 @@ def _build_answer(
         value=str(messages[-1].object) if messages else "",
         view=view,
     )
-
-
-async def _aask(
-    data: DataT | Pipeline, question: str, llm: Llm | None, agents: list | None
-) -> Answer:
-    source, visible_slugs = _resolve(data)
-    planner = await _planner(source, llm or _default_llm(), agents)
-    context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, [{"role": "user", "content": question}], context)
-    return answer
 
 
 async def aask(
@@ -331,8 +423,22 @@ async def aask(
     Returns
     -------
     Answer
+        A question Lumen cannot answer gives an Answer with status "error"
+        and the reason in ``error``, rather than raising, so it can be
+        retried with ``answer.retry()``.
     """
-    return await _on_loop(_aask(data, question, llm, agents))
+    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
+
+
+async def _aask_messages(
+    data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
+    llm: Llm | None, agents: list | None,
+) -> Answer:
+    source, visible_slugs = _resolve(data)
+    planner = await _planner(source, llm or _default_llm(), agents)
+    context = _fresh_context(planner, source, visible_slugs)
+    answer, _ = await _respond(planner, question, messages, context, data, agents)
+    return answer
 
 
 def ask(
@@ -341,11 +447,12 @@ def ask(
     """
     Ask a question of some data and return the Answer.
 
-    Takes the same arguments as aask, and works whether or not an event
-    loop is already running, e.g. in a Jupyter notebook: the question runs
+    Takes the same arguments as aask and, like it, returns an Answer with
+    status "error" instead of raising when the question fails. Works
+    whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(_aask(data, question, llm, agents))
+    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -368,6 +475,7 @@ class Chat(param.Parameterized):
 
     def __init__(self, data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None, **params):
         super().__init__(**params)
+        self._data = data
         self._source, self._visible_slugs = _resolve(data)
         self._llm = llm
         self._agents = agents
@@ -382,16 +490,25 @@ class Chat(param.Parameterized):
         return await _on_loop(self._aask(question))
 
     async def _aask(self, question: str) -> Answer:
-        planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
-        if self._context is None:
-            context = _fresh_context(planner, self._source, self._visible_slugs)
-        else:
-            context = dict(self._context)
         messages = [*self._messages, {"role": "user", "content": question}]
-        answer, out_context = await _respond(planner, question, messages, context)
+        return await self._turn(question, messages, self._messages, self._context)
+
+    async def _turn(
+        self, question: str, messages: list[dict[str, str]],
+        history: list[dict[str, str]], prior: dict[str, Any] | None,
+    ) -> Answer:
+        """Answer messages from the conversation as it stood (history and its context), and record the turn."""
+        planner = await _planner(self._source, self._llm or _default_llm(), self._agents)
+        context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
+        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        # So answer.retry() asks again within this conversation
+        answer._chat, answer._history = self, (history, prior)
+        self.answers = [*self.answers, answer]
+        if answer.status == "error":
+            # The next question starts from the last answer that worked
+            return answer
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
-        self.answers = [*self.answers, answer]
         return answer
 
     def ask(self, question: str) -> Answer:
@@ -410,6 +527,9 @@ class Answer(param.Parameterized):
     plan = param.ClassSelector(class_=Plan, doc="""
         The executed Plan, with every step the Planner took.""")
 
+    error = param.String(default="", doc="""
+        Why the question could not be answered, when status is "error".""")
+
     question = param.String(doc="""
         The question that was asked.""")
 
@@ -423,8 +543,8 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan. A question that fails raises
-        instead of returning an Answer, so this is "success".""")
+        The status of the executed Plan: "success", or "error" when the
+        question failed; error says why.""")
 
     value = param.String(default="", doc="""
         The written answer.""")
@@ -432,11 +552,107 @@ class Answer(param.Parameterized):
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
-    def __init__(self, llm: Llm | None = None, visible_slugs: set[str] | None = None, **params):
+    def __init__(
+        self, llm: Llm | None = None, data: DataT | Pipeline | None = None,
+        agents: list | None = None, editor: LumenEditor | None = None,
+        context: dict[str, Any] | None = None, sql_failed: bool = False,
+        visible_slugs: set[str] | None = None, **params,
+    ):
         super().__init__(**params)
         self._card = None
         self._llm = llm
         self._visible_slugs = visible_slugs
+        # Set by a Chat, so retry stays in the conversation
+        self._chat: Chat | None = None
+        self._history: tuple[list[dict[str, str]], dict[str, Any] | None] = ([], None)
+        # The plan's views with refined charts swapped in, for explore
+        self._views: list | None = None
+        # What was asked and with which agents, so retry asks the same way
+        self._data = data
+        self._agents = agents
+        # The chart's editor and the context it was made in, for refine
+        self._editor = editor
+        self._context = context or {}
+        # Whether sql is the query that failed, rather than one that worked
+        self._sql_failed = sql_failed
+
+    async def arefine(self, instruction: str) -> Answer:
+        """
+        Change the chart, e.g. its colors, title or encodings, without
+        querying the data again. Returns a new Answer.
+        """
+        return await _on_loop(self._arefine(instruction))
+
+    async def _arefine(self, instruction: str) -> Answer:
+        actor = next((
+            task.actor for task in self.plan or []
+            if isinstance(task, ActorTask) and isinstance(task.actor, VegaLiteAgent)
+        ), None)
+        if self.status == "error":
+            raise ValueError("This answer failed, so it has no chart to refine. Use answer.retry() to ask again.")
+        if self.spec is None or self._editor is None or actor is None:
+            raise ValueError("refine changes a Vega-Lite chart, and this answer has none.")
+        # A copy, so this answer and its card keep the chart they show
+        editor = type(self._editor)(component=self.view)
+        messages = [{"role": "user", "content": self.question}]
+        # The Planner only sets the agent's LLM while a plan runs
+        with actor.param.update(llm=actor.llm or self._llm):
+            editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
+        refined = Answer(
+            agents=self._agents, context=self._context, data=self._data, editor=editor,
+            llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
+            source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
+            value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
+        )
+        refined._chat, refined._history = self._chat, self._history
+        views = self.plan.views if self._views is None else self._views
+        refined._views = [editor if view is self._editor else view for view in views]
+        if self._editor not in views:
+            refined._views.append(editor)
+        return refined
+
+    def refine(self, instruction: str) -> Answer:
+        """Change the chart and return the new Answer. See arefine."""
+        return _run(self._arefine(instruction), "Revising the chart")
+
+    def to_cell(self) -> None:
+        """Put answer.code into a new cell below this one, in Jupyter."""
+        code = self.code
+        if not code:
+            raise ValueError("This answer has no chart or data to turn into code.")
+        if not _in_kernel():
+            raise RuntimeError("to_cell needs a Jupyter kernel. answer.code holds the code as a string.")
+        # IPython is present, since this runs in a kernel
+        from IPython import get_ipython
+        get_ipython().set_next_input(code, replace=False)
+
+    async def aretry(self, hint: str | None = None) -> Answer:
+        """
+        Ask the question again, optionally with a hint on what to change,
+        e.g. after an error or a wrong result. Returns a new Answer.
+
+        In a chat, the retry follows the conversation as it stood when this
+        answer was asked, so retrying an older answer drops the turns after
+        it from what later questions see.
+        """
+        return await _on_loop(self._aretry(hint))
+
+    async def _aretry(self, hint: str | None = None) -> Answer:
+        messages = [{"role": "user", "content": self.question}]
+        if hint:
+            outcome = f"That failed: {self.error}" if self.status == "error" else self.value
+            if self.sql:
+                outcome += f"\n\nThe SQL was:\n{self.sql}"
+            messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
+        if self._chat is not None:
+            history, prior = self._history
+            return await self._chat._turn(self.question, [*history, *messages], history, prior)
+        data = self.source if self._data is None else self._data
+        return await _aask_messages(data, self.question, messages, self._llm, self._agents)
+
+    def retry(self, hint: str | None = None) -> Answer:
+        """Ask the question again and return the new Answer. See aretry."""
+        return _run(self._aretry(hint))
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -453,7 +669,7 @@ class Answer(param.Parameterized):
 
         async def seed():
             ui.interface.send(self.question, respond=False)
-            await ui.add_plan_exploration(self.plan)
+            await ui.add_plan_exploration(self.plan, views=self._views)
 
         # onload runs it inside the served session once the page is up, so
         # the browser receives the changes; state.execute ran it outside the
@@ -523,7 +739,15 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None:
+        if self._card is None and self.status == "error":
+            parts = [Alert(object=self.error, severity="error", title=self.value, sizing_mode="stretch_width")]
+            if self.sql:
+                parts.append(Card(
+                    Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
+                    collapsed=not self._sql_failed, sizing_mode="stretch_width",
+                ))
+            self._card = Column(*parts)
+        elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self.view)
@@ -543,7 +767,9 @@ class Answer(param.Parameterized):
         data = spec.get("data")
         # A spec can bring its own data, e.g. a topojson url for a map
         if isinstance(data, dict) and "values" in data:
-            spec["data"] = dict(data, values=ds_to_records(data["values"]))
+            spec["data"] = dict(data, values=_records(data["values"]))
+        if isinstance(spec.get("datasets"), dict):
+            spec["datasets"] = {name: _records(values) for name, values in spec["datasets"].items()}
         for dim, size in (("width", 600), ("height", 400)):
             if spec.get(dim, "container") == "container":
                 spec[dim] = size
@@ -562,15 +788,25 @@ class Answer(param.Parameterized):
             "text/plain": f"<Vega-Lite chart: {title}>",
         }
 
+    @property
+    def _text(self) -> str:
+        """The written answer, followed by the error for a failed question."""
+        return f"{self.value}\n\n{self.error}" if self.error else self.value
+
     def _sql_html(self) -> str:
+        # A failed query is what the reader needs to see, so it starts open
+        if self._sql_failed:
+            return f"<details open><summary>Failed SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
         return f"<details><summary>SQL</summary><pre><code>{html.escape(self.sql)}</code></pre></details>"
 
     def _static_bundle(self, chart: dict | None) -> dict:
         # A viewer shows one mime type per output, so the HTML carries the
         # whole card (answer, chart, SQL) and is what notebook viewers prefer
         sql = f"\n\n```sql\n{self.sql}\n```" if self.sql else ""
-        bundle = {"text/plain": repr(self), "text/markdown": f"{self.value}{sql}"}
+        bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
         card = [_MARKDOWN.render(self.value)] if self.value else []
+        if self.error:
+            card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:
             bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
             width = chart["application/vnd.vegalite.v5+json"]["width"]
@@ -600,8 +836,8 @@ class Answer(param.Parameterized):
         # themselves, so the chart goes out as its own output and keeps its
         # tooltips. IPython is present, since this runs in a kernel.
         from IPython.display import display
-        if self.value:
-            display({"text/markdown": self.value, "text/plain": self.value}, raw=True)
+        if self._text:
+            display({"text/markdown": self._text, "text/plain": self._text}, raw=True)
         if (chart := self._chart_bundle()) is not None:
             display(chart, raw=True)
         if not self.sql:

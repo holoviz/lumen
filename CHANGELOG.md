@@ -1,5 +1,11 @@
 # Releases
 
+## Unreleased
+
+### Notebooks
+
+* `source.ask(...)` and `chat.ask(...)` return an Answer with `status="error"` and the reason in `answer.error` when a question fails, instead of raising, so `answer.retry()` can follow ([#2266](https://github.com/holoviz/lumen/pull/2266))
+
 ## Version 1.4.0
 
 Lumen AI 1.4 makes Lumen easier to run anywhere and cheaper to run well. It adds keyless and CLI-backed LLM providers, tracks token usage and cost, gives agents more accurate table context, and lets reports carry an AI-written story that exports to Word. It also adds polars and pyarrow support through narwhals, broader geospatial rendering, and a large batch of reliability fixes for SQL, validation, and charts.
