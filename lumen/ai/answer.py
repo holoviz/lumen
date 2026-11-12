@@ -1475,7 +1475,7 @@ class Answer(param.Parameterized):
         pipeline = self.pipeline
         source = pipeline.source
         if not isinstance(source, DuckDBSource) or pipeline.filters or pipeline.transforms:
-            # ponytail: filters or Python transforms only run through the Pipeline, so convert its pandas data
+            # Filters and Python transforms only run through the Pipeline, so convert its pandas data
             df = as_pandas(pipeline.data)
             if backend == "polars":
                 return sys.modules["polars"].from_pandas(df)
@@ -1586,7 +1586,7 @@ class Answer(param.Parameterized):
         # pipeline's source holds
         source = self.source if self.pipeline is None else self.pipeline.source
         if not isinstance(source, DuckDBSource):
-            # ponytail: DuckDB named parameters only; other engines bind differently
+            # DuckDB named parameters only; other engines bind differently
             raise ValueError("compile needs a DuckDB source, such as one from lumen.read.")
         try:
             tree = sqlglot.parse_one(self.sql, read="duckdb")
