@@ -1,7 +1,10 @@
+import asyncio
 import base64
+import json
 
 from collections import Counter
 from functools import partial
+from time import perf_counter
 from typing import Any
 
 import param
@@ -28,6 +31,11 @@ from ..editors import LumenEditor, MultiChartEditor, VegaLiteEditor
 from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
+from ..retrieval import (
+    RETRIEVAL_STOP_WORDS, doc_key, documentation_coverage,
+    documentation_shortlist, focused_document_queries, fuse_ranked_documents,
+    rerank_documents, retrieval_tokens,
+)
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
     has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
@@ -35,6 +43,18 @@ from ..utils import (
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
+
+
+class DocumentationMatch(BaseModel):
+    requirement: str = Field(max_length=80)
+    document_id: int | None = Field(description="Candidate ID, or null if no candidate covers the requirement.")
+
+
+class DocumentationSelection(BaseModel):
+    matches: list[DocumentationMatch] = Field(min_length=1, max_length=5)
+    follow_up_query: str = Field(default="", max_length=120, description=(
+        "One short documentation query for the most important uncovered requirement, or an empty string."
+    ))
 
 
 class ChartSpec(BaseModel):
@@ -144,6 +164,7 @@ class VegaLiteAgent(BaseCodeAgent):
             "main_altair": {"response_model": AltairSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main_altair.jinja2"},
             "code_safety": {"response_model": CodeSafetyCheck, "template": PROMPTS_DIR / "VegaLiteAgent" / "code_safety.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
+            "select_documentation": {"response_model": DocumentationSelection, "template": PROMPTS_DIR / "VegaLiteAgent" / "select_documentation.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
         }
@@ -165,14 +186,11 @@ class VegaLiteAgent(BaseCodeAgent):
         Number of documentation sections to inject into the prompt.
         Set to 0 to disable documentation lookup entirely.""")
 
+    llm_doc_selection = param.Boolean(default=False, doc="""
+        Ask the configured LLM to fill documentation gaps in multi-part requests.""")
+
     reserve_base_form = param.Boolean(default=True, doc="""
-        Guarantee one retrieved section is the base form of a chart type, when
-        the candidate pool contains one. A bare request like "plot a bar chart"
-        matches every bar variant about equally -- similarity across the top
-        candidates spans less than the noise floor -- so the plain section loses
-        to specialisations that simply have more text to match on. Sections are
-        flagged deterministically at build time from their title, which is why
-        this reserves a slot rather than nudging a score.""")
+        Give a score bonus to base chart forms that match the request.""")
 
     doc_pages_per_slug = param.Integer(default=2, bounds=(1, None), doc="""
         Maximum number of retrieved sections allowed from any single
@@ -196,7 +214,7 @@ class VegaLiteAgent(BaseCodeAgent):
 
     # Over-fetch multiplier: the per-slug cap needs alternatives below the cut
     # to promote, otherwise capping just returns fewer results.
-    _doc_page_pool = 6
+    _doc_page_pool = 12
 
     # Marks that annotate an existing view rather than plot data in their own
     # right. A tooltip on a value label is noise, so their absence must not force
@@ -648,8 +666,8 @@ class VegaLiteAgent(BaseCodeAgent):
                 return text
         return step_title or ""
 
-    def _diversify_doc_pages(self, candidates: list[dict]) -> list[dict]:
-        """Cap how many sections any single documentation page contributes.
+    def _rerank_doc_pages(self, user_query: str, candidates: list[dict]) -> list[dict]:
+        """Blend vector relevance with intent, canonicality, and diversity.
 
         Similarity alone collapses onto one page. A "bar chart of athlete count
         by country" query returned five mark-bar variants -- stacked, normalized
@@ -657,36 +675,52 @@ class VegaLiteAgent(BaseCodeAgent):
         similarity, none of them a plain bar chart, while nothing about
         transforms or sorting made the cut.
 
-        Candidates arrive sorted by similarity, so taking them in order keeps
-        the ranking intact within each page. When `reserve_base_form` is set, the
-        best-matching base-form section is admitted first and the remaining slots
-        filled around it; the result is still returned in similarity order, since
-        the reservation is about inclusion rather than position.
+        Vector similarity supplies a useful candidate pool, but its top scores
+        are often too close to distinguish the canonical chart form from verbose
+        variants. The shared reranker adds exact intent/capability matches and a
+        small near-duplicate penalty while retaining semantic relevance as the
+        strongest signal.
         """
-        if not self.n_doc_pages:
-            return []
-        reserved = None
-        if self.reserve_base_form:
-            reserved = next(
-                (c for c in candidates if (c.get("metadata") or {}).get("base_form")), None
-            )
-        kept: list[dict] = []
-        seen: Counter = Counter()
-        if reserved is not None:
-            kept.append(reserved)
-            seen[(reserved.get("metadata") or {}).get("slug")] += 1
-        for candidate in candidates:
-            if len(kept) >= self.n_doc_pages:
+        documents = rerank_documents(
+            user_query,
+            candidates,
+            limit=self.n_doc_pages,
+            max_per_group=self.doc_pages_per_slug,
+            reserve_base_form=self.reserve_base_form,
+        )
+
+        return self._prioritize_chart_documentation(user_query, documents)
+
+    @staticmethod
+    def _prioritize_chart_documentation(query: str, documents: list[dict]) -> list[dict]:
+        """Move an already selected chart-title match to the front."""
+        query_terms = retrieval_tokens(query)
+        chart_phrase = ()
+        for i, term in enumerate(query_terms):
+            if term in {"chart", "plot"} and i and query_terms[i - 1] not in RETRIEVAL_STOP_WORDS:
+                start = i - 2 if i > 1 and query_terms[i - 2] not in RETRIEVAL_STOP_WORDS else i - 1
+                chart_phrase = tuple(query_terms[start:i + 1])
                 break
-            if candidate is reserved:
-                continue
-            slug = (candidate.get("metadata") or {}).get("slug")
-            if slug is not None and seen[slug] >= self.doc_pages_per_slug:
-                continue
-            seen[slug] += 1
-            kept.append(candidate)
-        position = {id(c): i for i, c in enumerate(candidates)}
-        return sorted(kept, key=lambda c: position[id(c)])
+        if not chart_phrase or not documents:
+            return documents
+
+        def heading_tokens(document):
+            metadata = document.get("metadata") or {}
+            return retrieval_tokens(metadata.get("section_title") or "")
+
+        # Keep existing coverage while leading with a direct chart example when
+        # the selected context currently opens with an unrelated section.
+        if set(chart_phrase) <= set(heading_tokens(documents[0])):
+            return documents
+        matches = []
+        for i, document in enumerate(documents[1:], 1):
+            heading = heading_tokens(document)
+            if any(tuple(heading[j:j + len(chart_phrase)]) == chart_phrase for j in range(len(heading))):
+                matches.append((len(heading), i))
+        if matches:
+            _, position = min(matches)
+            documents.insert(0, documents.pop(position))
+        return documents
 
     def _dedupe_examples(self, doc_pages: list[dict]) -> list[dict]:
         """Drop example specs already carried by an earlier retrieved section.
@@ -747,6 +781,85 @@ class VegaLiteAgent(BaseCodeAgent):
             filtered.append({**page, "metadata": {**metadata, "examples": kept}})
         return filtered
 
+    @staticmethod
+    async def _search_doc_pages(store: DuckDBVectorStore, query: str, limit: int) -> tuple[list[dict], list[dict]]:
+        semantic, lexical = await asyncio.gather(
+            store.query(query, top_k=limit),
+            store.query_lexical(query, top_k=limit),
+        )
+        return semantic, lexical
+
+    async def _select_doc_pages(
+        self, query: str, candidates: list[dict], baseline: list[dict],
+        store: DuckDBVectorStore, seen_queries: set[str], gaps: list[str],
+        protected_pages: list[dict],
+    ) -> list[dict]:
+        shortlist = documentation_shortlist(candidates, baseline)
+        entries = []
+        for identifier, page in enumerate(shortlist):
+            metadata = page.get("metadata") or {}
+            entries.append({
+                "id": identifier,
+                "page": (metadata.get("page_title") or "")[:60],
+                "section": (metadata.get("section_title") or "")[:100],
+                "excerpt": " ".join(page["text"].split())[:160],
+            })
+        started = perf_counter()
+        messages = [{"role": "user", "content": json.dumps({
+            "request": query, "requirements_to_check": gaps, "candidates": entries,
+        }, ensure_ascii=False)}]
+        system = await self._render_prompt("select_documentation", messages, {})
+        try:
+            selection = await asyncio.wait_for(self.llm.invoke(
+                messages,
+                system=system,
+                response_model=self._get_model("select_documentation"),
+                model_spec=self.llm_spec_key,
+                max_retries=1,
+            ), timeout=10)
+        except UNRECOVERABLE_ERRORS:
+            raise
+        except Exception as exc:  # cleanup: ignore[blind-except] Optional selection supports multiple LLM providers.
+            log_debug(f"Vega-Lite documentation selection fell back to hybrid ranking: {exc!r}")
+            return baseline
+        finally:
+            log_debug(f"Vega-Lite documentation selection took {perf_counter() - started:.3f}s")
+
+        identifiers = [match.document_id for match in selection.matches if match.document_id is not None]
+        if any(not 0 <= identifier < len(shortlist) for identifier in identifiers):
+            log_debug("Vega-Lite documentation selection returned an unknown candidate ID")
+            return baseline
+
+        follow_up_pages = []
+        missing = any(match.document_id is None for match in selection.matches)
+        follow_up_query = selection.follow_up_query.strip()
+        if missing and follow_up_query and follow_up_query.casefold() not in seen_queries:
+            try:
+                semantic, lexical = await self._search_doc_pages(store, follow_up_query, 5)
+                extra = fuse_ranked_documents([(None, semantic), (None, lexical)])
+                follow_up_pages = self._drop_forbidden_examples(extra[:1])
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as exc:  # cleanup: ignore[blind-except] A failed optional search leaves the selected docs usable.
+                log_debug(f"Vega-Lite documentation follow-up failed: {exc!r}")
+
+        model_pages = [shortlist[i] for i in dict.fromkeys(identifiers)]
+        selected = []
+        selected_keys = set()
+        groups = Counter()
+        for page in [*protected_pages, *model_pages, *follow_up_pages, *baseline]:
+            if len(selected) >= self.n_doc_pages:
+                break
+            metadata = page.get("metadata") or {}
+            slug = metadata.get("slug")
+            key = doc_key(page)
+            if key in selected_keys or (slug and groups[slug] >= self.doc_pages_per_slug):
+                continue
+            selected.append(page)
+            selected_keys.add(key)
+            groups[slug] += 1
+        return selected or baseline
+
     async def _get_doc_pages(self, user_query: str) -> list[dict]:
         if not self.n_doc_pages:
             log_debug("Vega-Lite docs lookup disabled (n_doc_pages=0)")
@@ -756,50 +869,65 @@ class VegaLiteAgent(BaseCodeAgent):
             return []
         try:
             vector_store = self._get_vector_store()
-        except Exception as e:
-            # Log rather than swallow: a mismatched or missing store otherwise
-            # degrades to "no documentation" with no indication anything failed.
+        except Exception as e:  # cleanup: ignore[blind-except] Chart generation can proceed without a docs store.
             log_debug(f"Vega-Lite docs store unavailable: {e!r}")
             return []
         if not vector_store:
             return []
         try:
-            candidates = await vector_store.query(
-                user_query, top_k=self.n_doc_pages * self._doc_page_pool
-            )
-        except Exception as e:
+            broad_pool = self.n_doc_pages * self._doc_page_pool
+            focused_pool = max(self.n_doc_pages * 3, 4)
+            focused_queries = focused_document_queries(user_query, min(self.n_doc_pages, 3))
+            focused_queries = [query for query in focused_queries if query != user_query.strip().casefold()]
+            queries = [(user_query, broad_pool), *((query, focused_pool) for query in focused_queries)]
+            pairs = await asyncio.gather(*(
+                self._search_doc_pages(vector_store, query, pool) for query, pool in queries
+            ))
+            vector_scores = {page["id"]: page["similarity"] for page in pairs[0][0] if "id" in page}
+            searches = []
+            for i, (semantic, lexical) in enumerate(pairs):
+                searches.extend([(None, semantic), (queries[i][0] if i else None, lexical)])
+            candidates = fuse_ranked_documents(searches)
+        except Exception as e:  # cleanup: ignore[blind-except] A docs lookup failure should not stop chart generation.
             log_debug(f"Vega-Lite docs lookup failed for {user_query!r}: {e!r}")
             return []
-        doc_pages = self._diversify_doc_pages(candidates)
-        before = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
+        before = sum(len(page.get("metadata", {}).get("examples") or ()) for page in candidates)
+        candidates = self._drop_forbidden_examples(candidates)
+        compatible = sum(len(page.get("metadata", {}).get("examples") or ()) for page in candidates)
+        doc_pages = self._rerank_doc_pages(user_query, candidates)
+        if (
+            self.llm_doc_selection and self.llm is not None and len(focused_queries) > 1
+            and len(candidates) > len(doc_pages) and len(user_query) <= 1600
+        ):
+            coverage = documentation_coverage(focused_queries, doc_pages)
+            gaps = [clause for clause in focused_queries if clause not in coverage]
+            if gaps:
+                doc_pages = await self._select_doc_pages(
+                    user_query, candidates, doc_pages, vector_store,
+                    {query.strip().casefold() for query, _ in queries},
+                    gaps, list(coverage.values()),
+                )
         doc_pages = self._dedupe_examples(doc_pages)
         deduped = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
-        doc_pages = self._drop_forbidden_examples(doc_pages)
-        specs = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
         sources = len({page.get("metadata", {}).get("slug") for page in doc_pages})
         base_forms = sum(1 for page in doc_pages if (page.get("metadata") or {}).get("base_form"))
-        # Similarity of what was kept, against the pool it was drawn from. Ranking
-        # here has repeatedly proved to sit inside the noise floor -- the section
-        # that actually helped has landed anywhere from 2nd to 4th -- so record the
-        # numbers needed to decide whether a relevance floor could separate an
-        # off-topic payload from a useful one, rather than guessing a threshold.
-        scores = [c["similarity"] for c in doc_pages if "similarity" in c]
-        pool_scores = [c["similarity"] for c in candidates if "similarity" in c]
+        scores = [vector_scores[page["id"]] for page in doc_pages if page.get("id") in vector_scores]
+        pool_scores = list(vector_scores.values())
         spread = ""
         if scores:
             spread = (
-                f", similarity {min(scores):.3f}-{max(scores):.3f}"
+                f", vector similarity {min(scores):.3f}-{max(scores):.3f}"
                 f" (spread {max(scores) - min(scores):.3f}"
                 f", pool floor {min(pool_scores):.3f})"
             )
         dropped = "".join([
             f", {base_forms} base-form section(s)" if base_forms else "",
-            f", {before - deduped} duplicate spec(s) dropped" if before != deduped else "",
-            f", {deduped - specs} spec(s) dropped on forbidden constructs" if deduped != specs else "",
+            f", {before - compatible} spec(s) dropped on forbidden constructs" if before != compatible else "",
+            f", {compatible - deduped} unselected or duplicate spec(s) dropped" if compatible != deduped else "",
         ])
         log_debug(
             f"Vega-Lite docs lookup returned {len(doc_pages)} section(s) from "
-            f"{sources} page(s) of {len(candidates)} candidate(s), {specs} example spec(s)"
+            f"{sources} page(s) of {len(candidates)} candidate(s), {deduped} example spec(s)"
             f"{dropped}{spread}"
         )
         # Per-section detail: which slug scored what, and whether it brought a
@@ -807,7 +935,7 @@ class VegaLiteAgent(BaseCodeAgent):
         # reranker needs the score attached to the section it belongs to.
         for page in doc_pages:
             metadata = page.get("metadata") or {}
-            score = page.get("similarity")
+            score = vector_scores.get(page.get("id"))
             score_text = f"{score:.3f}" if isinstance(score, float) else "  -  "
             log_debug(
                 f"    {score_text} {metadata.get('slug')} / {metadata.get('section_title')} "
