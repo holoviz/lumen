@@ -1180,7 +1180,8 @@ async def test_run_cancels_the_question_on_interrupt():
     # The interrupt returns at once, and the task is cancelled on the loop
     assert time.monotonic() - start < 5
     await async_wait_until(lambda: ended == [1])
-    assert threading.active_count() == threads
+    # No thread was left behind; others from earlier tests may have ended meanwhile
+    assert threading.active_count() <= threads
 
 
 async def test_run_names_the_first_step_until_one_reports():
