@@ -42,22 +42,9 @@ ui = lmai.ExplorerUI(data={'penguins': df})
 
 ### Ask from a notebook
 
-A Source or a Pipeline can answer a question directly, without the chat UI.
+A Source or Pipeline can answer questions directly with `source.ask(...)`, without the chat UI. See [Lumen in notebooks](../getting_started/lumen_in_notebooks.md).
 
-``` py title="Ask a question"
-import lumen
-import pandas as pd
-
-source = lumen.read({'penguins': pd.read_csv('penguins.csv')})
-answer = source.ask("What is the average body mass per species?")
-answer  # (1)!
-```
-
-1. Renders a card with the answer, the chart and the SQL. Outside a live notebook a Vega-Lite chart falls back to its spec and a PNG; an hvPlot chart (grids, geometry) only shows in a live notebook.
-
-The `Answer` holds `value` (the text), `sql`, `spec` (the Vega-Lite spec), `pipeline` (a Pipeline over the result), `view` (the chart as a Lumen View), `plan` and `status`. `pipeline.ask(...)` limits the question to that table and its filters, and `await source.aask(...)` is the async form.
-
-`ask` uses the first LLM provider whose API key is set in the environment, or pass `llm=`. That provider receives your tables' schemas, column statistics and sample rows, and a sample of each query result, so only point it at data you may send there. `ask` only writes SQL and declarative chart specs, both shown to you; it never runs LLM-written Python.
+A dict passed to `lumen.read` can mix DataFrames, files, Pipelines, xarray data and a DuckDB connection; they become named tables of one source, so a question can join them. xarray data is read lazily, and a connection's tables are copied in so your database is never written to.
 
 ``` py title="Follow up, rerun, keep exploring"
 chat = source.chat()
