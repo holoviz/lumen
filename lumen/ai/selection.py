@@ -183,8 +183,38 @@ def _nearest(df: pd.DataFrame, xcol: str, ycol: str, x: Any, y: Any) -> Any:
     return distance.idxmin()
 
 
+_GRIDS = (hv.QuadMesh, hv.Image, hv.DynamicMap)
+
+
+def _grid_element(element: Any) -> Any:
+    """The grid, image or density map a plot draws, which a click reads by position, or None."""
+    if isinstance(element, _GRIDS):
+        return element
+    if isinstance(element, (hv.Overlay, hv.NdOverlay)):
+        # The last one, as a legend's points are drawn after the image they describe
+        grids = [item for item in element.values() if isinstance(item, _GRIDS)]
+        return grids[-1] if grids else None
+    return None
+
+
+def _tap_stream(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> hv.streams.Tap:
+    stream = hv.streams.Tap(source=element)
+    xcol, ycol = (dim.name for dim in element.kdims[:2]) if len(element.kdims) >= 2 else (view.x, view.y)
+
+    def on_tap(x=None, y=None):
+        df = as_pandas(view.pipeline.data)
+        if x is None or y is None or xcol not in df or ycol not in df:
+            return
+        on_rows(df.loc[[_nearest(df, xcol, ycol, x, y)]])
+    stream.add_subscriber(on_tap)
+    return stream
+
+
 def _hv_streams(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> list:
     """The streams reporting clicks on a HoloViews plot as rows, none for a plot it cannot read."""
+    # A grid or density image first: a legend's points beside it are not the data
+    if (grid := _grid_element(element)) is not None:
+        return [_tap_stream(grid, view, on_rows)]
     if layers := _layers(element):
         # A box can cover several layers, so each layer's pick is kept and all are reported
         picked: dict[int, pd.DataFrame] = {}
@@ -203,20 +233,6 @@ def _hv_streams(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None
             stream.add_subscriber(lambda index, i=i, data=data: report(i, data, index))
             streams.append(stream)
         return streams
-    if isinstance(element, (hv.Overlay, hv.NdOverlay)):
-        grids = [item for item in element.values() if not isinstance(item, hv.Tiles)]
-        element = grids[-1] if grids else element
-    if isinstance(element, (hv.QuadMesh, hv.Image, hv.DynamicMap)):
-        stream = hv.streams.Tap(source=element)
-        xcol, ycol = (dim.name for dim in element.kdims[:2]) if len(element.kdims) >= 2 else (view.x, view.y)
-
-        def on_tap(x=None, y=None):
-            df = as_pandas(view.pipeline.data)
-            if x is None or y is None or xcol not in df or ycol not in df:
-                return
-            on_rows(df.loc[[_nearest(df, xcol, ycol, x, y)]])
-        stream.add_subscriber(on_tap)
-        return [stream]
     return []
 
 

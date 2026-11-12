@@ -2163,6 +2163,17 @@ def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
     assert answer.selection is None
 
 
+def test_a_density_image_with_a_legend_reads_taps_not_the_legends_points():
+    import holoviews as hv
+
+    from lumen.ai.selection import _hv_streams
+    image = hv.QuadMesh(([0, 1], [0, 1], [[1, 2], [3, 4]]))
+    legend = hv.NdOverlay({"a": hv.Points([(0, 0)]), "b": hv.Points([(1, 1)])}, kdims="kind")
+    view = MagicMock(x="x", y="y")
+    streams = _hv_streams(image * legend, view, lambda rows: None)
+    assert [type(s).__name__ for s in streams] == ["Tap"] and streams[0].source is image
+
+
 def test_a_box_over_a_by_chart_selects_across_its_categories():
     source = read({"t": pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 2.0, 3.0, 4.0], "kind": ["a", "b", "a", "b"]})})
     pipeline = Pipeline(source=source, table="t")
