@@ -55,6 +55,7 @@ from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
+from .sharing import mask_frame, shares_values, sharing
 
 if TYPE_CHECKING:
     from narwhals.stable.v2.typing import Frame, IntoFrame
@@ -546,6 +547,9 @@ async def get_schema(
     shuffle: bool = True,
     **get_kwargs
 ):
+    if not shares_values():
+        include_min_max = include_enum = False
+        include_type = include_type and sharing.share != "none"
     if isinstance(source, Pipeline):
         schema = await asyncio.to_thread(source.get_schema)
     else:
@@ -642,6 +646,12 @@ async def get_schema(
     # remove any fields that are empty
     for field in empty_fields:
         schema[field] = "<null>"
+
+    for field, spec in schema.items():
+        if isinstance(spec, dict) and not shares_values(field, spec.get("enum") or ()):
+            # A personal-data column keeps its type but not its values
+            for key in ("enum", "min", "max"):
+                spec.pop(key, None)
 
     if count is not None and include_count:
         schema["__len__"] = count
@@ -904,6 +914,12 @@ def describe_data_sync(
         YAML-formatted summary of the DataFrame
     """
     df, shape, is_sampled = _sample_for_summary(df)
+    if not shares_values():
+        # The structure without a single value, as the sharing level asks
+        columns = list(df.columns) if sharing.share == "none" else {col: str(df[col].dtype) for col in df.columns}
+        summary = {"data_shape": [int(shape[0]), int(shape[1])], "columns": columns}
+        return yaml.dump(summary, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    df = mask_frame(df)
     size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):

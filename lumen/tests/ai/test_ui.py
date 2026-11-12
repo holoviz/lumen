@@ -1582,6 +1582,53 @@ def test_read_two_grids_share_one_source():
     assert source.execute('SELECT SUM(t + u) AS s FROM a JOIN b USING (x)').iloc[0, 0] == 10.0
 
 
+def _view_sql(source, name):
+    """The SQL of a DuckDB view; a table copied into DuckDB has none."""
+    rows = source._connection.execute('SELECT sql FROM duckdb_views() WHERE view_name = ?', [name]).fetchall()
+    return rows[0][0] if rows else ''
+
+
+def test_read_glob_stays_a_scan_over_the_files(tmp_path):
+    for i in range(2):
+        pd.DataFrame({'a': range(i * 5, i * 5 + 5)}).to_parquet(tmp_path / f'part{i}.parquet')
+    source = read({'parts': str(tmp_path / '*.parquet')})
+    # A view reading the files on each query, not a table copied into DuckDB
+    assert 'parquet' in _view_sql(source, 'parts').lower()
+    assert source.execute('SELECT COUNT(*) AS n, MAX(a) AS m FROM parts').values.tolist() == [[10, 9]]
+
+
+def test_read_url_is_queried_over_http(tmp_path):
+    import functools
+    import http.server
+    import threading
+    try:
+        duckdb.connect().execute('LOAD httpfs')
+    except duckdb.Error:
+        pytest.skip('DuckDB httpfs extension is not available')
+    pd.DataFrame({'a': [1, 2, 3]}).to_parquet(tmp_path / 'remote.parquet')
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f'http://127.0.0.1:{server.server_port}/remote.parquet'
+        source = read({'remote': url})
+        assert url in _view_sql(source, 'remote')
+        assert source.execute('SELECT SUM(a) AS s FROM remote').iloc[0, 0] == 6
+    finally:
+        server.shutdown()
+
+
+def test_read_keeps_a_chunked_dataset_lazy():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    pytest.importorskip('dask')
+    ds = xr.Dataset({'t': (('x', 'y'), np.arange(400.0).reshape(20, 20))}).chunk({'x': 5})
+    source = read(ds)
+    assert source.execute('SELECT COUNT(*) AS n FROM t WHERE x < 5').iloc[0, 0] == 100
+    # Still dask-backed after the query, so nothing was loaded whole
+    assert source._dataset.t.chunks is not None
+
+
 def test_read_duckdb_connection():
     conn = duckdb.connect()
     conn.execute('CREATE TABLE t AS SELECT * FROM range(3) r(a)')
