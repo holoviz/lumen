@@ -437,8 +437,26 @@ class TestSchemaMetadata:
         meta = source.get_metadata("temperature")
         assert "Air Temperature" in meta["description"]
         cols = meta["columns"]
-        assert cols["temperature"]["description"] == "Air Temperature"
+        assert cols["temperature"]["description"] == "Air Temperature [K]"
         assert cols["lat"]["data_type"] == "float64"
+
+    def test_column_descriptions_carry_cf_units_and_standard_names(self):
+        ds = xr.Dataset(
+            {"air": (["lat"], [280.0, 290.0], {"long_name": "Air", "units": "degK", "standard_name": "air_temperature"})},
+            coords={"lat": ("lat", [10.0, 20.0], {"long_name": "Latitude", "units": "degrees_north", "standard_name": "latitude"})},
+        )
+        cols = XArraySQLSource(_dataset=ds).get_metadata("air")["columns"]
+        assert cols["air"]["description"] == "Air [degK] (air_temperature)"
+        # A standard name that only repeats the long name is left out
+        assert cols["lat"]["description"] == "Latitude [degrees_north]"
+        assert XArraySQLSource(_dataset=ds).column_units("air") == {"air": "degK", "lat": "degrees_north"}
+
+    def test_a_non_standard_calendar_is_named(self):
+        cftime = pytest.importorskip("cftime")
+        times = [cftime.DatetimeNoLeap(2000, 1, d) for d in (1, 2)]
+        ds = xr.Dataset({"t": (["time"], [1.0, 2.0], {"long_name": "T"})}, coords={"time": times})
+        description = XArraySQLSource(_dataset=ds).get_metadata("t")["columns"]["time"]["description"]
+        assert "calendar: noleap" in description
 
     def test_metadata_all_tables(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)

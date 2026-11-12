@@ -32,8 +32,11 @@ from ..llm import Message, SubmitTool
 from ..models import RetrySpec
 from ..schemas import Metaset, resolve_table_slug
 from ..sharing import shares_values, sharing
+from ..sql_review import TableFacts, geographic_crs, review_sql
+from ..table_stats import get_stats_store
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
+from ..tools.gridded import gridded_sql_tools
 from ..utils import (
     PROFILE_SAMPLE_ROWS, clean_sql, describe_data, format_error,
     format_unknown_name, get_frame, get_pipeline, log_debug,
@@ -1022,7 +1025,7 @@ class SQLAgent(BaseLumenAgent):
     # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
     # request may both apply this in-place filter and open a new SQL exploration
     # (see make_apply_filter_tool for the known limitation / follow-up).
-    llm_tools = param.List(default=[make_apply_filter_llm_tool])
+    llm_tools = param.List(default=[make_apply_filter_llm_tool, gridded_sql_tools])
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
@@ -1079,7 +1082,12 @@ class SQLAgent(BaseLumenAgent):
         The frame is None only when every attempt failed.
         """
         timed_out = False
-        for i in range(max_retries):
+        reviewed = False
+        # The review's revision is not a failed attempt, so it adds one
+        attempts = max_retries
+        for i in range(max_retries + 1):
+            if i >= attempts:
+                break
             if attempt is not None:
                 # Kept current so a failure reports the query that last ran
                 attempt["sql"] = sql_query
@@ -1096,7 +1104,7 @@ class SQLAgent(BaseLumenAgent):
                     step.stream(f"\n\n❌ SQL cleaning failed: {e}")
                 validate_read_only_sql(sql_query, source.dialect)
             except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
-                if i == max_retries - 1:
+                if i == attempts - 1:
                     raise
                 sql_query = await self.revise(
                     format_error(e), messages, context, spec=sql_query,
@@ -1104,6 +1112,22 @@ class SQLAgent(BaseLumenAgent):
                     max_tool_rounds=REVISE_TOOL_ROUNDS,
                 )
                 continue
+            if not reviewed and i < max_retries - 1:
+                # Once, as in submit_sql: the revision is accepted as it comes back
+                reviewed = True
+                read = None if source.dialect == "any" else source.dialect
+                read_tables = {
+                    table.name for table in sqlglot.parse_one(sql_query, read=read).find_all(sqlglot.exp.Table)
+                } & set(source.get_tables())
+                if findings := review_sql(sql_query, self._table_facts(source, sorted(read_tables)), read):
+                    attempts += 1
+                    step.stream("\n\n⚠️ " + " ".join(findings))
+                    sql_query = await self.revise(
+                        "Check this query before it runs: " + " ".join(findings), messages, context,
+                        spec=sql_query, language=f"sql.{source.dialect}", discovery_context=discovery_context,
+                        tools=tools, max_tool_rounds=REVISE_TOOL_ROUNDS,
+                    )
+                    continue
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 validated = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
@@ -1120,20 +1144,20 @@ class SQLAgent(BaseLumenAgent):
                         f"Table {table!r} is listed by source {source.name!r} "
                         f"but the engine cannot resolve it: {feedback}"
                     )
-                elif isinstance(e, QueryTimeoutError) and (timed_out or i == max_retries - 1):
+                elif isinstance(e, QueryTimeoutError) and (timed_out or i == attempts - 1):
                     unrecoverable = f"The revised query timed out as well: {feedback}"
                 else:
                     unrecoverable = None
                 if unrecoverable:
                     step.stream(f"\n\n❌ SQL validation failed: {unrecoverable}")
                     raise DeterministicError(unrecoverable) from e
-                if i == max_retries - 1:
-                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {feedback}")
+                if i == attempts - 1:
+                    step.stream(f"\n\n❌ SQL validation failed after {attempts} attempts: {feedback}")
                     raise
                 timed_out = timed_out or isinstance(e, QueryTimeoutError)
 
                 # Retry with LLM fix
-                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {feedback}")
+                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{attempts}): {feedback}")
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
@@ -1491,6 +1515,33 @@ class SQLAgent(BaseLumenAgent):
                 raise ValueError(f"Unknown source/table pair: {source.name!r}/{table!r}")
         return source, tables
 
+    @staticmethod
+    def _table_facts(source: BaseSQLSource, tables: list[str]) -> dict[str, TableFacts]:
+        """The geometry CRSs and CF units the SQL review checks a query against."""
+        facts = {}
+        for table in tables:
+            stats = get_stats_store().get(source, table)
+            if stats is not None:
+                # Cached, so the review costs no query: GEOMETRY('EPSG:4326') and the like
+                geometry = {
+                    column.name: geographic_crs(column.type) for column in stats.columns
+                    if (column.type or "").upper().startswith("GEOMETRY")
+                }
+            else:
+                try:
+                    # One row is enough for the CRS; the full schema would scan the table
+                    schema = source.get_schema(table, limit=1)
+                except Exception:
+                    # The review is advice; a table it cannot describe is skipped
+                    continue
+                geometry = {
+                    column: bool(props.get("geographic")) for column, props in schema.items()
+                    if isinstance(props, dict) and props.get("format") == "geometry"
+                }
+            units = source.column_units(table) if isinstance(source, XArraySQLSource) else {}
+            facts[table] = TableFacts(geometry=geometry, units=units)
+        return facts
+
     def _submit_sql_tool(
         self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any]
     ) -> SubmitTool:
@@ -1512,6 +1563,15 @@ class SQLAgent(BaseLumenAgent):
                 raise ValueError(
                     "The query reads no table. Select from the tables listed in `tables` "
                     "instead of returning literal values."
+                )
+            findings = review_sql(output.query, self._table_facts(source, tables), read)
+            if findings and checked.get("review") != output.query:
+                # Asked once, like the empty result: the model may know better,
+                # e.g. a buffer in degrees on purpose, and resubmits unchanged
+                checked["review"] = output.query
+                raise ValueError(
+                    "Check this query before it runs: " + " ".join(findings)
+                    + " If it is right as it is, submit it again unchanged."
                 )
             sql_query = clean_sql(output.query.strip(), source.dialect, prettify=True)
             limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)

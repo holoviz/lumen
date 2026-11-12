@@ -494,12 +494,20 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     assert not is_gridded({(joined.name, "plain"): joined})
 
 
-async def _main_prompt(sql_context, test_messages, llm, **flags):
+async def _main_prompt(sql_context, test_messages, llm, tool_names=(), **flags):
     agent = SQLAgent(llm=llm)
     return await agent._render_prompt(
         "main", test_messages, await sql_context(), dialect="duckdb", is_final_step=True,
-        sql_plan_context=None, active_filters=None, tool_names=[], tool_rounds=6, **flags,
+        sql_plan_context=None, active_filters=None, tool_names=list(tool_names), tool_rounds=6, **flags,
     )
+
+
+async def test_sql_prompt_names_the_gridded_tools_only_when_offered(sql_context, test_messages, llm):
+    # A grid joined into DuckDB is gridded, but the tools only work on an xarray source
+    joined = await _main_prompt(sql_context, test_messages, llm, gridded=True)
+    assert "## Gridded SQL" in joined and "time_slice" not in joined
+    offered = await _main_prompt(sql_context, test_messages, llm, gridded=True, tool_names=["time_slice"])
+    assert "`time_slice`" in offered
 
 
 @pytest.mark.parametrize("flags, spatial, gridded", [
@@ -517,6 +525,37 @@ async def test_sql_prompt_is_unchanged_for_plain_tables(sql_context, test_messag
     plain = await _main_prompt(sql_context, test_messages, llm)
     off = await _main_prompt(sql_context, test_messages, llm, has_geometry=False, gridded=False)
     assert plain == off
+
+
+async def test_submit_sql_reviews_a_degree_buffer_once():
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+
+    from lumen.sources.data import read
+    source = read({"places": gpd.GeoDataFrame({"n": ["a"]}, geometry=[Point(13.4, 52.5)], crs="EPSG:4326")})
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
+    checked = {}
+    submit = agent._submit_sql_tool({(source.name, "places"): source}, checked)
+    query = "SELECT ST_Buffer(geometry, 500) AS area FROM places"
+    output = make_sql_model([(source.name, "places")])(query=query, table_slug="x", tables=["places"])
+
+    with pytest.raises(ValueError, match=r"(?s)Check this query before it runs: ST_Buffer\(geometry, \.\.\., 500\) works in degrees.*submit it again unchanged"):
+        await submit.validate(output)
+    # Resubmitted unchanged, it runs: the model may mean degrees
+    await submit.validate(output)
+    assert checked["sql"].startswith("SELECT")
+
+
+async def test_submit_sql_reviews_a_kelvin_column_compared_with_celsius():
+    xr = pytest.importorskip("xarray")
+    from lumen.sources.xarray_sql import XArraySQLSource
+    ds = xr.Dataset({"air": (["lat"], [280.0, 300.0], {"units": "K"})}, coords={"lat": [10.0, 20.0]})
+    source = XArraySQLSource(_dataset=ds)
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
+    submit = agent._submit_sql_tool({(source.name, "air"): source}, {})
+    output = make_sql_model([(source.name, "air")])(query="SELECT lat FROM air WHERE air > 25", table_slug="x", tables=["air"])
+    with pytest.raises(ValueError, match=r"air is in k, so 25 looks like degrees Celsius \(298.15 K\)"):
+        await submit.validate(output)
 
 
 def test_has_geometry_counts_only_the_tables_of_the_sources():

@@ -76,6 +76,9 @@ A geometry column's type names its CRS, e.g. `GEOMETRY('EPSG:4326')` for longitu
 
 ## Gridded SQL
 Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as columns and the data variables as values.
+{%- if tool_names is defined and 'time_slice' in tool_names %}
+- For a time slice, an area-weighted mean, a climatology, anomalies or a unit conversion, call the tool of that name (`time_slice`, `area_weighted_mean`, `climatology`, `anomaly`, `convert_units`) for SQL that uses this grid's own dimension names, calendar and units, then submit it or build on it.
+{%- endif %}
 - Select only the columns you need, never `SELECT *`.
 - Filter on the dimension columns (latitude, longitude and time ranges) so only the needed part of the grid is read.
 - A mean over latitudes must be area-weighted: `SUM(v * COS(RADIANS(lat))) / SUM(COS(RADIANS(lat)))`; `COS` takes radians, so never `COS(lat)`. A plain `AVG` over-weights the small cells near the poles. Use it for global or regional means unless the question asks for a plain average.
