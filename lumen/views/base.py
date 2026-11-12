@@ -1625,6 +1625,19 @@ class VegaLiteView(View):
 
     spec = param.Dict()
 
+    theme = param.Selector(
+        default='auto',
+        objects=['auto', 'light', 'dark'] + [
+            name for name in pn.pane.Vega.param.theme.objects
+            if name not in ('light', 'dark')
+        ],
+        allow_None=True, doc="""
+        The theme to render the chart with. Defaults to 'auto', which follows
+        the active Panel theme so the chart adapts to light and dark dashboards
+        without baking colors into the exported specification. 'light' uses the
+        Vega default theme, 'dark' the Vega dark theme, and any other value is
+        passed through to the Vega pane as a named Vega theme.""")
+
     view_type = 'vegalite'
 
     _extension = 'vega'
@@ -1766,6 +1779,37 @@ class VegaLiteView(View):
             return re.sub(r"([.\[\]])", r"\\\1", field)
         return field
 
+    @staticmethod
+    def _detect_theme() -> str:
+        """
+        Resolve the theme the chart is being displayed in.
+
+        ``pn.config.theme`` reflects an explicit light/dark choice for the
+        session, while a served Lumen dashboard carries its theme on the
+        template registered with the current document. Checking both means a
+        chart follows the dashboard it is rendered into even when the global
+        config still reports its default.
+        """
+        if pn.config.theme == 'dark':
+            return 'dark'
+        curdoc = pn.state.curdoc
+        if curdoc is not None:
+            template = getattr(pn.state, '_templates', {}).get(curdoc)
+        else:
+            template = getattr(pn.state, '_template', None)
+        if getattr(getattr(template, 'theme', None), '_name', None) == 'dark':
+            return 'dark'
+        return 'light'
+
+    def _resolve_theme(self) -> str | None:
+        """Resolve the View theme to a value the Vega pane understands."""
+        theme = self.theme
+        if theme == 'auto':
+            theme = self._detect_theme()
+        if theme == 'light':
+            return None
+        return theme
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1803,7 +1847,11 @@ class VegaLiteView(View):
             encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
             encoded = dict(spec, data={'values': df, **spec_data})
-        return dict(object=encoded, **self.kwargs)
+        params = dict(object=encoded, **self.kwargs)
+        # Always set the theme so switching back to light clears a dark theme
+        # left on a reused pane.
+        params['theme'] = self._resolve_theme()
+        return params
 
 
     def get_panel(self) -> pn.pane.Vega:

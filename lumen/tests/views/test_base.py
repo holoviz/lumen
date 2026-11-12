@@ -517,6 +517,74 @@ def test_vega_defaults_schema(set_root):
     assert final_spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
 
 
+def _vega_theme_view(**params):
+    pipeline = Pipeline(
+        source=InMemorySource(tables={'test': pd.DataFrame({'A': [1, 2], 'B': [3, 4]})}),
+        table='test',
+    )
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "nominal"},
+            "y": {"field": "B", "type": "quantitative"},
+        },
+    }
+    return VegaLiteView(spec=spec, pipeline=pipeline, **params)
+
+
+def test_vegalite_auto_theme_defaults_to_light():
+    """With no theme selected the Vega pane keeps its light default."""
+    assert _vega_theme_view().get_panel().theme is None
+
+
+def test_vegalite_auto_theme_follows_dark_config():
+    """The chart is themed at render time, so a dark session gets the Vega
+    dark theme without the spec having to carry any colors."""
+    view = _vega_theme_view()
+
+    with pn.config.set(theme='dark'):
+        assert view.get_panel().theme == 'dark'
+
+
+def test_vegalite_auto_theme_follows_dark_template(monkeypatch):
+    """A served dashboard carries its theme on the registered template rather
+    than on pn.config.theme, so the template has to be consulted too."""
+    class _Doc:
+        session_context = None
+        _session_context = None
+
+    template = pn.template.MaterialTemplate(theme='dark')
+    doc = _Doc()
+    monkeypatch.setattr(pn.state, 'curdoc', doc)
+    monkeypatch.setattr(pn.state, '_templates', {doc: template})
+
+    assert _vega_theme_view().get_panel().theme == 'dark'
+
+
+def test_vegalite_explicit_theme_overrides_dark_config():
+    """An explicit light theme wins over the active dark session."""
+    view = _vega_theme_view(theme='light')
+
+    with pn.config.set(theme='dark'):
+        assert view.get_panel().theme is None
+
+
+def test_vegalite_explicit_dark_theme():
+    assert _vega_theme_view(theme='dark').get_panel().theme == 'dark'
+
+
+def test_vegalite_auto_theme_is_not_serialized():
+    """Theme is a property of the viewer, not the chart, so it must stay out of
+    an exported spec until someone explicitly pins one."""
+    view = _vega_theme_view()
+
+    assert 'theme' not in view.to_spec()
+
+    view.theme = 'dark'
+
+    assert view.to_spec()['theme'] == 'dark'
+
+
 @requires_geopandas
 @requires_geoviews
 def test_view_hvplot_geometry_auto_kind():
