@@ -23,7 +23,7 @@ def candidate(
             "base_form": base_form,
             "capabilities": list(capabilities),
             "examples": list(examples),
-            **({"_retrieval_queries": [retrieval_query]} if retrieval_query else {}),
+            **({"_retrieval_query_scores": {retrieval_query: 0.0}} if retrieval_query else {}),
         },
     }
 
@@ -131,7 +131,7 @@ def test_rank_fusion_combines_semantic_and_lexical_evidence():
     ])
 
     assert result[0]["metadata"]["section_title"] == "Input Binding"
-    assert result[0]["metadata"]["_retrieval_queries"] == ["slider"]
+    assert list(result[0]["metadata"]["_retrieval_query_scores"]) == ["slider"]
 
 
 def test_rerank_covers_each_focused_clause():

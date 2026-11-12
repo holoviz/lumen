@@ -28,7 +28,7 @@ from .actor import PROMPTS_DIR, LLMUser
 from .config import get_markitdown
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
-from .retrieval import retrieval_tokens
+from .retrieval import doc_title, retrieval_tokens
 from .utils import log_debug
 
 
@@ -1532,9 +1532,7 @@ class DuckDBVectorStore(VectorStore):
             "SELECT id, text, metadata FROM documents"
         ).fetchall():
             metadata = json.loads(metadata_json)
-            title = " ".join(str(metadata.get(key, "")) for key in (
-                "page_title", "section_title", "slug",
-            )).lower()
+            title = doc_title(metadata).lower()
             body = f"{document}\n{metadata.get('description', '')}".lower()
             title_tokens = Counter(retrieval_tokens(title))
             body_tokens = Counter(retrieval_tokens(body))
