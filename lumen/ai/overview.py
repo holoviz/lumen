@@ -157,7 +157,7 @@ def _describe(table: str, rows: int | None, columns: pd.DataFrame) -> str:
             not shares_values(row.column, [row.min, row.max]) for row in columns.itertuples()
         ]
         columns.loc[hidden, ["min", "max"]] = None
-    return f"Table {table} ({rows if rows is not None else 'unknown'} rows):\n" + columns[keep].to_csv(index=False)
+    return f"Table {table} ({rows if rows is not None else 'unknown'} rows):\n" + columns[keep].to_csv(index=False, lineterminator="\n")
 
 
 async def aoverview(source: Source, *, questions: bool = True, llm: Llm | None = None) -> Overview:
