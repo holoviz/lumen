@@ -24,6 +24,30 @@ XARRAY_EXTENSIONS = (
 )
 
 
+def _calendar(coord: Any) -> str | None:
+    """The calendar of a time coordinate, cftime or numpy, or None for any other."""
+    try:
+        return coord.dt.calendar
+    except (AttributeError, TypeError):
+        return None
+
+
+def _cf_description(attrs: dict, calendar: str | None = None) -> str:
+    """
+    A column's CF metadata as one description: its long name, units and
+    standard name, and a calendar other than the standard one, so the LLM
+    writes SQL in the right units and dates.
+    """
+    parts = [attrs.get("long_name", "")]
+    if units := attrs.get("units"):
+        parts.append(f"[{units}]")
+    if (standard := attrs.get("standard_name")) and standard.lower() != str(attrs.get("long_name", "")).lower():
+        parts.append(f"({standard})")
+    if calendar and calendar not in ("standard", "gregorian", "proleptic_gregorian"):
+        parts.append(f"calendar: {calendar}")
+    return " ".join(part for part in parts if part)
+
+
 class XArraySQLSource(BaseSQLSource):
     """
     SQL-queryable xarray data source for Lumen.
@@ -357,16 +381,26 @@ class XArraySQLSource(BaseSQLSource):
                     "description": f"index along {dim} dimension",
                 }
                 continue
-            coord_attrs = dict(ds.coords[dim].attrs)
+            coord = ds.coords[dim]
             columns[dim] = {
-                "data_type": str(ds.coords[dim].dtype),
-                "description": coord_attrs.get("long_name", ""),
+                "data_type": str(coord.dtype),
+                "description": _cf_description(coord.attrs, _calendar(coord)),
             }
         columns[table] = {
             "data_type": str(var.dtype),
-            "description": var.attrs.get("long_name", ""),
+            "description": _cf_description(var.attrs),
         }
         return columns
+
+    def column_units(self, table: str) -> dict[str, str]:
+        """The CF units of a table's columns that declare them, by column name."""
+        if table not in self._dataset.data_vars:
+            # A table derived by a query, e.g. a follow-up's result, has no variable of its own
+            return {}
+        var = self._dataset[table]
+        units = {dim: self._dataset.coords[dim].attrs.get("units") for dim in var.dims if dim in self._dataset.coords}
+        units[table] = var.attrs.get("units")
+        return {column: unit for column, unit in units.items() if unit}
 
     def _format_aux_coords(self, var: Any) -> str:
         """Format auxiliary coordinate labels for a data variable."""

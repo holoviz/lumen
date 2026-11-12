@@ -1950,6 +1950,14 @@ def test_result_geometry_crs_is_left_unset_when_ambiguous():
     assert source.execute(query).crs is None
 
 
+def test_spheroid_functions_run_on_a_spatial_source_whatever_the_duckdb_version():
+    # DuckDB 2.0 raises from them until the axis order is set; Lumen keeps (lat, lon)
+    source = DuckDBSource(uri=":memory:", initializers=["INSTALL spatial;", "LOAD spatial;"])
+    triangle = "ST_GeomFromText('POLYGON((13 52, 14 52, 14 53, 13 52))')"
+    area = source.execute(f"SELECT ST_Area_Spheroid(ST_FlipCoordinates({triangle})) AS a")["a"].iloc[0]
+    assert 3.70e9 < area < 3.86e9
+
+
 @pytest.fixture
 def described_source():
     return DuckDBSource.from_df({"orders": pd.DataFrame({"amount": [1.0, 2.0], "status": ["paid", "open"]})})
