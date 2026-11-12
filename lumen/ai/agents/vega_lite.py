@@ -32,9 +32,9 @@ from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..retrieval import (
-    RETRIEVAL_STOP_WORDS, documentation_coverage, documentation_shortlist,
-    focused_document_queries, fuse_ranked_documents, rerank_documents,
-    retrieval_tokens,
+    RETRIEVAL_STOP_WORDS, doc_key, documentation_coverage,
+    documentation_shortlist, focused_document_queries, fuse_ranked_documents,
+    rerank_documents, retrieval_tokens,
 )
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
@@ -830,28 +830,29 @@ class VegaLiteAgent(BaseCodeAgent):
             log_debug("Vega-Lite documentation selection returned an unknown candidate ID")
             return baseline
 
-        selected = []
-        selected_keys = set()
-        groups = Counter()
-        follow_up = []
+        follow_up_pages = []
         missing = any(match.document_id is None for match in selection.matches)
-        rewrite = selection.follow_up_query.strip()
-        if missing and rewrite and rewrite.casefold() not in seen_queries:
+        follow_up_query = selection.follow_up_query.strip()
+        if missing and follow_up_query and follow_up_query.casefold() not in seen_queries:
             try:
-                semantic, lexical = await self._search_doc_pages(store, rewrite, 5)
+                semantic, lexical = await self._search_doc_pages(store, follow_up_query, 5)
                 extra = fuse_ranked_documents([(None, semantic), (None, lexical)])
-                follow_up = self._drop_forbidden_examples(extra[:1])
+                follow_up_pages = self._drop_forbidden_examples(extra[:1])
             except UNRECOVERABLE_ERRORS:
                 raise
             except Exception as exc:  # cleanup: ignore[blind-except] A failed optional search leaves the selected docs usable.
                 log_debug(f"Vega-Lite documentation follow-up failed: {exc!r}")
 
-        for page in [*protected_pages, *(shortlist[i] for i in dict.fromkeys(identifiers)), *follow_up, *baseline]:
+        model_pages = [shortlist[i] for i in dict.fromkeys(identifiers)]
+        selected = []
+        selected_keys = set()
+        groups = Counter()
+        for page in [*protected_pages, *model_pages, *follow_up_pages, *baseline]:
             if len(selected) >= self.n_doc_pages:
                 break
             metadata = page.get("metadata") or {}
             slug = metadata.get("slug")
-            key = (slug, metadata.get("section_title"), page["text"])
+            key = doc_key(page)
             if key in selected_keys or (slug and groups[slug] >= self.doc_pages_per_slug):
                 continue
             selected.append(page)
