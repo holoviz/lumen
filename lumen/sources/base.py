@@ -684,6 +684,7 @@ class Source(MultiTypeComponent):
 
     def ask(
         self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
     ) -> Answer:
         """
         Ask this source a question with Lumen AI and return the Answer.
@@ -693,10 +694,11 @@ class Source(MultiTypeComponent):
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import ask
-        return ask(self, question, llm=llm, agents=agents, confirm=confirm)
+        return ask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
 
     async def aask(
         self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
     ) -> Answer:
         """
         Ask this source a question with Lumen AI and await the Answer.
@@ -706,7 +708,7 @@ class Source(MultiTypeComponent):
         """
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import aask
-        return await aask(self, question, llm=llm, agents=agents, confirm=confirm)
+        return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
 
     def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
         """

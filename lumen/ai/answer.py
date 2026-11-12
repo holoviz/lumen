@@ -8,6 +8,7 @@ import base64
 import hashlib
 import html
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -19,10 +20,12 @@ import warnings
 import weakref
 
 from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import (
     ExitStack, contextmanager, nullcontext, suppress,
 )
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -44,6 +47,8 @@ from panel_material_ui import (
     Alert, Button, Card, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
+from pydantic import TypeAdapter, ValidationError, create_model
+from sqlglot import exp
 
 from .. import __version__
 from ..config import SOURCE_TABLE_SEPARATOR, config
@@ -70,7 +75,7 @@ from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
 from .report import ActorTask, TaskGroup
-from .sharing import sharing
+from .sharing import mask_frame, sharing
 from .tools import MetadataLookup
 from .ui import ExplorerUI
 from .usage import UsageCollector
@@ -230,15 +235,27 @@ def _fingerprint(obj: param.Parameterized) -> str:
     return type(obj).__name__ + json.dumps(settings, sort_keys=True, default=str) + own_llm
 
 
-def _cache_key(source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None) -> str:
-    """What decides an answer: the question, the data, the model, the agents and the prompts."""
+def _type_key(returns: Any) -> str:
+    """
+    The type returns= asks for, by its schema and identity: a pydantic class
+    redefined in a notebook keeps its repr but is another class.
+    """
+    if returns is None:
+        return ""
+    return f"{id(returns)}:{json.dumps(TypeAdapter(returns).json_schema(), sort_keys=True)}"
+
+
+def _cache_key(
+    source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None, returns: Any = None,
+) -> str:
+    """What decides an answer: the question, the data, the model, the agents, the prompts and the type."""
     parts = (
         " ".join(question.lower().split()), str(id(source)), source._get_source_hash(),
         # Columns, types, row counts and descriptions, so a schema change or describe() misses
         json.dumps(source.get_metadata(None), sort_keys=True, default=str),
         _fingerprint(llm), json.dumps(llm.model_kwargs, sort_keys=True, default=str),
         *(_fingerprint(agent) for agent in agents), str(SQLAgent.max_rows), sharing.share, str(sharing.mask_pii),
-        str(sorted(visible_slugs or [])), _prompt_version(),
+        str(sorted(visible_slugs or [])), _prompt_version(), _type_key(returns),
     )
     return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
@@ -469,6 +486,106 @@ async def _execute(
     return answer, out_context
 
 
+def _shapes(df: pd.DataFrame | None) -> list:
+    """
+    The result in each shape a type could take it in: the cell of a
+    one-cell result, the values of a one-column one, the row of a one-row
+    one, and the rows as records. Only the shapes the result has.
+    """
+    if df is None or df.empty:
+        return []
+    # object dtype hands back Python numbers rather than numpy ones
+    records = df.astype(object).where(df.notna(), None).to_dict("records")
+    shapes: list = []
+    if len(df.columns) == 1:
+        column = [row[df.columns[0]] for row in records]
+        shapes += [column[0]] if len(column) == 1 else []
+        shapes.append(column)
+    if len(records) == 1:
+        shapes.append(records[0])
+    shapes.append(records)
+    return shapes
+
+
+async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
+    """
+    Fill answer.result with the answer as the type asked for. A result
+    already in a shape the type takes is validated as it is, with no LLM
+    call; otherwise one structured call reads the type from the written
+    answer. An answer that cannot be read as the type becomes an error.
+    """
+    answer._returns = returns
+    if answer.status != "success":
+        return
+    adapter = TypeAdapter(returns)
+    df = None if answer.pipeline is None else as_pandas(answer.pipeline.data)
+    for shape in _shapes(df):
+        with suppress(ValidationError):
+            answer.result = adapter.validate_python(shape)
+            return
+    name = returns.__name__ if isinstance(returns, type) else str(returns)
+    content = f"Question: {answer.question}\n\nAnswer: {answer.value}"
+    if df is not None and sharing.share == "sample":
+        content += f"\n\nThe data the answer was written from:\n{mask_frame(df.head(20)).to_csv(index=False)}"
+    try:
+        with llm.capture_usage() as usage:
+            out = await llm.invoke(
+                [{"role": "user", "content": content}],
+                system=f"Give the answer as {name}, using only the answer and data given.",
+                response_model=create_model("Result", result=(returns, ...)),
+            )
+    except Exception as e:
+        answer.param.update(status="error", error=f"The answer could not be read as {name}: {format_error(e)}")
+        return
+    for record in usage.records:
+        answer.usage.add(record)
+    answer.result = out.result
+
+
+def _literal(node: exp.Expression | None) -> exp.Expression | None:
+    """The literal a value is, inside a cast such as DATE '2024-01-01' too, or None."""
+    inner = node.this if isinstance(node, exp.Cast) else node
+    if isinstance(inner, exp.Literal) or (isinstance(inner, exp.Neg) and isinstance(inner.this, exp.Literal)):
+        return inner
+    return None
+
+
+def _literals(node: exp.Expression) -> tuple[str, Any] | None:
+    """
+    What a comparison compares its column with, as (kind, values): one
+    value, a BETWEEN pair or an IN list. None when that is not literals.
+    """
+    if isinstance(node, exp.In):
+        literals = [_literal(e) for e in node.expressions]
+        return None if not literals or None in literals else ("in", tuple(e.to_py() for e in literals))
+    if isinstance(node, exp.Between):
+        low, high = _literal(node.args["low"]), _literal(node.args["high"])
+        return None if low is None or high is None else ("between", (low.to_py(), high.to_py()))
+    literal = _literal(node.expression)
+    return None if literal is None else ("value", literal.to_py())
+
+
+def _parameterize(node: exp.Expression, kind: str, name: str) -> None:
+    """Put the named parameter where the comparison had its literals."""
+    if kind == "in":
+        # One list parameter, whatever the number of values asked for later
+        node.replace(exp.func("list_contains", exp.Placeholder(this=name), node.this.copy(), dialect="duckdb"))
+    elif kind == "between":
+        _literal(node.args["low"]).replace(exp.Placeholder(this=f"{name}_low"))
+        _literal(node.args["high"]).replace(exp.Placeholder(this=f"{name}_high"))
+    else:
+        _literal(node.expression).replace(exp.Placeholder(this=name))
+
+
+def _binder(kind: str, name: str) -> Callable[[Any], dict[str, Any]]:
+    """How an argument's value becomes the query's parameters."""
+    if kind == "between":
+        return lambda value: {f"{name}_low": value[0], f"{name}_high": value[1]}
+    if kind == "in":
+        return lambda value: {name: list(value)}
+    return lambda value: {name: value}
+
+
 def _records(data: Any) -> Any:
     """
     A frame as JSON records, with missing values as null. JSON has no
@@ -653,7 +770,7 @@ def _build_answer(
 
 async def aask(
     data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
-    confirm: bool = False,
+    confirm: bool = False, returns: Any = None,
 ) -> Answer:
     """
     Ask a question of some data and wait for the Answer.
@@ -673,6 +790,10 @@ async def aask(
     confirm: bool
         Stop once the question is planned and return an Answer with status
         "planned" that lists its steps; answer.run() runs them.
+    returns: type | None
+        The type to give the answer in as answer.result, e.g. int,
+        list[str] or a pydantic model. A result already in that shape is
+        used as it is; otherwise one more LLM call reads it from the answer.
 
     Returns
     -------
@@ -681,12 +802,12 @@ async def aask(
         and the reason in ``error``, rather than raising, so it can be
         retried with ``answer.retry()``.
     """
-    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm))
+    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm, returns=returns))
 
 
 async def _aask_messages(
     data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
-    llm: Llm | None, agents: list | None, confirm: bool = False, use_cache: bool = True,
+    llm: Llm | None, agents: list | None, confirm: bool = False, use_cache: bool = True, returns: Any = None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = await _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
@@ -696,12 +817,14 @@ async def _aask_messages(
     key = None
     reusable = isinstance(data, Source | Pipeline)
     if _settings["cache"] and use_cache and reusable and len(messages) == 1 and not confirm:
-        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs)
+        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs, returns)
         if (hit := _answer_cache.get(key)) is not None:
             _answer_cache.move_to_end(key)
             return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
     answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    if returns is not None:
+        await _typed(answer, returns, planner.llm)
     if key is not None and answer.status == "success":
         # A copy, so changes to the answer handed back reach no later hit
         _answer_cache[key] = answer._cached_copy()
@@ -712,7 +835,7 @@ async def _aask_messages(
 
 def ask(
     data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
-    confirm: bool = False,
+    confirm: bool = False, returns: Any = None,
 ) -> Answer:
     """
     Ask a question of some data and return the Answer.
@@ -722,7 +845,7 @@ def ask(
     whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm))
+    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm, returns=returns))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -731,6 +854,23 @@ def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None 
     on the answers before it. Takes the same arguments as aask.
     """
     return Chat(data, llm=llm, agents=agents)
+
+
+@dataclass(frozen=True)
+class Step:
+    """One step of an answer's plan, as it ran."""
+
+    title: str
+    actor: str
+    instruction: str
+    status: str
+    #: None for a step that did not run
+    seconds: float | None
+    llm_calls: int | None
+    requires: tuple[str, ...]
+    provides: tuple[str, ...]
+    #: The query, for a step that wrote one
+    sql: str | None
 
 
 class Chat(param.Parameterized):
@@ -757,25 +897,26 @@ class Chat(param.Parameterized):
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
-    async def aask(self, question: str, *, confirm: bool = False) -> Answer:
+    async def aask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """
         Ask the next question and wait for the Answer. With confirm, the
         Answer is "planned" and joins the conversation once it is run.
         """
-        return await _on_loop(self._aask(question, confirm))
+        return await _on_loop(self._aask(question, confirm, returns))
 
-    async def _aask(self, question: str, confirm: bool = False) -> Answer:
+    async def _aask(self, question: str, confirm: bool = False, returns: Any = None) -> Answer:
         if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
             # The context's summaries and the replies were written under
             # another sharing level, so only the questions carry over
             self._context = None
             self._messages = [m for m in self._messages if m["role"] == "user"]
         messages = [*self._messages, {"role": "user", "content": question}]
-        return await self._turn(question, messages, self._messages, self._context, confirm)
+        return await self._turn(question, messages, self._messages, self._context, confirm, returns)
 
     async def _turn(
         self, question: str, messages: list[dict[str, str]],
         history: list[dict[str, str]], prior: dict[str, Any] | None, confirm: bool = False,
+        returns: Any = None,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
         agents = _settings["agents"] if self._agents is None else self._agents
@@ -784,6 +925,8 @@ class Chat(param.Parameterized):
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
         # So answer.retry() asks again within this conversation
         answer._conversation, answer._history = self, (history, prior)
+        if returns is not None:
+            await _typed(answer, returns, planner.llm)
         if answer.status == "planned":
             answer._chat = (self, messages)
         else:
@@ -799,9 +942,9 @@ class Chat(param.Parameterized):
         self._context = out_context
         self._level = (sharing.share, sharing.mask_pii)
 
-    def ask(self, question: str, *, confirm: bool = False) -> Answer:
+    def ask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self._aask(question, confirm))
+        return _run(self._aask(question, confirm, returns))
 
 
 class Answer(param.Parameterized):
@@ -848,6 +991,10 @@ class Answer(param.Parameterized):
     value = param.String(default="", doc="""
         The written answer.""")
 
+    result = param.Parameter(default=None, doc="""
+        The answer as the type asked for with returns=, e.g. an int or a
+        pydantic model; None when no type was asked for.""")
+
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
 
@@ -878,6 +1025,8 @@ class Answer(param.Parameterized):
         self._pending: tuple[Planner, dict[str, Any]] | None = None
         self._chat: tuple[Chat, list[dict[str, str]]] | None = None
         self._crs_warned = False
+        # The type asked for, so run and retry give the answer in it too
+        self._returns = None
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -940,6 +1089,8 @@ class Answer(param.Parameterized):
         )
         self._pending = None
         self._take(done)
+        if self._returns is not None:
+            await _typed(self, self._returns, planner.llm)
         if self._chat is not None:
             chat, messages = self._chat
             chat._record(self, messages, out_context)
@@ -973,6 +1124,7 @@ class Answer(param.Parameterized):
             llm=self._llm, sql_failed=self._sql_failed,
         )
         copy.param.update(cached=True, usage=UsageCollector())
+        copy._returns = self._returns
         return copy
 
     def _take(self, other: Answer) -> None:
@@ -1046,7 +1198,9 @@ class Answer(param.Parameterized):
             history, prior = self._history
             return await self._conversation._turn(self.question, [*history, *messages], history, prior)
         data = self.source if self._data is None else self._data
-        return await _aask_messages(data, self.question, messages, self._llm, self._agents, use_cache=False)
+        return await _aask_messages(
+            data, self.question, messages, self._llm, self._agents, use_cache=False, returns=self._returns,
+        )
 
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
@@ -1102,6 +1256,14 @@ class Answer(param.Parameterized):
             return self._fetch_as(*kinds)
         return as_pandas(self.pipeline.data)
 
+    def _as_input_type(self, df: pd.DataFrame, kinds: set[str]) -> Any:
+        # Input of that type means its library is already imported
+        if kinds == {"polars"}:
+            return sys.modules["polars"].from_pandas(df)
+        if kinds == {"pyarrow"}:
+            return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+        return df
+
     def _fetch_as(self, backend: str) -> Any:
         """
         The pipeline's data read in polars or pyarrow by DuckDB itself, with
@@ -1120,6 +1282,109 @@ class Answer(param.Parameterized):
         for transform in pipeline.sql_transforms:
             sql = transform.apply(sql)
         return source.fetch(sql, source.table_params.get(pipeline.table), backend=backend)
+
+    @property
+    def why(self) -> str:
+        """
+        Why the answer took the steps it did: the planner's account of the
+        question, and for an unanswerable one the reason.
+        """
+        if self.plan is None:
+            return ""
+        return "\n\n".join(part for part in (self.plan.reasoning, self.plan.unanswerable) if part)
+
+    @property
+    def trace(self) -> list[Step]:
+        """
+        Each step of the plan as it ran: its actor and instruction, what it
+        needed and provided, how long it took, how many LLM calls it made
+        and the query it wrote. answer.plan.graph() gives how the steps
+        feed each other.
+        """
+        if self.plan is None:
+            return []
+        steps = []
+        for i, task in enumerate(self.plan):
+            seconds, calls = self.plan._runs.get(i, (None, None))
+            provides = task.output_schema.__required_keys__ | task.output_schema.__optional_keys__
+            steps.append(Step(
+                title=task.title, actor=type(task.actor).__name__, instruction=task.instruction,
+                status=task.status, seconds=seconds, llm_calls=calls,
+                requires=tuple(sorted(task.input_schema.__required_keys__)), provides=tuple(sorted(provides)),
+                sql=task.out_context.get("sql") if "sql" in provides else None,
+            ))
+        return steps
+
+    def compile(self, params: list[str] | None = None) -> Callable[..., Any]:
+        """
+        The answer's query as a function that runs without an LLM.
+
+        Each name in params is a column the query compares with values,
+        e.g. ``year = 2008``, ``year BETWEEN 2008 AND 2009`` or
+        ``island IN ('Biscoe', 'Dream')``; it becomes a keyword argument
+        that defaults to those values, a pair for BETWEEN and a list for
+        IN. ``f()`` gives this answer's data and ``f(year=2009)`` the same
+        query for 2009, in the type the question was asked with. Values
+        are bound as query parameters, never written into the SQL.
+        """
+        if not self.sql or self._sql_failed or self.source is None:
+            raise ValueError("This answer has no query that worked to compile.")
+        # The query can read tables an earlier step made, which only the
+        # pipeline's source holds
+        source = self.source if self.pipeline is None else self.pipeline.source
+        if not isinstance(source, DuckDBSource):
+            # ponytail: DuckDB named parameters only; other engines bind differently
+            raise ValueError("compile needs a DuckDB source, such as one from lumen.read.")
+        try:
+            tree = sqlglot.parse_one(self.sql, read="duckdb")
+        except sqlglot.errors.ParseError as e:
+            raise ValueError(f"The answer's query could not be parsed for compile: {e}") from e
+        defaults: dict[str, Any] = {}
+        binders: dict[str, Callable[[Any], dict[str, Any]]] = {}
+        for i, name in enumerate(params or []):
+            nodes = [
+                node for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
+                if isinstance(node.this, exp.Column) and node.this.name == name
+            ]
+            values = {_literals(node) for node in nodes} - {None}
+            if not values:
+                compared = sorted({
+                    node.this.name for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
+                    if isinstance(node.this, exp.Column) and _literals(node) is not None
+                })
+                raise ValueError(f"The query compares no column {name!r} with a value. It compares: {', '.join(compared) or 'none'}.")
+            if len(values) > 1:
+                raise ValueError(f"The query compares {name!r} with different values in different places, so one argument cannot stand for them.")
+            (kind, default), = values
+            defaults[name] = {"in": list, "between": tuple}.get(kind, lambda value: value)(default)
+            # Columns can have names a parameter cannot, e.g. with spaces
+            for node in nodes:
+                _parameterize(node, kind, f"p{i}")
+            binders[name] = _binder(kind, f"p{i}")
+        # Without parameters the query runs as written, untouched by sqlglot
+        sql = tree.sql("duckdb") if params else self.sql
+        if SQLAgent.max_rows is not None:
+            # The same row cap as the answer's own data
+            sql = SQLLimit(limit=SQLAgent.max_rows, write="duckdb").apply(sql)
+        kinds = self._input_kinds()
+
+        def run(**kwargs: Any) -> Any:
+            unknown = set(kwargs) - set(defaults)
+            if unknown:
+                raise TypeError(f"Unknown arguments {sorted(unknown)}; this query takes {sorted(defaults)}.")
+            bound: dict[str, Any] = {}
+            for name, value in {**defaults, **kwargs}.items():
+                bound.update(binders[name](value))
+            return self._as_input_type(source.execute(sql, bound), kinds)
+
+        if all(name.isidentifier() for name in defaults):
+            # A column such as "body mass" can still be passed with **{...}
+            run.__signature__ = inspect.Signature([
+                inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=value) for name, value in defaults.items()
+            ])
+        run.__doc__ = f"{self.question}\n\n{sql}"
+        run.sql = sql
+        return run
 
     def _input_kinds(self) -> set[str]:
         """The libraries of the tables this answer's query read."""
@@ -1192,6 +1457,42 @@ class Answer(param.Parameterized):
         if importlib.util.find_spec("geoviews") is not None:
             return gdf.hvplot(geo=True, tiles="OSM")
         return gdf.hvplot()
+
+    @property
+    def chart(self) -> Any:
+        """
+        The chart as an object to keep working with: an Altair Chart for a
+        Vega-Lite answer, the HoloViews object for an hvPlot one, so it can
+        be composed with ``+`` and ``*`` or restyled with ``.opts``. None
+        when the answer has no chart.
+        """
+        if self.view is None:
+            return None
+        if self.spec is None:
+            return self.view.get_plot(self.view.get_data())
+        try:
+            # Deferred: altair is optional
+            import altair as alt
+        except ImportError as e:
+            raise ImportError(
+                "answer.chart needs altair for a Vega-Lite chart: pip install altair. "
+                "answer.to_vega() gives the spec without it."
+            ) from e
+        spec = self.to_vega()
+        # Chart.from_dict only takes single-view specs
+        kinds = {"layer": "LayerChart", "facet": "FacetChart", "repeat": "RepeatChart",
+                 "hconcat": "HConcatChart", "vconcat": "VConcatChart", "concat": "ConcatChart"}
+        kind = next((name for key, name in kinds.items() if key in spec), "Chart")
+        return getattr(alt, kind).from_dict(spec)
+
+    def to_vega(self) -> dict:
+        """
+        The chart as a self-contained Vega-Lite spec, data inlined. An
+        hvPlot map is given as a Vega-Lite map of its geometry.
+        """
+        if (spec := self._vega_lite_spec() or self._geoshape_spec()) is None:
+            raise ValueError("This answer has no Vega-Lite chart; answer.chart gives an hvPlot one.")
+        return spec
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -1307,9 +1608,27 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
+        if self._steps_text:
+            parts.append(Card(
+                Markdown(self._steps_text, sizing_mode="stretch_width"), title="Steps", collapsed=True,
+                sizing_mode="stretch_width",
+            ))
         if self._usage_note:
             parts.append(self._usage_pane())
         return parts
+
+    @property
+    def _steps_text(self) -> str:
+        """The why and each step as it ran, as Markdown; nothing for a plan with no steps."""
+        lines = []
+        for i, step in enumerate(self.trace, 1):
+            facts = [f"{step.seconds:.1f} s"] if step.seconds is not None else ["not run"]
+            if step.llm_calls:
+                facts.append(f"{step.llm_calls} LLM call{'s' if step.llm_calls > 1 else ''}")
+            lines.append(f"{i}. **{step.actor}**: {step.title} · {', '.join(facts)}")
+        if not lines:
+            return ""
+        return "\n\n".join(part for part in (f"*{self.plan.reasoning}*" if self.plan.reasoning else "", "\n".join(lines)) if part)
 
     @property
     def _plan_steps(self) -> str:
@@ -1446,6 +1765,11 @@ class Answer(param.Parameterized):
             spec["data"] = dict(data, values=_records(data["values"]))
         if isinstance(spec.get("datasets"), dict):
             spec["datasets"] = {name: _records(values) for name, values in spec["datasets"].items()}
+        if any(key in spec for key in ("facet", "repeat", "concat", "hconcat", "vconcat")):
+            # Vega-Lite allows no top-level size on these; their views size themselves
+            spec.pop("width", None)
+            spec.pop("height", None)
+            return spec
         for dim, size in (("width", 600), ("height", 400)):
             if spec.get(dim, "container") == "container":
                 spec[dim] = size
@@ -1527,15 +1851,19 @@ class Answer(param.Parameterized):
             card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:
             bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
-            width = chart["application/vnd.vegalite.v5+json"]["width"]
-            # Rendered at twice the size for sharpness, shown at the spec width
-            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}" width="{width}" style="max-width: 100%">')
+            # Rendered at twice the size for sharpness, shown at the spec
+            # width; a faceted or concatenated chart has none of its own
+            width = chart["application/vnd.vegalite.v5+json"].get("width")
+            size = f' width="{width}"' if width else ""
+            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}"{size} style="max-width: 100%">')
         if self._cap_note:
             card.append(f"<p><em>{html.escape(self._cap_note)}</em></p>")
         if self.sql:
             card.append(self._sql_html())
         if chart_spec is not None:
             card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
+        if self._steps_text:
+            card.append(f"<details><summary>Steps</summary>{_MARKDOWN.render(self._steps_text)}</details>")
         if self._usage_note:
             card.append(f"<p><small>{html.escape(self._usage_note)}</small></p>")
             bundle["text/markdown"] += f"\n\n*{self._usage_note}*"

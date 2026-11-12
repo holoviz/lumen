@@ -8,7 +8,7 @@ import threading
 import time
 import warnings
 
-from typing import get_args
+from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
@@ -33,8 +33,8 @@ from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
     _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
     _drop_exceptions, _env_llm, _fingerprint, _loop, _planner, _planners,
-    _records, _resolve, _row_cap_hit, _run, _StatusLine, aask, ask, chat,
-    clear_cache, configure,
+    _records, _resolve, _row_cap_hit, _run, _StatusLine, _type_key, aask, ask,
+    chat, clear_cache, configure,
 )
 from lumen.ai.config import QueryError, RetriesExceededError
 from lumen.ai.coordinator import Plan
@@ -254,8 +254,9 @@ async def test_error_card_shows_the_message_and_open_sql(frame_source):
     with _failing_sql(fail_times=9):
         answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
 
-    alert, sql = answer.__panel__()
+    alert, sql, steps = answer.__panel__()
     assert alert.severity == "error" and "column nope" in alert.object
+    assert steps.title == "Steps" and steps.collapsed
     assert not sql.collapsed and "SELECT nope FROM tiny" in sql[0].object
     html = answer._static_bundle(None)["text/html"]
     assert "column nope not found" in html
@@ -276,7 +277,7 @@ async def test_a_later_step_failing_keeps_the_working_query(frame_source):
     assert answer.error == "ValueError: chart spec is invalid"
     assert "SUM(value)" in answer.sql
     assert answer.pipeline.data.iloc[0, 0] == 38.0
-    _alert, sql = answer.__panel__()
+    _alert, sql, _steps = answer.__panel__()
     assert sql.title == "SQL" and sql.collapsed
     assert "<details><summary>SQL</summary>" in answer._static_bundle(None)["text/html"]
     with pytest.raises(ValueError, match=r"answer\.retry"):
@@ -668,12 +669,12 @@ async def test_ask_inside_a_running_loop(llm, frame_source):
 async def test_source_and_pipeline_methods_delegate(frame_source):
     pipeline = Pipeline(source=frame_source, table="tiny")
     with patch("lumen.ai.answer.ask") as sync_ask, patch("lumen.ai.answer.aask", new_callable=AsyncMock) as async_ask:
-        frame_source.ask("q", llm="x")
+        frame_source.ask("q", llm="x", returns=int)
         pipeline.ask("q")
         await frame_source.aask("q")
         await pipeline.aask("q", llm="x")
     assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
-    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None, "confirm": False}
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None, "confirm": False, "returns": int}
     assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
 
 
@@ -983,6 +984,81 @@ def test_answer_spec_of_an_hvplot_chart_is_its_yaml(frame_source):
     view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
     language, text = Answer(question="?", status="success", pipeline=pipeline, view=view)._chart_spec()
     assert language == "yaml" and "kind: bar" in text and "pipeline" not in text
+
+
+def test_answer_chart_of_an_hvplot_answer_is_its_holoviews_object(frame_source):
+    import holoviews as hv
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    chart = Answer(question="?", status="success", pipeline=pipeline, view=view).chart
+    assert isinstance(chart, hv.Bars)
+    assert list(chart.data["value"]) == [10.5, 20.0, 7.5]
+    assert isinstance(chart + chart, hv.Layout)
+
+
+@pytest.mark.parametrize("key, kind", [
+    (None, "Chart"), ("layer", "LayerChart"), ("facet", "FacetChart"), ("hconcat", "HConcatChart"),
+])
+def test_answer_chart_of_a_vega_lite_answer_is_an_altair_chart(chart_answer, monkeypatch, key, kind):
+    built = []
+
+    class TopLevel:
+        @classmethod
+        def from_dict(cls, spec):
+            built.append(spec)
+            return cls()
+
+    altair = type(sys)("altair")
+    for name in ("Chart", "LayerChart", "FacetChart", "RepeatChart", "HConcatChart", "VConcatChart", "ConcatChart"):
+        setattr(altair, name, type(name, (TopLevel,), {}))
+    # Panel's Vega pane checks for altair charts through altair.api
+    altair.api = type(sys)("altair.api")
+    altair.api.TopLevelMixin = TopLevel
+    monkeypatch.setitem(sys.modules, "altair", altair)
+    layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}
+    spec = {None: chart_answer.spec, "layer": {"layer": [layer]}, "facet": {"facet": {"field": "category"}, "spec": layer},
+            "hconcat": {"hconcat": [layer, layer]}}[key]
+    chart_answer.view.spec = chart_answer.spec = spec
+    assert type(chart_answer.chart).__name__ == kind
+    assert built == [chart_answer.to_vega()]
+
+
+def test_the_static_card_of_a_concatenated_chart_has_its_image(chart_answer):
+    layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}
+    chart_answer.view.spec = chart_answer.spec = {"hconcat": [layer, layer]}
+    html_card = chart_answer._static_bundle(chart_answer._chart_bundle())["text/html"]
+    assert '<img src="data:image/png;base64,' in html_card and "width=" not in html_card
+
+
+def test_answer_to_vega_sizes_only_the_views_that_take_a_size(chart_answer):
+    assert (chart_answer.to_vega()["width"], chart_answer.to_vega()["height"]) == (600, 400)
+    layer = {"mark": "bar", "encoding": chart_answer.spec["encoding"]}
+    chart_answer.view.spec = chart_answer.spec = {"hconcat": [layer, layer]}
+    assert "width" not in chart_answer.to_vega() and "height" not in chart_answer.to_vega()
+
+
+def test_answer_chart_without_altair_says_how_to_get_it(chart_answer, monkeypatch):
+    monkeypatch.setitem(sys.modules, "altair", None)
+    with pytest.raises(ImportError, match="pip install altair"):
+        _ = chart_answer.chart
+
+
+def test_answer_to_vega_inlines_the_data(chart_answer):
+    spec = chart_answer.to_vega()
+    assert spec["mark"] == "bar"
+    assert [row["value"] for row in spec["data"]["values"]] == [10.5, 20.0, 7.5]
+    assert chart_answer.spec.get("data") is None
+
+
+def test_answer_without_a_chart_has_no_chart_or_vega(frame_source):
+    answer = Answer(question="?", value="Ten rows.", sql="SELECT 1", status="success")
+    assert answer.chart is None
+    with pytest.raises(ValueError, match="no Vega-Lite chart"):
+        answer.to_vega()
+
+
+def test_pn_panel_of_an_answer_is_its_card(chart_answer):
+    assert pn.panel(chart_answer) is chart_answer.__panel__()
 
 
 def test_answer_without_a_chart_has_no_spec(frame_source):
@@ -1596,6 +1672,7 @@ async def test_editing_a_frame_after_reading_it_cannot_make_a_cached_answer_stal
     frame.loc[0, "value"] = 99.0
     assert source.execute("SELECT SUM(value) AS total FROM tiny").iloc[0, 0] == 3.0
 
+
 async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch):
     monkeypatch.setattr(answer_module, "_ANSWER_CACHE_ROWS", 4)
     configure(cache=True)
@@ -1604,6 +1681,331 @@ async def test_the_cache_bounds_the_rows_it_holds(llm, frame_source, monkeypatch
         answer.pipeline = Pipeline(source=frame_source, table="tiny")  # three rows each
         answer_module._answer_cache[next(reversed(answer_module._answer_cache))] = answer
     assert len(answer_module._answer_cache) <= 2
+
+
+class _TypingLLM(MockLLM):
+    """Answers the plan and SQL from its responses, and the typed result with result."""
+
+    result = None
+    typed_prompt = None
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        if response_model is not None and response_model.__name__ == "Result":
+            self.typed_prompt = messages[-1]["content"]
+            return response_model(result=self.result)
+        return await super().invoke(messages, system, response_model, **kwargs)
+
+
+def _sql_answer(llm, source, query):
+    SQLModel = make_sql_model([(source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Query"), ("ChatAgent", "Explain")),
+        SQLModel(query=query, table_slug="tiny_result", tables=["tiny"]),
+        "The answer is in the data.",
+    ])
+
+
+@pytest.mark.parametrize("query, returns, expected", [
+    ("SELECT SUM(value) AS total FROM tiny", int, 38),
+    ("SELECT SUM(value) AS total FROM tiny", float, 38.0),
+    ("SELECT DISTINCT category FROM tiny ORDER BY category", list[str], ["A", "B"]),
+    ("SELECT category, SUM(value) AS total FROM tiny GROUP BY category ORDER BY category",
+     dict[str, float] | list[dict[str, Any]], [{"category": "A", "total": 18.0}, {"category": "B", "total": 20.0}]),
+])
+async def test_returns_takes_a_result_already_in_the_shape_without_an_llm_call(frame_source, query, returns, expected):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, query)
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=returns)
+    assert answer.status == "success" and answer.result == expected
+    assert type(answer.result) is type(expected)
+    assert llm._index == 3 and llm.typed_prompt is None
+
+
+async def test_returns_a_model_from_a_matching_row(frame_source):
+    from pydantic import BaseModel
+
+    class Total(BaseModel):
+        category: str
+        total: float
+
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT 'B' AS category, MAX(value) AS total FROM tiny")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=Total)
+    assert answer.result == Total(category="B", total=20.0)
+
+
+async def test_returns_reads_the_type_from_the_answer_when_the_data_has_another_shape(frame_source):
+    llm = _TypingLLM()
+    llm.result = "B"
+    _sql_answer(llm, frame_source, "SELECT category, SUM(value) AS total FROM tiny GROUP BY category")
+    answer = await aask(frame_source, "Which category is largest?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=str)
+    assert answer.status == "success" and answer.result == "B"
+    assert "Which category is largest?" in llm.typed_prompt and "category,total" in llm.typed_prompt
+
+
+async def test_returns_never_takes_one_cell_of_a_larger_result(frame_source):
+    """Two rows are not one int; the typed call decides, not the first cell."""
+    llm = _TypingLLM()
+    llm.result = 2
+    _sql_answer(llm, frame_source, "SELECT COUNT(*) AS n FROM tiny GROUP BY category")
+    answer = await aask(frame_source, "How many categories?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    assert answer.result == 2 and llm.typed_prompt is not None
+
+
+async def test_returns_keeps_data_out_of_the_typed_prompt_unless_samples_are_shared(frame_source):
+    llm = _TypingLLM()
+    llm.result = "B"
+    _sql_answer(llm, frame_source, "SELECT category, SUM(value) AS total FROM tiny GROUP BY category")
+    configure(share="schema")
+    try:
+        await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=str)
+    finally:
+        configure(share="sample")
+    assert "category,total" not in llm.typed_prompt
+
+
+async def test_returns_masks_personal_data_in_the_typed_prompt():
+    source = read({"tiny": pd.DataFrame({"email": ["ann@example.com", "bo@example.org"], "value": [1.0, 2.0]})})
+    llm = _TypingLLM()
+    llm.result = "ann"
+    _sql_answer(llm, source, "SELECT email, value FROM tiny")
+    configure(mask_pii=True)
+    await aask(source, "Whose is largest?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=str)
+    assert "@example." not in llm.typed_prompt and "value" in llm.typed_prompt
+
+
+async def test_an_answer_that_is_not_the_type_becomes_an_error(frame_source):
+    class Refusing(_TypingLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if response_model is not None and response_model.__name__ == "Result":
+                raise ValueError("no number in the answer")
+            return await super().invoke(messages, system, response_model, **kwargs)
+
+    llm = Refusing()
+    _sql_answer(llm, frame_source, "SELECT 'many' AS category")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    assert answer.status == "error" and "could not be read as int" in answer.error
+    assert answer.result is None and answer.sql
+
+
+async def test_returns_is_part_of_the_cache_key(frame_source):
+    configure(cache=True)
+    try:
+        llm = _TypingLLM()
+        _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+        await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+        _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+        other = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=float)
+        again = await aask(frame_source, "Total?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    finally:
+        configure(cache=False)
+        clear_cache()
+    assert not other.cached and other.result == 38.0
+    assert again.cached and again.result == 38 and again._returns is int
+
+
+def test_a_redefined_class_is_another_cache_key():
+    from pydantic import BaseModel
+
+    class Total(BaseModel):
+        total: float
+
+    first = Total
+
+    class Total(BaseModel):  # noqa: F811
+        total: float
+        note: str = ""
+
+    assert repr(first) == repr(Total)
+    assert _type_key(first) != _type_key(Total) and _type_key(first) == _type_key(first)
+
+
+async def test_a_planned_answer_is_typed_when_run(frame_source):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], confirm=True, returns=int)
+    assert answer.status == "planned" and answer.result is None
+    await answer.arun()
+    assert answer.result == 38
+
+
+async def test_retry_asks_for_the_same_type(frame_source):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=int)
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    assert (await answer.aretry()).result == 38
+
+
+async def test_chat_ask_takes_returns(frame_source):
+    llm = _TypingLLM()
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()]).aask("?", returns=int)
+    assert answer.result == 38
+
+
+@pytest.fixture
+def penguins_answer():
+    frame = pd.DataFrame({
+        "year": [2007, 2008, 2008, 2009], "island": ["A", "B", "A", "B"], "body mass": [1.0, 2.0, 3.0, 4.0],
+    })
+    sql = (
+        "SELECT COUNT(*) AS n FROM penguins WHERE year = 2008 AND island IN ('A', 'B') "
+        'AND "body mass" BETWEEN 0 AND 10'
+    )
+    return Answer(question="How many in 2008?", status="success", source=read({"penguins": frame}), sql=sql)
+
+
+def test_compile_reruns_the_query_with_new_values_and_no_llm(penguins_answer):
+    count = penguins_answer.compile(["year", "island", "body mass"])
+    assert count().iloc[0, 0] == 2
+    assert count(year=2009).iloc[0, 0] == 1
+    assert count(island=["A"]).iloc[0, 0] == 1
+    assert count(**{"body mass": (2.5, 10)}).iloc[0, 0] == 1
+
+
+def test_compile_defaults_are_the_answers_values(penguins_answer):
+    import inspect
+    count = penguins_answer.compile(["year", "island"])
+    params = inspect.signature(count).parameters
+    assert {name: p.default for name, p in params.items()} == {"year": 2008, "island": ["A", "B"]}
+    assert "$p0" in count.sql and "2008" not in count.sql
+    assert count.__doc__.startswith("How many in 2008?")
+
+
+def test_compile_binds_values_instead_of_writing_them_into_the_sql(penguins_answer):
+    count = penguins_answer.compile(["island"])
+    assert count(island=["x'; DROP TABLE penguins; --"]).iloc[0, 0] == 0
+    assert penguins_answer.source.execute("SELECT COUNT(*) FROM penguins").iloc[0, 0] == 4
+
+
+def test_compile_names_the_columns_it_can_take(penguins_answer):
+    with pytest.raises(ValueError, match=r"no column 'sex'.*island, year"):
+        penguins_answer.compile(["sex"])
+    with pytest.raises(TypeError, match="Unknown arguments"):
+        penguins_answer.compile(["year"])(island=["A"])
+
+
+def test_compile_refuses_a_column_compared_with_several_values():
+    source = read({"t": pd.DataFrame({"year": [2007, 2008]})})
+    answer = Answer(question="?", status="success", source=source, sql="SELECT * FROM t WHERE year >= 2007 AND year < 2009")
+    with pytest.raises(ValueError, match="different values"):
+        answer.compile(["year"])
+
+
+def test_compile_returns_the_input_type():
+    pl = pytest.importorskip("polars")
+    source = read({"t": pl.DataFrame({"year": [2007, 2008]})})
+    answer = Answer(question="?", status="success", source=source, sql="SELECT * FROM t WHERE year = 2007")
+    assert isinstance(answer.compile(["year"])(year=2008), pl.DataFrame)
+
+
+def test_compile_keeps_the_row_cap(penguins_answer):
+    configure(max_rows=2)
+    rows = penguins_answer.compile()
+    answer = Answer(question="?", status="success", source=penguins_answer.source, sql="SELECT * FROM penguins")
+    assert len(answer.compile()()) == 2 and rows().iloc[0, 0] == 2
+
+
+def test_compile_reads_tables_only_the_pipeline_source_has(penguins_answer):
+    derived = penguins_answer.source.create_sql_expr_source({"only_2008": "SELECT * FROM penguins WHERE year = 2008"})
+    answer = Answer(
+        question="?", status="success", source=penguins_answer.source, sql="SELECT COUNT(*) AS n FROM only_2008",
+        pipeline=Pipeline(source=derived, table="only_2008"),
+    )
+    assert answer.compile()().iloc[0, 0] == 2
+
+
+def test_compile_needs_a_query_that_worked(frame_source):
+    with pytest.raises(ValueError, match="no query that worked"):
+        Answer(question="?", status="success").compile()
+    with pytest.raises(ValueError, match="no query that worked"):
+        Answer(question="?", status="error", sql="SELECT 1", sql_failed=True, source=frame_source).compile()
+
+
+async def test_answer_trace_has_each_step_as_it_ran(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        _costing(llm, SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]), 10, None),
+        _costing(llm, "The total value is 38.", 10, None),
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    sql_step, chat_step = answer.trace
+    assert (sql_step.actor, chat_step.actor) == ("SQLAgent", "ChatAgent")
+    assert sql_step.status == chat_step.status == "success"
+    assert sql_step.seconds > 0 and chat_step.seconds > 0
+    assert sql_step.llm_calls == chat_step.llm_calls == 1
+    assert "SUM(value)" in sql_step.sql and chat_step.sql is None
+    assert "sql" in sql_step.provides and "source" in sql_step.requires and chat_step.provides == ("chat",)
+    assert answer.why == "Query then explain"
+
+
+async def test_rerunning_a_plan_keeps_its_step_timings(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    before = [(step.seconds, step.llm_calls) for step in answer.trace]
+    await answer.plan.execute()
+    assert [(step.seconds, step.llm_calls) for step in answer.trace] == before
+
+
+def test_plan_graph_follows_what_steps_need():
+    plan = Plan(
+        ActorTask(SQLAgent(), title="Query", instruction="Query"),
+        ActorTask(VegaLiteAgent(n_doc_pages=0), title="Chart", instruction="Chart"),
+        ActorTask(ChatAgent(), title="Explain", instruction="Explain"),
+        title="Chart it",
+    )
+    assert plan.graph() == [("Query", "Chart", "data"), ("Query", "Chart", "pipeline"), ("Query", "Chart", "table")]
+    mermaid = plan.to_mermaid()
+    assert mermaid.startswith("graph TD") and 's0["Query"]' in mermaid and "s0 -->|pipeline| s1" in mermaid
+    assert 's2["Explain"]' in mermaid
+
+
+def test_mermaid_keeps_steps_with_the_same_title_apart():
+    plan = Plan(
+        ActorTask(SQLAgent(), title="Query", instruction="Query"),
+        ActorTask(SQLAgent(), title="Query", instruction="Query"),
+        ActorTask(ChatAgent(), title='Say "why"\nnow', instruction="Explain"),
+        title="Twice",
+    )
+    mermaid = plan.to_mermaid()
+    assert 's0["Query"]' in mermaid and 's1["Query"]' in mermaid
+    assert 's2["Say #quot;why#quot; now"]' in mermaid
+
+
+async def test_answer_steps_card_lists_the_trace(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ])
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    steps = next(part for part in answer.__panel__() if isinstance(part, Card) and part.title == "Steps")
+    assert steps.collapsed
+    text = steps[0].object
+    assert text.startswith("*Query then explain*") and "1. **SQLAgent**: Sum value · " in text
+    assert "<summary>Steps</summary>" in answer._static_bundle(None)["text/html"]
+
+
+def test_a_plan_that_did_not_run_has_no_timings(chart_answer):
+    agent = VegaLiteAgent(n_doc_pages=0)
+    answer = Answer(question="?", status="planned", plan=Plan(ActorTask(agent, title="Chart", instruction="Chart"), title="Chart"))
+    (step,) = answer.trace
+    assert step.seconds is None and step.llm_calls is None
+    assert answer._steps_text.endswith("Chart · not run")
+
+
+def test_an_answer_without_a_plan_has_no_trace():
+    answer = Answer(question="?", status="success")
+    assert answer.trace == [] and answer.why == "" and answer._steps_text == ""
 
 
 def test_records_turn_every_missing_value_into_null():
