@@ -610,6 +610,35 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         assert len(results) == 0
         store.close()
 
+    @pytest.mark.asyncio
+    async def test_query_lexical_prefers_specific_terms(self, empty_store):
+        await empty_store.add([
+            {
+                "text": "Bind a parameter to a range slider input element.",
+                "metadata": {"section_title": "Input binding"},
+            },
+            {
+                "text": "A chart can contain marks and encodings.",
+                "metadata": {"section_title": "Chart overview"},
+            },
+            {
+                "text": "A chart can use a title.",
+                "metadata": {"section_title": "Chart title"},
+            },
+            {
+                "text": "A chart can use a legend.",
+                "metadata": {"section_title": "Chart legend"},
+            },
+            {
+                "text": "A chart can use an axis.",
+                "metadata": {"section_title": "Chart axis"},
+            },
+        ])
+
+        results = await empty_store.query_lexical("slider")
+
+        assert results[0]["metadata"]["section_title"] == "Input binding"
+
     async def test_check_embeddings_consistency(self, tmp_path):
         db_path = str(tmp_path / "test_duckdb.db")
         store = DuckDBVectorStore(uri=db_path, embeddings=NumpyEmbeddings())
