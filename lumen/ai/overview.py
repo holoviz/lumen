@@ -136,7 +136,7 @@ class Overview(param.Parameterized):
 def _first_rows(source: Source, table: str) -> pd.DataFrame:
     """Up to SAMPLE_ROWS rows of a table, read without loading the rest."""
     if isinstance(source, BaseSQLSource):
-        # ponytail: the first rows, not a random sample; a sorted table can hide its problems
+        # The first rows, not a random sample; a sorted table can hide its problems
         return source.execute(f"SELECT * FROM ({source.get_sql_expr(table)}) AS t LIMIT {SAMPLE_ROWS}")
     return source.get(table).head(SAMPLE_ROWS)
 
