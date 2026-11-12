@@ -21,8 +21,9 @@ import numpy as np
 import pandas as pd
 import panel as pn
 import param  # type: ignore
+import sqlglot
 
-from bokeh.models import NumeralTickFormatter  # type: ignore
+from bokeh.models import ColumnDataSource, NumeralTickFormatter  # type: ignore
 from holoviews import Overlay  # type: ignore
 from holoviews.core import (  # type: ignore
     Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
@@ -1469,6 +1470,54 @@ class hvOverlayView(View):
         return self._panel_type(**params)
 
 
+
+class _RemotePageTabulator(pn.widgets.tables.Tabulator):
+    """
+    Tabulator that holds a single page of rows in ``value`` while reporting
+    the full row count (``total_rows``), so the browser shows every page
+    button even though only the current page lives in memory.
+    """
+
+    total_rows = param.Integer(default=None, allow_None=True, doc="""
+        Total number of rows available remotely.""")
+
+    _rename: ClassVar[dict[str, str | None]] = {
+        **pn.widgets.tables.Tabulator._rename, 'total_rows': None
+    }
+
+    @property
+    def _length(self):
+        if self.total_rows is not None:
+            return self.total_rows
+        return super()._length
+
+    # Callable ``page -> DataFrame`` returning the rows of a given page.
+    page_loader: ClassVar[Any] = None
+
+    def _update_cds(self, *events):
+        if self.page_loader is not None and any(e.name == 'page' for e in events) and not self._updating:
+            # Swap in the new page *before* Panel serializes ``value`` for the
+            # browser, whose pending remote-pagination request resolves with
+            # the first update it receives.
+            new_page = self.page_loader(self.page)
+            with param.parameterized.discard_events(self):
+                self.value = new_page
+        super()._update_cds(*events)
+
+    def _get_data(self):
+        if self.total_rows is None or self.pagination != 'remote' or self.value is None:
+            return super()._get_data()
+        # ``value`` already is the current page, so never slice by page offset.
+        df = self.value
+        nrows = self.page_size or self.initial_page_size
+        page_df = df.iloc[:nrows]
+        data = ColumnDataSource.from_df(page_df).items()
+        return df, {
+            k if isinstance(k, str) else str(k): self._process_column(v, k, page_df)
+            for k, v in data
+        }
+
+
 class Table(View):
     """
     `Table` renders data using the powerful Panel `Tabulator` component.
@@ -1491,6 +1540,53 @@ class Table(View):
         if 'configuration' in self.kwargs:
             config.update(self.kwargs['configuration'])
         params['configuration'] = config
+
+        is_paginated = getattr(self.pipeline, 'paginated', False)
+        if is_paginated and hasattr(getattr(self.pipeline, 'source', None), 'get_sql_expr'):
+            sql_expr = self.pipeline.source.get_sql_expr(self.pipeline.table)
+
+            total_count = None
+            try:
+                count_expr = sql_expr
+                try:
+                    parsed_count = sqlglot.parse_one(sql_expr)
+                    parsed_count.set('limit', None)
+                    parsed_count.set('offset', None)
+                    count_expr = parsed_count.sql()
+                except Exception:
+                    pass
+                count_query = f"SELECT count(*) FROM ({count_expr})"
+                total_count = int(self.pipeline.source.execute(count_query).iloc[0, 0])
+            except Exception:
+                total_count = None
+
+            page_size = 50
+            params['page_size'] = page_size
+            params['pagination'] = 'remote'
+            if total_count is None:
+                return self._panel_type(**params)
+
+            params['total_rows'] = total_count
+            tabulator = _RemotePageTabulator(**params)
+            tabulator._update_max_page()
+
+            def load_page(page):
+                current_page = page or 1
+                offset = (current_page - 1) * page_size
+
+                new_chunk = as_pandas(self.pipeline._fetch_paginated_data(
+                    sql_expr,
+                    self.pipeline._filter_query(),
+                    limit=page_size,
+                    offset=offset,
+                ))
+                new_chunk.index = pd.RangeIndex(offset, offset + len(new_chunk))
+                return geometry_to_wkt(new_chunk)
+
+            tabulator.page_loader = load_page
+
+            return tabulator
+
         return self._panel_type(**params)
 
     def _get_params(self):
