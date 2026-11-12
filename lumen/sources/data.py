@@ -11,6 +11,7 @@ import weakref
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 import duckdb
 import pandas as pd
@@ -35,6 +36,19 @@ if TYPE_CHECKING:
 
 #: Name of the source that holds the files and pipelines handed to Lumen
 PROVIDED_SOURCE_NAME = "ProvidedSource00000"
+
+
+# The library each table was read from, e.g. "polars", so an answer can give
+# its data back in the same type. Weak, so it never keeps a Source alive.
+_INPUT_KINDS: WeakKeyDictionary[Source, dict[str | None, str]] = WeakKeyDictionary()
+
+
+def input_kinds(source: Source) -> dict[str | None, str]:
+    """
+    The library each table of a source read with `read` came from, keyed
+    by table name, or by None when one object made the whole source.
+    """
+    return _INPUT_KINDS.get(source, {})
 
 
 def _is_frame(obj) -> bool:
@@ -211,6 +225,16 @@ def read(
             "their own source. Call read once per source, or pass the list to "
             "ExplorerUI, which takes several."
         )
+    if isinstance(data, dict):
+        items = list(data.items())
+    elif isinstance(data, list):
+        # Unnamed frames become the tables data, or data_0, data_1 and so on
+        frames = [value for value in data if _is_frame(value)]
+        items = [(("data" if len(frames) == 1 else f"data_{i}"), value) for i, value in enumerate(frames)]
+        items += [(None, value) for value in data if not _is_frame(value)] if len(frames) != len(data) else []
+    else:
+        items = [(None, data)]
+    _INPUT_KINDS[sources[0]] = {name: type(value).__module__.split(".")[0] for name, value in items}
     return sources[0]
 
 

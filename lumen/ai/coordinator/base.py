@@ -71,6 +71,10 @@ class Plan(Section):
 
     is_followup = param.Boolean(default=False)
 
+    unanswerable = param.String(default=None, allow_None=True, doc="""
+        Why the data cannot answer the question, when the planner found
+        that it cannot; the plan then has no steps.""")
+
     _tasks = param.List(item_type=ActorTask)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
@@ -261,7 +265,10 @@ class Plan(Section):
         if self.steps_layout is not None:
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
-            if self.status == "success":
+            if self.unanswerable:
+                # \u2139 is the information emoji, escaped since it looks like an i
+                steps_title.object = f"\u2139\ufe0f The data cannot answer {self.title!r}"
+            elif self.status == "success":
                 steps_title.object = f"✅ Successfully completed {self.title!r}"
             else:
                 steps_title.object = f"❌ Failed to execute {self.title!r}"
@@ -669,8 +676,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+        if plan is not None and plan.unanswerable and not headless:
+            self.interface.stream(plan.unanswerable, user="Planner")
         if plan is not None and self.steps_layout is not None:
-            self.steps_layout.header[0].object = "🧾 Checklist ready..."
+            # \u2139 is the information emoji, escaped since it looks like an i
+            self.steps_layout.header[0].object = (
+                f"\u2139\ufe0f The data cannot answer {plan.title!r}" if plan.unanswerable else "🧾 Checklist ready..."
+            )
             _, todos = plan.render_task_history(-1)
             self.steps_layout.header[1].object = todos
         return plan

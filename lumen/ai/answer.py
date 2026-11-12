@@ -10,13 +10,14 @@ import importlib.util
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import warnings
 import weakref
 
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from contextlib import nullcontext
+from contextlib import ExitStack, suppress
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -25,6 +26,7 @@ import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import pandas as pd
 import panel as pn
 import param
+import sqlglot
 import yaml
 
 from markdown_it import MarkdownIt
@@ -43,7 +45,8 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import joins_grids, read
+from ..sources.data import input_kinds, joins_grids, read
+from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
 from ..util import (
@@ -64,6 +67,7 @@ from .report import ActorTask, TaskGroup
 from .sharing import sharing
 from .tools import MetadataLookup
 from .ui import ExplorerUI
+from .usage import UsageCollector
 from .utils import errors_in_result, format_error
 
 if TYPE_CHECKING:
@@ -314,15 +318,23 @@ async def _respond(
     Run one question through the Planner, returning the Answer and the
     context it left. A failed plan gives an Answer with status "error".
     """
+    # An agent given its own LLM is counted too, each LLM once
+    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
     _busy.add(planner)
+    token = errors_in_result.set(True)
     try:
-        token = errors_in_result.set(True)
-        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
+        with ExitStack() as stack:
+            scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
+            if log.getEffectiveLevel() > logging.DEBUG:
+                stack.enter_context(quiet_retries())
             await planner.sync(context)
             plan = await planner.respond(messages, context)
             if plan is None:
                 raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-            outputs, out_context = await plan.execute()
+            if plan.unanswerable:
+                outputs, out_context = [], context
+            else:
+                outputs, out_context = await plan.execute()
     finally:
         errors_in_result.reset(token)
         _busy.discard(planner)
@@ -330,6 +342,10 @@ async def _respond(
         question, plan, outputs, out_context, context["source"], planner.llm, data, agents,
         context.get("visible_slugs"),
     )
+    answer.usage = UsageCollector()
+    for scope in scopes:
+        for record in scope.records:
+            answer.usage.add(record)
     return answer, out_context
 
 
@@ -452,6 +468,11 @@ def _build_answer(
     question: str, plan: Plan, outputs: list, context: dict[str, Any], source: Source, llm: Llm,
     data: DataT | Pipeline, agents: list | None, visible_slugs: set[str] | None = None,
 ) -> Answer:
+    if plan.unanswerable:
+        return Answer(
+            agents=agents, data=data, error=plan.unanswerable, llm=llm, plan=plan, question=question,
+            source=source, status="unanswerable", value=f"Lumen cannot answer {question!r} from this data.",
+        )
     if plan.status == "error":
         failed = next((task.title for task in plan if task.status == "error"), plan.title)
         # Read once and dropped: its traceback keeps every frame's data alive
@@ -661,12 +682,16 @@ class Answer(param.Parameterized):
         The SQL query that produced the data, if one was run.""")
 
     status = param.String(doc="""
-        The status of the executed Plan: "success", or "error" when the
-        question failed; error says why.""")
+        "success", "error" when the question failed, or "unanswerable"
+        when the data does not hold what it asks for; error says why.""")
 
     truncated_at = param.Integer(default=None, allow_None=True, doc="""
         The row cap the data stopped at, when the result had more rows.
         lumen.ai.configure(max_rows=...) sets the cap.""")
+
+    usage = param.ClassSelector(class_=UsageCollector, default=None, allow_None=True, doc="""
+        The tokens and, when the provider prices them, the cost of the LLM
+        calls this answer made, e.g. answer.usage.input_tokens.""")
 
     value = param.String(default="", doc="""
         The written answer.""")
@@ -719,13 +744,14 @@ class Answer(param.Parameterized):
         editor = type(self._editor)(component=self.view)
         messages = [{"role": "user", "content": self.question}]
         # The Planner only sets the agent's LLM while a plan runs
-        with actor.param.update(llm=actor.llm or self._llm):
+        llm = actor.llm or self._llm
+        with actor.param.update(llm=llm), llm.capture_usage() as usage:
             editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
         refined = Answer(
             agents=self._agents, context=self._context, data=self._data, editor=editor,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
             source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
-            value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
+            usage=usage, value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
         )
         refined._chat, refined._history = self._chat, self._history
         views = self.plan.views if self._views is None else self._views
@@ -763,7 +789,8 @@ class Answer(param.Parameterized):
             editor=type(self._editor)(component=view) if self._editor is not None else None,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
             source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
-            status=self.status, truncated_at=self.truncated_at, value=self.value, view=view,
+            status=self.status, truncated_at=self.truncated_at, usage=UsageCollector(),
+            value=self.value, view=view,
         )
 
     def to_cell(self) -> None:
@@ -791,7 +818,9 @@ class Answer(param.Parameterized):
     async def _aretry(self, hint: str | None = None) -> Answer:
         messages = [{"role": "user", "content": self.question}]
         if hint:
-            outcome = f"That failed: {self.error}" if self.status == "error" else self.value
+            outcome = {
+                "error": f"That failed: {self.error}", "unanswerable": f"{self.value} {self.error}",
+            }.get(self.status, self.value)
             if self.sql:
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
@@ -835,6 +864,55 @@ class Answer(param.Parameterized):
         if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
             return None
         return self.pipeline.get_dataset()
+
+    @property
+    def data(self) -> Any:
+        """
+        The answer's data in the type it was asked with: polars or pyarrow
+        for polars or pyarrow input, the GeoDataFrame of gdf for GeoPandas
+        input and the Dataset of ds for xarray input, pandas otherwise.
+        When the query read tables of different types, pandas.
+        """
+        if self.pipeline is None:
+            return None
+        kinds = self._input_kinds()
+        if kinds == {"xarray"} and (ds := self.ds) is not None:
+            return ds
+        if kinds == {"geopandas"} and (gdf := self.gdf) is not None:
+            return gdf
+        if kinds in ({"polars"}, {"pyarrow"}):
+            return self._fetch_as(*kinds)
+        return as_pandas(self.pipeline.data)
+
+    def _fetch_as(self, backend: str) -> Any:
+        """
+        The pipeline's data read in polars or pyarrow by DuckDB itself, with
+        no pandas stop on the way. The query runs on its own, so the shared
+        source is never changed and nothing watches it afterwards.
+        """
+        pipeline = self.pipeline
+        source = pipeline.source
+        if not isinstance(source, DuckDBSource) or pipeline.filters or pipeline.transforms:
+            # ponytail: filters or Python transforms only run through the Pipeline, so convert its pandas data
+            df = as_pandas(pipeline.data)
+            if backend == "polars":
+                return sys.modules["polars"].from_pandas(df)
+            return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+        sql = source.get_sql_expr(pipeline.table)
+        for transform in pipeline.sql_transforms:
+            sql = transform.apply(sql)
+        return source.fetch(sql, source.table_params.get(pipeline.table), backend=backend)
+
+    def _input_kinds(self) -> set[str]:
+        """The libraries of the tables this answer's query read."""
+        kinds = input_kinds(self.source) if self.source is not None else {}
+        if None in kinds or not kinds:
+            return {kinds.get(None, "pandas")}
+        read = set(kinds)
+        if self.sql:
+            with suppress(sqlglot.errors.ParseError):
+                read &= {table.name for table in sqlglot.parse_one(self.sql, read="duckdb").find_all(sqlglot.exp.Table)}
+        return {kinds[table] for table in (read or kinds)}
 
     def to_file(self, path: str | Path, *, overwrite: bool = False) -> Path:
         """
@@ -982,13 +1060,17 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None and self.status == "error":
-            parts = [Alert(object=self.error, severity="error", title=self.value, sizing_mode="stretch_width")]
+        if self._card is None and self.status in ("error", "unanswerable"):
+            # The data lacking what was asked is not a failure, so it is not red
+            severity = "info" if self.status == "unanswerable" else "error"
+            parts = [Alert(object=self.error, severity=severity, title=self.value, sizing_mode="stretch_width")]
             if self.sql:
                 parts.append(Card(
                     Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
                     collapsed=not self._sql_failed, sizing_mode="stretch_width",
                 ))
+            if self._usage_note:
+                parts.append(self._usage_pane())
             self._card = Column(*parts)
         elif self._card is None:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
@@ -1003,8 +1085,26 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
+            if self._usage_note:
+                parts.append(self._usage_pane())
             self._card = Column(*parts)
         return self._card
+
+    @property
+    def _usage_note(self) -> str:
+        """One line on what the answer cost, or nothing when no call was counted."""
+        if self.usage is None or not self.usage.records:
+            return ""
+        note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
+        if self.usage.cost_usd is not None:
+            note += f" · ${self.usage.cost_usd:.4f}"
+        return note
+
+    def _usage_pane(self) -> Markdown:
+        return Markdown(
+            self._usage_note, sizing_mode="stretch_width", margin=(0, 10),
+            styles={"font-size": "0.8em", "opacity": "0.7"},
+        )
 
     def _chart_part(self, view: View):
         try:
@@ -1181,6 +1281,9 @@ class Answer(param.Parameterized):
             card.append(self._sql_html())
         if chart_spec is not None:
             card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
+        if self._usage_note:
+            card.append(f"<p><small>{html.escape(self._usage_note)}</small></p>")
+            bundle["text/markdown"] += f"\n\n*{self._usage_note}*"
         bundle["text/html"] = "\n".join(card)
         return bundle
 

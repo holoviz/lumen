@@ -42,6 +42,7 @@ from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.models import ReplaceLine, RetrySpec
 from lumen.ai.report import ActorTask, TaskGroup
 from lumen.ai.sharing import sharing
+from lumen.ai.usage import Usage, record_usage
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.filters.base import ConstantFilter
 from lumen.pipeline import Pipeline
@@ -55,13 +56,14 @@ from lumen.views.base import VegaLiteView, hvPlotView
 QUESTION = [{"role": "user", "content": "Total value?"}]
 
 
-def _plan(*steps):
+def _plan(*steps, unanswerable=None):
     PlanModel = make_plan_model(["ChatAgent", "SQLAgent"], [])
     (StepModel,) = get_args(PlanModel.__annotations__["steps"])
     return PlanModel(
         chain_of_thought="Query then explain",
         title="Total value",
         steps=[StepModel(actor=actor, instruction=title, title=title) for actor, title in steps],
+        unanswerable=unanswerable,
     )
 
 
@@ -98,6 +100,43 @@ def test_a_chart_that_fails_to_draw_shows_its_error_in_the_card(chart_answer, no
     assert chart.title == "The chart could not be drawn" and "bad encoding" in chart.object
 
 
+@pytest.mark.parametrize("question, reason", [
+    ("What is the elevation of each category?", "No table has an elevation column."),
+    ("What was the value in 2030?", "The table has no dates, so no year can be picked out."),
+    ("Who bought each item?", "No table records buyers."),
+])
+async def test_an_impossible_question_is_unanswerable_without_running(llm, frame_source, question, reason):
+    llm.set_responses([_plan(unanswerable=reason)])
+
+    answer = await aask(frame_source, question, llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert answer.status == "unanswerable" and answer.error == reason
+    assert llm._index == 1  # only the plan was asked for; no agent ran
+    alert = answer.__panel__()[0]
+    assert alert.severity == "info" and reason in alert.object
+    assert reason in answer._static_bundle(None)["text/html"]
+
+
+async def test_a_reason_with_steps_still_runs_the_steps(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain"), unanswerable="Unsure"), "Ten rows."])
+    answer = await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.status == "success" and answer.value == "Ten rows."
+
+
+def test_a_plan_without_the_reason_parses_as_before():
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    assert PlanModel(chain_of_thought="c", title="t", steps=[]).unanswerable is None
+
+
+async def test_retrying_an_unanswerable_answer_tells_the_model_why(llm, frame_source):
+    llm.set_responses([_plan(unanswerable="No table has an elevation column.")])
+    answer = await aask(frame_source, "Elevation?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    with patch("lumen.ai.answer._aask_messages", new_callable=AsyncMock) as ask:
+        await answer.aretry(hint="Use the value column")
+    messages = ask.call_args.args[2]
+    assert "No table has an elevation column." in messages[1]["content"]
+
+
 async def test_a_plan_that_neither_queries_nor_answers_is_an_error(llm, frame_source):
     llm.set_responses([_plan(("ChatAgent", "Explain")), ""])
 
@@ -106,6 +145,59 @@ async def test_a_plan_that_neither_queries_nor_answers_is_an_error(llm, frame_so
     assert answer.status == "error"
     assert "without querying the data" in answer.error
     assert answer.sql is None and answer.view is None
+
+
+def _costing(llm, response, tokens, cost):
+    """A response that reports usage, as a provider does when it answers."""
+    def respond():
+        record_usage(llm, llm.usage, Usage("mock", tokens, tokens // 10, cost_usd=cost))
+        return response
+    return respond
+
+
+async def test_answer_usage_sums_the_calls_it_made(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _costing(llm, _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")), 1000, 0.001),
+        _costing(llm, SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]), 2000, 0.002),
+        _costing(llm, "The total value is 38.", 500, 0.0005),
+    ])
+    record_usage(llm, llm.usage, Usage("mock", 9999, 9999))  # an earlier question, not this one
+
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert len(answer.usage.records) == 3
+    assert (answer.usage.input_tokens, answer.usage.output_tokens) == (3500, 350)
+    assert answer.usage.cost_usd == pytest.approx(0.0035)
+    assert answer._usage_note == "3,500 in / 350 out tokens · $0.0035"
+    assert answer.__panel__()[-1].object == answer._usage_note
+    assert "3,500 in / 350 out tokens" in answer._static_bundle(None)["text/html"]
+
+
+async def test_answer_usage_counts_an_agent_with_its_own_llm(llm, frame_source):
+    chat_llm = MockLLM()
+    chat_llm.set_responses([_costing(chat_llm, "Ten rows.", 400, 0.004)])
+    llm.set_responses([_costing(llm, _plan(("ChatAgent", "Explain")), 100, 0.001)])
+
+    answer = await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(llm=chat_llm), SQLAgent()])
+
+    assert answer.usage.input_tokens == 500 and answer.usage.cost_usd == pytest.approx(0.005)
+
+
+async def test_answer_usage_leaves_out_the_cost_when_a_call_is_unpriced(llm, frame_source):
+    llm.set_responses([
+        _costing(llm, _plan(("ChatAgent", "Explain")), 100, 0.001),
+        _costing(llm, "Ten rows.", 50, None),
+    ])
+    answer = await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.usage.cost_usd is None
+    assert answer._usage_note == "150 in / 15 out tokens"
+
+
+def test_answer_without_counted_calls_has_no_usage_line(chart_answer):
+    assert chart_answer._usage_note == ""
+    assert all("tokens" not in str(getattr(part, "object", "")) for part in chart_answer.__panel__())
+    assert chart_answer.with_spec(chart_answer._chart_spec()[1]).usage.records == []
 
 
 async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):
@@ -1248,12 +1340,113 @@ def test_card_gives_a_responsive_plot_a_height(frame_source, responsive):
     assert (card[0].min_height == 400) is responsive
 
 
+def _answer_over(data, sql):
+    source = read(data)
+    pipeline = Pipeline(source=source.create_sql_expr_source({"result": sql}), table="result")
+    return Answer(question="?", status="success", source=source, sql=sql, pipeline=pipeline)
+
+
+def test_answer_data_is_pandas_for_pandas_input(frame_source):
+    answer = _answer_over({"t": pd.DataFrame({"a": [1, 2]})}, "SELECT a FROM t")
+    assert isinstance(answer.data, pd.DataFrame) and answer.data.a.tolist() == [1, 2]
+
+
+def test_answer_data_is_polars_for_polars_input():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a * 2 AS b FROM data")
+    assert isinstance(answer.data, pl.DataFrame) and answer.data["b"].to_list() == [2, 4]
+
+
+def test_answer_data_in_polars_does_not_rerun_the_answers_pipeline():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a FROM data")
+    assert len(answer.pipeline.data) == 2
+    events = []
+    answer.pipeline.param.watch(events.append, "data")
+    answer.pipeline.source.param.watch(events.append, ["dataframe_backend", "cache_data"])
+    assert isinstance(answer.data, pl.DataFrame)
+    assert events == []
+    assert answer.pipeline.source.dataframe_backend != "polars"
+
+
+def test_reading_answer_data_leaves_no_watchers_on_the_source():
+    pl = pytest.importorskip("polars")
+    answer = _answer_over(pl.DataFrame({"a": [1, 2]}), "SELECT a FROM data")
+    source = answer.pipeline.source
+    def watchers():
+        return sum(len(ws) for kinds in source.param.watchers.values() for ws in kinds.values())
+
+    before = watchers()
+    for _ in range(5):
+        assert answer.data["a"].to_list() == [1, 2]
+    assert watchers() == before
+
+
+def test_answer_data_is_pyarrow_for_pyarrow_input():
+    pa = pytest.importorskip("pyarrow")
+    answer = _answer_over({"t": pa.table({"a": [1, 2]})}, "SELECT a FROM t")
+    assert isinstance(answer.data, pa.Table) and answer.data.column_names == ["a"]
+
+
+def test_answer_data_is_a_geodataframe_for_geopandas_input():
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    places = gpd.GeoDataFrame({"n": ["a"]}, geometry=[Point(13.4, 52.5)], crs="EPSG:4326")
+    answer = _answer_over({"places": places}, "SELECT n, geometry FROM places")
+    assert isinstance(answer.data, gpd.GeoDataFrame) and answer.data.crs.to_epsg() == 4326
+
+
+def test_answer_data_is_a_dataset_for_xarray_input():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+    grid = xr.Dataset({"t": (("lat", "lon"), np.arange(6.0).reshape(2, 3))}, coords={"lat": [0.0, 1.0], "lon": [0.0, 1.0, 2.0]})
+    answer = _answer_over({"t": grid}, "SELECT lat, lon, t FROM t")
+    assert isinstance(answer.data, xr.Dataset) and dict(answer.data.sizes) == {"lat": 2, "lon": 3}
+
+
+def test_answer_data_follows_the_tables_the_query_read():
+    pl = pytest.importorskip("polars")
+    data = {"fast": pl.DataFrame({"a": [1]}), "plain": pd.DataFrame({"b": [2]})}
+    assert isinstance(_answer_over(data, "SELECT a FROM fast").data, pl.DataFrame)
+    # Tables of two types read together come back as pandas
+    mixed = _answer_over(data, "SELECT a, b FROM fast CROSS JOIN plain")
+    assert type(mixed.data) is pd.DataFrame
+
+
+def test_answer_data_imports_no_library_the_input_did_not_use():
+    code = (
+        "import sys, pandas as pd, lumen; from lumen.ai.answer import Answer; from lumen.pipeline import Pipeline\n"
+        "src = lumen.read({'t': pd.DataFrame({'a': [1]})})\n"
+        "p = Pipeline(source=src.create_sql_expr_source({'r': 'SELECT a FROM t'}), table='r')\n"
+        "Answer(question='?', status='success', source=src, sql='SELECT a FROM t', pipeline=p).data\n"
+        "assert not {'polars', 'geopandas', 'xarray'} & set(sys.modules), {'polars', 'geopandas', 'xarray'} & set(sys.modules)"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
 def test_records_turn_every_missing_value_into_null():
     frame = pd.DataFrame({
         "f32": pd.Series([1.0, float("nan")], dtype="float32"),
         "ints": pd.Series([1, None], dtype="Int64"),
     })
     assert _records(frame) == [{"f32": 1.0, "ints": 1}, {"f32": None, "ints": None}]
+
+
+def test_answer_data_keeps_polars_dtypes_that_pandas_would_lose():
+    pl = pytest.importorskip("polars")
+    frame = pl.DataFrame({"a": pl.Series([1, None], dtype=pl.Int64), "c": pl.Series(["x", "y"], dtype=pl.Categorical)})
+    data = _answer_over({"t": frame}, "SELECT a FROM t").data
+    # Through pandas the nullable ints would have become floats
+    assert data.schema["a"] == pl.Int64 and data["a"].to_list() == [1, None]
+
+
+def test_answer_data_follows_a_list_of_polars_frames():
+    pl = pytest.importorskip("polars")
+    source = read([pl.DataFrame({"a": [1, 2]})])
+    pipeline = Pipeline(source=source.create_sql_expr_source({"r": "SELECT a FROM data"}), table="r")
+    answer = Answer(question="?", status="success", source=source, sql="SELECT a FROM data", pipeline=pipeline)
+    assert isinstance(answer.data, pl.DataFrame)
 
 
 def test_failed_answers_drop_exceptions_in_nested_task_groups():

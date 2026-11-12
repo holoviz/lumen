@@ -2814,5 +2814,6 @@ class ExplorerUI(UI):
             if not is_home:
                 context['prev_plan'] = exploration.plan
             plan = await self._coordinator.respond(messages, context)
-            if plan is not None:
+            # An unanswerable plan has no steps, and respond has told the user why
+            if plan is not None and not plan.unanswerable:
                 await self._execute_plan(plan)

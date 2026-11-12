@@ -16,7 +16,7 @@ import traceback
 
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import (
@@ -2090,6 +2090,14 @@ class ClaudeCode(LlmCli):
             raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
         if "result" not in response:
             raise ValueError("Claude Code CLI response did not include a result.")
+        # The CLI can use several models, e.g. a small one for side tasks;
+        # the one that cost the most is the one that wrote the answer
+        used = response.get("modelUsage") or {}
+        model = max(used, key=lambda name: (used[name] or {}).get("costUSD") or 0, default="claude-code")
+        if (usage := parse_usage(response, "anthropic", model, {})) is not None:
+            # The CLI prices its own calls, so no pricing table is needed
+            cost = response.get("total_cost_usd")
+            record_usage(self, self.usage, replace(usage, cost_usd=cost if isinstance(cost, (int, float)) else None))
         return str(response["result"]).strip()
 
 
