@@ -82,6 +82,45 @@ if answer.status == "error":
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
 - `answer.explore()` opens the chat UI on the same source and LLM, with the answer as its first exploration.
 
+## Spatial and gridded questions
+
+GeoDataFrames and GeoParquet files load with their geometry and CRS, and xarray Datasets load as grids:
+
+``` py
+import geopandas as gpd
+import xarray as xr
+
+source = lumen.read({"places": gpd.read_file("places.geojson"), "regions": gpd.read_file("regions.geojson")})
+source.ask("How many places are within 750 km of Berlin?")
+
+grid = lumen.read(xr.open_dataset("era5_t2m.nc"))
+grid.ask("Which month had the highest area-weighted global mean temperature?")
+```
+
+When a table has a geometry column or is a grid, Lumen gives the model extra rules for it: distances and areas in metres on a sphere or an equal-area CRS rather than in degrees, longitude before latitude, a spatial predicate in every join; filters on the grid's dimensions, latitude weights for means and Kelvin to Celsius.
+
+Public remote data reads in one line, without credentials. A box keeps (Geo)Parquet to the area you ask about, read once into memory; `variables` and `sel` cut a Zarr store before any SQL runs:
+
+``` py
+places = lumen.read(
+    "s3://overturemaps-us-west-2/release/2026-10-21.0/theme=places/type=place/*.parquet",
+    bbox=(13.38, 52.51, 13.42, 52.53),  # west, south, east, north
+)
+era5 = lumen.read(
+    "gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2",
+    variables=["2m_temperature"],
+    sel={"time": "2020-07-01T12:00", "latitude": slice(60, 40), "longitude": slice(0, 20)},
+)
+```
+
+`https://` URLs (Source Cooperative's `https://data.source.coop/...` among them) and public `s3://` and `gs://` buckets work; private buckets are not supported yet. Overture's `bbox` column lets the read skip the files outside the box, but a box still scans the release's file metadata, so expect about a minute.
+
+Three more things keep these answers right:
+
+- **A review before the query runs.** Lumen checks the SQL for mistakes that run without an error: a buffer or distance in degrees on longitude and latitude, an area or length that comes out in degrees, two geometry tables joined without a spatial predicate, and a Kelvin column compared with a Celsius value (or the other way round). It tells the model once; a query it resubmits unchanged runs as it is.
+- **Units in the schema.** For a grid, each column's description carries its CF `units`, `standard_name` and, when it is not the standard one, its calendar, e.g. `air -- 4xDaily Air temperature [degK]`.
+- **Tools for common grid operations.** The model can ask for the SQL of a time slice, an area-weighted mean, a monthly (or quarterly, daily, hourly) climatology, anomalies from it, and a unit conversion (K to degC, Pa to hPa, kg m-2 s-1 to mm day-1 and more). Each uses the grid's own dimension names, so `latitude` on ERA5 and `lat` elsewhere, and says so when a 360-day calendar cannot be read as dates in SQL.
+
 ## Maps and grids
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/holoviz/lumen/blob/main/examples/notebooks/maps_and_grids.ipynb)

@@ -280,6 +280,7 @@ class DuckDBSource(BaseSQLSource):
             for c in df.columns
         )
         self._connection.execute('INSTALL spatial;\nLOAD spatial;')
+        self._set_axis_order()
         self._connection.register(f'{name}__wkb', wkb)
         try:
             self._drop_relation('VIEW', name)
@@ -305,10 +306,26 @@ class DuckDBSource(BaseSQLSource):
         except duckdb.CatalogException:
             pass
 
+    def _set_axis_order(self) -> None:
+        """
+        Keep the spatial extension's pre-2.0 axis order, (latitude, longitude)
+        for the sphere and spheroid functions, whatever the DuckDB version.
+        DuckDB 2.0 raises from them until the order is set explicitly, and
+        2.1 will assume (longitude, latitude), which would make the flipped
+        queries Lumen advises wrong without an error. Global, so cursors see it.
+        """
+        try:
+            self._connection.execute('SET GLOBAL geometry_always_xy = false')
+        except duckdb.Error:
+            # Versions before 2.0 have no such setting
+            pass
+
     def _run_initializer(self, init: str) -> None:
         try:
             with self._connection.cursor() as cursor:
                 cursor.execute(init)
+            if re.search(r'\bLOAD\s+spatial\b', init, re.IGNORECASE):
+                self._set_axis_order()
         except duckdb.IOException as e:
             message = str(e)
             if "delete file" in message and "duckdb_extension" in message:
@@ -324,6 +341,8 @@ class DuckDBSource(BaseSQLSource):
                 extension = match.group(1)
                 with self._connection.cursor() as cursor:
                     cursor.execute(f"LOAD {extension};")
+                if extension.lower() == 'spatial':
+                    self._set_axis_order()
                 return
             raise
 
