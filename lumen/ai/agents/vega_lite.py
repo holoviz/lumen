@@ -1,7 +1,10 @@
 import asyncio
 import base64
+import json
 
+from collections import Counter
 from functools import partial
+from time import perf_counter
 from typing import Any
 
 import param
@@ -29,8 +32,9 @@ from ..embeddings import NumpyEmbeddings, OpenAIEmbeddings
 from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..retrieval import (
-    RETRIEVAL_STOP_WORDS, focused_document_queries, fuse_ranked_documents,
-    rerank_documents, retrieval_tokens,
+    RETRIEVAL_STOP_WORDS, documentation_coverage, documentation_shortlist,
+    focused_document_queries, fuse_ranked_documents, rerank_documents,
+    retrieval_tokens,
 )
 from ..utils import (
     category_palette, get_data, get_gridded_metadata, get_schema,
@@ -39,6 +43,18 @@ from ..utils import (
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
+
+
+class DocumentationMatch(BaseModel):
+    requirement: str = Field(max_length=80)
+    document_id: int | None = Field(description="Candidate ID, or null if no candidate covers the requirement.")
+
+
+class DocumentationSelection(BaseModel):
+    matches: list[DocumentationMatch] = Field(min_length=1, max_length=5)
+    follow_up_query: str = Field(default="", max_length=120, description=(
+        "One short documentation query for the most important uncovered requirement, or an empty string."
+    ))
 
 
 class ChartSpec(BaseModel):
@@ -148,6 +164,7 @@ class VegaLiteAgent(BaseCodeAgent):
             "main_altair": {"response_model": AltairSpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "main_altair.jinja2"},
             "code_safety": {"response_model": CodeSafetyCheck, "template": PROMPTS_DIR / "VegaLiteAgent" / "code_safety.jinja2"},
             "interaction_polish": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "interaction_polish.jinja2"},
+            "select_documentation": {"response_model": DocumentationSelection, "template": PROMPTS_DIR / "VegaLiteAgent" / "select_documentation.jinja2"},
             "annotate_plot": {"response_model": VegaLiteSpecUpdate, "template": PROMPTS_DIR / "VegaLiteAgent" / "annotate_plot.jinja2"},
             "revise_output": {"response_model": RetrySpec, "template": PROMPTS_DIR / "VegaLiteAgent" / "revise_output.jinja2"},
         }
@@ -168,6 +185,9 @@ class VegaLiteAgent(BaseCodeAgent):
     n_doc_pages = param.Integer(default=5, bounds=(0, None), doc="""
         Number of documentation sections to inject into the prompt.
         Set to 0 to disable documentation lookup entirely.""")
+
+    llm_doc_selection = param.Boolean(default=False, doc="""
+        Ask the configured LLM to fill documentation gaps in multi-part requests.""")
 
     reserve_base_form = param.Boolean(default=True, doc="""
         Give a score bonus to base chart forms that match the request.""")
@@ -769,6 +789,76 @@ class VegaLiteAgent(BaseCodeAgent):
         )
         return semantic, lexical
 
+    async def _select_doc_pages(
+        self, query: str, candidates: list[dict], baseline: list[dict],
+        store: DuckDBVectorStore, seen_queries: set[str], gaps: list[str],
+        protected_pages: list[dict],
+    ) -> list[dict]:
+        shortlist = documentation_shortlist(candidates, baseline)
+        entries = []
+        for identifier, page in enumerate(shortlist):
+            metadata = page.get("metadata") or {}
+            entries.append({
+                "id": identifier,
+                "page": (metadata.get("page_title") or "")[:60],
+                "section": (metadata.get("section_title") or "")[:100],
+                "excerpt": " ".join(page["text"].split())[:160],
+            })
+        started = perf_counter()
+        messages = [{"role": "user", "content": json.dumps({
+            "request": query, "requirements_to_check": gaps, "candidates": entries,
+        }, ensure_ascii=False)}]
+        system = await self._render_prompt("select_documentation", messages, {})
+        try:
+            selection = await asyncio.wait_for(self.llm.invoke(
+                messages,
+                system=system,
+                response_model=self._get_model("select_documentation"),
+                model_spec=self.llm_spec_key,
+                max_retries=1,
+            ), timeout=10)
+        except UNRECOVERABLE_ERRORS:
+            raise
+        except Exception as exc:  # cleanup: ignore[blind-except] Optional selection supports multiple LLM providers.
+            log_debug(f"Vega-Lite documentation selection fell back to hybrid ranking: {exc!r}")
+            return baseline
+        finally:
+            log_debug(f"Vega-Lite documentation selection took {perf_counter() - started:.3f}s")
+
+        identifiers = [match.document_id for match in selection.matches if match.document_id is not None]
+        if any(not 0 <= identifier < len(shortlist) for identifier in identifiers):
+            log_debug("Vega-Lite documentation selection returned an unknown candidate ID")
+            return baseline
+
+        selected = []
+        selected_keys = set()
+        groups = Counter()
+        follow_up = []
+        missing = any(match.document_id is None for match in selection.matches)
+        rewrite = selection.follow_up_query.strip()
+        if missing and rewrite and rewrite.casefold() not in seen_queries:
+            try:
+                semantic, lexical = await self._search_doc_pages(store, rewrite, 5)
+                extra = fuse_ranked_documents([(None, semantic), (None, lexical)])
+                follow_up = self._drop_forbidden_examples(extra[:1])
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as exc:  # cleanup: ignore[blind-except] A failed optional search leaves the selected docs usable.
+                log_debug(f"Vega-Lite documentation follow-up failed: {exc!r}")
+
+        for page in [*protected_pages, *(shortlist[i] for i in dict.fromkeys(identifiers)), *follow_up, *baseline]:
+            if len(selected) >= self.n_doc_pages:
+                break
+            metadata = page.get("metadata") or {}
+            slug = metadata.get("slug")
+            key = (slug, metadata.get("section_title"), page["text"])
+            if key in selected_keys or (slug and groups[slug] >= self.doc_pages_per_slug):
+                continue
+            selected.append(page)
+            selected_keys.add(key)
+            groups[slug] += 1
+        return selected or baseline
+
     async def _get_doc_pages(self, user_query: str) -> list[dict]:
         if not self.n_doc_pages:
             log_debug("Vega-Lite docs lookup disabled (n_doc_pages=0)")
@@ -804,6 +894,18 @@ class VegaLiteAgent(BaseCodeAgent):
         candidates = self._drop_forbidden_examples(candidates)
         compatible = sum(len(page.get("metadata", {}).get("examples") or ()) for page in candidates)
         doc_pages = self._rerank_doc_pages(user_query, candidates)
+        if (
+            self.llm_doc_selection and self.llm is not None and len(focused_queries) > 1
+            and len(candidates) > len(doc_pages) and len(user_query) <= 1600
+        ):
+            coverage = documentation_coverage(focused_queries, doc_pages)
+            gaps = [clause for clause in focused_queries if clause not in coverage]
+            if gaps:
+                doc_pages = await self._select_doc_pages(
+                    user_query, candidates, doc_pages, vector_store,
+                    {query.strip().casefold() for query, _ in queries},
+                    gaps, list(coverage.values()),
+                )
         doc_pages = self._dedupe_examples(doc_pages)
         deduped = sum(len(page.get("metadata", {}).get("examples") or ()) for page in doc_pages)
         sources = len({page.get("metadata", {}).get("slug") for page in doc_pages})

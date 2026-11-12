@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-from collections import Counter
+from collections import Counter, defaultdict
+from itertools import zip_longest
 from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -97,6 +98,49 @@ def focused_document_queries(query: str, limit: int = 4) -> list[str]:
 
     # De-duplicate without changing the order in which the user stated needs.
     return list(dict.fromkeys(clauses))[:limit]
+
+
+def documentation_coverage(queries: list[str], pages: list[dict]) -> dict[str, dict]:
+    """Return the first section with positive textual evidence for each covered clause."""
+    evidence = []
+    for page in pages:
+        metadata = page.get("metadata") or {}
+        heading = metadata.get("section_title") or ""
+        # A setting or a section describing removal is weak evidence for
+        # implementing the operation itself.
+        if heading.startswith("`") or _tokens(heading) & {"disable", "remove", "suppress"}:
+            continue
+        evidence.append((page, _tokens(" ".join((
+            metadata.get("page_title") or "", heading,
+            metadata.get("description") or "", page["text"],
+        )))))
+    coverage = {}
+    for query in queries:
+        query_tokens = _tokens(query)
+        for page, terms in evidence:
+            if query_tokens <= terms:
+                coverage[query] = page
+                break
+    return coverage
+
+
+def documentation_shortlist(candidates: list[dict], preferred: list[dict]) -> list[dict]:
+    """Include alternate sections from the pages represented in the first pass."""
+    shortlist = preferred[:16]
+    groups = defaultdict(list)
+    for candidate in candidates:
+        metadata = candidate.get("metadata") or {}
+        if metadata.get("slug") and not str(metadata.get("section_title", "")).startswith("`"):
+            groups[metadata["slug"]].append(candidate)
+
+    slugs = list(dict.fromkeys(
+        slug for doc in shortlist if (slug := (doc.get("metadata") or {}).get("slug"))
+    ))[:3]
+    alternatives = [[doc for doc in groups[slug] if doc not in shortlist][:4] for slug in slugs]
+    # Interleave pages so one long reference page cannot take all the slots.
+    for row in zip_longest(*alternatives):
+        shortlist.extend(doc for doc in row if doc is not None)
+    return shortlist[:16]
 
 
 def fuse_ranked_documents(

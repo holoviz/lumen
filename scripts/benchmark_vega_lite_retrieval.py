@@ -8,6 +8,7 @@ from statistics import median
 from time import perf_counter
 
 from lumen.ai.agents.vega_lite import VegaLiteAgent
+from lumen.ai.llm import CodexCli
 
 PROMPTS = [
     "Plot monthly revenue as a line chart.",
@@ -20,8 +21,9 @@ PROMPTS = [
 ]
 
 
-async def benchmark(store: str, repeats: int) -> None:
-    agent = VegaLiteAgent(vector_store_path=store)
+async def benchmark(store: str, repeats: int, llm_selection: bool) -> None:
+    llm = CodexCli() if llm_selection else None
+    agent = VegaLiteAgent(vector_store_path=store, llm=llm, llm_doc_selection=llm_selection)
     await agent._get_doc_pages(PROMPTS[0])
     for prompt in PROMPTS:
         times = []
@@ -43,5 +45,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("store", help="Path to the Vega-Lite NumPy documentation store")
     parser.add_argument("--repeats", type=int, choices=range(1, 101), default=5)
+    parser.add_argument("--llm-selection", action="store_true", help="Enable selection through Codex CLI")
     args = parser.parse_args()
-    asyncio.run(benchmark(args.store, args.repeats))
+    asyncio.run(benchmark(args.store, args.repeats, args.llm_selection))

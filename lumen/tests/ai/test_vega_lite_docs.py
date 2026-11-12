@@ -9,9 +9,58 @@ except ModuleNotFoundError:
 
 import datetime
 
-from lumen.ai.agents.vega_lite import VegaLiteAgent
+from unittest.mock import AsyncMock
+
+from lumen.ai.agents.vega_lite import (
+    DocumentationMatch, DocumentationSelection, VegaLiteAgent,
+)
 from lumen.ai.config import PROMPTS_DIR
+from lumen.ai.retrieval import documentation_coverage
 from lumen.ai.utils import render_template
+
+
+@pytest.mark.parametrize("valid_id", [True, False])
+async def test_documentation_selection_follows_up_once_or_falls_back(llm, valid_id):
+    agent = VegaLiteAgent(llm=llm)
+    baseline = [{"text": "Overview", "metadata": {"slug": "guide", "section_title": "Introduction"}}]
+    sibling = {"text": "Detailed instructions", "metadata": {"slug": "guide", "section_title": "Configuration"}}
+    extra = {"text": "Missing topic", "metadata": {"slug": "extra"}}
+    llm.set_responses([DocumentationSelection(
+        matches=[
+            DocumentationMatch(requirement="configure", document_id=1 if valid_id else -1),
+            DocumentationMatch(requirement="missing", document_id=None),
+        ],
+        follow_up_query="missing topic",
+    )])
+    store = AsyncMock()
+    store.query.return_value = [extra]
+    store.query_lexical.return_value = [extra]
+
+    result = await agent._select_doc_pages(
+        "Configure and add missing topic", [*baseline, sibling], baseline,
+        store, set(), ["configure", "missing"], [],
+    )
+
+    if valid_id:
+        assert [page["text"] for page in result] == ["Detailed instructions", "Missing topic", "Overview"]
+        store.query.assert_awaited_once_with("missing topic", top_k=5)
+        store.query_lexical.assert_awaited_once_with("missing topic", top_k=5)
+    else:
+        assert result == baseline
+        store.query.assert_not_awaited()
+        store.query_lexical.assert_not_awaited()
+
+
+def test_documentation_coverage_ignores_negative_and_property_headings():
+    pages = [
+        {"text": "Scatter plot with points", "metadata": {"section_title": "Scatter Plot"}},
+        {"text": "Disable tooltips on marks", "metadata": {"section_title": "Disable tooltips"}},
+        {"text": "Resize the brush selection", "metadata": {"section_title": "`zoom`"}},
+    ]
+
+    assert documentation_coverage(
+        ["scatter", "brush selection", "tooltip"], pages,
+    ) == {"scatter": pages[0]}
 
 
 def test_chart_title_promotion_keeps_selected_sections():
