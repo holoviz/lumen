@@ -847,12 +847,36 @@ def geometry_to_wkt(df):
     return df
 
 
-def geometry_to_geojson(df):
+def geometry_to_geojson(df, clockwise: bool = False):
     """Return a GeoDataFrame as a GeoJSON FeatureCollection dict.
 
     Shapely geometry cannot be sent to the browser, so views that render
     geometry emit a FeatureCollection instead. ``default=str`` is required
     because to_json defers to json.dumps, which cannot encode the Timestamps
     and Decimals a SQL source yields.
+
+    ``clockwise`` winds polygons clockwise, as Vega's d3-geo expects: on its
+    sphere a counter-clockwise ring, the GeoJSON convention (RFC 7946) shapely
+    follows, encloses everything outside the shape, and the map fills solid.
+    Leave it off for consumers of plain GeoJSON, e.g. deck.gl.
     """
+    if clockwise:
+        shapely = try_import("shapely", load=False)
+        geometry = df.geometry.name
+        if Version(shapely.__version__) >= Version("2.1"):
+            oriented = shapely.orient_polygons(df.geometry.array, exterior_cw=True)
+        else:
+            # shapely before 2.1: orient each geometry, exterior ring clockwise
+            from shapely.geometry import MultiPolygon, Polygon
+            from shapely.geometry.polygon import orient
+
+            def wind(geom):
+                if isinstance(geom, Polygon):
+                    return orient(geom, sign=-1.0)
+                if isinstance(geom, MultiPolygon):
+                    return MultiPolygon([orient(part, sign=-1.0) for part in geom.geoms])
+                return geom
+
+            oriented = [wind(geom) for geom in df.geometry]
+        df = df.assign(**{geometry: oriented})
     return json.loads(df.to_json(default=str))

@@ -280,6 +280,7 @@ class DuckDBSource(BaseSQLSource):
             for c in df.columns
         )
         self._connection.execute('INSTALL spatial;\nLOAD spatial;')
+        self._set_axis_order()
         self._connection.register(f'{name}__wkb', wkb)
         try:
             self._drop_relation('VIEW', name)
@@ -305,10 +306,26 @@ class DuckDBSource(BaseSQLSource):
         except duckdb.CatalogException:
             pass
 
+    def _set_axis_order(self) -> None:
+        """
+        Keep the spatial extension's pre-2.0 axis order, (latitude, longitude)
+        for the sphere and spheroid functions, whatever the DuckDB version.
+        DuckDB 2.0 raises from them until the order is set explicitly, and
+        2.1 will assume (longitude, latitude), which would make the flipped
+        queries Lumen advises wrong without an error. Global, so cursors see it.
+        """
+        try:
+            self._connection.execute('SET GLOBAL geometry_always_xy = false')
+        except duckdb.Error:
+            # Versions before 2.0 have no such setting
+            pass
+
     def _run_initializer(self, init: str) -> None:
         try:
             with self._connection.cursor() as cursor:
                 cursor.execute(init)
+            if re.search(r'\bLOAD\s+spatial\b', init, re.IGNORECASE):
+                self._set_axis_order()
         except duckdb.IOException as e:
             message = str(e)
             if "delete file" in message and "duckdb_extension" in message:
@@ -324,6 +341,8 @@ class DuckDBSource(BaseSQLSource):
                 extension = match.group(1)
                 with self._connection.cursor() as cursor:
                     cursor.execute(f"LOAD {extension};")
+                if extension.lower() == 'spatial':
+                    self._set_axis_order()
                 return
             raise
 
@@ -649,7 +668,7 @@ class DuckDBSource(BaseSQLSource):
         else:
             rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
-            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
+            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self._missing_crs(sql_expr, d[0]))
             for d in rel.description if str(d[1]).startswith('GEOMETRY')
         }
         geom_cols = list(geom_crs)
@@ -675,6 +694,44 @@ class DuckDBSource(BaseSQLSource):
                 )
             df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
         return df
+
+    def _missing_crs(self, sql_expr: str, column: str) -> str | None:
+        """
+        The CRS of a result geometry column whose type carries none.
+
+        DuckDB drops the CRS through ST_Transform, so a transformed result
+        takes its target. Otherwise it is the source's geometry_crs, or the
+        one CRS every geometry column on the connection shares.
+        """
+        try:
+            parsed = sqlglot.parse_one(sql_expr, read='duckdb')
+        except sqlglot.errors.SqlglotError:
+            parsed = None
+        if parsed is not None:
+            select = parsed if isinstance(parsed, sqlglot.exp.Select) else parsed.find(sqlglot.exp.Select)
+            projected = [p for p in (select.expressions if select else []) if p.alias_or_name == column]
+            # The column's own projection, outermost transform first, else the query's only target
+            scopes = projected or [parsed]
+            targets = [
+                f.expressions[2].name for scope in scopes for f in scope.find_all(sqlglot.exp.Anonymous)
+                if f.name.upper() == 'ST_TRANSFORM' and len(f.expressions) > 2
+                and isinstance(f.expressions[2], sqlglot.exp.Literal)
+            ]
+            if projected and targets:
+                return targets[0]
+            if len(set(targets)) == 1:
+                return targets[0]
+            if targets:
+                return None
+        if self.geometry_crs:
+            return self.geometry_crs
+        # Its own cursor: the caller's cursor still holds the result being fetched
+        with self._connection.cursor() as meta:
+            types = meta.execute(
+                "SELECT DISTINCT data_type FROM information_schema.columns WHERE data_type LIKE 'GEOMETRY(%'"
+            ).fetchall()
+        crs = {m.group(1) for (kind,) in types if (m := GEOMETRY_CRS.search(kind))}
+        return crs.pop() if len(crs) == 1 else None
 
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:

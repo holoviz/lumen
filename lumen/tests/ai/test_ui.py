@@ -1629,6 +1629,16 @@ def test_read_keeps_a_chunked_dataset_lazy():
     assert source._dataset.t.chunks is not None
 
 
+def test_read_geojson_names_its_crs_on_the_column_type(tmp_path):
+    gpd = pytest.importorskip('geopandas')
+    from shapely.geometry import Point
+    gpd.GeoDataFrame({'n': ['a']}, geometry=[Point(13.4, 52.5)], crs='EPSG:4326').to_file(tmp_path / 'p.geojson')
+    source = read(str(tmp_path / 'p.geojson'))
+    table = source.get_tables()[0]
+    types = dict((row[0], row[1]) for row in source._connection.execute(f'DESCRIBE "{table}"').fetchall())
+    assert types['geometry'] == "GEOMETRY('EPSG:4326')"
+
+
 def test_read_duckdb_connection():
     conn = duckdb.connect()
     conn.execute('CREATE TABLE t AS SELECT * FROM range(3) r(a)')

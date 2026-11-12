@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import warnings
 
 from typing import get_args
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -385,7 +386,7 @@ async def test_default_agents_add_hvplot_for_gridded_data():
     xr = pytest.importorskip("xarray")
     pytest.importorskip("xarray_sql")
     ds = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
-    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read(ds)))
+    assert [type(a).__name__ for a in await _default_agents(read(ds))] == ["ChatAgent", "SQLAgent", "VegaLiteAgent", "hvPlotAgent"]
 
 
 async def test_default_agents_add_hvplot_for_geometry():
@@ -395,9 +396,21 @@ async def test_default_agents_add_hvplot_for_geometry():
     assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read({"shapes": gdf})))
 
 
+async def test_default_agents_add_hvplot_for_lon_lat_columns():
+    source = read({"quakes": pd.DataFrame({"Lat": [1.0], "lon": [2.0], "mag": [4.5]})})
+    names = [type(a).__name__ for a in await _default_agents(source)]
+    assert names == ["ChatAgent", "SQLAgent", "VegaLiteAgent", "hvPlotAgent"]
+
+
 async def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
     with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
         assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(frame_source))
+
+
+async def test_default_agents_skip_hvplot_when_the_probe_fails(frame_source):
+    with patch.object(type(frame_source), "execute", side_effect=RuntimeError("syntax error")):
+        names = [type(a).__name__ for a in await _default_agents(frame_source)]
+    assert names == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
 
 
 def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
@@ -1090,6 +1103,148 @@ async def test_run_names_the_first_step_until_one_reports():
 
     assert display.call_args.args[0] == {"text/plain": "Revising the chart"}
     assert any(text.startswith("Revising the chart (") for text in handle.updates)
+
+
+def _geo_answer(crs="EPSG:4326"):
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    source = read({"places": gpd.GeoDataFrame({"n": ["a", "b"]}, geometry=[Point(13.4, 52.5), Point(2.3, 48.9)], crs=crs)})
+    return Answer(question="?", status="success", pipeline=Pipeline(source=source, table="places"))
+
+
+def test_answer_gdf_keeps_the_crs():
+    gdf = _geo_answer().gdf
+    assert gdf.crs.to_epsg() == 4326 and len(gdf) == 2
+
+
+def test_answer_gdf_is_none_without_geometry(frame_source):
+    assert Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).gdf is None
+
+
+def test_answer_gdf_warns_once_when_lon_lat_has_no_crs():
+    answer = _geo_answer(crs=None)
+    with pytest.warns(UserWarning, match="looks like longitude and latitude"):
+        assert answer.gdf.crs is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert answer.gdf.crs is None
+
+
+def _grid_answer(sql):
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+    grid = xr.Dataset(
+        {"t": (("time", "lat", "lon"), np.arange(24.0).reshape(2, 3, 4))},
+        coords={"time": [0, 1], "lat": [10.0, 20.0, 30.0], "lon": [0.0, 1.0, 2.0, 3.0]},
+    )
+    source = read({"t": grid})
+    derived = source.create_sql_expr_source({"result": sql})
+    return grid, Answer(question="?", status="success", pipeline=Pipeline(source=derived, table="result"))
+
+
+def test_answer_ds_is_the_gridded_result():
+    grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    ds = answer.ds
+    assert dict(ds.sizes) == {"lat": 3, "lon": 4}
+    assert (ds.t.transpose("lat", "lon").sortby(["lat", "lon"]).values == grid.t.mean("time").values).all()
+
+
+def test_answer_ds_is_none_for_tables(frame_source):
+    assert Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).ds is None
+
+
+@pytest.mark.parametrize("suffix", [".parquet", ".geojson", ".gpkg"])
+def test_to_file_writes_geometry_with_its_crs(tmp_path, suffix):
+    gpd = pytest.importorskip("geopandas")
+    path = _geo_answer().to_file(tmp_path / f"places{suffix}")
+    back = gpd.read_parquet(path) if suffix == ".parquet" else gpd.read_file(path)
+    assert back.crs.to_epsg() == 4326 and list(back["n"]) == ["a", "b"]
+
+
+def test_to_file_refuses_to_overwrite_unless_asked(tmp_path, frame_source):
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"))
+    path = answer.to_file(tmp_path / "t.csv")
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        answer.to_file(path)
+    assert answer.to_file(path, overwrite=True) == path
+
+
+def test_to_file_warns_when_the_data_was_cut_at_max_rows(tmp_path, frame_source):
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"), truncated_at=2)
+    with pytest.warns(UserWarning, match="first 2 rows"):
+        answer.to_file(tmp_path / "t.csv")
+
+
+def test_to_file_writes_a_table(tmp_path, frame_source):
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"))
+    assert len(pd.read_csv(answer.to_file(tmp_path / "t.csv"))) == 3
+    assert len(pd.read_parquet(answer.to_file(tmp_path / "t.parquet"))) == 3
+    with pytest.raises(ValueError, match="hold geometry"):
+        answer.to_file(tmp_path / "t.geojson")
+    with pytest.raises(ValueError, match="hold grids"):
+        answer.to_file(tmp_path / "t.zarr")
+    with pytest.raises(ValueError, match=r"Cannot write '\.xlsx'"):
+        answer.to_file(tmp_path / "t.xlsx")
+
+
+@pytest.mark.parametrize("suffix", [".zarr", ".nc"])
+def test_to_file_writes_a_grid(tmp_path, suffix):
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("zarr" if suffix == ".zarr" else "netCDF4")
+    _, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    path = answer.to_file(tmp_path / f"g{suffix}")
+    back = xr.open_zarr(path, consolidated=False) if suffix == ".zarr" else xr.open_dataset(path)
+    assert dict(back.sizes) == {"lat": 3, "lon": 4}
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4326", "EPSG:3857"])
+def test_a_map_answer_gets_a_static_geoshape(crs):
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    points = gpd.GeoDataFrame({"v": [1.0, 2.0]}, geometry=[Point(13.4, 52.5), Point(2.3, 48.9)], crs="EPSG:4326").to_crs(crs)
+    answer = Answer(question="Where?", status="success", pipeline=Pipeline(source=read({"pts": points}), table="pts"))
+    bundle = answer._chart_bundle()
+    spec = bundle["application/vnd.vegalite.v5+json"]
+    assert spec["mark"]["type"] == "geoshape" and spec["encoding"]["color"]["field"] == "properties.v"
+    assert spec["encoding"]["color"]["title"] == "v"
+    lon, lat = spec["data"]["values"][0]["geometry"]["coordinates"]
+    # Back in longitude and latitude, whatever CRS the answer came in
+    assert abs(lon - 13.4) < 1e-6 and abs(lat - 52.5) < 1e-6
+    assert base64.b64decode(bundle["image/png"])[:4] == b"\x89PNG"
+
+
+def test_map_uses_lonboard_when_installed():
+    pytest.importorskip("lonboard")
+    assert type(_geo_answer().map()).__name__ == "Map"
+
+
+def test_map_falls_back_to_hvplot_on_a_basemap(monkeypatch):
+    pytest.importorskip("geoviews")
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "lonboard" else real(name, *a))
+    plot = _geo_answer().map()
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+
+
+def test_map_needs_geometry(frame_source):
+    with pytest.raises(ValueError, match="no geometry to map"):
+        Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny")).map()
+
+
+def test_answer_ds_has_sorted_coordinates():
+    _, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon ORDER BY lat DESC, lon DESC")
+    ds = answer.ds
+    assert list(ds.lat.values) == [10.0, 20.0, 30.0] and list(ds.lon.values) == [0.0, 1.0, 2.0, 3.0]
+
+
+@pytest.mark.parametrize("responsive", [True, False])
+def test_card_gives_a_responsive_plot_a_height(frame_source, responsive):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value", responsive=responsive)
+    card = Answer(question="?", status="success", pipeline=pipeline, view=view).__panel__()
+    assert (card[0].min_height == 400) is responsive
 
 
 def test_records_turn_every_missing_value_into_null():

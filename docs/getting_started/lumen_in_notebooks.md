@@ -119,7 +119,24 @@ Three more things keep these answers right:
 
 - **A review before the query runs.** Lumen checks the SQL for mistakes that run without an error: a buffer or distance in degrees on longitude and latitude, an area or length that comes out in degrees, two geometry tables joined without a spatial predicate, and a Kelvin column compared with a Celsius value (or the other way round). It tells the model once; a query it resubmits unchanged runs as it is.
 - **Units in the schema.** For a grid, each column's description carries its CF `units`, `standard_name` and, when it is not the standard one, its calendar, e.g. `air -- 4xDaily Air temperature [degK]`.
-- **Tools for common grid operations.** The model can ask for the SQL of a time slice, an area-weighted mean, a monthly (or seasonal, daily, hourly) climatology, anomalies from it, and a unit conversion (K to degC, Pa to hPa, kg m-2 s-1 to mm day-1 and more). Each uses the grid's own dimension names, so `latitude` on ERA5 and `lat` elsewhere, and says so when a 360-day calendar cannot be read as dates in SQL.
+- **Tools for common grid operations.** The model can ask for the SQL of a time slice, an area-weighted mean, a monthly (or quarterly, daily, hourly) climatology, anomalies from it, and a unit conversion (K to degC, Pa to hPa, kg m-2 s-1 to mm day-1 and more). Each uses the grid's own dimension names, so `latitude` on ERA5 and `lat` elsewhere, and says so when a 360-day calendar cannot be read as dates in SQL.
+
+## Maps and grids
+
+``` bash
+pip install geopandas geoviews lonboard
+```
+
+An answer over a table with a geometry column, or over an xarray Dataset, has a few more fields:
+
+| Field | What it is |
+|-------|------------|
+| `gdf` | The result as a GeoDataFrame with its CRS, or `None` without geometry. Warns once when the geometry looks like longitude and latitude but has no CRS |
+| `ds` | The result as an xarray Dataset, for answers over gridded data, or `None` |
+| `to_file(path)` | Writes the result by extension (it will not replace an existing file unless you pass `overwrite=True`, and warns when the data was cut at `max_rows`): `.parquet` (GeoParquet when there is geometry), `.geojson`, `.gpkg`, `.csv`, or `.zarr` and `.nc` for gridded answers |
+| `map()` | The geometry on an interactive map: lonboard when installed, otherwise hvPlot on a basemap |
+
+Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
 
 ## Settings
 

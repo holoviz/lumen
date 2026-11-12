@@ -1919,3 +1919,40 @@ async def test_execute_with_timeout_interrupts_the_query():
     with pytest.raises(duckdb.ConnectionException):
         cursors[0].execute("SELECT 1")
     assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]
+
+
+def _crs_source(crs="EPSG:4326"):
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    from shapely.geometry import Point
+    places = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Point(13.4, 52.5)], crs=crs)
+    return DuckDBSource.from_df({"places": places})
+
+
+@pytest.mark.parametrize("query, epsg", [
+    # DuckDB drops the CRS through ST_Transform, so the target stands in
+    ("SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', always_xy := true) AS geometry FROM places", 3857),
+    ("SELECT * FROM (SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) AS geometry FROM places)", 6933),
+    # A built geometry takes the one CRS the source's geometry shares
+    ("SELECT ST_Point(10, 50) AS geometry", 4326),
+    ("SELECT ST_Buffer(geometry, 1) AS geometry FROM places", 4326),
+], ids=["transform", "transform-in-subquery", "constructed", "kept"])
+def test_result_geometry_keeps_a_crs(query, epsg):
+    assert _crs_source().execute(query).crs.to_epsg() == epsg
+
+
+def test_result_geometry_crs_is_left_unset_when_ambiguous():
+    source = _crs_source()
+    query = (
+        "SELECT * FROM (SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', always_xy := true) AS geometry FROM places "
+        "UNION ALL SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) FROM places)"
+    )
+    assert source.execute(query).crs is None
+
+
+def test_spheroid_functions_run_on_a_spatial_source_whatever_the_duckdb_version():
+    # DuckDB 2.0 raises from them until the axis order is set; Lumen keeps (lat, lon)
+    source = DuckDBSource(uri=":memory:", initializers=["INSTALL spatial;", "LOAD spatial;"])
+    triangle = "ST_GeomFromText('POLYGON((13 52, 14 52, 14 53, 13 52))')"
+    area = source.execute(f"SELECT ST_Area_Spheroid(ST_FlipCoordinates({triangle})) AS a")["a"].iloc[0]
+    assert 3.70e9 < area < 3.86e9
