@@ -540,7 +540,9 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     name = returns.__name__ if isinstance(returns, type) else str(returns)
     content = f"Question: {answer.question}\n\nAnswer: {answer.value}"
     if df is not None and sharing.share == "sample":
-        content += f"\n\nThe data the answer was written from:\n{mask_frame(df.head(20)).to_csv(index=False)}"
+        # Same text on every platform, so a recorded prompt replays everywhere
+        csv = mask_frame(df.head(20)).to_csv(index=False, lineterminator="\n")
+        content += f"\n\nThe data the answer was written from:\n{csv}"
     try:
         with llm.capture_usage() as usage:
             out = await llm.invoke(

@@ -79,9 +79,11 @@ def about(question: str, rows: pd.DataFrame) -> str:
         lambda v: v[:ABOUT_CELL] + "..." if isinstance(v, str) and len(v) > ABOUT_CELL else v
     )
     note = "" if len(rows) <= ABOUT_ROWS else f" (the first {ABOUT_ROWS} shown)"
+    # Same text on every platform, so a recorded prompt replays everywhere
+    csv = shown.to_csv(index=False, lineterminator="\n")
     return (
         f"{question}\n\nThis is about {len(rows)} row{'s' if len(rows) != 1 else ''} of the previous answer's data"
-        f"{note}:\n{shown.to_csv(index=False)}\n"
+        f"{note}:\n{csv}\n"
         "If these rows hold what is asked, answer from them without a new query. "
         "Otherwise query the data, filtering on these rows' values."
     )

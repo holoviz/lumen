@@ -2442,7 +2442,11 @@ def test_the_drawn_hvplot_chart_reports_clicks(frame_source, many_points, kind, 
     answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
     answer.__panel__().get_root()
     plots = [plot for plot, _ in view._panel._plots.values()]
-    assert any(callback in [type(c).__name__ for c in plot.callbacks] for plot in plots)
+    seen = [[type(c).__name__ for c in plot.callbacks] for plot in plots]
+    assert any(callback in names for names in seen), (
+        f"{callback} not found: pane object {type(view._panel.object).__name__}, "
+        f"{len(plots)} plots with callbacks {seen}, streams {[type(s).__name__ for s in answer._streams]}"
+    )
 
 
 def test_records_turn_every_missing_value_into_null():
