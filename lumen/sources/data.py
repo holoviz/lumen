@@ -135,7 +135,8 @@ def _remote_name(url: str) -> str:
     """A table name for a remote location: Overture's type=place gives place, else the file or store name."""
     if match := re.search(r"type=([^/]+)", url):
         return match.group(1)
-    stem = url.rstrip("/").rsplit("/", 1)[-1]
+    # A local path on Windows separates with backslashes
+    stem = url.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
     return normalize_table_name(re.sub(r"(\.zarr(-v[23])?|\.parquet|\*.*)$", "", stem) or "data")
 
 

@@ -29,6 +29,7 @@ def test_public_buckets_are_read_over_https(url, expected):
     ("s3://overturemaps-us-west-2/release/2026-10-21.0/theme=places/type=place/*.parquet", "place"),
     ("gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2", "1959_2022_full_37_1h_0p25deg_chunk_1"),
     ("https://data.source.coop/cholmes/eurocrops/fields.parquet", "fields"),
+    ("C:\\Users\\runner\\AppData\\Local\\Temp\\pytest-0\\places.parquet", "places"),
 ])
 def test_a_remote_location_names_its_table(url, expected):
     assert data_module._remote_name(url) == expected
