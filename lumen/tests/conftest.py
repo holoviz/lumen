@@ -25,6 +25,7 @@ def pytest_configure():
     if (duckdb := try_import("duckdb")) and not os.environ.get("PYTEST_XDIST_WORKER"):
         duckdb.execute("INSTALL sqlite")
         duckdb.execute("INSTALL httpfs")
+        duckdb.execute("INSTALL spatial")
 
 
 @pytest.fixture
