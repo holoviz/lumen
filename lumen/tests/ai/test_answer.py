@@ -917,8 +917,9 @@ def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_an
 def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     card = chart_answer.__panel__()
     assert card is chart_answer.__panel__()
-    text, _chart, sql, spec = card
+    text, _chart, ask_box, sql, spec = card
     assert text.object.startswith("**B** is largest.")
+    assert not ask_box.visible
     assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
     assert spec.title == "Spec" and spec.collapsed
     code = spec[0].object
@@ -1070,7 +1071,7 @@ def test_answer_without_a_chart_has_no_spec(frame_source):
 
 def test_answer_card_skips_empty_text(chart_answer):
     chart_answer.value = ""
-    assert len(chart_answer.__panel__()) == 3
+    assert len(chart_answer.__panel__()) == 4
 
 
 def test_importing_answer_does_not_load_the_panel_extension():
@@ -2110,6 +2111,326 @@ def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable
     assert titles == ["## Value by category?", "## Total value?", "## Wingspan?"]
     assert refinable_answer._editor in report.views
     assert "## Total value?" in report.to_notebook()
+
+
+def test_a_vega_lite_chart_reports_clicks_on_its_dimension_fields():
+    from lumen.ai.selection import CLICK, with_click as _with_click
+    spec = {"mark": "bar", "encoding": {
+        "x": {"field": "category", "type": "nominal"},
+        "y": {"field": "value", "aggregate": "mean", "type": "quantitative"},
+        "color": {"field": "island", "type": "nominal"},
+    }}
+    assert _with_click(spec)["params"] == [{"name": CLICK, "select": {"type": "point", "fields": ["category", "island"]}}]
+    assert _with_click(spec)["encoding"]["opacity"] == {"condition": {"param": CLICK, "value": 1}, "value": 0.35}
+    faded = {**spec, "encoding": {**spec["encoding"], "opacity": {"value": 0.5}}}
+    assert _with_click(faded)["encoding"]["opacity"] == {"value": 0.5}
+    layered = _with_click({"encoding": spec["encoding"], "layer": [{"mark": "bar"}, {"mark": "text"}]})
+    assert layered["layer"][0]["params"][0]["select"]["fields"] == ["category", "island"]
+    assert "params" not in layered["layer"][1]
+    facet = {"facet": {"field": "island"}, "spec": spec}
+    assert _with_click(facet) is facet
+    assert _with_click(_with_click(spec)) == _with_click(spec)
+
+
+def test_a_click_on_a_vega_lite_chart_selects_its_rows_and_shows_the_ask_box(chart_answer):
+    from lumen.ai.selection import CLICK
+    chart_answer.pipeline = chart_answer.view.pipeline
+    card = chart_answer.__panel__()
+    box = card[2]
+    pane = chart_answer.view._panel
+    assert not box.visible and CLICK in pane._selections
+
+    pane.selection.param.update(**{CLICK: [{"category": "A"}]})
+    assert list(chart_answer.selection["value"]) == [10.5, 7.5]
+    assert box.visible and box[0].object == "**Selected:** 2 rows"
+
+    pane.selection.param.update(**{CLICK: [{"category": "B"}]})
+    assert box[0].object == "**Selected:** category: B, value: 20"
+    pane.selection.param.update(**{CLICK: []})
+    assert chart_answer.selection is None and not box.visible
+
+
+def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = hvPlotView(pipeline=pipeline, kind="scatter", x="category", y="value")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    stream = answer._streams[-1]
+    stream.event(index=[1, 2])
+    assert list(answer.selection["value"]) == [20.0, 7.5]
+    stream.event(index=[])
+    assert answer.selection is None
+
+
+def test_a_box_over_a_by_chart_selects_across_its_categories():
+    source = read({"t": pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [1.0, 2.0, 3.0, 4.0], "kind": ["a", "b", "a", "b"]})})
+    pipeline = Pipeline(source=source, table="t")
+    view = hvPlotView(pipeline=pipeline, kind="scatter", x="x", y="y", by="kind")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    first, second = answer._streams[-2:]
+    first.event(index=[0])
+    second.event(index=[1])
+    assert sorted(answer.selection["x"]) == [1.0, 4.0] and set(answer.selection["kind"]) == {"a", "b"}
+    first.event(index=[])
+    assert list(answer.selection["kind"]) == ["b"]
+
+
+def test_the_nearest_point_works_on_dates_and_scales_each_axis():
+    from lumen.ai.selection import _nearest
+    df = pd.DataFrame({
+        "when": pd.to_datetime(["2024-01-01", "2024-06-01", "2024-12-01"]), "value": [0.0, 1000.0, 2000.0],
+    })
+    # In data units the value axis would swamp the date; scaled, the date decides
+    tapped = pd.Timestamp("2024-11-20").value / 1e6
+    assert _nearest(df, "when", "value", tapped, 1100.0) == 2
+
+
+def test_a_tap_on_a_grid_selects_the_nearest_cell():
+    _grid, answer = _grid_answer("SELECT lat, lon, AVG(t) AS t FROM t GROUP BY lat, lon")
+    answer.view = hvPlotView(pipeline=answer.pipeline, kind="quadmesh", x="lon", y="lat", z="t")
+    answer.__panel__()
+    stream = answer._streams[-1]
+    stream.event(x=2.2, y=19.0)
+    (row,) = answer.selection.to_dict("records")
+    assert (row["lon"], row["lat"]) == (2.0, 20.0)
+
+
+async def test_ask_about_sends_the_rows_and_the_answer_before(llm, frame_source):
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "That is category A, at 10.5."])
+    original = Answer(
+        question="Values by category?", value="A and B.", sql="SELECT * FROM tiny", status="success",
+        source=frame_source, pipeline=Pipeline(source=frame_source, table="tiny"), llm=llm,
+        agents=[ChatAgent(), SQLAgent()],
+    )
+    sent = []
+    invoke = llm.invoke
+
+    async def recording(messages, *args, **kwargs):
+        sent.append(messages)
+        return await invoke(messages, *args, **kwargs)
+
+    llm.invoke = recording
+    answer = await original.aask_about("What is this?", rows=[0])
+    assert answer.value == "That is category A, at 10.5." and answer.sql is None
+    assert answer.question == "What is this?"
+    history, latest = sent[0]
+    # The planner folds the earlier turns into one history message
+    assert "Values by category?" in history["content"] and "SELECT * FROM tiny" in history["content"]
+    assert latest["content"].startswith("What is this?\n\nThis is about 1 row")
+    assert "category,value\nA,10.5" in latest["content"]
+
+
+async def test_ask_about_in_a_chat_joins_the_chat(frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm = FollowUpLLM([
+        SQLModel(query="SELECT category, SUM(value) AS total FROM tiny GROUP BY category", table_slug="totals", tables=["tiny"]),
+        SQLModel(query="SELECT * FROM tiny WHERE category = 'A'", table_slug="only_a", tables=["tiny"]),
+    ])
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    first = await conversation.aask("Total value per category?")
+    follow_up = await first.aask_about("Show its rows", rows={"category": "A", "total": 18.0})
+    assert conversation.answers == [first, follow_up] and follow_up.question == "Show its rows"
+    history, latest = llm.plan_calls[-1]
+    assert "User: Total value per category?" in history["content"]
+    assert latest["content"].startswith("Show its rows\n\nThis is about 1 row") and "A,18.0" in latest["content"]
+    assert "category = 'A'" in follow_up.sql
+
+
+def test_ask_about_needs_rows_and_shared_values(chart_answer):
+    with pytest.raises(ValueError, match="Nothing is selected"):
+        chart_answer.ask_about("What is this?")
+    configure(share="schema")
+    try:
+        with pytest.raises(ValueError, match="share='schema' does not allow"):
+            chart_answer.ask_about("What is this?", rows={"category": "A"})
+    finally:
+        configure(share="sample")
+
+
+def test_ask_about_withholds_personal_columns():
+    from lumen.ai.selection import about as _about
+    configure(mask_pii=True)
+    try:
+        text = _about("Who?", pd.DataFrame({"email": ["a@b.com"], "value": [1]}))
+    finally:
+        configure(mask_pii=False)
+    assert "a@b.com" not in text and "value\n1" in text
+
+
+def test_ask_about_leaves_out_geometry_and_cuts_long_cells():
+    from lumen.ai.selection import about as _about
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+    rows = gpd.GeoDataFrame({"name": ["x" * 500], "geometry": [Point(1, 2)]})
+    text = _about("What?", rows)
+    assert "POINT" not in text and "geometry" not in text and "x" * 201 not in text and "x" * 200 + "..." in text
+
+
+def test_the_static_card_has_no_ask_box(chart_answer):
+    html_card = chart_answer._static_bundle(chart_answer._chart_bundle())["text/html"]
+    assert "Ask about this" not in html_card
+
+
+async def test_the_ask_box_asks_about_the_selection(chart_answer, monkeypatch):
+    chart_answer.pipeline = chart_answer.view.pipeline
+    asked = []
+
+    async def aask_about(question, rows=None):
+        asked.append((question, list(chart_answer.selection["category"])))
+        return Answer(question=question, value="Category B.", status="success")
+
+    monkeypatch.setattr(chart_answer, "aask_about", aask_about)
+    box = chart_answer.__panel__()[2]
+    chart_answer.selection = chart_answer.pipeline.data.iloc[[1]]
+    _selected, (question, ask), answers = box
+    question.value_input = "What is this?"
+    ask.clicks += 1
+    await async_wait_until(lambda: len(answers) == 1)
+    assert asked == [("What is this?", ["B"])] and answers[0][0].object == "Category B."
+
+
+def test_a_pick_on_a_lonboard_map_selects_the_row():
+    pytest.importorskip("lonboard")
+    answer = _geo_answer()
+    m = answer.map()
+    m.layers[0].selected_index = 1
+    assert len(answer.selection) == 1 and answer.selection.index[0] == answer.gdf.index[1]
+
+
+def test_the_click_selection_stays_out_of_the_spec_and_survives_a_redraw(chart_answer):
+    from lumen.ai.selection import CLICK
+    chart_answer.pipeline = chart_answer.view.pipeline
+    chart_answer.__panel__()
+    pane = chart_answer.view._panel
+    assert "params" not in chart_answer.view.spec and "params" not in chart_answer._chart_spec()[1]
+    # A redraw, e.g. on a filter, draws the spec without the selection again
+    pane.object = {key: value for key, value in pane.object.items() if key != "params"}
+    assert CLICK in pane._selections
+    pane.selection.param.update(**{CLICK: [{"category": "B"}]})
+    assert list(chart_answer.selection["category"]) == ["B"]
+
+
+@pytest.fixture
+def many_points():
+    import numpy as np
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({"x": rng.random(6_000), "y": rng.random(6_000), "kind": rng.choice(["a", "b"], 6_000)})
+    return Pipeline(source=read({"points": frame}), table="points")
+
+
+def _point_spec(mark="point", color=True, **x):
+    encoding = {"x": {"field": "x", "type": "quantitative", **x}, "y": {"field": "y", "type": "quantitative"}}
+    if color:
+        encoding["color"] = {"field": "kind", "type": "nominal"}
+    return {"mark": mark, "encoding": encoding}
+
+
+@pytest.mark.parametrize("mark, color, kind", [("point", True, "scatter"), ({"type": "circle"}, False, "scatter"), ("line", True, "line")])
+def test_a_large_scatter_or_line_chart_is_drawn_as_a_density_image(many_points, mark, color, kind):
+    pytest.importorskip("datashader")
+    from lumen.ai.answer import _density_view
+    view = _density_view(VegaLiteView(pipeline=many_points, spec=_point_spec(mark, color)), many_points)
+    assert isinstance(view, hvPlotView) and view.kind == kind and (view.x, view.y) == ("x", "y")
+    if color:
+        assert view.datashade and view.by == ["kind"]
+    else:
+        assert view.kwargs["rasterize"] and not view.datashade
+    import holoviews as hv
+    assert isinstance(view.get_plot(view.get_data()), hv.DynamicMap)
+
+
+@pytest.mark.parametrize("spec", [
+    {"mark": "bar", "encoding": {"x": {"field": "kind"}, "y": {"field": "y", "aggregate": "mean"}}},
+    _point_spec(aggregate="mean"),
+    {"layer": [_point_spec()]},
+    {**_point_spec(), "transform": [{"filter": "datum.y > 0.5"}]},
+])
+def test_other_large_charts_stay_vega_lite(many_points, spec):
+    from lumen.ai.answer import _density_view
+    view = VegaLiteView(pipeline=many_points, spec=spec)
+    assert _density_view(view, many_points) is view
+
+
+def test_a_small_scatter_chart_stays_vega_lite(frame_source):
+    from lumen.ai.answer import _density_view
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    view = VegaLiteView(pipeline=pipeline, spec={"mark": "point", "encoding": {
+        "x": {"field": "category", "type": "nominal"}, "y": {"field": "value", "type": "quantitative"}}})
+    assert _density_view(view, pipeline) is view
+
+
+def test_without_datashader_a_large_chart_stays_and_says_how_to_draw_it(many_points, monkeypatch):
+    from lumen.ai.answer import _density_view
+    real = answer_module.importlib.util.find_spec
+    monkeypatch.setattr(answer_module.importlib.util, "find_spec", lambda name: None if name == "datashader" else real(name))
+    view = VegaLiteView(pipeline=many_points, spec=_point_spec())
+    assert _density_view(view, many_points) is view
+    answer = Answer(question="?", status="success", pipeline=many_points, view=view, spec=view.spec)
+    assert "draws all 6,000 points" in answer._cap_note and "Install datashader" in answer._cap_note
+
+
+def test_an_answer_with_a_large_scatter_chart_gets_the_density_chart_and_a_note(many_points):
+    pytest.importorskip("datashader")
+    from lumen.ai.answer import _build_answer
+    view = VegaLiteView(pipeline=many_points, spec=_point_spec())
+    plan = Plan(title="Points")
+    answer = _build_answer(
+        "Where are the points?", plan, [VegaLiteEditor(component=view)], {"pipeline": many_points, "sql": "SELECT * FROM points"},
+        many_points.source, MockLLM(), None, None,
+    )
+    assert isinstance(answer.view, hvPlotView) and answer.spec is None and answer._editor is None
+    assert answer._cap_note == "The chart draws 6,000 points as a density image, blending the categories where they overlap."
+    assert answer._cap_note in answer._static_bundle(None)["text/html"]
+
+
+def test_a_tap_on_a_density_image_selects_the_nearest_point(many_points):
+    pytest.importorskip("datashader")
+    from lumen.ai.answer import _density_view
+    view = _density_view(VegaLiteView(pipeline=many_points, spec=_point_spec(color=False)), many_points)
+    answer = Answer(question="?", status="success", pipeline=many_points, view=view)
+    answer.__panel__()
+    stream = answer._streams[-1]
+    data = many_points.data
+    stream.event(x=data["x"].iloc[7], y=data["y"].iloc[7])
+    assert answer.selection.index.tolist() == [7]
+
+
+def test_an_edit_to_a_large_scatter_chart_is_drawn_as_a_density_image(many_points):
+    pytest.importorskip("datashader")
+    bars = VegaLiteView(pipeline=many_points, spec={"mark": "bar", "encoding": {
+        "x": {"field": "kind"}, "y": {"field": "y", "aggregate": "mean"}}})
+    answer = Answer(question="?", status="success", pipeline=many_points, view=bars, spec=bars.spec)
+    redrawn = answer.with_spec(_point_spec())
+    assert isinstance(redrawn.view, hvPlotView) and redrawn.view.datashade and redrawn.spec is None
+
+
+def test_a_click_on_a_point_matches_its_numbers_as_numbers():
+    from lumen.ai.selection import _matching
+    df = pd.DataFrame({"bill": [58.0, 46.5], "species": ["Chinstrap", "Gentoo"], "year": [2007, 2008]})
+    # Vega-Lite sends JSON numbers: a whole float arrives as 58, not 58.0
+    assert _matching(df, {"bill": 58, "species": "Chinstrap"}).index.tolist() == [0]
+    assert _matching(df, {"year": 2008}).index.tolist() == [1]
+    dates = pd.DataFrame({"time": pd.to_datetime(["2024-06-01", "2024-07-01"])})
+    assert _matching(dates, {"time": 1717200000000}).index.tolist() == [0]
+
+
+
+@pytest.mark.parametrize("kind, callback", [("scatter", "Selection1DCallback"), ("density", "TapCallback")])
+def test_the_drawn_hvplot_chart_reports_clicks(frame_source, many_points, kind, callback):
+    """The view draws its plot again on render; the stream has to follow the plot that is shown."""
+    if kind == "density":
+        pytest.importorskip("datashader")
+        from lumen.ai.answer import _density_view
+        pipeline = many_points
+        view = _density_view(VegaLiteView(pipeline=pipeline, spec=_point_spec()), pipeline)
+    else:
+        pipeline = Pipeline(source=frame_source, table="tiny")
+        view = hvPlotView(pipeline=pipeline, kind="scatter", x="category", y="value")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__().get_root()
+    plots = [plot for plot, _ in view._panel._plots.values()]
+    assert any(callback in [type(c).__name__ for c in plot.callbacks] for plot in plots)
 
 
 def test_records_turn_every_missing_value_into_null():

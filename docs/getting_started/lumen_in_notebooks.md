@@ -107,6 +107,23 @@ def test_penguins_in_2008():
 
 Recording again replaces the file, so calls a changed prompt no longer makes do not linger; `record(llm, path, append=True)` keeps them. A cassette holds every response and the start of each prompt, and at the default `share="sample"` both can carry values from your data, such as sample rows. Check the file before committing it, or record with `cassette(path, preview=False)` to leave the prompts out (a replay miss then cannot name the closest call).
 
+## Ask about a point
+
+Click a point, bar or shape on an answer's chart, or drag a box over several on an hvPlot chart or map, and a box under the chart asks about it: "what is this?", "why is it so high?", "show its history". On a grid or a density image, a click picks the nearest cell or point. The clicked rows are in `answer.selection`, and the same works from code:
+
+``` py
+answer.ask_about("Why is this one so high?")             # (1)!
+answer.ask_about("Show its history", rows={"island": "Dream"})
+```
+
+1. Asks about `answer.selection`; `rows=` takes a DataFrame, a dict, a list of dicts or row positions instead.
+
+The LLM gets the question, the rows (up to 20, with personal-looking columns withheld under `mask_pii`) and the answer before, and answers from the rows when they hold what is asked, querying the data filtered on them otherwise. In a chat, or in the chat UI's explorations, the follow-up joins the conversation. It sends row values, so it needs `share="sample"`. Static outputs (PNG, a saved notebook) have no box.
+
+## Large results
+
+A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.
+
 ## Change the chart
 
 ``` py
