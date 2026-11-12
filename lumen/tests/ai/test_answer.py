@@ -1,0 +1,428 @@
+import asyncio
+import base64
+import logging
+import subprocess
+import sys
+
+from typing import get_args
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pandas as pd
+import pytest
+
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+
+from panel.config import panel_extension
+
+from lumen.ai.agents import ChatAgent, SQLAgent
+from lumen.ai.agents.hvplot import hvPlotAgent
+from lumen.ai.agents.sql import make_sql_model
+from lumen.ai.answer import (
+    _LOOP_LOCK, Answer, _after_fork, _busy, _default_agents, _default_llm,
+    _loop, _planner, _planners, _resolve, aask, ask,
+)
+from lumen.ai.coordinator.planner import make_plan_model
+from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.filters.base import ConstantFilter
+from lumen.pipeline import Pipeline
+from lumen.sources.data import read
+from lumen.tests.utils import Polygon, gpd
+from lumen.util import log as lumen_log
+from lumen.views.base import VegaLiteView
+
+QUESTION = [{"role": "user", "content": "Total value?"}]
+
+
+def _plan(*steps):
+    PlanModel = make_plan_model(["ChatAgent", "SQLAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__["steps"])
+    return PlanModel(
+        chain_of_thought="Query then explain",
+        title="Total value",
+        steps=[StepModel(actor=actor, instruction=title, title=title) for actor, title in steps],
+    )
+
+
+@pytest.fixture
+def frame_source():
+    return read({"tiny": pd.DataFrame({"category": ["A", "B", "A"], "value": [10.5, 20.0, 7.5]})})
+
+
+async def test_aask_answers_with_sql_and_text(llm, frame_source):
+    SQLModel = make_sql_model([(frame_source.name, "tiny")])
+    llm.set_responses([
+        _plan(("SQLAgent", "Sum value"), ("ChatAgent", "Explain")),
+        SQLModel(query="SELECT SUM(value) AS total FROM tiny", table_slug="tiny_total", tables=["tiny"]),
+        "The total value is 38.",
+    ])
+
+    answer = await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+    assert isinstance(answer, Answer)
+    assert answer.status == "success"
+    assert answer.value == "The total value is 38."
+    assert "SUM(value)" in answer.sql
+    assert answer.pipeline.data.iloc[0, 0] == 38.0
+    assert answer.view is None and answer.spec is None
+
+
+async def test_aask_raises_when_the_plan_fails(llm, frame_source):
+    def fail():
+        raise RuntimeError("LLM unavailable")
+
+    llm.set_responses([
+        _plan(("ChatAgent", "Explain")),
+        fail, fail, fail, fail,
+    ])
+    with pytest.raises(RuntimeError, match="could not answer 'Total value\\?'"):
+        await aask(frame_source, "Total value?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+
+
+async def test_aask_without_a_provider_explains_the_options(frame_source):
+    _default_llm.cache_clear()
+    with patch("lumen.ai.answer.get_available_llm", return_value=None):
+        with pytest.raises(RuntimeError, match=r"No LLM provider found\. Pass llm=lumen\.ai\.llm\.Kilo"):
+            await aask(frame_source, "Total value?")
+
+
+def test_default_llm_is_shared_between_questions(llm):
+    _default_llm.cache_clear()
+    with patch("lumen.ai.answer.get_available_llm", return_value=type(llm)):
+        assert _default_llm() is _default_llm()
+    _default_llm.cache_clear()
+
+
+async def test_aask_reuses_one_planner_per_source(llm, frame_source):
+    _chat_only(llm)
+    await aask(frame_source, "How many rows?", llm=llm)
+    planner = _planners[frame_source]
+    _chat_only(llm)
+    second = await aask(frame_source, "How many rows?", llm=llm)
+    assert _planners[frame_source] is planner
+    assert second.value == "Three rows."
+    assert "metaset" not in planner.context
+
+
+async def test_planner_is_rebuilt_for_another_llm_or_explicit_agents(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    assert await _planner(frame_source, llm, None) is first
+    assert await _planner(frame_source, type(llm)(), None) is not first
+    assert await _planner(frame_source, llm, [ChatAgent()]) is not await _planner(frame_source, llm, [ChatAgent()])
+
+
+async def test_a_busy_planner_is_not_shared(llm, frame_source):
+    first = await _planner(frame_source, llm, None)
+    _busy.add(first)
+    try:
+        assert await _planner(frame_source, llm, None) is not first
+    finally:
+        _busy.discard(first)
+    assert await _planner(frame_source, llm, None) is first
+
+
+async def test_default_agents_plain_table(frame_source):
+    agents = await _default_agents(frame_source)
+    assert [type(a).__name__ for a in agents] == ["ChatAgent", "SQLAgent", "VegaLiteAgent"]
+
+
+async def test_default_agents_add_hvplot_for_gridded_data():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    ds = xr.Dataset({"temp": ("x", [1.0, 2.0])}, coords={"x": [0, 1]})
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read(ds)))
+
+
+async def test_default_agents_add_hvplot_for_geometry():
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    gdf = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])])
+    assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(read({"shapes": gdf})))
+
+
+async def test_default_agents_add_hvplot_when_a_table_has_geometry(frame_source):
+    with patch("lumen.ai.answer.geometry_columns", return_value=["geometry"]):
+        assert any(isinstance(a, hvPlotAgent) for a in await _default_agents(frame_source))
+
+
+def test_resolve_plain_pipeline_limits_to_its_table(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    source, visible = _resolve(pipeline)
+    assert source is frame_source
+    assert visible == {f"{frame_source.name}{SOURCE_TABLE_SEPARATOR}tiny"}
+
+
+def test_resolve_filtered_pipeline_queries_only_its_rows(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    source, visible = _resolve(pipeline)
+    assert visible is None
+    assert source.get_tables() == ["tiny"]
+    assert sorted(source.get("tiny")["value"]) == [7.5, 10.5]
+    assert _resolve(pipeline)[0] is source
+
+
+def test_filter_change_drops_the_cached_planner(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    source, _ = _resolve(pipeline)
+    _planners[source] = MagicMock()
+    pipeline.filters[0].value = "B"
+    assert source not in _planners
+    assert _resolve(pipeline)[0] is source
+
+
+async def test_a_question_after_a_filter_change_syncs_the_new_planners_metadata(llm, frame_source):
+    from lumen.ai.tools import MetadataLookup
+    pipeline = Pipeline(source=frame_source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    _chat_only(llm)
+    await aask(pipeline, "How many rows?", llm=llm)
+    source, _ = _resolve(pipeline)
+    store = _planners[source].context["vector_store"]
+    assert MetadataLookup._sources_processed[store] == {source.name: 1}
+    pipeline.filters[0].value = "B"
+    # Forgotten with its Planner, so no later store can be taken for it and skip its sync
+    assert store not in MetadataLookup._sources_processed
+    _chat_only(llm)
+    await aask(pipeline, "How many rows?", llm=llm)
+    new_store = _planners[source].context["vector_store"]
+    assert new_store is not store and MetadataLookup._sources_processed[new_store] == {source.name: 1}
+
+
+def test_table_change_rebuilds_the_filtered_source():
+    source = read({
+        "tiny": pd.DataFrame({"category": ["A", "B"], "value": [1, 2]}),
+        "other": pd.DataFrame({"category": ["A", "A"], "value": [3, 4]}),
+    })
+    pipeline = Pipeline(source=source, table="tiny", filters=[ConstantFilter(field="category", value="A")])
+    first, _ = _resolve(pipeline)
+    pipeline.table = "other"
+    second, _ = _resolve(pipeline)
+    assert second is not first and first._mirror_watchers == []
+    assert second.get_tables() == ["other"]
+    assert sorted(second.get("other")["value"]) == [3, 4]
+
+
+def _chat_only(llm):
+    llm.set_responses([
+        _plan(("ChatAgent", "Explain")),
+        "Three rows.",
+    ])
+
+
+def test_ask_without_a_running_loop(llm, frame_source):
+    _chat_only(llm)
+    answer = ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.value == "Three rows."
+
+
+def test_ask_errors_do_not_chain_the_loop_check(frame_source):
+    with patch("lumen.ai.answer._aask", side_effect=ValueError("boom")):
+        with pytest.raises(ValueError) as info:
+            ask(frame_source, "q")
+    assert info.value.__context__ is None
+
+
+async def test_aask_quiets_instructor_retry_log_only_while_asking(llm, frame_source, monkeypatch, caplog):
+    # ExplorerUI tests in the same process leave Lumen's logger at DEBUG
+    monkeypatch.setattr(lumen_log, "level", logging.WARNING)
+    logger = logging.getLogger("instructor.v2.retry")
+
+    def reply():
+        logger.error("retrying")
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    with caplog.at_level(logging.ERROR, logger="instructor.v2.retry"):
+        await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+        logger.error("outside")
+    assert caplog.messages == ["outside"]
+
+
+def test_sync_ask_runs_every_question_on_one_loop(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    for _ in range(2):
+        llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+        ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops[0] is loops[1]
+
+
+async def test_aask_runs_on_the_loop_sync_ask_uses(llm, frame_source):
+    loops = []
+
+    def reply():
+        loops.append(asyncio.get_running_loop())
+        return "Three rows."
+
+    llm.set_responses([_plan(("ChatAgent", "Explain")), reply])
+    await aask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert loops == [_loop()]
+
+
+def test_ask_from_lumens_loop_raises_instead_of_deadlocking(frame_source):
+    async def nested():
+        ask(frame_source, "q")
+
+    with pytest.raises(RuntimeError, match="await aask"):
+        asyncio.run_coroutine_threadsafe(nested(), _loop()).result(timeout=5)
+
+
+def test_fork_resets_the_loop_and_caches(frame_source):
+    loop = _loop()
+    _planners[frame_source] = MagicMock()
+    _LOOP_LOCK.acquire()  # as the before-fork hook does
+    _after_fork()
+    assert frame_source not in _planners
+    assert _loop() is not loop
+    loop.call_soon_threadsafe(loop.stop)
+
+
+def test_interrupting_sync_ask_cancels_the_question(frame_source):
+    future = MagicMock()
+    future.result.side_effect = KeyboardInterrupt
+    with patch("lumen.ai.answer._aask", new=MagicMock()), \
+            patch("lumen.ai.answer.asyncio.run_coroutine_threadsafe", return_value=future):
+        with pytest.raises(KeyboardInterrupt):
+            ask(frame_source, "q")
+    future.cancel.assert_called_once()
+
+
+def test_answer_html_escapes_html_in_the_answer():
+    html = Answer(value="Hi <script>alert(1)</script>")._static_bundle(None)["text/html"]
+    assert "<script>" not in html
+
+
+async def test_ask_inside_a_running_loop(llm, frame_source):
+    _chat_only(llm)
+    answer = ask(frame_source, "How many rows?", llm=llm, agents=[ChatAgent(), SQLAgent()])
+    assert answer.value == "Three rows."
+
+
+async def test_source_and_pipeline_methods_delegate(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    with patch("lumen.ai.answer.ask") as sync_ask, patch("lumen.ai.answer.aask", new_callable=AsyncMock) as async_ask:
+        frame_source.ask("q", llm="x")
+        pipeline.ask("q")
+        await frame_source.aask("q")
+        await pipeline.aask("q", llm="x")
+    assert [c.args[0] for c in sync_ask.call_args_list] == [frame_source, pipeline]
+    assert sync_ask.call_args_list[0].kwargs == {"llm": "x", "agents": None}
+    assert [c.args[0] for c in async_ask.call_args_list] == [frame_source, pipeline]
+
+
+def test_core_imports_do_not_load_lumen_ai():
+    code = "import sys, lumen, lumen.sources, lumen.pipeline; assert 'lumen.ai' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.fixture
+def chart_answer(frame_source):
+    view = VegaLiteView(
+        pipeline=Pipeline(source=frame_source, table="tiny"),
+        spec={"mark": "bar", "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"},
+        }},
+    )
+    return Answer(
+        question="Value by category?", value="**B** is largest.\nA is second.",
+        sql="SELECT * FROM tiny", spec=view.spec, view=view, status="success",
+    )
+
+
+def test_answer_repr_is_one_line(chart_answer):
+    assert repr(chart_answer) == "Answer(status='success', value='**B** is largest.')"
+
+
+def test_answer_static_bundle_outside_a_kernel(chart_answer):
+    bundle = chart_answer._repr_mimebundle_()
+    assert bundle["text/markdown"] == "**B** is largest.\nA is second.\n\n```sql\nSELECT * FROM tiny\n```"
+    spec = bundle["application/vnd.vegalite.v5+json"]
+    assert spec["data"]["values"][0] == {"category": "A", "value": 10.5}
+    assert base64.b64decode(bundle["image/png"]).startswith(b"\x89PNG")
+    html = bundle["text/html"]
+    assert "<strong>B</strong> is largest." in html
+    assert f'src="data:image/png;base64,{bundle["image/png"]}" width="600"' in html
+    assert "<details><summary>SQL</summary><pre><code>SELECT * FROM tiny</code></pre></details>" in html
+
+
+def test_answer_static_spec_keeps_data_given_by_url(frame_source):
+    url = {"url": "https://cdn.jsdelivr.net/npm/vega-datasets@2/data/cars.json"}
+    view = VegaLiteView(
+        pipeline=Pipeline(source=frame_source, table="tiny"),
+        spec={"data": url, "mark": "point", "encoding": {"x": {"field": "Horsepower", "type": "quantitative"}}},
+    )
+    answer = Answer(question="q", value="v", spec=view.spec, view=view, status="success")
+    assert answer._vega_lite_spec()["data"] == url
+
+
+def test_answer_chart_label_reads_a_title_object(chart_answer):
+    chart_answer.view.spec = dict(chart_answer.view.spec, title={"text": "Value by category"})
+    chart_answer.spec = chart_answer.view.spec
+    assert chart_answer._chart_bundle()["text/plain"] == "<Vega-Lite chart: Value by category>"
+
+
+def test_answer_static_bundle_without_a_chart():
+    answer = Answer(question="q", value="Three rows.", status="success")
+    bundle = answer._repr_mimebundle_()
+    assert set(bundle) == {"text/plain", "text/markdown", "text/html"}
+    assert bundle["text/html"] == "<p>Three rows.</p>\n"
+
+
+def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
+    def load(*args):
+        panel_extension._loaded_extensions.append("vega")
+
+    with (
+        patch("lumen.ai.answer._in_kernel", return_value=True),
+        patch.object(panel_extension, "_loaded", True),
+        patch.object(panel_extension, "_loaded_extensions", []),
+        patch("lumen.ai.answer.pn.extension", side_effect=load) as extension,
+        patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", return_value=({"text/html": "card"}, {})),
+    ):
+        assert chart_answer._repr_mimebundle_() == ({"text/html": "card"}, {})
+        chart_answer._repr_mimebundle_()
+    extension.assert_called_once_with("vega")
+
+
+def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_answer):
+    pytest.importorskip("IPython")
+    with (
+        patch("lumen.ai.answer._in_kernel", return_value=True),
+        patch.object(panel_extension, "_loaded_extensions", ["vega"]),
+        patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
+        patch("IPython.display.display") as display,
+    ):
+        last = chart_answer._repr_mimebundle_()
+    (text,), (chart,) = (c.args for c in display.call_args_list)
+    assert text["text/markdown"].startswith("**B** is largest.")
+    # Its own output, so front-ends draw it as interactive Vega-Lite
+    assert chart["application/vnd.vegalite.v5+json"]["mark"] == "bar"
+    assert "image/png" in chart
+    assert "SELECT * FROM tiny" in last["text/html"]
+
+
+def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
+    card = chart_answer.__panel__()
+    assert card is chart_answer.__panel__()
+    text, _chart, sql = card
+    assert text.object.startswith("**B** is largest.")
+    assert sql.collapsed and "SELECT * FROM tiny" in sql[0].object
+
+
+def test_answer_card_skips_empty_text(chart_answer):
+    chart_answer.value = ""
+    assert len(chart_answer.__panel__()) == 2
+
+
+def test_importing_answer_does_not_load_the_panel_extension():
+    code = (
+        "import lumen.ai.answer; from panel.config import panel_extension; "
+        "assert not panel_extension._loaded"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)

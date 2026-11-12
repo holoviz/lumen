@@ -5,6 +5,7 @@ import base64
 import contextvars
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -14,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache, partial
 from pathlib import Path
@@ -299,6 +301,40 @@ def local_cli_providers() -> dict[type[LlmCli], bool | None]:
         for class_name in LLM_PROVIDERS.values()
         if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
     }
+
+
+def quiet_retry_log():
+    """
+    Silence instructor's per-attempt error log.
+
+    Lumen sends a single attempt and reports or recovers from the error
+    itself, so that log only duplicates it.
+    """
+    logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
+
+
+_quiet_retries = contextvars.ContextVar("quiet_retries", default=False)
+logging.getLogger("instructor.v2.retry").addFilter(lambda record: not _quiet_retries.get())
+
+
+@contextmanager
+def quiet_retries():
+    """
+    Silence instructor's per-attempt error log for the code run inside,
+    including the tasks it starts, without changing the logger for the rest
+    of the process.
+    """
+    token = _quiet_retries.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retries.reset(token)
+
+
+def signed_in_cli_hint() -> str:
+    """Name the keyless coding CLIs the user is signed in to, as a clause to append."""
+    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
+    return f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
 
 
 def get_available_llm() -> type[Llm] | None:
