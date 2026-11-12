@@ -10,8 +10,8 @@ from panel.tests.util import async_wait_until
 from panel_material_ui import Button, FlexBox
 
 from lumen.ai.answer import Answer, configure
-from lumen.sources.data import read
 from lumen.ai.overview import aoverview
+from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 
 

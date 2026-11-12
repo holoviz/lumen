@@ -4,10 +4,13 @@ connections) into Lumen Sources.
 """
 from __future__ import annotations
 
+import importlib.util
+import re
+import warnings
 import weakref
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
 import duckdb
@@ -63,7 +66,98 @@ def _as_frame(obj):
     return obj
 
 
-def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
+#: Remote locations read without credentials, public buckets only
+_REMOTE = ("http://", "https://", "s3://", "gs://", "gcs://")
+
+#: A Zarr store, by name; ARCO-ERA5 adds the format version
+_ZARR = re.compile(r"\.zarr(-v[23])?/?$")
+
+#: An S3 bucket named after its region, as Overture's is (overturemaps-us-west-2)
+_S3_REGION = re.compile(r"^s3://[^/]*?-((?:us|eu|ap|ca|sa|me|af)-[a-z]+-\d)/")
+
+
+def _https(url: str) -> str:
+    """A public gs:// or s3:// location as its HTTPS address, so no cloud SDK is needed to read it."""
+    if url.startswith(("gs://", "gcs://")):
+        return "https://storage.googleapis.com/" + url.split("://", 1)[1]
+    if url.startswith("s3://"):
+        bucket, _, key = url[5:].partition("/")
+        return f"https://{bucket}.s3.amazonaws.com/{key}"
+    return url
+
+
+#: What reading a remote Zarr store needs: the gridded source, zarr, HTTP access and lazy chunks
+_ZARR_MODULES = ("xarray", "xarray_sql", "zarr", "fsspec", "aiohttp", "dask")
+
+
+def _remote_grid(url: str, variables: list[str] | None, sel: dict | None) -> XArraySQLSource:
+    """A public Zarr store as a gridded source, cut to the variables and coordinates asked for before SQL sees it."""
+    if missing := [name for name in _ZARR_MODULES if importlib.util.find_spec(name) is None]:
+        raise ImportError(
+            f"Reading a remote Zarr store needs {', '.join(missing)}: "
+            "pip install 'lumen[xarray]' fsspec aiohttp dask"
+        )
+    if not variables and not sel:
+        warnings.warn(
+            f"{url} is read whole: a remote store can hold hundreds of variables and terabytes, "
+            "and nothing bounds a query over it. Pass variables= and sel= to read only what you need.",
+            stacklevel=3,
+        )
+    xr = try_import_xarray()
+    # Lazy: only the metadata is read until a query needs values
+    ds = xr.open_zarr(_https(url), chunks={})
+    if variables:
+        ds = ds[variables]
+    if sel:
+        ds = ds.sel(sel)
+    return XArraySQLSource.from_dataset(ds)
+
+
+def _remote_box(name: str, url: str, bbox: tuple[float, float, float, float]) -> DuckDBSource:
+    """
+    The features of a (Geo)Parquet file or glob inside a box, copied into
+    memory once, so questions about them do not read the remote files again.
+    """
+    # Numbers only, as they go into the SQL
+    west, south, east, north = (float(v) for v in bbox)
+    initializers = ["INSTALL httpfs;", "LOAD httpfs;", "INSTALL spatial;", "LOAD spatial;"]
+    if region := _S3_REGION.match(url):
+        initializers.append(f"SET s3_region='{region.group(1)}';")
+    table = name.replace('"', '""')
+    source = DuckDBSource(
+        initializers=initializers, name=PROVIDED_SOURCE_NAME, tables={name: f'SELECT * FROM "{table}"'}, uri=":memory:",
+    )
+    # One connection for the look and the copy, so the files are scanned once.
+    # The copy is not an initializer, so a spec or an export does not download it again.
+    con = source._connection
+    quoted = url.replace("'", "''")
+    scan = f"read_parquet('{quoted}', hive_partitioning = true, union_by_name = true)"
+    columns = {row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {scan}").fetchall()}
+    if "bbox" in columns:
+        # Overture's bbox column: compared in the scan, so row groups outside the box are skipped
+        inside = f"bbox.xmin <= {east} AND bbox.xmax >= {west} AND bbox.ymin <= {north} AND bbox.ymax >= {south}"
+    elif "geometry" in columns:
+        inside = f"ST_Intersects(geometry, ST_MakeEnvelope({west}, {south}, {east}, {north}))"
+    else:
+        source.close()
+        raise ValueError(f"{url} has neither a bbox nor a geometry column to cut to a box.")
+    con.execute(f'CREATE TABLE "{table}" AS SELECT * FROM {scan} WHERE {inside}')
+    return source
+
+
+def _remote_name(url: str) -> str:
+    """A table name for a remote location: Overture's type=place gives place, else the file or store name."""
+    if match := re.search(r"type=([^/]+)", url):
+        return match.group(1)
+    # A local path on Windows separates with backslashes
+    stem = url.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
+    return normalize_table_name(re.sub(r"(\.zarr(-v[23])?|\.parquet|\*.*)$", "", stem) or "data")
+
+
+def read(
+    data: DataT | list[DataT] | dict[str, DataT], *, variables: list[str] | None = None,
+    sel: dict[str, Any] | None = None, bbox: tuple[float, float, float, float] | None = None,
+) -> Source:
     """
     Load data into a single Lumen Source.
 
@@ -78,8 +172,8 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         or a DuckDB connection's source; it is ignored for a Source and an
         xarray Dataset. A DuckDB relation is read into memory.
         Apart from those named below, every entry of a mixed dict lands in
-        one DuckDB source, so they can be joined: frames (as pandas when mixed with files or pipelines),
-        files, pipelines, xarray data (read lazily), and the tables of a
+        one DuckDB source, so they can be joined: frames (as pandas when
+        mixed with files or pipelines), files, pipelines, xarray data (read lazily), and the tables of a
         DuckDB connection, which are copied in under their own names (the
         connection's dict key goes unused) so the user's database is never
         written to. On its own, a connection is used as is and left
@@ -88,10 +182,41 @@ def read(data: DataT | list[DataT] | dict[str, DataT]) -> Source:
         and a geo, xarray or database file or a database URI, always stays
         its own source.
 
+    variables: list[str] | None
+        For a Zarr store, the variables to read; a store such as ARCO-ERA5
+        has hundreds.
+    sel: dict | None
+        For a Zarr store, coordinates to cut it to before SQL sees it, as
+        for xarray's ``Dataset.sel``, e.g. ``{"time": "2020-07-01T12:00"}``.
+    bbox: tuple | None
+        For (Geo)Parquet, the box (west, south, east, north) in longitude and
+        latitude to keep; the features inside are read once into memory.
+        Without it a remote (Geo)Parquet file is queried in place, which
+        cannot skip row groups by Overture's bbox column and may download
+        whole files for every question.
+
+    Public remote data is read without credentials: ``https://``, and
+    ``s3://`` or ``gs://`` buckets that allow anonymous reads, e.g. Overture
+    (``s3://overturemaps-us-west-2/release/...``), Source Cooperative
+    (``https://data.source.coop/...``) and ARCO-ERA5
+    (``gs://gcp-public-data-arco-era5/ar/...zarr-v2``).
+
     Returns
     -------
     Source
     """
+    if variables or sel or bbox:
+        name, url = next(iter(data.items())) if isinstance(data, dict) and len(data) == 1 else (None, data)
+        if not isinstance(url, (str, Path)):
+            raise ValueError("variables, sel and bbox apply to one file, glob or URL, e.g. lumen.read(url, bbox=...).")
+        url = str(url)
+        if _ZARR.search(url):
+            if bbox:
+                raise ValueError("bbox cuts (Geo)Parquet; cut a Zarr store with sel, e.g. sel={'latitude': slice(60, 40)}.")
+            return _remote_grid(url, variables, sel)
+        if variables or sel:
+            raise ValueError("variables and sel cut a Zarr store; cut (Geo)Parquet with bbox.")
+        return _remote_box(name or _remote_name(url), url, bbox)
     sources = resolve_data(data)
     if len(sources) != 1:
         raise ValueError(
@@ -211,6 +336,10 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
                     sources.append(source)
                 continue
 
+            if src.startswith(_REMOTE) and _ZARR.search(src):
+                sources.append(_remote_grid(src, None, None))
+                continue
+
             # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
             if Path(src).suffix.lstrip('.').lower() in XARRAY_EXTENSIONS:
                 source = XArraySQLSource(uri=str(Path(src).absolute()))
@@ -224,7 +353,7 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
                 sources.append(_resolve_geo_source(src, geo_ext))
                 continue
 
-            if src.startswith('http'):
+            if src.startswith(_REMOTE):
                 remote = True
             if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
                 table = src
@@ -273,6 +402,17 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         sources.append(DuckDBSource.from_df(frames))
     if tables or mirrors:
         initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
+        if remote and any(re.search(r"\.parq(uet)?$", t) for t in tables.values()):
+            # Remote GeoParquet arrives as GEOMETRY, which the ST_ functions
+            # need spatial for; a plain CSV does without the download
+            initializers += ["INSTALL spatial;", "LOAD spatial;"]
+        regions = {m.group(1) for table in tables.values() if (m := _S3_REGION.match(table))}
+        if len(regions) > 1:
+            # DuckDB has one s3_region per connection
+            raise ValueError(
+                f"These buckets are in different regions ({', '.join(sorted(regions))}); read each with its own lumen.read."
+            )
+        initializers += [f"SET s3_region='{region}';" for region in regions]
         source = DuckDBSource(
             initializers=initializers,
             mirrors=mirrors,
@@ -303,6 +443,8 @@ def _add_grids(source: DuckDBSource, grids: dict) -> None:
         # Read lazily: DuckDB pulls record batches from the Dataset per query
         source._connection.from_arrow(arrow_dataset(ds)).to_view(name)
         source.tables[name] = f'SELECT * FROM "{name}"'
+        # So the SQL prompt knows the table is a grid, as with XArraySQLSource
+        source.metadata = {**source.metadata, name: {**source.metadata.get(name, {}), "gridded": True}}
     JOINED_GRIDS.add(source)
 
 
