@@ -99,6 +99,22 @@ grid.ask("Which month had the highest area-weighted global mean temperature?")
 
 When a table has a geometry column or is a grid, Lumen gives the model extra rules for it: distances and areas in metres on a sphere or an equal-area CRS rather than in degrees, longitude before latitude, a spatial predicate in every join; filters on the grid's dimensions, latitude weights for means and Kelvin to Celsius.
 
+Public remote data reads in one line, without credentials. A box keeps (Geo)Parquet to the area you ask about, read once into memory; `variables` and `sel` cut a Zarr store before any SQL runs:
+
+``` py
+places = lumen.read(
+    "s3://overturemaps-us-west-2/release/2026-10-21.0/theme=places/type=place/*.parquet",
+    bbox=(13.38, 52.51, 13.42, 52.53),  # west, south, east, north
+)
+era5 = lumen.read(
+    "gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2",
+    variables=["2m_temperature"],
+    sel={"time": "2020-07-01T12:00", "latitude": slice(60, 40), "longitude": slice(0, 20)},
+)
+```
+
+`https://` URLs (Source Cooperative's `https://data.source.coop/...` among them) and public `s3://` and `gs://` buckets work; private buckets are not supported yet. Overture's `bbox` column lets the read skip the files outside the box, but a box still scans the release's file metadata, so expect about a minute.
+
 Three more things keep these answers right:
 
 - **A review before the query runs.** Lumen checks the SQL for mistakes that run without an error: a buffer or distance in degrees on longitude and latitude, an area or length that comes out in degrees, two geometry tables joined without a spatial predicate, and a Kelvin column compared with a Celsius value (or the other way round). It tells the model once; a query it resubmits unchanged runs as it is.
