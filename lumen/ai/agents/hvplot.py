@@ -1,4 +1,5 @@
 import importlib.util
+import re
 
 from typing import Any
 
@@ -22,6 +23,21 @@ from .base_view import BaseViewAgent
 GRID_RASTERIZE_CELLS = 250_000
 
 LON_NAMES, LAT_NAMES = {"lon", "longitude", "lng"}, {"lat", "latitude"}
+
+
+# Words in a column name that mark a cyclic quantity, which wraps around (359 degrees sits next to 0)
+CYCLIC_WORDS = {"direction", "dir", "bearing", "heading", "azimuth", "angle", "aspect", "phase", "hour", "month", "doy", "dayofyear"}
+
+
+def _default_cmap(column: pd.Series) -> str | None:
+    """A colorcet colormap matching a colour column's data, or None to keep hvPlot's sequential default."""
+    if not pd.api.types.is_numeric_dtype(column) or pd.api.types.is_bool_dtype(column):
+        return None
+    if CYCLIC_WORDS & set(re.split(r"[^a-z]+", str(column.name).lower())):
+        return "colorwheel"
+    if column.min() < 0 < column.max():
+        return "coolwarm"
+    return None
 
 
 def _is_lon_lat(spec: dict[str, Any], data: Any) -> bool:
@@ -188,6 +204,12 @@ class hvPlotAgent(BaseViewAgent):
         spec.setdefault("grid", True)
         self._drop_unknown_columns(spec, set(data.columns))
         self._complete_axes(spec, data)
+        colour = next((spec[k] for k in ("z", "c", "color") if spec.get(k) in data.columns), None)
+        if colour is not None and "cmap" not in spec and (cmap := _default_cmap(data[colour])):
+            spec["cmap"] = cmap
+            if cmap == "coolwarm":
+                # Centred on zero, so the colours split where the sign does
+                spec.setdefault("symmetric", True)
         if _is_lon_lat(spec, data):
             # Longitude and latitude read best on a basemap
             spec.setdefault("geo", True)
