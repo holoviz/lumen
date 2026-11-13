@@ -15,6 +15,7 @@ from panel.pane import SVG
 from panel_material_ui import ChatMessage
 
 from ..config import SOURCE_TABLE_SEPARATOR  # NOQA: F401
+from ..sources.data import PROVIDED_SOURCE_NAME  # NOQA: F401
 
 LUMEN_AVATAR = (Path(__file__).parent.parent / "_assets" / "logo.svg").read_text().replace(
     'viewBox="0 0 200 200"', 'viewBox="-25 -25 250 250"'
@@ -104,6 +105,21 @@ class DeterministicError(Exception):
     """
 
 
+class QueryError(Exception):
+    """
+    Raised when every attempt at a SQL query failed, keeping the last
+    query so it can be shown next to the error.
+    """
+
+    def __init__(self, message: str, sql: str):
+        super().__init__(message)
+        self.sql = sql
+
+
+class DeterministicQueryError(QueryError, DeterministicError):
+    """A QueryError that regenerating the query cannot fix."""
+
+
 class EmptyResultError(ValueError):
     """
     Raised when a query returns no rows, so the model can check its filters.
@@ -165,7 +181,6 @@ UNRECOVERABLE_ERRORS = (
     RequestBudgetExceededError,
 )
 
-PROVIDED_SOURCE_NAME = "ProvidedSource00000"
 
 # Vega-lite zoomable map configuration
 VEGA_ZOOMABLE_MAP_ITEMS = {

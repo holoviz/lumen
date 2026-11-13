@@ -1,6 +1,9 @@
-from typing import Annotated, Literal
+from contextvars import ContextVar
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel, Field, field_validator, model_validator,
+)
 
 from .config import MissingContextError
 
@@ -102,6 +105,38 @@ LineEdit = Annotated[
     Field(discriminator="op")
 ]
 
+# The lines a RetrySpec edits and whether they are YAML, set while revising,
+# so an edit that leaves out its op can be read against the line it points at
+revision_lines: ContextVar[tuple[list[str], bool] | None] = ContextVar("revision_lines", default=None)
+
+
+def _line_key(line: str) -> tuple[str, str] | None:
+    """The indent and YAML key of a line, e.g. ("  ", "color"), if it has one."""
+    stripped = line.lstrip()
+    if ":" not in stripped:
+        return None
+    return line[:len(line) - len(stripped)], stripped.split(":", 1)[0]
+
+
+def _infer_op(edit: dict[str, Any], revision: tuple[list[str], bool] | None) -> str:
+    if "line" not in edit:
+        return "delete"
+    if revision is None:
+        # Without the text, assume a change
+        return "replace"
+    lines, is_yaml = revision
+    line_no = edit.get("line_no")
+    if not isinstance(line_no, int) or not 1 <= line_no <= len(lines):
+        # Past the end can only add a line, e.g. LIMIT 10 after a query
+        return "insert"
+    if not is_yaml:
+        # SQL lines (a::INT, '00:00') only seem to have YAML keys
+        return "replace"
+    old, new = _line_key(lines[line_no - 1]), _line_key(edit["line"])
+    # A different key at that spot adds a line, e.g. color: before x:
+    return "insert" if old is not None and new is not None and old != new else "replace"
+
+
 class RetrySpec(BaseModel):
     """Represents a revision of text with its content and changes."""
 
@@ -112,6 +147,20 @@ class RetrySpec(BaseModel):
             "The chart needs horizontal bars instead of vertical. Will swap x and y encodings."
         ])
     edits: list[LineEdit] = Field(description="A list of line edits based on the chain_of_thought.")
+
+    @field_validator("edits", mode="before")
+    @classmethod
+    def default_missing_op(cls, edits: Any) -> Any:
+        # Small models often leave out "op" and fail every retry on it, so
+        # it is read from the edit and the line it points at
+        if not isinstance(edits, list):
+            return edits
+        revision = revision_lines.get()
+        return [
+            {**edit, "op": _infer_op(edit, revision)}
+            if isinstance(edit, dict) and "op" not in edit else edit
+            for edit in edits
+        ]
 
     @model_validator(mode="after")
     def validate_indices_nonconflicting(self) -> "RetrySpec":

@@ -17,6 +17,36 @@ from ..transforms.sql import SQLFilter
 from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
 
+#: File extensions xarray reads (NetCDF, HDF5, Zarr and GRIB)
+XARRAY_EXTENSIONS = (
+    "nc", "nc4", "netcdf", "h5", "hdf5", "he5", "zarr",
+    "grib", "grib2", "grb", "grb2",
+)
+
+
+def _calendar(coord: Any) -> str | None:
+    """The calendar of a time coordinate, cftime or numpy, or None for any other."""
+    try:
+        return coord.dt.calendar
+    except (AttributeError, TypeError):
+        return None
+
+
+def _cf_description(attrs: dict, calendar: str | None = None) -> str:
+    """
+    A column's CF metadata as one description: its long name, units and
+    standard name, and a calendar other than the standard one, so the LLM
+    writes SQL in the right units and dates.
+    """
+    parts = [attrs.get("long_name", "")]
+    if units := attrs.get("units"):
+        parts.append(f"[{units}]")
+    if (standard := attrs.get("standard_name")) and standard.lower() != str(attrs.get("long_name", "")).lower():
+        parts.append(f"({standard})")
+    if calendar and calendar not in ("standard", "gregorian", "proleptic_gregorian"):
+        parts.append(f"calendar: {calendar}")
+    return " ".join(part for part in parts if part)
+
 
 class XArraySQLSource(BaseSQLSource):
     """
@@ -302,7 +332,10 @@ class XArraySQLSource(BaseSQLSource):
         # result, and to_dataset(dims=...) errors on a dim it can't find.
         names = set(result.schema().names)
         dims = [d for d in self._dataset.dims if d in names]
-        return result.to_dataset(dims=dims)
+        ds = result.to_dataset(dims=dims)
+        # Coordinates come in the order the rows did, which a GROUP BY leaves
+        # arbitrary, and a grid with unsorted coordinates plots and slices wrong
+        return ds.sortby([d for d in dims if d in ds.coords])
 
     def create_sql_expr_source(
         self,
@@ -348,16 +381,26 @@ class XArraySQLSource(BaseSQLSource):
                     "description": f"index along {dim} dimension",
                 }
                 continue
-            coord_attrs = dict(ds.coords[dim].attrs)
+            coord = ds.coords[dim]
             columns[dim] = {
-                "data_type": str(ds.coords[dim].dtype),
-                "description": coord_attrs.get("long_name", ""),
+                "data_type": str(coord.dtype),
+                "description": _cf_description(coord.attrs, _calendar(coord)),
             }
         columns[table] = {
             "data_type": str(var.dtype),
-            "description": var.attrs.get("long_name", ""),
+            "description": _cf_description(var.attrs),
         }
         return columns
+
+    def column_units(self, table: str) -> dict[str, str]:
+        """The CF units of a table's columns that declare them, by column name."""
+        if table not in self._dataset.data_vars:
+            # A table derived by a query, e.g. a follow-up's result, has no variable of its own
+            return {}
+        var = self._dataset[table]
+        units = {dim: self._dataset.coords[dim].attrs.get("units") for dim in var.dims if dim in self._dataset.coords}
+        units[table] = var.attrs.get("units")
+        return {column: unit for column, unit in units.items() if unit}
 
     def _format_aux_coords(self, var: Any) -> str:
         """Format auxiliary coordinate labels for a data variable."""

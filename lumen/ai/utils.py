@@ -15,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Callable, Generator, Iterator
+from contextvars import ContextVar
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
@@ -54,6 +55,7 @@ from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
+from .sharing import mask_frame, shares_values, sharing
 
 if TYPE_CHECKING:
     from narwhals.stable.v2.typing import Frame, IntoFrame
@@ -409,7 +411,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -446,7 +448,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             time.sleep(sleep)
 
@@ -545,6 +547,9 @@ async def get_schema(
     shuffle: bool = True,
     **get_kwargs
 ):
+    if not shares_values():
+        include_min_max = include_enum = False
+        include_type = include_type and sharing.share != "none"
     if isinstance(source, Pipeline):
         schema = await asyncio.to_thread(source.get_schema)
     else:
@@ -641,6 +646,12 @@ async def get_schema(
     # remove any fields that are empty
     for field in empty_fields:
         schema[field] = "<null>"
+
+    for field, spec in schema.items():
+        if isinstance(spec, dict) and not shares_values(field, spec.get("enum") or ()):
+            # A personal-data column keeps its type but not its values
+            for key in ("enum", "min", "max"):
+                spec.pop(key, None)
 
     if count is not None and include_count:
         schema["__len__"] = count
@@ -903,6 +914,12 @@ def describe_data_sync(
         YAML-formatted summary of the DataFrame
     """
     df, shape, is_sampled = _sample_for_summary(df)
+    if not shares_values():
+        # The structure without a single value, as the sharing level asks
+        columns = list(df.columns) if sharing.share == "none" else {col: str(df[col].dtype) for col in df.columns}
+        summary = {"data_shape": [int(shape[0]), int(shape[1])], "columns": columns}
+        return yaml.dump(summary, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    df = mask_frame(df)
     size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
@@ -1216,6 +1233,23 @@ def format_msg_content(content: Any) -> str:
                 parts.append(f"<{type(item).__name__}[{id(item)}]>")
         return " + ".join(parts)
     return f"<{type(content).__name__}[{id(content)}]>"
+
+
+#: Set while lumen.ai.ask answers a question: it hands errors back in the
+#: Answer, so their tracebacks are only logged at debug level
+errors_in_result: ContextVar[bool] = ContextVar("errors_in_result", default=False)
+
+
+def print_task_exception(e: BaseException) -> None:
+    """
+    Print a failed task's traceback to the console, or log it at debug
+    level while the caller gets the error back, e.g. as an Answer with
+    status "error".
+    """
+    if errors_in_result.get():
+        log.debug("Task failed", exc_info=e)
+    else:
+        traceback.print_exception(e)
 
 
 def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):

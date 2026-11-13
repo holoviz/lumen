@@ -17,6 +17,7 @@ nav = [
     {"Launching Lumen" = "getting_started/launching_lumen.md"},
     {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
     {"Using Lumen AI" = "getting_started/using_lumen_ai.md"},
+    {"Lumen in Notebooks" = "getting_started/lumen_in_notebooks.md"},
     {"Building Lumen Apps" = "getting_started/building_lumen_apps.md"}
   ]},
   {"Examples" = [
