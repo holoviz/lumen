@@ -1029,6 +1029,9 @@ async def _gather(data: Source | Pipeline, jobs: list[tuple[str, Llm, list | Non
             answer = await _aask_messages(data, question, messages, llm, agents, returns=returns)
             seconds[i] = time.monotonic() - start
             answered += 1
+            if outer is not None:
+                # The count moves on as each answer arrives, not with the next step
+                outer(f"{answered} of {len(jobs)} answered")
             return answer
 
     answers = await asyncio.gather(*(one(i, *job) for i, job in enumerate(jobs)))
