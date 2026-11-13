@@ -11,6 +11,7 @@ from hvplot.ui import hvDataFrameExplorer, hvGridExplorer
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
+from lumen.ai.answer import Answer
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import (
     _spec_field_references, get_gridded_metadata, render_template,
@@ -435,3 +436,12 @@ def test_hvplotuiview_uses_dataframe_explorer_for_tabular(tabular_pipeline):
     """A non-xarray pipeline still uses the dataframe explorer."""
     view = hvPlotUIView(pipeline=tabular_pipeline, kind="scatter", x="x", y="y")
     assert isinstance(view.get_panel(), hvDataFrameExplorer)
+
+
+def test_tweak_opens_a_gridded_answer_in_the_grid_explorer(xarray_pipeline):
+    view = hvPlotView(pipeline=xarray_pipeline, kind="quadmesh", x="lon", y="lat", z="air", cmap="fire", grid=True)
+    explorer = Answer(question="?", view=view, status="success").tweak()
+    assert isinstance(explorer, hvGridExplorer)
+    assert (explorer.kind, explorer.x, explorer.y) == ("quadmesh", "lon", "lat")
+    assert explorer.colormapping.cmap == "fire"
+    assert isinstance(explorer.hvplot(), hv.QuadMesh)
