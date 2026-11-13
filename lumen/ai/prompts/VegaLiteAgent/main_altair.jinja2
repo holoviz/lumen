@@ -10,7 +10,7 @@ Return several entries in `charts` ONLY when request spans distinct metrics or r
 
 ## Reference
 - **Sort**: `sort='-y'` | **Title**: `.properties(title='...')` | **Tooltip**: `tooltip=['f1', 'f2']`
-- **Color**: `alt.value('#1f77b4')` | `alt.condition(test, if_true, if_false)` | `'field:N'`
+- **Color**: `alt.value('gray')` | `alt.condition(test, if_true, if_false)` | `'field:N'`
 - **Transforms**: `.transform_filter()` | `.transform_window(rank='rank()')` | `.transform_aggregate()`
 - **Layouts**: `alt.hconcat()` | `alt.vconcat()` | `.facet()` | `.repeat()` (omit width on sub-charts)
 - **Geo**: `longitude='lon:Q', latitude='lat:Q'` with `.project(type='mercator')`

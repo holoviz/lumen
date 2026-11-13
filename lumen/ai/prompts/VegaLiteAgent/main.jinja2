@@ -44,7 +44,7 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 **Single field**: Map directly
 **Multiple series**: Use `transform` to create constant field, then map it (never use `datum` in color encoding)
 **Avoid redundancy**: If encoding same field with both size and color, either:
-  - Use size only with single color: `color: {value: '#1f77b4'}`
+  - Use size only and omit `color`, letting the theme color the marks
   - Or disable one legend: `color: {field: value, scale: {scheme: blues}, legend: null}`
 
 ## Key Patterns
@@ -54,6 +54,7 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 **Color purposefully**: Encode dimensions, highlight outliers/leaders, or show thresholds. Keep color in `mark` for text labels that shouldn't appear in legends. When encoding quantitative values with color, consider setting appropriate `domain` if data doesn't start at 0 (e.g., `scale: {scheme: blues, domain: [min, max]}`).
 - A categorical `scale.range` MUST be paired with an explicit `scale.domain`. Alone, the range binds to the domain in alphabetical order, so meaningful colors land on the wrong categories: green/orange/red intended for Low/Medium/High sorts to High/Low/Medium, painting High green and Medium red.
+- Leave theme-owned chrome (chart background, text, axis, grid and view border colors) unset so the renderer can apply light or dark styling. For plain categorical encodings prefer `color: {field: ..., type: nominal}` without `scale.range` or `value` so the shared categorical palette applies, and use explicit colors only when the color itself carries meaning.
 
 **Stack order**: A stacked mark orders its segments alphabetically unless told otherwise. Add a numeric field via `calculate` and map it to the `order` channel to get a deliberate sequence.
 
@@ -65,7 +66,7 @@ Legends appear when mapping data to `color`, `size`, or `shape` in encoding.
 
 **Direct labels over legends**: with only a few series, set `legend: null` and label each series on the mark itself — a `text` layer filtered to the series' last point, `align: left`, small `dx`. The eye should not have to leave the data to decode a color key.
 
-**Gray context, one highlight**: mute everything that is not the message (`'#cccccc'`, or `opacity: 0.25`) and give the accent color only to the series or bar carrying it. One focus per chart — see the `condition` in the ranked bar example.
+**Gray context, one highlight**: mute everything that is not the message with `opacity: 0.25` and give the accent color only to the series or bar carrying it. One focus per chart — see the `condition` in the ranked bar example.
 
 **Annotate the finding**: mark the threshold, event or delta in place with a `rule` layer plus a `text` layer. Assume the reader never hovers: the static view has to carry the whole message on its own.
 
@@ -110,7 +111,7 @@ Mark vs Encoding (common error—dx/dy go in mark, NOT encoding):
 ```yaml
 layer:
   # CORRECT: dx in mark
-  - mark: {type: text, align: left, dx: 5, color: black}
+  - mark: {type: text, align: left, dx: 5}
     encoding:
       x: {field: value, type: quantitative}
       y: {field: category, type: nominal}
@@ -149,7 +150,6 @@ title:
   subtitle: "Online channels drove 80% of growth"  # New insight, don't repeat title
   fontSize: 18
   subtitleFontSize: 14
-  subtitleColor: '#666666'
   anchor: start
 ```
 
@@ -173,7 +173,6 @@ layer:
       x: {field: year, type: quantitative}
       y: {field: avg_capacity, type: quantitative}
       text: {field: avg_capacity, type: quantitative}
-      color: {value: black}
 ```
 
 Ranked bar chart with top 10 filter:
@@ -189,9 +188,9 @@ layer:
     encoding:
       y: {field: state, type: nominal, sort: {field: turbine_count, order: descending}, axis: {title: null}}
       x: {field: turbine_count, type: quantitative, axis: {title: "Number of Turbines", format: ",~r"}}
-      color:
-        condition: {test: "datum.state === 'TX'", value: '#1f77b4'}
-        value: '#aec7e8'
+      opacity:
+        condition: {test: "datum.state === 'TX'", value: 1}
+        value: 0.3
 config:
   view: {stroke: null}
   axis: {grid: false}
@@ -207,7 +206,6 @@ layer:
       longitude: {field: xlong, type: quantitative}
       latitude: {field: ylat, type: quantitative}
       size: {field: capacity_kw, type: quantitative, scale: {range: [100, 500]}, legend: {title: "Capacity (kW)"}}
-      color: {value: '#1f77b4'}
       tooltip:
         - {field: turbine_id, type: nominal, title: "ID"}
         - {field: capacity_kw, type: quantitative, title: "Capacity (kW)"}
@@ -229,7 +227,7 @@ layer:
     encoding:
       x: {field: year, type: quantitative}
       y: {field: value, type: quantitative}
-      color: {value: '#d62728'}
+      color: {field: category, type: nominal, legend: null}
 config:
   view: {stroke: null}
   axis: {grid: false}
@@ -277,7 +275,7 @@ layer:
   - data:
       url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
       format: {type: topojson, feature: states}
-    mark: {type: geoshape, fill: null, stroke: "#888888", strokeWidth: 0.5}
+    mark: {type: geoshape, fill: null, stroke: "gray", strokeWidth: 0.5}
   - data:
       url: "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
       format: {type: topojson, feature: states}
@@ -287,7 +285,7 @@ layer:
           data: {name: {{ memory['table'] }}}          # the table, named exactly
           key: <TABLE_JOIN_COLUMN>                     # matching column in the table
           fields: [<VALUE_COLUMN>]                     # only these exist after the join
-    mark: {type: geoshape, stroke: "white", strokeWidth: 0.5}
+    mark: {type: geoshape, stroke: "gray", strokeWidth: 0.5}
     encoding:
       color: {field: <VALUE_COLUMN>, type: quantitative, scale: {scheme: blues}, legend: {title: "<VALUE_COLUMN>"}}
       tooltip:

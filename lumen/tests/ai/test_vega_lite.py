@@ -124,6 +124,29 @@ def test_main_prompt_guards_ungrouped_multi_series_lines():
     assert "aggregate" in text.lower()
 
 
+def test_vegalite_prompts_leave_theme_owned_colors_unset():
+    """Colors written into the spec beat the render-time theme, so the prompts
+    must not teach the model to set text, grid, background or border colors."""
+    prompt_dir = PROMPTS_DIR / "VegaLiteAgent"
+    theme_tokens = (
+        "subtitleColor",
+        "color: black",
+        "#eeeeee",
+        "#cccccc",
+        "#333333",
+        "#666666",
+        "#888888",
+        "#ffcccc",
+        "#cc0000",
+        "#e74c3c",
+        '"white"',
+    )
+    for name in ("main.jinja2", "main_altair.jinja2", "revise_output.jinja2", "annotate_plot.jinja2"):
+        text = (prompt_dir / name).read_text()
+        for token in theme_tokens:
+            assert token not in text, f"{token!r} leaked into {name}"
+
+
 CATEGORICAL_SPEC = {
     "mark": "bar",
     "encoding": {
