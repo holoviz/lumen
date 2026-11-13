@@ -1,7 +1,7 @@
 import importlib.util
 import re
 
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import param
@@ -104,6 +104,9 @@ class hvPlotAgent(BaseViewAgent):
             "opts",
             "selection_expr",
             "streaming",
+            # Offered below as a short list; the view also takes any colormap
+            # name, list or mapping, which is too open a choice for the model
+            "cmap",
         ]
         model = param_to_pydantic(
             self.view_type,
@@ -112,6 +115,9 @@ class hvPlotAgent(BaseViewAgent):
             schema=schema,
             extra_fields={
                 "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
+                "cmap": (Literal["kbc_r", "fire", "coolwarm", "colorwheel"] | None, FieldInfo(
+                    default=None, description=" ".join(hvPlotView.param.cmap.doc.split("Leave unset")[0].split())
+                )),
             },
             # Only this one view is being described. Expanding subclasses is for
             # callers that want a union over a taxonomy, and here it would walk

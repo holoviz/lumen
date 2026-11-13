@@ -273,3 +273,10 @@ async def test_a_signed_colour_is_drawn_centred_on_zero(coloured):
     plot = view.get_plot(view.get_data())
     assert hv.Store.lookup_options("bokeh", plot, "style").kwargs["cmap"] == "coolwarm"
     assert hv.Store.lookup_options("bokeh", plot, "plot").kwargs["symmetric"] is True
+
+
+def test_the_model_chooses_cmap_from_a_short_list():
+    model = hvPlotAgent()._get_model("main", schema={"type": "object", "properties": {"x": {"type": "number"}}})
+    schema = model.model_json_schema()["properties"]["cmap"]
+    assert schema["anyOf"][0]["enum"] == ["kbc_r", "fire", "coolwarm", "colorwheel"]
+    assert "\n" not in schema["description"]
