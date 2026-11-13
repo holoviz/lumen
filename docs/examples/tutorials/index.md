@@ -74,6 +74,17 @@ Turn recurring analytics requests into one-click reproducible reports. Build an 
 - Wrapping agents with ActorTask for narrative insights
 - Organizing reports with Sections and sharing context between tasks
 
+### [Standard Operational Dashboard](standard_operational_dashboard.md)
+Build an operational dashboard to monitor network performance, identify anomalies, and investigate unusual activity using Lumen AI.
+
+**You'll learn:**
+
+- Creating KPI cards for operational metrics
+- Visualizing network latency and performance trends
+- Displaying critical alerts in an interactive table
+- Identifying and investigating anomalies
+- Integrating Lumen's AI ExplorerUI into a dashboard
+
 ## More Coming Soon
 
 We're constantly adding new tutorials. Check back regularly or [contribute your own](../../contributing.md)!
