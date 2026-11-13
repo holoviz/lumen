@@ -279,4 +279,3 @@ def test_the_model_chooses_cmap_from_a_short_list():
     model = hvPlotAgent()._get_model("main", schema={"type": "object", "properties": {"x": {"type": "number"}}})
     schema = model.model_json_schema()["properties"]["cmap"]
     assert schema["anyOf"][0]["enum"] == ["kbc_r", "fire", "coolwarm", "colorwheel"]
-    assert "\n" not in schema["description"]

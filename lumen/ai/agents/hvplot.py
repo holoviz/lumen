@@ -115,9 +115,8 @@ class hvPlotAgent(BaseViewAgent):
             schema=schema,
             extra_fields={
                 "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
-                "cmap": (Literal["kbc_r", "fire", "coolwarm", "colorwheel"] | None, FieldInfo(
-                    default=None, description=" ".join(hvPlotView.param.cmap.doc.split("Leave unset")[0].split())
-                )),
+                # The prompt says which colormap fits which data
+                "cmap": (Literal["kbc_r", "fire", "coolwarm", "colorwheel"] | None, FieldInfo(default=None)),
             },
             # Only this one view is being described. Expanding subclasses is for
             # callers that want a union over a taxonomy, and here it would walk
