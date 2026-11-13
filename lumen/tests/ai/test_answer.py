@@ -2616,13 +2616,16 @@ class KeyedLLM(MockLLM):
     and counts how many questions are planning at once.
     """
 
-    def __init__(self, questions, fail=(), **params):
+    def __init__(self, questions, fail=(), meet=0, **params):
         super().__init__(**params)
         self.questions = questions
         self.fail = set(fail)
         self.in_flight = 0
         self.most_in_flight = 0
         self.plans = []
+        # With meet=n, each plan call waits until n of them are in flight
+        self.meet = meet
+        self._met = asyncio.Event()
 
     def _question(self, messages):
         text = json.dumps(messages)
@@ -2634,7 +2637,12 @@ class KeyedLLM(MockLLM):
             self.plans.append(question)
             self.in_flight += 1
             self.most_in_flight = max(self.most_in_flight, self.in_flight)
-            await asyncio.sleep(0.05)
+            if self.in_flight == self.meet:
+                self._met.set()
+            if self.meet:
+                await asyncio.wait_for(self._met.wait(), timeout=5)
+            else:
+                await asyncio.sleep(0.05)
             self.in_flight -= 1
             return _plan(("ChatAgent", "Explain"))
         if question in self.fail:
@@ -2653,9 +2661,10 @@ async def test_ask_many_answers_in_order(frame_source):
 
 
 async def test_ask_many_runs_questions_at_the_same_time(frame_source):
-    llm = KeyedLLM(QUESTIONS)
-    await answer_module.aask_many(frame_source, QUESTIONS, llm=llm)
-    assert llm.most_in_flight == 3
+    # Asked one by one, the first plan call would wait for the others and time out
+    llm = KeyedLLM(QUESTIONS, meet=3)
+    answers = await answer_module.aask_many(frame_source, QUESTIONS, llm=llm)
+    assert llm.most_in_flight == 3 and all(a.status == "success" for a in answers)
 
 
 async def test_ask_many_keeps_to_its_concurrency(frame_source):
