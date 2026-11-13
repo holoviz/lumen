@@ -236,3 +236,36 @@ async def test_without_datashader_a_large_grid_is_not_rasterized(monkeypatch):
     pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
     spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "x", "y": "y", "z": "t"})
     assert "rasterize" not in spec
+
+
+# ---- A colour column gets a colormap that fits it ----
+
+@pytest.fixture
+def coloured():
+    df = pd.DataFrame({
+        "x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0], "anomaly": [-1.5, 0.2, 2.0],
+        "wind_dir": [10.0, 200.0, 350.0], "air": [280.0, 290.0, 300.0], "kind": ["a", "b", "a"],
+    })
+    return Pipeline(source=InMemorySource(tables={"t": df}), table="t")
+
+
+@pytest.mark.parametrize("column, cmap", [("anomaly", "coolwarm"), ("wind_dir", "colorwheel"), ("air", None), ("kind", None)])
+async def test_the_colour_column_picks_a_colormap(coloured, column, cmap):
+    spec = await hvPlotAgent()._extract_spec({"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": column})
+    assert spec.get("cmap") == cmap
+    assert spec.get("symmetric") is (True if cmap == "coolwarm" else None)
+
+
+async def test_a_colormap_the_model_chose_is_kept(coloured):
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": "anomaly", "cmap": "fire"}
+    )
+    assert spec["cmap"] == "fire" and "symmetric" not in spec
+
+
+async def test_a_signed_colour_is_drawn_centred_on_zero(coloured):
+    spec = await hvPlotAgent()._extract_spec({"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": "anomaly"})
+    view = hvPlotView(pipeline=coloured, **spec)
+    plot = view.get_plot(view.get_data())
+    assert hv.Store.lookup_options("bokeh", plot, "style").kwargs["cmap"] == "coolwarm"
+    assert hv.Store.lookup_options("bokeh", plot, "plot").kwargs["symmetric"] is True
