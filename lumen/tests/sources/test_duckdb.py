@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import yaml
 
+from lumen.pipeline import Pipeline
 from lumen.tests.utils import Polygon, gpd
 from lumen.transforms.sql import SQLGroupBy
 
@@ -1581,6 +1583,37 @@ def test_native_fetch_keeps_date_a_date(backend):
     assert [dt.date(d.year, d.month, d.day) for d in days] == list(expected)
 
 
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_from_df_native_frame_keeps_dtypes(backend):
+    """A polars or Arrow frame goes in without a pandas detour."""
+    pytest.importorskip(backend)
+    import narwhals.stable.v2 as nw
+
+    data = {
+        'i': [1, 2, None], 'f': [0.5, None, 2.5], 's': ['a', None, 'c'],
+        'b': [True, False, None], 'd': [dt.date(2020, 1, d) for d in (1, 2, 3)],
+    }
+    frame = nw.from_dict(data, backend=backend)
+    source = DuckDBSource.from_df({'t': frame.to_native()})
+    source.dataframe_backend = backend
+
+    fetched = nw.from_native(source.fetch("SELECT * FROM t"))
+    assert fetched.collect_schema() == frame.collect_schema()
+    assert fetched.rows() == frame.rows()
+
+
+def test_from_spec_restores_frame_and_pipeline_mirrors():
+    base = DuckDBSource.from_df({'base': pd.DataFrame({'x': [1, 2, 3]})})
+    source = DuckDBSource(
+        uri=':memory:',
+        mirrors={'people': pd.DataFrame({'name': ['a', 'b']}), 'piped': Pipeline(source=base, table='base')},
+        tables={'people': 'SELECT * FROM people', 'piped': 'SELECT * FROM piped'},
+    )
+    restored = DuckDBSource.from_spec(yaml.safe_load(yaml.dump(source.to_spec())))
+    assert list(restored.get('people')['name']) == ['a', 'b']
+    assert list(restored.get('piped')['x']) == [1, 2, 3]
+
+
 def _sql_geometry_source():
     """A GEOMETRY table built in SQL alone, so no geopandas is needed.
 
@@ -1886,3 +1919,40 @@ async def test_execute_with_timeout_interrupts_the_query():
     with pytest.raises(duckdb.ConnectionException):
         cursors[0].execute("SELECT 1")
     assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]
+
+
+def _crs_source(crs="EPSG:4326"):
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    from shapely.geometry import Point
+    places = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Point(13.4, 52.5)], crs=crs)
+    return DuckDBSource.from_df({"places": places})
+
+
+@pytest.mark.parametrize("query, epsg", [
+    # DuckDB drops the CRS through ST_Transform, so the target stands in
+    ("SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', always_xy := true) AS geometry FROM places", 3857),
+    ("SELECT * FROM (SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) AS geometry FROM places)", 6933),
+    # A built geometry takes the one CRS the source's geometry shares
+    ("SELECT ST_Point(10, 50) AS geometry", 4326),
+    ("SELECT ST_Buffer(geometry, 1) AS geometry FROM places", 4326),
+], ids=["transform", "transform-in-subquery", "constructed", "kept"])
+def test_result_geometry_keeps_a_crs(query, epsg):
+    assert _crs_source().execute(query).crs.to_epsg() == epsg
+
+
+def test_result_geometry_crs_is_left_unset_when_ambiguous():
+    source = _crs_source()
+    query = (
+        "SELECT * FROM (SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', always_xy := true) AS geometry FROM places "
+        "UNION ALL SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) FROM places)"
+    )
+    assert source.execute(query).crs is None
+
+
+def test_spheroid_functions_run_on_a_spatial_source_whatever_the_duckdb_version():
+    # DuckDB 2.0 raises from them until the axis order is set; Lumen keeps (lat, lon)
+    source = DuckDBSource(uri=":memory:", initializers=["INSTALL spatial;", "LOAD spatial;"])
+    triangle = "ST_GeomFromText('POLYGON((13 52, 14 52, 14 53, 13 52))')"
+    area = source.execute(f"SELECT ST_Area_Spheroid(ST_FlipCoordinates({triangle})) AS a")["a"].iloc[0]
+    assert 3.70e9 < area < 3.86e9

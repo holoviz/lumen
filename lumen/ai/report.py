@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import io
-import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator
-from contextlib import nullcontext
 from functools import partial
 from types import FunctionType
 from typing import Any, Self, final
@@ -47,8 +45,8 @@ from .llm import Llm, Message
 from .tools import FunctionTool, Tool
 from .tools.base import FunctionCall, capture_function_calls
 from .utils import (
-    content_to_text, extract_block_source, get_block_names, set_content_text,
-    wrap_logfire_on_method,
+    content_to_text, extract_block_source, get_block_names,
+    print_task_exception, set_content_text, wrap_logfire_on_method,
 )
 
 
@@ -167,12 +165,13 @@ class Task(Viewer):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
         self._view[:] = self._header
@@ -464,9 +463,9 @@ class TaskGroup(Task):
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
-                tb.print_exception(e)
+                print_task_exception(e)
                 self.status = "error"
-                new_context = {"__error__": str(e), "__error_type__": type(e)}
+                new_context = {"__error__": str(e), "__error_type__": type(e), "__exception__": e}
                 task.out_context = new_context
                 if self.abort_on_error:
                     if self.parent is not None:

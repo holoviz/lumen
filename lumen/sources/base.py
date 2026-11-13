@@ -53,6 +53,9 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
+    from ..ai.answer import Answer, Chat
+    from ..ai.llm import Llm
+
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
 
@@ -659,6 +662,37 @@ class Source(MultiTypeComponent):
         about the Source or controls how the Source queries data.
         """
         return None
+
+    def ask(self, question: str, *, llm: Llm | None = None, agents: list | None = None) -> Answer:
+        """
+        Ask this source a question with Lumen AI and return the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask
+        return ask(self, question, llm=llm, agents=agents)
+
+    async def aask(self, question: str, *, llm: Llm | None = None, agents: list | None = None) -> Answer:
+        """
+        Ask this source a question with Lumen AI and await the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask
+        return await aask(self, question, llm=llm, agents=agents)
+
+    def chat(self, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
+        """
+        Start a conversation with this source, where each question can follow
+        up on the answers before it. See :func:`lumen.ai.answer.chat`.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import chat
+        return chat(self, llm=llm, agents=agents)
 
     def get_tables(self) -> list[str]:
         """

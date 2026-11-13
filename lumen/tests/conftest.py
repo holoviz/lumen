@@ -9,12 +9,23 @@ import panel as pn
 import pytest
 
 from bokeh.document import Document  # type: ignore
-from hvplot.tests.util import makeMixedDataFrame
 
 from lumen.config import config
 from lumen.sources.base import FileSource, Source
 from lumen.state import state
+from lumen.tests.utils import makeMixedDataFrame
+from lumen.util import try_import
 from lumen.variables.base import Variables
+
+
+def pytest_configure():
+    # Install the extensions once, before xdist starts its workers,
+    # so they don't race to download them; on Windows the loser fails with
+    # "Access is denied" moving the file into place.
+    if (duckdb := try_import("duckdb")) and not os.environ.get("PYTEST_XDIST_WORKER"):
+        duckdb.execute("INSTALL sqlite")
+        duckdb.execute("INSTALL httpfs")
+        duckdb.execute("INSTALL spatial")
 
 
 @pytest.fixture
@@ -139,7 +150,7 @@ def document():
 
 @pytest.fixture
 def cachedir():
-    tmp_dir = tempfile.TemporaryDirectory()
+    tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     yield tmp_dir.name
     tmp_dir.cleanup()
 

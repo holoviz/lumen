@@ -10,15 +10,20 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 try:
+    from lumen.ai.actor import NullStep
     from lumen.ai.agents.sql import (
         PROMPT_OTHER_TABLES, RequestBudget, SQLAgent, _coerce_filter_value,
         build_distinct_values_sql, catalog_exceeds_prompt,
-        execute_distinct_values, execute_exploration_sql,
-        make_browse_data_catalog_tool, make_load_table_schemas_tool,
-        make_run_exploration_sql_tool, make_sql_model, numeric_cast_edit,
-        referenced_columns, sql_is_scalar_aggregate, summarize_tool_calls,
+        execute_distinct_values, execute_exploration_sql, has_geometry,
+        is_gridded, make_browse_data_catalog_tool,
+        make_load_table_schemas_tool, make_run_exploration_sql_tool,
+        make_sql_model, numeric_cast_edit, referenced_columns,
+        sql_is_scalar_aggregate, summarize_tool_calls,
     )
-    from lumen.ai.config import DeterministicError, RequestBudgetExceededError
+    from lumen.ai.config import (
+        UNRECOVERABLE_ERRORS, DeterministicError, DeterministicQueryError,
+        MissingContextError, QueryError, RequestBudgetExceededError,
+    )
     from lumen.ai.llm import OpenAI
     from lumen.ai.schemas import (
         Column, Metaset, TableCatalogEntry, get_metaset, resolve_table_slug,
@@ -350,6 +355,44 @@ async def test_sql_agent_retry_receives_the_previous_attempt(sql_context, test_m
     assert seen[1] == {"sql": "SELECT broken", "tools": "- distinct_values(...) -> ...", "error": "ValueError: boom"}
 
 
+async def _respond_after_failing_with(error, sql_context, test_messages, llm):
+    async def attempt_query(self, *args, **kwargs):
+        args[5]["sql"] = "SELECT nope FROM tiny"
+        raise error
+
+    with patch.object(SQLAgent, "_attempt_query", new=attempt_query), patch("lumen.ai.utils.asyncio.sleep", new=AsyncMock()):
+        await SQLAgent(llm=llm).respond(test_messages, await sql_context())
+
+
+async def test_sql_agent_failure_keeps_the_failed_query(sql_context, test_messages, llm):
+    with pytest.raises(QueryError, match="Binder Error") as info:
+        await _respond_after_failing_with(ValueError("Binder Error: nope"), sql_context, test_messages, llm)
+    assert info.value.sql == "SELECT nope FROM tiny"
+    assert not isinstance(info.value, UNRECOVERABLE_ERRORS)
+
+
+async def test_sql_agent_deterministic_failure_stays_unrecoverable(sql_context, test_messages, llm):
+    with pytest.raises(DeterministicQueryError) as info:
+        await _respond_after_failing_with(DeterministicError("unresolvable"), sql_context, test_messages, llm)
+    assert info.value.sql == "SELECT nope FROM tiny"
+    assert isinstance(info.value, UNRECOVERABLE_ERRORS)
+
+
+async def test_sql_agent_missing_context_is_not_wrapped(sql_context, test_messages, llm):
+    with pytest.raises(MissingContextError) as info:
+        await _respond_after_failing_with(MissingContextError("no pipeline"), sql_context, test_messages, llm)
+    assert not isinstance(info.value, QueryError)
+
+
+async def test_validate_sql_records_the_last_revised_query(tiny_source, test_messages, llm):
+    agent = SQLAgent(llm=llm)
+    attempt = {"sql": None}
+    revise = AsyncMock(return_value="SELECT also_bad FROM tiny")
+    with patch.object(SQLAgent, "revise", new=revise), pytest.raises(Exception, match="also_bad"):
+        await agent._validate_sql({}, "SELECT nope FROM tiny", "slug", tiny_source, test_messages, NullStep(), attempt=attempt)
+    assert "also_bad" in attempt["sql"]
+
+
 async def test_sql_agent_stops_at_the_request_timeout(sql_context, test_messages, llm):
     agent = SQLAgent(llm=llm, request_timeout=0.05)
 
@@ -418,3 +461,105 @@ async def test_submit_sql_ends_request_on_second_timeout():
             await submit.validate(output)
         with pytest.raises(DeterministicError, match="timed out as well"):
             await submit.validate(output)
+
+
+def _metaset_with(data_type, stats_type=None):
+    from lumen.ai.table_stats import ColumnStats, TableStats
+    entry = TableCatalogEntry(table_slug=f"src{SEP}t", similarity=1.0, columns=[Column(name="g", metadata={"data_type": data_type})])
+    stats = {f"src{SEP}t": TableStats(table="t", columns=[ColumnStats(name="g", type=stats_type)])} if stats_type else {}
+    return Metaset(query=None, catalog={f"src{SEP}t": entry}, stats=stats)
+
+
+@pytest.mark.parametrize("data_type, stats_type, expected", [
+    ("geometry", None, True),
+    ("object", "GEOMETRY('EPSG:4326')", True),
+    ("int64", "BIGINT", False),
+])
+def test_has_geometry_reads_the_column_types(data_type, stats_type, expected):
+    assert has_geometry(_metaset_with(data_type, stats_type)) is expected
+    assert has_geometry(None) is False
+
+
+def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+
+    from lumen.sources.data import read
+    grid = xr.Dataset({"t": (("x",), np.arange(3.0))}, coords={"x": [0, 1, 2]})
+    alone = read(grid)
+    assert is_gridded({(alone.name, "t"): alone})
+    joined = read({"grid": grid, "plain": __import__("pandas").DataFrame({"a": [1]})})
+    assert is_gridded({(joined.name, "grid"): joined})
+    assert not is_gridded({(joined.name, "plain"): joined})
+
+
+async def _main_prompt(sql_context, test_messages, llm, tool_names=(), **flags):
+    agent = SQLAgent(llm=llm)
+    return await agent._render_prompt(
+        "main", test_messages, await sql_context(), dialect="duckdb", is_final_step=True,
+        sql_plan_context=None, active_filters=None, tool_names=list(tool_names), tool_rounds=6, **flags,
+    )
+
+
+async def test_sql_prompt_names_the_gridded_tools_only_when_offered(sql_context, test_messages, llm):
+    # A grid joined into DuckDB is gridded, but the tools only work on an xarray source
+    joined = await _main_prompt(sql_context, test_messages, llm, gridded=True)
+    assert "## Gridded SQL" in joined and "time_slice" not in joined
+    offered = await _main_prompt(sql_context, test_messages, llm, gridded=True, tool_names=["time_slice"])
+    assert "`time_slice`" in offered
+
+
+@pytest.mark.parametrize("flags, spatial, gridded", [
+    ({}, False, False),
+    ({"has_geometry": True}, True, False),
+    ({"gridded": True}, False, True),
+])
+async def test_sql_prompt_adds_spatial_and_gridded_guidance_only_when_flagged(sql_context, test_messages, llm, flags, spatial, gridded):
+    prompt = await _main_prompt(sql_context, test_messages, llm, **flags)
+    assert ("## Spatial SQL" in prompt, "ST_FlipCoordinates" in prompt) == (spatial, spatial)
+    assert ("## Gridded SQL" in prompt, "COS(RADIANS(lat))" in prompt) == (gridded, gridded)
+
+
+async def test_sql_prompt_is_unchanged_for_plain_tables(sql_context, test_messages, llm):
+    plain = await _main_prompt(sql_context, test_messages, llm)
+    off = await _main_prompt(sql_context, test_messages, llm, has_geometry=False, gridded=False)
+    assert plain == off
+
+
+async def test_submit_sql_reviews_a_degree_buffer_once():
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Point
+
+    from lumen.sources.data import read
+    source = read({"places": gpd.GeoDataFrame({"n": ["a"]}, geometry=[Point(13.4, 52.5)], crs="EPSG:4326")})
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
+    checked = {}
+    submit = agent._submit_sql_tool({(source.name, "places"): source}, checked)
+    query = "SELECT ST_Buffer(geometry, 500) AS area FROM places"
+    output = make_sql_model([(source.name, "places")])(query=query, table_slug="x", tables=["places"])
+
+    with pytest.raises(ValueError, match=r"(?s)Check this query before it runs: ST_Buffer\(geometry, \.\.\., 500\) works in degrees.*submit it again unchanged"):
+        await submit.validate(output)
+    # Resubmitted unchanged, it runs: the model may mean degrees
+    await submit.validate(output)
+    assert checked["sql"].startswith("SELECT")
+
+
+async def test_submit_sql_reviews_a_kelvin_column_compared_with_celsius():
+    xr = pytest.importorskip("xarray")
+    from lumen.sources.xarray_sql import XArraySQLSource
+    ds = xr.Dataset({"air": (["lat"], [280.0, 300.0], {"units": "K"})}, coords={"lat": [10.0, 20.0]})
+    source = XArraySQLSource(_dataset=ds)
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}))
+    submit = agent._submit_sql_tool({(source.name, "air"): source}, {})
+    output = make_sql_model([(source.name, "air")])(query="SELECT lat FROM air WHERE air > 25", table_slug="x", tables=["air"])
+    with pytest.raises(ValueError, match=r"air is in k, so 25 looks like degrees Celsius \(298.15 K\)"):
+        await submit.validate(output)
+
+
+def test_has_geometry_counts_only_the_tables_of_the_sources():
+    metaset = _metaset_with("geometry")
+    here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
+    assert has_geometry(metaset, {("src", "t"): here}) is True
+    assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
