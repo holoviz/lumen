@@ -445,3 +445,11 @@ def test_tweak_opens_a_gridded_answer_in_the_grid_explorer(xarray_pipeline):
     assert (explorer.kind, explorer.x, explorer.y) == ("quadmesh", "lon", "lat")
     assert explorer.colormapping.cmap == "fire"
     assert isinstance(explorer.hvplot(), hv.QuadMesh)
+
+
+def test_the_explorer_opens_on_the_variable_the_chart_shows(xarray_source):
+    source = xarray_source.create_sql_expr_source({"derived": "SELECT lat, lon, air AS first_air, air - 5 AS air_change FROM air"})
+    pipeline = Pipeline(source=source, table="derived")
+    assert set(pipeline.get_dataset().data_vars) == {"first_air", "air_change"}
+    explorer = hvPlotUIView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="air_change").get_panel()
+    assert explorer.hvplot().vdims[0].name == "air_change"

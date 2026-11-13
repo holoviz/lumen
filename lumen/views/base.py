@@ -1218,10 +1218,18 @@ class hvPlotUIView(hvPlotBaseView):
         self._check_aggregator(kwargs)
         return (data,), dict(params, **kwargs)
 
+    def _explored_dataset(self):
+        """The gridded Dataset to explore, narrowed to `z` when it names one of
+        its variables; otherwise the explorer opens on whichever comes first."""
+        gridded = self._source_dataset()
+        if gridded is not None and self.z in gridded.data_vars:
+            return gridded[[self.z]]
+        return gridded
+
     def __panel__(self):
         panel = self.get_panel()
         def ui(*events):
-            gridded = self._source_dataset()
+            gridded = self._explored_dataset()
             panel._data = gridded if gridded is not None else self.get_data()
             panel._plot()
             return panel
@@ -1231,7 +1239,7 @@ class hvPlotUIView(hvPlotBaseView):
         # An xarray-backed pipeline explores the compact gridded Dataset (via
         # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
         # and quadmesh work; tabular data uses the dataframe explorer.
-        gridded = self._source_dataset()
+        gridded = self._explored_dataset()
         if gridded is not None:
             # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
             import hvplot.xarray  # type: ignore  # noqa: F401
