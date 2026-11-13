@@ -1186,14 +1186,17 @@ class hvPlotUIView(hvPlotBaseView):
             if any(k in control for control in controls)
             and v is not None and k != 'name'
         }
+        # Plot options such as grid or frame_height have no explorer control
+        # either; dropped, so a plot spec opens in the explorer as it is.
+        kwargs = {k: v for k, v in self.kwargs.items() if any(k in control for control in controls)}
         # Only completed once a control has claimed it above: hvPlot gained the
         # color_key control after this was written, and forcing the keyword in
         # regardless makes hvPlotExplorer.__init__ reject it outright on an
         # older hvPlot rather than simply coloring from the default palette.
         if 'color_key' in params:
             params['color_key'] = self._complete_color_key(data)
-        self._check_aggregator(self.kwargs)
-        return (data,), dict(params, **self.kwargs)
+        self._check_aggregator(kwargs)
+        return (data,), dict(params, **kwargs)
 
     def __panel__(self):
         panel = self.get_panel()

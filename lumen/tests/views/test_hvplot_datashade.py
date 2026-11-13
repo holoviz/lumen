@@ -175,6 +175,21 @@ def test_hvplot_ui_view_forwards_datashade(categorical_pipeline):
     assert kwargs["dynspread"] is True
 
 
+def test_hvplot_ui_view_keeps_axis_options_and_drops_plot_only_ones(categorical_pipeline):
+    """A plot spec carries options like grid that no explorer control takes;
+    the explorer must still open, with the ones it does take, like height."""
+    view = hvPlotUIView(
+        pipeline=categorical_pipeline, kind="scatter", x="x", y="y",
+        height=300, grid=True, frame_height=400,
+    )
+
+    _args, kwargs = view._get_args()
+
+    assert kwargs["height"] == 300
+    assert "grid" not in kwargs and "frame_height" not in kwargs
+    assert view.get_panel().axes.height == 300
+
+
 @requires_datashader
 @requires_explorer_color_key
 def test_hvplot_ui_view_forwards_color_key(categorical_pipeline):
