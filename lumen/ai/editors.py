@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import pathlib
 import re
 import traceback
@@ -41,13 +42,18 @@ from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_frame
+from .utils import column_tooltips, describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
 
+
+# vl-convert logs Vega-Lite's spec warnings, e.g. on charts rendered to an
+# image for the LLM. Without any logging set up Python prints them, so in a
+# notebook they land in the cell; a configured logger still receives them.
+logging.getLogger("vl_convert").addHandler(logging.NullHandler())
 
 _PAGINATED_TABLE_STYLES = """
 .tabulator-footer {
@@ -66,6 +72,18 @@ _PAGINATED_TABLE_STYLES = """
 .tabulator .tabulator-footer .tabulator-pages {
   display: inline-flex !important;
   flex-wrap: wrap !important;
+}
+/* Header tooltips (column provenance) otherwise render light text on a
+   white box under dark themes; match the MUI tooltip instead. */
+.tabulator-tooltip {
+  background: var(--mui-palette-Tooltip-bg, #616161) !important;
+  color: var(--mui-palette-common-white, #fff) !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  max-width: 420px !important;
+  white-space: normal !important;
 }
 """
 
@@ -117,9 +135,10 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # Set before the view, which renders at once when no event loop runs
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
     def _code_editor(self) -> CodeEditor:
         """A CodeEditor two-way bound to this editor's spec."""
@@ -237,10 +256,14 @@ class LumenEditor(Viewer):
             self.component, self.spec, self._spec_dict, pipeline=pipeline
         )
 
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        return {}
+
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote', min_height=200,
             sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
+            **self._pipeline_table_kwargs(pipeline),
         )
         layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
@@ -611,6 +634,16 @@ class SQLEditor(LumenEditor):
         "integer": "numbers",
         "boolean": "toggle_on",
     }
+
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        # Derived from the current spec so tooltips follow SQL edits.
+        columns = tuple(str(col) for col in pipeline.data.columns)
+        try:
+            header_tooltips = column_tooltips(self.spec, pipeline.source.dialect, columns)
+        except Exception:
+            # Tooltips are a nicety; never let lineage break the table.
+            header_tooltips = {}
+        return {"header_tooltips": dict(header_tooltips)} if header_tooltips else {}
 
     def _render_editor(self):
         editor = super()._render_editor()

@@ -11,7 +11,7 @@ from functools import partial
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -34,19 +34,17 @@ from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
-from ..pipeline import Pipeline
-from ..sources import Source
-from ..sources.duckdb import DuckDBSource
+from ..sources.data import resolve_data
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import log, normalize_table_name, try_import_xarray
+from ..util import log, try_import_xarray
+from ..views import View
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
     ValidationAgent, VegaLiteAgent,
 )
 from .config import (
-    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR,
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, SOURCE_TABLE_SEPARATOR,
 )
 from .context import TContext
 from .controls import (
@@ -54,17 +52,19 @@ from .controls import (
     SourceCatalog, TableExplorer, UploadSourceControls,
 )
 from .controls.ingest.constants import XARRAY_EXTENSIONS
-from .controls.ingest.utils import read_geo_file
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
-    Llm, OpenAI, get_available_llm, local_cli_providers,
+    Llm, OpenAI, get_available_llm, signed_in_cli_hint,
 )
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Section
+from .selection import (
+    Selected, about, ask_box, watch_clicks,
+)
 from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
@@ -72,7 +72,8 @@ from .utils import (
 )
 from .vector_store import VectorStore
 
-DataT = str | Path | Source | Pipeline
+if TYPE_CHECKING:
+    from ..sources.data import DataT
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
@@ -380,11 +381,9 @@ LLM-generated code may be unpredictable. While validation layers reduce accident
 
 def _keyless_options_message() -> str:
     """Tell a user with no provider configured what works without an API key on this machine."""
-    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
-    cli_hint = f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
     return (
         "No LLM provider found, so chat is disabled. Open Settings > Configure AI Models and choose "
-        f"Kilo for free models without an account{cli_hint}. Or set an API key such as "
+        f"Kilo for free models without an account{signed_in_cli_hint()}. Or set an API key such as "
         "OPENAI_API_KEY and restart, or pass llm=lmai.llm.Kilo() to the UI."
     )
 
@@ -564,170 +563,6 @@ class UI(Viewer):
         atexit.register(_cleanup_temp_files)
         return {ext: _handle_xarray_upload for ext in XARRAY_EXTENSIONS}
 
-    @classmethod
-    def _resolve_data(
-        cls, data: DataT | list[DataT] | dict[DataT] | None
-    ) -> list[Source]:
-        """
-        Resolve the data into a list of sources.
-
-        Parameters
-        ----------
-        data: DataT | list[DataT] | dict[DataT] | None
-            The data to resolve.
-
-        Returns
-        -------
-        list[Source]
-            List of sources.
-        """
-        if data is None:
-            return []
-        elif isinstance(data, dict):
-            data = data.items()
-        elif not isinstance(data, list):
-            data = [data]
-
-        sources = []
-        remote = False
-        mirrors, tables = {}, {}
-
-        for src in data:
-            if isinstance(src, Source):
-                sources.append(src)
-            elif isinstance(src, Pipeline):
-                mirrors[src.name] = src
-            elif isinstance(src, (str, Path, tuple)):
-                if isinstance(src, tuple):
-                    name, src = src
-                    src = str(src)
-                else:
-                    name = src = str(src)
-
-                # Handle "no_data" as a special case for starting without data
-                if src == 'no_data':
-                    continue
-
-                # Handle explicit database connection strings first (before checking file extensions)
-                if src.startswith('duckdb://'):
-                    db_path = src.replace('duckdb:///', '')
-                    db_path = str(Path(db_path).absolute())
-                    source = DuckDBSource(uri=db_path)
-                    sources.append(source)
-                    continue
-                elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
-                    try:
-                        from ..sources.sqlalchemy import SQLAlchemySource
-                    except ImportError as e:
-                        raise ImportError(
-                            "SQLAlchemy is required for database connection strings. "
-                            "Install it with: pip install sqlalchemy"
-                        ) from e
-                    source = SQLAlchemySource(url=src)
-                    sources.append(source)
-                    continue
-
-                # Handle .db files - need to detect if SQLite or DuckDB
-                if src.endswith('.db'):
-                    db_path = Path(src).absolute()
-                    if not db_path.exists():
-                        raise FileNotFoundError(f"Database file not found: {src}")
-
-                    with open(db_path, 'rb') as f:
-                        header = f.read(16)
-
-                    # DuckDB files start with specific magic bytes
-                    # The header contains "DUCK" in the first 16 bytes
-                    if b'DUCK' in header:
-                        source = DuckDBSource(uri=str(db_path))
-                        sources.append(source)
-                    else:
-                        try:
-                            from ..sources.sqlalchemy import SQLAlchemySource
-                        except ImportError as e:
-                            raise ImportError(
-                                "SQLAlchemy is required to read .db files. "
-                                "Install it with: pip install sqlalchemy"
-                            ) from e
-                        source = SQLAlchemySource(url=f'sqlite:///{db_path}')
-                        sources.append(source)
-                    continue
-
-                # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
-                if Path(src).suffix.lstrip('.').lower() in XARRAY_EXTENSIONS:
-                    source = XArraySQLSource(uri=str(Path(src).absolute()))
-                    sources.append(source)
-                    continue
-
-                # Handle local geospatial files (GeoJSON, WKT, zipped shapefile)
-                # via the same read_geo_file -> DuckDB spatial path as file upload
-                geo_ext = Path(src).suffix.lstrip('.').lower()
-                if geo_ext in ('geojson', 'wkt', 'zip') and '://' not in src:
-                    sources.append(cls._resolve_geo_source(src, geo_ext))
-                    continue
-
-                if src.startswith('http'):
-                    remote = True
-                if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
-                    table = src
-                else:
-                    raise ValueError(
-                        f"Could not determine how to load {src} file."
-                    )
-                tables[name] = table
-
-        if tables or mirrors:
-            initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
-            source = DuckDBSource(
-                initializers=initializers,
-                mirrors=mirrors,
-                name=PROVIDED_SOURCE_NAME,
-                tables=tables,
-                uri=':memory:'
-            )
-            sources.append(source)
-
-        return sources
-
-    @classmethod
-    def _resolve_geo_source(cls, src: str, extension: str) -> Source:
-        """Load a geospatial file into an in-memory DuckDBSource.
-
-        Routes GeoJSON/WKT/zipped-shapefile through the same read_geo_file ->
-        DuckDB spatial (ST_GeomFromWKB) path the interactive upload uses, so
-        startup and uploaded geospatial data behave identically (gh-1900).
-        """
-        path = Path(src).absolute()
-        if not path.exists():
-            raise FileNotFoundError(f"Data file not found: {src}")
-
-        alias = normalize_table_name(path.stem)
-        with open(path, 'rb') as f:
-            result = read_geo_file(f, extension, alias)
-
-        source = DuckDBSource(
-            initializers=result.source_params.get('initializers', []),
-            # WKB carries no CRS, so re apply the one read_geo_file captured
-            # from the file after the roundtrip
-            geometry_crs=result.source_params.get('geometry_crs'),
-            tables={},
-            uri=':memory:',
-        )
-        conn = source._connection
-        for tbl_name, df in result.tables.items():
-            df_rel = conn.from_df(df)
-            if tbl_name in result.conversions:
-                conn.register(f"{tbl_name}_temp", df_rel)
-                # read_geo_file emits a CREATE TEMP TABLE, but DuckDBSource runs
-                # its queries on cursors that cannot see another connection's temp
-                # tables, so materialize a persistent (in-memory) table instead.
-                conn.execute(result.conversions[tbl_name].replace("TEMP TABLE", "TABLE", 1))
-                conn.unregister(f"{tbl_name}_temp")
-            else:
-                df_rel.to_view(tbl_name)
-            source.tables[tbl_name] = f"SELECT * FROM {tbl_name}"
-        return source
-
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
         self, messages: Any, user: str, instance: ChatInterface, context: TContext | None = None
@@ -747,7 +582,7 @@ class UI(Viewer):
             The data to resolve.
         """
         self.context["provenance_chain"] = ["global"]
-        self.context["sources"] = sources = self._resolve_data(data)
+        self.context["sources"] = sources = resolve_data(data)
         if sources:
             self.context["source"] = sources[-1]
 
@@ -1094,6 +929,7 @@ class UI(Viewer):
                 callback_exception="raise",
                 edit_callback=on_edit,
                 load_buffer=5,
+                message_params={"show_avatar": True},
                 on_submit=on_submit,
                 show_button_tooltips=True,
                 show_button_name=False,
@@ -2342,16 +2178,31 @@ class ExplorerUI(UI):
         # Flush UI
         await asyncio.sleep(0.01)
 
-        prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
         sql_out = self._explorer.create_sql_output()
         out_context = dict(self.context, **(await sql_out.render_context()))
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
+        await self.add_plan_exploration(plan)
 
+    async def add_plan_exploration(self, plan: Plan, views: list | None = None):
+        """
+        Show an executed Plan as a new exploration, with its views and its
+        output context, so follow-up questions continue from it.
+
+        Parameters
+        ----------
+        plan: Plan
+            A Plan that has already been executed, e.g. ``answer.plan``
+            from ``source.ask(...)``.
+        views: list | None
+            The views to show instead of the plan's own, e.g. with a
+            refined chart in place of the one the plan made.
+        """
+        prev = self._explorations.value
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
-            self._add_views(exploration, items=plan.views)
+            self._add_views(exploration, items=plan.views if views is None else views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
@@ -2669,8 +2520,10 @@ class ExplorerUI(UI):
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
         editor = view.editor
+        # Last in the tab, so the pop-out lookups still find the body at index 1
+        box = [self._ask_box(view)] if isinstance(view.component, View) else []
         if editor is None:
-            view = Column(controls, view)
+            view = Column(controls, view, *box)
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
@@ -2689,7 +2542,7 @@ class ExplorerUI(UI):
         # the Column's body (a watcher swaps it in and out) rather than wrapped
         # in a reactive pane, so the pop-out helpers still find it as a VSplit.
         filter_paper = getattr(view, "_filter_paper", None)
-        view = Column(controls, vsplit)
+        view = Column(controls, vsplit, *box)
         if filter_paper is not None:
             def _toggle_filter_pane(event):
                 if event.new:
@@ -2703,6 +2556,21 @@ class ExplorerUI(UI):
             filter_paper.param.watch(_toggle_filter_pane, "visible")
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
+
+    def _ask_box(self, view: LumenEditor) -> Column:
+        """
+        A box for asking about a point clicked or selected on the view's
+        chart; the question and the point's rows go to the chat as the next
+        message, so the follow-up runs in this exploration.
+        """
+        selected = Selected()
+        # Kept on the editor so the streams live as long as the chart
+        view._click_streams = watch_clicks(view.component, lambda rows: setattr(selected, "selection", rows))
+
+        async def ask(question: str):
+            self.interface.send(about(question, selected.selection), respond=True)
+
+        return ask_box(selected, ask)
 
     def _vsplit_has_view(self, content, view) -> bool:
         # The body is the editor/table VSplit, or - when filters are active - a
@@ -2924,6 +2792,7 @@ class ExplorerUI(UI):
             exploration.parent.conversation = exploration.conversation
 
         error_type = plan.out_context.pop("__error_type__", Exception)
+        plan.out_context.pop("__exception__", None)
         error = plan.out_context.pop("__error__", "Unknown error")
         _, todos = plan.render_task_history(failed=True)
 
@@ -2966,5 +2835,6 @@ class ExplorerUI(UI):
             if not is_home:
                 context['prev_plan'] = exploration.plan
             plan = await self._coordinator.respond(messages, context)
-            if plan is not None:
+            # An unanswerable plan has no steps, and respond has told the user why
+            if plan is not None and not plan.unanswerable:
                 await self._execute_plan(plan)

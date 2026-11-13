@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import sys
 
 from pathlib import Path
@@ -29,6 +30,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+from instructor import Mode
 from instructor.processing.multimodal import Image
 from pydantic import BaseModel, ValidationError
 
@@ -243,14 +245,14 @@ def test_codex_cli_command_defaults_to_read_only():
     ]
 
 
-def test_claude_code_command_defaults_to_plan_mode():
+def test_claude_code_command_does_not_use_plan_mode():
     llm = ClaudeCode()
 
     command = llm._build_command("sonnet")
 
     assert command == [
         "claude", "--print", "--output-format", "json", "--no-session-persistence",
-        "--max-turns", "3", "--permission-mode", "plan",
+        "--max-turns", "3", "--permission-mode", "dontAsk",
         "--tools", "", "--strict-mcp-config", "--setting-sources=", "--model", "sonnet",
     ]
 
@@ -292,6 +294,34 @@ def test_cli_output_decoders():
 
     claude = ClaudeCode()
     assert claude._decode_output('{"result":"Ready", "is_error":false}') == "Ready"
+
+
+def test_claude_code_records_the_usage_it_reports():
+    claude = ClaudeCode()
+    output = json.dumps({
+        "result": "Ready", "is_error": False, "total_cost_usd": 0.0125,
+        "usage": {"input_tokens": 10, "cache_read_input_tokens": 90, "cache_creation_input_tokens": 5, "output_tokens": 20},
+        "modelUsage": {"claude-opus-5-5": {}},
+    })
+    with claude.capture_usage() as scope:
+        claude._decode_output(output)
+    (usage,) = scope.records
+    assert usage.model == "claude-opus-5-5"
+    # Cache reads and writes count as input, as for the Anthropic API
+    assert (usage.input_tokens, usage.cached_tokens, usage.output_tokens) == (105, 90, 20)
+    assert usage.cost_usd == 0.0125 and claude.usage.records == [usage]
+
+
+def test_claude_code_names_the_model_that_cost_the_most():
+    claude = ClaudeCode()
+    output = json.dumps({
+        "result": "Ready", "is_error": False,
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+        "modelUsage": {"claude-haiku-5-5": {"costUSD": 0.001}, "claude-opus-5-5": {"costUSD": 0.02}},
+    })
+    with claude.capture_usage() as scope:
+        claude._decode_output(output)
+    assert scope.records[0].model == "claude-opus-5-5"
 
 
 async def test_copilot_cli_reuses_one_acp_process(monkeypatch):
@@ -546,6 +576,11 @@ def test_groq_api_key_env_var():
 def test_groq_endpoint():
     groq = Groq(api_key="test-key")
     assert groq.endpoint == "https://api.groq.com/openai/v1"
+
+
+def test_groq_uses_json_schema_mode():
+    groq = Groq(api_key="test-key")
+    assert groq.mode == Mode.JSON_SCHEMA
 
 
 def test_ollama_models_lists_pulled_models(monkeypatch):
@@ -855,6 +890,72 @@ async def test_rejection_with_non_string_param_is_reraised(monkeypatch):
         await llm.run_client("default", [{"role": "user", "content": "hi"}])
 
 
+KILO_UPSTREAM_ERROR = {
+    "error": "The upstream provider was unable to process the request",
+    "error_type": "upstream_error",
+}
+
+
+def _kilo_rejection(body: dict) -> openai.BadRequestError:
+    """The 400 the OpenAI client builds for a Kilo payload: the message holds
+    the whole payload, while ``body`` is only its ``error`` string."""
+    request = httpx.Request("POST", "https://api.kilo.ai/api/gateway/chat/completions")
+    return openai.BadRequestError(
+        f"Error code: 400 - {body}", response=httpx.Response(400, request=request), body=body["error"],
+    )
+
+
+KILO_TOOL_CHOICE_ERROR = {
+    "error": "This model does not support a required or named tool choice. Remove it and retry.",
+    "type": "invalid_request_error",
+}
+
+
+@pytest.mark.parametrize("rejection", [KILO_UPSTREAM_ERROR, KILO_TOOL_CHOICE_ERROR], ids=["upstream", "tool-choice"])
+async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch, rejection):
+    """The free tier's upstream rejects a forced tool call, so Kilo asks for
+    JSON in plain text instead and keeps doing so."""
+    llm = Kilo()
+    modes = []
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        modes.append(self.mode)
+        if self.mode is not Mode.MD_JSON:
+            raise _kilo_rejection(rejection)
+        return "ok"
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    assert await llm.run_client("default", [{"role": "user", "content": "hi"}]) == "ok"
+    assert await llm.run_client("default", [{"role": "user", "content": "hi"}]) == "ok"
+    assert modes == [Mode.TOOLS, Mode.MD_JSON, Mode.MD_JSON]
+
+
+async def test_kilo_other_rejections_are_reraised(monkeypatch):
+    llm = Kilo()
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        raise _kilo_rejection({"error": "bad schema", "error_type": "invalid_request"})
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
+    assert llm.mode is Mode.TOOLS
+
+
+async def test_kilo_upstream_rejection_in_json_mode_is_reraised(monkeypatch):
+    llm = Kilo()
+    calls = []
+
+    async def fake_send(self, _model_spec, _messages, **kwargs):
+        calls.append(self.mode)
+        raise _kilo_rejection(KILO_UPSTREAM_ERROR)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    with pytest.raises(openai.BadRequestError):
+        await llm.run_client("default", [{"role": "user", "content": "hi"}])
+    assert calls == [Mode.TOOLS, Mode.MD_JSON]
+
+
 KILO_TEXT_ONLY = (
     "Beam supports text input only. This conversation contains an image. "
     "Remove the image from the conversation and try again."
@@ -886,6 +987,25 @@ async def test_rejected_image_is_dropped_and_vision_disabled(monkeypatch, error)
     assert sent[1] == [["describe"]]
     assert llm._supports_vision is False
     assert OpenAI._supports_vision is True
+
+
+async def test_images_resent_after_vision_is_disabled_are_dropped(monkeypatch):
+    """A tool loop keeps its own messages, so the next round resends the image
+    the model already rejected; it must go out as text only."""
+    llm = OpenAI(model_kwargs={"default": {"model": "text-only"}})
+    sent: list[list] = []
+
+    async def fake_send(self, _model_spec, messages, **kwargs):
+        sent.append([m["content"] for m in messages])
+        if any(isinstance(c, list) and any(isinstance(p, Image) for p in c) for c in sent[-1]):
+            raise RuntimeError("instructor gave up") from _bad_request({"error": KILO_TEXT_ONLY}, KILO_TEXT_ONLY)
+
+    monkeypatch.setattr(OpenAI, "_send", fake_send)
+    round_messages = [{"role": "user", "content": ["describe", _make_test_image()]}]
+    await llm.run_client("default", round_messages)
+    await llm.run_client("default", round_messages)
+
+    assert sent[-1] == [["describe"]]
 
 
 @pytest.mark.parametrize("message", [

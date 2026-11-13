@@ -15,6 +15,7 @@ import time
 import traceback
 
 from collections.abc import Callable, Generator, Iterator
+from contextvars import ContextVar
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
@@ -37,6 +38,8 @@ from jinja2 import (
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
 from panel_material_ui import Details
+from sqlglot import exp
+from sqlglot.lineage import lineage
 
 from ..config import dump_yaml
 from ..filters.base import ConstantFilter
@@ -52,6 +55,7 @@ from .config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
     VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
+from .sharing import mask_frame, shares_values, sharing
 
 if TYPE_CHECKING:
     from narwhals.stable.v2.typing import Frame, IntoFrame
@@ -407,7 +411,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -444,7 +448,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             time.sleep(sleep)
 
@@ -543,6 +547,9 @@ async def get_schema(
     shuffle: bool = True,
     **get_kwargs
 ):
+    if not shares_values():
+        include_min_max = include_enum = False
+        include_type = include_type and sharing.share != "none"
     if isinstance(source, Pipeline):
         schema = await asyncio.to_thread(source.get_schema)
     else:
@@ -639,6 +646,12 @@ async def get_schema(
     # remove any fields that are empty
     for field in empty_fields:
         schema[field] = "<null>"
+
+    for field, spec in schema.items():
+        if isinstance(spec, dict) and not shares_values(field, spec.get("enum") or ()):
+            # A personal-data column keeps its type but not its values
+            for key in ("enum", "min", "max"):
+                spec.pop(key, None)
 
     if count is not None and include_count:
         schema["__len__"] = count
@@ -901,6 +914,12 @@ def describe_data_sync(
         YAML-formatted summary of the DataFrame
     """
     df, shape, is_sampled = _sample_for_summary(df)
+    if not shares_values():
+        # The structure without a single value, as the sharing level asks
+        columns = list(df.columns) if sharing.share == "none" else {col: str(df[col].dtype) for col in df.columns}
+        summary = {"data_shape": [int(shape[0]), int(shape[1])], "columns": columns}
+        return yaml.dump(summary, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    df = mask_frame(df)
     size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
@@ -1214,6 +1233,23 @@ def format_msg_content(content: Any) -> str:
                 parts.append(f"<{type(item).__name__}[{id(item)}]>")
         return " + ".join(parts)
     return f"<{type(content).__name__}[{id(content)}]>"
+
+
+#: Set while lumen.ai.ask answers a question: it hands errors back in the
+#: Answer, so their tracebacks are only logged at debug level
+errors_in_result: ContextVar[bool] = ContextVar("errors_in_result", default=False)
+
+
+def print_task_exception(e: BaseException) -> None:
+    """
+    Print a failed task's traceback to the console, or log it at debug
+    level while the caller gets the error back, e.g. as an Answer with
+    status "error".
+    """
+    if errors_in_result.get():
+        log.debug("Task failed", exc_info=e)
+    else:
+        traceback.print_exception(e)
 
 
 def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
@@ -2372,3 +2408,101 @@ def _add_geographic_items(vega_spec: dict, vega_spec_str: str) -> dict:
 
     _handle_map_compatibility(vega_spec, vega_spec_str)
     return vega_spec
+
+
+def _root_expression(node) -> exp.Expression | None:
+    """
+    Rebuild a lineage node's expression in terms of base table columns,
+    inlining CTE and subquery aliases along the way.
+    """
+    if isinstance(node.source, exp.SetOperation):
+        return None
+    expression = node.expression.unalias().copy()
+    children = {child.name: child for child in node.downstream}
+    columns = list(expression.find_all(exp.Column))
+    # Unmatched children are set-operation branches (named "0", "1", ...).
+    if set(children) - {column.sql() for column in columns}:
+        return None
+    for column in columns:
+        child = children.get(column.sql())
+        if child is None:
+            continue
+        if isinstance(child.source, exp.Table):
+            # Table functions like read_parquet(...) have no name to qualify with.
+            replacement = exp.column(column.this.copy(), table=child.source.name or None)
+        elif isinstance(child.source, exp.Select | exp.SetOperation):
+            replacement = _root_expression(child)
+            if replacement is None:
+                return None
+            if not isinstance(replacement, exp.Column | exp.Func | exp.Literal | exp.Paren):
+                replacement = exp.paren(replacement)
+        else:
+            # VALUES, table functions etc. are base relations already.
+            continue
+        if column is expression:
+            return replacement
+        column.replace(replacement)
+    return expression
+
+
+def _group_by(node) -> list[exp.Expression]:
+    """Return the first GROUP BY found along a lineage chain."""
+    for n in node.walk():
+        if isinstance(n.source, exp.Select) and (group := n.source.args.get("group")):
+            return [e.copy() for e in group.expressions]
+    return []
+
+
+@functools.lru_cache(maxsize=128)
+def column_tooltips(sql_query: str, dialect: str | None, columns: tuple[str, ...]) -> dict[str, str]:
+    """
+    Map each derived result column to a one-line description of how it is
+    computed from base table columns, e.g. ``SUM(orders.price), grouped by region``.
+
+    Plain or renamed columns get no entry. Set operations (UNION etc.) are
+    skipped since each branch computes the column differently.
+    """
+    try:
+        select = sqlglot.parse_one(sql_query, read=dialect)
+    except sqlglot.errors.ParseError:
+        return {}
+    if not isinstance(select, exp.Select):
+        return {}
+    # Lineage lowercases identifiers; restore them as the user wrote them.
+    spelling = {ident.name.lower(): ident.name for ident in select.find_all(exp.Identifier)}
+
+    projections = select.expressions
+    # Unaliased names differ per dialect (DuckDB `sum(x)`, Postgres `sum`), so
+    # match by position when every projection maps to exactly one column.
+    positional = len(projections) == len(columns) and not any(
+        isinstance(p.unalias(), exp.Star) or (isinstance(p, exp.Column) and isinstance(p.this, exp.Star))
+        for p in projections
+    )
+    by_name = {col.lower(): col for col in columns}
+
+    tooltips = {}
+    for i, projection in enumerate(projections):
+        name = projection.alias_or_name
+        column = columns[i] if positional else by_name.get(name.lower())
+        if column is None or isinstance(projection.unalias(), exp.Star):
+            continue
+        traced = select
+        if not projection.alias and not isinstance(projection, exp.Column):
+            name = f"_col_{i}"
+            traced = select.copy()
+            traced.expressions[i] = projection.as_(name)
+        try:
+            node = lineage(name, traced, schema=None, dialect=dialect)
+        except sqlglot.errors.SqlglotError:
+            continue
+        root = _root_expression(node)
+        if root is None or isinstance(root, exp.Column) or root.find(exp.Select):
+            continue
+        parts = [root, *_group_by(node)]
+        for identifier in (i for part in parts for i in part.find_all(exp.Identifier)):
+            identifier.set("this", spelling.get(identifier.name.lower(), identifier.name))
+        tooltip = root.sql(dialect=dialect)
+        if len(parts) > 1:
+            tooltip += ", grouped by " + ", ".join(e.sql(dialect=dialect) for e in parts[1:])
+        tooltips[column] = tooltip
+    return tooltips

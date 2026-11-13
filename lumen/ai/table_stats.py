@@ -57,6 +57,7 @@ from platformdirs import user_cache_dir
 from sqlglot import exp
 from sqlglot.dialects import Dialect
 
+from .sharing import shares_values, sharing
 from .utils import log_debug
 
 if TYPE_CHECKING:
@@ -1633,6 +1634,23 @@ def _format_nulls(nulls: float | None) -> str | None:
     return f"nulls {pct:.0f}%"
 
 
+def compact_geometry_type(sql_type: str) -> str:
+    """
+    A geometry type with its CRS as an authority code, e.g. GEOMETRY('EPSG:4326').
+    GeoParquet's CRS arrives as PROJJSON, about 1.5 KB in every schema line.
+    """
+    match = re.fullmatch(r"GEOMETRY\('(\{.*\})'\)", sql_type, re.DOTALL)
+    if match is None:
+        return sql_type
+    try:
+        crs_id = json.loads(match.group(1)).get("id") or {}
+    except ValueError:
+        return sql_type
+    if "authority" in crs_id and "code" in crs_id:
+        return f"GEOMETRY('{crs_id['authority']}:{crs_id['code']}')"
+    return "GEOMETRY"
+
+
 def render_column(
     col: ColumnStats, stats: TableStats | None = None, description: str | None = None,
     detail: str = "full", name: str | None = None,
@@ -1641,14 +1659,18 @@ def render_column(
     One line per column, e.g. ``AvgScrMath INTEGER 289..699 nulls 26%``.
 
     `detail` is ``"full"`` for every statistic, ``"types"`` for name, type and
-    keys only.
+    keys only, and ``"names"`` for the name alone, which is what sharing
+    nothing beyond names (``share="none"``) always gives.
     """
     parts = [name or format_name(col.name)]
-    if col.type:
-        parts.append(col.type)
-    if col.primary_key:
+    if sharing.share == "none":
+        # Names only, as the sharing level asks
+        detail = "names"
+    if col.type and detail != "names":
+        parts.append(compact_geometry_type(col.type))
+    if col.primary_key and detail != "names":
         parts.append("PK")
-    if col.references:
+    if col.references and detail != "names":
         parts.append(f"-> {col.references}")
     if detail == "full" and stats is not None and stats.method != TYPES_ONLY:
         parts.extend(_column_facts(col, stats))
@@ -1663,6 +1685,13 @@ def _column_facts(col: ColumnStats, stats: TableStats) -> list[str]:
     if col.nulls is not None and col.nulls >= 1:
         return ["all NULL"]
     exact = stats.method == EXACT
+    if not shares_values(col.name, [v for v, _ in col.values or ()] + list(col.examples or ())):
+        # Counts and nulls only, so no value of the column reaches the prompt
+        if exact and col.distinct:
+            facts.append(f"{col.distinct} distinct")
+        if nulls := _format_nulls(col.nulls):
+            facts.append(nulls)
+        return facts
     nonnull_rows = None
     if exact and stats.rows is not None and col.nulls is not None:
         nonnull_rows = round(stats.rows * (1 - col.nulls))
@@ -2079,8 +2108,14 @@ class TableStatsStore(param.Parameterized):
             log_debug(f"[table_stats] failed for {table!r}: {e}")
             return None
         finally:
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                # A loop that closed before the task ran closes this
+                # coroutine outside any loop; _schedule replaces the task
+                current = None
             with self._lock:
-                if self._tasks.get(key) is asyncio.current_task():
+                if current is not None and self._tasks.get(key) is current:
                     self._tasks.pop(key, None)
 
     async def ensure(

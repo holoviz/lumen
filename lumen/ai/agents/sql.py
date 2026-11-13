@@ -17,10 +17,12 @@ from ...filters import ConstantFilter
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, QueryTimeoutError, Source
 from ...sources.duckdb import DuckDBSource
+from ...sources.xarray_sql import XArraySQLSource
 from ...transforms.sql import SQLLimit
 from ...util import as_narwhals, as_pandas, is_lazyframe
 from ..config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError, EmptyResultError,
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError,
+    DeterministicQueryError, EmptyResultError, MissingContextError, QueryError,
     RequestBudgetExceededError,
 )
 from ..context import ContextModel, TContext
@@ -29,8 +31,12 @@ from ..editors import LumenEditor, SQLEditor
 from ..llm import Message, SubmitTool
 from ..models import RetrySpec
 from ..schemas import Metaset, resolve_table_slug
+from ..sharing import shares_values, sharing
+from ..sql_review import TableFacts, geographic_crs, review_sql
+from ..table_stats import get_stats_store
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
+from ..tools.gridded import gridded_sql_tools
 from ..utils import (
     PROFILE_SAMPLE_ROWS, clean_sql, describe_data, format_error,
     format_unknown_name, get_frame, get_pipeline, log_debug,
@@ -245,6 +251,35 @@ class RequestBudget:
             raise RequestBudgetExceededError(
                 f"SQL request used {self.calls} LLM calls, the limit is {self.max_calls}.{self.last_error()}"
             )
+
+
+def has_geometry(metaset: Metaset | None, sources: dict[tuple[str, str], BaseSQLSource] | None = None) -> bool:
+    """
+    Whether a table has a geometry column, from its types alone. With sources,
+    only their tables count, so a geometry table elsewhere in the metaset does
+    not put the spatial guidance in front of unrelated queries.
+    """
+    if metaset is None:
+        return False
+    slugs = None if sources is None else {f"{name}{SOURCE_TABLE_SEPARATOR}{table}" for name, table in sources}
+    types = [
+        (column.metadata or {}).get("data_type")
+        for slug, entry in metaset.catalog.items() if slugs is None or slug in slugs
+        for column in entry.columns
+    ]
+    types += [
+        column.type for slug, stats in metaset.stats.items() if slugs is None or slug in slugs
+        for column in stats.columns
+    ]
+    return any(str(kind).upper().startswith("GEOMETRY") for kind in types if kind)
+
+
+def is_gridded(sources: dict[tuple[str, str], BaseSQLSource]) -> bool:
+    """Whether any table is an xarray grid, read directly or joined into DuckDB."""
+    return any(
+        isinstance(source, XArraySQLSource) or bool((source.metadata or {}).get(table, {}).get("gridded"))
+        for (_, table), source in sources.items()
+    )
 
 
 def validate_read_only_sql(sql_query: str, dialect: str) -> None:
@@ -544,12 +579,26 @@ async def execute_distinct_values(
         if len(matches) != 1:
             return format_unknown_name("column", column, known)
         column = matches[0]
+    withheld = f"The values of {column!r} are withheld: the column looks like personal data."
+    if not shares_values(column):
+        return withheld
     try:
-        sql = build_distinct_values_sql(source.get_sql_expr(table_name), column, source.dialect, like, limit)
+        expr = source.get_sql_expr(table_name)
+        if like and sharing.mask_pii:
+            # Judge the column by its own values, not the ones matching like,
+            # or "no values" against "withheld" would tell what it contains
+            sample = as_pandas(await source.execute_with_timeout(
+                build_distinct_values_sql(expr, column, source.dialect, None, limit), timeout
+            ))
+            if not shares_values(column, sample.iloc[:, 0].tolist()):
+                return withheld
+        sql = build_distinct_values_sql(expr, column, source.dialect, like, limit)
         df = as_pandas(await source.execute_with_timeout(sql, timeout))
     except Exception as e:
         return format_error(e)
     rows = list(df.itertuples(index=False, name=None))
+    if not shares_values(column, [value for value, _ in rows]):
+        return withheld
     truncated = len(rows) > limit
     rows = rows[:limit]
     matching = f" containing {like!r}" if like else ""
@@ -946,6 +995,10 @@ class SQLAgent(BaseLumenAgent):
 
     exclusions = param.List(default=["dbtsl_metaset"])
 
+    max_rows = param.Integer(default=1_000_000, bounds=(1, None), allow_None=True, doc="""
+        Most rows a final query returns, applied as a LIMIT on the query so
+        a large result never loads in full. None returns every row.""")
+
     max_request_llm_calls = param.Integer(default=40, bounds=(1, None), doc="""
         Maximum LLM calls one SQL request may spend across all attempts, tool
         rounds and revisions. Checked before each attempt.""")
@@ -972,7 +1025,7 @@ class SQLAgent(BaseLumenAgent):
     # with apply_filter. NOTE: SQLAgent also emits a SQL query, so a filter
     # request may both apply this in-place filter and open a new SQL exploration
     # (see make_apply_filter_tool for the known limitation / follow-up).
-    llm_tools = param.List(default=[make_apply_filter_llm_tool])
+    llm_tools = param.List(default=[make_apply_filter_llm_tool, gridded_sql_tools])
 
     not_with = param.List(default=["DbtslAgent", "MetadataLookup", "TableListAgent"])
 
@@ -1021,6 +1074,7 @@ class SQLAgent(BaseLumenAgent):
         max_retries: int = 2,
         discovery_context: str | None = None,
         tools: list[FunctionTool] | None = None,
+        attempt: dict[str, t.Any] | None = None,
     ) -> tuple[str, pd.DataFrame | None]:
         """Validate and potentially fix SQL query.
 
@@ -1028,7 +1082,15 @@ class SQLAgent(BaseLumenAgent):
         The frame is None only when every attempt failed.
         """
         timed_out = False
-        for i in range(max_retries):
+        reviewed = False
+        # The review's revision is not a failed attempt, so it adds one
+        attempts = max_retries
+        for i in range(max_retries + 1):
+            if i >= attempts:
+                break
+            if attempt is not None:
+                # Kept current so a failure reports the query that last ran
+                attempt["sql"] = sql_query
             try:
                 # Reject non-query statements before clean_sql can discard trailing statements.
                 try:
@@ -1042,7 +1104,7 @@ class SQLAgent(BaseLumenAgent):
                     step.stream(f"\n\n❌ SQL cleaning failed: {e}")
                 validate_read_only_sql(sql_query, source.dialect)
             except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
-                if i == max_retries - 1:
+                if i == attempts - 1:
                     raise
                 sql_query = await self.revise(
                     format_error(e), messages, context, spec=sql_query,
@@ -1050,6 +1112,22 @@ class SQLAgent(BaseLumenAgent):
                     max_tool_rounds=REVISE_TOOL_ROUNDS,
                 )
                 continue
+            if not reviewed and i < max_retries - 1:
+                # Once, as in submit_sql: the revision is accepted as it comes back
+                reviewed = True
+                read = None if source.dialect == "any" else source.dialect
+                read_tables = {
+                    table.name for table in sqlglot.parse_one(sql_query, read=read).find_all(sqlglot.exp.Table)
+                } & set(source.get_tables())
+                if findings := review_sql(sql_query, self._table_facts(source, sorted(read_tables)), read):
+                    attempts += 1
+                    step.stream("\n\n⚠️ " + " ".join(findings))
+                    sql_query = await self.revise(
+                        "Check this query before it runs: " + " ".join(findings), messages, context,
+                        spec=sql_query, language=f"sql.{source.dialect}", discovery_context=discovery_context,
+                        tools=tools, max_tool_rounds=REVISE_TOOL_ROUNDS,
+                    )
+                    continue
             try:
                 step.stream(f"\n\n`{expr_slug}`\n```sql\n{sql_query}\n```")
                 validated = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
@@ -1066,20 +1144,20 @@ class SQLAgent(BaseLumenAgent):
                         f"Table {table!r} is listed by source {source.name!r} "
                         f"but the engine cannot resolve it: {feedback}"
                     )
-                elif isinstance(e, QueryTimeoutError) and (timed_out or i == max_retries - 1):
+                elif isinstance(e, QueryTimeoutError) and (timed_out or i == attempts - 1):
                     unrecoverable = f"The revised query timed out as well: {feedback}"
                 else:
                     unrecoverable = None
                 if unrecoverable:
                     step.stream(f"\n\n❌ SQL validation failed: {unrecoverable}")
                     raise DeterministicError(unrecoverable) from e
-                if i == max_retries - 1:
-                    step.stream(f"\n\n❌ SQL validation failed after {max_retries} attempts: {feedback}")
+                if i == attempts - 1:
+                    step.stream(f"\n\n❌ SQL validation failed after {attempts} attempts: {feedback}")
                     raise
                 timed_out = timed_out or isinstance(e, QueryTimeoutError)
 
                 # Retry with LLM fix
-                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{max_retries}): {feedback}")
+                step.stream(f"\n\n⚠️ SQL validation failed (attempt {i+1}/{attempts}): {feedback}")
                 if "KeyError" in feedback:
                     feedback += " The data does not exist; select from available data sources."
 
@@ -1107,7 +1185,9 @@ class SQLAgent(BaseLumenAgent):
         Placeholder numbers [-9999, ...] appear as data in "revenue"".
 
         Only the columns ``sql_query`` references are linted: a placeholder in
-        a column the query never reads cannot affect its result.
+        a column the query never reads cannot affect its result. Duplicates are
+        still judged on whole rows, since two records can share every column
+        the query reads.
         """
         columns = referenced_columns(sql_query, source.dialect) if sql_query else None
         findings = []
@@ -1125,14 +1205,12 @@ class SQLAgent(BaseLumenAgent):
                 # the query it feeds has already run successfully.
                 log_debug(f"Could not profile source table {table!r}: {e}")
                 continue
-            if columns is not None:
-                sample = as_pandas(sample)
-                sample = sample[[col for col in sample.columns if str(col).lower() in columns]]
-                if sample.columns.empty:
-                    continue
+            sample = as_pandas(sample)
+            if columns is not None and not any(str(col).lower() in columns for col in sample.columns):
+                continue
             findings.extend(
                 f"In the source rows of `{table}` (before aggregation): {finding}"
-                for finding in lint_data(sample, actionable_only=True)
+                for finding in lint_data(sample, actionable_only=True, columns=columns)
             )
         return findings
 
@@ -1215,7 +1293,7 @@ class SQLAgent(BaseLumenAgent):
 
         # Create pipeline
         if is_final:
-            sql_transforms = [SQLLimit(limit=1_000_000, write=source.dialect, pretty=True, identify=False)]
+            sql_transforms = [SQLLimit(limit=self.max_rows, write=source.dialect, pretty=True, identify=False)]
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug, sql_transforms=sql_transforms)
         else:
             pipeline = await get_pipeline(source=sql_expr_source, table=expr_slug)
@@ -1413,8 +1491,13 @@ class SQLAgent(BaseLumenAgent):
             if catalog_exceeds_prompt(metaset, self.schema_tables_shown):
                 tools.append(make_browse_data_catalog_tool(metaset))
             tools.append(make_load_table_schemas_tool(metaset))
-        tools.append(make_distinct_values_tool(sources, metaset, timeout=self.query_timeout))
-        tools.append(make_run_exploration_sql_tool(sources, timeout=self.query_timeout))
+        if shares_values():
+            # Both return row values, which the sharing level keeps out.
+            # Exploration rows can carry personal data under any alias, so
+            # masking keeps that tool out too; distinct_values masks by column.
+            tools.append(make_distinct_values_tool(sources, metaset, timeout=self.query_timeout))
+            if not sharing.mask_pii:
+                tools.append(make_run_exploration_sql_tool(sources, timeout=self.query_timeout))
         return tools
 
     def _resolve_output_tables(
@@ -1431,6 +1514,33 @@ class SQLAgent(BaseLumenAgent):
             if (source.name, table) not in sources:
                 raise ValueError(f"Unknown source/table pair: {source.name!r}/{table!r}")
         return source, tables
+
+    @staticmethod
+    def _table_facts(source: BaseSQLSource, tables: list[str]) -> dict[str, TableFacts]:
+        """The geometry CRSs and CF units the SQL review checks a query against."""
+        facts = {}
+        for table in tables:
+            stats = get_stats_store().get(source, table)
+            if stats is not None:
+                # Cached, so the review costs no query: GEOMETRY('EPSG:4326') and the like
+                geometry = {
+                    column.name: geographic_crs(column.type) for column in stats.columns
+                    if (column.type or "").upper().startswith("GEOMETRY")
+                }
+            else:
+                try:
+                    # One row is enough for the CRS; the full schema would scan the table
+                    schema = source.get_schema(table, limit=1)
+                except Exception:
+                    # The review is advice; a table it cannot describe is skipped
+                    continue
+                geometry = {
+                    column: bool(props.get("geographic")) for column, props in schema.items()
+                    if isinstance(props, dict) and props.get("format") == "geometry"
+                }
+            units = source.column_units(table) if isinstance(source, XArraySQLSource) else {}
+            facts[table] = TableFacts(geometry=geometry, units=units)
+        return facts
 
     def _submit_sql_tool(
         self, sources: dict[tuple[str, str], BaseSQLSource], checked: dict[str, t.Any]
@@ -1453,6 +1563,15 @@ class SQLAgent(BaseLumenAgent):
                 raise ValueError(
                     "The query reads no table. Select from the tables listed in `tables` "
                     "instead of returning literal values."
+                )
+            findings = review_sql(output.query, self._table_facts(source, tables), read)
+            if findings and checked.get("review") != output.query:
+                # Asked once, like the empty result: the model may know better,
+                # e.g. a buffer in degrees on purpose, and resubmits unchanged
+                checked["review"] = output.query
+                raise ValueError(
+                    "Check this query before it runs: " + " ".join(findings)
+                    + " If it is right as it is, submit it again unchanged."
                 )
             sql_query = clean_sql(output.query.strip(), source.dialect, prettify=True)
             limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
@@ -1477,10 +1596,13 @@ class SQLAgent(BaseLumenAgent):
                 # Asked once, since an empty answer is often correct and a model
                 # pushed to find rows tends to loosen the filters the user asked for.
                 checked["empty"] = sql_query
+                check_values = (
+                    "the literal values (distinct_values)" if shares_values() else "the filters against the schema"
+                )
                 raise ValueError(
                     "The query returned no rows. If its filters match the question, submit "
                     "it again unchanged; an empty result is a valid answer. Otherwise check "
-                    "the literal values (distinct_values) and fix the filters."
+                    f"{check_values} and fix the filters."
                 )
             checked.update(output=output, source=source, tables=tables, sql=sql_query, preview=preview)
 
@@ -1516,6 +1638,8 @@ class SQLAgent(BaseLumenAgent):
                         context,
                         model_kwargs=dict(sources=list(sources)),
                         dialect=dialect,
+                        has_geometry=has_geometry(metaset, sources),
+                        gridded=is_gridded(sources),
                         step_number=1,
                         is_final_step=True,
                         current_step="",
@@ -1560,6 +1684,7 @@ class SQLAgent(BaseLumenAgent):
                 validated_sql, preview = await self._validate_sql(
                     context, sql_query, expr_slug, source, messages,
                     step, discovery_context=discovery_context, tools=tool_list,
+                    attempt=attempt,
                 )
             attempt["sql"] = validated_sql
 
@@ -1576,12 +1701,13 @@ class SQLAgent(BaseLumenAgent):
                 # rewriting pass. Constant columns and outliers are reported but
                 # must not provoke a query rewrite. A single aggregated row gives
                 # the lint nothing to work with.
-                if self.clean_data and not sql_is_scalar_aggregate(validated_sql, source.dialect):
+                # Findings quote values, so they only reach the model when values may
+                if self.clean_data and shares_values() and not sql_is_scalar_aggregate(validated_sql, source.dialect):
                     actionable = lint_data(preview, actionable_only=True, capped=capped)
 
             # Scalar aggregates are profiled too: AVG over -9999 placeholders
             # is wrong and nothing in its one-row result shows it.
-            if self.clean_data and sql_contains_aggregates(validated_sql, source.dialect):
+            if self.clean_data and shares_values() and sql_contains_aggregates(validated_sql, source.dialect):
                 source_findings = await self._profile_source_rows(source, tables, validated_sql)
                 findings += source_findings
                 actionable += source_findings
@@ -1705,5 +1831,16 @@ class SQLAgent(BaseLumenAgent):
                 raise RequestBudgetExceededError(
                     f"SQL request exceeded its {self.request_timeout}s time limit.{budget.last_error()}"
                 ) from e
+            except (MissingContextError, RequestBudgetExceededError):
+                raise
+            except Exception as e:
+                last = attempts[-1] if attempts else {}
+                if last.get("sql") is None:
+                    raise
+                # Carries the failed query to callers that show errors, e.g.
+                # lumen.ai.ask, with the attempt's own error rather than the
+                # retry wrapper's "Maximum number of retries exceeded."
+                error_cls = DeterministicQueryError if isinstance(e, DeterministicError) else QueryError
+                raise error_cls(last.get("error", str(e)), last["sql"]) from e
         out_context = t.cast(SQLOutputs, await out.render_context())
         return [out], out_context

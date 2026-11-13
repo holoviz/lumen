@@ -28,6 +28,7 @@ from ..context import (
 from ..llm import Message
 from ..models import FollowUpClassification, ThinkingYesNo
 from ..report import ActorTask
+from ..sharing import shares_values
 from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import (
@@ -122,6 +123,10 @@ class RawStep(BaseModel):
 class RawPlan(BaseModel):
     chain_of_thought: str = Field(description="Summarize the user's goal and categorize the question type in 1-2 sentences.")
     title: str = Field(description="A title that describes this plan, up to three words.")
+    unanswerable: str | None = Field(default=None, description="""
+        Only when the Current Data Context shows that no table has the
+        columns, rows or period the question needs, the reason in one
+        sentence, with no steps. Otherwise null.""")
     steps: list[RawStep] = Field(
         description="""
         The sequence of steps to resolve the user's query.
@@ -391,7 +396,10 @@ class Planner(Coordinator):
         tools: dict[str, Tool],
     ) -> tuple[dict[str, Agent], dict[str, Tool], dict[str, Any]]:
         follow_up_type = await self._check_follow_up_question(messages, context)
-        self._clarification_enabled = await self._check_clarification_needed(messages, context)
+        # Clarifying needs someone to answer, so a headless planner skips the check
+        self._clarification_enabled = (
+            self.interface is not None and await self._check_clarification_needed(messages, context)
+        )
         await self._execute_planner_tools(messages, context)
         agents, tools, pre_plan_output = await super()._pre_plan(messages, context, agents, tools)
         pre_plan_output["follow_up_type"] = follow_up_type
@@ -471,6 +479,7 @@ class Planner(Coordinator):
             previous_actors=previous_actors,
             previous_plans=previous_plans,
             follow_up_type=follow_up_type,
+            values_visible=shares_values(),
         )
         stream_plan = partial(
             self._stream_plan, messages, model_spec=model_spec, plan_model=plan_model, llm_tools=llm_tools, step=step
@@ -621,7 +630,9 @@ class Planner(Coordinator):
             )
             actors_in_graph.add("ChatAgent")
 
+        # An empty plan has nothing to validate
         if (
+            tasks and
             "ValidationAgent" in agents and
             self.validation_enabled and
             "ValidationAgent" not in actors_in_graph
@@ -699,6 +710,13 @@ class Planner(Coordinator):
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
                     traceback.print_exception(e)
                     raise e
+                if raw_plan.unanswerable and not raw_plan.steps:
+                    # Nothing to resolve or validate: the answer is the reason
+                    plan = Plan(
+                        title=raw_plan.title, history=messages, context=context, coordinator=self,
+                        steps_layout=self.steps_layout, unanswerable=raw_plan.unanswerable,
+                    )
+                    break
                 # Inject clarifications into messages so downstream agents see the clarified intent
                 clarifications = context.get("clarifications")
                 if clarifications:
@@ -726,8 +744,12 @@ class Planner(Coordinator):
                     raise e
 
             # Store the todo message reference for later updates
-            if attempts > 0:
+            if plan.unanswerable:
+                istep.success_title = "The data cannot answer this question"
+            elif attempts > 0:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
             else:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created"
+        if plan is not None:
+            plan.reasoning = raw_plan.chain_of_thought
         return plan

@@ -5,6 +5,7 @@ import base64
 import contextvars
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -14,7 +15,8 @@ import time
 import traceback
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from functools import lru_cache, partial
 from pathlib import Path
 from typing import (
@@ -213,6 +215,10 @@ IMAGE_CAPABILITY_ERROR = re.compile(
     re.IGNORECASE,
 )
 
+# How Kilo's routed models refuse a forced tool call or structured output:
+# a generic upstream error, or naming the tool choice it cannot honour
+KILO_STRUCTURED_REJECTION = re.compile(r"upstream_error|tool[ _]choice", re.IGNORECASE)
+
 # model_kwargs entries that configure routing rather than the provider client,
 # and so must never reach an SDK constructor.
 ROUTING_KEYS = ("routing", "description")
@@ -299,6 +305,49 @@ def local_cli_providers() -> dict[type[LlmCli], bool | None]:
         for class_name in LLM_PROVIDERS.values()
         if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
     }
+
+
+def quiet_retry_log():
+    """
+    Silence instructor's per-attempt error log.
+
+    Lumen sends a single attempt and reports or recovers from the error
+    itself, so that log only duplicates it.
+    """
+    logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
+
+
+_quiet_retries = contextvars.ContextVar("quiet_retries", default=False)
+logging.getLogger("instructor.v2.retry").addFilter(lambda record: not _quiet_retries.get())
+
+
+@contextmanager
+def quiet_retries():
+    """
+    Silence instructor's per-attempt error log for the code run inside,
+    including the tasks it starts, without changing the logger for the rest
+    of the process.
+    """
+    token = _quiet_retries.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retries.reset(token)
+
+
+def signed_in_cli_hint() -> str:
+    """Name the keyless coding CLIs the user is signed in to, as a clause to append."""
+    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
+    return f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
+
+
+def llm_class(provider: str) -> type[Llm]:
+    """The LLM class for a provider name, e.g. the ``--provider`` value."""
+    if provider not in LLM_PROVIDERS:
+        raise ValueError(
+            f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
+        )
+    return globals()[LLM_PROVIDERS[provider]]
 
 
 def get_available_llm() -> type[Llm] | None:
@@ -1980,11 +2029,14 @@ class ClaudeCode(LlmCli):
 
     _auth_status_args = ("auth", "status")
 
+    # Not plan: every tool is already disabled, and plan mode adds planning
+    # remarks to each answer ("I'll answer directly rather than creating a
+    # plan file"), which leak into Lumen's text and break JSON replies.
     permission_mode = param.Selector(
-        default="plan",
+        default="dontAsk",
         objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
         constant=True,
-        doc="Claude Code permission mode. The non-writing plan mode is the default.",
+        doc="Claude Code permission mode. dontAsk never prompts and, with every tool disabled, never acts.",
     )
 
     max_turns = param.Integer(
@@ -2038,6 +2090,14 @@ class ClaudeCode(LlmCli):
             raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
         if "result" not in response:
             raise ValueError("Claude Code CLI response did not include a result.")
+        # The CLI can use several models, e.g. a small one for side tasks;
+        # the one that cost the most is the one that wrote the answer
+        used = response.get("modelUsage") or {}
+        model = max(used, key=lambda name: (used[name] or {}).get("costUSD") or 0, default="claude-code")
+        if (usage := parse_usage(response, "anthropic", model, {})) is not None:
+            # The CLI prices its own calls, so no pricing table is needed
+            cost = response.get("total_cost_usd")
+            record_usage(self, self.usage, replace(usage, cost_usd=cost if isinstance(cost, (int, float)) else None))
         return str(response["result"]).strip()
 
 
@@ -2743,6 +2803,10 @@ class OpenAI(Llm, OpenAIMixin):
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
         model = self._get_model_kwargs(model_spec)["model"]
         self._apply_kwarg_fixes(model, kwargs)
+        if not self._supports_vision:
+            # A tool loop resends its own messages each round, so images it
+            # added before vision was disabled come back here
+            messages = strip_images(messages)
         while True:
             try:
                 return await self._send(model_spec, messages, **kwargs)
@@ -4126,6 +4190,11 @@ class Groq(OpenAI):
         doc="The Groq API endpoint.",
     )
 
+    # Groq validates tool-call arguments server side and rejects a mismatch
+    # with an APIError before instructor can retry, which made chart specs
+    # fail every attempt. json_schema output is validated client side instead.
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
     model_kwargs = param.Dict(default={
         "default": {"model": "openai/gpt-oss-120b"},
     })
@@ -4482,3 +4551,17 @@ class Kilo(OpenAI):
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Kilo."""
         return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        try:
+            return await super().run_client(model_spec, messages, **kwargs)
+        except Exception as e:
+            error = find_bad_request(e)
+            # kilo-auto/free routes to models whose upstream provider rejects a
+            # forced tool call or response_format with a 400. JSON asked for in
+            # plain text needs neither, so switch for the rest of the session.
+            if error is None or self.mode is Mode.MD_JSON or not KILO_STRUCTURED_REJECTION.search(str(error)):
+                raise
+            log_debug(f"Kilo's upstream rejected a structured request; switching to {Mode.MD_JSON.name}")
+            self.mode = Mode.MD_JSON
+            return await super().run_client(model_spec, messages, **kwargs)

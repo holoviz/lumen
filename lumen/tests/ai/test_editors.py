@@ -1,5 +1,7 @@
 """Tests for lumen.ai.editors module."""
 import json
+import subprocess
+import sys
 
 from io import BytesIO
 
@@ -476,3 +478,68 @@ def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor
     assert multi.export("yaml").getvalue().count("line0") == 3
     with pytest.raises(ValueError, match="Unknown export format"):
         multi.export("csv")
+
+
+
+
+@pytest.mark.asyncio
+async def test_sql_editor_render_pipeline_header_tooltips(sql_pipeline_editor):
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+    assert not layout[0]._pane.header_tooltips
+
+
+def test_sql_editor_header_tooltips_match_unaliased_columns(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = "SELECT category, SUM(amount) FROM (VALUES ('A', 1.0), ('B', 2.0)) AS t(category, amount) GROUP BY category"
+    pipeline = Pipeline(source=DuckDBSource(tables={"q": sql}), table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by t.category"}}
+
+
+def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = (
+        "WITH s AS (SELECT category, SUM(amount) AS total FROM orders GROUP BY category) "
+        "SELECT category, total * 2 AS doubled FROM s"
+    )
+    source = DuckDBSource(
+        initializers=["CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 1.0)) AS t(category, amount)"],
+        tables={"q": sql},
+    )
+    pipeline = Pipeline(source=source, table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"doubled": "SUM(orders.amount) * 2, grouped by category"}}
+
+
+def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, monkeypatch):
+    def boom(*args):
+        raise IndexError
+    monkeypatch.setattr(editors_module, "column_tooltips", boom)
+    assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
+
+
+def test_editor_builds_outside_an_event_loop():
+    # The fixtures stub ParamMethod, which hid that the view renders at
+    # once without a running loop, before the editor had its state
+    component = MockComponent(data=pd.DataFrame({'name': ['Alice']}))
+    editor = SQLEditor(component=component, spec="SELECT * FROM test")
+    assert editor.view is not None
+
+
+
+def test_vl_convert_warnings_do_not_reach_stderr():
+    # Lumen renders charts to images for the LLM; with no logging set up, as
+    # in a notebook, Vega-Lite's spec warnings would print into the cell. A
+    # subprocess, since pytest's own log handlers would hide the problem.
+    code = """
+import lumen.ai.editors as editors
+spec = {"data": {"values": [{"a": "x", "b": 1}]}, "layer": [
+    {"mark": "bar", "encoding": {"x": {"field": "a", "type": "nominal", "sort": "-y"}, "y": {"field": "b", "type": "quantitative"}}},
+    {"mark": "text", "encoding": {"x": {"field": "a", "type": "nominal", "sort": {"field": "b"}}, "y": {"field": "b", "type": "quantitative"}, "text": {"field": "b"}}},
+]}
+editors.vlc.vegalite_to_png(spec)
+"""
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert "conflicting sort" not in run.stderr

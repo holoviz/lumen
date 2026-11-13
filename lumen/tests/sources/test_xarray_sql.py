@@ -22,6 +22,7 @@ import pytest
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
+from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.xarray_sql import XArraySQLSource
 from lumen.transforms.sql import SQLColumns
 
@@ -437,8 +438,26 @@ class TestSchemaMetadata:
         meta = source.get_metadata("temperature")
         assert "Air Temperature" in meta["description"]
         cols = meta["columns"]
-        assert cols["temperature"]["description"] == "Air Temperature"
+        assert cols["temperature"]["description"] == "Air Temperature [K]"
         assert cols["lat"]["data_type"] == "float64"
+
+    def test_column_descriptions_carry_cf_units_and_standard_names(self):
+        ds = xr.Dataset(
+            {"air": (["lat"], [280.0, 290.0], {"long_name": "Air", "units": "degK", "standard_name": "air_temperature"})},
+            coords={"lat": ("lat", [10.0, 20.0], {"long_name": "Latitude", "units": "degrees_north", "standard_name": "latitude"})},
+        )
+        cols = XArraySQLSource(_dataset=ds).get_metadata("air")["columns"]
+        assert cols["air"]["description"] == "Air [degK] (air_temperature)"
+        # A standard name that only repeats the long name is left out
+        assert cols["lat"]["description"] == "Latitude [degrees_north]"
+        assert XArraySQLSource(_dataset=ds).column_units("air") == {"air": "degK", "lat": "degrees_north"}
+
+    def test_a_non_standard_calendar_is_named(self):
+        cftime = pytest.importorskip("cftime")
+        times = [cftime.DatetimeNoLeap(2000, 1, d) for d in (1, 2)]
+        ds = xr.Dataset({"t": (["time"], [1.0, 2.0], {"long_name": "T"})}, coords={"time": times})
+        description = XArraySQLSource(_dataset=ds).get_metadata("t")["columns"]["time"]["description"]
+        assert "calendar: noleap" in description
 
     def test_metadata_all_tables(self, synthetic_dataset):
         source = XArraySQLSource(_dataset=synthetic_dataset)
@@ -729,3 +748,118 @@ class TestToDataset:
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert isinstance(source.get("temperature"), pd.DataFrame)
+
+
+# ---- DuckDB engine ----
+
+class TestDuckDBEngine:
+
+    def test_default_engine_is_datafusion(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        assert source.sql_engine == "datafusion"
+        assert source.dialect is None
+
+    def test_dialect(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        assert source.dialect == "duckdb"
+
+    def test_matches_datafusion(self, synthetic_dataset):
+        query = "SELECT lat, AVG(temperature) AS t FROM temperature GROUP BY lat ORDER BY lat"
+        datafusion = XArraySQLSource(_dataset=synthetic_dataset).execute(query)
+        duckdb = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb").execute(query)
+        pd.testing.assert_frame_equal(duckdb, datafusion, check_dtype=False)
+
+    def test_get_with_filter(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        df = source.get("temperature", lat=30.0)
+        assert len(df) == 10 * 4
+        assert (df["lat"] == 30.0).all()
+
+    @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+    def test_fetch_backends(self, synthetic_dataset, backend):
+        pytest.importorskip(backend)
+        import narwhals.stable.v2 as nw
+
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb", dataframe_backend=backend)
+        fetched = source.fetch("SELECT lat, lon FROM temperature LIMIT 5")
+        assert nw.from_native(fetched).implementation.name.lower() == backend
+
+    def test_get_schema(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        schema = source.get_schema("temperature")
+        assert schema["lat"]["dimension"] is True
+        assert schema["temperature"]["inclusiveMinimum"] >= 250
+
+    def test_to_dataset(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        ds = source.to_dataset("temperature", lat=30.0)
+        assert ds.sizes["lat"] == 1
+        np.testing.assert_allclose(
+            ds["temperature"].transpose("time", "lat", "lon").values,
+            synthetic_dataset["temperature"].sel(lat=[30.0]).values,
+        )
+
+    def test_create_sql_expr_source_shares_connection(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        derived = source.create_sql_expr_source({"hot": "SELECT * FROM temperature WHERE temperature > 300"})
+        assert derived.sql_engine == "duckdb"
+        assert derived._ctx is source._ctx
+        assert (derived.get("hot")["temperature"] > 300).all()
+
+    def test_initializers_and_source_imply_duckdb(self, synthetic_dataset):
+        assert XArraySQLSource(_dataset=synthetic_dataset, initializers=["SELECT 1"]).sql_engine == "duckdb"
+        assert XArraySQLSource(_dataset=synthetic_dataset, source=DuckDBSource()).sql_engine == "duckdb"
+
+    def test_initializers_and_source_reject_datafusion(self, synthetic_dataset):
+        with pytest.raises(ValueError, match="sql_engine='duckdb'"):
+            XArraySQLSource(_dataset=synthetic_dataset, sql_engine="datafusion", initializers=["SELECT 1"])
+
+    def test_initializers_run_on_the_connection(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, initializers=["CREATE TABLE ones AS SELECT 1 AS one"])
+        assert source.execute("SELECT one FROM ones")["one"].tolist() == [1]
+
+    def test_registers_on_a_given_source(self, synthetic_dataset):
+        frames = DuckDBSource.from_df({"cities": pd.DataFrame({"name": ["a", "b"], "lat": [10.0, 20.0]})})
+        source = XArraySQLSource(_dataset=synthetic_dataset, source=frames)
+        assert source._ctx is frames
+        df = source.execute(
+            "SELECT c.name, COUNT(*) AS n FROM temperature t JOIN cities c ON t.lat = c.lat "
+            "GROUP BY c.name ORDER BY c.name"
+        )
+        assert df["n"].tolist() == [10 * 4, 10 * 4]
+        # The grid is a view on the same connection, so the given source sees it too
+        assert len(frames.execute("SELECT * FROM temperature")) == 10 * 5 * 4
+
+    def test_spec_roundtrip(self, nc_file):
+        source = XArraySQLSource(uri=str(nc_file), initializers=["SELECT 1"])
+        spec = source.to_spec()
+        assert spec["sql_engine"] == "duckdb"
+        assert spec["initializers"] == ["SELECT 1"]
+        restored = XArraySQLSource.from_spec(spec)
+        assert restored.sql_engine == "duckdb"
+        assert len(restored.execute("SELECT * FROM temperature LIMIT 3")) == 3
+
+    def test_zonal_stats_in_one_query(self, synthetic_dataset):
+        """The grid joins polygons from DuckDB spatial in one SQL query."""
+        try:
+            regions = DuckDBSource(initializers=["INSTALL spatial;", "LOAD spatial;"])
+        except Exception:
+            pytest.skip("DuckDB spatial extension unavailable")
+        regions.execute(
+            "CREATE TABLE regions AS SELECT * FROM (VALUES "
+            "('west', ST_GeomFromText('POLYGON((95 0, 115 0, 115 60, 95 60, 95 0))')), "
+            "('east', ST_GeomFromText('POLYGON((115 0, 135 0, 135 60, 115 60, 115 0))'))"
+            ") AS r(name, geom)"
+        )
+        source = XArraySQLSource(_dataset=synthetic_dataset, source=regions)
+        df = source.execute(
+            "SELECT r.name, AVG(t.temperature) AS temperature FROM temperature t "
+            "JOIN regions r ON ST_Contains(r.geom, ST_Point(t.lon, t.lat)) "
+            "GROUP BY r.name ORDER BY r.name"
+        )
+        temp = synthetic_dataset["temperature"]
+        assert df["name"].tolist() == ["east", "west"]
+        np.testing.assert_allclose(
+            df["temperature"],
+            [temp.sel(lon=[120.0, 130.0]).mean(), temp.sel(lon=[100.0, 110.0]).mean()],
+        )
