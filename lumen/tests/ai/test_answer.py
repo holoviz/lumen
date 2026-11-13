@@ -1081,6 +1081,18 @@ def test_tweak_refuses_a_mark_hvplot_cannot_draw(chart_answer):
         chart_answer.tweak()
 
 
+@pytest.mark.parametrize("encoding, extra", [
+    ({"y": {"field": "value", "type": "quantitative", "aggregate": "mean"}}, {}),
+    ({"x": {"field": "value", "type": "quantitative", "bin": True}}, {}),
+    ({}, {"transform": [{"filter": "datum.value > 8"}]}),
+])
+def test_tweak_refuses_a_chart_that_reshapes_its_rows(chart_answer, encoding, extra):
+    chart_answer.view.spec = {**chart_answer.view.spec, **extra,
+                              "encoding": {**chart_answer.view.spec["encoding"], **encoding}}
+    with pytest.raises(ValueError, match="aggregation in the query"):
+        chart_answer.tweak()
+
+
 def test_tweak_without_a_chart_says_so(frame_source):
     with pytest.raises(ValueError, match="no chart to tweak"):
         Answer(question="?", value="Ten rows.", status="success").tweak()

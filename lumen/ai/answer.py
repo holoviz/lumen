@@ -681,15 +681,21 @@ def _density_view(view: View, pipeline: Pipeline | None) -> View:
 _EXPLORER_KINDS = {**_POINT_KINDS, "bar": "bar", "area": "area", "rect": "heatmap", "boxplot": "box"}
 
 
-def _vega_explorer_settings(spec: dict) -> dict[str, Any] | None:
-    """hvPlot equivalents of a Vega-Lite chart's mark and encoding, or None for marks hvPlot has no kind for."""
+def _vega_explorer_settings(spec: dict) -> dict[str, Any]:
+    """hvPlot equivalents of a Vega-Lite chart's mark and encoding."""
     spec = spec["layer"][0] if spec.get("layer") else spec
     mark = spec.get("mark")
     kind = _EXPLORER_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
     if kind is None:
-        return None
+        raise ValueError("hvPlot has no kind for this chart's Vega-Lite mark, so it cannot be tweaked.")
     encoding = spec.get("encoding", {})
     x, y, color = (encoding.get(channel, {}) for channel in ("x", "y", "color"))
+    if "transform" in spec or any(key in c for c in (x, y, color) for key in ("aggregate", "bin", "timeUnit")):
+        # The explorer plots the rows as they are; it would draw a different chart
+        raise ValueError(
+            "This chart aggregates or transforms its rows in Vega-Lite, which the explorer "
+            "cannot redo; ask for the aggregation in the query, then tweak that answer."
+        )
     if kind == "bar" and y.get("type") in ("nominal", "ordinal") and x.get("type") == "quantitative":
         # Vega-Lite draws horizontal bars by swapping the axes; hvPlot keeps the category on x
         kind, x, y = "barh", y, x
@@ -699,8 +705,8 @@ def _vega_explorer_settings(spec: dict) -> dict[str, Any] | None:
     return {k: v for k, v in settings.items() if v is not None}
 
 
-def _explorer_settings(view: View) -> dict[str, Any] | None:
-    """The hvPlotUIView params that redraw an answer's chart, or None when there is no hvPlot equivalent."""
+def _explorer_settings(view: View) -> dict[str, Any]:
+    """The hvPlotUIView params that redraw an answer's chart."""
     if isinstance(view, VegaLiteView):
         return _vega_explorer_settings(view.spec)
     names = set(hvPlotBaseView.param) - set(View.param)
@@ -1790,9 +1796,7 @@ class Answer(param.Parameterized):
         """
         if not isinstance(self.view, hvPlotView | VegaLiteView):
             raise ValueError("This answer has no chart to tweak.")
-        if (settings := _explorer_settings(self.view)) is None:
-            raise ValueError("hvPlot has no kind for this chart's Vega-Lite mark, so it cannot be tweaked.")
-        return hvPlotUIView(pipeline=self.view.pipeline, **settings).get_panel()
+        return hvPlotUIView(pipeline=self.view.pipeline, **_explorer_settings(self.view)).get_panel()
 
     def explore(self, **params) -> ExplorerUI:
         """
