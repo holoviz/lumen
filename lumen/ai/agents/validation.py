@@ -117,6 +117,7 @@ class ValidationAgent(Agent):
         ctx["previous_keys"] = self._previous_keys(context)
         if context.get("view"):
             ctx["view_spec"] = self._compact_view(context["view"])
+            ctx["multiple_views"] = isinstance(context["view"], list) and len(context["view"]) > 1
         return ctx
 
     def _previous_keys(self, context: TContext) -> set[str]:
@@ -136,6 +137,10 @@ class ValidationAgent(Agent):
 
     @staticmethod
     def _compact_view(view: Any) -> Any:
+        # A multi-chart answer leaves a list of view specs on the context;
+        # compact each of them.
+        if isinstance(view, list):
+            return [ValidationAgent._compact_view(item) for item in view]
         # The pipeline's source repeats the SQL shown separately, and the theme
         # palette and sizing are boilerplate the user never asks about. Pipeline
         # filters and transforms and mark-level config stay, since a requested

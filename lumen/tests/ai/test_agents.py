@@ -192,6 +192,33 @@ async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
     assert out[0].object == "Analysis of data"
     assert out_context == {'chat': 'Analysis of data'}
 
+
+def test_validation_compacts_every_view_of_a_multi_chart_answer():
+    """A multi-chart plan leaves a list of view specs; each must be compacted
+    (boilerplate stripped), not returned as-is."""
+    view = [
+        {"spec": {"mark": "bar"}, "sizing_mode": "stretch_width"},
+        {"spec": {"mark": "line"}, "sizing_mode": "stretch_width"},
+    ]
+
+    compacted = ValidationAgent._compact_view(view)
+
+    assert isinstance(compacted, list) and len(compacted) == 2
+    assert "sizing_mode" not in compacted[0]
+    assert compacted[0]["spec"] == {"mark": "bar"}
+    assert compacted[1]["spec"] == {"mark": "line"}
+
+
+def test_validation_compacts_a_single_view():
+    view = {"spec": {"mark": "bar"}, "sizing_mode": "stretch_width"}
+
+    compacted = ValidationAgent._compact_view(view)
+
+    assert isinstance(compacted, dict)
+    assert "sizing_mode" not in compacted
+    assert compacted["spec"] == {"mark": "bar"}
+
+
 async def test_sql_agent(llm, duckdb_source, test_messages):
     agent = SQLAgent(llm=llm)
 
@@ -635,6 +662,9 @@ async def test_vegalite_agent(llm, duckdb_source, test_messages):
     out, out_context = await agent.respond(test_messages, context)
     assert len(out) == 1
     assert isinstance(out[0], VegaLiteEditor)
+    # A single chart keeps the plain view spec on the context.
+    assert isinstance(out_context.get("view"), dict)
+    assert out_context["view"]["spec"]["mark"] == "bar"
     assert out[0].spec == "$schema: https://vega.github.io/schema/vega-lite/v5.json\nconfig:\n  numberFormat: ',~r'\ndata:\n  values:\n  - A: 1\n    B: 2\n    C: 3\n    D: '2023-01-01T00:00:00Z'\n  - A: 4\n    B: 5\n    C: 6\n    D: '2023-01-02T00:00:00Z'\nencoding:\n  x:\n    field: A\n    type: quantitative\n  y:\n    field: B\n    type: quantitative\nheight: container\nmark: bar\nwidth: container\n"
 
 
@@ -695,6 +725,12 @@ async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
     assert out[-1].editor._names == ["A vs B", "A vs C"]
     assert isinstance(out[-1].component, Panel)
     assert len(out[-1].component.object) == 2  # both plots stacked in the overview
+    # Every chart's view spec reaches the context, in chart order, so
+    # downstream agents (validation) see all charts, not only the last one.
+    views = out_context.get("view")
+    assert isinstance(views, list) and len(views) == 2
+    assert views[0]["spec"]["encoding"]["y"]["field"] == "B"
+    assert views[1]["spec"]["encoding"]["y"]["field"] == "C"
 
 
 async def test_vegalite_agent_skips_unparseable_chart(llm, duckdb_source, test_messages):

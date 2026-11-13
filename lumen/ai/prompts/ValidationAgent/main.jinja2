@@ -64,7 +64,7 @@ Fill `checks` first; `chain_of_thought` one sentence; `suggestions` only for uns
 {{ memory["data"] }}
 {%- endif -%}
 {% if memory.get('view') %}
-{% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View:
+{% if 'view' in previous_keys %}(From previous plan) {% endif %}Generated View{% if multiple_views is defined and multiple_views %}s (one section per chart; one requirement may be satisfied by one chart and another by a different chart){% endif %}:
 ```yaml
 {{ (view_spec if view_spec is defined else memory["view"]) | json_to_yaml }}
 ```

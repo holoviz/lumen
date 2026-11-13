@@ -1006,7 +1006,22 @@ class VegaLiteAgent(BaseCodeAgent):
             for editor in editors:
                 state.execute(partial(self._polish_plot, editor, messages, context, doc))
 
-        out_context = await editors[-1].render_context()
+        # Every editable chart contributes its own view spec. Returning only
+        # the last editor's context hid the other charts from downstream agents
+        # (e.g. validation), which then reported them as missing. The other
+        # keys (pipeline, table, source, data) are shared, so the first
+        # non-empty value wins.
+        out_context: dict = {}
+        views = []
+        for editor in editors:
+            editor_context = await editor.render_context()
+            view = editor_context.pop("view", None)
+            if view is not None:
+                views.append(view)
+            for key, value in editor_context.items():
+                out_context.setdefault(key, value)
+        if views:
+            out_context["view"] = views[0] if len(views) == 1 else views
         return outs, out_context
 
     async def annotate(
