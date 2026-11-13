@@ -42,7 +42,7 @@ pip = "*"
 platformdirs = "*"
 pyyaml = "*"
 requests = "*"
-sqlglot = "*"
+sqlglot = ">=26.26.0"
 tornado = "*"
 tqdm = "*"
 
