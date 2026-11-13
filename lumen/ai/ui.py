@@ -61,7 +61,7 @@ from .llm import (
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Section
+from .report import ActorTask, Section, export_outputs
 from .selection import (
     Selected, about, ask_box, watch_clicks,
 )
@@ -2294,7 +2294,8 @@ class ExplorerUI(UI):
             return
 
         def make_notebook():
-            nb = export_notebook(exploration.plan.views, preamble=self.notebook_preamble)
+            outputs = export_outputs(exploration.plan, include_calls=True)
+            nb = export_notebook(outputs, preamble=self.notebook_preamble)
             return StringIO(nb)
 
         self._exploration_download.param.update(
