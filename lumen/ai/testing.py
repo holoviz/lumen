@@ -111,7 +111,8 @@ def record(llm: Llm, path: str | Path, *, append: bool = False, preview: bool = 
 
     async def recording(messages, system="", response_model=None, model_spec="default", **kwargs):
         output = await invoke(messages, system=system, response_model=response_model, model_spec=model_spec, **kwargs)
-        if isinstance(output, BaseModel):
+        # A text call can return the SDK's response object, itself a pydantic model
+        if response_model is not None and isinstance(output, BaseModel):
             response = {"model": output.model_dump(mode="json")}
         else:
             response = {"text": output if isinstance(output, str) else llm._get_content(output)}
