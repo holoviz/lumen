@@ -747,3 +747,85 @@ class TestToDataset:
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
         assert isinstance(source.get("temperature"), pd.DataFrame)
+
+
+# ---- DuckDB engine ----
+
+class TestDuckDBEngine:
+
+    def test_default_engine_is_datafusion(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset)
+        assert source.sql_engine == "datafusion"
+        assert source.dialect is None
+
+    def test_dialect(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        assert source.dialect == "duckdb"
+
+    def test_matches_datafusion(self, synthetic_dataset):
+        query = "SELECT lat, AVG(temperature) AS t FROM temperature GROUP BY lat ORDER BY lat"
+        datafusion = XArraySQLSource(_dataset=synthetic_dataset).execute(query)
+        duckdb = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb").execute(query)
+        pd.testing.assert_frame_equal(duckdb, datafusion, check_dtype=False)
+
+    def test_get_with_filter(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        df = source.get("temperature", lat=30.0)
+        assert len(df) == 10 * 4
+        assert (df["lat"] == 30.0).all()
+
+    @pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+    def test_fetch_backends(self, synthetic_dataset, backend):
+        pytest.importorskip(backend)
+        import narwhals.stable.v2 as nw
+
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb", dataframe_backend=backend)
+        fetched = source.fetch("SELECT lat, lon FROM temperature LIMIT 5")
+        assert nw.from_native(fetched).implementation.name.lower() == backend
+
+    def test_get_schema(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        schema = source.get_schema("temperature")
+        assert schema["lat"]["dimension"] is True
+        assert schema["temperature"]["inclusiveMinimum"] >= 250
+
+    def test_to_dataset(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        ds = source.to_dataset("temperature", lat=30.0)
+        assert ds.sizes["lat"] == 1
+        np.testing.assert_allclose(
+            ds["temperature"].transpose("time", "lat", "lon").values,
+            synthetic_dataset["temperature"].sel(lat=[30.0]).values,
+        )
+
+    def test_create_sql_expr_source_shares_connection(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        derived = source.create_sql_expr_source({"hot": "SELECT * FROM temperature WHERE temperature > 300"})
+        assert derived.sql_engine == "duckdb"
+        assert derived._ctx is source._ctx
+        assert (derived.get("hot")["temperature"] > 300).all()
+
+    def test_zonal_stats_in_one_query(self, synthetic_dataset):
+        """The grid joins polygons from DuckDB spatial in one SQL query."""
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
+        try:
+            source.execute("INSTALL spatial; LOAD spatial")
+        except Exception:
+            pytest.skip("DuckDB spatial extension unavailable")
+        source.execute(
+            "CREATE TABLE regions AS SELECT * FROM (VALUES "
+            "('west', ST_GeomFromText('POLYGON((95 0, 115 0, 115 60, 95 60, 95 0))')), "
+            "('east', ST_GeomFromText('POLYGON((115 0, 135 0, 135 60, 115 60, 115 0))'))"
+            ") AS r(name, geom)"
+        )
+        df = source.execute(
+            "SELECT r.name, AVG(t.temperature) AS temperature FROM temperature t "
+            "JOIN regions r ON ST_Contains(r.geom, ST_Point(t.lon, t.lat)) "
+            "GROUP BY r.name ORDER BY r.name"
+        )
+        temp = synthetic_dataset["temperature"]
+        assert df["name"].tolist() == ["east", "west"]
+        np.testing.assert_allclose(
+            df["temperature"],
+            [temp.sel(lon=[120.0, 130.0]).mean(), temp.sel(lon=[100.0, 110.0]).mean()],
+        )
