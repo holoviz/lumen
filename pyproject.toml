@@ -60,7 +60,7 @@ dependencies = [
     "pyyaml",
     "requests",
     "semchunk",
-    "sqlglot[c]",
+    "sqlglot[c] >=26.26.0",
     "tabulate",
     "tiktoken",
     "tornado",
