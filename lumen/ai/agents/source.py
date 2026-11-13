@@ -499,17 +499,22 @@ class SourceAgent(Agent):
         Deduplicates against *existing_tables* (actual registered
         tables) instead of a global counter.
 
+        The action name is placed first so a purely numeric argument
+        (e.g. ``min_size=20``) cannot put a digit at the start of the
+        name, which SQL identifiers reject.
+
         Examples:
             List Aggs {ticker: AAPL, timespan: day, from_: 2024-01-01}
-            \u2192 day_aapl_2024_01_01_list_aggs
+            \u2192 list_aggs_day_aapl_2024_01_01
 
             get_ticker_details(AAPL) + get_ticker_details(GOOG)
-            \u2192 aapl_goog_get_ticker_details
+            \u2192 get_ticker_details_aapl_goog
         """
         MAX_PARTS = 4
 
         if tool_results:
-            # Use the action name from the first call
+            # Lead with the action name; argument values alone can be
+            # numeric ("20"), and a SQL identifier cannot start with a digit.
             action_name = tool_results[0]["action"]
             # Collect distinguishing kwarg values across all calls
             items = []
@@ -519,14 +524,18 @@ class SourceAgent(Agent):
                     if s and len(s) <= 30:
                         items.append(s)
             items.sort(key=len)
-            parts = items[:MAX_PARTS]
-            parts.append(action_name)
+            parts = [action_name, *items[:MAX_PARTS]]
             base = normalize_table_name("_".join(parts))
         elif source_actions and len(source_actions) == 1:
             name = next(iter(source_actions))
             base = normalize_table_name(name)
         else:
             base = "source_data"
+
+        # An action named e.g. "3D Plot" or a source named "2024_report"
+        # still normalizes to a digit-leading identifier.
+        if base[:1].isdigit():
+            base = f"table_{base}"
 
         # Deduplicate against actual registered tables
         if existing_tables:

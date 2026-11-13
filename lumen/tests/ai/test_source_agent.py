@@ -50,3 +50,48 @@ def test_sanitize_tool_callable_resolves_postponed_annotations_with_skip_params(
     schema = function_to_model(wrapped).model_json_schema()
     assert list(schema["properties"]) == ["kind"]
     assert schema["properties"]["kind"]["enum"] == ["a", "b"]
+
+
+# ---- Derived table names must be valid SQL identifiers ----
+
+def test_derived_table_name_does_not_start_with_a_digit():
+    """A numeric argument value (min_size=20) must not open the name; DuckDB
+    rejects identifiers like ``20_load_cells``."""
+    name = SourceAgent._derive_table_name(
+        tool_results=[{"action": "Load Cells", "kwargs": {"min_size": 20}}]
+    )
+
+    assert name == "load_cells_20"
+    assert not name[0].isdigit()
+
+
+def test_derived_table_name_leads_with_the_action_name():
+    name = SourceAgent._derive_table_name(
+        tool_results=[
+            {"action": "List Aggs", "kwargs": {"ticker": "AAPL", "timespan": "day"}}
+        ]
+    )
+
+    assert name == "list_aggs_day_aapl"
+
+
+def test_derived_table_name_digit_leading_action_gets_a_prefix():
+    """An action named like a number ("3D Plot") still yields a valid
+    identifier."""
+    name = SourceAgent._derive_table_name(
+        tool_results=[{"action": "3D Plot", "kwargs": {}}]
+    )
+
+    assert name == "table_3d_plot"
+    assert not name[0].isdigit()
+
+
+def test_derived_table_name_still_deduplicates_against_existing_tables():
+    existing = {"load_cells_20"}
+
+    name = SourceAgent._derive_table_name(
+        tool_results=[{"action": "Load Cells", "kwargs": {"min_size": 20}}],
+        existing_tables=existing,
+    )
+
+    assert name == "load_cells_20_2"
