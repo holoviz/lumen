@@ -38,11 +38,12 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    docx_add_chart, docx_add_markdown, docx_add_table, format_output,
-    make_md_cell, make_preamble, write_notebook,
+    docx_add_chart, docx_add_markdown, docx_add_table, format_function_call,
+    format_output, make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
+from .tools.base import FunctionCall
 from .utils import (
     content_to_text, extract_block_source, get_block_names,
     print_task_exception, set_content_text, wrap_logfire_on_method,
@@ -139,6 +140,7 @@ class Task(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self.function_calls: list[FunctionCall] = []
         self._prepared = False
         self._init_view()
         self._null_step = NullStep()
@@ -292,6 +294,7 @@ class Task(Viewer):
         self.status = "idle"
         self._view[:] = []
         self.out_context.clear()
+        self.function_calls.clear()
 
 
 class TaskGroup(Task):
@@ -1133,6 +1136,32 @@ class Report(TaskGroup):
             return
         views += self._selected_views(section)
 
+    @property
+    def _notebook_outputs(self):
+        """Selected task outputs, including notebook-only FunctionCall records."""
+        if not len(self):
+            return self.views
+        outputs = list(self._header)
+        for section in self:
+            if section.include_in_export:
+                outputs += self._selected_outputs(section)
+        return outputs
+
+    def _selected_outputs(self, group, include_header=True):
+        """Selected views interleaved with each task's notebook call records."""
+        outputs = list(group._header) if include_header else []
+        for task in group:
+            if not task.include_in_export:
+                continue
+            if isinstance(task, TaskGroup):
+                outputs += self._selected_outputs(task)
+            else:
+                task_views = list(task.views)
+                outputs += task_views[:len(task._header)]
+                outputs += task.function_calls
+                outputs += task_views[len(task._header):]
+        return outputs
+
     def _selected_views(self, group, include_header=True):
         """
         The views of a task group, skipping sections discarded from the export.
@@ -1179,9 +1208,11 @@ class Report(TaskGroup):
             )
         cells, extensions = [], ['tabulator']
         pending_headers = []
-        for out in self._export_views:
+        for index, out in enumerate(self._notebook_outputs):
             cell = ext = None
-            if isinstance(out, Typography):
+            if isinstance(out, FunctionCall):
+                cell = format_function_call(out, index)
+            elif isinstance(out, Typography):
                 # Buffer headers; only emit them if followed by exportable content
                 level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
                 prefix = f"{'#'*level} " if level else ''
@@ -1528,6 +1559,7 @@ class ActorTask(ExecutableTask):
 
     async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
         views = []
+        self.function_calls = []
         if self.title and not self._header:
             title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
             views.append(title)
@@ -1543,6 +1575,10 @@ class ActorTask(ExecutableTask):
             try:
                 kwargs["step_title"] = self.title
                 outputs, out_context = await self.actor.respond(messages, subcontext, **kwargs)
+                if isinstance(self.actor, FunctionTool):
+                    function_call = self.actor._take_function_call()
+                    if function_call is not None:
+                        self.function_calls.append(function_call)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise

@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 
@@ -12,12 +13,17 @@ except ModuleNotFoundError:
 
 from panel.layout import Column, Row
 from panel.pane import Markdown
+from panel.viewable import Viewable
 from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
+from lumen.ai.editors import LumenEditor
+from lumen.ai.export import render_cells
 from lumen.ai.report import (
-    Action, Report, Section, TaskGroup, Typography,
+    Action, ActorTask, Report, Section, TaskGroup, Typography,
 )
+from lumen.ai.tools import FunctionTool
+from lumen.ai.tools.base import FunctionCall
 
 try:
     from panel_material_ui import ChatMessage, Checkbox
@@ -375,6 +381,141 @@ async def test_report_to_notebook():
 
     assert cell3['cell_type'] == 'markdown'
     assert cell3['source'] == ["**Hello**"]
+
+
+async def test_function_tool_calls_export_reproducibly():
+    def create_pipeline():
+        import pandas as pd
+
+        from lumen.pipeline import Pipeline
+        from lumen.sources.base import InMemorySource
+
+        source = InMemorySource(
+            tables={"numbers": pd.DataFrame({"value": [1, 2, 3]})}
+        )
+        return Pipeline(source=source, table="numbers")
+
+    def count_rows(pipeline):
+        return {
+            "row_count": len(pipeline.data),
+            "table_name": pipeline.table,
+        }
+
+    producer = ActorTask(
+        FunctionTool(create_pipeline, provides=["pipeline"]),
+        title="Create pipeline",
+    )
+    consumer = ActorTask(
+        FunctionTool(
+            count_rows, requires=["pipeline"], provides=["row_count", "table_name"]
+        ),
+        title="Count rows",
+    )
+    report = Report(Section(producer, consumer, HelloAction(title="After"), title="Results"))
+    await report.execute()
+
+    cells = json.loads(report.to_notebook())["cells"]
+    producer_index = next(
+        i for i, cell in enumerate(cells)
+        if cell["cell_type"] == "code" and "pipeline = create_pipeline()" in "".join(cell["source"])
+    )
+    consumer_index = next(
+        i for i, cell in enumerate(cells)
+        if cell["cell_type"] == "code" and "count_rows(pipeline=pipeline)" in "".join(cell["source"])
+    )
+    markdown_index = next(
+        i for i, cell in enumerate(cells)
+        if "**Hello**" in "".join(cell["source"])
+    )
+    assert producer_index < consumer_index < markdown_index
+    namespace = {}
+    for cell in cells[producer_index:consumer_index + 1]:
+        if cell["cell_type"] == "code":
+            exec("".join(cell["source"]), namespace)
+
+    assert namespace["pipeline"].table == producer.out_context["pipeline"].table
+    assert namespace["pipeline"].data.equals(producer.out_context["pipeline"].data)
+    assert {
+        key: namespace[key] for key in ("row_count", "table_name")
+    } == consumer.out_context
+    assert len(consumer.function_calls) == 1
+    assert all(
+        isinstance(view, Viewable) for view in consumer.views
+    )
+    assert "count_rows" not in report.to_html()
+
+    json_kwargs = {"obj": {"x": 1}}
+    imported_call = FunctionCall(
+        function=json.dumps,
+        arguments=json_kwargs,
+        context_arguments=set(),
+        provides=["serialized"],
+        result_is_dict=False,
+    )
+    imported_cell = render_cells([imported_call])[0][0]
+    imported_code = "".join(imported_cell["source"])
+    imported_namespace = dict(json_kwargs)
+    exec(imported_code, imported_namespace)
+
+    assert imported_code.startswith("from json import dumps")
+    assert imported_namespace["serialized"] == json.dumps(json_kwargs["obj"])
+
+
+async def test_async_function_tool_export_awaits_call():
+    async def fetch():
+        return 3
+
+    task = ActorTask(FunctionTool(fetch, provides=["n"]), title="Fetch")
+    report = Report(Section(task, title="Results"))
+    await report.execute()
+
+    cells = json.loads(report.to_notebook())["cells"]
+    code = next(
+        "".join(cell["source"])
+        for cell in cells
+        if cell["cell_type"] == "code" and "n = await fetch()" in "".join(cell["source"])
+    )
+    namespace = {}
+    coroutine = eval(
+        compile(code, "<notebook cell>", "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT),
+        namespace,
+    )
+    if coroutine is not None:
+        await coroutine
+
+    assert namespace["n"] == task.out_context["n"] == 3
+
+
+@pytest.mark.parametrize("render_output", [False, True])
+async def test_function_tool_view_results_keep_export_call_and_rendered_view(render_output):
+    def return_view():
+        return Markdown("FunctionTool view output")
+
+    def return_text():
+        return "FunctionTool rendered output"
+
+    function = return_text if render_output else return_view
+    task = ActorTask(
+        FunctionTool(function, render_output=render_output), title="Tool output"
+    )
+    report = Report(Section(task, title="Results"))
+    await report.execute()
+
+    call = task.function_calls[0]
+    assert len(task.function_calls) == 1
+    assert call.rendered_output is True
+    assert any(isinstance(view, LumenEditor) for view in task.views)
+    assert not any(isinstance(view, FunctionCall) for view in task.views)
+    assert not any(isinstance(view, FunctionCall) for view in task._view.objects)
+
+    sources = [
+        "".join(cell["source"])
+        for cell in json.loads(report.to_notebook())["cells"]
+        if cell["cell_type"] == "code"
+    ]
+    tool_code = next(source for source in sources if f"_ = {function.__name__}()" in source)
+    assert f"def {function.__name__}()" in tool_code
+    assert "FunctionCall" not in report.to_html()
 
 
 async def test_report_to_html():

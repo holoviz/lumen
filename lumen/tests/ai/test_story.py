@@ -9,14 +9,16 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.pane import Markdown
+from panel.viewable import Viewable
 from panel.widgets import TextEditor
 
 from lumen.ai.agents.story import (
     ProseEdit, Story, StoryAgent, StoryBlock, build_catalog,
 )
 from lumen.ai.editors import LumenEditor
-from lumen.ai.report import Action, Section
+from lumen.ai.report import Action, ActorTask, Section
 from lumen.ai.story import StoryReport, _prose_to_html, _prose_to_markdown
+from lumen.ai.tools import FunctionTool
 from lumen.pipeline import Pipeline
 
 
@@ -478,6 +480,58 @@ async def test_report_outline_reorders_html_export():
     html = report.to_html()
     assert "Key Findings" in html
     assert html.index("B done") < html.index("A done")
+
+
+async def test_function_call_metadata_is_excluded_from_arranged_story_html():
+    def load_value():
+        return 42
+
+    task = ActorTask(FunctionTool(load_value, provides=["value"]), title="Load value")
+    report = StoryReport(
+        Section(task, title="Tools"),
+        title="R",
+    )
+    await report.execute()
+    report._story.outline = [{"section": "Tools"}]
+
+    html = report.to_html()
+
+    assert len(task.function_calls) == 1
+    assert all(isinstance(view, Viewable) for view in task.views)
+    assert "value = load_value()" in _nb_text(report)
+    assert "FunctionCall" not in html
+    assert "load_value" not in html
+
+
+async def test_generated_story_notebook_includes_function_calls(tiny_source):
+    def load_value():
+        return 42
+
+    report = StoryReport(
+        Section(
+            ActorTask(FunctionTool(load_value, provides=["value"])),
+            ChartAction(source=tiny_source, label="Chart"),
+            title="Tools and chart",
+        ),
+        title="R",
+    )
+    await report.execute()
+
+    catalog = report._collect_story_views()
+    report._set_story(
+        Story(
+            chain_of_thought="c",
+            title="Story",
+            blocks=[StoryBlock(prose="A short story.", view=1)],
+        ),
+        catalog,
+    )
+
+    notebook = _nb_text(report)
+    assert "value = load_value()" in notebook
+    assert "A short story." in notebook
+    assert notebook.index("value = load_value()") < notebook.index("A short story.")
+    assert "lm.Pipeline.from_spec" in notebook
 
 
 async def test_report_arrange_editor_seeds_and_binds_outline():

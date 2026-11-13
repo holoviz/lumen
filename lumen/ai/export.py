@@ -1,4 +1,5 @@
 import base64
+import inspect
 import os
 import re
 
@@ -18,6 +19,7 @@ from ..pipeline import Pipeline
 from ..util import as_pandas
 from ..views import View
 from .editors import LumenEditor
+from .tools.base import FunctionCall
 
 
 def make_md_cell(text: str):
@@ -77,13 +79,69 @@ def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) 
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
-def format_output(output: Any, spec: dict | None = None, load_spec: str = "yaml.safe_load(yaml_spec)"):
+def format_function_call(call: FunctionCall, index: int = 0):
+    """Render an executed FunctionTool call as reproducible Python code."""
+    function = call.function
+    module = function.__module__
+    name = function.__name__
+    qualname = function.__qualname__
+    importable = (
+        module != "__main__"
+        and all(part.isidentifier() for part in module.split("."))
+        and name.isidentifier()
+        and qualname == name
+    )
+    # Context arguments refer to names supplied by earlier exported cells or
+    # by the notebook environment; arbitrary runtime objects are not serialized.
+    arguments = ", ".join(
+        f"{argument}={argument if argument in call.context_arguments else repr(value)}"
+        for argument, value in call.arguments.items()
+    )
+    invocation = f"{'await ' if call.is_async else ''}{name}({arguments})"
+    lines = []
+    if importable:
+        lines.append(f"from {module} import {name}")
+    else:
+        # Best effort: imports and closure state are not reconstructed, so only
+        # self-contained functions are reliably reproducible from source.
+        try:
+            source = dedent(inspect.getsource(function)).rstrip()
+        except (OSError, TypeError):
+            source = None
+        if source is None or not name.isidentifier():
+            return nbformat.v4.new_code_cell(
+                source=f"# Could not reproduce {function!r}: source is unavailable"
+            )
+        lines.append(source)
+
+    if call.rendered_output:
+        lines.extend(["", f"_ = {invocation}"])
+    elif call.provides and (len(call.provides) > 1 or call.result_is_dict):
+        result_name = f"_lumen_function_result_{index}"
+        lines.extend([
+            "",
+            f"{result_name} = {invocation}",
+            *[f"{provided} = {result_name}[{provided!r}]" for provided in call.provides],
+        ])
+    elif call.provides:
+        lines.extend(["", f"{call.provides[0]} = {invocation}"])
+    else:
+        lines.extend(["", invocation])
+    return nbformat.v4.new_code_cell(source="\n".join(lines))
+
+
+def format_output(
+    output: Any,
+    spec: dict | None = None,
+    load_spec: str = "yaml.safe_load(yaml_spec)",
+):
     """
     A notebook cell that rebuilds an output's Pipeline or View from its spec.
 
     ``spec`` replaces the component's own spec, and ``load_spec`` is the
     expression the cell uses to turn ``yaml_spec`` back into a dict.
     """
+
     ext = None
     code = []
 
@@ -122,8 +180,10 @@ def format_output(output: Any, spec: dict | None = None, load_spec: str = "yaml.
 
 def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
     cells, extensions = [], []
-    for out in outputs:
-        if isinstance(out, Markdown):
+    for index, out in enumerate(outputs):
+        if isinstance(out, FunctionCall):
+            cells.append(format_function_call(out, index))
+        elif isinstance(out, Markdown):
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)
