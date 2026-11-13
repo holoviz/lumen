@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import html
+import importlib.util
 import re
 import sys
 import warnings
@@ -23,7 +24,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
-from holoviews import Overlay  # type: ignore
+from holoviews import Overlay, dim  # type: ignore
 from holoviews.core import (  # type: ignore
     Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
 )
@@ -61,7 +62,7 @@ from ..transforms.base import Transform
 from ..transforms.sql import SQLLimit, SQLTransform
 from ..util import (
     VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
-    geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
+    geometry_to_wkt, is_geodataframe, is_ref, log, resolve_module_reference,
     try_import_xarray, widen_nullable,
 )
 from ..validation import ValidationError
@@ -1016,12 +1017,18 @@ class hvPlotBaseView(View):
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
     z = param.Selector(doc="""
-        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
-        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf),
+        or the column points and map shapes are coloured by. Internally mapped to
+        hvPlot's C= for kind='heatmap', c= for points and geometry and z= for other
+        kinds.""")
 
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
     )
+
+    tiles = param.Parameter(default=None, doc="""
+        Basemap tiles under a geographic plot (geo=True), e.g. True or
+        'OSM'. Needs geoviews; without it the plot has no basemap.""")
 
     _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
@@ -1230,7 +1237,13 @@ class hvPlotView(hvPlotBaseView):
         A selection expression caputirng the current selection applied
         on the plot.""")
 
+    size = param.Selector(doc="""
+        Column that sizes points, e.g. the population of each place.
+        Scaled to 4 to 24 pixels.""")
+
     view_type = 'hvplot'
+
+    _field_params = hvPlotBaseView._field_params + ['size']
 
     _ignore_kwargs = ['tables']
 
@@ -1326,6 +1339,7 @@ class hvPlotView(hvPlotBaseView):
         x = self.x if keep(self.x) else None
         y = self.y if keep(self.y) else None
         z = self.z if keep(self.z) else None
+        size = self.size if keep(self.size) else None
         by = [column for column in self.by or [] if keep(column)]
         groupby = [column for column in self.groupby or [] if keep(column)]
         processed = {}
@@ -1337,8 +1351,14 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+        if size is not None:
+            # Raw values, e.g. a population, would be sizes in pixels. A
+            # constant column has no range to scale over, so it gets one size.
+            constant = isinstance(df, pd.DataFrame) and df[size].nunique() <= 1
+            processed['s'] = 12 if constant else dim(size).norm() * 20 + 4
         if z is not None:
-            processed['C' if self.kind == 'heatmap' else 'z'] = z
+            # heatmap takes it as C, points are coloured by c
+            processed[{'heatmap': 'C', 'points': 'c', 'scatter': 'c'}.get(self.kind, 'z')] = z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
         # needs has to be put back explicitly.
         if self.datashade:
@@ -1353,12 +1373,27 @@ class hvPlotView(hvPlotBaseView):
 
         kind = self.kind
         plot_source = df
+        if self.geo:
+            # geo=True and tiles need geoviews; without it hvPlot raises, so
+            # draw the plot on plain axes rather than not at all
+            if importlib.util.find_spec('geoviews') is not None:
+                processed['geo'] = True
+                tiles = self.tiles
+                # A spec written as JSON can carry the flag as a string
+                if isinstance(tiles, str) and tiles.lower() in ('true', 'false'):
+                    tiles = tiles.lower() == 'true'
+                if tiles:
+                    processed['tiles'] = tiles
+            else:
+                log.warning("geo=True needs geoviews; drawing %s without a map projection or tiles.", self.name)
+                processed.pop('coastline', None)
         if is_geodataframe(df):
             # hvplot infers the geometry kind (polygons/paths/points); just
             # clear a non-geometry default so it isn't forced to scatter/points
             if kind in (None, 'scatter', 'points'):
                 kind = None
-            processed['geo'] = self.geo
+            if 'z' in processed:
+                processed['c'] = processed.pop('z')
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
         elif kind in BAR_KINDS and x is not None:
@@ -1680,6 +1715,27 @@ class VegaLiteView(View):
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
 
+    @classmethod
+    def _drop_dangling_view_data(cls, node: Any, known: set[str]) -> None:
+        """
+        Drop, in place, data on a layer or concatenated view that only names a
+        dataset nobody registered, so the view inherits the table's data.
+
+        A model sometimes gives the table a name of its own on a layer, e.g.
+        ``{"name": "avg_mass_by_species"}``. Vega-Lite accepts it and then
+        draws an empty chart with no error.
+        """
+        if not isinstance(node, dict):
+            return
+        for key in ("layer", "concat", "hconcat", "vconcat"):
+            for view in node.get(key) or []:
+                if not isinstance(view, dict):
+                    continue
+                data = view.get("data")
+                if isinstance(data, dict) and data.keys() <= {"name", "format"} and data.get("name") not in known:
+                    del view["data"]
+                cls._drop_dangling_view_data(view, known)
+
     def _coerce_temporal(self, spec: Any, df: pd.DataFrame) -> Any:
         """
         Recursively walk the spec. If an encoding channel references a field that
@@ -1791,6 +1847,7 @@ class VegaLiteView(View):
             if 'data' not in spec and any('data' not in layer for layer in spec.get('layer', [])):
                 spec['data'] = {'name': self.pipeline.table}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
+            self._drop_dangling_view_data(spec, set(datasets))
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
             # geoshape consumes GeoJSON features, so fields then live under
@@ -1798,10 +1855,11 @@ class VegaLiteView(View):
             # passes a list of features through untouched, but would turn a
             # FeatureCollection in data.values into columns.
             name = spec_data.get('name', self.pipeline.table)
-            features = geometry_to_geojson(df)['features']
+            features = geometry_to_geojson(df, clockwise=True)['features']
             datasets = dict(self.spec.get('datasets', {}), **{name: features})
             encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
+            self._drop_dangling_view_data(spec, set(spec.get('datasets', {})))
             encoded = dict(spec, data={'values': df, **spec_data})
         return dict(object=encoded, **self.kwargs)
 

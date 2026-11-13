@@ -305,6 +305,28 @@ class TestStore:
     async def test_schedule_without_loop_is_noop(self, duckdb_source):
         assert await asyncio.to_thread(TableStatsStore(cache_dir=None).schedule, duckdb_source, ["orders"]) == []
 
+    def test_a_loop_closed_before_the_task_finishes_raises_nothing(self, duckdb_source):
+        """A short-lived loop, e.g. one a script ran while building the UI, leaves
+        a started task behind that Python closes later, outside any loop."""
+        store = TableStatsStore(cache_dir=None)
+
+        async def start():
+            store.schedule(duckdb_source, ["orders"])
+            await asyncio.sleep(0)  # the task starts and waits for a slot
+
+        raised = []
+        # Garbage from earlier tests, e.g. their SQLite connections, is not this task's
+        gc.collect()
+        loop = asyncio.new_event_loop()
+        with patch("sys.unraisablehook", lambda unraisable: raised.append(unraisable.exc_value)):
+            with patch.object(store, "_async_slot", return_value=asyncio.Semaphore(0)):
+                loop.run_until_complete(start())
+            loop.close()
+            store._tasks.clear()
+            # Collected once nothing holds the task, outside any loop
+            gc.collect()
+        assert not raised
+
 
 # ---------------------------------------------------------------
 # Rendering
@@ -1051,3 +1073,11 @@ async def test_due_recheck_does_not_delay_cached_stats(duckdb_source):
         assert time.monotonic() - start < 0.5
     assert result["orders"] is stats
     await asyncio.sleep(1.2)
+
+
+def test_geoparquet_crs_is_shown_as_its_code():
+    pyproj = pytest.importorskip("pyproj")
+    from lumen.ai.table_stats import ColumnStats, render_column
+    projjson = pyproj.CRS.from_epsg(4326).to_json()
+    line = render_column(ColumnStats(name="geometry", type=f"GEOMETRY('{projjson}')"), detail="types")
+    assert line == "geometry GEOMETRY('EPSG:4326')"

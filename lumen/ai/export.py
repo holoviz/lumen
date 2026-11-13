@@ -79,7 +79,6 @@ def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) 
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
-
 def format_function_call(call: FunctionCall, index: int = 0):
     """Render an executed FunctionTool call as reproducible Python code."""
     function = call.function
@@ -126,7 +125,19 @@ def format_function_call(call: FunctionCall, index: int = 0):
         lines.extend(["", invocation])
     return nbformat.v4.new_code_cell(source="\n".join(lines))
 
-def format_output(output: Any):
+
+def format_output(
+    output: Any,
+    spec: dict | None = None,
+    load_spec: str = "yaml.safe_load(yaml_spec)",
+):
+    """
+    A notebook cell that rebuilds an output's Pipeline or View from its spec.
+
+    ``spec`` replaces the component's own spec, and ``load_spec`` is the
+    expression the cell uses to turn ``yaml_spec`` back into a dict.
+    """
+
     ext = None
     code = []
 
@@ -138,14 +149,15 @@ def format_output(output: Any):
         return None, None
 
     with config.param.update(serializer='csv'):
-        # replace |2- |3- |4-... etc with | for a cleaner look
         try:
-            spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
+            spec = yaml.dump(component.to_spec() if spec is None else spec, sort_keys=False)
         except (TypeError, yaml.YAMLError):
             return None, None
     read_code = [
-        f'yaml_spec = """\n{spec}"""',
-        'spec = yaml.safe_load(yaml_spec)',
+        # A repr, not a triple-quoted string, so no value in the data or SQL
+        # can end the string and run as code
+        f'yaml_spec = {spec!r}',
+        f'spec = {load_spec}',
     ]
     if isinstance(component, Pipeline):
         code.extend([

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import io
-import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator
@@ -46,8 +45,8 @@ from .llm import Llm, Message
 from .tools import FunctionTool, Tool
 from .tools.base import FunctionCall
 from .utils import (
-    content_to_text, extract_block_source, get_block_names, set_content_text,
-    wrap_logfire_on_method,
+    content_to_text, extract_block_source, get_block_names,
+    print_task_exception, set_content_text, wrap_logfire_on_method,
 )
 
 
@@ -469,9 +468,9 @@ class TaskGroup(Task):
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
-                tb.print_exception(e)
+                print_task_exception(e)
                 self.status = "error"
-                new_context = {"__error__": str(e), "__error_type__": type(e)}
+                new_context = {"__error__": str(e), "__error_type__": type(e), "__exception__": e}
                 task.out_context = new_context
                 if self.abort_on_error:
                     if self.parent is not None:

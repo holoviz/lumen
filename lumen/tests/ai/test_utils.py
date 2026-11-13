@@ -17,16 +17,18 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from lumen.ai.config import PROMPTS_DIR, EmptyResultError
-from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
+from lumen.ai.models import (
+    DeleteLine, InsertLine, ReplaceLine, RetrySpec, revision_lines,
+)
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
-    content_to_text, count_tokens, describe_data, find_slug_by_table_name,
-    format_msg_content, format_tool_error, fuse_messages, get_schema,
-    inline_schema_defs, mutate_user_message, parse_huggingface_url,
-    render_template, report_error, retry_llm_output, sanitize_column_names,
-    serialize_image_content, set_content_text, slug_to_table_name,
-    truncate_to_tokens,
+    content_to_text, count_tokens, describe_data, errors_in_result,
+    find_slug_by_table_name, format_msg_content, format_tool_error,
+    fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
+    parse_huggingface_url, print_task_exception, render_template, report_error,
+    retry_llm_output, sanitize_column_names, serialize_image_content,
+    set_content_text, slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -1105,3 +1107,56 @@ def test_format_tool_error_truncates():
 )
 def test_column_tooltips(sql, columns, expected):
     assert column_tooltips(sql, "duckdb", columns) == expected
+
+
+
+SPEC_LINES = ["encoding:", "  x:", "    field: species", "  y:", "    field: mass", "mark: bar"]
+
+
+def _revision(edits, lines=SPEC_LINES, is_yaml=True):
+    token = revision_lines.set((lines, is_yaml))
+    try:
+        return RetrySpec.model_validate({"chain_of_thought": "Change it", "edits": edits})
+    finally:
+        revision_lines.reset(token)
+
+
+def test_edit_without_op_on_the_same_key_is_a_replace():
+    # Seen from free models: the right edit, with "op" left out every retry
+    spec = _revision([{"line_no": 6, "line": "mark: line"}])
+    assert isinstance(spec.edits[0], ReplaceLine)
+
+
+def test_edit_without_op_on_another_key_is_an_insert():
+    # "Color the bars" adds color: where x: is; replacing would drop x
+    spec = _revision([{"line_no": 2, "line": "  color:"}, {"line_no": 2, "line": "    field: species"}])
+    assert [type(e) for e in spec.edits] == [InsertLine, InsertLine]
+    assert apply_changes(SPEC_LINES, spec.edits).splitlines()[1:3] == ["  color:", "    field: species"]
+
+
+def test_edit_without_op_past_the_end_is_an_insert_and_without_line_a_delete():
+    spec = _revision([{"line_no": 7, "line": "width: 400"}, {"line_no": 3}])
+    assert [type(e) for e in spec.edits] == [InsertLine, DeleteLine]
+
+
+def test_sql_edit_without_op_is_a_replace_unless_past_the_end():
+    lines = ["SELECT a::INT AS a", "FROM t"]
+    spec = _revision([{"line_no": 1, "line": "SELECT b::INT AS a"}, {"line_no": 3, "line": "LIMIT 10"}], lines, is_yaml=False)
+    assert [type(e) for e in spec.edits] == [ReplaceLine, InsertLine]
+    assert apply_changes(lines, spec.edits).splitlines() == ["SELECT b::INT AS a", "FROM t", "LIMIT 10"]
+
+
+def test_edit_with_op_is_left_alone():
+    spec = _revision([{"op": "replace", "line_no": 2, "line": "  color:"}])
+    assert isinstance(spec.edits[0], ReplaceLine)
+
+
+def test_task_tracebacks_are_hidden_only_while_errors_go_into_the_result(capsys):
+    print_task_exception(ValueError("shown"))
+    token = errors_in_result.set(True)
+    try:
+        print_task_exception(ValueError("hidden"))
+    finally:
+        errors_in_result.reset(token)
+    err = capsys.readouterr().err
+    assert "shown" in err and "hidden" not in err

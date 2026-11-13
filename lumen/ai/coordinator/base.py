@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-import traceback
+import time
 
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -40,9 +40,11 @@ from ..tools import (
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
 from ..tools.monty import make_monty_llm_tool
+from ..usage import capture_usage
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, truncate_to_tokens, wrap_logfire,
+    mutate_user_message, normalized_name, print_task_exception,
+    truncate_to_tokens, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -71,7 +73,48 @@ class Plan(Section):
 
     is_followup = param.Boolean(default=False)
 
+    unanswerable = param.String(default=None, allow_None=True, doc="""
+        Why the data cannot answer the question, when the planner found
+        that it cannot; the plan then has no steps.""")
+
+    reasoning = param.String(default="", doc="""
+        The planner's account of the question, which led to these steps.""")
+
     _tasks = param.List(item_type=ActorTask)
+
+    # For each step run: (seconds, LLM calls), by the step's index
+    _runs = param.Dict(default={})
+
+    def _edges(self) -> list[tuple[int, int, str]]:
+        """graph's edges by step index, which stay apart when titles repeat."""
+        edges = []
+        tasks = list(self)
+        for j, task in enumerate(tasks):
+            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
+                provider = next((
+                    i for i in reversed(range(j))
+                    if key in tasks[i].output_schema.__required_keys__ | tasks[i].output_schema.__optional_keys__
+                ), None)
+                if provider is not None:
+                    edges.append((provider, j, key))
+        return edges
+
+    def graph(self) -> list[tuple[str, str, str]]:
+        """
+        How the steps feed each other, as (from step, to step, key) edges:
+        a step that needs or can use a key gets it from the latest step
+        before it that provides it.
+        """
+        tasks = list(self)
+        return [(tasks[i].title, tasks[j].title, key) for i, j, key in self._edges()]
+
+    def to_mermaid(self) -> str:
+        """The steps and how they feed each other, as a Mermaid flowchart."""
+        # Inside a quoted label only a quote or a line break ends it early
+        labels = [" ".join(task.title.split()).replace('"', "#quot;") for task in self]
+        lines = ["graph TD"] + [f'    s{i}["{label}"]' for i, label in enumerate(labels)]
+        lines += [f"    s{i} -->|{key}| s{j}" for i, j, key in self._edges()]
+        return "\n".join(lines)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
@@ -116,6 +159,20 @@ class Plan(Section):
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
+        if task.status == "success":
+            # A rerun, e.g. from explore, skips the step, so its timing stands
+            return await self._run_actor_task(i, task, context, **kwargs)
+        start = time.monotonic()
+        # The agent's own LLM is the one it calls, set by the coordinator
+        llm = task.actor.llm or task.llm or self.llm
+        with capture_usage(llm) if llm is not None else nullcontext() as usage:
+            try:
+                return await self._run_actor_task(i, task, context, **kwargs)
+            finally:
+                calls = None if usage is None else len(usage.records)
+                self._runs = {**self._runs, i: (time.monotonic() - start, calls)}
+
+    async def _run_actor_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         if task.status == "success":
             return task.views, task.out_context
 
@@ -184,11 +241,11 @@ class Plan(Section):
                 task.out_context["__error__"] = error_msg
                 return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
-            traceback.print_exception(e)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
-            traceback.print_exception(e)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task failed due to an internal error"
             raise e
 
@@ -254,13 +311,17 @@ class Plan(Section):
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
+        context.pop("__exception__", None)
         context["plan"] = self
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(failed=self.status == "error")
         if self.steps_layout is not None:
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
-            if self.status == "success":
+            if self.unanswerable:
+                # \u2139 is the information emoji, escaped since it looks like an i
+                steps_title.object = f"\u2139\ufe0f The data cannot answer {self.title!r}"
+            elif self.status == "success":
                 steps_title.object = f"✅ Successfully completed {self.title!r}"
             else:
                 steps_title.object = f"❌ Failed to execute {self.title!r}"
@@ -668,8 +729,13 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
+        if plan is not None and plan.unanswerable and not headless:
+            self.interface.stream(plan.unanswerable, user="Planner")
         if plan is not None and self.steps_layout is not None:
-            self.steps_layout.header[0].object = "🧾 Checklist ready..."
+            # \u2139 is the information emoji, escaped since it looks like an i
+            self.steps_layout.header[0].object = (
+                f"\u2139\ufe0f The data cannot answer {plan.title!r}" if plan.unanswerable else "🧾 Checklist ready..."
+            )
             _, todos = plan.render_task_history(-1)
             self.steps_layout.header[1].object = todos
         return plan

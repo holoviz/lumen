@@ -183,6 +183,24 @@ async def test_dependency_resolver_headless_raises_agent_errors(llm):
         await resolver.respond([{'role': 'user', 'content': 'Hello?'}], {})
 
 
+async def test_planner_unanswerable_plan_tells_the_chat_why(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+    reason = "No table has an elevation column."
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Clear", yes=False),
+        plan_model(chain_of_thought="No elevation", title="No data", steps=[], unanswerable=reason),
+    ])
+    planner = Planner(llm=llm)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'Elevation of Berlin?'}], {})
+
+    assert plan.unanswerable == reason and len(plan) == 0
+    assert any(str(message.object) == reason for message in planner.interface.objects)
+
+    await plan.execute()
+    assert plan.steps_layout.header[0].object == "ℹ️ The data cannot answer 'No data'"
+
+
 async def test_planner_empty_plan_with_validation(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
 
@@ -1074,3 +1092,15 @@ def test_chat_steps_shrink_with_a_narrow_chat_column():
 
     assert step.min_width is None
     assert step.sizing_mode == "stretch_width"
+
+
+async def test_planner_keeps_its_reasoning_on_the_plan(llm):
+    plan_model = make_plan_model(["ChatAgent"], [])
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Clear", yes=False),
+        plan_model(chain_of_thought="A greeting, so chat back.", title="Hello", steps=[
+            {"actor": "ChatAgent", "instruction": "Say hello", "title": "Hello"},
+        ]),
+    ])
+    plan = await Planner(llm=llm).respond([{'role': 'user', 'content': 'Hello?'}], {})
+    assert plan.reasoning == "A greeting, so chat back."
