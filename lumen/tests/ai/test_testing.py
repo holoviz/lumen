@@ -5,6 +5,8 @@ from typing import get_args
 import pandas as pd
 import pytest
 
+from openai.types.chat import ChatCompletion
+
 try:
     import lumen.ai  # noqa
 except ModuleNotFoundError:
@@ -90,6 +92,27 @@ def test_recording_turns_streaming_off_and_back_on(tmp_path):
         assert llm.invoke.__name__ == "recording"
     assert llm._supports_stream and llm._supports_model_stream
     assert llm.invoke.__name__ == "invoke"
+
+
+class CompletionLLM(MockLLM):
+    """Answers a text call with the SDK's response object, as OpenAI-compatible providers do."""
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        if response_model is not None:
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+        return ChatCompletion(
+            id="1", created=0, model="m", object="chat.completion", choices=[{
+                "index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "Hi there."},
+            }],
+        )
+
+
+async def test_a_text_call_answered_with_an_sdk_object_replays_as_text(tmp_path):
+    path = tmp_path / "text.json"
+    question = [{"role": "user", "content": "Hello?"}]
+    with record(CompletionLLM(), path) as llm:
+        await llm.invoke(question)
+    assert await ReplayLLM(path).invoke(question) == "Hi there."
 
 
 async def test_the_same_call_twice_replays_both_responses_in_order(tmp_path):
