@@ -76,6 +76,12 @@ class XArraySQLSource(BaseSQLSource):
         Subset of data variables to expose. None means all variables.
     sql_engine : str
         The SQL engine queries run on, 'datafusion' or 'duckdb'.
+    initializers : list
+        SQL statements run on a new DuckDB connection, e.g. to load
+        the spatial extension. DuckDB only.
+    source : DuckDBSource or None
+        A DuckDBSource to register the grid on, so it joins that
+        source's tables. DuckDB only.
 
     Examples
     --------
@@ -88,9 +94,11 @@ class XArraySQLSource(BaseSQLSource):
     On DuckDB, the grid joins with anything else on the connection, such
     as polygons read with the spatial extension::
 
-    >>> source = XArraySQLSource(uri="air_temperature.nc", sql_engine="duckdb")
-    >>> source.execute("INSTALL spatial; LOAD spatial")
-    >>> source.execute("CREATE TABLE regions AS SELECT * FROM ST_Read('regions.geojson')")
+    >>> regions = DuckDBSource(
+    ...     initializers=["INSTALL spatial;", "LOAD spatial;"],
+    ...     tables={"regions": "SELECT * FROM ST_Read('regions.geojson')"},
+    ... )
+    >>> source = XArraySQLSource(uri="air_temperature.nc", source=regions)
     >>> source.execute(
     ...     "SELECT r.name, AVG(a.air) AS air FROM air a JOIN regions r "
     ...     "ON ST_Contains(r.geom, ST_Point(a.lon, a.lat)) GROUP BY r.name"
@@ -138,7 +146,16 @@ class XArraySQLSource(BaseSQLSource):
 
     sql_engine = param.Selector(default="datafusion", objects=["datafusion", "duckdb"], doc="""
         The SQL engine queries run on. DuckDB joins the grid with other
-        tables on its connection, and with its extensions, such as spatial.""")
+        tables on its connection, and with its extensions, such as spatial.
+        Defaults to 'duckdb' when initializers or a source are given.""")
+
+    initializers = param.List(default=[], item_type=str, doc="""
+        SQL statements run on a new DuckDB connection before the grid is
+        registered, e.g. ["INSTALL spatial;", "LOAD spatial;"]. DuckDB only.""")
+
+    source = param.ClassSelector(class_=DuckDBSource, default=None, doc="""
+        A DuckDBSource to register the grid on instead of a new connection,
+        so queries join the grid with that source's tables. DuckDB only.""")
 
     def __init__(self, _dataset=None, _ctx=None, **params):
         if try_import_xarray() is None:
@@ -146,6 +163,10 @@ class XArraySQLSource(BaseSQLSource):
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"
             )
+        if params.get("initializers") or params.get("source") is not None:
+            params.setdefault("sql_engine", "duckdb")
+            if params["sql_engine"] != "duckdb":
+                raise ValueError("initializers and source need sql_engine='duckdb'.")
         super().__init__(**params)
         if self.sql_engine == "duckdb":
             # SQL transforms and the SQL prompts read the dialect
@@ -181,7 +202,7 @@ class XArraySQLSource(BaseSQLSource):
         duckdb = self.sql_engine == "duckdb"
         if duckdb:
             from xarray_sql import arrow_dataset
-            self._ctx = DuckDBSource(uri=":memory:")
+            self._ctx = self.source if self.source is not None else DuckDBSource(uri=":memory:", initializers=self.initializers)
         else:
             from xarray_sql import XarrayContext
             self._ctx = XarrayContext()
@@ -407,6 +428,8 @@ class XArraySQLSource(BaseSQLSource):
             variables=self.variables,
             open_kwargs=self.open_kwargs,
             sql_engine=self.sql_engine,
+            initializers=self.initializers,
+            source=self.source,
             tables=all_tables,
             table_params=all_params,
         )

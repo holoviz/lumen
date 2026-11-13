@@ -22,6 +22,7 @@ import pytest
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
+from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.xarray_sql import XArraySQLSource
 from lumen.transforms.sql import SQLColumns
 
@@ -805,19 +806,52 @@ class TestDuckDBEngine:
         assert derived._ctx is source._ctx
         assert (derived.get("hot")["temperature"] > 300).all()
 
+    def test_initializers_and_source_imply_duckdb(self, synthetic_dataset):
+        assert XArraySQLSource(_dataset=synthetic_dataset, initializers=["SELECT 1"]).sql_engine == "duckdb"
+        assert XArraySQLSource(_dataset=synthetic_dataset, source=DuckDBSource()).sql_engine == "duckdb"
+
+    def test_initializers_and_source_reject_datafusion(self, synthetic_dataset):
+        with pytest.raises(ValueError, match="sql_engine='duckdb'"):
+            XArraySQLSource(_dataset=synthetic_dataset, sql_engine="datafusion", initializers=["SELECT 1"])
+
+    def test_initializers_run_on_the_connection(self, synthetic_dataset):
+        source = XArraySQLSource(_dataset=synthetic_dataset, initializers=["CREATE TABLE ones AS SELECT 1 AS one"])
+        assert source.execute("SELECT one FROM ones")["one"].tolist() == [1]
+
+    def test_registers_on_a_given_source(self, synthetic_dataset):
+        frames = DuckDBSource.from_df({"cities": pd.DataFrame({"name": ["a", "b"], "lat": [10.0, 20.0]})})
+        source = XArraySQLSource(_dataset=synthetic_dataset, source=frames)
+        assert source._ctx is frames
+        df = source.execute(
+            "SELECT c.name, COUNT(*) AS n FROM temperature t JOIN cities c ON t.lat = c.lat "
+            "GROUP BY c.name ORDER BY c.name"
+        )
+        assert df["n"].tolist() == [10 * 4, 10 * 4]
+        # The grid is a view on the same connection, so the given source sees it too
+        assert len(frames.execute("SELECT * FROM temperature")) == 10 * 5 * 4
+
+    def test_spec_roundtrip(self, nc_file):
+        source = XArraySQLSource(uri=str(nc_file), initializers=["SELECT 1"])
+        spec = source.to_spec()
+        assert spec["sql_engine"] == "duckdb"
+        assert spec["initializers"] == ["SELECT 1"]
+        restored = XArraySQLSource.from_spec(spec)
+        assert restored.sql_engine == "duckdb"
+        assert len(restored.execute("SELECT * FROM temperature LIMIT 3")) == 3
+
     def test_zonal_stats_in_one_query(self, synthetic_dataset):
         """The grid joins polygons from DuckDB spatial in one SQL query."""
-        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine="duckdb")
         try:
-            source.execute("INSTALL spatial; LOAD spatial")
+            regions = DuckDBSource(initializers=["INSTALL spatial;", "LOAD spatial;"])
         except Exception:
             pytest.skip("DuckDB spatial extension unavailable")
-        source.execute(
+        regions.execute(
             "CREATE TABLE regions AS SELECT * FROM (VALUES "
             "('west', ST_GeomFromText('POLYGON((95 0, 115 0, 115 60, 95 60, 95 0))')), "
             "('east', ST_GeomFromText('POLYGON((115 0, 135 0, 135 60, 115 60, 115 0))'))"
             ") AS r(name, geom)"
         )
+        source = XArraySQLSource(_dataset=synthetic_dataset, source=regions)
         df = source.execute(
             "SELECT r.name, AVG(t.temperature) AS temperature FROM temperature t "
             "JOIN regions r ON ST_Contains(r.geom, ST_Point(t.lon, t.lat)) "
