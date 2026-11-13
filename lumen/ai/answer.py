@@ -678,8 +678,31 @@ def _density_view(view: View, pipeline: Pipeline | None) -> View:
     return hvPlotView(**params)
 
 
-def _explorer_settings(view: View) -> dict[str, Any]:
-    """The hvPlotUIView params that redraw an answer's hvPlot chart."""
+_EXPLORER_KINDS = {**_POINT_KINDS, "bar": "bar", "area": "area", "rect": "heatmap", "boxplot": "box"}
+
+
+def _vega_explorer_settings(spec: dict) -> dict[str, Any] | None:
+    """hvPlot equivalents of a Vega-Lite chart's mark and encoding, or None for marks hvPlot has no kind for."""
+    spec = spec["layer"][0] if spec.get("layer") else spec
+    mark = spec.get("mark")
+    kind = _EXPLORER_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
+    if kind is None:
+        return None
+    encoding = spec.get("encoding", {})
+    x, y, color = (encoding.get(channel, {}) for channel in ("x", "y", "color"))
+    if kind == "bar" and y.get("type") in ("nominal", "ordinal") and x.get("type") == "quantitative":
+        # Vega-Lite draws horizontal bars by swapping the axes; hvPlot keeps the category on x
+        kind, x, y = "barh", y, x
+    settings = {"kind": kind, "x": x.get("field"), "y": y.get("field")}
+    if color.get("field"):
+        settings["by" if color.get("type") in ("nominal", "ordinal") else "color"] = color["field"]
+    return {k: v for k, v in settings.items() if v is not None}
+
+
+def _explorer_settings(view: View) -> dict[str, Any] | None:
+    """The hvPlotUIView params that redraw an answer's chart, or None when there is no hvPlot equivalent."""
+    if isinstance(view, VegaLiteView):
+        return _vega_explorer_settings(view.spec)
     names = set(hvPlotBaseView.param) - set(View.param)
     settings = {k: v for k, v in view.param.values().items() if k in names and v not in (None, [], False)}
     if "z" in settings and view.kind not in GRIDDED_KINDS:
@@ -1761,12 +1784,15 @@ class Answer(param.Parameterized):
     def tweak(self) -> Any:
         """
         Open the chart in hvPlot's explorer, preloaded with its kind, axes,
-        colours and map settings, to adjust by hand. ``.settings()`` on the
+        colours and map settings, to adjust by hand. A Vega-Lite chart opens
+        as the matching hvPlot kind. ``.settings()`` on the
         result gives the hvPlot keywords, ``.hvplot()`` the plot.
         """
-        if not isinstance(self.view, hvPlotView):
+        if not isinstance(self.view, hvPlotView | VegaLiteView):
             raise ValueError("This answer has no chart to tweak.")
-        return hvPlotUIView(pipeline=self.view.pipeline, **_explorer_settings(self.view)).get_panel()
+        if (settings := _explorer_settings(self.view)) is None:
+            raise ValueError("hvPlot has no kind for this chart's Vega-Lite mark, so it cannot be tweaked.")
+        return hvPlotUIView(pipeline=self.view.pipeline, **settings).get_panel()
 
     def explore(self, **params) -> ExplorerUI:
         """
