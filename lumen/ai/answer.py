@@ -65,6 +65,7 @@ from ..util import (
     as_pandas, geometry_columns, geometry_to_geojson, is_geodataframe, log,
 )
 from ..views import VegaLiteView, View, hvPlotView
+from ..views.base import GRIDDED_KINDS, hvPlotBaseView, hvPlotUIView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
@@ -675,6 +676,16 @@ def _density_view(view: View, pipeline: Pipeline | None) -> View:
     else:
         params.update(rasterize=True, cnorm="log")
     return hvPlotView(**params)
+
+
+def _explorer_settings(view: View) -> dict[str, Any]:
+    """The hvPlotUIView params that redraw an answer's hvPlot chart."""
+    names = set(hvPlotBaseView.param) - set(View.param)
+    settings = {k: v for k, v in view.param.values().items() if k in names and v not in (None, [], False)}
+    if "z" in settings and view.kind not in GRIDDED_KINDS:
+        # The explorer colours points and shapes by `color`; a grid takes its variable from the data
+        settings["color"] = settings.pop("z")
+    return dict(settings, **view.kwargs)
 
 
 def _records(data: Any) -> Any:
@@ -1746,6 +1757,16 @@ class Answer(param.Parameterized):
         if (spec := self._vega_lite_spec() or self._geoshape_spec()) is None:
             raise ValueError("This answer has no Vega-Lite chart; answer.chart gives an hvPlot one.")
         return spec
+
+    def tweak(self) -> Any:
+        """
+        Open the chart in hvPlot's explorer, preloaded with its kind, axes,
+        colours and map settings, to adjust by hand. ``.settings()`` on the
+        result gives the hvPlot keywords, ``.hvplot()`` the plot.
+        """
+        if not isinstance(self.view, hvPlotView):
+            raise ValueError("This answer has no chart to tweak.")
+        return hvPlotUIView(pipeline=self.view.pipeline, **_explorer_settings(self.view)).get_panel()
 
     def explore(self, **params) -> ExplorerUI:
         """
