@@ -91,6 +91,8 @@ def format_function_call(call: FunctionCall, index: int = 0):
         and name.isidentifier()
         and qualname == name
     )
+    # Context arguments refer to names supplied by earlier exported cells or
+    # by the notebook environment; arbitrary runtime objects are not serialized.
     arguments = ", ".join(
         f"{argument}={argument if argument in call.context_arguments else repr(value)}"
         for argument, value in call.arguments.items()
@@ -100,6 +102,8 @@ def format_function_call(call: FunctionCall, index: int = 0):
     if importable:
         lines.append(f"from {module} import {name}")
     else:
+        # Best effort: imports and closure state are not reconstructed, so only
+        # self-contained functions are reliably reproducible from source.
         try:
             source = dedent(inspect.getsource(function)).rstrip()
         except (OSError, TypeError):

@@ -13,6 +13,7 @@ except ModuleNotFoundError:
 
 from panel.layout import Column, Row
 from panel.pane import Markdown
+from panel.viewable import Viewable
 from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
@@ -383,20 +384,32 @@ async def test_report_to_notebook():
 
 
 async def test_function_tool_calls_export_reproducibly():
-    # tracker #2130
-    def make_df():
-        return [1, 2, 3]
+    def create_pipeline():
+        import pandas as pd
 
-    def summarize(df):
-        return {"a": sum(df), "b": len(df)}
+        from lumen.pipeline import Pipeline
+        from lumen.sources.base import InMemorySource
+
+        source = InMemorySource(
+            tables={"numbers": pd.DataFrame({"value": [1, 2, 3]})}
+        )
+        return Pipeline(source=source, table="numbers")
+
+    def count_rows(pipeline):
+        return {
+            "row_count": len(pipeline.data),
+            "table_name": pipeline.table,
+        }
 
     producer = ActorTask(
-        FunctionTool(make_df, provides=["df"]),
-        title="Load numbers",
+        FunctionTool(create_pipeline, provides=["pipeline"]),
+        title="Create pipeline",
     )
     consumer = ActorTask(
-        FunctionTool(summarize, requires=["df"], provides=["a", "b"]),
-        title="Summarize",
+        FunctionTool(
+            count_rows, requires=["pipeline"], provides=["row_count", "table_name"]
+        ),
+        title="Count rows",
     )
     report = Report(Section(producer, consumer, HelloAction(title="After"), title="Results"))
     await report.execute()
@@ -404,11 +417,11 @@ async def test_function_tool_calls_export_reproducibly():
     cells = json.loads(report.to_notebook())["cells"]
     producer_index = next(
         i for i, cell in enumerate(cells)
-        if cell["cell_type"] == "code" and "df = make_df()" in "".join(cell["source"])
+        if cell["cell_type"] == "code" and "pipeline = create_pipeline()" in "".join(cell["source"])
     )
     consumer_index = next(
         i for i, cell in enumerate(cells)
-        if cell["cell_type"] == "code" and "summarize(df=df)" in "".join(cell["source"])
+        if cell["cell_type"] == "code" and "count_rows(pipeline=pipeline)" in "".join(cell["source"])
     )
     markdown_index = next(
         i for i, cell in enumerate(cells)
@@ -420,10 +433,16 @@ async def test_function_tool_calls_export_reproducibly():
         if cell["cell_type"] == "code":
             exec("".join(cell["source"]), namespace)
 
-    assert namespace["df"] == producer.out_context["df"]
-    assert {key: namespace[key] for key in ("a", "b")} == consumer.out_context
-    assert not any(isinstance(view, FunctionCall) for view in consumer._view.objects)
-    assert "summarize" not in report.to_html()
+    assert namespace["pipeline"].table == producer.out_context["pipeline"].table
+    assert namespace["pipeline"].data.equals(producer.out_context["pipeline"].data)
+    assert {
+        key: namespace[key] for key in ("row_count", "table_name")
+    } == consumer.out_context
+    assert len(consumer.function_calls) == 1
+    assert all(
+        isinstance(view, Viewable) for view in consumer.views
+    )
+    assert "count_rows" not in report.to_html()
 
     json_kwargs = {"obj": {"x": 1}}
     imported_call = FunctionCall(
@@ -482,9 +501,11 @@ async def test_function_tool_view_results_keep_export_call_and_rendered_view(ren
     report = Report(Section(task, title="Results"))
     await report.execute()
 
-    call = next(view for view in task.views if isinstance(view, FunctionCall))
+    call = task.function_calls[0]
+    assert len(task.function_calls) == 1
     assert call.rendered_output is True
     assert any(isinstance(view, LumenEditor) for view in task.views)
+    assert not any(isinstance(view, FunctionCall) for view in task.views)
     assert not any(isinstance(view, FunctionCall) for view in task._view.objects)
 
     sources = [

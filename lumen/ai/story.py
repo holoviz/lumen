@@ -24,7 +24,7 @@ from ..views.base import View
 from .agents.story import StoryAgent, StoryState, build_catalog
 from .config import get_markitdown
 from .editors import LumenEditor
-from .report import Report, _renderable_views
+from .report import Report
 from .tools.base import FunctionCall
 
 # The same engine as panel.pane.Markdown, so a paragraph reads identically in
@@ -264,10 +264,6 @@ class StoryReport(Report):
         if self._show_story and self._story.blocks:
             views = list(self._header)
             views.append(Typography(self._story.title, variant="h2"))
-            views.extend(
-                view for view in super()._export_views
-                if isinstance(view, FunctionCall)
-            )
             views += [
                 Markdown(obj) if kind == "prose" else obj
                 for kind, obj in self._story.blocks
@@ -283,6 +279,26 @@ class StoryReport(Report):
                 views += self._selected_views(value)
         return views
 
+    @property
+    def _notebook_outputs(self):
+        if self._show_story and self._story.blocks:
+            outputs = list(self._export_views)
+            function_calls = [
+                output for output in super()._notebook_outputs
+                if isinstance(output, FunctionCall)
+            ]
+            outputs[len(self._header) + 1:len(self._header) + 1] = function_calls
+            return outputs
+        if not self._story.outline:
+            return super()._notebook_outputs
+        outputs = list(self._header)
+        for kind, value, level in self._iter_arrangement():
+            if kind == "heading":
+                outputs.append(Typography(value, variant=f"h{level}"))
+            elif value.include_in_export:
+                outputs += self._selected_outputs(value)
+        return outputs
+
     def _export_view(self):
         if self._show_story and self._story.blocks:
             return Column(*self._story_flow(), sizing_mode="stretch_width", margin=(0, 5, 15, 5))
@@ -295,7 +311,7 @@ class StoryReport(Report):
             elif value.include_in_export:
                 cards.append((
                     value.title,
-                    Column(*_renderable_views(self._selected_views(value, include_header=False)), sizing_mode="stretch_width"),
+                    Column(*self._selected_views(value, include_header=False), sizing_mode="stretch_width"),
                 ))
         return Accordion(
             *cards, active=list(range(len(cards))), sizing_mode="stretch_width",

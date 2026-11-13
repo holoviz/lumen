@@ -74,7 +74,7 @@ async def test_function_tool_requires():
     tool = FunctionTool(add, requires=["a", "b"])
     context = {"a": 1, "b": 3}
     views, out_context = await tool.respond([], context)
-    assert views[0] == "add(a=1, b=3) returned: 4"
+    assert views == ["add(a=1, b=3) returned: 4"]
 
 
 async def test_function_tool_define_tool_decorator():
@@ -93,6 +93,7 @@ async def test_function_tool_define_tool_render_output():
     views, out_context = await tool.respond([], {})
     assert tool.render_output is True
     assert out_context == {}
+    assert len(views) == 1
     assert isinstance(views[0], Viewable)
 
 

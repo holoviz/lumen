@@ -158,6 +158,7 @@ class FunctionTool(Tool):
             **params
         )
         self._model = model
+        self._function_call: FunctionCall | None = None
 
     @property
     def inputs(self):
@@ -166,6 +167,7 @@ class FunctionTool(Tool):
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
     ) -> tuple[list[Any], ContextModel]:
+        self._function_call = None
         # step_title is passed to every actor in a plan; only forward it
         # if the wrapped function actually accepts it
         if "step_title" not in self._model.model_fields:
@@ -182,21 +184,25 @@ class FunctionTool(Tool):
             result = await asyncio.to_thread(self.function, **arguments)
         else:
             result = self.function(**arguments)
+        rendered_output = isinstance(result, (View, Viewable)) or self.render_output
+        function_call = FunctionCall(
+            self.function,
+            arguments,
+            context_arguments,
+            [] if rendered_output else list(self.provides),
+            isinstance(result, dict),
+            is_async=is_async,
+            rendered_output=rendered_output,
+        )
         if isinstance(result, (View, Viewable)):
-            function_call = FunctionCall(
-                self.function, arguments, context_arguments, [], False,
-                is_async=is_async, rendered_output=True,
-            )
-            return [result, function_call], {}
+            self._function_call = function_call
+            return [result], {}
         elif self.render_output:
             p = as_panel(result)
             if isinstance(p, HoloViewsPanel):
                 p = HoloViews(object=p.object)
-            function_call = FunctionCall(
-                self.function, arguments, context_arguments, [], False,
-                is_async=is_async, rendered_output=True,
-            )
-            return [p, function_call], {}
+            self._function_call = function_call
+            return [p], {}
         out_model = {}
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
@@ -208,10 +214,13 @@ class FunctionTool(Tool):
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
         )
-        return [output, FunctionCall(
-            self.function, arguments, context_arguments, list(self.provides),
-            isinstance(result, dict), is_async=is_async,
-        )], out_model
+        self._function_call = function_call
+        return [output], out_model
+
+    def _take_function_call(self) -> FunctionCall | None:
+        """Transfer the last call record to its executing ActorTask."""
+        function_call, self._function_call = self._function_call, None
+        return function_call
 
 
 class ToolUser(Actor):
@@ -301,16 +310,8 @@ class ToolUser(Actor):
         for tool in self._tools.get(prompt_name, []) or self.tools:
             if all(requirement in context for requirement in tool.input_schema.__required_keys__):
                 tool_context = await tool.respond(messages, context)
-                if (
-                    isinstance(tool_context, tuple) and len(tool_context) == 2
-                    and isinstance(tool_context[0], list)
-                    and any(isinstance(item, FunctionCall) for item in tool_context[0])
-                ):
-                    outputs, out_context = tool_context
-                    tool_context = (
-                        [item for item in outputs if not isinstance(item, FunctionCall)],
-                        out_context,
-                    )
+                if isinstance(tool, FunctionTool):
+                    tool._take_function_call()
                 if tool_context:
                     tools_context += f"\n{tool_context}"
         return tools_context

@@ -9,6 +9,7 @@ except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
 from panel.pane import Markdown
+from panel.viewable import Viewable
 from panel.widgets import TextEditor
 
 from lumen.ai.agents.story import (
@@ -485,8 +486,9 @@ async def test_function_call_metadata_is_excluded_from_arranged_story_html():
     def load_value():
         return 42
 
+    task = ActorTask(FunctionTool(load_value, provides=["value"]), title="Load value")
     report = StoryReport(
-        Section(ActorTask(FunctionTool(load_value, provides=["value"])), title="Tools"),
+        Section(task, title="Tools"),
         title="R",
     )
     await report.execute()
@@ -494,6 +496,9 @@ async def test_function_call_metadata_is_excluded_from_arranged_story_html():
 
     html = report.to_html()
 
+    assert len(task.function_calls) == 1
+    assert all(isinstance(view, Viewable) for view in task.views)
+    assert "value = load_value()" in _nb_text(report)
     assert "FunctionCall" not in html
     assert "load_value" not in html
 
@@ -525,6 +530,7 @@ async def test_generated_story_notebook_includes_function_calls(tiny_source):
     notebook = _nb_text(report)
     assert "value = load_value()" in notebook
     assert "A short story." in notebook
+    assert notebook.index("value = load_value()") < notebook.index("A short story.")
     assert "lm.Pipeline.from_spec" in notebook
 
 

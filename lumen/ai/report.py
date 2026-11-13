@@ -82,11 +82,6 @@ def _export_header(section, status_source, variant="h3"):
     )
 
 
-def _renderable_views(views):
-    """Exclude notebook-only FunctionCall metadata from rendered reports."""
-    return [view for view in views if not isinstance(view, FunctionCall)]
-
-
 class Task(Viewer):
     """
     A `Task` defines a single unit of work that can be executed and rendered.
@@ -145,6 +140,7 @@ class Task(Viewer):
 
     def __init__(self, **params):
         super().__init__(**params)
+        self.function_calls: list[FunctionCall] = []
         self._prepared = False
         self._init_view()
         self._null_step = NullStep()
@@ -298,6 +294,7 @@ class Task(Viewer):
         self.status = "idle"
         self._view[:] = []
         self.out_context.clear()
+        self.function_calls.clear()
 
 
 class TaskGroup(Task):
@@ -1139,6 +1136,32 @@ class Report(TaskGroup):
             return
         views += self._selected_views(section)
 
+    @property
+    def _notebook_outputs(self):
+        """Selected task outputs, including notebook-only FunctionCall records."""
+        if not len(self):
+            return self.views
+        outputs = list(self._header)
+        for section in self:
+            if section.include_in_export:
+                outputs += self._selected_outputs(section)
+        return outputs
+
+    def _selected_outputs(self, group, include_header=True):
+        """Selected views interleaved with each task's notebook call records."""
+        outputs = list(group._header) if include_header else []
+        for task in group:
+            if not task.include_in_export:
+                continue
+            if isinstance(task, TaskGroup):
+                outputs += self._selected_outputs(task)
+            else:
+                task_views = list(task.views)
+                outputs += task_views[:len(task._header)]
+                outputs += task.function_calls
+                outputs += task_views[len(task._header):]
+        return outputs
+
     def _selected_views(self, group, include_header=True):
         """
         The views of a task group, skipping sections discarded from the export.
@@ -1162,7 +1185,7 @@ class Report(TaskGroup):
         cards = [
             (
                 section.title,
-                Column(*_renderable_views(self._selected_views(section, include_header=False)), sizing_mode="stretch_width"),
+                Column(*self._selected_views(section, include_header=False), sizing_mode="stretch_width"),
             )
             for section in self if section.include_in_export
         ]
@@ -1185,7 +1208,7 @@ class Report(TaskGroup):
             )
         cells, extensions = [], ['tabulator']
         pending_headers = []
-        for index, out in enumerate(self._export_views):
+        for index, out in enumerate(self._notebook_outputs):
             cell = ext = None
             if isinstance(out, FunctionCall):
                 cell = format_function_call(out, index)
@@ -1255,7 +1278,7 @@ class Report(TaskGroup):
                 doc.add_heading(heading, level=level or 1)
             pending.clear()
 
-        for out in _renderable_views(self._export_views):
+        for out in self._export_views:
             if isinstance(out, Typography):
                 obj = out.object or ""
                 if out.variant and out.variant.startswith('h'):
@@ -1501,7 +1524,6 @@ class ActorTask(ExecutableTask):
         self.out_context = dict(self.out_context, **(await editor.render_context()))
 
     def _add_outputs(self, views: list, context: TContext):
-        function_calls = [view for view in views if isinstance(view, FunctionCall)]
         # Handle Tool specific behaviors
         if isinstance(self.actor, Tool):
             # Handle View/Viewable results regardless of agent type
@@ -1527,7 +1549,7 @@ class ActorTask(ExecutableTask):
                 continue
             view.param.watch(self._update_spec, ["spec", "_context_updated"])
 
-        self.views = self._header + function_calls + views
+        self.views = self._header + views
         rendered = []
         for view in views:
             out = self._render_output(view)
@@ -1537,6 +1559,7 @@ class ActorTask(ExecutableTask):
 
     async def _execute(self, context: TContext, **kwargs) -> tuple[list[Any], TContext]:
         views = []
+        self.function_calls = []
         if self.title and not self._header:
             title = Typography(f"{'#'*self.level} {self.title}", margin=(10, 10, 0, 10))
             views.append(title)
@@ -1552,6 +1575,10 @@ class ActorTask(ExecutableTask):
             try:
                 kwargs["step_title"] = self.title
                 outputs, out_context = await self.actor.respond(messages, subcontext, **kwargs)
+                if isinstance(self.actor, FunctionTool):
+                    function_call = self.actor._take_function_call()
+                    if function_call is not None:
+                        self.function_calls.append(function_call)
             except MissingContextError:
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
