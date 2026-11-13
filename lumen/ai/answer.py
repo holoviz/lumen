@@ -555,7 +555,20 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
         return
     for record in usage.records:
         answer.usage.add(record)
-    answer.result = out.result
+    try:
+        try:
+            answer.result = adapter.validate_python(out.result)
+        except ValidationError:
+            if not isinstance(out.result, str):
+                raise
+            answer.result = adapter.validate_json(out.result)
+    except Exception as e:
+        answer.param.update(
+            status="error",
+            error=f"The answer could not be read as {name}: {format_error(e)}",
+        )
+        return
+
 
 
 def _read_kinds(source: Source | None, sql: str | None) -> set[str]:
