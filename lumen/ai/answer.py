@@ -714,6 +714,12 @@ def _explorer_settings(view: View) -> dict[str, Any]:
     if "z" in settings and view.kind not in GRIDDED_KINDS:
         # The explorer colours points and shapes by `color`; a grid takes its variable from the data
         settings["color"] = settings.pop("z")
+    if settings.get("geo"):
+        # The explorer zooms a map out to the whole globe in Web Mercator unless
+        # told otherwise; the chart is framed on its data, and only tiles need Mercator
+        settings["global_extent"] = False
+        if not settings.get("tiles"):
+            settings["projection"] = "PlateCarree"
     return dict(settings, **view.kwargs)
 
 

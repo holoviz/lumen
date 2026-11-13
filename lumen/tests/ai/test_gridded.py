@@ -453,3 +453,10 @@ def test_the_explorer_opens_on_the_variable_the_chart_shows(xarray_source):
     assert set(pipeline.get_dataset().data_vars) == {"first_air", "air_change"}
     explorer = hvPlotUIView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="air_change").get_panel()
     assert explorer.hvplot().vdims[0].name == "air_change"
+
+
+def test_tweak_frames_a_map_on_its_data(xarray_pipeline):
+    view = hvPlotView(pipeline=xarray_pipeline, kind="quadmesh", x="lon", y="lat", z="air", geo=True, coastline=True)
+    settings = Answer(question="?", view=view, status="success").tweak().settings()
+    assert settings["projection"] == "PlateCarree"
+    assert settings.get("global_extent") in (None, False)
