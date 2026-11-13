@@ -498,6 +498,36 @@ async def test_function_call_metadata_is_excluded_from_arranged_story_html():
     assert "load_value" not in html
 
 
+async def test_generated_story_notebook_includes_function_calls(tiny_source):
+    def load_value():
+        return 42
+
+    report = StoryReport(
+        Section(
+            ActorTask(FunctionTool(load_value, provides=["value"])),
+            ChartAction(source=tiny_source, label="Chart"),
+            title="Tools and chart",
+        ),
+        title="R",
+    )
+    await report.execute()
+
+    catalog = report._collect_story_views()
+    report._set_story(
+        Story(
+            chain_of_thought="c",
+            title="Story",
+            blocks=[StoryBlock(prose="A short story.", view=1)],
+        ),
+        catalog,
+    )
+
+    notebook = _nb_text(report)
+    assert "value = load_value()" in notebook
+    assert "A short story." in notebook
+    assert "lm.Pipeline.from_spec" in notebook
+
+
 async def test_report_arrange_editor_seeds_and_binds_outline():
     report = StoryReport(
         Section(A(order=[]), title='Section A'),

@@ -96,7 +96,7 @@ def format_function_call(call: FunctionCall, index: int = 0):
         f"{argument}={argument if argument in call.context_arguments else repr(value)}"
         for argument, value in call.arguments.items()
     )
-    invocation = f"{name}({arguments})"
+    invocation = f"{'await ' if call.is_async else ''}{name}({arguments})"
     lines = []
     if importable:
         lines.append(f"from {module} import {name}")
@@ -111,7 +111,9 @@ def format_function_call(call: FunctionCall, index: int = 0):
             )
         lines.append(source)
 
-    if call.provides and (len(call.provides) > 1 or call.result_is_dict):
+    if call.rendered_output:
+        lines.extend(["", f"_ = {invocation}"])
+    elif call.provides and (len(call.provides) > 1 or call.result_is_dict):
         result_name = f"_lumen_function_result_{index}"
         lines.extend([
             "",

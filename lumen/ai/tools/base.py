@@ -30,6 +30,8 @@ class FunctionCall:
     context_arguments: set[str]
     provides: list[str]
     result_is_dict: bool
+    is_async: bool = False
+    rendered_output: bool = False
 
 
 def define_tool(
@@ -173,19 +175,28 @@ class FunctionTool(Tool):
             model_kwargs = await self._invoke_prompt("main", messages, context, response_model=self._model, max_retries=3)
         context_arguments = set(self.requires)
         arguments = dict(model_kwargs, **{k: context[k] for k in self.requires}, **kwargs)
-        if param.parameterized.iscoroutinefunction(self.function):
+        is_async = param.parameterized.iscoroutinefunction(self.function)
+        if is_async:
             result = await self.function(**arguments)
         elif self.run_in_thread:
             result = await asyncio.to_thread(self.function, **arguments)
         else:
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
-            return [result], {}
+            function_call = FunctionCall(
+                self.function, arguments, context_arguments, [], False,
+                is_async=is_async, rendered_output=True,
+            )
+            return [result, function_call], {}
         elif self.render_output:
             p = as_panel(result)
             if isinstance(p, HoloViewsPanel):
                 p = HoloViews(object=p.object)
-            return [p], {}
+            function_call = FunctionCall(
+                self.function, arguments, context_arguments, [], False,
+                is_async=is_async, rendered_output=True,
+            )
+            return [p, function_call], {}
         out_model = {}
         if self.provides:
             if len(self.provides) == 1 and not isinstance(result, dict):
@@ -199,7 +210,7 @@ class FunctionTool(Tool):
         )
         return [output, FunctionCall(
             self.function, arguments, context_arguments, list(self.provides),
-            isinstance(result, dict),
+            isinstance(result, dict), is_async=is_async,
         )], out_model
 
 

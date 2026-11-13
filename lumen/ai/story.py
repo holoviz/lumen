@@ -25,6 +25,7 @@ from .agents.story import StoryAgent, StoryState, build_catalog
 from .config import get_markitdown
 from .editors import LumenEditor
 from .report import Report, _renderable_views
+from .tools.base import FunctionCall
 
 # The same engine as panel.pane.Markdown, so a paragraph reads identically in
 # the editor and in the exports.
@@ -263,6 +264,10 @@ class StoryReport(Report):
         if self._show_story and self._story.blocks:
             views = list(self._header)
             views.append(Typography(self._story.title, variant="h2"))
+            views.extend(
+                view for view in super()._export_views
+                if isinstance(view, FunctionCall)
+            )
             views += [
                 Markdown(obj) if kind == "prose" else obj
                 for kind, obj in self._story.blocks

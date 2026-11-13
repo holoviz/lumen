@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 
@@ -15,6 +16,7 @@ from panel.pane import Markdown
 from typing_extensions import NotRequired
 
 from lumen.ai.actor import ContextModel
+from lumen.ai.editors import LumenEditor
 from lumen.ai.export import render_cells
 from lumen.ai.report import (
     Action, ActorTask, Report, Section, TaskGroup, Typography,
@@ -382,18 +384,29 @@ async def test_report_to_notebook():
 
 async def test_function_tool_calls_export_reproducibly():
     # tracker #2130
+    def make_df():
+        return [1, 2, 3]
+
     def summarize(df):
         return {"a": sum(df), "b": len(df)}
 
-    task = ActorTask(
+    producer = ActorTask(
+        FunctionTool(make_df, provides=["df"]),
+        title="Load numbers",
+    )
+    consumer = ActorTask(
         FunctionTool(summarize, requires=["df"], provides=["a", "b"]),
         title="Summarize",
     )
-    report = Report(Section(task, HelloAction(title="After"), title="Results"), context={"df": [1, 2, 3]})
+    report = Report(Section(producer, consumer, HelloAction(title="After"), title="Results"))
     await report.execute()
 
     cells = json.loads(report.to_notebook())["cells"]
-    code_index = next(
+    producer_index = next(
+        i for i, cell in enumerate(cells)
+        if cell["cell_type"] == "code" and "df = make_df()" in "".join(cell["source"])
+    )
+    consumer_index = next(
         i for i, cell in enumerate(cells)
         if cell["cell_type"] == "code" and "summarize(df=df)" in "".join(cell["source"])
     )
@@ -401,14 +414,15 @@ async def test_function_tool_calls_export_reproducibly():
         i for i, cell in enumerate(cells)
         if "**Hello**" in "".join(cell["source"])
     )
-    code = "".join(cells[code_index]["source"])
-    assert code.startswith("def summarize(df):")
-    namespace = {"df": [1, 2, 3]}
-    exec(code, namespace)
+    assert producer_index < consumer_index < markdown_index
+    namespace = {}
+    for cell in cells[producer_index:consumer_index + 1]:
+        if cell["cell_type"] == "code":
+            exec("".join(cell["source"]), namespace)
 
-    assert code_index < markdown_index
-    assert {key: namespace[key] for key in ("a", "b")} == task.out_context
-    assert not any(isinstance(view, FunctionCall) for view in task._view.objects)
+    assert namespace["df"] == producer.out_context["df"]
+    assert {key: namespace[key] for key in ("a", "b")} == consumer.out_context
+    assert not any(isinstance(view, FunctionCall) for view in consumer._view.objects)
     assert "summarize" not in report.to_html()
 
     json_kwargs = {"obj": {"x": 1}}
@@ -426,6 +440,61 @@ async def test_function_tool_calls_export_reproducibly():
 
     assert imported_code.startswith("from json import dumps")
     assert imported_namespace["serialized"] == json.dumps(json_kwargs["obj"])
+
+
+async def test_async_function_tool_export_awaits_call():
+    async def fetch():
+        return 3
+
+    task = ActorTask(FunctionTool(fetch, provides=["n"]), title="Fetch")
+    report = Report(Section(task, title="Results"))
+    await report.execute()
+
+    cells = json.loads(report.to_notebook())["cells"]
+    code = next(
+        "".join(cell["source"])
+        for cell in cells
+        if cell["cell_type"] == "code" and "n = await fetch()" in "".join(cell["source"])
+    )
+    namespace = {}
+    coroutine = eval(
+        compile(code, "<notebook cell>", "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT),
+        namespace,
+    )
+    if coroutine is not None:
+        await coroutine
+
+    assert namespace["n"] == task.out_context["n"] == 3
+
+
+@pytest.mark.parametrize("render_output", [False, True])
+async def test_function_tool_view_results_keep_export_call_and_rendered_view(render_output):
+    def return_view():
+        return Markdown("FunctionTool view output")
+
+    def return_text():
+        return "FunctionTool rendered output"
+
+    function = return_text if render_output else return_view
+    task = ActorTask(
+        FunctionTool(function, render_output=render_output), title="Tool output"
+    )
+    report = Report(Section(task, title="Results"))
+    await report.execute()
+
+    call = next(view for view in task.views if isinstance(view, FunctionCall))
+    assert call.rendered_output is True
+    assert any(isinstance(view, LumenEditor) for view in task.views)
+    assert not any(isinstance(view, FunctionCall) for view in task._view.objects)
+
+    sources = [
+        "".join(cell["source"])
+        for cell in json.loads(report.to_notebook())["cells"]
+        if cell["cell_type"] == "code"
+    ]
+    tool_code = next(source for source in sources if f"_ = {function.__name__}()" in source)
+    assert f"def {function.__name__}()" in tool_code
+    assert "FunctionCall" not in report.to_html()
 
 
 async def test_report_to_html():
