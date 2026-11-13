@@ -1044,6 +1044,67 @@ def test_answer_chart_without_altair_says_how_to_get_it(chart_answer, monkeypatc
         _ = chart_answer.chart
 
 
+def test_tweak_opens_an_hvplot_answer_with_its_settings(frame_source):
+    view = hvPlotView(
+        pipeline=Pipeline(source=frame_source, table="tiny"), kind="scatter",
+        x="category", y="value", height=300, grid=True,
+    )
+    explorer = Answer(question="?", view=view, status="success").tweak()
+    assert explorer.settings() == {"kind": "scatter", "x": "category", "y": ["value"], "height": 300}
+
+
+def test_tweak_colours_points_by_the_answers_z(frame_source):
+    view = hvPlotView(pipeline=Pipeline(source=frame_source, table="tiny"), kind="points", x="category", y="value", z="value")
+    assert Answer(question="?", view=view, status="success").tweak().settings()["color"] == "value"
+
+
+@pytest.mark.parametrize("mark, x, y, kind", [
+    ("bar", "category", "value", "bar"),
+    ({"type": "bar"}, "value", "category", "barh"),
+    ("line", "category", "value", "line"),
+])
+def test_tweak_opens_a_vega_lite_answer_as_the_matching_kind(chart_answer, mark, x, y, kind):
+    types = {"category": "nominal", "value": "quantitative"}
+    chart_answer.view.spec = {"mark": mark, "encoding": {
+        "x": {"field": x, "type": types[x]}, "y": {"field": y, "type": types[y]},
+        "color": {"field": "category", "type": "nominal"},
+    }}
+    settings = chart_answer.tweak().settings()
+    assert settings["kind"] == kind
+    assert (settings["x"], settings["y"]) == ("category", ["value"])
+    assert settings["by"] == ["category"]
+
+
+def test_tweak_refuses_a_mark_hvplot_cannot_draw(chart_answer):
+    chart_answer.view.spec = {"mark": "arc", "encoding": {"theta": {"field": "value", "type": "quantitative"}}}
+    with pytest.raises(ValueError, match="cannot be tweaked"):
+        chart_answer.tweak()
+
+
+@pytest.mark.parametrize("encoding, extra", [
+    ({"y": {"field": "value", "type": "quantitative", "aggregate": "mean"}}, {}),
+    ({"x": {"field": "value", "type": "quantitative", "bin": True}}, {}),
+    ({}, {"transform": [{"filter": "datum.value > 8"}]}),
+])
+def test_tweak_refuses_a_chart_that_reshapes_its_rows(chart_answer, encoding, extra):
+    chart_answer.view.spec = {**chart_answer.view.spec, **extra,
+                              "encoding": {**chart_answer.view.spec["encoding"], **encoding}}
+    with pytest.raises(ValueError, match="aggregation in the query"):
+        chart_answer.tweak()
+
+
+def test_tweak_on_an_empty_result_says_so(frame_source):
+    pipeline = Pipeline(source=frame_source.create_sql_expr_source({"none": "SELECT * FROM tiny WHERE value > 100"}), table="none")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    with pytest.raises(ValueError, match="no rows"):
+        Answer(question="?", view=view, status="success").tweak()
+
+
+def test_tweak_without_a_chart_says_so(frame_source):
+    with pytest.raises(ValueError, match="no chart to tweak"):
+        Answer(question="?", value="Ten rows.", status="success").tweak()
+
+
 def test_answer_to_vega_inlines_the_data(chart_answer):
     spec = chart_answer.to_vega()
     assert spec["mark"] == "bar"

@@ -139,6 +139,13 @@ answer.refine("Color the bars by species and sort them by mass")  # (1)!
 
 To change the chart by hand, open the card's Spec section, press Edit, change the spec and press Redraw. `answer.with_spec(...)` does the same from code, taking the spec as a dict or as JSON or YAML text, and needs no LLM.
 
+``` py
+explorer = answer.tweak()  # (1)!
+explorer.settings()        # the hvPlot keywords you ended up with
+```
+
+1. Opens the chart in hvPlot's explorer (`hvplot.explorer`), with its kind, axes, colours and map settings already filled in. A Vega-Lite chart opens as the matching hvPlot kind. No LLM call.
+
 ## When a question fails
 
 A question that cannot be answered still returns an `Answer`, with `status` set to `"error"`. Its card shows the error and the failed SQL, open. Ask again with a hint:
@@ -306,7 +313,7 @@ income.map()                    # lonboard, or hvPlot on a basemap
 mean_air.ds                     # an xarray Dataset on lat and lon
 ```
 
-Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
+Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. A colour that shows a number gets a [colorcet](https://colorcet.holoviz.org) map that fits it: `coolwarm` centred on zero for an anomaly or a change, `colorwheel` for a direction or an hour of day, `fire` or `kbc_r` for a magnitude. Ask for another one, or `refine` the answer, to change it. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
 
 ## Settings
 
