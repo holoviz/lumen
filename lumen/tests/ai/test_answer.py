@@ -1093,6 +1093,13 @@ def test_tweak_refuses_a_chart_that_reshapes_its_rows(chart_answer, encoding, ex
         chart_answer.tweak()
 
 
+def test_tweak_on_an_empty_result_says_so(frame_source):
+    pipeline = Pipeline(source=frame_source.create_sql_expr_source({"none": "SELECT * FROM tiny WHERE value > 100"}), table="none")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    with pytest.raises(ValueError, match="no rows"):
+        Answer(question="?", view=view, status="success").tweak()
+
+
 def test_tweak_without_a_chart_says_so(frame_source):
     with pytest.raises(ValueError, match="no chart to tweak"):
         Answer(question="?", value="Ten rows.", status="success").tweak()

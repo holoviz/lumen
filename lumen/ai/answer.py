@@ -1796,7 +1796,10 @@ class Answer(param.Parameterized):
         """
         if not isinstance(self.view, hvPlotView | VegaLiteView):
             raise ValueError("This answer has no chart to tweak.")
-        return hvPlotUIView(pipeline=self.view.pipeline, **_explorer_settings(self.view)).get_panel()
+        settings = _explorer_settings(self.view)
+        if self.view.pipeline.data.empty:
+            raise ValueError("This answer's query returned no rows, so there is nothing to tweak.")
+        return hvPlotUIView(pipeline=self.view.pipeline, **settings).get_panel()
 
     def explore(self, **params) -> ExplorerUI:
         """
