@@ -35,6 +35,7 @@ from holoviews.plotting.util import process_cmap  # type: ignore
 from holoviews.selection import link_selections  # type: ignore
 from holoviews.streams import Pipe  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
+from hvplot.converter import HoloViewsConverter  # type: ignore
 from hvplot.ui import (  # type: ignore
     Controls, hvDataFrameExplorer, hvGridExplorer, hvPlotExplorer,
 )
@@ -1170,6 +1171,13 @@ class hvPlotBaseView(View):
         return self.pipeline.get_dataset() if self.pipeline is not None else None
 
 
+# Every keyword hvPlot itself documents, by group (axes, colour, geo, ...)
+_HVPLOT_OPTIONS = {
+    option for name, group in vars(HoloViewsConverter).items()
+    if name.endswith('_options') and isinstance(group, list) for option in group
+}
+
+
 class hvPlotUIView(hvPlotBaseView):
     """
     `hvPlotUIView` displays provides a component for exploring datasets interactively.
@@ -1194,9 +1202,13 @@ class hvPlotUIView(hvPlotBaseView):
             if any(k in control for control in controls)
             and v is not None and k != 'name'
         }
-        # Plot options such as grid or frame_height have no explorer control
-        # either; dropped, so a plot spec opens in the explorer as it is.
-        kwargs = {k: v for k, v in self.kwargs.items() if any(k in control for control in controls)}
+        # hvPlot options such as grid or frame_height have no explorer control
+        # either; dropped, so a plot spec opens in the explorer as it is. A
+        # keyword hvPlot does not know is kept, so a typo still raises.
+        kwargs = {
+            k: v for k, v in self.kwargs.items()
+            if any(k in control for control in controls) or k not in _HVPLOT_OPTIONS
+        }
         # Only completed once a control has claimed it above: hvPlot gained the
         # color_key control after this was written, and forcing the keyword in
         # regardless makes hvPlotExplorer.__init__ reject it outright on an

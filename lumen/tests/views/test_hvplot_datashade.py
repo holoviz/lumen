@@ -191,6 +191,12 @@ def test_hvplot_ui_view_keeps_axis_options_and_drops_plot_only_ones(categorical_
     assert view.get_panel().axes.height == 300
 
 
+def test_hvplot_ui_view_still_rejects_a_keyword_hvplot_does_not_know(categorical_pipeline):
+    view = hvPlotUIView(pipeline=categorical_pipeline, kind="scatter", x="x", y="y", gird=True)
+    with pytest.raises(TypeError, match="gird"):
+        view.get_panel()
+
+
 @requires_datashader
 @requires_explorer_color_key
 def test_hvplot_ui_view_forwards_color_key(categorical_pipeline):
