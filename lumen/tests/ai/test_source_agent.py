@@ -11,6 +11,7 @@ try:
     from lumen.ai.agents.source import SourceAgent, _sanitize_tool_callable
     from lumen.ai.controls import CodeSourceControls
     from lumen.ai.translate import function_to_model
+    from lumen.sources.duckdb import DuckDBSource
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
@@ -50,3 +51,18 @@ def test_sanitize_tool_callable_resolves_postponed_annotations_with_skip_params(
     schema = function_to_model(wrapped).model_json_schema()
     assert list(schema["properties"]) == ["kind"]
     assert schema["properties"]["kind"]["enum"] == ["a", "b"]
+
+
+def test_derive_table_name_numeric_kwarg_is_valid_duckdb_identifier():
+    name = SourceAgent._derive_table_name(
+        tool_results=[{"action": "Load Cells", "kwargs": {"min_size": 20}}]
+    )
+    assert name == "load_cells_20"
+    assert not name[0].isdigit()
+
+    source = DuckDBSource.from_df(tables={name: pd.DataFrame({"area": [1.0]})})
+    source.tables[name] = f"SELECT * FROM {name}"
+    result = source.get(name)
+
+    assert list(result.columns) == ["area"]
+    assert result["area"].tolist() == [1.0]
