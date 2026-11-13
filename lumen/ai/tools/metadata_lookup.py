@@ -214,6 +214,9 @@ class MetadataLookup(VectorLookupTool):
         columns = []
         if self.include_columns and (vector_columns := vector_info.get("columns", {})):
             for col_name, col_info in vector_columns.items():
+                # The entries are shared with tables_metadata, which a later
+                # lookup reads the description from, so pop from a copy
+                col_info = dict(col_info) if isinstance(col_info, dict) else {}
                 col_desc = col_info.pop("description", "")
                 column = Column(name=col_name, description=col_desc, metadata=col_info.copy() if isinstance(col_info, dict) else {})
                 columns.append(column)
@@ -279,7 +282,8 @@ class MetadataLookup(VectorLookupTool):
                 )
                 # Skip this source if already processed with the same (or more) tables
                 current_table_count = len(source.get_tables())
-                source_key = source.name
+                # describe() bumps the revision, so described tables are read again
+                source_key = (source.name, source._metadata_revision)
                 known_count = self._sources_processed[store].get(source_key, 0)
                 if source_key in self._sources_in_progress[store]:
                     log_debug(f"[MetadataLookup] Skipping source {source.name} - already in progress")

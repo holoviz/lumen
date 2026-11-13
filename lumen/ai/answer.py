@@ -5,24 +5,33 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import html
 import importlib.util
+import inspect
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
 import warnings
 import weakref
 
+from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from contextlib import ExitStack, suppress
+from contextlib import (
+    ExitStack, contextmanager, nullcontext, suppress,
+)
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
+import nbformat
 import pandas as pd
 import panel as pn
 import param
@@ -36,10 +45,13 @@ from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Card, Column, Row,
+    Alert, Button, Card, ChatInterface, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
+from pydantic import TypeAdapter, ValidationError, create_model
+from sqlglot import exp
 
+from .. import __version__
 from ..config import SOURCE_TABLE_SEPARATOR, config
 from ..pipeline import Pipeline
 from ..serializers import Serializer
@@ -56,15 +68,16 @@ from ..views import VegaLiteView, View, hvPlotView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
-from .config import QueryError, RetriesExceededError
+from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .editors import LumenEditor
-from .export import format_output, make_preamble
+from .export import format_output, make_md_cell, make_preamble
 from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
-from .report import ActorTask, TaskGroup
-from .sharing import sharing
+from .report import ActorTask, Report, TaskGroup
+from .selection import about, ask_box, watch_clicks
+from .sharing import mask_frame, sharing
 from .tools import MetadataLookup
 from .ui import ExplorerUI
 from .usage import UsageCollector
@@ -88,6 +101,18 @@ def _in_kernel() -> bool:
         return get_ipython().kernel is not None
     except AttributeError:  # no IPython at all, or a terminal IPython
         return False
+
+
+def _load_extensions() -> None:
+    """
+    Load what answer cards need, on first display rather than on import, so
+    lumen.ai stays quiet in scripts and in front-ends that never show one.
+    Checked per extension: a plain pn.extension() leaves Vega out, and the
+    Spec section's editor needs codeeditor.
+    """
+    missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
+    if missing:
+        pn.extension(*missing)
 
 
 def _is_spatial(source: Source) -> bool:
@@ -121,7 +146,18 @@ async def _default_agents(source: Source) -> list:
 
 
 # Set through configure, and used by every question that does not pass its own
-_settings: dict[str, Any] = {"agents": None, "llm": None}
+_settings: dict[str, Any] = {
+    "agents": None, "llm": None,
+    "cache": os.environ.get("LUMEN_AI_CACHE", "").lower() in ("1", "true", "yes"),
+}
+
+# Finished answers by question, data, model and prompt version, kept for
+# configure(cache=True). A cached Answer holds its source, so its id stays
+# unique for as long as the entry lives.
+_answer_cache: OrderedDict[str, Answer] = OrderedDict()
+_ANSWER_CACHE_SIZE = 128
+# Each cached answer holds its result, so the rows across them are bounded too
+_ANSWER_CACHE_ROWS = 2_000_000
 
 _UNSET: Any = object()
 
@@ -129,6 +165,7 @@ _UNSET: Any = object()
 def configure(
     *, llm: Llm | None = _UNSET, agents: list | None = _UNSET, max_rows: int | None = _UNSET,
     share: Literal["sample", "schema", "none"] | None = None, mask_pii: bool | None = None,
+    cache: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
@@ -145,17 +182,96 @@ def configure(
     mask_pii withholds the values of columns that look like personal
     data. Both apply to the chat UI too; see lumen.ai.sharing.
 
+    cache keeps answers in memory, so asking the same question of the same
+    data with the same model again returns the answer without LLM calls.
+    LUMEN_AI_CACHE=1 turns it on too; clear_cache() empties it.
+
     Returns the settings now in effect.
     """
     if llm is not _UNSET:
         _settings["llm"] = llm
     if agents is not _UNSET:
         _settings["agents"] = agents
+    if cache is not None:
+        _settings["cache"] = cache
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
         SQLAgent.max_rows = max_rows
     sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
     return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
+
+
+def _clone(obj: Any, **overrides) -> Any:
+    """A new instance of a Lumen component with the same parameter values, or those given."""
+    # None is left out so the parameter takes its default: a list parameter's default is [], not None
+    values = {key: value for key, value in obj.param.values().items() if key != "name" and value is not None}
+    return type(obj)(**{**values, **overrides})
+
+
+def _cached_rows() -> int:
+    # The data is already loaded, so its length costs no query
+    return sum(len(answer.pipeline.data) for answer in _answer_cache.values() if answer.pipeline is not None)
+
+
+def clear_cache() -> None:
+    """Forget the answers configure(cache=True) kept."""
+    _answer_cache.clear()
+
+
+@cache
+def _prompt_version() -> str:
+    """Lumen's version and a hash of its prompt templates, read once per process."""
+    sha = hashlib.sha256(__version__.encode())
+    for path in sorted(PROMPTS_DIR.rglob("*.jinja2")):
+        sha.update(path.read_bytes())
+    return sha.hexdigest()
+
+
+_SECRET_PARAM = re.compile(r"key|secret|token|password|credential", re.IGNORECASE)
+
+
+def _fingerprint(obj: param.Parameterized) -> str:
+    """
+    The plain settings of a component, e.g. an LLM's endpoint and temperature
+    or an agent's own limits, as a string. Secrets and objects such as the
+    interface or another LLM are left out.
+    """
+    values = obj.param.values()
+    settings = {
+        key: value for key, value in values.items()
+        # Private params, e.g. _ready, are state, not settings
+        if key != "name" and not key.startswith("_") and not _SECRET_PARAM.search(key)
+        and isinstance(value, (str, int, float, bool, type(None), list, dict))
+    }
+    # An agent can bring an LLM of its own, which answers in place of the Planner's
+    llm = values.get("llm")
+    own_llm = _fingerprint(llm) if isinstance(llm, Llm) else ""
+    return type(obj).__name__ + json.dumps(settings, sort_keys=True, default=str) + own_llm
+
+
+def _type_key(returns: Any) -> str:
+    """
+    The type returns= asks for, by its schema and identity: a pydantic class
+    redefined in a notebook keeps its repr but is another class.
+    """
+    if returns is None:
+        return ""
+    return f"{id(returns)}:{json.dumps(TypeAdapter(returns).json_schema(), sort_keys=True)}"
+
+
+def _cache_key(
+    source: Source, question: str, llm: Llm, agents: list, visible_slugs: set[str] | None, returns: Any = None,
+) -> str:
+    """What decides an answer: the question, the data, the model, the agents, the prompts and the type."""
+    parts = (
+        " ".join(question.lower().split()), str(id(source)), source._get_source_hash(),
+        # Columns, types, row counts and descriptions, so a schema change or describe() misses
+        json.dumps(source.get_metadata(None), sort_keys=True, default=str),
+        _fingerprint(llm), json.dumps(llm.model_kwargs, sort_keys=True, default=str),
+        *(_fingerprint(agent) for agent in agents), str(SQLAgent.max_rows), sharing.share, str(sharing.mask_pii),
+        str(sorted(visible_slugs or [])), _prompt_version(), _type_key(returns),
+    )
+    return hashlib.sha256("\0".join(parts).encode()).hexdigest()
 
 
 def _without_values(spec: Any) -> Any:
@@ -310,43 +426,255 @@ def _fresh_context(planner: Planner, source: Source, visible_slugs: set[str] | N
     return context
 
 
+@contextmanager
+def _asking(planner: Planner):
+    """
+    Mark the planner busy, so a concurrent question gets one of its own, hand
+    errors back in the Answer rather than printing their tracebacks, and quiet
+    instructor's per-attempt retry log, for the length of the block.
+    """
+    _busy.add(planner)
+    token = errors_in_result.set(True)
+    try:
+        with quiet_retries() if log.getEffectiveLevel() > logging.DEBUG else nullcontext():
+            yield
+    finally:
+        errors_in_result.reset(token)
+        _busy.discard(planner)
+
+
+@contextmanager
+def _counting(planner: Planner):
+    """Collect the usage of every LLM the planner and its agents use, each LLM once."""
+    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
+    usage = UsageCollector()
+    with ExitStack() as stack:
+        scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
+        try:
+            yield usage
+        finally:
+            for scope in scopes:
+                for record in scope.records:
+                    usage.add(record)
+
+
 async def _respond(
     planner: Planner, question: str, messages: list[dict[str, str]], context: dict[str, Any],
-    data: DataT | Pipeline, agents: list | None,
+    data: DataT | Pipeline, agents: list | None, confirm: bool = False,
 ) -> tuple[Answer, dict[str, Any]]:
     """
     Run one question through the Planner, returning the Answer and the
     context it left. A failed plan gives an Answer with status "error".
+    With confirm, stop after planning and return a "planned" Answer.
     """
-    # An agent given its own LLM is counted too, each LLM once
-    llms = {id(llm): llm for llm in (planner.llm, *(agent.llm for agent in planner.agents)) if llm is not None}
-    _busy.add(planner)
-    token = errors_in_result.set(True)
-    try:
-        with ExitStack() as stack:
-            scopes = [stack.enter_context(llm.capture_usage()) for llm in llms.values()]
-            if log.getEffectiveLevel() > logging.DEBUG:
-                stack.enter_context(quiet_retries())
-            await planner.sync(context)
-            plan = await planner.respond(messages, context)
-            if plan is None:
-                raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
-            if plan.unanswerable:
-                outputs, out_context = [], context
-            else:
-                outputs, out_context = await plan.execute()
-    finally:
-        errors_in_result.reset(token)
-        _busy.discard(planner)
+    with _asking(planner), _counting(planner) as usage:
+        await planner.sync(context)
+        plan = await planner.respond(messages, context)
+    if plan is None:
+        raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
+    if confirm and not plan.unanswerable:
+        answer = Answer(
+            agents=agents, data=data, llm=planner.llm, plan=plan, question=question,
+            source=context["source"], status="planned", usage=usage,
+            visible_slugs=context.get("visible_slugs"),
+        )
+        answer._pending = (planner, context)
+        return answer, context
+    return await _execute(planner, plan, question, context, data, agents, usage)
+
+
+async def _execute(
+    planner: Planner, plan: Plan, question: str, context: dict[str, Any], data: DataT | Pipeline,
+    agents: list | None, usage: UsageCollector,
+) -> tuple[Answer, dict[str, Any]]:
+    """Run a plan and build its Answer, adding the run's usage to the planning's."""
+    with _asking(planner), _counting(planner) as run_usage:
+        outputs, out_context = ([], context) if plan.unanswerable else await plan.execute()
     answer = _build_answer(
         question, plan, outputs, out_context, context["source"], planner.llm, data, agents,
         context.get("visible_slugs"),
     )
     answer.usage = UsageCollector()
-    for scope in scopes:
-        for record in scope.records:
-            answer.usage.add(record)
+    for record in (*usage.records, *run_usage.records):
+        answer.usage.add(record)
     return answer, out_context
+
+
+def _shapes(df: pd.DataFrame | None) -> list:
+    """
+    The result in each shape a type could take it in: the cell of a
+    one-cell result, the values of a one-column one, the row of a one-row
+    one, and the rows as records. Only the shapes the result has.
+    """
+    if df is None or df.empty:
+        return []
+    # object dtype hands back Python numbers rather than numpy ones
+    records = df.astype(object).where(df.notna(), None).to_dict("records")
+    shapes: list = []
+    if len(df.columns) == 1:
+        column = [row[df.columns[0]] for row in records]
+        shapes += [column[0]] if len(column) == 1 else []
+        shapes.append(column)
+    if len(records) == 1:
+        shapes.append(records[0])
+    shapes.append(records)
+    return shapes
+
+
+async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
+    """
+    Fill answer.result with the answer as the type asked for. A result
+    already in a shape the type takes is validated as it is, with no LLM
+    call; otherwise one structured call reads the type from the written
+    answer. An answer that cannot be read as the type becomes an error.
+    """
+    answer._returns = returns
+    if answer.status != "success":
+        return
+    adapter = TypeAdapter(returns)
+    df = None if answer.pipeline is None else as_pandas(answer.pipeline.data)
+    for shape in _shapes(df):
+        with suppress(ValidationError):
+            answer.result = adapter.validate_python(shape)
+            return
+    name = returns.__name__ if isinstance(returns, type) else str(returns)
+    content = f"Question: {answer.question}\n\nAnswer: {answer.value}"
+    if df is not None and sharing.share == "sample":
+        # Same text on every platform, so a recorded prompt replays everywhere
+        csv = mask_frame(df.head(20)).to_csv(index=False, lineterminator="\n")
+        content += f"\n\nThe data the answer was written from:\n{csv}"
+    try:
+        with llm.capture_usage() as usage:
+            out = await llm.invoke(
+                [{"role": "user", "content": content}],
+                system=f"Give the answer as {name}, using only the answer and data given.",
+                response_model=create_model("Result", result=(returns, ...)),
+            )
+    except Exception as e:
+        answer.param.update(status="error", error=f"The answer could not be read as {name}: {format_error(e)}")
+        return
+    for record in usage.records:
+        answer.usage.add(record)
+    answer.result = out.result
+
+
+def _read_kinds(source: Source | None, sql: str | None) -> set[str]:
+    """The libraries of the tables a query read, as lumen.read recorded them."""
+    kinds = input_kinds(source) if source is not None else {}
+    if None in kinds or not kinds:
+        return {kinds.get(None, "pandas")}
+    read = set(kinds)
+    if sql:
+        with suppress(sqlglot.errors.ParseError):
+            read &= {table.name for table in sqlglot.parse_one(sql, read="duckdb").find_all(sqlglot.exp.Table)}
+    return {kinds[table] for table in (read or kinds)}
+
+
+def _as_input_type(df: pd.DataFrame, kinds: set[str]) -> Any:
+    """A result in the library its input came in: polars, pyarrow or pandas."""
+    # Input of that type means its library is already imported
+    if kinds == {"polars"}:
+        return sys.modules["polars"].from_pandas(df)
+    if kinds == {"pyarrow"}:
+        return sys.modules["pyarrow"].Table.from_pandas(df, preserve_index=False)
+    return df
+
+
+def _literal(node: exp.Expression | None) -> exp.Expression | None:
+    """The literal a value is, inside a cast such as DATE '2024-01-01' too, or None."""
+    inner = node.this if isinstance(node, exp.Cast) else node
+    if isinstance(inner, exp.Literal) or (isinstance(inner, exp.Neg) and isinstance(inner.this, exp.Literal)):
+        return inner
+    return None
+
+
+def _literals(node: exp.Expression) -> tuple[str, Any] | None:
+    """
+    What a comparison compares its column with, as (kind, values): one
+    value, a BETWEEN pair or an IN list. None when that is not literals.
+    """
+    if isinstance(node, exp.In):
+        literals = [_literal(e) for e in node.expressions]
+        return None if not literals or None in literals else ("in", tuple(e.to_py() for e in literals))
+    if isinstance(node, exp.Between):
+        low, high = _literal(node.args["low"]), _literal(node.args["high"])
+        return None if low is None or high is None else ("between", (low.to_py(), high.to_py()))
+    literal = _literal(node.expression)
+    return None if literal is None else ("value", literal.to_py())
+
+
+def _parameterize(node: exp.Expression, kind: str, name: str) -> None:
+    """Put the named parameter where the comparison had its literals."""
+    if kind == "in":
+        # One list parameter, whatever the number of values asked for later
+        node.replace(exp.func("list_contains", exp.Placeholder(this=name), node.this.copy(), dialect="duckdb"))
+    elif kind == "between":
+        _literal(node.args["low"]).replace(exp.Placeholder(this=f"{name}_low"))
+        _literal(node.args["high"]).replace(exp.Placeholder(this=f"{name}_high"))
+    else:
+        _literal(node.expression).replace(exp.Placeholder(this=name))
+
+
+def _binder(kind: str, name: str) -> Callable[[Any], dict[str, Any]]:
+    """How an argument's value becomes the query's parameters."""
+    if kind == "between":
+        return lambda value: {f"{name}_low": value[0], f"{name}_high": value[1]}
+    if kind == "in":
+        return lambda value: {name: list(value)}
+    return lambda value: {name: value}
+
+
+#: Rows a Vega-Lite scatter or line chart draws before the answer draws a
+#: density image instead; Vega-Lite inlines every row and slows above this
+LARGE_POINTS = 5_000
+
+_POINT_KINDS = {"point": "scatter", "circle": "scatter", "square": "scatter", "tick": "scatter", "line": "line"}
+
+
+def _point_chart(view: View) -> tuple[str, dict] | None:
+    """For a single Vega-Lite scatter or line chart of raw rows, its hvPlot kind and encoding."""
+    if not isinstance(view, VegaLiteView):
+        return None
+    spec = view.spec
+    # A transform filters or computes fields, which the raw rows do not have
+    if any(key in spec for key in ("layer", "facet", "repeat", "concat", "hconcat", "vconcat", "transform")):
+        return None
+    mark = spec.get("mark")
+    kind = _POINT_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
+    encoding = spec.get("encoding", {})
+    axes = [encoding.get(axis) for axis in ("x", "y")]
+    if kind is None or not all(isinstance(a, dict) and a.get("field") for a in axes):
+        return None
+    if any(key in a for a in axes for key in ("aggregate", "bin")):
+        return None
+    return kind, encoding
+
+
+def _density_view(view: View, pipeline: Pipeline | None) -> View:
+    """
+    A Vega-Lite scatter or line chart of more than LARGE_POINTS rows, drawn
+    instead with hvPlot and datashader as a density image, which stays fast
+    however many rows there are. Coloured by a category, the categories are
+    blended; otherwise each pixel counts its points. Anything else, or
+    without datashader, is returned as it is.
+    """
+    chart = _point_chart(view)
+    if chart is None or pipeline is None or len(pipeline.data) <= LARGE_POINTS:
+        return view
+    if importlib.util.find_spec("datashader") is None:
+        return view
+    kind, encoding = chart
+    params: dict[str, Any] = dict(
+        pipeline=view.pipeline, kind=kind, x=encoding["x"]["field"], y=encoding["y"]["field"],
+        responsive=True, height=400, title=view.spec.get("title", ""),
+    )
+    color = encoding.get("color", {})
+    if color.get("field") and color.get("type") == "nominal":
+        # rasterize keeps one number per pixel and loses the category
+        params.update(by=color["field"], datashade=True)
+    else:
+        params.update(rasterize=True, cnorm="log")
+    return hvPlotView(**params)
 
 
 def _records(data: Any) -> Any:
@@ -502,6 +830,9 @@ def _build_answer(
     editors = [out for out in outputs if isinstance(out, LumenEditor) and isinstance(out.component, View)]
     editor = editors[-1] if editors else None
     view = None if editor is None else editor.component
+    if view is not None and (dense := _density_view(view, context.get("pipeline"))) is not view:
+        # The Vega-Lite editor cannot edit the hvPlot chart that replaced it
+        view, editor = dense, None
     value = str(messages[-1].object) if messages else ""
     if not value.strip() and view is None and context.get("sql") is None:
         # A plan can finish without a step that queries or answers, e.g. one
@@ -532,7 +863,8 @@ def _build_answer(
 
 
 async def aask(
-    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
+    confirm: bool = False, returns: Any = None,
 ) -> Answer:
     """
     Ask a question of some data and wait for the Answer.
@@ -549,6 +881,13 @@ async def aask(
     agents: list | None
         The agents the Planner may use. Defaults to SQL and Vega-Lite, plus
         hvPlot for gridded data or tables with geometry.
+    confirm: bool
+        Stop once the question is planned and return an Answer with status
+        "planned" that lists its steps; answer.run() runs them.
+    returns: type | None
+        The type to give the answer in as answer.result, e.g. int,
+        list[str] or a pydantic model. A result already in that shape is
+        used as it is; otherwise one more LLM call reads it from the answer.
 
     Returns
     -------
@@ -557,22 +896,40 @@ async def aask(
         and the reason in ``error``, rather than raising, so it can be
         retried with ``answer.retry()``.
     """
-    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
+    return await _on_loop(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm, returns=returns))
 
 
 async def _aask_messages(
     data: DataT | Pipeline, question: str, messages: list[dict[str, str]],
-    llm: Llm | None, agents: list | None,
+    llm: Llm | None, agents: list | None, confirm: bool = False, use_cache: bool = True, returns: Any = None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
     planner = await _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
+    # A retry or a preview is asked for a fresh answer, so neither is cached.
+    # Nor is data read here from a frame or a dict: each question reads its own
+    # copy, so no later question could hit it and it would only hold that copy.
+    key = None
+    reusable = isinstance(data, Source | Pipeline)
+    if _settings["cache"] and use_cache and reusable and len(messages) == 1 and not confirm:
+        key = _cache_key(source, question, planner.llm, planner.agents, visible_slugs, returns)
+        if (hit := _answer_cache.get(key)) is not None:
+            _answer_cache.move_to_end(key)
+            return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, messages, context, data, agents)
+    answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    if returns is not None:
+        await _typed(answer, returns, planner.llm)
+    if key is not None and answer.status == "success":
+        # A copy, so changes to the answer handed back reach no later hit
+        _answer_cache[key] = answer._cached_copy()
+        while len(_answer_cache) > _ANSWER_CACHE_SIZE or _cached_rows() > _ANSWER_CACHE_ROWS:
+            _answer_cache.popitem(last=False)
     return answer
 
 
 def ask(
-    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None
+    data: DataT | Pipeline, question: str, *, llm: Llm | None = None, agents: list | None = None,
+    confirm: bool = False, returns: Any = None,
 ) -> Answer:
     """
     Ask a question of some data and return the Answer.
@@ -582,7 +939,7 @@ def ask(
     whether or not an event loop is already running, e.g. in a Jupyter notebook: the question runs
     on Lumen's own background loop. An interrupt cancels it.
     """
-    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents))
+    return _run(_aask_messages(data, question, [{"role": "user", "content": question}], llm, agents, confirm, returns=returns))
 
 
 def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
@@ -591,6 +948,23 @@ def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None 
     on the answers before it. Takes the same arguments as aask.
     """
     return Chat(data, llm=llm, agents=agents)
+
+
+@dataclass(frozen=True)
+class Step:
+    """One step of an answer's plan, as it ran."""
+
+    title: str
+    actor: str
+    instruction: str
+    status: str
+    #: None for a step that did not run
+    seconds: float | None
+    llm_calls: int | None
+    requires: tuple[str, ...]
+    provides: tuple[str, ...]
+    #: The query, for a step that wrote one
+    sql: str | None
 
 
 class Chat(param.Parameterized):
@@ -611,48 +985,165 @@ class Chat(param.Parameterized):
         self._agents = agents
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
+        self._interface: ChatInterface | None = None
         # The sharing level the context was built under
         self._level: tuple[str, bool] | None = None
 
     def __repr__(self) -> str:
         return f"Chat(answers={len(self.answers)})"
 
-    async def aask(self, question: str) -> Answer:
-        """Ask the next question and wait for the Answer."""
-        return await _on_loop(self._aask(question))
+    def __panel__(self) -> ChatInterface:
+        """
+        The conversation as a chat widget. A question typed into it is asked
+        with chat.aask, so the widget and chat.ask share one history.
+        """
+        if self._interface is None:
+            self._interface = ChatInterface(
+                callback=self._reply, callback_user="Lumen", show_rerun=False, show_undo=False,
+                sizing_mode="stretch_width", height=600,
+            )
+            for answer in self.answers:
+                self._interface.send(answer.question, user="User", respond=False)
+                self._interface.send(answer.__panel__(), user="Lumen", respond=False)
+        return self._interface
 
-    async def _aask(self, question: str) -> Answer:
+    async def _reply(self, contents: str, user: str, instance: ChatInterface):
+        try:
+            # The widget shows its own question and this reply, so _record does not
+            answer = await _on_loop(self._aask(contents, in_widget=True))
+        except Exception as e:
+            # A failed call, e.g. a rate limit, must not leave the widget dead
+            return Alert(object=format_error(e), title="Lumen could not answer", severity="error")
+        return answer.__panel__()
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        if not _in_kernel():
+            return {"text/plain": repr(self), "text/html": self._html()}
+        _load_extensions()
+        try:
+            bundle = self.__panel__()._repr_mimebundle_(include, exclude)
+        except ImportError:
+            # VS Code renders Panel through jupyter_bokeh, which may be missing
+            bundle = None
+        return bundle or {"text/plain": repr(self), "text/html": self._html()}
+
+    def to_html(self, path: str | Path | None = None) -> str:
+        """
+        The conversation as one HTML page: each question over its answer,
+        chart as an image, SQL and spec. Returns the page, and writes it to
+        path when given.
+        """
+        page = (
+            '<!doctype html>\n<html><head><meta charset="utf-8"><title>Lumen chat</title></head>'
+            f"<body>\n{self._html()}\n</body></html>\n"
+        )
+        if path is not None:
+            Path(path).write_text(page, encoding="utf-8")
+        return page
+
+    def to_notebook(self, path: str | Path | None = None) -> str:
+        """
+        The conversation as a notebook: each question and answer, then Lumen
+        code that rebuilds its chart, or else its data, with no LLM. In-memory
+        data is embedded, as in answer.code. Returns the notebook as JSON
+        text, and writes it to path when given.
+        """
+        cells, extensions = [], []
+        for answer in self.answers:
+            text = answer.value if not answer.error else f"{answer.value}\n\n{answer.error}"
+            cells.append(make_md_cell(f"## {answer.question}\n\n{text}"))
+            component = answer.view if answer.view is not None else answer.pipeline
+            if answer.status != "success" or component is None:
+                continue
+            cell, extension = format_output(component)
+            if cell is not None:
+                cells.append(cell)
+            if extension and extension not in extensions:
+                extensions.append(extension)
+        notebook = nbformat.v4.new_notebook(cells=[*make_preamble("", extensions=extensions), *cells])
+        text = nbformat.writes(notebook)
+        if path is not None:
+            Path(path).write_text(text, encoding="utf-8")
+        return text
+
+    def to_report(self, title: str | None = None) -> Report:
+        """
+        The conversation as a Lumen Report, with its own to_html, to_notebook
+        and to_docx: each question and answer, and the chart where there is
+        one. An answer with a table but no chart is in it as text only.
+        """
+        views: list = []
+        for answer in self.answers:
+            views.append(Markdown(f"## {answer.question}\n\n{answer.value}", sizing_mode="stretch_width"))
+            if answer._editor is not None:
+                views.append(answer._editor)
+        return Report.from_views(views, title=title)
+
+    def _html(self) -> str:
+        """Each question as a heading over its answer's static card."""
+        return "\n".join(
+            f"<h3>{html.escape(answer.question)}</h3>\n{answer._static_bundle(answer._chart_bundle())['text/html']}"
+            for answer in self.answers
+        )
+
+    async def aask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
+        """
+        Ask the next question and wait for the Answer. With confirm, the
+        Answer is "planned" and joins the conversation once it is run.
+        """
+        return await _on_loop(self._aask(question, confirm, returns))
+
+    async def _aask(
+        self, question: str, confirm: bool = False, returns: Any = None, in_widget: bool = False,
+        content: str | None = None,
+    ) -> Answer:
+        """Ask question, sending content as the message if given, e.g. the question with the rows it is about."""
         if self._context is not None and self._level != (sharing.share, sharing.mask_pii):
             # The context's summaries and the replies were written under
             # another sharing level, so only the questions carry over
             self._context = None
             self._messages = [m for m in self._messages if m["role"] == "user"]
-        messages = [*self._messages, {"role": "user", "content": question}]
-        return await self._turn(question, messages, self._messages, self._context)
+        messages = [*self._messages, {"role": "user", "content": content or question}]
+        return await self._turn(question, messages, self._messages, self._context, confirm, returns, in_widget)
 
     async def _turn(
         self, question: str, messages: list[dict[str, str]],
-        history: list[dict[str, str]], prior: dict[str, Any] | None,
+        history: list[dict[str, str]], prior: dict[str, Any] | None, confirm: bool = False,
+        returns: Any = None, in_widget: bool = False,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
         agents = _settings["agents"] if self._agents is None else self._agents
         planner = await _planner(self._source, self._llm or _default_llm(), agents)
         context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
-        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents)
+        answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
         # So answer.retry() asks again within this conversation
-        answer._chat, answer._history = self, (history, prior)
+        answer._conversation, answer._history = self, (history, prior)
+        if returns is not None:
+            await _typed(answer, returns, planner.llm)
+        if answer.status == "planned":
+            answer._chat = (self, messages)
+        else:
+            self._record(answer, messages, out_context, in_widget)
+        return answer
+
+    def _record(
+        self, answer: Answer, messages: list[dict[str, str]], out_context: dict[str, Any], in_widget: bool = False,
+    ) -> None:
         self.answers = [*self.answers, answer]
+        if self._interface is not None and not in_widget:
+            # Asked from code: the widget shows it too, as one conversation
+            self._interface.send(answer.question, user="User", respond=False)
+            self._interface.send(answer.__panel__(), user="Lumen", respond=False)
         if answer.status == "error":
             # The next question starts from the last answer that worked
-            return answer
+            return
         self._messages = [*messages, {"role": "assistant", "content": answer.value or answer.plan.title}]
         self._context = out_context
         self._level = (sharing.share, sharing.mask_pii)
-        return answer
 
-    def ask(self, question: str) -> Answer:
+    def ask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """Ask the next question and return the Answer."""
-        return _run(self._aask(question))
+        return _run(self._aask(question, confirm, returns))
 
 
 class Answer(param.Parameterized):
@@ -689,12 +1180,23 @@ class Answer(param.Parameterized):
         The row cap the data stopped at, when the result had more rows.
         lumen.ai.configure(max_rows=...) sets the cap.""")
 
+    cached = param.Boolean(default=False, doc="""
+        Whether the answer came from configure(cache=True), with no LLM calls.""")
+
     usage = param.ClassSelector(class_=UsageCollector, default=None, allow_None=True, doc="""
         The tokens and, when the provider prices them, the cost of the LLM
         calls this answer made, e.g. answer.usage.input_tokens.""")
 
     value = param.String(default="", doc="""
         The written answer.""")
+
+    selection = param.DataFrame(default=None, allow_None=True, doc="""
+        The rows clicked or box-selected on the chart or map, which
+        ask_about asks about; None when nothing is selected.""")
+
+    result = param.Parameter(default=None, doc="""
+        The answer as the type asked for with returns=, e.g. an int or a
+        pydantic model; None when no type was asked for.""")
 
     view = param.ClassSelector(class_=View, allow_None=True, doc="""
         The chart as a Lumen View, if one was made.""")
@@ -710,7 +1212,7 @@ class Answer(param.Parameterized):
         self._llm = llm
         self._visible_slugs = visible_slugs
         # Set by a Chat, so retry stays in the conversation
-        self._chat: Chat | None = None
+        self._conversation: Chat | None = None
         self._history: tuple[list[dict[str, str]], dict[str, Any] | None] = ([], None)
         # The plan's views with refined charts swapped in, for explore
         self._views: list | None = None
@@ -722,7 +1224,16 @@ class Answer(param.Parameterized):
         self._context = context or {}
         # Whether sql is the query that failed, rather than one that worked
         self._sql_failed = sql_failed
+        # For a planned answer: what running it needs, and the chat it joins
+        self._pending: tuple[Planner, dict[str, Any]] | None = None
+        self._chat: tuple[Chat, list[dict[str, str]]] | None = None
         self._crs_warned = False
+        # The type asked for, so run and retry give the answer in it too
+        self._returns = None
+        # The chat this answer is part of, so a question about it follows up there
+        self._conversation: Chat | None = None
+        # What reports clicks on the chart, kept alive with the answer
+        self._streams: list = []
 
     async def arefine(self, instruction: str) -> Answer:
         """
@@ -753,7 +1264,7 @@ class Answer(param.Parameterized):
             source=self.source, spec=editor.component.spec, sql=self.sql, status=self.status,
             usage=usage, value=self.value, view=editor.component, visible_slugs=self._visible_slugs,
         )
-        refined._chat, refined._history = self._chat, self._history
+        refined._conversation, refined._history = self._conversation, self._history
         views = self.plan.views if self._views is None else self._views
         refined._views = [editor if view is self._editor else view for view in views]
         if self._editor not in views:
@@ -763,6 +1274,72 @@ class Answer(param.Parameterized):
     def refine(self, instruction: str) -> Answer:
         """Change the chart and return the new Answer. See arefine."""
         return _run(self._arefine(instruction), "Revising the chart")
+
+    async def arun(self) -> Answer:
+        """
+        Run the steps of an answer asked with confirm=True, exactly as
+        planned, and fill this answer in with the result. Returns it.
+
+        Unlike refine, which returns a new answer and keeps the old one, a
+        planned answer has no result worth keeping, so it becomes the result:
+        the variable you held and the card on screen both show it.
+        """
+        return await _on_loop(self._arun())
+
+    async def _arun(self) -> Answer:
+        if self._pending is None:
+            raise ValueError("Only an answer asked with confirm=True can be run, and only once.")
+        planner, context = self._pending
+        # Cleared only once it ran, so a cancelled run can be run again
+        done, out_context = await _execute(
+            planner, self.plan, self.question, context, self._data, self._agents, self.usage,
+        )
+        self._pending = None
+        self._take(done)
+        if self._returns is not None:
+            await _typed(self, self._returns, planner.llm)
+        if self._chat is not None:
+            chat, messages = self._chat
+            chat._record(self, messages, out_context)
+        return self
+
+    def run(self) -> Answer:
+        """Run a planned answer and return it. See arun."""
+        return _run(self._arun(), "Running the plan")
+
+    def _cached_copy(self) -> Answer:
+        """
+        This answer again, for a cache hit, with its own card, pipeline and
+        chart, so a filter added to one hit shows up in no other, and no calls
+        counted. The plan is shared: it only records what ran.
+        """
+        values = {key: value for key, value in self.param.values().items() if key != "name"}
+        pipeline, view, editor = self.pipeline, self.view, self._editor
+        if pipeline is not None:
+            pipeline = _clone(
+                pipeline, filters=[_clone(f) for f in pipeline.filters],
+                transforms=[_clone(t) for t in pipeline.transforms],
+                sql_transforms=[_clone(t) for t in pipeline.sql_transforms],
+            )
+        if view is not None:
+            # Keywords that are not params, e.g. hvPlot's responsive or grid
+            view = _clone(view, pipeline=pipeline, **view.kwargs)
+            editor = None if editor is None else type(editor)(component=view)
+        copy = Answer(
+            **{**values, "pipeline": pipeline, "view": view},
+            agents=self._agents, context=self._context, data=self._data, editor=editor,
+            llm=self._llm, sql_failed=self._sql_failed,
+        )
+        copy.param.update(cached=True, usage=UsageCollector())
+        copy._returns = self._returns
+        return copy
+
+    def _take(self, other: Answer) -> None:
+        """Become the answer this planned one ran to, card included."""
+        self.param.update({key: value for key, value in other.param.values().items() if key != "name"})
+        self._editor, self._context, self._sql_failed = other._editor, other._context, other._sql_failed
+        if self._card is not None:
+            self._card[:] = self._card_parts()
 
     def with_spec(self, spec: dict | str) -> Answer:
         """
@@ -782,13 +1359,17 @@ class Answer(param.Parameterized):
             view = VegaLiteView(pipeline=pipeline, spec=spec)
         else:
             view = type(self.view)(pipeline=pipeline, **{key: value for key, value in spec.items() if key != "type"})
+        # An edit can turn a chart into a scatter of every row, as an answer can
+        dense = _density_view(view, pipeline)
+        vega = dense is view and self.spec is not None
+        view = dense
         # Drawn now, so a spec the view cannot draw fails here and not later in the card
         view.get_panel()
         return Answer(
             agents=self._agents, context=self._context, data=self._data,
-            editor=type(self._editor)(component=view) if self._editor is not None else None,
+            editor=type(self._editor)(component=view) if self._editor is not None and vega else None,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
-            source=self.source, spec=view.spec if self.spec is not None else None, sql=self.sql,
+            source=self.source, spec=view.spec if vega else None, sql=self.sql,
             status=self.status, truncated_at=self.truncated_at, usage=UsageCollector(),
             value=self.value, view=view,
         )
@@ -824,11 +1405,13 @@ class Answer(param.Parameterized):
             if self.sql:
                 outcome += f"\n\nThe SQL was:\n{self.sql}"
             messages += [{"role": "assistant", "content": outcome}, {"role": "user", "content": hint}]
-        if self._chat is not None:
+        if self._conversation is not None:
             history, prior = self._history
-            return await self._chat._turn(self.question, [*history, *messages], history, prior)
+            return await self._conversation._turn(self.question, [*history, *messages], history, prior)
         data = self.source if self._data is None else self._data
-        return await _aask_messages(data, self.question, messages, self._llm, self._agents)
+        return await _aask_messages(
+            data, self.question, messages, self._llm, self._agents, use_cache=False, returns=self._returns,
+        )
 
     def retry(self, hint: str | None = None) -> Answer:
         """Ask the question again and return the new Answer. See aretry."""
@@ -884,6 +1467,7 @@ class Answer(param.Parameterized):
             return self._fetch_as(*kinds)
         return as_pandas(self.pipeline.data)
 
+
     def _fetch_as(self, backend: str) -> Any:
         """
         The pipeline's data read in polars or pyarrow by DuckDB itself, with
@@ -893,7 +1477,7 @@ class Answer(param.Parameterized):
         pipeline = self.pipeline
         source = pipeline.source
         if not isinstance(source, DuckDBSource) or pipeline.filters or pipeline.transforms:
-            # ponytail: filters or Python transforms only run through the Pipeline, so convert its pandas data
+            # Filters and Python transforms only run through the Pipeline, so convert its pandas data
             df = as_pandas(pipeline.data)
             if backend == "polars":
                 return sys.modules["polars"].from_pandas(df)
@@ -903,16 +1487,163 @@ class Answer(param.Parameterized):
             sql = transform.apply(sql)
         return source.fetch(sql, source.table_params.get(pipeline.table), backend=backend)
 
+    @property
+    def why(self) -> str:
+        """
+        Why the answer took the steps it did: the planner's account of the
+        question, and for an unanswerable one the reason.
+        """
+        if self.plan is None:
+            return ""
+        return "\n\n".join(part for part in (self.plan.reasoning, self.plan.unanswerable) if part)
+
+    @property
+    def trace(self) -> list[Step]:
+        """
+        Each step of the plan as it ran: its actor and instruction, what it
+        needed and provided, how long it took, how many LLM calls it made
+        and the query it wrote. answer.plan.graph() gives how the steps
+        feed each other.
+        """
+        if self.plan is None:
+            return []
+        steps = []
+        for i, task in enumerate(self.plan):
+            seconds, calls = self.plan._runs.get(i, (None, None))
+            provides = task.output_schema.__required_keys__ | task.output_schema.__optional_keys__
+            steps.append(Step(
+                title=task.title, actor=type(task.actor).__name__, instruction=task.instruction,
+                status=task.status, seconds=seconds, llm_calls=calls,
+                requires=tuple(sorted(task.input_schema.__required_keys__)), provides=tuple(sorted(provides)),
+                sql=task.out_context.get("sql") if "sql" in provides else None,
+            ))
+        return steps
+
+    async def aask_about(self, question: str, rows: Any = None) -> Answer:
+        """
+        Ask a follow-up about some rows of this answer's data: the
+        selection, clicked or box-selected on the chart, unless rows says
+        which (a DataFrame, a dict or list of dicts, or row positions). The
+        LLM answers from the rows when they hold what is asked, and
+        otherwise queries the data filtered on their values. In a chat, the
+        question joins the conversation. Returns the new Answer.
+        """
+        rows = self._selected(rows)
+        content = about(question, rows)
+        if self._conversation is not None:
+            return await self._conversation._aask(question, content=content)
+        outcome = self.value + (f"\n\nThe SQL was:\n{self.sql}" if self.sql else "")
+        messages = [
+            {"role": "user", "content": self.question}, {"role": "assistant", "content": outcome},
+            {"role": "user", "content": content},
+        ]
+        data = self.source if self._data is None else self._data
+        return await _aask_messages(data, question, messages, self._llm, self._agents)
+
+    def ask_about(self, question: str, rows: Any = None) -> Answer:
+        """Ask a follow-up about the selected rows and return the Answer. See aask_about."""
+        return _run(self.aask_about(question, rows))
+
+    def _selected(self, rows: Any) -> pd.DataFrame:
+        """The rows a question is about, as a DataFrame."""
+        if rows is None:
+            if self.selection is None or self.selection.empty:
+                raise ValueError("Nothing is selected. Click a point on the chart, or pass rows=.")
+            return self.selection
+        if isinstance(rows, pd.DataFrame):
+            return rows
+        if isinstance(rows, dict):
+            return pd.DataFrame([rows])
+        if isinstance(rows, list) and all(isinstance(row, dict) for row in rows):
+            return pd.DataFrame(rows)
+        if self.pipeline is None:
+            raise ValueError("This answer has no data to pick rows from.")
+        return as_pandas(self.pipeline.data).iloc[list(rows)]
+
+    async def _ask_from_box(self, question: str) -> Any:
+        """Ask from the card's box; in the chat widget the answer joins the conversation."""
+        answer = await self.aask_about(question)
+        chat = self._conversation
+        if chat is not None and chat._interface is not None:
+            chat._interface.send(answer.question, user="User", respond=False)
+            chat._interface.send(answer.__panel__(), user="Lumen", respond=False)
+            return None
+        return answer.__panel__()
+
+    def compile(self, params: list[str] | None = None) -> Callable[..., Any]:
+        """
+        The answer's query as a function that runs without an LLM.
+
+        Each name in params is a column the query compares with values,
+        e.g. ``year = 2008``, ``year BETWEEN 2008 AND 2009`` or
+        ``island IN ('Biscoe', 'Dream')``; it becomes a keyword argument
+        that defaults to those values, a pair for BETWEEN and a list for
+        IN. ``f()`` gives this answer's data and ``f(year=2009)`` the same
+        query for 2009, in the type the question was asked with. Values
+        are bound as query parameters, never written into the SQL.
+        """
+        if not self.sql or self._sql_failed or self.source is None:
+            raise ValueError("This answer has no query that worked to compile.")
+        # The query can read tables an earlier step made, which only the
+        # pipeline's source holds
+        source = self.source if self.pipeline is None else self.pipeline.source
+        if not isinstance(source, DuckDBSource):
+            # DuckDB named parameters only; other engines bind differently
+            raise ValueError("compile needs a DuckDB source, such as one from lumen.read.")
+        try:
+            tree = sqlglot.parse_one(self.sql, read="duckdb")
+        except sqlglot.errors.ParseError as e:
+            raise ValueError(f"The answer's query could not be parsed for compile: {e}") from e
+        defaults: dict[str, Any] = {}
+        binders: dict[str, Callable[[Any], dict[str, Any]]] = {}
+        for i, name in enumerate(params or []):
+            nodes = [
+                node for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
+                if isinstance(node.this, exp.Column) and node.this.name == name
+            ]
+            values = {_literals(node) for node in nodes} - {None}
+            if not values:
+                compared = sorted({
+                    node.this.name for node in tree.find_all(exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.In, exp.Between)
+                    if isinstance(node.this, exp.Column) and _literals(node) is not None
+                })
+                raise ValueError(f"The query compares no column {name!r} with a value. It compares: {', '.join(compared) or 'none'}.")
+            if len(values) > 1:
+                raise ValueError(f"The query compares {name!r} with different values in different places, so one argument cannot stand for them.")
+            (kind, default), = values
+            defaults[name] = {"in": list, "between": tuple}.get(kind, lambda value: value)(default)
+            # Columns can have names a parameter cannot, e.g. with spaces
+            for node in nodes:
+                _parameterize(node, kind, f"p{i}")
+            binders[name] = _binder(kind, f"p{i}")
+        # Without parameters the query runs as written, untouched by sqlglot
+        sql = tree.sql("duckdb") if params else self.sql
+        if SQLAgent.max_rows is not None:
+            # The same row cap as the answer's own data
+            sql = SQLLimit(limit=SQLAgent.max_rows, write="duckdb").apply(sql)
+        kinds = self._input_kinds()
+
+        def run(**kwargs: Any) -> Any:
+            unknown = set(kwargs) - set(defaults)
+            if unknown:
+                raise TypeError(f"Unknown arguments {sorted(unknown)}; this query takes {sorted(defaults)}.")
+            bound: dict[str, Any] = {}
+            for name, value in {**defaults, **kwargs}.items():
+                bound.update(binders[name](value))
+            return _as_input_type(source.execute(sql, bound), kinds)
+
+        if all(name.isidentifier() for name in defaults):
+            # A column such as "body mass" can still be passed with **{...}
+            run.__signature__ = inspect.Signature([
+                inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=value) for name, value in defaults.items()
+            ])
+        run.__doc__ = f"{self.question}\n\n{sql}"
+        run.sql = sql
+        return run
+
     def _input_kinds(self) -> set[str]:
         """The libraries of the tables this answer's query read."""
-        kinds = input_kinds(self.source) if self.source is not None else {}
-        if None in kinds or not kinds:
-            return {kinds.get(None, "pandas")}
-        read = set(kinds)
-        if self.sql:
-            with suppress(sqlglot.errors.ParseError):
-                read &= {table.name for table in sqlglot.parse_one(self.sql, read="duckdb").find_all(sqlglot.exp.Table)}
-        return {kinds[table] for table in (read or kinds)}
+        return _read_kinds(self.source, self.sql)
 
     def to_file(self, path: str | Path, *, overwrite: bool = False) -> Path:
         """
@@ -970,10 +1701,51 @@ class Answer(param.Parameterized):
         if importlib.util.find_spec("lonboard") is not None:
             # Deferred: lonboard is optional, and heavy to import
             from lonboard import viz
-            return viz(gdf)
+            m = viz(gdf)
+            for layer in m.layers:
+                layer.observe(lambda change: setattr(
+                    self, "selection", None if change.new is None else gdf.iloc[[change.new]]
+                ), names="selected_index")
+            return m
         if importlib.util.find_spec("geoviews") is not None:
             return gdf.hvplot(geo=True, tiles="OSM")
         return gdf.hvplot()
+
+    @property
+    def chart(self) -> Any:
+        """
+        The chart as an object to keep working with: an Altair Chart for a
+        Vega-Lite answer, the HoloViews object for an hvPlot one, so it can
+        be composed with ``+`` and ``*`` or restyled with ``.opts``. None
+        when the answer has no chart.
+        """
+        if self.view is None:
+            return None
+        if self.spec is None:
+            return self.view.get_plot(self.view.get_data())
+        try:
+            # Deferred: altair is optional
+            import altair as alt
+        except ImportError as e:
+            raise ImportError(
+                "answer.chart needs altair for a Vega-Lite chart: pip install altair. "
+                "answer.to_vega() gives the spec without it."
+            ) from e
+        spec = self.to_vega()
+        # Chart.from_dict only takes single-view specs
+        kinds = {"layer": "LayerChart", "facet": "FacetChart", "repeat": "RepeatChart",
+                 "hconcat": "HConcatChart", "vconcat": "VConcatChart", "concat": "ConcatChart"}
+        kind = next((name for key, name in kinds.items() if key in spec), "Chart")
+        return getattr(alt, kind).from_dict(spec)
+
+    def to_vega(self) -> dict:
+        """
+        The chart as a self-contained Vega-Lite spec, data inlined. An
+        hvPlot map is given as a Vega-Lite map of its geometry.
+        """
+        if (spec := self._vega_lite_spec() or self._geoshape_spec()) is None:
+            raise ValueError("This answer has no Vega-Lite chart; answer.chart gives an hvPlot one.")
+        return spec
 
     def explore(self, **params) -> ExplorerUI:
         """
@@ -1060,7 +1832,14 @@ class Answer(param.Parameterized):
         return f"Answer(status={self.status!r}, value={first_line!r})"
 
     def __panel__(self):
-        if self._card is None and self.status in ("error", "unanswerable"):
+        if self._card is None:
+            self._card = Column(*self._card_parts())
+        return self._card
+
+    def _card_parts(self) -> list:
+        if self.status == "planned":
+            return self._planned_parts()
+        if self.status in ("error", "unanswerable"):
             # The data lacking what was asked is not a failure, so it is not red
             severity = "info" if self.status == "unanswerable" else "error"
             parts = [Alert(object=self.error, severity=severity, title=self.value, sizing_mode="stretch_width")]
@@ -1069,13 +1848,11 @@ class Answer(param.Parameterized):
                     Markdown(f"```sql\n{self.sql}\n```"), title="Failed SQL" if self._sql_failed else "SQL",
                     collapsed=not self._sql_failed, sizing_mode="stretch_width",
                 ))
-            if self._usage_note:
-                parts.append(self._usage_pane())
-            self._card = Column(*parts)
-        elif self._card is None:
+        else:
             parts = [Markdown(self.value, sizing_mode="stretch_width")] if self.value else []
             if self.view is not None:
                 parts.append(self._chart_part(self.view))
+                parts.append(ask_box(self, self._ask_from_box))
             if self._cap_note:
                 parts.append(Alert(object=self._cap_note, severity="info", sizing_mode="stretch_width"))
             if self.sql:
@@ -1085,14 +1862,62 @@ class Answer(param.Parameterized):
                 ))
             if (chart_spec := self._chart_spec()) is not None:
                 parts.append(self._spec_card(*chart_spec, chart_index=1 if self.value else 0))
-            if self._usage_note:
-                parts.append(self._usage_pane())
-            self._card = Column(*parts)
-        return self._card
+        if self._steps_text:
+            parts.append(Card(
+                Markdown(self._steps_text, sizing_mode="stretch_width"), title="Steps", collapsed=True,
+                sizing_mode="stretch_width",
+            ))
+        if self._usage_note:
+            parts.append(self._usage_pane())
+        return parts
+
+    @property
+    def _steps_text(self) -> str:
+        """The why and each step as it ran, as Markdown; nothing for a plan with no steps."""
+        lines = []
+        for i, step in enumerate(self.trace, 1):
+            facts = [f"{step.seconds:.1f} s"] if step.seconds is not None else ["not run"]
+            if step.llm_calls:
+                facts.append(f"{step.llm_calls} LLM call{'s' if step.llm_calls > 1 else ''}")
+            lines.append(f"{i}. **{step.actor}**: {step.title} · {', '.join(facts)}")
+        if not lines:
+            return ""
+        return "\n\n".join(part for part in (f"*{self.plan.reasoning}*" if self.plan.reasoning else "", "\n".join(lines)) if part)
+
+    @property
+    def _plan_steps(self) -> str:
+        """The planned steps as a numbered Markdown list."""
+        return "\n".join(
+            f"{i}. **{type(task.actor).__name__}**: {task.instruction}" for i, task in enumerate(self.plan, 1)
+        )
+
+    def _planned_parts(self) -> list:
+        run = Button(label="Run", icon="play_arrow", variant="contained")
+
+        async def on_run(event):
+            run.loading = True
+            try:
+                await self.arun()
+            finally:
+                run.loading = False
+
+        run.on_click(on_run)
+        parts = [
+            Alert(
+                object=self._plan_steps, title=f"Planned: {self.plan.title}", severity="info",
+                sizing_mode="stretch_width",
+            ),
+            run,
+        ]
+        if self._usage_note:
+            parts.append(self._usage_pane())
+        return parts
 
     @property
     def _usage_note(self) -> str:
         """One line on what the answer cost, or nothing when no call was counted."""
+        if self.cached:
+            return "From the answer cache, no LLM calls"
         if self.usage is None or not self.usage.records:
             return ""
         note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
@@ -1117,6 +1942,7 @@ class Answer(param.Parameterized):
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
                 severity="error", sizing_mode="stretch_width",
             )
+        self._streams += watch_clicks(view, lambda rows: setattr(self, "selection", rows))
         if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
             # A responsive plot stretches to its container, and a notebook
             # output has no height to give it, so it would collapse
@@ -1194,6 +2020,11 @@ class Answer(param.Parameterized):
             spec["data"] = dict(data, values=_records(data["values"]))
         if isinstance(spec.get("datasets"), dict):
             spec["datasets"] = {name: _records(values) for name, values in spec["datasets"].items()}
+        if any(key in spec for key in ("facet", "repeat", "concat", "hconcat", "vconcat")):
+            # Vega-Lite allows no top-level size on these; their views size themselves
+            spec.pop("width", None)
+            spec.pop("height", None)
+            return spec
         for dim, size in (("width", 600), ("height", 400)):
             if spec.get(dim, "container") == "container":
                 spec[dim] = size
@@ -1242,16 +2073,29 @@ class Answer(param.Parameterized):
     @property
     def _text(self) -> str:
         """The written answer, followed by the error or the row cap note."""
+        if self.status == "planned":
+            return f"Planned: {self.plan.title}\n\n{self._plan_steps}\n\nRun it with answer.run()."
         return "\n\n".join(part for part in (self.value, self.error, self._cap_note) if part)
 
     @property
     def _cap_note(self) -> str:
-        if self.truncated_at is None:
-            return ""
-        return (
-            f"The data stops at the first {self.truncated_at:,} rows. "
-            "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
-        )
+        """Notes on how much of the data the answer holds and draws."""
+        notes = []
+        if self.truncated_at is not None:
+            notes.append(
+                f"The data stops at the first {self.truncated_at:,} rows. "
+                "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
+            )
+        rows = 0 if self.pipeline is None or self.view is None else len(self.pipeline.data)
+        if isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize")):
+            shown = "blending the categories where they overlap" if self.view.by else "so each pixel shows how many fall there"
+            notes.append(f"The chart draws {rows:,} points as a density image, {shown}.")
+        elif rows > LARGE_POINTS and _point_chart(self.view) is not None:
+            notes.append(
+                f"The chart draws all {rows:,} points, which can be slow. "
+                "Install datashader to draw them as a density image instead."
+            )
+        return " ".join(notes)
 
     def _sql_html(self) -> str:
         # A failed query is what the reader needs to see, so it starts open
@@ -1267,20 +2111,25 @@ class Answer(param.Parameterized):
         if chart_spec is not None:
             sql += f"\n\n```{chart_spec[0]}\n{chart_spec[1]}\n```"
         bundle = {"text/plain": repr(self), "text/markdown": f"{self._text}{sql}"}
-        card = [_MARKDOWN.render(self.value)] if self.value else []
+        prose = self._text if self.status == "planned" else self.value
+        card = [_MARKDOWN.render(prose)] if prose else []
         if self.error:
             card.append(f"<pre>{html.escape(self.error)}</pre>")
         if chart is not None:
             bundle.update({k: v for k, v in chart.items() if k != "text/plain"})
-            width = chart["application/vnd.vegalite.v5+json"]["width"]
-            # Rendered at twice the size for sharpness, shown at the spec width
-            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}" width="{width}" style="max-width: 100%">')
+            # Rendered at twice the size for sharpness, shown at the spec
+            # width; a faceted or concatenated chart has none of its own
+            width = chart["application/vnd.vegalite.v5+json"].get("width")
+            size = f' width="{width}"' if width else ""
+            card.append(f'<img src="data:image/png;base64,{chart["image/png"]}"{size} style="max-width: 100%">')
         if self._cap_note:
             card.append(f"<p><em>{html.escape(self._cap_note)}</em></p>")
         if self.sql:
             card.append(self._sql_html())
         if chart_spec is not None:
             card.append(f"<details><summary>Spec</summary><pre><code>{html.escape(chart_spec[1])}</code></pre></details>")
+        if self._steps_text:
+            card.append(f"<details><summary>Steps</summary>{_MARKDOWN.render(self._steps_text)}</details>")
         if self._usage_note:
             card.append(f"<p><small>{html.escape(self._usage_note)}</small></p>")
             bundle["text/markdown"] += f"\n\n*{self._usage_note}*"
@@ -1290,13 +2139,7 @@ class Answer(param.Parameterized):
     def _repr_mimebundle_(self, include=None, exclude=None):
         if not _in_kernel():
             return self._static_bundle(self._chart_bundle())
-        # Loaded on first display, not on import, so lumen.ai stays
-        # quiet in scripts and in front-ends that never show an Answer.
-        # Checked per extension: a plain pn.extension() leaves Vega out,
-        # and the Spec section's editor needs codeeditor.
-        missing = [ext for ext in ("vega", "codeeditor") if ext not in panel_extension._loaded_extensions]
-        if missing:
-            pn.extension(*missing)
+        _load_extensions()
         try:
             bundle = self.__panel__()._repr_mimebundle_(include, exclude)
         except ImportError:

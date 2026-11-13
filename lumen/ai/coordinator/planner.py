@@ -750,4 +750,6 @@ class Planner(Coordinator):
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created after {attempts + 1} attempts"
             else:
                 istep.success_title = f"Plan with {len(raw_plan.steps)} steps created"
+        if plan is not None:
+            plan.reasoning = raw_plan.chain_of_thought
         return plan
