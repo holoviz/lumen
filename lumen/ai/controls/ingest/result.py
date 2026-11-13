@@ -4,6 +4,7 @@ import pandas as pd
 import param
 
 from ....sources.duckdb import DuckDBSource
+from ....util import normalize_table_name
 
 
 class SourceResult(param.Parameterized):
@@ -33,6 +34,9 @@ class SourceResult(param.Parameterized):
         **metadata,
     ) -> SourceResult:
         """Create a result wrapping a DataFrame in an ephemeral DuckDBSource."""
+        # Names reach DuckDB unquoted (``SELECT * FROM {table}``), so normalize
+        # them here as well; controls can pass a raw action or table name.
+        table_name = normalize_table_name(table_name) or "data"
         source = DuckDBSource.from_df(tables={table_name: df})
         source.tables[table_name] = f"SELECT * FROM {table_name}"
         if metadata:

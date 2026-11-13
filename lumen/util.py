@@ -756,7 +756,9 @@ def normalize_table_name(name: str) -> str:
 
     Replaces all non-word characters (anything except letters, digits,
     and underscores) with underscores, strips leading/trailing underscores,
-    and converts to lowercase.
+    and converts to lowercase. A ``table_`` prefix is added when the result
+    would start with a digit, which SQL identifiers do not allow. Names that
+    are already valid are returned unchanged.
 
     This matches the behavior of DuckDBSource.normalize_table() to ensure
     consistent table naming across the codebase.
@@ -779,8 +781,13 @@ def normalize_table_name(name: str) -> str:
     'my_data_file'
     >>> normalize_table_name("table__name")
     'table_name'
+    >>> normalize_table_name("2024 report")
+    'table_2024_report'
     """
-    return re.sub(r'\W+', '_', name).strip('_').lower()
+    normalized = re.sub(r'\W+', '_', name).strip('_').lower()
+    if normalized[:1].isdigit():
+        normalized = f"table_{normalized}"
+    return normalized
 
 
 def try_import(module_name, load=True):
