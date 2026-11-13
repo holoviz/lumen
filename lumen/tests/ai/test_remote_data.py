@@ -14,6 +14,7 @@ import lumen.sources.data as data_module
 from lumen.sources.data import read, resolve_data
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.xarray_sql import XArraySQLSource
+from lumen.util import normalize_table_name
 
 
 @pytest.mark.parametrize("url, expected", [
@@ -33,6 +34,16 @@ def test_public_buckets_are_read_over_https(url, expected):
 ])
 def test_a_remote_location_names_its_table(url, expected):
     assert data_module._remote_name(url) == expected
+
+
+def test_a_remote_name_keeps_a_digit_leading_name_unprefixed():
+    """A remote box quotes its name in SQL, so the SQL-identifier guard that
+    protects unquoted upload and payload names does not apply to it."""
+    url = "gs://gcp-public-data-arco-era5/ar/1959-2022-full_37-1h-0p25deg-chunk-1.zarr-v2"
+
+    assert data_module._remote_name(url) == "1959_2022_full_37_1h_0p25deg_chunk_1"
+    # Unquoted callers keep the guard, so the two paths stay distinguishable.
+    assert normalize_table_name("1959_2022") == "table_1959_2022"
 
 
 def test_a_zarr_store_is_cut_to_the_variables_and_coordinates_asked_for(tmp_path):

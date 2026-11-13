@@ -151,7 +151,10 @@ def _remote_name(url: str) -> str:
         return match.group(1)
     # A local path on Windows separates with backslashes
     stem = url.rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
-    return normalize_table_name(re.sub(r"(\.zarr(-v[23])?|\.parquet|\*.*)$", "", stem) or "data")
+    # A remote box quotes its name in SQL, so a digit-leading name is safe
+    # there and keeps its existing form instead of gaining the table_ prefix.
+    name = re.sub(r"(\.zarr(-v[23])?|\.parquet|\*.*)$", "", stem) or "data"
+    return normalize_table_name(name, prefix_digits=False)
 
 
 def read(

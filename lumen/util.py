@@ -750,15 +750,15 @@ def _set_backend_opts(element, cur_opts, compat_opts):
     return element
 
 
-def normalize_table_name(name: str) -> str:
+def normalize_table_name(name: str, *, prefix_digits: bool = True) -> str:
     """
     Normalize a table name to a valid SQL identifier.
 
     Replaces all non-word characters (anything except letters, digits,
     and underscores) with underscores, strips leading/trailing underscores,
-    and converts to lowercase. A ``table_`` prefix is added when the result
-    would start with a digit, which SQL identifiers do not allow. Names that
-    are already valid are returned unchanged.
+    and converts to lowercase. By default a ``table_`` prefix is added when
+    the result would start with a digit, which SQL identifiers do not allow.
+    Names that are already valid are returned unchanged.
 
     This matches the behavior of DuckDBSource.normalize_table() to ensure
     consistent table naming across the codebase.
@@ -767,6 +767,11 @@ def normalize_table_name(name: str) -> str:
     ----------
     name : str
         The table name to normalize (e.g., filename without extension)
+
+    prefix_digits : bool
+        Whether to prefix a digit-leading result with ``table_``. Keep the
+        default for names interpolated into SQL unquoted; pass False where
+        the name is quoted and its existing form must be preserved.
 
     Returns
     -------
@@ -783,9 +788,11 @@ def normalize_table_name(name: str) -> str:
     'table_name'
     >>> normalize_table_name("2024 report")
     'table_2024_report'
+    >>> normalize_table_name("2024 report", prefix_digits=False)
+    '2024_report'
     """
     normalized = re.sub(r'\W+', '_', name).strip('_').lower()
-    if normalized[:1].isdigit():
+    if prefix_digits and normalized[:1].isdigit():
         normalized = f"table_{normalized}"
     return normalized
 
