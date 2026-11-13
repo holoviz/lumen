@@ -2208,6 +2208,23 @@ def test_a_tap_on_a_grid_selects_the_nearest_cell():
     assert (row["lon"], row["lat"]) == (2.0, 20.0)
 
 
+def test_a_tap_on_a_map_with_a_time_slider_picks_the_step_on_screen():
+    times = pd.date_range("2020-01-01", periods=3, freq="D")
+    frame = pd.DataFrame(
+        [(t, x, y, float(i)) for i, t in enumerate(times) for x in (0.0, 1.0) for y in (0.0, 1.0)],
+        columns=["time", "lon", "lat", "v"],
+    )
+    pipeline = Pipeline(source=read({"grid": frame}), table="grid")
+    view = hvPlotView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="v", groupby=["time"])
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    dmap = view._panel.object
+    dmap[times[1]]  # what the slider does when moved to the second day
+    answer._streams[-1].event(x=0.9, y=0.1)
+    (row,) = answer.selection.to_dict("records")
+    assert (row["lon"], row["lat"], row["v"]) == (1.0, 0.0, 1.0)
+
+
 async def test_ask_about_sends_the_rows_and_the_answer_before(llm, frame_source):
     llm.set_responses([_plan(("ChatAgent", "Explain")), "That is category A, at 10.5."])
     original = Answer(
@@ -2448,6 +2465,15 @@ def test_the_drawn_hvplot_chart_reports_clicks(frame_source, many_points, kind, 
         f"{callback} not found: pane object {type(view._panel.object).__name__}, "
         f"{len(plots)} plots with callbacks {seen}, streams {[type(s).__name__ for s in answer._streams]}"
     )
+
+
+def test_a_map_with_a_time_slider_says_so_and_a_rasterized_grid_is_not_called_points():
+    times = pd.date_range("2020-01-01", periods=3, freq="D")
+    frame = pd.DataFrame([(t, x, y, 1.0) for t in times for x in (0.0, 1.0) for y in (0.0, 1.0)], columns=["time", "lon", "lat", "v"])
+    pipeline = Pipeline(source=read({"grid": frame}), table="grid")
+    view = hvPlotView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="v", groupby=["time"], rasterize=True)
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    assert answer._cap_note == "The chart has a slider over 3 time steps."
 
 
 def test_records_turn_every_missing_value_into_null():

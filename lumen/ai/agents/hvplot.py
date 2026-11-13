@@ -99,6 +99,20 @@ class hvPlotAgent(BaseViewAgent):
         return model[self.view_type.__name__]
 
     @staticmethod
+    def _time_dimension(spec: dict[str, Any], data: Any) -> str | None:
+        """The time column a gridded map's data spans more than one step of, unless it is already an axis."""
+        # by and groupby are lists by now, see _drop_unknown_columns
+        taken = {spec.get("x"), spec.get("y"), *(spec.get("groupby") or []), *(spec.get("by") or [])}
+        for column in data.columns:
+            if column in taken:
+                continue
+            dtype = data[column].dtype
+            is_time = pd.api.types.is_datetime64_any_dtype(dtype) or str(column).lower() in ("time", "valid_time", "date")
+            if is_time and data[column].nunique() > 1:
+                return column
+        return None
+
+    @staticmethod
     def _drop_conflicting_axes(spec: dict[str, Any], geometry: bool = False) -> None:
         """Remove axis assignments that contradict each other.
 
@@ -208,9 +222,17 @@ class hvPlotAgent(BaseViewAgent):
             # height lets the width follow the data instead
             spec.pop("responsive")
             spec.setdefault("frame_height", 400)
+        frames = 1
+        if spec.get("kind") in GRIDDED_KINDS and (time := self._time_dimension(spec, data)):
+            # A map of several time steps would draw them on top of each
+            # other; a slider over time shows one at a time
+            spec["groupby"] = [*(spec.get("groupby") or []), time]
+        for column in spec.get("groupby") or []:
+            frames *= max(data[column].nunique(), 1)
         # Rasterizing and datashading need datashader, which is not a dependency
         datashader = importlib.util.find_spec("datashader") is not None
-        if datashader and spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
+        if datashader and spec.get("kind") in GRIDDED_KINDS and len(data) / frames > GRID_RASTERIZE_CELLS:
+            # Counted per frame: each slider step draws one frame's cells
             spec["rasterize"] = True
         if datashader and len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             if spec.get("by"):

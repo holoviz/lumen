@@ -120,6 +120,10 @@ answer.ask_about("Show its history", rows={"island": "Dream"})
 
 The LLM gets the question, the rows (up to 20, with personal-looking columns withheld under `mask_pii`) and the answer before, and answers from the rows when they hold what is asked, querying the data filtered on them otherwise. In a chat, or in the chat UI's explorations, the follow-up joins the conversation. It sends row values, so it needs `share="sample"`. Static outputs (PNG, a saved notebook) have no box.
 
+## Maps over time
+
+A map of a grid with several time steps, such as `air_temperature`'s 20, gets a slider over time instead of drawing every step on top of the others; the card notes the slider, which a saved notebook or PNG cannot show. A grid is rasterized by the cells of one step, not all of them.
+
 ## Large results
 
 A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.

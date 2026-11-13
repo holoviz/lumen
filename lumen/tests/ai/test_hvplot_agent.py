@@ -6,6 +6,7 @@ recovering, and the one field the agent adds to the schema reached the view.
 """
 import holoviews as hv
 import pandas as pd
+import panel as pn
 import param
 import pytest
 
@@ -222,6 +223,56 @@ async def test_a_large_grid_is_rasterized(monkeypatch):
     df = pd.DataFrame({"x": [0.0, 1.0, 0.0, 1.0], "y": [0.0, 0.0, 1.0, 1.0], "t": [1.0, 2.0, 3.0, 4.0]})
     pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
     spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "x", "y": "y", "z": "t"})
+    assert spec["rasterize"] is True
+
+
+def _grid_frames(steps=3, cells=4):
+    times = pd.date_range("2020-01-01", periods=steps, freq="D")
+    rows = [(t, lon, lat, float(i)) for i, t in enumerate(times) for lon in (0.0, 1.0) for lat in (0.0, 1.0)][: steps * cells]
+    df = pd.DataFrame(rows, columns=["time", "lon", "lat", "t"])
+    return Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
+
+
+async def test_a_gridded_map_over_time_gets_a_time_slider():
+    pipe = _grid_frames()
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"})
+    assert spec["groupby"] == ["time"]
+    view = hvPlotView(pipeline=pipe, **spec)
+    panel = pn.panel(view.get_plot(view.get_data()))
+    widgets = panel.select(pn.widgets.Widget)
+    assert len(widgets) == 1 and len(widgets[0].options) == 3
+
+
+def test_time_dimension_reads_columns_that_are_not_strings():
+    data = pd.DataFrame({0: [1, 2], "lon": [0.0, 1.0]})
+    assert hvPlotAgent._time_dimension({"x": "lon"}, data) is None
+
+
+async def test_a_map_of_one_time_step_has_no_slider():
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": _grid_frames(steps=1)}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},
+    )
+    assert "groupby" not in spec
+
+
+async def test_time_already_on_an_axis_gets_no_slider():
+    spec = await hvPlotAgent()._extract_spec({"pipeline": _grid_frames()}, {"kind": "line", "x": "time", "y": "t"})
+    assert "groupby" not in spec
+
+
+async def test_a_grid_is_rasterized_by_the_cells_of_one_frame(monkeypatch):
+    import lumen.ai.agents.hvplot as hvplot_agent
+
+    # 3 steps of 4 cells: 12 rows in all, but each frame draws 4
+    monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 5)
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": _grid_frames()}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},
+    )
+    assert spec["groupby"] == ["time"] and "rasterize" not in spec
+    monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": _grid_frames()}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},
+    )
     assert spec["rasterize"] is True
 
 
