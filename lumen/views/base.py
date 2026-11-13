@@ -122,6 +122,12 @@ BAR_KINDS = ("bar", "barh")
 # datashaded into an image server-side long before WebGL would earn its keep.
 CANVAS_BACKEND = {"plot.output_backend": "canvas"}
 
+# Every keyword hvPlot itself documents, by group (axes, colour, geo, ...)
+_HVPLOT_OPTIONS = {
+    option for name, group in vars(HoloViewsConverter).items()
+    if name.endswith('_options') and isinstance(group, list) for option in group
+}
+
 
 class View(MultiTypeComponent, Viewer):
     """
@@ -1169,13 +1175,6 @@ class hvPlotBaseView(View):
         """The compact gridded ``xarray.Dataset`` from the pipeline's source
         (xarray-sql ``to_dataset``), or None when the source can't produce one."""
         return self.pipeline.get_dataset() if self.pipeline is not None else None
-
-
-# Every keyword hvPlot itself documents, by group (axes, colour, geo, ...)
-_HVPLOT_OPTIONS = {
-    option for name, group in vars(HoloViewsConverter).items()
-    if name.endswith('_options') and isinstance(group, list) for option in group
-}
 
 
 class hvPlotUIView(hvPlotBaseView):

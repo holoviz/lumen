@@ -631,6 +631,8 @@ LARGE_POINTS = 5_000
 
 _POINT_KINDS = {"point": "scatter", "circle": "scatter", "square": "scatter", "tick": "scatter", "line": "line"}
 
+_EXPLORER_KINDS = {**_POINT_KINDS, "bar": "bar", "area": "area", "rect": "heatmap", "boxplot": "box"}
+
 
 def _point_chart(view: View) -> tuple[str, dict] | None:
     """For a single Vega-Lite scatter or line chart of raw rows, its hvPlot kind and encoding."""
@@ -676,9 +678,6 @@ def _density_view(view: View, pipeline: Pipeline | None) -> View:
     else:
         params.update(rasterize=True, cnorm="log")
     return hvPlotView(**params)
-
-
-_EXPLORER_KINDS = {**_POINT_KINDS, "bar": "bar", "area": "area", "rect": "heatmap", "boxplot": "box"}
 
 
 def _vega_explorer_settings(spec: dict) -> dict[str, Any]:
