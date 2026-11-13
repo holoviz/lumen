@@ -27,9 +27,17 @@ answer
 
 `pipeline.ask(...)` limits the question to one table and its filters, and `await source.aask(...)` is the async form.
 
+## Look at the data first
+
+``` py
+source.overview()
+```
+
+The overview lists each table's columns with their types, nulls, distinct counts and ranges, flags what looks wrong in the first 5,000 rows (missing values, duplicate rows, padded text, numbers stored as text, constant columns, outliers) and suggests five questions. In a notebook each question is a button that asks it and shows the answer below. Writing the questions is one LLM call, sent only what `share` allows; `source.overview(questions=False)` skips it. For a large table the distinct counts and ranges come from a sample, and the overview says so.
+
 ## The answer
 
-An `Answer` renders as a card with the text, the chart, and collapsed SQL and Spec sections: the query, and the Vega-Lite or hvPlot spec the chart was drawn from. It also holds:
+An `Answer` renders as a card with the text, the chart, and collapsed SQL, Spec and Steps sections: the query, the Vega-Lite or hvPlot spec the chart was drawn from, and each step with how long it took. It also holds:
 
 | Field | What it is |
 |-------|------------|
@@ -37,10 +45,14 @@ An `Answer` renders as a card with the text, the chart, and collapsed SQL and Sp
 | `sql` | The query that produced the data |
 | `data` | The result in the type you asked with: polars for polars input, pyarrow for pyarrow, a GeoDataFrame or xarray Dataset for GeoPandas or xarray, pandas otherwise |
 | `pipeline` | A Pipeline over the result, e.g. `answer.pipeline.data` |
+| `chart` | The chart to keep working with: an Altair chart for Vega-Lite (needs `altair`), the HoloViews object for hvPlot, so `answer.chart + other` and `.opts(...)` work |
+| `to_vega()` | The chart as a self-contained Vega-Lite spec with its data |
 | `view` / `spec` | The chart as a Lumen View and its Vega-Lite spec |
 | `plan` / `status` | The steps the planner ran and how they ended: `"success"`, `"error"` or `"unanswerable"` |
 | `error` | Why the question failed or cannot be answered |
 | `usage` | Tokens and, when the provider prices them, the cost of the answer's LLM calls, e.g. `answer.usage.input_tokens`; the card ends with a one-line summary |
+| `result` | The answer in the type asked for with `returns=`, see below |
+| `why` / `trace` | The planner's reasoning, and each step as it ran: actor, instruction, what it needed and provided, seconds, LLM calls and its SQL. `answer.plan.graph()` and `answer.plan.to_mermaid()` give how the steps feed each other |
 
 While a question runs, one line under the cell shows the step it is on. Interrupt the kernel to stop a `source.ask(...)` or `chat.ask(...)`; Lumen cancels the question and its LLM calls. An awaited `aask` is cancelled like any other task.
 
@@ -53,6 +65,64 @@ chat.ask("Only keep the species above 4000 g")  # (1)!
 ```
 
 1. Each follow-up sees the earlier questions and runs on the data the last answer left.
+
+Displaying `chat` in a notebook shows it as a chat widget, starting with the answers so far. A question typed into it is asked with `chat.ask`, so the widget and your code share one conversation.
+
+To keep a conversation:
+
+| Method | What you get |
+|--------|--------------|
+| `chat.to_html("chat.html")` | One page: each question over its answer, the chart as an image, the SQL and the spec |
+| `chat.to_notebook("chat.ipynb")` | Each question and answer, then Lumen code that rebuilds its chart or data with no LLM |
+| `chat.to_report("Penguins")` | A Lumen Report of the answers and their charts, with its own `to_html`, `to_notebook` and `to_docx` |
+
+## Check the data
+
+`source.check` takes a rule the data should keep and returns the rows that break it:
+
+``` py
+source.check("SELECT * FROM penguins WHERE body_mass_g <= 0")  # (1)!
+source.check("no penguin weighs under 2 kg")  # (2)!
+```
+
+1. A SELECT returning the offending rows runs as written, with no LLM.
+2. A rule in plain language costs one LLM call, which writes that SELECT; `result.sql` holds it.
+
+The result is falsy when rows break the rule, so `assert source.check(...)` works in pytest and its failure message shows the rule, the query, the count and the first rows. `result.rows` holds up to 1,000 of them in the type the data was read in, and `result.raise_()` raises the same message outside pytest. Only read-only queries run. To keep a test free of LLM calls, paste the `result.sql` of a plain-language rule into the test.
+
+## Test code that asks
+
+`lumen.ai.testing` records a real LLM's answers once and replays them, so tests of code built on `ask` run offline, fast and the same every time:
+
+``` py
+from lumen.ai.testing import cassette
+
+def test_penguins_in_2008():
+    with cassette("tests/cassettes/penguins_2008.json") as llm:
+        answer = source.ask("How many penguins were measured in 2008?", llm=llm, returns=int)
+    assert answer.result == 114
+```
+
+`cassette` replays by default. Run the tests once with `LUMEN_AI_RECORD=1` to record with your LLM (or pass one, `cassette(path, llm)`), and commit the JSON file. A call that was not recorded, e.g. after a prompt changed, raises `MissingRecording` naming the closest recorded one; record again. `record(llm, path)` and `ReplayLLM(path)` are the two halves, for use outside a `with` block. Calls the LLM makes to tools are replayed as their final answer, without running the tools again.
+
+Recording again replaces the file, so calls a changed prompt no longer makes do not linger; `record(llm, path, append=True)` keeps them. A cassette holds every response and the start of each prompt, and at the default `share="sample"` both can carry values from your data, such as sample rows. Check the file before committing it, or record with `cassette(path, preview=False)` to leave the prompts out (a replay miss then cannot name the closest call).
+
+## Ask about a point
+
+Click a point, bar or shape on an answer's chart, or drag a box over several on an hvPlot chart or map, and a box under the chart asks about it: "what is this?", "why is it so high?", "show its history". On a grid or a density image, a click picks the nearest cell or point. The clicked rows are in `answer.selection`, and the same works from code:
+
+``` py
+answer.ask_about("Why is this one so high?")             # (1)!
+answer.ask_about("Show its history", rows={"island": "Dream"})
+```
+
+1. Asks about `answer.selection`; `rows=` takes a DataFrame, a dict, a list of dicts or row positions instead.
+
+The LLM gets the question, the rows (up to 20, with personal-looking columns withheld under `mask_pii`) and the answer before, and answers from the rows when they hold what is asked, querying the data filtered on them otherwise. In a chat, or in the chat UI's explorations, the follow-up joins the conversation. It sends row values, so it needs `share="sample"`. Static outputs (PNG, a saved notebook) have no box.
+
+## Large results
+
+A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.
 
 ## Change the chart
 
@@ -87,8 +157,28 @@ answer.error   # e.g. "No table records beak colour."
 
 `answer.data` follows the input only for data read with `lumen.read`; for a Source built by hand it is pandas. Claude Code reports the cost of its calls at API prices, which is not what a subscription is billed.
 
+## Typed answers
+
+Ask with `returns=` to get the answer as a value rather than prose:
+
+``` py
+from pydantic import BaseModel
+
+count = source.ask("How many penguins were measured in 2008?", returns=int)
+count.result  # 114
+
+class Heaviest(BaseModel):
+    species: str
+    body_mass_g: float
+
+source.ask("Which species is heaviest on average?", returns=Heaviest).result
+```
+
+A result already in the shape of the type is used as it is, with no extra LLM call: one cell for a number or a string, one column for a list, one row for a model. Otherwise one more LLM call reads the type from the written answer, and from the rows when `share="sample"`. It can round: asking for `int` when the data says 38.5 gives 38 or 39. An answer that cannot be read as the type has status `"error"`.
+
 ## Rerun, export, explore
 
+- `answer.compile(params=["year"])` turns the query into a function with no LLM: `count = answer.compile(["year"])`, then `count(year=2009)` runs the same query for 2009. Each parameter is a column the query compares with values: one value, a `(low, high)` pair for `BETWEEN`, or a list for `IN`. Values are bound as query parameters, never written into the SQL. It works on DuckDB sources, which `lumen.read` gives.
 - `answer.code` is Lumen code that rebuilds the result without an LLM. In-memory data is embedded, so keep it for small results. Source settings go in as they are, so check it for credentials (a database URI with a password, say) before sharing it.
 - `answer.to_cell()` puts that code into a new cell below, in Jupyter.
 - `answer.export("my_answer")` writes `my_answer/answer.py` and the data as Parquet files under `my_answer/data/`, so large answers stay small and portable.
@@ -132,6 +222,42 @@ Three more things keep these answers right:
 - **A review before the query runs.** Lumen checks the SQL for mistakes that run without an error: a buffer or distance in degrees on longitude and latitude, an area or length that comes out in degrees, two geometry tables joined without a spatial predicate, and a Kelvin column compared with a Celsius value (or the other way round). It tells the model once; a query it resubmits unchanged runs as it is.
 - **Units in the schema.** For a grid, each column's description carries its CF `units`, `standard_name` and, when it is not the standard one, its calendar, e.g. `air -- 4xDaily Air temperature [degK]`.
 - **Tools for common grid operations.** The model can ask for the SQL of a time slice, an area-weighted mean, a monthly (or quarterly, daily, hourly) climatology, anomalies from it, and a unit conversion (K to degC, Pa to hPa, kg m-2 s-1 to mm day-1 and more). Each uses the grid's own dimension names, so `latitude` on ERA5 and `lat` elsewhere, and says so when a 360-day calendar cannot be read as dates in SQL.
+
+## Workflow
+
+**Describe your data.** The LLM writes better SQL when it knows what tables and columns mean:
+
+``` py
+source.describe(
+    "penguins", "One row per penguin measured on the Palmer Archipelago, 2007 to 2009",
+    columns={"body_mass_g": "Body mass in grams", "sex": "male or female, missing for some birds"},
+)
+```
+
+Your text replaces any description the database has, and the next question sees it.
+
+**Check the plan first.** `confirm=True` stops once the question is planned. The card lists the steps with a Run button, and `run()` runs exactly those steps without planning again:
+
+``` py
+plan = source.ask("Which island has the heaviest penguins?", confirm=True)
+plan.status   # "planned"
+plan.run()    # the same answer object, now with its result
+```
+
+**Cache answers.** With `configure(cache=True)`, asking the same question of the same Source or Pipeline and model again returns the earlier answer straight away, marked "From the answer cache". The key covers the question, the data's columns, types, row counts and descriptions as Lumen last read them, the model's and agents' settings, the row cap, the sharing settings and Lumen's prompts. Lumen caches a source's metadata, so a file or database whose values change, or whose row count changes after the first question, is not noticed: call `lumen.ai.clear_cache()` after such a change. Data you pass as a DataFrame or dict is read afresh for each question, so those answers are never cached. A cache hit gets its own pipeline and chart, so a filter added to one does not show in another. Retries are never cached. Up to 128 answers and 2,000,000 rows of their data are kept, oldest dropped first.
+
+**Ask from a cell.** The `%%lumen` magic takes the source and the question; `{name}` fills in a variable:
+
+``` py
+%load_ext lumen.ai.notebook
+```
+
+``` py
+%%lumen source --as heaviest
+Which species was heaviest in {year}?
+```
+
+`%lumen source How many rows?` asks in one line, and `--confirm` previews the plan.
 
 ## Maps and grids
 
@@ -196,6 +322,7 @@ configure(llm=Kilo(), max_rows=100_000, share="schema", mask_pii=True)
 | `max_rows` | | Rows an answer's data holds, as a LIMIT on its query (1,000,000 by default, `None` for all). The card notes when a result hits it |
 | `share` | `LUMEN_AI_SHARE` | What of the data prompts contain, see below |
 | `mask_pii` | `LUMEN_AI_MASK_PII` | Withhold the values of columns that look like personal data |
+| `cache` | `LUMEN_AI_CACHE` | Keep answers in memory, so the same question of the same data and model returns without LLM calls; `lumen.ai.clear_cache()` empties it |
 
 Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sales": "data/*.parquet"})` does not load the data into memory. Name tables with a dict, as there; a bare path names the table after the whole path.
 

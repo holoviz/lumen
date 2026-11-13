@@ -145,7 +145,9 @@ def declines(missing: str) -> Callable[[pd.DataFrame, Answer], bool]:
             return True
         invented = any(missing in str(col).lower() for col in df.columns) and bool(numbers(df))
         declined = ("no ", "not ", "n't", "cannot", "unavailable")
-        return not invented and any(word in answer.value.lower().replace("’", "'") for word in declined)
+        text = answer.value.lower().replace("’", "'")
+        # A decline has to be about the missing thing, not any "no" or "not" in the text
+        return not invented and missing in text and any(word in text for word in declined)
     return check
 
 
@@ -218,7 +220,7 @@ def _more_spatial_cases(f: dict[str, gpd.GeoDataFrame]) -> list[Case]:
     places, regions, roads, parcels = f["places"], f["regions"], f["roads"], f["parcels"]
     paris = CITIES["Paris"]
     lon, lat = places.geometry.x, places.geometry.y
-    near_paris = int(((great_circle_km(paris[0], paris[1], lon, lat) <= 400) & (places.name != "Paris")).sum())
+    near_paris = int(((great_circle_km(paris[0], paris[1], lon, lat) <= 450) & (places.name != "Paris")).sum())
     crossing_south = int(gpd.sjoin(roads, regions[regions.region == "South"], predicate="intersects").road.nunique())
     centres = parcels.centroid.to_crs(4326)
     p0, p9 = centres.iloc[0], centres.iloc[9]
@@ -232,9 +234,9 @@ def _more_spatial_cases(f: dict[str, gpd.GeoDataFrame]) -> list[Case]:
     centre = "ST_Transform(ST_Centroid(geometry), 'EPSG:3857', 'EPSG:4326', always_xy := true)"
     return [
         Case("spatial", "degree_buffer", "spatial",
-             "How many places are within 400 km of Paris, not counting Paris itself?", any_close(near_paris, 0),
-             f"SELECT COUNT(*) AS n FROM places WHERE name <> 'Paris' AND {sphere.format(a='geometry', b=paris_geom)} <= 400000",
-             f"SELECT COUNT(*) AS n FROM places WHERE name <> 'Paris' AND ST_DWithin(geometry, {paris_geom}, 400000)"),
+             "How many places are within 450 km of Paris, not counting Paris itself?", any_close(near_paris, 0),
+             f"SELECT COUNT(*) AS n FROM places WHERE name <> 'Paris' AND {sphere.format(a='geometry', b=paris_geom)} <= 450000",
+             f"SELECT COUNT(*) AS n FROM places WHERE name <> 'Paris' AND ST_DWithin(geometry, {paris_geom}, 450000)"),
         Case("spatial", "lines_cross_polygon", "spatial",
              "How many roads pass through the South region?", any_close(crossing_south, 0),
              "SELECT COUNT(DISTINCT r.road) AS n FROM roads r JOIN regions g ON ST_Intersects(r.geometry, g.geometry) WHERE g.region = 'South'",
@@ -400,7 +402,9 @@ def extra_grid_cases() -> list[Case]:
         Case("gridded", "noleap_warmest_month", "noleap",
              "Which month has the highest mean temperature?",
              lambda df, answer: first_month(int(monthly.idxmax()))(df, answer)
-             or any(word in answer.value.lower() for word in ("noleap", "calendar"))),
+             # Naming the calendar problem counts, but not alongside a wrong month
+             or (any(word in answer.value.lower() for word in ("noleap", "calendar"))
+                 and not any(first_month(month)(df, answer) for month in range(1, 13)))),
     ]
 
 
@@ -436,7 +440,8 @@ async def main(args):
     import hvsampledata
     llm_cls = {"kilo": Kilo, "claude-code": ClaudeCode}[args.llm]
     llm = llm_cls(model_kwargs={"default": {"model": args.model}}) if args.model else llm_cls()
-    model = args.model or llm.model_kwargs.get("default", {}).get("model", "default")
+    # A provider's default model can be None in the settings
+    model = args.model or llm.model_kwargs.get("default", {}).get("model") or "default"
     era5 = xr.open_dataset(args.era5) if args.era5 else None
     air = hvsampledata.air_temperature("xarray")
     sources = {
@@ -462,9 +467,14 @@ async def main(args):
         print(f"{suite}: {sum(r['passed'] for r in rows)}/{len(rows)} passed")
     passed = sum(r["passed"] for r in results)
     # One line per run, to paste into a table of pass rates by model
-    print(f"| {args.llm} | {model} | {passed}/{len(results)} | {100 * passed / max(len(results), 1):.0f}% |")
+    # What was run, so two rows are only compared when they ran the same cases
+    options = f"{args.only or 'all'}, x{args.repeat}, {'era5' if args.era5 else 'no era5'}"
+    print(f"| {args.llm} | {model} | {options} | {passed}/{len(results)} | {100 * passed / max(len(results), 1):.0f}% |")
     if args.out:
-        Path(args.out).write_text(json.dumps({"llm": args.llm, "model": model, "results": results}, indent=1))
+        Path(args.out).write_text(json.dumps({
+            "llm": args.llm, "model": model, "era5": args.era5, "only": args.only, "repeat": args.repeat,
+            "results": results,
+        }, indent=1))
 
 
 if __name__ == "__main__":
