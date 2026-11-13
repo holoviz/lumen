@@ -244,12 +244,16 @@ async def test_without_datashader_a_large_grid_is_not_rasterized(monkeypatch):
 def coloured():
     df = pd.DataFrame({
         "x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0], "anomaly": [-1.5, 0.2, 2.0],
-        "wind_dir": [10.0, 200.0, 350.0], "air": [280.0, 290.0, 300.0], "kind": ["a", "b", "a"],
+        "wind_dir": [10.0, 200.0, 350.0], "air": [280.0, 290.0, 300.0], "celsius": [-5.0, 2.0, 12.0],
+        "aspect_ratio": [1.0, 1.5, 2.0], "kind": ["a", "b", "a"],
     })
     return Pipeline(source=InMemorySource(tables={"t": df}), table="t")
 
 
-@pytest.mark.parametrize("column, cmap", [("anomaly", "coolwarm"), ("wind_dir", "colorwheel"), ("air", None), ("kind", None)])
+@pytest.mark.parametrize("column, cmap", [
+    ("anomaly", "coolwarm"), ("wind_dir", "colorwheel"), ("air", None),
+    ("celsius", None), ("aspect_ratio", None), ("kind", None),
+])
 async def test_the_colour_column_picks_a_colormap(coloured, column, cmap):
     spec = await hvPlotAgent()._extract_spec({"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": column})
     assert spec.get("cmap") == cmap

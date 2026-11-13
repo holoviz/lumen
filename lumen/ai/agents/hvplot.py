@@ -25,17 +25,24 @@ GRID_RASTERIZE_CELLS = 250_000
 LON_NAMES, LAT_NAMES = {"lon", "longitude", "lng"}, {"lat", "latitude"}
 
 
-# Words in a column name that mark a cyclic quantity, which wraps around (359 degrees sits next to 0)
-CYCLIC_WORDS = {"direction", "dir", "bearing", "heading", "azimuth", "angle", "aspect", "phase", "hour", "month", "doy", "dayofyear"}
+# Words in a column name that mark a cyclic quantity, which wraps around
+# (359 degrees sits next to 0), and a signed one, read from zero
+CYCLIC_WORDS = {"direction", "dir", "bearing", "heading", "azimuth", "angle", "phase", "hour", "month", "doy", "dayofyear"}
+SIGNED_WORDS = {"anomaly", "anom", "diff", "difference", "change", "delta", "trend", "bias", "residual", "departure"}
 
 
 def _default_cmap(column: pd.Series) -> str | None:
-    """A colorcet colormap matching a colour column's data, or None to keep hvPlot's sequential default."""
+    """
+    A colorcet colormap for a colour column whose name says what it holds,
+    or None to leave the choice to hvPlot, which already turns diverging
+    when the values cross zero.
+    """
     if not pd.api.types.is_numeric_dtype(column) or pd.api.types.is_bool_dtype(column):
         return None
-    if CYCLIC_WORDS & set(re.split(r"[^a-z]+", str(column.name).lower())):
+    words = set(re.split(r"[^a-z]+", str(column.name).lower()))
+    if words & CYCLIC_WORDS:
         return "colorwheel"
-    if column.min() < 0 < column.max():
+    if words & SIGNED_WORDS:
         return "coolwarm"
     return None
 
