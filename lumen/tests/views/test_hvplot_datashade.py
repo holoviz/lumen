@@ -1,3 +1,4 @@
+import holoviews as hv
 import pandas as pd
 import pytest
 
@@ -458,3 +459,16 @@ def test_an_axis_the_frame_does_not_carry_is_dropped(categorical_pipeline, categ
     assert recorded["y"] == "y"
     assert recorded["by"] == ["ancestry"]
     assert recorded["groupby"] is None
+
+
+# ---- cmap reaches hvPlot ----
+
+def test_hvplot_view_passes_its_cmap_to_hvplot(categorical_pipeline):
+    view = hvPlotView(pipeline=categorical_pipeline, kind="points", x="x", y="y", z="y", cmap="fire")
+    plot = view.get_plot(view.get_data())
+    assert hv.Store.lookup_options("bokeh", plot, "style").kwargs["cmap"] == "fire"
+
+
+def test_hvplot_ui_view_opens_with_its_cmap(categorical_pipeline):
+    view = hvPlotUIView(pipeline=categorical_pipeline, kind="points", x="x", y="y", cmap="fire")
+    assert view.get_panel().colormapping.cmap == "fire"

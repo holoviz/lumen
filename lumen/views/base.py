@@ -999,6 +999,14 @@ class hvPlotBaseView(View):
 
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
+    cmap = param.ClassSelector(default=None, class_=(str, list, dict), doc="""
+        Colorcet colormap for a continuous colour: 'kbc_r' for a magnitude
+        such as a count or a rainfall total, 'fire' for heat or intensity,
+        'coolwarm' for a signed value centred on zero such as an anomaly or a
+        change, 'colorwheel' for a cyclic one such as a wind direction or an
+        hour of day. Leave unset for hvPlot's default. A list of colours
+        or a {category: colour} mapping is passed to hvPlot as it is.""")
+
     color_key = param.Dict(default=None, doc="""
         Mapping of the values in `by` to explicit colors, e.g.
         {'Irish': '#e41a1c', 'Italian': '#377eb8'}. Only meaningful with
@@ -1372,6 +1380,8 @@ class hvPlotView(hvPlotBaseView):
             processed['dynspread'] = True
         if self.color_key is not None:
             processed['color_key'] = self._complete_color_key(df)
+        if self.cmap is not None:
+            processed['cmap'] = self.cmap
         if self.aggregator is not None:
             self._check_aggregator(processed)
             processed['aggregator'] = self.aggregator
