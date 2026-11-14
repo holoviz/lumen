@@ -1044,6 +1044,67 @@ def test_answer_chart_without_altair_says_how_to_get_it(chart_answer, monkeypatc
         _ = chart_answer.chart
 
 
+def test_tweak_opens_an_hvplot_answer_with_its_settings(frame_source):
+    view = hvPlotView(
+        pipeline=Pipeline(source=frame_source, table="tiny"), kind="scatter",
+        x="category", y="value", height=300, grid=True,
+    )
+    explorer = Answer(question="?", view=view, status="success").tweak()
+    assert explorer.settings() == {"kind": "scatter", "x": "category", "y": ["value"], "height": 300}
+
+
+def test_tweak_colours_points_by_the_answers_z(frame_source):
+    view = hvPlotView(pipeline=Pipeline(source=frame_source, table="tiny"), kind="points", x="category", y="value", z="value")
+    assert Answer(question="?", view=view, status="success").tweak().settings()["color"] == "value"
+
+
+@pytest.mark.parametrize("mark, x, y, kind", [
+    ("bar", "category", "value", "bar"),
+    ({"type": "bar"}, "value", "category", "barh"),
+    ("line", "category", "value", "line"),
+])
+def test_tweak_opens_a_vega_lite_answer_as_the_matching_kind(chart_answer, mark, x, y, kind):
+    types = {"category": "nominal", "value": "quantitative"}
+    chart_answer.view.spec = {"mark": mark, "encoding": {
+        "x": {"field": x, "type": types[x]}, "y": {"field": y, "type": types[y]},
+        "color": {"field": "category", "type": "nominal"},
+    }}
+    settings = chart_answer.tweak().settings()
+    assert settings["kind"] == kind
+    assert (settings["x"], settings["y"]) == ("category", ["value"])
+    assert settings["by"] == ["category"]
+
+
+def test_tweak_refuses_a_mark_hvplot_cannot_draw(chart_answer):
+    chart_answer.view.spec = {"mark": "arc", "encoding": {"theta": {"field": "value", "type": "quantitative"}}}
+    with pytest.raises(ValueError, match="cannot be tweaked"):
+        chart_answer.tweak()
+
+
+@pytest.mark.parametrize("encoding, extra", [
+    ({"y": {"field": "value", "type": "quantitative", "aggregate": "mean"}}, {}),
+    ({"x": {"field": "value", "type": "quantitative", "bin": True}}, {}),
+    ({}, {"transform": [{"filter": "datum.value > 8"}]}),
+])
+def test_tweak_refuses_a_chart_that_reshapes_its_rows(chart_answer, encoding, extra):
+    chart_answer.view.spec = {**chart_answer.view.spec, **extra,
+                              "encoding": {**chart_answer.view.spec["encoding"], **encoding}}
+    with pytest.raises(ValueError, match="aggregation in the query"):
+        chart_answer.tweak()
+
+
+def test_tweak_on_an_empty_result_says_so(frame_source):
+    pipeline = Pipeline(source=frame_source.create_sql_expr_source({"none": "SELECT * FROM tiny WHERE value > 100"}), table="none")
+    view = hvPlotView(pipeline=pipeline, kind="bar", x="category", y="value")
+    with pytest.raises(ValueError, match="no rows"):
+        Answer(question="?", view=view, status="success").tweak()
+
+
+def test_tweak_without_a_chart_says_so(frame_source):
+    with pytest.raises(ValueError, match="no chart to tweak"):
+        Answer(question="?", value="Ten rows.", status="success").tweak()
+
+
 def test_answer_to_vega_inlines_the_data(chart_answer):
     spec = chart_answer.to_vega()
     assert spec["mark"] == "bar"
@@ -2301,6 +2362,23 @@ def test_a_tap_on_a_grid_selects_the_nearest_cell():
     assert (row["lon"], row["lat"]) == (2.0, 20.0)
 
 
+def test_a_tap_on_a_map_with_a_time_slider_picks_the_step_on_screen():
+    times = pd.date_range("2020-01-01", periods=3, freq="D")
+    frame = pd.DataFrame(
+        [(t, x, y, float(i)) for i, t in enumerate(times) for x in (0.0, 1.0) for y in (0.0, 1.0)],
+        columns=["time", "lon", "lat", "v"],
+    )
+    pipeline = Pipeline(source=read({"grid": frame}), table="grid")
+    view = hvPlotView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="v", groupby=["time"])
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    dmap = view._panel.object
+    dmap[times[1]]  # what the slider does when moved to the second day
+    answer._streams[-1].event(x=0.9, y=0.1)
+    (row,) = answer.selection.to_dict("records")
+    assert (row["lon"], row["lat"], row["v"]) == (1.0, 0.0, 1.0)
+
+
 async def test_ask_about_sends_the_rows_and_the_answer_before(llm, frame_source):
     llm.set_responses([_plan(("ChatAgent", "Explain")), "That is category A, at 10.5."])
     original = Answer(
@@ -2541,6 +2619,15 @@ def test_the_drawn_hvplot_chart_reports_clicks(frame_source, many_points, kind, 
         f"{callback} not found: pane object {type(view._panel.object).__name__}, "
         f"{len(plots)} plots with callbacks {seen}, streams {[type(s).__name__ for s in answer._streams]}"
     )
+
+
+def test_a_map_with_a_time_slider_says_so_and_a_rasterized_grid_is_not_called_points():
+    times = pd.date_range("2020-01-01", periods=3, freq="D")
+    frame = pd.DataFrame([(t, x, y, 1.0) for t in times for x in (0.0, 1.0) for y in (0.0, 1.0)], columns=["time", "lon", "lat", "v"])
+    pipeline = Pipeline(source=read({"grid": frame}), table="grid")
+    view = hvPlotView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="v", groupby=["time"], rasterize=True)
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    assert answer._cap_note == "The chart has a slider over 3 time steps."
 
 
 def test_records_turn_every_missing_value_into_null():

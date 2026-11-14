@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import json
 import os
 import tempfile
 
@@ -1612,6 +1613,14 @@ def test_from_spec_restores_frame_and_pipeline_mirrors():
     restored = DuckDBSource.from_spec(yaml.safe_load(yaml.dump(source.to_spec())))
     assert list(restored.get('people')['name']) == ['a', 'b']
     assert list(restored.get('piped')['x']) == [1, 2, 3]
+
+
+def test_from_spec_restores_a_source_table_mirror():
+    # JSON turns the (source, table) tuple into a list, as YAML does
+    base = DuckDBSource.from_df({'base': pd.DataFrame({'x': [1, 2, 3]})})
+    source = DuckDBSource(uri=':memory:', mirrors={'copy': (base, 'base')}, tables={'copy': 'SELECT * FROM copy'})
+    restored = DuckDBSource.from_spec(json.loads(json.dumps(source.to_spec())))
+    assert list(restored.get('copy')['x']) == [1, 2, 3]
 
 
 def _sql_geometry_source():

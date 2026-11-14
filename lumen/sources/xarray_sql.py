@@ -1,9 +1,9 @@
 """
 XArraySQLSource -- SQL-backed xarray source for Lumen.
 
-Uses xarray-sql (Apache DataFusion) to provide SQL query capabilities
-over N-dimensional xarray datasets. Each data variable in the dataset
-is exposed as a separate SQL table with coordinate columns.
+Uses xarray-sql to provide SQL query capabilities over N-dimensional
+xarray datasets, on Apache DataFusion or DuckDB. Each data variable in
+the dataset is exposed as a separate SQL table with coordinate columns.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import param
 from ..transforms.sql import SQLFilter
 from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
+from .duckdb import DuckDBSource
 
 #: File extensions xarray reads (NetCDF, HDF5, Zarr and GRIB)
 XARRAY_EXTENSIONS = (
@@ -52,9 +53,9 @@ class XArraySQLSource(BaseSQLSource):
     """
     SQL-queryable xarray data source for Lumen.
 
-    Wraps xarray datasets with Apache DataFusion (via xarray-sql) to
-    provide full SQL query support. Each data variable in the dataset
-    is exposed as a separate SQL table with coordinate columns.
+    Wraps xarray datasets with Apache DataFusion or DuckDB (via
+    xarray-sql) to provide full SQL query support. Each data variable in
+    the dataset is exposed as a separate SQL table with coordinate columns.
 
     To use this source, install the optional xarray dependencies::
 
@@ -73,6 +74,14 @@ class XArraySQLSource(BaseSQLSource):
         Additional keyword arguments passed to xr.open_dataset().
     variables : list or None
         Subset of data variables to expose. None means all variables.
+    sql_engine : str
+        The SQL engine queries run on, 'datafusion' or 'duckdb'.
+    initializers : list
+        SQL statements run on a new DuckDB connection, e.g. to load
+        the spatial extension. DuckDB only.
+    source : DuckDBSource or None
+        A DuckDBSource to register the grid on, so it joins that
+        source's tables. DuckDB only.
 
     Examples
     --------
@@ -81,6 +90,19 @@ class XArraySQLSource(BaseSQLSource):
     ['air']
     >>> df = source.execute("SELECT lat, lon, AVG(air) FROM air GROUP BY lat, lon")
     >>> schema = source.get_schema("air")
+
+    On DuckDB, the grid joins with anything else on the connection, such
+    as polygons read with the spatial extension::
+
+    >>> regions = DuckDBSource(
+    ...     initializers=["INSTALL spatial;", "LOAD spatial;"],
+    ...     tables={"regions": "SELECT * FROM ST_Read('regions.geojson')"},
+    ... )
+    >>> source = XArraySQLSource(uri="air_temperature.nc", source=regions)
+    >>> source.execute(
+    ...     "SELECT r.name, AVG(a.air) AS air FROM air a JOIN regions r "
+    ...     "ON ST_Contains(r.geom, ST_Point(a.lon, a.lat)) GROUP BY r.name"
+    ... )
     """
 
     source_type: ClassVar[str | None] = "xarray"
@@ -122,13 +144,33 @@ class XArraySQLSource(BaseSQLSource):
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression template for table queries.""")
 
+    sql_engine = param.Selector(default="datafusion", objects=["datafusion", "duckdb"], doc="""
+        The SQL engine queries run on. DuckDB joins the grid with other
+        tables on its connection, and with its extensions, such as spatial.
+        Defaults to 'duckdb' when initializers or a source are given.""")
+
+    initializers = param.List(default=[], item_type=str, doc="""
+        SQL statements run on a new DuckDB connection before the grid is
+        registered, e.g. ["INSTALL spatial;", "LOAD spatial;"]. DuckDB only.""")
+
+    source = param.ClassSelector(class_=DuckDBSource, default=None, doc="""
+        A DuckDBSource to register the grid on instead of a new connection,
+        so queries join the grid with that source's tables. DuckDB only.""")
+
     def __init__(self, _dataset=None, _ctx=None, **params):
         if try_import_xarray() is None:
             raise ImportError(
                 "xarray and xarray-sql are required for XArraySQLSource. "
                 "Install them with: pip install lumen[xarray]"
             )
+        if params.get("initializers") or params.get("source") is not None:
+            params.setdefault("sql_engine", "duckdb")
+            if params["sql_engine"] != "duckdb":
+                raise ValueError("initializers and source need sql_engine='duckdb'.")
         super().__init__(**params)
+        if self.sql_engine == "duckdb":
+            # SQL transforms and the SQL prompts read the dialect
+            self.dialect = "duckdb"
         self._dataset = _dataset
         self._ctx = _ctx
         self._registered_tables = set()
@@ -147,7 +189,7 @@ class XArraySQLSource(BaseSQLSource):
         return cls._xarray_engines.get(suffix)
 
     def _initialize(self):
-        """Load the xarray dataset and register variables with DataFusion."""
+        """Load the xarray dataset and register variables with the SQL engine."""
         self._dataset = self._load_dataset(
             dataset=self._dataset,
             uri=self.uri,
@@ -157,14 +199,24 @@ class XArraySQLSource(BaseSQLSource):
             variables=self.variables,
         )
 
-        from xarray_sql import XarrayContext
-        self._ctx = XarrayContext()
+        duckdb = self.sql_engine == "duckdb"
+        if duckdb:
+            from xarray_sql import arrow_dataset
+            self._ctx = self.source if self.source is not None else DuckDBSource(uri=":memory:", initializers=self.initializers)
+        else:
+            from xarray_sql import XarrayContext
+            self._ctx = XarrayContext()
         chunk_spec = self._resolve_chunks(self._dataset, self.chunks)
 
         for var_name in self._dataset.data_vars:
             var_ds = self._dataset[[var_name]]
             var_chunks = {k: v for k, v in chunk_spec.items() if k in var_ds.dims}
-            self._ctx.from_dataset(var_name, var_ds, chunks=var_chunks)
+            if duckdb:
+                # A view, not xarray_sql.register: register binds the table to
+                # this connection only, and DuckDBSource queries through cursors
+                self._ctx._connection.from_arrow(arrow_dataset(var_ds, var_chunks)).to_view(var_name)
+            else:
+                self._ctx.from_dataset(var_name, var_ds, chunks=var_chunks)
             self._registered_tables.add(var_name)
 
         if self.tables is None:
@@ -172,7 +224,7 @@ class XArraySQLSource(BaseSQLSource):
 
     @staticmethod
     def _resolve_chunks(dataset, chunks):
-        """Resolve chunk specification for DataFusion registration."""
+        """Resolve chunk specification for registration with the SQL engine."""
         if isinstance(chunks, dict):
             return chunks
         if dataset.chunks:
@@ -217,7 +269,7 @@ class XArraySQLSource(BaseSQLSource):
         dataset: xr.Dataset
             The xarray Dataset to query.
         chunks: dict or str
-            Chunk specification for DataFusion registration.
+            Chunk specification for registration with the SQL engine.
         kwargs: any
             Additional keyword arguments for the source.
 
@@ -281,16 +333,20 @@ class XArraySQLSource(BaseSQLSource):
         return lower_map.get(table.lower(), table)
 
     def execute(self, sql_query, params=None, *args, **kwargs):
-        """Execute a SQL query against the DataFusion context."""
+        """Execute a SQL query against the SQL engine."""
+        if self.sql_engine == "duckdb":
+            return self._ctx.execute(sql_query, params)
         result = self._ctx.sql(sql_query)
         return result.to_pandas()
 
     def fetch(self, sql_query, params=None):
-        """Fetch query results in `dataframe_backend`, built by DataFusion.
+        """Fetch query results in `dataframe_backend`, built by the SQL engine.
 
-        DataFusion is arrow native, so the to_pandas in execute is a
+        Both engines are arrow native, so the to_pandas in execute is a
         conversion this can skip entirely when another library was asked for.
         """
+        if self.sql_engine == "duckdb":
+            return self._ctx.fetch(sql_query, params, backend=self.dataframe_backend)
         result = self._ctx.sql(sql_query)
         if self.dataframe_backend == 'polars':
             return result.to_polars()
@@ -324,15 +380,22 @@ class XArraySQLSource(BaseSQLSource):
         Uses xarray-sql's ``to_dataset``, which is lazy and keeps the data
         gridded, so a gridded source is never materialized as long-form.
         """
-        result = self._ctx.sql(self._build_sql(table, **query))
+        sql = self._build_sql(table, **query)
+        duckdb = self.sql_engine == "duckdb"
+        if duckdb:
+            from xarray_sql import to_dataset
+            result = self._ctx._connection.sql(sql)
+            names = set(result.columns)
+        else:
+            result = self._ctx.sql(sql)
+            names = set(result.schema().names)
         # Pass only the dims the result actually has a column for. Multiple
         # data vars need dims passed explicitly (the FROM clause is
         # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
         # aggregating sql_transform can leave a dataset dim out of the
         # result, and to_dataset(dims=...) errors on a dim it can't find.
-        names = set(result.schema().names)
         dims = [d for d in self._dataset.dims if d in names]
-        ds = result.to_dataset(dims=dims)
+        ds = to_dataset(result, dims=dims) if duckdb else result.to_dataset(dims=dims)
         # Coordinates come in the order the rows did, which a GROUP BY leaves
         # arbitrary, and a grid with unsorted coordinates plots and slices wrong
         return ds.sortby([d for d in dims if d in ds.coords])
@@ -343,7 +406,7 @@ class XArraySQLSource(BaseSQLSource):
         params: dict[str, list | dict] | None = None,
         **kwargs,
     ):
-        """Create a new XArraySQLSource sharing the same DataFusion context."""
+        """Create a new XArraySQLSource sharing the same SQL engine connection."""
         all_tables = {}
         if isinstance(self.tables, dict):
             all_tables.update(self.tables)
@@ -364,6 +427,9 @@ class XArraySQLSource(BaseSQLSource):
             chunks=self.chunks,
             variables=self.variables,
             open_kwargs=self.open_kwargs,
+            sql_engine=self.sql_engine,
+            initializers=self.initializers,
+            source=self.source,
             tables=all_tables,
             table_params=all_params,
         )

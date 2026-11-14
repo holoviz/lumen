@@ -66,6 +66,7 @@ from ..util import (
     as_pandas, geometry_columns, geometry_to_geojson, is_geodataframe, log,
 )
 from ..views import VegaLiteView, View, hvPlotView
+from ..views.base import GRIDDED_KINDS, hvPlotBaseView, hvPlotUIView
 from .actor import step_title_callback
 from .agents import ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
@@ -654,6 +655,8 @@ LARGE_POINTS = 5_000
 
 _POINT_KINDS = {"point": "scatter", "circle": "scatter", "square": "scatter", "tick": "scatter", "line": "line"}
 
+_EXPLORER_KINDS = {**_POINT_KINDS, "bar": "bar", "area": "area", "rect": "heatmap", "boxplot": "box"}
+
 
 def _point_chart(view: View) -> tuple[str, dict] | None:
     """For a single Vega-Lite scatter or line chart of raw rows, its hvPlot kind and encoding."""
@@ -699,6 +702,48 @@ def _density_view(view: View, pipeline: Pipeline | None) -> View:
     else:
         params.update(rasterize=True, cnorm="log")
     return hvPlotView(**params)
+
+
+def _vega_explorer_settings(spec: dict) -> dict[str, Any]:
+    """hvPlot equivalents of a Vega-Lite chart's mark and encoding."""
+    spec = spec["layer"][0] if spec.get("layer") else spec
+    mark = spec.get("mark")
+    kind = _EXPLORER_KINDS.get(mark.get("type") if isinstance(mark, dict) else mark)
+    if kind is None:
+        raise ValueError("hvPlot has no kind for this chart's Vega-Lite mark, so it cannot be tweaked.")
+    encoding = spec.get("encoding", {})
+    x, y, color = (encoding.get(channel, {}) for channel in ("x", "y", "color"))
+    if "transform" in spec or any(key in c for c in (x, y, color) for key in ("aggregate", "bin", "timeUnit")):
+        # The explorer plots the rows as they are; it would draw a different chart
+        raise ValueError(
+            "This chart aggregates or transforms its rows in Vega-Lite, which the explorer "
+            "cannot redo; ask for the aggregation in the query, then tweak that answer."
+        )
+    if kind == "bar" and y.get("type") in ("nominal", "ordinal") and x.get("type") == "quantitative":
+        # Vega-Lite draws horizontal bars by swapping the axes; hvPlot keeps the category on x
+        kind, x, y = "barh", y, x
+    settings = {"kind": kind, "x": x.get("field"), "y": y.get("field")}
+    if color.get("field"):
+        settings["by" if color.get("type") in ("nominal", "ordinal") else "color"] = color["field"]
+    return {k: v for k, v in settings.items() if v is not None}
+
+
+def _explorer_settings(view: View) -> dict[str, Any]:
+    """The hvPlotUIView params that redraw an answer's chart."""
+    if isinstance(view, VegaLiteView):
+        return _vega_explorer_settings(view.spec)
+    names = set(hvPlotBaseView.param) - set(View.param)
+    settings = {k: v for k, v in view.param.values().items() if k in names and v not in (None, [], False)}
+    if "z" in settings and view.kind not in GRIDDED_KINDS:
+        # The explorer colours points and shapes by `color`; a grid takes its variable from the data
+        settings["color"] = settings.pop("z")
+    if settings.get("geo"):
+        # The explorer zooms a map out to the whole globe in Web Mercator unless
+        # told otherwise; the chart is framed on its data, and only tiles need Mercator
+        settings["global_extent"] = False
+        if not settings.get("tiles"):
+            settings["projection"] = "PlateCarree"
+    return dict(settings, **view.kwargs)
 
 
 def _records(data: Any) -> Any:
@@ -1771,6 +1816,20 @@ class Answer(param.Parameterized):
             raise ValueError("This answer has no Vega-Lite chart; answer.chart gives an hvPlot one.")
         return spec
 
+    def tweak(self) -> Any:
+        """
+        Open the chart in hvPlot's explorer, preloaded with its kind, axes,
+        colours and map settings, to adjust by hand. A Vega-Lite chart opens
+        as the matching hvPlot kind. ``.settings()`` on the
+        result gives the hvPlot keywords, ``.hvplot()`` the plot.
+        """
+        if not isinstance(self.view, hvPlotView | VegaLiteView):
+            raise ValueError("This answer has no chart to tweak.")
+        settings = _explorer_settings(self.view)
+        if self.view.pipeline.data.empty:
+            raise ValueError("This answer's query returned no rows, so there is nothing to tweak.")
+        return hvPlotUIView(pipeline=self.view.pipeline, **settings).get_panel()
+
     def explore(self, **params) -> ExplorerUI:
         """
         Open this answer in the Lumen chat UI: an ExplorerUI on the same
@@ -2111,10 +2170,17 @@ class Answer(param.Parameterized):
                 "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
             )
         rows = 0 if self.pipeline is None or self.view is None else len(self.pipeline.data)
-        if isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize")):
+        dense = isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize"))
+        if dense and self.view.kind in ("scatter", "points", "line"):
+            # A rasterized grid is cells drawn at screen resolution, not points
             shown = "blending the categories where they overlap" if self.view.by else "so each pixel shows how many fall there"
             notes.append(f"The chart draws {rows:,} points as a density image, {shown}.")
-        elif rows > LARGE_POINTS and _point_chart(self.view) is not None:
+        if isinstance(self.view, hvPlotView) and self.view.groupby and self.pipeline is not None:
+            # A static output shows no slider, so say there is one
+            steps = ", ".join(f"{self.pipeline.data[col].nunique()} {col} steps" for col in self.view.groupby if col in self.pipeline.data)
+            if steps:
+                notes.append(f"The chart has a slider over {steps}.")
+        if rows > LARGE_POINTS and _point_chart(self.view) is not None:
             notes.append(
                 f"The chart draws all {rows:,} points, which can be slow. "
                 "Install datashader to draw them as a density image instead."

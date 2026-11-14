@@ -430,15 +430,8 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
 
 def _add_grids(source: DuckDBSource, grids: dict) -> None:
     """Expose xarray Datasets as lazy tables on a DuckDB source, so they join with its other tables."""
-    try:
-        # Deferred: xarray-sql is optional, and only the joined case needs it
-        from xarray_sql import arrow_dataset
-    except ImportError as e:
-        raise ImportError(
-            "Joining xarray data with other tables needs a version of xarray-sql "
-            "that provides arrow_dataset. Upgrade xarray-sql, or read the xarray "
-            "data on its own."
-        ) from e
+    # Deferred: xarray-sql is optional, and only the joined case needs it
+    from xarray_sql import arrow_dataset
     for name, ds in grids.items():
         # Read lazily: DuckDB pulls record batches from the Dataset per query
         source._connection.from_arrow(arrow_dataset(ds)).to_view(name)

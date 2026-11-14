@@ -35,9 +35,9 @@ from holoviews.plotting.util import process_cmap  # type: ignore
 from holoviews.selection import link_selections  # type: ignore
 from holoviews.streams import Pipe  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
+from hvplot.converter import HoloViewsConverter  # type: ignore
 from hvplot.ui import (  # type: ignore
-    Colormapping, Geographic, Operations, hvDataFrameExplorer, hvGridExplorer,
-    hvPlotExplorer,
+    Controls, hvDataFrameExplorer, hvGridExplorer, hvPlotExplorer,
 )
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
@@ -121,6 +121,12 @@ BAR_KINDS = ("bar", "barh")
 # nothing here: a frame past MAX_RENDER_ROWS is refused, and one past 20k is
 # datashaded into an image server-side long before WebGL would earn its keep.
 CANVAS_BACKEND = {"plot.output_backend": "canvas"}
+
+# Every keyword hvPlot itself documents, by group (axes, colour, geo, ...)
+_HVPLOT_OPTIONS = {
+    option for name, group in vars(HoloViewsConverter).items()
+    if name.endswith('_options') and isinstance(group, list) for option in group
+}
 
 
 class View(MultiTypeComponent, Viewer):
@@ -1000,6 +1006,14 @@ class hvPlotBaseView(View):
 
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
+    cmap = param.ClassSelector(default=None, class_=(str, list, dict), doc="""
+        Colorcet colormap for a continuous colour: 'kbc_r' for a magnitude
+        such as a count or a rainfall total, 'fire' for heat or intensity,
+        'coolwarm' for a signed value centred on zero such as an anomaly or a
+        change, 'colorwheel' for a cyclic one such as a wind direction or an
+        hour of day. Leave unset for hvPlot's default. A list of colours
+        or a {category: colour} mapping is passed to hvPlot as it is.""")
+
     color_key = param.Dict(default=None, doc="""
         Mapping of the values in `by` to explicit colors, e.g.
         {'Irish': '#e41a1c', 'Italian': '#377eb8'}. Only meaningful with
@@ -1175,14 +1189,24 @@ class hvPlotUIView(hvPlotBaseView):
             explorer_cls = hvPlotExplorer
         if data is None:
             data = self.get_data()
-        # The explorer keeps colormapping and datashading on nested controls, so
-        # a param is only forwarded if one of them claims it; anything else is
-        # rejected by hvPlotExplorer.__init__.
-        controls = (explorer_cls.param, Geographic.param, Colormapping.param, Operations.param)
+        # The explorer keeps most options on nested controls (axes, colormapping,
+        # geographic, ...), so a param is only forwarded if one of them claims
+        # it; anything else is rejected by hvPlotExplorer.__init__.
+        controls = (explorer_cls.param, *(
+            p.class_.param for p in explorer_cls.param.objects().values()
+            if isinstance(p, param.ClassSelector) and issubclass(p.class_, Controls)
+        ))
         params = {
             k: v for k, v in self.param.values().items()
             if any(k in control for control in controls)
             and v is not None and k != 'name'
+        }
+        # hvPlot options such as grid or frame_height have no explorer control
+        # either; dropped, so a plot spec opens in the explorer as it is. A
+        # keyword hvPlot does not know is kept, so a typo still raises.
+        kwargs = {
+            k: v for k, v in self.kwargs.items()
+            if any(k in control for control in controls) or k not in _HVPLOT_OPTIONS
         }
         # Only completed once a control has claimed it above: hvPlot gained the
         # color_key control after this was written, and forcing the keyword in
@@ -1190,13 +1214,21 @@ class hvPlotUIView(hvPlotBaseView):
         # older hvPlot rather than simply coloring from the default palette.
         if 'color_key' in params:
             params['color_key'] = self._complete_color_key(data)
-        self._check_aggregator(self.kwargs)
-        return (data,), dict(params, **self.kwargs)
+        self._check_aggregator(kwargs)
+        return (data,), dict(params, **kwargs)
+
+    def _explored_dataset(self):
+        """The gridded Dataset to explore, narrowed to `z` when it names one of
+        its variables; otherwise the explorer opens on whichever comes first."""
+        gridded = self._source_dataset()
+        if gridded is not None and self.z in gridded.data_vars:
+            return gridded[[self.z]]
+        return gridded
 
     def __panel__(self):
         panel = self.get_panel()
         def ui(*events):
-            gridded = self._source_dataset()
+            gridded = self._explored_dataset()
             panel._data = gridded if gridded is not None else self.get_data()
             panel._plot()
             return panel
@@ -1206,7 +1238,7 @@ class hvPlotUIView(hvPlotBaseView):
         # An xarray-backed pipeline explores the compact gridded Dataset (via
         # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
         # and quadmesh work; tabular data uses the dataframe explorer.
-        gridded = self._source_dataset()
+        gridded = self._explored_dataset()
         if gridded is not None:
             # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
             import hvplot.xarray  # type: ignore  # noqa: F401
@@ -1367,6 +1399,8 @@ class hvPlotView(hvPlotBaseView):
             processed['dynspread'] = True
         if self.color_key is not None:
             processed['color_key'] = self._complete_color_key(df)
+        if self.cmap is not None:
+            processed['cmap'] = self.cmap
         if self.aggregator is not None:
             self._check_aggregator(processed)
             processed['aggregator'] = self.aggregator

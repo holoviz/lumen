@@ -1,3 +1,4 @@
+import holoviews as hv
 import pandas as pd
 import pytest
 
@@ -173,6 +174,27 @@ def test_hvplot_ui_view_forwards_datashade(categorical_pipeline):
 
     assert kwargs["datashade"] is True
     assert kwargs["dynspread"] is True
+
+
+def test_hvplot_ui_view_keeps_axis_options_and_drops_plot_only_ones(categorical_pipeline):
+    """A plot spec carries options like grid that no explorer control takes;
+    the explorer must still open, with the ones it does take, like height."""
+    view = hvPlotUIView(
+        pipeline=categorical_pipeline, kind="scatter", x="x", y="y",
+        height=300, grid=True, frame_height=400,
+    )
+
+    _args, kwargs = view._get_args()
+
+    assert kwargs["height"] == 300
+    assert "grid" not in kwargs and "frame_height" not in kwargs
+    assert view.get_panel().axes.height == 300
+
+
+def test_hvplot_ui_view_still_rejects_a_keyword_hvplot_does_not_know(categorical_pipeline):
+    view = hvPlotUIView(pipeline=categorical_pipeline, kind="scatter", x="x", y="y", gird=True)
+    with pytest.raises(TypeError, match="gird"):
+        view.get_panel()
 
 
 @requires_datashader
@@ -443,3 +465,16 @@ def test_an_axis_the_frame_does_not_carry_is_dropped(categorical_pipeline, categ
     assert recorded["y"] == "y"
     assert recorded["by"] == ["ancestry"]
     assert recorded["groupby"] is None
+
+
+# ---- cmap reaches hvPlot ----
+
+def test_hvplot_view_passes_its_cmap_to_hvplot(categorical_pipeline):
+    view = hvPlotView(pipeline=categorical_pipeline, kind="points", x="x", y="y", z="y", cmap="fire")
+    plot = view.get_plot(view.get_data())
+    assert hv.Store.lookup_options("bokeh", plot, "style").kwargs["cmap"] == "fire"
+
+
+def test_hvplot_ui_view_opens_with_its_cmap(categorical_pipeline):
+    view = hvPlotUIView(pipeline=categorical_pipeline, kind="points", x="x", y="y", cmap="fire")
+    assert view.get_panel().colormapping.cmap == "fire"

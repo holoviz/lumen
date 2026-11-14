@@ -1,6 +1,7 @@
 import importlib.util
+import re
 
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import param
@@ -22,6 +23,28 @@ from .base_view import BaseViewAgent
 GRID_RASTERIZE_CELLS = 250_000
 
 LON_NAMES, LAT_NAMES = {"lon", "longitude", "lng"}, {"lat", "latitude"}
+
+
+# Words in a column name that mark a cyclic quantity, which wraps around
+# (359 degrees sits next to 0), and a signed one, read from zero
+CYCLIC_WORDS = {"direction", "dir", "bearing", "heading", "azimuth", "angle", "phase", "hour", "month", "doy", "dayofyear"}
+SIGNED_WORDS = {"anomaly", "anom", "diff", "difference", "change", "delta", "trend", "bias", "residual", "departure"}
+
+
+def _default_cmap(column: pd.Series) -> str | None:
+    """
+    A colorcet colormap for a colour column whose name says what it holds,
+    or None to leave the choice to hvPlot, which already turns diverging
+    when the values cross zero.
+    """
+    if not pd.api.types.is_numeric_dtype(column) or pd.api.types.is_bool_dtype(column):
+        return None
+    words = set(re.split(r"[^a-z]+", str(column.name).lower()))
+    if words & CYCLIC_WORDS:
+        return "colorwheel"
+    if words & SIGNED_WORDS:
+        return "coolwarm"
+    return None
 
 
 def _is_lon_lat(spec: dict[str, Any], data: Any) -> bool:
@@ -81,6 +104,9 @@ class hvPlotAgent(BaseViewAgent):
             "opts",
             "selection_expr",
             "streaming",
+            # Offered below as a short list; the view also takes any colormap
+            # name, list or mapping, which is too open a choice for the model
+            "cmap",
         ]
         model = param_to_pydantic(
             self.view_type,
@@ -89,6 +115,8 @@ class hvPlotAgent(BaseViewAgent):
             schema=schema,
             extra_fields={
                 "chain_of_thought": (str, FieldInfo(description="Your thought process behind the plot.")),
+                # The prompt says which colormap fits which data
+                "cmap": (Literal["kbc_r", "fire", "coolwarm", "colorwheel"] | None, FieldInfo(default=None)),
             },
             # Only this one view is being described. Expanding subclasses is for
             # callers that want a union over a taxonomy, and here it would walk
@@ -97,6 +125,20 @@ class hvPlotAgent(BaseViewAgent):
             process_subclasses=False,
         )
         return model[self.view_type.__name__]
+
+    @staticmethod
+    def _time_dimension(spec: dict[str, Any], data: Any) -> str | None:
+        """The time column a gridded map's data spans more than one step of, unless it is already an axis."""
+        # by and groupby are lists by now, see _drop_unknown_columns
+        taken = {spec.get("x"), spec.get("y"), *(spec.get("groupby") or []), *(spec.get("by") or [])}
+        for column in data.columns:
+            if column in taken:
+                continue
+            dtype = data[column].dtype
+            is_time = pd.api.types.is_datetime64_any_dtype(dtype) or str(column).lower() in ("time", "valid_time", "date")
+            if is_time and data[column].nunique() > 1:
+                return column
+        return None
 
     @staticmethod
     def _drop_conflicting_axes(spec: dict[str, Any], geometry: bool = False) -> None:
@@ -188,6 +230,12 @@ class hvPlotAgent(BaseViewAgent):
         spec.setdefault("grid", True)
         self._drop_unknown_columns(spec, set(data.columns))
         self._complete_axes(spec, data)
+        colour = next((spec[k] for k in ("z", "c", "color") if spec.get(k) in data.columns), None)
+        if colour is not None and "cmap" not in spec and (cmap := _default_cmap(data[colour])):
+            spec["cmap"] = cmap
+            if cmap == "coolwarm":
+                # Centred on zero, so the colours split where the sign does
+                spec.setdefault("symmetric", True)
         if _is_lon_lat(spec, data):
             # Longitude and latitude read best on a basemap
             spec.setdefault("geo", True)
@@ -208,9 +256,17 @@ class hvPlotAgent(BaseViewAgent):
             # height lets the width follow the data instead
             spec.pop("responsive")
             spec.setdefault("frame_height", 400)
+        frames = 1
+        if spec.get("kind") in GRIDDED_KINDS and (time := self._time_dimension(spec, data)):
+            # A map of several time steps would draw them on top of each
+            # other; a slider over time shows one at a time
+            spec["groupby"] = [*(spec.get("groupby") or []), time]
+        for column in spec.get("groupby") or []:
+            frames *= max(data[column].nunique(), 1)
         # Rasterizing and datashading need datashader, which is not a dependency
         datashader = importlib.util.find_spec("datashader") is not None
-        if datashader and spec.get("kind") in GRIDDED_KINDS and len(data) > GRID_RASTERIZE_CELLS:
+        if datashader and spec.get("kind") in GRIDDED_KINDS and len(data) / frames > GRID_RASTERIZE_CELLS:
+            # Counted per frame: each slider step draws one frame's cells
             spec["rasterize"] = True
         if datashader and len(data) > 20000 and spec["kind"] in ("line", "scatter", "points"):
             if spec.get("by"):

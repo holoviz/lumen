@@ -6,6 +6,7 @@ recovering, and the one field the agent adds to the schema reached the view.
 """
 import holoviews as hv
 import pandas as pd
+import panel as pn
 import param
 import pytest
 
@@ -225,6 +226,56 @@ async def test_a_large_grid_is_rasterized(monkeypatch):
     assert spec["rasterize"] is True
 
 
+def _grid_frames(steps=3, cells=4):
+    times = pd.date_range("2020-01-01", periods=steps, freq="D")
+    rows = [(t, lon, lat, float(i)) for i, t in enumerate(times) for lon in (0.0, 1.0) for lat in (0.0, 1.0)][: steps * cells]
+    df = pd.DataFrame(rows, columns=["time", "lon", "lat", "t"])
+    return Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
+
+
+async def test_a_gridded_map_over_time_gets_a_time_slider():
+    pipe = _grid_frames()
+    spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"})
+    assert spec["groupby"] == ["time"]
+    view = hvPlotView(pipeline=pipe, **spec)
+    panel = pn.panel(view.get_plot(view.get_data()))
+    widgets = panel.select(pn.widgets.Widget)
+    assert len(widgets) == 1 and len(widgets[0].options) == 3
+
+
+def test_time_dimension_reads_columns_that_are_not_strings():
+    data = pd.DataFrame({0: [1, 2], "lon": [0.0, 1.0]})
+    assert hvPlotAgent._time_dimension({"x": "lon"}, data) is None
+
+
+async def test_a_map_of_one_time_step_has_no_slider():
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": _grid_frames(steps=1)}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},
+    )
+    assert "groupby" not in spec
+
+
+async def test_time_already_on_an_axis_gets_no_slider():
+    spec = await hvPlotAgent()._extract_spec({"pipeline": _grid_frames()}, {"kind": "line", "x": "time", "y": "t"})
+    assert "groupby" not in spec
+
+
+async def test_a_grid_is_rasterized_by_the_cells_of_one_frame(monkeypatch):
+    import lumen.ai.agents.hvplot as hvplot_agent
+
+    # 3 steps of 4 cells: 12 rows in all, but each frame draws 4
+    monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 5)
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": _grid_frames()}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},
+    )
+    assert spec["groupby"] == ["time"] and "rasterize" not in spec
+    monkeypatch.setattr(hvplot_agent, "GRID_RASTERIZE_CELLS", 3)
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": _grid_frames()}, {"kind": "quadmesh", "x": "lon", "y": "lat", "z": "t"},
+    )
+    assert spec["rasterize"] is True
+
+
 async def test_without_datashader_a_large_grid_is_not_rasterized(monkeypatch):
     import importlib.util
 
@@ -236,3 +287,46 @@ async def test_without_datashader_a_large_grid_is_not_rasterized(monkeypatch):
     pipe = Pipeline(source=InMemorySource(tables={"grid": df}), table="grid")
     spec = await hvPlotAgent()._extract_spec({"pipeline": pipe}, {"kind": "quadmesh", "x": "x", "y": "y", "z": "t"})
     assert "rasterize" not in spec
+
+
+# ---- A colour column gets a colormap that fits it ----
+
+@pytest.fixture
+def coloured():
+    df = pd.DataFrame({
+        "x": [0.0, 1.0, 2.0], "y": [0.0, 1.0, 2.0], "anomaly": [-1.5, 0.2, 2.0],
+        "wind_dir": [10.0, 200.0, 350.0], "air": [280.0, 290.0, 300.0], "celsius": [-5.0, 2.0, 12.0],
+        "aspect_ratio": [1.0, 1.5, 2.0], "kind": ["a", "b", "a"],
+    })
+    return Pipeline(source=InMemorySource(tables={"t": df}), table="t")
+
+
+@pytest.mark.parametrize("column, cmap", [
+    ("anomaly", "coolwarm"), ("wind_dir", "colorwheel"), ("air", None),
+    ("celsius", None), ("aspect_ratio", None), ("kind", None),
+])
+async def test_the_colour_column_picks_a_colormap(coloured, column, cmap):
+    spec = await hvPlotAgent()._extract_spec({"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": column})
+    assert spec.get("cmap") == cmap
+    assert spec.get("symmetric") is (True if cmap == "coolwarm" else None)
+
+
+async def test_a_colormap_the_model_chose_is_kept(coloured):
+    spec = await hvPlotAgent()._extract_spec(
+        {"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": "anomaly", "cmap": "fire"}
+    )
+    assert spec["cmap"] == "fire" and "symmetric" not in spec
+
+
+async def test_a_signed_colour_is_drawn_centred_on_zero(coloured):
+    spec = await hvPlotAgent()._extract_spec({"pipeline": coloured}, {"kind": "points", "x": "x", "y": "y", "z": "anomaly"})
+    view = hvPlotView(pipeline=coloured, **spec)
+    plot = view.get_plot(view.get_data())
+    assert hv.Store.lookup_options("bokeh", plot, "style").kwargs["cmap"] == "coolwarm"
+    assert hv.Store.lookup_options("bokeh", plot, "plot").kwargs["symmetric"] is True
+
+
+def test_the_model_chooses_cmap_from_a_short_list():
+    model = hvPlotAgent()._get_model("main", schema={"type": "object", "properties": {"x": {"type": "number"}}})
+    schema = model.model_json_schema()["properties"]["cmap"]
+    assert schema["anyOf"][0]["enum"] == ["kbc_r", "fire", "coolwarm", "colorwheel"]

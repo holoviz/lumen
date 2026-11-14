@@ -120,6 +120,10 @@ answer.ask_about("Show its history", rows={"island": "Dream"})
 
 The LLM gets the question, the rows (up to 20, with personal-looking columns withheld under `mask_pii`) and the answer before, and answers from the rows when they hold what is asked, querying the data filtered on them otherwise. In a chat, or in the chat UI's explorations, the follow-up joins the conversation. It sends row values, so it needs `share="sample"`. Static outputs (PNG, a saved notebook) have no box.
 
+## Maps over time
+
+A map of a grid with several time steps, such as `air_temperature`'s 20, gets a slider over time instead of drawing every step on top of the others; the card notes the slider, which a saved notebook or PNG cannot show. A grid is rasterized by the cells of one step, not all of them.
+
 ## Large results
 
 A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.
@@ -134,6 +138,13 @@ answer.refine("Color the bars by species and sort them by mass")  # (1)!
 1. `refine` changes only the chart, with one LLM call and no new SQL. It returns a new answer and leaves the old one as it was.
 
 To change the chart by hand, open the card's Spec section, press Edit, change the spec and press Redraw. `answer.with_spec(...)` does the same from code, taking the spec as a dict or as JSON or YAML text, and needs no LLM.
+
+``` py
+explorer = answer.tweak()  # (1)!
+explorer.settings()        # the hvPlot keywords you ended up with
+```
+
+1. Opens the chart in hvPlot's explorer (`hvplot.explorer`), with its kind, axes, colours and map settings already filled in. A Vega-Lite chart opens as the matching hvPlot kind. No LLM call.
 
 ## When a question fails
 
@@ -302,7 +313,7 @@ income.map()                    # lonboard, or hvPlot on a basemap
 mean_air.ds                     # an xarray Dataset on lat and lon
 ```
 
-Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
+Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. A colour that shows a number gets a [colorcet](https://colorcet.holoviz.org) map that fits it: `coolwarm` centred on zero for an anomaly or a change, `colorwheel` for a direction or an hour of day, `fire` or `kbc_r` for a magnitude. Ask for another one, or `refine` the answer, to change it. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
 
 ## Settings
 
