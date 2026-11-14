@@ -1783,6 +1783,36 @@ async def test_returns_takes_a_result_already_in_the_shape_without_an_llm_call(f
     assert type(answer.result) is type(expected)
     assert llm._index == 3 and llm.typed_prompt is None
 
+async def test_returns_a_model_from_json_string(frame_source):
+    from pydantic import BaseModel
+
+    class Heaviest(BaseModel):
+        species: str
+        body_mass_g: float
+
+    llm = _TypingLLM()
+    llm.result = '{"species": "Gentoo", "body_mass_g": 5076.0}'
+
+    original_invoke = llm.invoke
+
+    async def invoke(messages, system="", response_model=None, **kwargs):
+        if response_model is not None and response_model.__name__ == "Result":
+            return response_model(result=llm.result)
+        return await original_invoke(messages, system, response_model, **kwargs)
+
+    llm.invoke = invoke
+
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(
+        frame_source,
+        "?",
+        llm=llm,
+        agents=[ChatAgent(), SQLAgent()],
+        returns=Heaviest,
+    )
+
+    assert answer.result == Heaviest(species="Gentoo", body_mass_g=5076.0)
+
 
 async def test_returns_a_model_from_a_matching_row(frame_source):
     from pydantic import BaseModel
@@ -1792,10 +1822,73 @@ async def test_returns_a_model_from_a_matching_row(frame_source):
         total: float
 
     llm = _TypingLLM()
-    _sql_answer(llm, frame_source, "SELECT 'B' AS category, MAX(value) AS total FROM tiny")
-    answer = await aask(frame_source, "?", llm=llm, agents=[ChatAgent(), SQLAgent()], returns=Total)
+    _sql_answer(
+        llm,
+        frame_source,
+        "SELECT 'B' AS category, MAX(value) AS total FROM tiny",
+    )
+    answer = await aask(
+        frame_source,
+        "?",
+        llm=llm,
+        agents=[ChatAgent(), SQLAgent()],
+        returns=Total,
+    )
     assert answer.result == Total(category="B", total=20.0)
 
+async def test_returns_a_dict_from_json_string(frame_source):
+    llm = _TypingLLM()
+    llm.result = '{"species": "Gentoo", "location": "Antarctica"}'
+
+    original_invoke = llm.invoke
+
+    async def invoke(messages, system="", response_model=None, **kwargs):
+        if response_model is not None and response_model.__name__ == "Result":
+            return response_model(result=llm.result)
+        return await original_invoke(messages, system, response_model, **kwargs)
+
+    llm.invoke = invoke
+
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(
+        frame_source,
+        "?",
+        llm=llm,
+        agents=[ChatAgent(), SQLAgent()],
+        returns=dict[str, str],
+    )
+
+    assert answer.result == {
+        "species": "Gentoo",
+        "location": "Antarctica",
+    }
+
+async def test_returns_a_list_from_json_string(frame_source):
+    llm = _TypingLLM()
+    llm.result = '[{"species": "Gentoo"}, {"species": "Adelie"}]'
+
+    original_invoke = llm.invoke
+
+    async def invoke(messages, system="", response_model=None, **kwargs):
+        if response_model is not None and response_model.__name__ == "Result":
+            return response_model(result=llm.result)
+        return await original_invoke(messages, system, response_model, **kwargs)
+
+    llm.invoke = invoke
+
+    _sql_answer(llm, frame_source, "SELECT SUM(value) AS total FROM tiny")
+    answer = await aask(
+        frame_source,
+        "?",
+        llm=llm,
+        agents=[ChatAgent(), SQLAgent()],
+        returns=list[dict[str, str]],
+    )
+
+    assert answer.result == [
+        {"species": "Gentoo"},
+        {"species": "Adelie"},
+    ]
 
 async def test_returns_reads_the_type_from_the_answer_when_the_data_has_another_shape(frame_source):
     llm = _TypingLLM()

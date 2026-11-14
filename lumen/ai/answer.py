@@ -2,6 +2,7 @@
 Ask a Lumen Source or Pipeline a question from Python and get an Answer.
 """
 from __future__ import annotations
+from typing_extensions import Annotated
 
 import asyncio
 import base64
@@ -48,7 +49,7 @@ from panel_material_ui import (
     Alert, Button, Card, ChatInterface, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
-from pydantic import TypeAdapter, ValidationError, create_model
+from pydantic import BeforeValidator, TypeAdapter, ValidationError, create_model
 from sqlglot import exp
 
 from .. import __version__
@@ -521,6 +522,18 @@ def _shapes(df: pd.DataFrame | None) -> list:
     shapes.append(records)
     return shapes
 
+def _parse_json_string(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+
+        if isinstance(parsed, (dict, list)):
+            return parsed
+
+    return value
+
 
 async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     """
@@ -532,32 +545,43 @@ async def _typed(answer: Answer, returns: Any, llm: Llm) -> None:
     answer._returns = returns
     if answer.status != "success":
         return
+
     adapter = TypeAdapter(returns)
     df = None if answer.pipeline is None else as_pandas(answer.pipeline.data)
+
     for shape in _shapes(df):
         with suppress(ValidationError):
             answer.result = adapter.validate_python(shape)
             return
+
     name = returns.__name__ if isinstance(returns, type) else str(returns)
     content = f"Question: {answer.question}\n\nAnswer: {answer.value}"
+
     if df is not None and sharing.share == "sample":
-        # Same text on every platform, so a recorded prompt replays everywhere
         csv = mask_frame(df.head(20)).to_csv(index=False, lineterminator="\n")
         content += f"\n\nThe data the answer was written from:\n{csv}"
+
     try:
         with llm.capture_usage() as usage:
             out = await llm.invoke(
                 [{"role": "user", "content": content}],
                 system=f"Give the answer as {name}, using only the answer and data given.",
-                response_model=create_model("Result", result=(returns, ...)),
+                response_model=create_model(
+                    "Result",
+                    result=(Annotated[returns, BeforeValidator(_parse_json_string)], ...),
+                ),
             )
     except Exception as e:
-        answer.param.update(status="error", error=f"The answer could not be read as {name}: {format_error(e)}")
+        answer.param.update(
+            status="error",
+            error=f"The answer could not be read as {name}: {format_error(e)}",
+        )
         return
+
     for record in usage.records:
         answer.usage.add(record)
-    answer.result = out.result
 
+    answer.result = out.result
 
 def _read_kinds(source: Source | None, sql: str | None) -> set[str]:
     """The libraries of the tables a query read, as lumen.read recorded them."""
