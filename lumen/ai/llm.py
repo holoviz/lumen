@@ -186,6 +186,7 @@ LLM_PROVIDERS = {
     'mlx': 'MLX',
     'litellm': 'LiteLLM',
     'openrouter': 'OpenRouter',
+    'orcarouter': 'OrcaRouter',
     'kilo': 'Kilo',
     'codex-cli': 'CodexCli',
     'claude-code': 'ClaudeCode',
@@ -4490,6 +4491,67 @@ class OpenRouter(OpenAI):
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from OpenRouter."""
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        response = requests.get(
+            f"{self.endpoint.rstrip('/')}/models",
+            headers=headers,
+            timeout=5,
+        )
+        if response.status_code != 200:
+            return set()
+
+        return {
+            model["id"]
+            for model in response.json().get("data", [])
+            if model.get("id")
+        }
+
+
+class OrcaRouter(OpenAI):
+    """
+    An LLM implementation using the OrcaRouter API.
+
+    OrcaRouter provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Set the ``ORCAROUTER_API_KEY`` environment
+    variable or pass ``api_key`` directly. The provider is auto-detected when
+    ``ORCAROUTER_API_KEY`` is present, or can be selected explicitly with
+    ``--provider orcarouter``.
+    """
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["orcarouter"]
+
+    display_name = param.String(
+        default="OrcaRouter",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://api.orcarouter.ai/v1",
+        doc="The OrcaRouter API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "orcarouter/auto"},
+    })
+
+    select_models = param.List(default=[
+        "orcarouter/auto",
+        "orcarouter/free",
+        "orcarouter/fusion",
+        "orcarouter/fusion-mini",
+        "orcarouter/fusion-flash",
+        "openai/gpt-6.1-sol",
+        "anthropic/claude-sonnet-5.5",
+        "google/gemini-3.1-pro-preview",
+        "deepseek/deepseek-v4.1-flash",
+    ], constant=True, doc="Available OrcaRouter models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from OrcaRouter."""
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
