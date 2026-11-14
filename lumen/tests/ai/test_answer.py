@@ -1736,7 +1736,7 @@ async def test_returns_a_model_from_json_string(frame_source):
 
     async def invoke(messages, system="", response_model=None, **kwargs):
         if response_model is not None and response_model.__name__ == "Result":
-            return response_model.model_construct(result=llm.result)
+            return response_model(result=llm.result)
         return await original_invoke(messages, system, response_model, **kwargs)
 
     llm.invoke = invoke
@@ -1783,7 +1783,7 @@ async def test_returns_a_dict_from_json_string(frame_source):
 
     async def invoke(messages, system="", response_model=None, **kwargs):
         if response_model is not None and response_model.__name__ == "Result":
-            return response_model.model_construct(result=llm.result)
+            return response_model(result=llm.result)
         return await original_invoke(messages, system, response_model, **kwargs)
 
     llm.invoke = invoke
@@ -1810,7 +1810,7 @@ async def test_returns_a_list_from_json_string(frame_source):
 
     async def invoke(messages, system="", response_model=None, **kwargs):
         if response_model is not None and response_model.__name__ == "Result":
-            return response_model.model_construct(result=llm.result)
+            return response_model(result=llm.result)
         return await original_invoke(messages, system, response_model, **kwargs)
 
     llm.invoke = invoke
