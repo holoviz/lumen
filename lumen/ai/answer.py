@@ -2,7 +2,6 @@
 Ask a Lumen Source or Pipeline a question from Python and get an Answer.
 """
 from __future__ import annotations
-from typing_extensions import Annotated
 
 import asyncio
 import base64
@@ -29,7 +28,9 @@ from contextlib import (
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import (
+    TYPE_CHECKING, Annotated, Any, Literal,
+)
 
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
@@ -49,7 +50,9 @@ from panel_material_ui import (
     Alert, Button, Card, ChatInterface, Column, Row,
 )
 from panel_material_ui.chat import ChatMessage
-from pydantic import BeforeValidator, TypeAdapter, ValidationError, create_model
+from pydantic import (
+    BeforeValidator, TypeAdapter, ValidationError, create_model,
+)
 from sqlglot import exp
 
 from .. import __version__
