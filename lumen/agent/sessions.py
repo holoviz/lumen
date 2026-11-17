@@ -5,8 +5,9 @@ A session file holds the name of the fixture a conversation ran on and, per
 turn, its question, the nodes it added or changed and the dashboard YAML after
 it. The case it becomes asks the same questions on the same fixture, and its
 expectations are computed by rerunning each turn's dashboard there, with no
-model: the rows and columns of the turn's SQL node, the table its SQL reads
-first and the mark of the last turn's chart.
+model: the rows of the turn's SQL node, the first table its SQL names and
+the mark of the last turn's chart. Column names are only expected when asked
+for, since a recording's aliases are a choice the question rarely makes.
 """
 from __future__ import annotations
 
@@ -25,9 +26,7 @@ from panel_flowdash.agent import DashboardOps, dashboard_from_yaml
 from pydantic_evals import Case
 
 from ..ai.evals.harness import MAX_ROWS, Expected, Inputs
-from ..flowdash import (
-    COMPONENTS, SOURCE_ID, bind_source, unbind_source,
-)
+from ..flowdash import COMPONENTS, SOURCE_ID, bind_source
 from . import _graph
 from .evals import answer_nodes, chart_summary, result_rows
 from .headless import TurnResult
@@ -92,21 +91,23 @@ def rerun(dashboard: str, source: Any) -> FlowDash:
         if item["component_id"] == SOURCE_ID and (item.get("config") or {}).get("ref")
     ]
     for ref in refs:
-        bind_source(source, ref)
-    try:
-        editor.import_dashboard(doc)
-    finally:
-        for ref in refs:
-            unbind_source(ref)
+        bind_source(editor, source, ref)
+    editor.import_dashboard(doc)
     return editor
 
 
-def _first_table(sql: str) -> str | None:
-    tables = sorted(table.name for table in sqlglot.parse_one(sql).find_all(sqlglot.exp.Table))
-    return tables[0].lower() if tables else None
+def first_table(sql: str, dialect: str | None = None) -> str | None:
+    """The first table ``sql`` names, in the order it is written, leaving out its CTEs."""
+    parsed = sqlglot.parse_one(sql, read=dialect)
+    ctes = {cte.alias_or_name.lower() for cte in parsed.find_all(sqlglot.exp.CTE)}
+    tables = [
+        table for table in parsed.find_all(sqlglot.exp.Table, bfs=False)
+        if isinstance(table.this, sqlglot.exp.Identifier) and table.name.lower() not in ctes
+    ]
+    return tables[0].name.lower() if tables else None
 
 
-def expected(session: Session, source: Any) -> Expected:
+def expected(session: Session, source: Any, expect_columns: bool = False) -> Expected:
     """The expectations of a session, from each turn's dashboard rerun on ``source``."""
     turn_rows, tables = [], []
     rows = columns = mark = None
@@ -120,20 +121,24 @@ def expected(session: Session, source: Any) -> Expected:
                 columns, rows, count = result_rows(_graph.output(ops, data, "data"))
                 rows = rows if count <= MAX_ROWS else None
             turn_rows.append(rows)
-            tables.append(_first_table(_graph.config_of(ops, data)["sql"]) if data is not None else None)
+            tables.append(first_table(_graph.config_of(ops, data)["sql"], source.dialect) if data is not None else None)
             marks, _ = chart_summary([_graph.config_of(ops, name).get("spec") or {} for name in views])
             mark = marks[-1] if marks else None
         finally:
             editor.dispose()
     return Expected(
-        rows=rows, columns=columns, chart_mark=mark,
+        rows=rows, columns=columns if expect_columns else None, chart_mark=mark,
         turn_rows=turn_rows if any(r is not None for r in turn_rows) else None,
         turn_tables=tables if all(tables) else None,
     )
 
 
-def session_case(path: str | os.PathLike, source_factory: Callable[[Inputs], Any]) -> Case:
-    """A harness case asking the questions of the session at ``path`` on its fixture."""
+def session_case(path: str | os.PathLike, source_factory: Callable[[Inputs], Any], columns: bool = False) -> Case:
+    """
+    A harness case asking the questions of the session at ``path`` on its
+    fixture; ``columns=True`` also expects the recorded column names.
+    """
     session = load_session(path)
     inputs = Inputs(session.questions, fixture=session.fixture)
-    return Case(name=f"session_{Path(path).stem}", inputs=inputs, metadata=expected(session, source_factory(inputs)))
+    metadata = expected(session, source_factory(inputs), columns)
+    return Case(name=f"session_{Path(path).stem}", inputs=inputs, metadata=metadata)

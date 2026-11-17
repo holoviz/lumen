@@ -3,20 +3,38 @@ from __future__ import annotations
 
 import weakref
 
+import sqlglot
+
 from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
-from ..ai.agents.sql import execute_distinct_values, execute_exploration_sql
+from ..ai.agents.sql import (
+    PROMPT_OTHER_TABLES, execute_distinct_values, execute_exploration_sql,
+)
 from ..ai.data_quality import lint_data
 from ..ai.schemas import Metaset, get_metaset
+from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
-from ..flowdash import SOURCE_ID
+from ..flowdash import (
+    QUERY_TIMEOUT, SOURCE_ID, SQL_ID, VIEW_ID, check_query,
+)
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
 from . import _graph
 
-QUERY_TIMEOUT = 30
 STATS_TIMEOUT = 30
+# Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
+SCHEMA_TABLES_SHOWN = 25
+
+DIALECT_NOTES = {
+    "duckdb": """\
+DuckDB notes:
+- Quote column names with double quotes and strings with single quotes.
+- Range predicates: "date" >= '2023-06-01' AND "date" < '2023-09-01'.
+- Window filtering: QUALIFY ROW_NUMBER() OVER (...) <= 5.
+- Use TRY_CAST for conversions that may fail.""",
+    "snowflake": "Snowflake notes:\n- No quotes around database, schema or table names.",
+}
 
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
 
@@ -55,8 +73,25 @@ def _sources(source: BaseSQLSource) -> dict[tuple[str, str], BaseSQLSource]:
     return {(source.name, table): source for table in source.get_tables()}
 
 
+def placed_nodes(ops) -> str | None:
+    """The SQL and chart nodes on the dashboard, with the columns of each SQL node's result."""
+    lines = []
+    for name in _graph.nodes(ops):
+        component = _graph.component_of(ops, name)
+        if component == SQL_ID:
+            try:
+                frame = _graph.output(ops, name, "data")
+                columns = f"columns: {', '.join(map(str, frame.columns))}" if frame is not None else "no result"
+            except OperationError as exc:
+                columns = str(exc)
+            lines.append(f"- {name} (SQL; {columns})")
+        elif component == VIEW_ID:
+            lines.append(f"- {name} (chart)")
+    return "\n".join(lines) or None
+
+
 async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) -> str:
-    """List the tables of a source node with their columns.
+    """List the tables of a source node with their columns, the source's SQL dialect and the SQL nodes already placed.
 
     Args:
         source: The name of a source node; may be left out when there is only one.
@@ -64,7 +99,15 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) 
     name, src = resolve_source(ctx.deps, source)
     tables = src.get_tables()
     meta = await metaset(src)
-    return f"{len(tables)} table(s) in source {name!r} ({src.dialect}):\n" + meta.table_context(n=None, include_lineage=False)
+    others = ", ".join(n for n in _graph.nodes(ctx.deps.ops, SOURCE_ID) if n != name)
+    text = f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
+    text += f"; other source nodes: {others}):\n" if others else "):\n"
+    text += meta.table_context(n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False)
+    if src.dialect in DIALECT_NOTES:
+        text += "\n\n" + DIALECT_NOTES[src.dialect]
+    if placed := placed_nodes(ctx.deps.ops):
+        text += "\n\nNodes on the dashboard:\n" + placed
+    return text
 
 
 async def describe_table(
@@ -114,6 +157,10 @@ async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = 
         source: The name of a source node; may be left out when there is only one.
     """
     _, src = resolve_source(ctx.deps, source)
+    try:
+        check_query(clean_sql(sql.strip(), src.dialect), src)
+    except (ValueError, sqlglot.errors.SqlglotError) as exc:
+        return f"SQL parse/clean error: {format_error(exc)}"
     return await execute_exploration_sql(None, sql, sources=_sources(src), timeout=QUERY_TIMEOUT)
 
 

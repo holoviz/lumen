@@ -106,8 +106,11 @@ async def test_seeded_query_is_placed_before_the_prompt():
     seen = {}
 
     def respond(messages, info):
-        if not any(isinstance(m, ModelResponse) for m in messages):
-            seen["instructions"] = info.instructions
+        count = sum(isinstance(m, ModelResponse) for m in messages)
+        if count == 0:
+            return ModelResponse(parts=[ToolCallPart("list_tables", {})])
+        if count == 1:
+            seen["tables"] = messages[-1].parts[0].content
             return ModelResponse(parts=[ToolCallPart("add_chart", {"data": "result", "name": "chart", "spec": {
                 "mark": "bar", "encoding": {"x": {"field": "category", "type": "nominal"},
                                             "y": {"field": "total", "type": "quantitative"}}}})])
@@ -117,7 +120,7 @@ async def test_seeded_query_is_placed_before_the_prompt():
     case = by_name("agent_vega_bar")[0]
     output = await subject.run(case.inputs, subject.build_model("x"), source(case.inputs))
 
-    assert "- result (SQL; columns: category, total)" in seen["instructions"]
+    assert "- result (SQL; columns: category, total)" in seen["tables"]
     turn = output.turns[0]
     assert turn.status == "success"
     assert turn.chart_marks == ["bar"]
@@ -151,22 +154,61 @@ def test_session_becomes_case_with_rerun_expectations():
     expected = case.metadata
     assert [sorted(rows) for rows in expected.turn_rows] == [[["east", 65.0], ["west", 40.0]], [["west", 40.0]]]
     assert expected.rows == [["west", 40.0]]
-    assert expected.columns == ["region", "total_paid_order_amount"]
-    assert expected.turn_tables == ["customers", "customers"]
+    assert expected.columns is None
+    assert expected.turn_tables == ["orders", "orders"]
+    assert session_case(SESSIONS / "paid_by_region.yaml", source, columns=True).metadata.columns[0] == "region"
+
+    top = session_case(SESSIONS / "top_customer.yaml", source).metadata
+    assert top.rows == [["Ada", 2]]
 
     chart = session_case(SESSIONS / "sales_chart.yaml", source).metadata
     assert chart.chart_mark == "bar"
     assert [sorted(rows) for rows in chart.turn_rows] == [[["A", 15.0], ["B", 20.0]]] * 2
 
 
+def recorded_fingerprints(name):
+    return {
+        (message.metadata or {}).get("panel_agents", {}).get("fingerprint")
+        for message in load_messages(SESSIONS / f"{name}.trace.jsonl") if isinstance(message, ModelResponse)
+    }
+
+
+STALE = (
+    "The recorded sessions were made with another agent surface (fingerprints {recorded}, now {current}): "
+    "the agent's instructions or tool schemas changed, possibly through an upstream panel-flowdash docstring. "
+    "Record them again with `python -m tests.evals.record_sessions` and review the answers."
+)
+
+
+def stale_sessions():
+    current = agent_fingerprint()
+    recorded = set().union(*(recorded_fingerprints(name) for name in SESSION_NAMES))
+    return None if recorded == {current} else STALE.format(recorded=sorted(map(str, recorded)), current=current)
+
+
+def test_recorded_sessions_match_agent_surface():
+    assert stale_sessions() is None, stale_sessions()
+
+
+@pytest.fixture
+def playback():
+    if (reason := stale_sessions()) is not None:
+        pytest.skip("Stale cassette, see test_recorded_sessions_match_agent_surface")
+    return reason
+
+
+def fixture(inputs):
+    data = source(inputs)
+    # Tool results show rows in the engine's order, which only one thread keeps stable.
+    data._connection.execute("SET threads TO 1")
+    return data
+
+
 @pytest.mark.parametrize("name", SESSION_NAMES)
-async def test_cassette_playback_rebuilds_recorded_graph(name):
+async def test_cassette_playback_rebuilds_recorded_graph(playback, name):
     session = load_session(SESSIONS / f"{name}.yaml")
     cassette = Cassette.from_trace(SESSIONS / f"{name}.trace.jsonl", strict=True)
-    fixture = source(Inputs(session.questions, fixture=session.fixture))
-    # Tool results show rows in the engine's order, which only one thread keeps stable.
-    fixture._connection.execute("SET threads TO 1")
-    run = AgentSession(fixture, cassette)
+    run = AgentSession(fixture(Inputs(session.questions, fixture=session.fixture)), cassette)
     try:
         turns = [await run.ask(question) for question in session.questions]
     finally:
@@ -179,14 +221,24 @@ async def test_cassette_playback_rebuilds_recorded_graph(name):
 
 
 @pytest.mark.parametrize("name", SESSION_NAMES)
-async def test_session_scored_by_harness_on_cassette(name):
+async def test_session_scored_by_harness_on_cassette(playback, name):
     subject = FlowDashSubject(cassette=SESSIONS / f"{name}.trace.jsonl")
     dataset = Dataset[Inputs, Output, Expected](
-        name="sessions", cases=[session_case(SESSIONS / f"{name}.yaml", source)], evaluators=[CheckResult()])
-    report = await evaluate(subject.build_model("cassette"), dataset, source, subject=subject)
+        name="sessions", cases=[session_case(SESSIONS / f"{name}.yaml", fixture)], evaluators=[CheckResult()])
+    report = await evaluate(subject.build_model("cassette"), dataset, fixture, subject=subject)
 
     assert not report.failures
     assert all(result.value for result in report.cases[0].assertions.values())
+
+
+async def test_rerun_during_live_session_keeps_its_source():
+    live = AgentSession(source(Inputs(["x"], fixture="sales")), scripted([TextPart("ok")]))
+    try:
+        session_case(SESSIONS / "paid_by_region.yaml", source)
+        live.ops.replace_yaml(live.ops.get_dashboard())
+        assert live.ops.editor.graph.get_state(live.ops._instance("data")).source is live.source
+    finally:
+        live.close()
 
 
 def test_recorded_sessions_hold_no_credentials_or_local_paths():

@@ -5,25 +5,36 @@ Edges between these nodes carry a Lumen ``Source`` or ``Pipeline`` rather
 than a DataFrame, so a query placed on a SQL node runs in the source's
 engine. Each node resolves its Lumen object once per change and every
 output reads that object.
+
+Source nodes never build a source from their config: the host binds the
+sources an editor may use with ``bind_source``, and a source node only
+names one of them by ``ref``. Whoever edits a dashboard can therefore only
+point it at sources the host chose, never open a new connection.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import weakref
 
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from typing import Any
 
 import panel as pn
 import param
 
 from panel.viewable import Viewer
-from panel_flowdash import register, register_port_type
+from panel_flowdash import current_dashboard, register, register_port_type
 from panel_flowdash.util import is_failure
 
-from ..ai.agents.sql import validate_read_only_sql
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import SQLLimit
+from ..util import get_dataframe_schema
+from .checks import check_chart, check_query
 
 SOURCE_TYPE = register_port_type("lumen.Source")
 PIPELINE_TYPE = register_port_type("lumen.Pipeline")
@@ -32,54 +43,76 @@ SOURCE_ID = "Lumen/source"
 SQL_ID = "Lumen/sql"
 VIEW_ID = "Lumen/view"
 
-# The same cap SQLAgent puts on a final query.
-RESULT_LIMIT = 1_000_000
+# Rows a SQL node keeps in memory unless its config sets another limit.
+RESULT_LIMIT = 100_000
+QUERY_TIMEOUT = 30
 
-_BOUND: dict[str, Source] = {}
+_BOUND: weakref.WeakKeyDictionary[Any, dict[str, Source]] = weakref.WeakKeyDictionary()
+_RESULTS: dict[tuple[int, str], Any] = {}
 
 
-def bind_source(source: Source, ref: str | None = None) -> str:
-    """
-    Make a live ``Source`` available to source nodes whose ``ref`` is
-    ``ref`` (default: the source's name), e.g. an in-memory fixture that
-    cannot be rebuilt from its spec. Returns the ref.
-    """
-    ref = ref or source.name
-    _BOUND[ref] = source
+def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
+    """Let source nodes of ``editor`` whose ``ref`` is ``ref`` use ``source``. Returns the ref."""
+    _BOUND.setdefault(editor, {})[ref] = source
     return ref
 
 
-def unbind_source(ref: str) -> None:
+def unbind_source(editor: Any, ref: str) -> None:
     """Forget a source bound with ``bind_source``."""
-    _BOUND.pop(ref, None)
+    _BOUND.get(editor, {}).pop(ref, None)
 
 
-def source_config(source: Source, ref: str | None = None) -> dict[str, Any]:
-    """Config for a source node bound to ``source``, with its spec when it serializes."""
-    config: dict[str, Any] = {"ref": ref or source.name}
-    try:
-        config["spec"] = source.to_spec(context={})
-    except Exception:
-        pass
-    return config
+def bound_sources(editor: Any) -> dict[str, Source]:
+    return dict(_BOUND.get(editor, {}))
 
 
-def compile_sql(source: Source, sql: str, table: str) -> Pipeline:
+def result_sql(source: BaseSQLSource, sql: str, limit: int = RESULT_LIMIT) -> str:
+    """The statement a SQL node runs for ``sql``, with its row cap."""
+    return SQLLimit(limit=limit, write=source.dialect, pretty=True, identify=False).apply(sql)
+
+
+@contextmanager
+def primed_result(source: BaseSQLSource, sql: str, frame: Any) -> Iterator[None]:
     """
-    A pipeline whose table is ``sql`` evaluated by ``source``'s engine.
+    Within the block, hand the result of ``sql`` (a ``result_sql``
+    statement), already executed by the caller, to the next SQL node that
+    would run it, so it runs once.
+    """
+    key = (id(source), sql)
+    _RESULTS[key] = frame
+    try:
+        yield
+    finally:
+        _RESULTS.pop(key, None)
 
-    Raises ``ValueError`` unless ``sql`` is a single read-only query.
+
+def execute(source: BaseSQLSource, sql: str, timeout: float = QUERY_TIMEOUT) -> Any:
+    """Run ``sql`` on ``source`` in a worker thread, stopping it after ``timeout`` seconds."""
+    if (primed := _RESULTS.pop((id(source), sql), None)) is not None:
+        return primed
+    with ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, source.execute_with_timeout(sql, timeout)).result()
+
+
+def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
+                timeout: float = QUERY_TIMEOUT) -> Pipeline:
+    """
+    A pipeline whose table is ``sql`` evaluated by ``source``'s engine, with
+    its result fetched once under ``limit`` rows and ``timeout`` seconds.
+
+    Raises ``ValueError`` unless ``sql`` passes ``check_query``.
     """
     if not isinstance(source, BaseSQLSource):
         raise ValueError(f"{type(source).__name__} does not run SQL.")
-    validate_read_only_sql(sql, source.dialect)
+    check_query(sql, source)
+    frame = execute(source, result_sql(source, sql, limit), timeout)
     # The result table joins the source's own tables, so it must not shadow one the query reads.
     while table in source.get_tables():
         table = f"{table}_result"
     kwargs = {"materialize": False} if isinstance(source, DuckDBSource) else {}
     query_source = source.create_sql_expr_source({table: sql}, **kwargs)
-    limit = SQLLimit(limit=RESULT_LIMIT, write=source.dialect, pretty=True, identify=False)
-    return Pipeline(source=query_source, table=table, sql_transforms=[limit], name=table)
+    schema = get_dataframe_schema(frame)["items"]["properties"]
+    return Pipeline(source=query_source, table=table, schema=schema, data=frame, name=table)
 
 
 def default_table(sql: str) -> str:
@@ -125,28 +158,31 @@ class LumenNode(Viewer):
 
 @register(
     component=True, page=False, title="Lumen Source", icon="storage",
-    description="A Lumen data source, from its spec or bound by the host by ref.",
-    config=["spec", "ref"],
+    description="A Lumen data source the app provides, named by its ref.",
+    config=["ref"],
     provides=[{"key": "source", "type": SOURCE_TYPE}],
 )
 class SourceNode(LumenNode):
 
-    spec = param.Dict(default={}, doc="The source's Lumen spec.")
-
     ref = param.String(default="", doc="Name of a source the host bound with bind_source.")
 
-    @param.depends("spec", "ref", watch=True, on_init=True)
+    def __init__(self, **params):
+        editor = current_dashboard()
+        self._editor = weakref.ref(editor) if editor is not None else None
+        super().__init__(**params)
+
+    @param.depends("ref", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
 
     def _resolve(self) -> Source | None:
-        if self.ref and self.ref in _BOUND:
-            return _BOUND[self.ref]
-        if self.spec:
-            return Source.from_spec(dict(self.spec))
-        if self.ref:
-            raise ValueError(f"No source is bound as {self.ref!r} and the node has no spec.")
-        return None
+        if not self.ref:
+            return None
+        editor = self._editor() if self._editor is not None else None
+        bound = bound_sources(editor) if editor is not None else {}
+        if self.ref not in bound:
+            raise ValueError(f"No source is bound as {self.ref!r}; the app binds the sources a dashboard may use.")
+        return bound[self.ref]
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -166,7 +202,7 @@ class SourceNode(LumenNode):
         "A read-only SQL query run by the source's engine. Outputs a Lumen pipeline "
         "over the result and the result as a DataFrame."
     ),
-    config=["sql", "table"],
+    config=["sql", "table", "limit"],
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
 )
@@ -178,14 +214,16 @@ class SQLNode(LumenNode):
 
     table = param.String(default="", doc="Name of the result table; derived from the SQL if empty.")
 
-    @param.depends("source", "sql", "table", watch=True, on_init=True)
+    limit = param.Integer(default=RESULT_LIMIT, bounds=(1, None), doc="Rows of the result kept in memory.")
+
+    @param.depends("source", "sql", "table", "limit", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
 
     def _resolve(self) -> Pipeline | None:
         if self.source is None or not self.sql.strip():
             return None
-        return compile_sql(self.source, self.sql, self.table or default_table(self.sql))
+        return compile_sql(self.source, self.sql, self.table or default_table(self.sql), self.limit)
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -207,7 +245,7 @@ class SQLNode(LumenNode):
 
 @register(
     component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart",
-    description="A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns.",
+    description="A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings no data or URLs.",
     config=["spec"],
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
 )
@@ -226,7 +264,8 @@ class ViewNode(LumenNode):
             return None
         from ..views.base import VegaLiteView
 
-        return VegaLiteView(pipeline=self.pipeline, spec=dict(self.spec))
+        spec = check_chart(self.spec, [str(c) for c in self.pipeline.data.columns])
+        return VegaLiteView(pipeline=self.pipeline, spec=spec)
 
     def _body(self):
         view = self._object
