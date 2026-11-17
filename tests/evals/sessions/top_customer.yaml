@@ -1,0 +1,53 @@
+lumen_session: 1
+fixture: commerce
+turns:
+- question: Which customer has the most paid orders, and how many?
+  nodes:
+  - paid_orders_by_customer
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    nodes:
+      data:
+        component: Lumen/source
+        config:
+          ref: data
+          spec:
+            read_only: false
+            tables:
+              customers: SELECT * FROM (VALUES (1, 'Ada', 'east'), (2, 'Bo', 'west'), (3, 'Cy', 'east'), (4,
+                'Dee', 'north')) AS t(customer_id, customer, region)
+              orders: SELECT * FROM (VALUES (101, 1, 30, 'paid'), (102, 1, 20, 'paid'), (103, 2, 40, 'paid'),
+                (104, 2, 10, 'cancelled'), (105, 3, 15, 'paid')) AS t(order_id, customer_id, amount, status)
+            uri: ':memory:'
+            type: duckdb
+        position: [0, 0]
+      paid_orders_by_customer:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              c.customer,
+              COUNT(*) AS paid_order_count
+            FROM orders AS o
+            JOIN customers AS c
+              ON o.customer_id = c.customer_id
+            WHERE
+              o.status = 'paid'
+            GROUP BY
+              c.customer
+            ORDER BY
+              paid_order_count DESC
+          table: paid_orders_by_customer
+        position: [350, 0]
+    edges:
+      - from: data.source
+        to: paid_orders_by_customer.source

@@ -1,0 +1,106 @@
+lumen_session: 1
+fixture: sales
+turns:
+- question: What is the total amount by category?
+  nodes:
+  - total_amount_by_category
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    nodes:
+      data:
+        component: Lumen/source
+        config:
+          ref: data
+          spec:
+            read_only: false
+            tables:
+              sales: SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)
+            uri: ':memory:'
+            type: duckdb
+        position: [0, 0]
+      total_amount_by_category:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              category,
+              SUM(amount) AS total_amount
+            FROM sales
+            WHERE
+              NOT category IS NULL AND NOT amount IS NULL
+            GROUP BY
+              category
+          table: total_amount_by_category
+        position: [350, 0]
+    edges:
+      - from: data.source
+        to: total_amount_by_category.source
+- question: Show that as a bar chart.
+  nodes:
+  - total_amount_by_category_chart
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    nodes:
+      data:
+        component: Lumen/source
+        config:
+          ref: data
+          spec:
+            read_only: false
+            tables:
+              sales: SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)
+            uri: ':memory:'
+            type: duckdb
+        position: [0, 0]
+      total_amount_by_category:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              category,
+              SUM(amount) AS total_amount
+            FROM sales
+            WHERE
+              NOT category IS NULL AND NOT amount IS NULL
+            GROUP BY
+              category
+          table: total_amount_by_category
+        position: [350, 0]
+      total_amount_by_category_chart:
+        component: Lumen/view
+        config:
+          spec:
+            mark: bar
+            encoding:
+              x:
+                field: category
+                type: nominal
+                title: Category
+              y:
+                field: total_amount
+                type: quantitative
+                title: Total amount
+        position: [700, 0]
+    edges:
+      - from: data.source
+        to: total_amount_by_category.source
+      - from: total_amount_by_category.pipeline
+        to: total_amount_by_category_chart.pipeline

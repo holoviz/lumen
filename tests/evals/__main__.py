@@ -15,9 +15,9 @@ from pathlib import Path
 
 from lumen.ai.evals.bird import bird_source, database_path, download_questions
 from lumen.ai.evals.harness import (
-    APPLICABILITY, DEFAULT_SCORING, DEFAULT_SUBJECT, SUBJECTS, artifacts_path,
-    case_fingerprint, effective_scoring, evaluate, resolve_subject,
-    run_settings, subject_spec,
+    APPLICABILITY, DEFAULT_SCORING, DEFAULT_SUBJECT, OPTIONAL_SUBJECTS,
+    SUBJECTS, artifacts_path, case_fingerprint, effective_scoring, evaluate,
+    resolve_subject, run_settings, subject_spec,
 )
 
 from .bird_runner import default_api, run_bird_case_process
@@ -49,7 +49,7 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted parallel BIRD run using --output")
     parser.add_argument("--workers", type=int, default=18, help="Concurrent isolated BIRD workers (default: 18)")
     parser.add_argument("--subject", default=DEFAULT_SUBJECT,
-                        help=f"Subject under evaluation: a registered name ({', '.join(sorted(SUBJECTS))}) "
+                        help=f"Subject under evaluation: a registered name ({', '.join(sorted({*SUBJECTS, *OPTIONAL_SUBJECTS}))}) "
                              f"or package.module:Class (default: {DEFAULT_SUBJECT})")
     parser.add_argument("--scoring", choices=["all", "outcome"], default=DEFAULT_SCORING,
                         help="Score all checks, or outcome checks only with architecture checks as diagnostics (default: all)")
