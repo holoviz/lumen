@@ -1,5 +1,11 @@
 import panel as pn
 
+from ..util import AI_EXTRA_HINT, missing_ai_modules
+
+if _missing := missing_ai_modules():
+    raise ModuleNotFoundError(f"{AI_EXTRA_HINT} (missing: {', '.join(_missing)})", name=_missing[0])
+del _missing
+
 from ..sources.data import read
 from . import (
     actor, agents, embeddings, llm,

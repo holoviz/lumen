@@ -12,21 +12,17 @@ import tomllib
 
 import pytest
 
-ROOT = pathlib.Path(__file__).parents[2]
+from lumen.util import AI_EXTRA_MODULES
 
-AI_ONLY_MODULES = [
-    'chardet', 'griffe', 'httpx', 'instructor', 'jsonschema', 'lxml',
-    'markdown_it', 'markitdown', 'nbformat', 'openai', 'panel_splitjs',
-    'platformdirs', 'pydantic', 'pydantic_extra_types', 'semchunk',
-    'tabulate', 'tiktoken', 'vl_convert',
-]
+ROOT = pathlib.Path(__file__).parents[2]
+CSV = ROOT / 'lumen' / 'tests' / 'sources' / 'test.csv'
 
 BLOCKER = textwrap.dedent(f"""
     import importlib.abc
     import importlib.util
     import sys
 
-    BLOCKED = {AI_ONLY_MODULES!r}
+    BLOCKED = {list(AI_EXTRA_MODULES)!r}
 
     class _Blocker(importlib.abc.MetaPathFinder):
         def find_spec(self, name, path, target=None):
@@ -71,7 +67,7 @@ def test_ai_extra_matches_blocked_modules():
         'markdown_it': 'markdown-it-py', 'panel_splitjs': 'panel-splitjs',
         'pydantic_extra_types': 'pydantic-extra-types', 'vl_convert': 'vl-convert-python',
     }
-    assert {distributions.get(m, m) for m in AI_ONLY_MODULES} == ai
+    assert {distributions.get(m, m) for m in AI_EXTRA_MODULES} == ai
 
 
 def test_import_core_without_ai(tmp_path):
@@ -89,14 +85,13 @@ def test_import_core_without_ai(tmp_path):
 
 
 def test_pipeline_without_ai(tmp_path):
-    csv = ROOT / 'lumen' / 'tests' / 'sources' / 'test.csv'
     run_without_ai(f"""
         from lumen.filters.base import ConstantFilter
         from lumen.pipeline import Pipeline
         from lumen.sources.base import FileSource
         from lumen.views.base import Table
 
-        source = FileSource(tables={{'test': {str(csv)!r}}})
+        source = FileSource(tables={{'test': {str(CSV)!r}}})
         pipeline = Pipeline(source=source, table='test')
         pipeline.add_filter(ConstantFilter(field='A', value=(0, 2)))
         assert len(pipeline.data) == 3
@@ -105,14 +100,13 @@ def test_pipeline_without_ai(tmp_path):
 
 
 def test_serve_yaml_without_ai(tmp_path):
-    csv = ROOT / 'lumen' / 'tests' / 'sources' / 'test.csv'
     spec = tmp_path / 'dashboard.yaml'
     spec.write_text(textwrap.dedent(f"""
         sources:
           test:
             type: file
             tables:
-              test: {csv}
+              test: {CSV}
         pipelines:
           test:
             source: test
@@ -148,21 +142,54 @@ def test_serve_yaml_without_ai(tmp_path):
     """, tmp_path)
 
 
-def test_cli_serves_yaml_without_ai(tmp_path):
+def test_cli_without_ai(tmp_path):
     run_without_ai("""
         import lumen.command
 
         calls = []
         lumen.command.main = lambda args=None: calls.append(sys.argv[1:])
-        sys.argv = ['lumen', 'serve', 'dashboard.yaml', '--port', '0']
-        lumen.command.ai_main()
-        assert calls == [['serve', 'dashboard.yaml', '--port', '0']]
+        for argv in (['serve', 'a.yaml', '--port', '0'], ['serve', 'a.yml', 'b.yaml'], ['--version']):
+            lumen.command.ai_main(argv)
+            assert calls.pop() == argv
 
-        sys.argv = ['lumen', 'serve', 'data.csv']
-        try:
-            lumen.command.ai_main()
-        except SystemExit as e:
-            assert e.code == 1
-        else:
-            raise AssertionError('expected SystemExit')
+        for argv in (['serve', 'data.csv'], ['serve', 'a.yaml', 'data.csv'], []):
+            try:
+                lumen.command.ai_main(argv)
+            except SystemExit as e:
+                assert e.code == 1
+            else:
+                raise AssertionError(f'expected SystemExit for {argv}')
+        assert not calls
+    """, tmp_path)
+
+
+def test_import_lumen_ai_without_ai_hints_at_extra(tmp_path):
+    result = subprocess.run(
+        [sys.executable, '-c', BLOCKER + textwrap.dedent("""
+            try:
+                import lumen.ai
+            except ModuleNotFoundError as e:
+                assert "pip install 'lumen[ai]'" in str(e), e
+                assert e.name in BLOCKED, e.name
+            else:
+                raise AssertionError('lumen.ai imported')
+        """)], capture_output=True, text=True, cwd=tmp_path, timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_read_geojson_without_ai(tmp_path):
+    pytest.importorskip('geopandas')
+    geojson = tmp_path / 'points.geojson'
+    geojson.write_text(
+        '{"type": "FeatureCollection", "features": ['
+        '{"type": "Feature", "properties": {"name": "a"}, "geometry": {"type": "Point", "coordinates": [1, 2]}},'
+        '{"type": "Feature", "properties": {"name": "b"}, "geometry": {"type": "Point", "coordinates": [3, 4]}}]}'
+    )
+    run_without_ai(f"""
+        import lumen
+
+        source = lumen.read({str(geojson)!r})
+        assert source.get_tables() == ['points']
+        assert len(source.get('points')) == 2
     """, tmp_path)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib
+import importlib.util
 import io
 import json
 import os
@@ -36,6 +37,30 @@ bokeh3 = Version(bokeh.__version__) > Version("3.0")
 param2 = Version(param.__version__) > Version("2.0rc1")
 
 disallow_refs = {'allow_refs': False} if param2 else {}
+
+#: Top-level modules of the packages the ai extra adds to the core install.
+AI_EXTRA_MODULES = (
+    'chardet', 'griffe', 'httpx', 'instructor', 'jsonschema', 'lxml',
+    'markdown_it', 'markitdown', 'nbformat', 'openai', 'panel_splitjs',
+    'platformdirs', 'pydantic', 'pydantic_extra_types', 'semchunk',
+    'tabulate', 'tiktoken', 'vl_convert',
+)
+
+AI_EXTRA_HINT = "Lumen AI requires the ai extra: pip install 'lumen[ai]'"
+
+
+def missing_ai_modules() -> list[str]:
+    """Return the modules of the ai extra that cannot be imported."""
+    missing = []
+    for name in AI_EXTRA_MODULES:
+        try:
+            found = importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(name)
+    return missing
+
 
 VARIABLE_RE = re.compile(r'\$variables\.([a-zA-Z_]\w*)')
 

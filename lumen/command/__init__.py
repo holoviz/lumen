@@ -20,6 +20,7 @@ from .. import __version__
 from ..config import config
 from ..dashboard import Defaults, load_yaml
 from ..state import state
+from ..util import AI_EXTRA_HINT, missing_ai_modules
 from .builder import Builder
 from .precache import Precache
 from .validate import Validate
@@ -141,22 +142,38 @@ def main(args=None):
         sys.exit(ret)
 
 
+def _runs_without_ai(argv: list[str]) -> bool:
+    """Whether the spec CLI can handle argv: --version, or serving only YAML specs."""
+    if not argv:
+        return False
+    if argv[0] in ('-v', '--version'):
+        return True
+    if argv[0] != 'serve':
+        return False
+    parser = argparse.ArgumentParser()
+    Serve(parser=parser)
+    files = parser.parse_known_args(argv[1:])[0].files
+    return bool(files) and all(f.lower().endswith(YAML_SUFFIXES) for f in files)
+
+
 def ai_main(args=None):
     """Entry point of the lumen and lumen-ai commands.
 
     Without the ai extra installed, serving YAML specs still works through
     the spec CLI; everything else needs Lumen AI.
     """
-    try:
-        from .ai import main as _ai_main
-    except ImportError as e:
-        if len(sys.argv) > 2 and sys.argv[1] == 'serve' and any(
-            arg.lower().endswith(YAML_SUFFIXES) for arg in sys.argv[2:]
-        ):
-            return main(args)
-        print(f'Lumen AI is not installed, install it with "pip install \'lumen[ai]\'": {e}')  # noqa: T201
+    if args is not None:
+        sys.argv = [sys.argv[0], *args]
+    if missing := missing_ai_modules():
+        if _runs_without_ai(sys.argv[1:]):
+            return main()
+        print(  # noqa: T201
+            f"{AI_EXTRA_HINT} (missing: {', '.join(missing)}).\n"
+            "YAML dashboards work without it: lumen serve spec.yaml, or lumen-spec."
+        )
         sys.exit(1)
-    return _ai_main(args)
+    from .ai import main as _ai_main
+    return _ai_main()
 
 
 if __name__ == "__main__":

@@ -211,7 +211,7 @@ export const beyondTables = {
       body:
         'Open NetCDF, Zarr, HDF5 and GRIB files lazily with xarray. Each variable becomes a SQL table with its dimensions as columns, so a question can slice, group and average across time, latitude, longitude or any other dimension. Results plot as grids, maps or lines.',
       formats: ['NetCDF', 'Zarr', 'HDF5', 'GRIB'],
-      code: ["pip install 'lumen[xarray]'", 'lumen-ai serve air_temperature.nc --show'].join('\n'),
+      code: ["pip install 'lumen[ai,xarray]'", 'lumen-ai serve air_temperature.nc --show'].join('\n'),
       question: 'What was the mean air temperature over North America each month of 2013?',
       sql: [
         "SELECT date_trunc('month', time) AS month, AVG(air) AS mean_air",
@@ -227,7 +227,7 @@ export const beyondTables = {
       body:
         'Load GeoJSON, WKT and zipped shapefiles, or any GeoDataFrame. Geometry columns keep their coordinate reference system and render as maps with Vega-Lite or Deck.gl, so a question about places comes back as a map.',
       formats: ['GeoJSON', 'WKT', 'Shapefile', 'GeoDataFrame'],
-      code: ["pip install 'lumen[geo]'", 'lumen-ai serve countries.geojson --show'].join('\n'),
+      code: ["pip install 'lumen[ai,geo]'", 'lumen-ai serve countries.geojson --show'].join('\n'),
       question: 'Map each country, coloured by population.',
       sql: ['SELECT name, pop_est, geometry', 'FROM countries'].join('\n'),
       link: {label: 'Data sources', href: `${DOCS}/configuration/sources/`},

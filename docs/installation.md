@@ -573,6 +573,7 @@ Add extras for data sources and features beyond the LLM provider:
 
 | Extra | Adds |
 |-------|------|
+| `ai` | Lumen AI itself; every `ai-*` provider extra, `chromadb` and `mcp` include it |
 | `sql` | SQLAlchemy, for PostgreSQL, MySQL, SQLite, Oracle and SQL Server |
 | `snowflake` | Snowflake connector |
 | `bigquery` | Google BigQuery |
@@ -585,7 +586,7 @@ Add extras for data sources and features beyond the LLM provider:
 | `mcp` | `MCPTool`, to give agents tools from MCP servers |
 
 ```bash
-pip install 'lumen[sql,xarray]'
+pip install 'lumen[ai,sql,xarray]'
 ```
 
 ---

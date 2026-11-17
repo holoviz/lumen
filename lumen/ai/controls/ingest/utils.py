@@ -5,14 +5,13 @@ import datetime
 import io
 import json
 import re
-import zipfile
 
-from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pandas as pd
 
+from ....sources.data import FileReadResult, read_geo_file
 from ....util import detect_file_encoding, normalize_table_name
 from .constants import (
     CONTENT_TYPE_TO_EXTENSION, METADATA_EXTENSIONS, TABLE_EXTENSIONS,
@@ -202,26 +201,6 @@ def read_json_to_dataframe(content: str | bytes) -> pd.DataFrame:
     raise ValueError(f"Unsupported JSON root type: {type(data).__name__}")
 
 
-@dataclass
-class FileReadResult:
-    """Result of parsing a file into DataFrames."""
-
-    tables: dict[str, pd.DataFrame]
-    """Mapping of table names to DataFrames."""
-
-    source_params: dict = field(default_factory=dict)
-    """Extra params for ``DuckDBSource`` (e.g. spatial initializers)."""
-
-    conversions: dict[str, str] = field(default_factory=dict)
-    """Per-table SQL to execute after registering the DataFrame as
-    ``{table}_temp``.  When present the caller should:
-
-    1. ``conn.register(f"{table}_temp", df_rel)``
-    2. ``conn.execute(conversion)``
-    3. ``conn.unregister(f"{table}_temp")``
-    """
-
-
 def read_file_to_dataframes(
     file_obj: io.BytesIO | io.StringIO,
     extension: str,
@@ -297,45 +276,6 @@ def read_file_to_dataframes(
         return read_geo_file(file_obj, extension, alias)
 
     return None
-
-
-def read_geo_file(
-    file_obj: io.BytesIO, extension: str, alias: str,
-) -> FileReadResult:
-    """Parse a geospatial file, returning WKB geometry + conversion SQL."""
-    if extension == "zip":
-        zf = zipfile.ZipFile(file_obj)
-        if not any(f.filename.endswith("shp") for f in zf.filelist):
-            raise ValueError("ZIP file does not contain a shapefile (.shp)")
-        file_obj.seek(0)
-
-    import geopandas as gpd
-
-    geo_df = gpd.read_file(file_obj)
-    if geo_df.empty:
-        raise ValueError("Geospatial file contains no features")
-
-    df = pd.DataFrame(geo_df)
-    df["geometry"] = geo_df["geometry"].to_wkb()
-
-    cols = ", ".join(f'"{c}"' for c in df.columns if c != "geometry")
-    # A TEMP table is scoped to the creating connection, so it would be
-    # invisible to the cursors DuckDBSource opens when querying.
-    conversion = (
-        f"CREATE TABLE {alias} AS SELECT {cols}, "
-        f"ST_GeomFromWKB(geometry) as geometry FROM {alias}_temp"
-    )
-
-    return FileReadResult(
-        tables={alias: df},
-        source_params={
-            "initializers": ["INSTALL spatial;\nLOAD spatial;"],
-            # DuckDB stores geometry without a CRS, so carry the source CRS
-            # through for DuckDBSource to reapply after the WKB roundtrip.
-            "geometry_crs": str(geo_df.crs) if geo_df.crs is not None else None,
-        },
-        conversions={alias: conversion},
-    )
 
 
 def normalize_json_response(data) -> pd.DataFrame:
