@@ -19,7 +19,7 @@ An interactive executive dashboard with three collapsible sections that combine 
 Install the required packages:
 
 ```bash
-pip install lumen-ai panel
+pip install 'lumen[ai]' panel
 ```
 
 ## 1. DuckDB provides in-memory data for prototyping

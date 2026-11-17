@@ -18,14 +18,9 @@ from bokeh.command.util import die
 from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
-try:
-    from ..ai.config import THIS_DIR
-except ImportError as e:
-    print(f'You need to install Lumen AI with "pip install lumen": {e}')  # noqa: T201
-    sys.exit(1)
-
 from .. import __version__
 from ..ai import agents as lumen_agents, llm as lumen_llms  # Aliased here
+from ..ai.config import THIS_DIR
 from ..ai.llm import (
     LLM_PROVIDERS, PROVIDER_ENV_VARS, get_available_llm, llm_class,
     local_cli_providers, ollama_models, provider_name, quiet_retry_log,

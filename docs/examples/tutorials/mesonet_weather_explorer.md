@@ -37,7 +37,7 @@ This is simpler than `BaseSourceControls` when you just need to fetch from a URL
 Install the required packages:
 
 ```bash
-pip install lumen-ai
+pip install 'lumen[ai]'
 ```
 
 ## 1. Minimal runnable example

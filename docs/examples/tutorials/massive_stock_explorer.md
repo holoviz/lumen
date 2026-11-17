@@ -38,7 +38,7 @@ Compare this with [`RESTAPISourceControls`](../../configuration/controls.md#rest
 Install the required packages and set your API key:
 
 ```bash
-pip install lumen-ai massive
+pip install 'lumen[ai]' massive
 export MASSIVE_API_KEY="your_api_key_here"
 ```
 

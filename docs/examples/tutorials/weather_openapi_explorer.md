@@ -36,7 +36,7 @@ This is ideal for public APIs like weather.gov, data.gov, or any service that pu
 Install the required packages:
 
 ```bash
-pip install lumen-ai
+pip install 'lumen[ai]'
 ```
 
 No API key is needed — the National Weather Service API is free and open.

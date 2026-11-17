@@ -37,7 +37,9 @@ Lumen works with Python 3.11 and above on Linux, Windows, or Mac. The recommende
 
 or using PyPI:
 
-    pip install lumen
+    pip install 'lumen[ai]'
+
+`pip install lumen` without the `ai` extra installs only the data and dashboard layer, without the AI dependencies.
 
 Once installed you will be able to start a Lumen Explorer server by running (replace `data.csv` with your data):
 

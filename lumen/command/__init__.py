@@ -140,5 +140,24 @@ def main(args=None):
     elif ret is not True and isinstance(ret, int) and ret != 0:
         sys.exit(ret)
 
+
+def ai_main(args=None):
+    """Entry point of the lumen and lumen-ai commands.
+
+    Without the ai extra installed, serving YAML specs still works through
+    the spec CLI; everything else needs Lumen AI.
+    """
+    try:
+        from .ai import main as _ai_main
+    except ImportError as e:
+        if len(sys.argv) > 2 and sys.argv[1] == 'serve' and any(
+            arg.lower().endswith(YAML_SUFFIXES) for arg in sys.argv[2:]
+        ):
+            return main(args)
+        print(f'Lumen AI is not installed, install it with "pip install \'lumen[ai]\'": {e}')  # noqa: T201
+        sys.exit(1)
+    return _ai_main(args)
+
+
 if __name__ == "__main__":
     main()

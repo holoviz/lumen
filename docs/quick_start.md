@@ -5,7 +5,7 @@ Install Lumen, set an API key, and start asking questions about your data in 30 
 ## Installation
 
 ```bash
-pip install lumen
+pip install 'lumen[ai]'
 export OPENAI_API_KEY=sk-...
 ```
 

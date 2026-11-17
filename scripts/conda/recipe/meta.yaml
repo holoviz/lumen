@@ -31,6 +31,9 @@ requirements:
     {% for dep in project.get('dependencies', []) %}
     - {{ dep }}
     {% endfor %}
+    {% for dep in project['optional-dependencies']['ai'] %}
+    - {{ dep }}
+    {% endfor %}
 
 test:
   imports:

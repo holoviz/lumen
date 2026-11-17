@@ -35,7 +35,7 @@ Lumen AI has built-in support for many data formats, but some data lives behind 
 Install the required packages:
 
 ```bash
-pip install lumen-ai censusdis
+pip install 'lumen[ai]' censusdis
 ```
 
 ## 1. Minimal example with CodeSourceControls

@@ -23,7 +23,7 @@ Lumen works with any LLM provider. Choose the approach that fits your needs:
 - 🔀 **Router/Multi-provider** — Kilo, OpenRouter, LiteLLM, AWS Bedrock (unified interface, many providers and models)
 - 💻 **Coding CLIs** — Codex, Claude Code, GitHub Copilot, Antigravity (use a CLI you are already signed in to, no API key)
 
-`pip install lumen` is all you need for OpenAI, every OpenAI-compatible provider (OpenRouter, Kilo, Groq, Ollama, AI Navigator, AI Catalyst) and the coding CLIs. Anthropic, Google, Mistral, AWS Bedrock, Llama.cpp and LiteLLM need their client library, which the matching extra below installs.
+`pip install 'lumen[ai]'` is all you need for OpenAI, every OpenAI-compatible provider (OpenRouter, Kilo, Groq, Ollama, AI Navigator, AI Catalyst) and the coding CLIs. Anthropic, Google, Mistral, AWS Bedrock, Llama.cpp and LiteLLM need their client library, which the matching extra below installs along with everything in `ai`. A plain `pip install lumen` installs only the data and dashboard layer (sources, pipelines, views and `lumen serve` of YAML specs), without the AI dependencies.
 
 ---
 
@@ -34,7 +34,7 @@ Use hosted LLM APIs from major providers. Fastest to set up, pay-per-use pricing
 === "OpenAI"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     export OPENAI_API_KEY=sk-...
     ```
 
@@ -137,7 +137,7 @@ Use hosted LLM APIs from major providers. Fastest to set up, pay-per-use pricing
 === "Azure OpenAI"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     export AZUREAI_ENDPOINT_KEY=your-key
     export AZUREAI_ENDPOINT_URL=https://your-resource.openai.azure.com/
     ```
@@ -183,7 +183,7 @@ Use hosted LLM APIs from major providers. Fastest to set up, pay-per-use pricing
 === "Groq"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     export GROQ_API_KEY=gsk_...
     ```
 
@@ -204,7 +204,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 === "Ollama"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     ```
 
     **Setup Ollama:**
@@ -243,7 +243,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 === "MLX (Apple Silicon)"
 
     ```bash
-    pip install lumen mlx-lm
+    pip install 'lumen[ai]' mlx-lm
     ```
 
     Runs models natively on Apple Silicon, either in-process or through a local `mlx_lm.server`. Start Lumen with `--provider mlx`. See [MLX](configuration/llm_providers.md#mlx-apple-silicon) for both modes.
@@ -251,7 +251,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 === "AI Navigator"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     ```
 
     [Anaconda AI Navigator](https://www.anaconda.com/products/ai-navigator) runs models locally on your machine. No API key needed!
@@ -273,7 +273,7 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
 === "AI Catalyst"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     export AI_CATALYST_BASE_URL=https://...
     export AI_CATALYST_API_KEY=...
     ```
@@ -306,7 +306,7 @@ Use a unified interface to access multiple LLM providers and models.
 === "Kilo"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     export KILO_API_KEY=...
     ```
 
@@ -351,7 +351,7 @@ Use a unified interface to access multiple LLM providers and models.
 === "OpenRouter"
 
     ```bash
-    pip install lumen
+    pip install 'lumen[ai]'
     export OPENROUTER_API_KEY=sk-or-...
     ```
 
@@ -556,7 +556,7 @@ Use a unified interface to access multiple LLM providers and models.
 Run Lumen through a command-line coding agent you are already signed in to, so no API key is needed. These providers are meant for local use, not shared deployments.
 
 ```bash
-pip install lumen
+pip install 'lumen[ai]'
 lumen-ai serve penguins.csv --provider claude-code      # Claude Code
 lumen-ai serve penguins.csv --provider codex-cli        # Codex CLI
 lumen-ai serve penguins.csv --provider copilot-cli      # GitHub Copilot CLI, any plan

@@ -28,44 +28,26 @@ classifiers = [
 ]
 dependencies = [
     "bokeh >=3.9.0",
-    "chardet",
     "duckdb >=1.2.0",
-    "lxml",
-    "griffe <2",
     "holoviews >=1.17.0",
-    "httpx",
     "hvplot",
-    "instructor >=1.14.3",
     "intake <2",
     "jinja2 >3.0",
-    "jsonschema",
-    "markdown-it-py",
-    "markitdown",
     "narwhals >=2",
-    "nbformat",
     "numpy",
-    "openai",
     "packaging",
     "pandas",
     "panel >=1.9.0",
     "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
-    "panel-splitjs >=0.4.0",
     "param >=2.2.1",
     "pillow >=13.0.0",
-    "platformdirs",
     "pyarrow",
-    "pydantic >=2.8.0",
-    "pydantic-extra-types",
     "pyyaml",
     "requests",
-    "semchunk",
     "sqlglot[c] >=26.26.0",
-    "tabulate",
-    "tiktoken",
     "tornado",
     "tqdm",
-    "vl-convert-python",
 ]
 
 [project.urls]
@@ -80,32 +62,52 @@ dev = [
     'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
-ai-local = ['huggingface_hub', 'hf_xet']
-ai-openai = ['openai']
-ai-typesafe = ['typesafe-sdk']
+ai = [
+    'chardet',
+    'griffe <2',
+    'httpx',
+    'instructor >=1.14.3',
+    'jsonschema',
+    'lxml',
+    'markdown-it-py',
+    'markitdown',
+    'nbformat',
+    'openai',
+    'panel-splitjs >=0.4.0',
+    'platformdirs',
+    'pydantic >=2.8.0',
+    'pydantic-extra-types',
+    'semchunk',
+    'tabulate',
+    'tiktoken',
+    'vl-convert-python',
+]
+ai-local = ['lumen[ai]', 'huggingface_hub', 'hf_xet']
+ai-openai = ['lumen[ai]']
+ai-typesafe = ['lumen[ai]', 'typesafe-sdk']
 ai-openrouter = ['lumen[ai-openai]']
-ai-mistralai = ['mistralai']
-ai-monty = ['pydantic-monty>=1.0.0']
-ai-bedrock = ['boto3>=1.42.23']
-ai-anthropic = ['anthropic']
+ai-mistralai = ['lumen[ai]', 'mistralai']
+ai-monty = ['lumen[ai]', 'pydantic-monty>=1.0.0']
+ai-bedrock = ['lumen[ai]', 'boto3>=1.42.23']
+ai-anthropic = ['lumen[ai]', 'anthropic']
 ai-transformers = ['lumen[ai-local]', 'sentence_transformers>=2.7.0', 'transformers>=4.51.0']  # for embeddings
 ai-llama = ['lumen[ai-local]', 'llama-cpp-python >=0.3.15']
-ai-google = ['google-genai>=1.56.0', 'jsonref', 'opentelemetry-instrumentation-google-genai']
-ai-litellm = ['litellm !=1.107.0']
-ai-ollama = ['ollama']
-chromadb = ['chromadb']
+ai-google = ['lumen[ai]', 'google-genai>=1.56.0', 'jsonref', 'opentelemetry-instrumentation-google-genai']
+ai-litellm = ['lumen[ai]', 'litellm !=1.107.0']
+ai-ollama = ['lumen[ai]', 'ollama']
+chromadb = ['lumen[ai]', 'chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
 xarray = ['xarray', 'xarray-sql >=0.4.0', 'netCDF4', 'zarr']
 xarray-grib = ['lumen[xarray]', 'cfgrib', 'eccodes']
 geo = ['datashader', 'geopandas', 'geoviews']
 snowflake = ['snowflake-connector-python', 'cryptography']
 ae5 = ['ae5-tools']
-mcp = ['fastmcp']
+mcp = ['lumen[ai]', 'fastmcp']
 
 [project.scripts]
 lumen-spec = "lumen.command:main"
-lumen-ai = "lumen.command.ai:main"
-lumen = "lumen.command.ai:main"
+lumen-ai = "lumen.command:ai_main"
+lumen = "lumen.command:ai_main"
 
 [project.entry-points.'panel.io.rest']
 lumen = "lumen.rest:lumen_rest_provider"

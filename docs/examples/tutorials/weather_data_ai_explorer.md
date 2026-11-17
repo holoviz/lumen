@@ -25,7 +25,7 @@ Each step introduces key Lumen AI concepts with links to detailed configuration 
 Install the required packages:
 
 ```bash
-pip install lumen-ai metpy panel matplotlib
+pip install 'lumen[ai]' metpy panel matplotlib
 ```
 
 ## 1. Create a custom analysis

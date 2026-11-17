@@ -75,7 +75,7 @@ export const hero = {
   tagline: 'Agent framework turning natural language into SQL, charts, dashboards and reports.',
   lede:
     'Ask a question in plain English and Lumen plans the steps, writes the SQL, runs it against your own sources and draws the chart, whether the data is a CSV file, a warehouse table, a NetCDF grid or a GeoJSON map. Open source, with any LLM and any database, and every step can be changed in Python or YAML.',
-  install: 'pip install lumen',
+  install: "pip install 'lumen[ai]'",
   installConda: 'conda install -c conda-forge lumen',
   primary: getStarted,
   secondary: {label: 'See examples', href: `${DOCS}/examples/gallery/`},
