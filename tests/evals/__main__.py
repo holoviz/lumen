@@ -14,9 +14,12 @@ from multiprocessing.connection import wait
 from pathlib import Path
 
 from lumen.ai.evals.bird import bird_source, database_path, download_questions
-from lumen.ai.evals.harness import case_fingerprint, evaluate
+from lumen.ai.evals.harness import (
+    APPLICABILITY, DEFAULT_SCORING, DEFAULT_SUBJECT, SUBJECTS,
+    case_fingerprint, evaluate, resolve_subject, run_settings,
+)
 
-from .bird_runner import default_api, eval_llm, run_bird_case_process
+from .bird_runner import default_api, run_bird_case_process
 from .cases import (
     BIRD_STRATIFIED_IDS, DATASET, QUESTION_IDS, QUESTION_URL,
     SUITE_INSTRUCTIONS, bird_dataset, documents, source,
@@ -44,6 +47,11 @@ def main():
     parser.add_argument("--output", type=Path, help="Result file (defaults to a timestamped file in tests/evals/results)")
     parser.add_argument("--resume", action="store_true", help="Resume an interrupted parallel BIRD run using --output")
     parser.add_argument("--workers", type=int, default=18, help="Concurrent isolated BIRD workers (default: 18)")
+    parser.add_argument("--subject", default=DEFAULT_SUBJECT,
+                        help=f"Subject under evaluation: a registered name ({', '.join(sorted(SUBJECTS))}) "
+                             f"or package.module:Class (default: {DEFAULT_SUBJECT})")
+    parser.add_argument("--scoring", choices=["all", "outcome"], default=DEFAULT_SCORING,
+                        help="Score all checks, or outcome checks only with architecture checks as diagnostics (default: all)")
     args = parser.parse_args()
     if args.download_bird_questions:
         download_questions(args.download_bird_questions, QUESTION_URL)
@@ -56,6 +64,11 @@ def main():
         parser.error("--resume requires parallel BIRD case selection and --output")
     if not 1 <= args.workers <= 64:
         parser.error("--workers must be between 1 and 64")
+    try:
+        subject = resolve_subject(args.subject)
+    except (ImportError, AttributeError, ValueError, TypeError) as exc:
+        parser.error(f"Invalid --subject: {exc}")
+    settings = run_settings(subject=args.subject, scoring=args.scoring)
 
     instructions, instruction_version = SUITE_INSTRUCTIONS[args.suite]
     if args.no_sql_cleanup:
@@ -89,21 +102,26 @@ def main():
     if not key:
         parser.error(f"A {args.provider} API key is required for live evaluations")
 
-    llm = eval_llm(args.model, args.provider, key, args.api, instructions)
-    llm.disable_sql_cleanup = args.no_sql_cleanup
+    llm = subject.build_model(args.model, provider=args.provider, api_key=key, api=args.api, instructions=instructions)
+    if args.no_sql_cleanup:
+        llm.disable_sql_cleanup = True
     output = args.output or RESULTS / f"{args.model.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     if args.bird_all or args.bird_stratified or args.bird_ids:
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
                                args.model, args.provider, key, args.resume, args.workers,
                                instructions=instructions, instruction_version=instruction_version,
-                               disable_sql_cleanup=args.no_sql_cleanup, api=args.api)
+                               disable_sql_cleanup=args.no_sql_cleanup, settings=settings, api=args.api)
         LOG.warning("BIRD run summary: %s", summary)
         if summary["failed"] or summary["unscorable"]:
             raise SystemExit(1)
         return
     report = asyncio.run(evaluate(llm, dataset, source_factory, output, args.case, documents_factory,
-                                  fixtures, instruction_version=instruction_version))
+                                  fixtures, instruction_version=instruction_version, settings=settings,
+                                  subject=subject, scoring=args.scoring))
     report.print()
+    not_applicable = [case.name for case in report.cases if APPLICABILITY in case.labels]
+    if not_applicable:
+        LOG.warning("Not applicable to subject %r with %s scoring: %s", args.subject, args.scoring, ", ".join(not_applicable))
     if report.failures or any(not all(result.value for result in case.assertions.values()) for case in report.cases):
         raise SystemExit(1)
 
@@ -118,8 +136,11 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
     resumed run cannot mix results produced with different settings.
     """
     api = api or default_api(provider)
+    settings = settings or {}
+    subject = resolve_subject(settings.get("subject"))
+    subject_fingerprint = subject.fingerprint()
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},
-                                   instructions, instruction_version, settings)
+                                   instructions, instruction_version, settings, subject_fingerprint)
     previous = None
     if output.exists():
         if not resume:
@@ -145,7 +166,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                 receiver, sender = context.Pipe(duplex=False)
                 case = dataset.cases[next_start - 1]
                 args = (next_start, case, databases, model, provider, key, output, instructions, instruction_version,
-                        disable_sql_cleanup, settings or {}, api)
+                        disable_sql_cleanup, settings, api)
                 process = context.Process(target=worker, args=(args, sender))
                 process.start()
                 sender.close()
@@ -184,7 +205,9 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                     previous["run"].update(dataset=dataset.name, case_fingerprint=fingerprint,
                                            question_count=len(dataset.cases), suite_instructions=instructions,
                                            instruction_version=instruction_version, model=model,
-                                           api=api, provider=provider, settings=settings or {})
+                                           api=api, provider=provider, settings=settings,
+                                           subject=subject.name, subject_fingerprint=subject_fingerprint,
+                                           scoring=settings.get("scoring", DEFAULT_SCORING))
                 previous["cases"].extend(result["cases"])
                 previous["failures"].extend(result["failures"])
                 output.parent.mkdir(parents=True, exist_ok=True)

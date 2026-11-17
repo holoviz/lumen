@@ -17,8 +17,10 @@ from lumen.ai.coordinator import Plan
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.evals.bird import bird_source, database_path, execute_read_only
 from lumen.ai.evals.harness import (
-    CheckResult, EvalOpenAI, Expected, Inputs, Output, Turn, _snapshot,
-    case_fingerprint, evaluate, run_case,
+    APPLICABILITY, ARCHITECTURE_CHECKS, NOT_APPLICABLE, CheckResult,
+    EvalOpenAI, Expected, Inputs, LumenSubject, Output, Subject, Turn,
+    TurnArtifacts, _snapshot, case_fingerprint, evaluate, register_subject,
+    resolve_subject, run_case,
 )
 from lumen.ai.report import ActorTask
 from lumen.ai.tool_trace import ToolCall
@@ -680,3 +682,197 @@ def test_bird_scorer_times_out_inside_the_child(tmp_path):
         execute_read_only(path, slow, timeout=1)
     # The child enforces the deadline, so the startup grace is not spent waiting.
     assert time.monotonic() - started < 30
+
+
+@register_subject("fake")
+class FakeSubject:
+    """A non-Lumen subject: a pydantic-ai agent whose answer becomes the turn's single row."""
+
+    supports_architecture = False
+
+    def __init__(self, surface: str = "v1"):
+        self.surface = surface
+
+    def build_model(self, model, *, provider="openai", api_key=None, api=None, instructions=""):
+        from pydantic_ai.messages import ModelResponse, TextPart
+        from pydantic_ai.models.function import FunctionModel
+
+        return FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart("35")]), model_name=model)
+
+    def fingerprint(self):
+        return f"fake-{self.surface}"
+
+    async def run(self, inputs, model, source, documents=None):
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+        turns, artifacts = [], []
+        for prompt in inputs.prompts:
+            result = await Agent(model).run(prompt)
+            turns.append(Turn(prompt, "success", f"The total is {result.output}.", [], [],
+                              "SELECT SUM(amount) AS total FROM sales", ["total"], [[int(result.output)]], 1, []))
+            artifacts.append(TurnArtifacts(graph="nodes: []\n",
+                                           messages=ModelMessagesTypeAdapter.dump_python(result.all_messages(), mode="json")))
+        return Output(turns, artifacts=artifacts)
+
+
+FAKE_DATASET = Dataset[Inputs, Output, Expected](name="fake_subject", cases=[
+    Case(name="outcome", inputs=Inputs(["What is the total amount overall?"]),
+         metadata=Expected(rows=[[35]], sql_contains=["sum"], answer_contains="35")),
+    Case(name="mixed", inputs=Inputs(["What is the total amount overall?"]),
+         metadata=Expected(actors=["SQLAgent"], tool_calls=["run_exploration_sql"], rows=[[35]])),
+    Case(name="architecture_only", inputs=Inputs(["What is the total amount overall?"]),
+         metadata=Expected(actors=["SQLAgent"], planned_actors=["SQLAgent"])),
+    Case(name="wrong_rows", inputs=Inputs(["What is the total amount overall?"]),
+         metadata=Expected(rows=[[34]])),
+], evaluators=[CheckResult()])
+
+
+def test_every_expectation_is_tagged():
+    from dataclasses import fields
+
+    assert {item.metadata["kind"] for item in fields(Expected)} == {"outcome", "architecture"}
+    assert Expected().expectation_kinds() == set()
+    assert Expected(actors=["SQLAgent"], view_type="VegaLiteEditor").expectation_kinds() == {"architecture"}
+    assert Expected(actors=["SQLAgent"], rows=[[1]]).expectation_kinds() == {"architecture", "outcome"}
+    assert Expected(status="error").expectation_kinds() == {"outcome"}
+
+
+def test_local_cases_not_applicable_under_outcome_scoring():
+    not_applicable = {case.name for case in DATASET.cases if case.metadata.expectation_kinds() == {"architecture"}}
+    assert not_applicable == {"sales_chart", "validation_incomplete"}
+
+
+def test_subjects_resolve_by_name_and_import_path():
+    assert isinstance(resolve_subject(), LumenSubject)
+    assert isinstance(resolve_subject("lumen", ui_params={"log_level": "INFO"}), Subject)
+    assert isinstance(resolve_subject("fake"), FakeSubject)
+    assert resolve_subject("tests.evals.test_harness:FakeSubject", surface="v2").fingerprint() == "fake-v2"
+    with pytest.raises(ValueError, match="Unknown eval subject"):
+        resolve_subject("missing")
+
+
+def test_subject_fingerprint_is_optional_component():
+    case = Case(name="test", inputs=Inputs(["Count sales"]))
+    baseline = case_fingerprint([case])
+    assert case_fingerprint([case], subject_fingerprint=None) == baseline
+    assert case_fingerprint([case], subject_fingerprint="fake-v1") not in (baseline, case_fingerprint([case], subject_fingerprint="fake-v2"))
+
+
+@pytest.mark.asyncio
+async def test_fake_subject_scored_end_to_end_on_outcomes(tmp_path):
+    """A non-Lumen subject with a pydantic-ai FunctionModel is scored offline on outcome checks only."""
+    subject = resolve_subject("fake")
+    model = subject.build_model("canned")
+    output = tmp_path / "fake.json"
+    report = await evaluate(model, FAKE_DATASET, source, output, subject=subject, scoring="outcome")
+    cases = {case.name: case for case in report.cases}
+
+    assert not report.failures
+    assert {name: result.value for name, result in cases["outcome"].assertions.items()} == {
+        "all_turns_completed": True, "status": True, "output": True, "rows": True, "answer": True, "sql_contains": True,
+    }
+    assert set(cases["mixed"].assertions) == {"all_turns_completed", "status", "output", "rows"}
+    assert not cases["mixed"].labels
+    assert not cases["architecture_only"].assertions
+    assert cases["architecture_only"].labels[APPLICABILITY].value == NOT_APPLICABLE
+    assert cases["wrong_rows"].assertions["rows"].value is False
+
+    saved = json.loads(output.read_text())
+    assert saved["run"]["subject"] == "fake"
+    assert saved["run"]["scoring"] == "outcome"
+    assert saved["run"]["settings"] == {"subject": "fake", "scoring": "outcome"}
+    assert saved["run"]["model"] == "canned"
+    assert saved["run"]["subject_fingerprint"] == "fake-v1"
+    assert saved["run"]["case_fingerprint"] == case_fingerprint(
+        FAKE_DATASET.cases, settings={"subject": "fake", "scoring": "outcome"}, subject_fingerprint="fake-v1")
+    by_name = {case["name"]: case for case in saved["cases"]}
+    assert by_name["architecture_only"]["applicable"] is False
+    assert by_name["architecture_only"]["assertions"] == {}
+    assert by_name["outcome"]["applicable"] is True
+    assert by_name["outcome"]["turns"][0]["rows"] == [[35]]
+    assert by_name["outcome"]["artifacts"][0]["graph"] == "nodes: []\n"
+    assert by_name["outcome"]["artifacts"][0]["messages"][-1]["parts"][0]["content"] == "35"
+
+    from tests.evals.dashboard import case_table, group_runs, summarize
+
+    stats = summarize(saved)
+    assert (stats["passed"], stats["cases"], stats["not_applicable"]) == (2, 3, 1)
+    table = case_table(group_runs({"fake": saved}, "fake_subject"))
+    assert table.set_index("Case").loc["architecture_only", "Checks"] == "n/a"
+
+
+@pytest.mark.asyncio
+async def test_lumen_subject_reports_architecture_checks_as_diagnostics():
+    """Under outcome scoring a subject that supports architecture checks keeps them as labels."""
+    dataset = Dataset[Inputs, Output, Expected](
+        name="diagnostics", cases=[
+            Case(name="mixed", inputs=Inputs(["Total"]), metadata=Expected(actors=["SQLAgent"], rows=[[35]])),
+            Case(name="architecture_only", inputs=Inputs(["Total"]), metadata=Expected(actors=["SQLAgent"])),
+        ],
+        evaluators=[CheckResult(scoring="outcome")],
+    )
+    turn = Turn("Total", "success", None, ["ChatAgent"], ["success"], None, ["total"], [[35]], 1, [])
+    report = await dataset.evaluate(lambda inputs: Output([turn]))
+    cases = {case.name: case for case in report.cases}
+
+    assert set(cases["mixed"].assertions) == {"all_turns_completed", "status", "output", "rows"}
+    assert cases["mixed"].labels["diagnostic:actors"].value == "fail"
+    assert cases["mixed"].labels["diagnostic:validation"].value == "pass"
+    assert not cases["architecture_only"].assertions
+    assert cases["architecture_only"].labels[APPLICABILITY].value == NOT_APPLICABLE
+    assert cases["architecture_only"].labels["diagnostic:actors"].value == "fail"
+
+
+@pytest.mark.asyncio
+async def test_default_scoring_keeps_architecture_assertions():
+    dataset = Dataset[Inputs, Output, Expected](
+        name="default", cases=[Case(name="architecture_only", inputs=Inputs(["Total"]), metadata=Expected(actors=["SQLAgent"]))],
+        evaluators=[CheckResult()],
+    )
+    turn = Turn("Total", "success", None, ["SQLAgent"], ["success"], None, ["total"], [[35]], 1, [])
+    report = await dataset.evaluate(lambda inputs: Output([turn]))
+    case = report.cases[0]
+    assert set(case.assertions) == {"all_turns_completed", "status", "output", "validation", "actors"}
+    assert not case.labels
+    assert {"actors", "tool_calls", "planned_actors", "view_type"} <= ARCHITECTURE_CHECKS
+
+
+def test_dashboard_reads_results_without_subject_fields():
+    from tests.evals.dashboard import group_runs, run_table, summarize
+
+    def report(subject=None, scoring=None, applicable=None):
+        run = {"dataset": "local", "model": "m", "commit": "c", "api": "responses", "provider": "openai",
+               "case_fingerprint": "f", "timestamp": "1"}
+        if subject:
+            run.update(subject=subject, scoring=scoring)
+        case = {"name": "a", "turns": [], "usage": None, "assertions": {"rows": True}, "duration": 1, "error": None}
+        if applicable is not None:
+            case |= {"applicable": applicable, "diagnostics": {}}
+        return {"run": run, "cases": [case], "failures": []}
+
+    old, new = report(), report("lumen", "all", True)
+    assert summarize(old) == summarize(new)
+    assert len(group_runs({"old": old, "new": new}, "local")) == 1
+    groups = group_runs({"old": old, "fake": report("fake", "outcome", False)}, "local")
+    assert len(groups) == 2
+    table = run_table(groups).set_index("Run")
+    assert table.loc["fake", "Subject"] == "fake"
+    assert (table.loc["fake", "Cases"], table.loc["fake", "N/A"]) == (0, 1)
+    assert (table.loc["old", "Subject"], table.loc["old", "Scoring"]) == ("lumen", "all")
+
+
+def test_parallel_bird_runner_records_subject_and_scoring(tmp_path):
+    from tests.evals.__main__ import run_all_bird
+
+    dataset = Dataset(name="bird_test", cases=[Case(name="case_1", inputs=Inputs(["1"]))])
+    questions = tmp_path / "questions.json"
+    questions.write_text("[]")
+    default, fake = tmp_path / "default.json", tmp_path / "fake.json"
+    for output, settings in ((default, None), (fake, {"subject": "fake", "scoring": "outcome"})):
+        run_all_bird(dataset, output, questions, tmp_path, "test", "openai", "test-key", False, 1,
+                     worker=simulated_bird_case_process, case_timeout=60, settings=settings)
+    default, fake = json.loads(default.read_text())["run"], json.loads(fake.read_text())["run"]
+    assert (default["subject"], default["scoring"], default["subject_fingerprint"]) == ("lumen", "all", None)
+    assert (fake["subject"], fake["scoring"], fake["subject_fingerprint"]) == ("fake", "outcome", "fake-v1")
+    assert default["case_fingerprint"] != fake["case_fingerprint"]
