@@ -1215,12 +1215,24 @@ class TestSQLFormat:
 class TestSQLSelectFrom:
     def test_replace_multiple_tables_with_list(self):
         """Test replacing multiple table names with a list of new table names."""
-        sql_in = "SELECT * FROM table1 JOIN table2"
+        sql_in = "SELECT * FROM table1, table2"
         result = SQLSelectFrom.apply_to(
             sql_in, tables=["new_table1", "new_table2"], identify=True
         )
-        expected = 'SELECT * FROM "new_table1" AS "", "new_table2" AS ""'
+        expected = 'SELECT * FROM "new_table1", "new_table2"'
         assert result == expected
+
+    def test_replace_tables_keeps_aliases(self):
+        sql_in = "SELECT * FROM table1 AS a JOIN table2 AS b ON a.id = b.id"
+        result = SQLSelectFrom.apply_to(
+            sql_in, tables=["new_table1", "new_table2"], identify=True
+        )
+        expected = 'SELECT * FROM "new_table1" AS "a" JOIN "new_table2" AS "b" ON "a"."id" = "b"."id"'
+        assert result == expected
+
+    def test_replace_table_from_dict_without_alias(self):
+        result = SQLSelectFrom.apply_to("SELECT * FROM a", tables={"a": "b"}, identify=True)
+        assert result == 'SELECT * FROM "b"'
 
     def test_dialect_specifics(self):
         """Test dialect-specific behavior."""
