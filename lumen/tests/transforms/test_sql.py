@@ -1222,6 +1222,13 @@ class TestSQLSelectFrom:
         expected = 'SELECT * FROM "new_table1", "new_table2"'
         assert result == expected
 
+    def test_replace_tables_in_bare_join_has_no_empty_alias(self):
+        result = SQLSelectFrom.apply_to(
+            "SELECT * FROM table1 JOIN table2", tables=["new_table1", "new_table2"], identify=True
+        )
+        assert '"new_table1"' in result and '"new_table2"' in result
+        assert 'AS ""' not in result
+
     def test_replace_tables_keeps_aliases(self):
         sql_in = "SELECT * FROM table1 AS a JOIN table2 AS b ON a.id = b.id"
         result = SQLSelectFrom.apply_to(
