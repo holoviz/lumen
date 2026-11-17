@@ -11,15 +11,18 @@ except ImportError as exc:
         "lumen.flowdash needs panel-flowdash, which is not installed: pip install panel-flowdash"
     ) from exc
 
+from .checks import check_chart, check_query
 from .nodes import (
-    COMPONENTS, PIPELINE_TYPE, SOURCE_ID, SOURCE_TYPE, SQL_ID, VIEW_ID,
-    SourceNode, SQLNode, ViewNode, bind_source, compile_sql, source_config,
-    unbind_source,
+    COMPONENTS, PIPELINE_TYPE, QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ID,
+    SOURCE_TYPE, SQL_ID, VIEW_ID, SourceNode, SQLNode, ViewNode, bind_source,
+    bound_sources, compile_sql, primed_result, result_sql, unbind_source,
 )
 
 __all__ = [
     "COMPONENTS",
     "PIPELINE_TYPE",
+    "QUERY_TIMEOUT",
+    "RESULT_LIMIT",
     "SOURCE_ID",
     "SOURCE_TYPE",
     "SQL_ID",
@@ -28,7 +31,11 @@ __all__ = [
     "SourceNode",
     "ViewNode",
     "bind_source",
+    "bound_sources",
+    "check_chart",
+    "check_query",
     "compile_sql",
-    "source_config",
+    "primed_result",
+    "result_sql",
     "unbind_source",
 ]

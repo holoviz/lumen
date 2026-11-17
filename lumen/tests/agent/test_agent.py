@@ -13,13 +13,14 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from lumen.agent import AgentSession
-from lumen.agent.assistant import lumen_context
-from lumen.agent.authoring import add_chart, add_sql, check_chart
+from lumen.agent import AgentSession, _graph
+from lumen.agent.assistant import HIDDEN_TOOLS, INSTRUCTIONS
+from lumen.agent.authoring import add_chart, add_sql
 from lumen.agent.data import (
     check_data, describe_table, distinct_values, list_tables, run_sql,
 )
 from lumen.agent.headless import source_node_name
+from lumen.flowdash import check_chart
 from lumen.sources.duckdb import DuckDBSource
 
 TABLES = {
@@ -63,7 +64,7 @@ def test_source_node_name():
 
 async def test_list_tables(ctx):
     text = await list_tables(ctx)
-    assert text.startswith("2 table(s) in source 'data' (duckdb)")
+    assert text.startswith("2 table(s) in source 'data' (duckdb SQL):")
     assert "customers" in text and "orders" in text
 
 
@@ -83,7 +84,9 @@ async def test_run_sql_previews_and_refuses_writes(ctx, session):
     text = await run_sql(ctx, "SELECT status, COUNT(*) AS n FROM orders GROUP BY status")
     assert "2 rows x 2 columns" in text
     assert "read-only" in await run_sql(ctx, "DELETE FROM orders")
-    assert "Catalog Error" in await run_sql(ctx, "SELECT * FROM missing")
+    assert "READ_TEXT" in await run_sql(ctx, "SELECT * FROM read_text('/etc/hosts')")
+    assert "not a table of this source" in await run_sql(ctx, "SELECT * FROM duckdb_tables")
+    assert "not a table of this source" in await run_sql(ctx, "SELECT * FROM missing")
     assert session.ops._names() and len(session.ops._names()) == 1
 
 
@@ -137,6 +140,8 @@ async def test_add_chart_places_view(ctx, session):
 def test_check_chart():
     columns = ["region", "total"]
     assert check_chart({**BAR, "data": {"name": "x"}}, columns) == BAR
+    with pytest.raises(ValueError, match="URLs"):
+        check_chart({**BAR, "encoding": {**BAR["encoding"], "href": {"field": "region"}}}, columns)
     with pytest.raises(ValueError, match="fields the data does not have: revenue"):
         check_chart({"mark": "bar", "encoding": {"x": {"field": "revenue", "type": "quantitative"}}}, columns)
     with pytest.raises(ValueError, match="remove `data`"):
@@ -156,12 +161,105 @@ async def test_add_chart_retries_unknown_node_and_fields(ctx):
         add_chart(ctx, "statuses", "chart", BAR)
 
 
-async def test_instructions_name_sources_dialect_and_placed_nodes(ctx, session):
+async def test_list_tables_names_dialect_notes_and_placed_nodes(ctx, session):
     await add_sql(ctx, "data", "paid_by_region", BY_REGION)
-    text = lumen_context(session.ops)
-    assert "- data (duckdb SQL)" in text
+    text = await list_tables(ctx)
+    assert "(duckdb SQL)" in text
     assert "DuckDB notes" in text
     assert "- paid_by_region (SQL; columns: region, total)" in text
+
+
+async def test_instructions_and_tools_stay_the_same_across_a_conversation():
+    seen = []
+
+    def respond(messages, info):
+        seen.append((info.instructions, sorted(tool.name for tool in info.function_tools)))
+        if sum(isinstance(m, ModelResponse) for m in messages) == 0:
+            return ModelResponse(parts=[ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION})])
+        return ModelResponse(parts=[TextPart("Done.")])
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    try:
+        await session.ask("Paid totals by region")
+        await session.ask("And again")
+    finally:
+        session.close()
+
+    assert len(seen) == 3 and len({instructions for instructions, _ in seen}) == 1
+    assert len({tuple(tools) for _, tools in seen}) == 1
+    assert INSTRUCTIONS in seen[0][0]
+    tools = seen[0][1]
+    assert not HIDDEN_TOOLS & set(tools)
+    assert {"add_sql", "add_chart", "list_tables", "get_dashboard", "set_config"} <= set(tools)
+
+
+def evil_source_calls(session):
+    yaml = session.ops.get_dashboard().replace("ref: data", "ref: other")
+    return [
+        ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "evil"}, tool_call_id="c1"),
+        ToolCallPart("set_config", {"name": "data", "config": {"ref": "other"}}, tool_call_id="c2"),
+        ToolCallPart("replace_dashboard", {"dashboard_yaml": yaml}, tool_call_id="c3"),
+    ]
+
+
+async def test_agent_cannot_place_or_change_source_nodes():
+    returns = []
+
+    def respond(messages, info):
+        for part in messages[-1].parts:
+            if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+                returns.append(str(part.content))
+        if len(returns) == 0 and not any(isinstance(m, ModelResponse) for m in messages):
+            return ModelResponse(parts=calls)
+        return ModelResponse(parts=[TextPart("Done.")])
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    calls = evil_source_calls(session)
+    before = session.graph()
+    try:
+        turn = await session.ask("Point the dashboard at another database")
+    finally:
+        session.close()
+
+    assert turn.error is None
+    assert len(returns) == 3 and all("source nodes are placed and configured by the app" in text for text in returns)
+    assert turn.graph == before and turn.nodes == [] and turn.changed == []
+
+
+async def test_approver_decides_source_changes():
+    decisions = []
+
+    def approve(tool, args):
+        decisions.append(tool)
+        return tool == "add_node"
+
+    model, _ = script(
+        [ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "second"})],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, approve=approve)
+    try:
+        turn = await session.ask("Add a second source node")
+    finally:
+        session.close()
+
+    assert decisions == ["add_node"]
+    assert turn.nodes == ["second"]
+
+
+async def test_concurrent_sessions_keep_their_own_sources():
+    quiet = FunctionModel(lambda m, i: ModelResponse([TextPart("ok")]))
+    first = AgentSession(DuckDBSource(uri=":memory:", tables={"a_table": "SELECT 1 AS x"}), quiet)
+    second = AgentSession(DuckDBSource(uri=":memory:", tables={"b_table": "SELECT 2 AS y"}), quiet)
+    try:
+        first.ops.replace_yaml(first.ops.get_dashboard())
+        assert _graph.output(first.ops, "data", "source") is first.source
+        assert _graph.output(second.ops, "data", "source") is second.source
+        second.close()
+        first.ops.replace_yaml(first.ops.get_dashboard())
+        assert _graph.output(first.ops, "data", "source") is first.source
+    finally:
+        first.close()
 
 
 async def test_agent_retries_bad_query_and_answers_from_node():

@@ -1,8 +1,6 @@
 """Tools that validate a query or chart before placing it on the dashboard as a node."""
 from __future__ import annotations
 
-import copy
-
 from typing import Any
 
 import sqlglot
@@ -10,18 +8,15 @@ import sqlglot
 from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
-from ..ai.agents.sql import (
-    VALIDATION_MAX_ROWS, format_exploration_result, validate_read_only_sql,
+from ..ai.agents.sql import format_exploration_result
+from ..ai.utils import clean_sql, format_error
+from ..flowdash import (
+    QUERY_TIMEOUT, RESULT_LIMIT, SQL_ID, VIEW_ID, check_chart, check_query,
+    primed_result, result_sql,
 )
-from ..ai.agents.vega_lite import VegaLiteAgent
-from ..ai.utils import (
-    _spec_field_references, clean_sql, format_error, normalize_vegalite_spec,
-)
-from ..flowdash import SQL_ID, VIEW_ID
 from ..pipeline import Pipeline
-from ..transforms.sql import SQLLimit
 from . import _graph
-from .data import QUERY_TIMEOUT, lint, resolve_source
+from .data import lint, resolve_source
 
 
 def _place(ops, component: str, name: str, config: dict[str, Any], source: str, target: str) -> None:
@@ -34,6 +29,16 @@ def _place(ops, component: str, name: str, config: dict[str, Any], source: str, 
     except OperationError as exc:
         ops.remove_node(name)
         raise ModelRetry(str(exc)) from exc
+
+
+def _marks(spec: dict[str, Any]) -> list[str]:
+    marks = []
+    for layer in spec.get("layer", [spec]):
+        mark = layer.get("mark") if isinstance(layer, dict) else None
+        mark = mark.get("type") if isinstance(mark, dict) else mark
+        if isinstance(mark, str):
+            marks.append(mark)
+    return marks
 
 
 async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
@@ -51,74 +56,23 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     source_node, src = resolve_source(ctx.deps, source)
     try:
         sql = clean_sql(sql.strip(), src.dialect, prettify=True)
-        validate_read_only_sql(sql, src.dialect)
-        if sqlglot.parse_one(sql, read=None if src.dialect == "any" else src.dialect).find(sqlglot.exp.Table) is None:
-            raise ValueError("The query reads no table. Select from the source's tables instead of returning literal values.")
-        limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=src.dialect).apply(sql)
-    except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as exc:
+        check_query(sql, src)
+        statement = result_sql(src, sql)
+    except (ValueError, sqlglot.errors.SqlglotError) as exc:
         raise ModelRetry(format_error(exc)) from exc
     try:
-        await src.execute_with_timeout(limited, QUERY_TIMEOUT)
+        frame = await src.execute_with_timeout(statement, QUERY_TIMEOUT)
     except Exception as exc:
         raise ModelRetry(format_error(exc)) from exc
-    _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{source_node}.source", f"{name}.source")
+    with primed_result(src, statement, frame):
+        _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{source_node}.source", f"{name}.source")
     try:
         frame = _graph.output(ops, name, "data")
     except OperationError as exc:
         ops.remove_node(name)
         raise ModelRetry(str(exc)) from exc
-    preview = format_exploration_result(frame)
-    findings = lint(frame)
-    return f"Placed SQL node {name!r}: {preview}\n\nData checks:\n{findings}"
-
-
-def _transform_fields(spec: Any) -> set[str]:
-    fields: set[str] = set()
-    if isinstance(spec, dict):
-        if isinstance(spec.get("transform"), list):
-            fields.update(VegaLiteAgent._extract_as_keys(spec["transform"]))
-        for value in spec.values():
-            fields |= _transform_fields(value)
-    elif isinstance(spec, list):
-        for item in spec:
-            fields |= _transform_fields(item)
-    return fields
-
-
-def _marks(spec: dict[str, Any]) -> list[str]:
-    marks = []
-    for layer in spec.get("layer", [spec]):
-        mark = layer.get("mark") if isinstance(layer, dict) else None
-        mark = mark.get("type") if isinstance(mark, dict) else mark
-        if isinstance(mark, str):
-            marks.append(mark)
-    return marks
-
-
-def check_chart(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
-    """
-    The spec to store for a chart of a table with ``columns``, or ``ValueError``
-    saying what to fix. The data comes from the node's input, so a spec may not
-    bring its own.
-    """
-    if not isinstance(spec, dict):
-        raise ValueError("The spec must be a Vega-Lite JSON object.")
-    spec = copy.deepcopy(spec)
-    data = spec.pop("data", None)
-    spec.pop("datasets", None)
-    if isinstance(data, dict) and ("url" in data or "values" in data):
-        raise ValueError("The chart's data comes from the data node; remove `data` from the spec.")
-    unknown = _spec_field_references(spec, "vega-lite") - set(columns) - _transform_fields(spec)
-    if unknown:
-        raise ValueError(
-            f"The spec references fields the data does not have: {', '.join(sorted(unknown))}. "
-            f"Its columns are: {', '.join(columns)}."
-        )
-    try:
-        normalize_vegalite_spec(copy.deepcopy(spec))
-    except Exception as exc:
-        raise ValueError(f"Invalid Vega-Lite spec: {exc}") from exc
-    return spec
+    capped = f" (capped at {RESULT_LIMIT} rows)" if len(frame) >= RESULT_LIMIT else ""
+    return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
@@ -127,7 +81,7 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     Args:
         data: The name of the SQL node whose result the chart shows.
         name: A short descriptive snake_case name for the chart node, e.g. "revenue_by_region_chart".
-        spec: A Vega-Lite spec without `data`; its encodings use the SQL node's column names.
+        spec: A Vega-Lite spec without `data` or URLs; its encodings use the SQL node's column names.
     """
     ops = ctx.deps.ops
     try:

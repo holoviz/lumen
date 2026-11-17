@@ -1,16 +1,21 @@
 """Run the agent on a dashboard with nobody looking at it: one source node, a prompt per turn."""
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from panel_agents import events as ev
 from panel_agents.adapters.pydantic_ai import AgentRunner, ModelTraceRecorder
 from panel_flowdash import FlowDash
-from panel_flowdash.agent import DashboardOps, FlowDashDeps, dashboard_to_yaml
+from panel_flowdash.agent import (
+    DashboardOps, FlowDashDeps, approval_policy, dashboard_to_yaml,
+)
 from pydantic_ai.messages import (
     ModelMessage, ModelResponse, TextPart, ToolCallPart,
 )
@@ -18,13 +23,21 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 from ..flowdash import (
-    COMPONENTS, SOURCE_ID, SQL_ID, bind_source, source_config, unbind_source,
+    COMPONENTS, SOURCE_ID, SQL_ID, bind_source, unbind_source,
 )
 from ..sources.base import Source
 from . import _graph
 from .assistant import create_agent
 
 _GENERATED_NAME = re.compile(r"^[A-Za-z]*Source\d+$")
+
+# Components only the host places or configures; the agent's attempts need approval.
+SENSITIVE_COMPONENTS = (SOURCE_ID,)
+
+DENIED = (
+    "Refused: source nodes are placed and configured by the app, not by the assistant. "
+    "Use the source nodes already on the dashboard."
+)
 
 
 def source_node_name(source: Source) -> str:
@@ -74,8 +87,10 @@ class Meter(WrapperModel):
     @asynccontextmanager
     async def request_stream(self, *args, **kwargs):
         async with super().request_stream(*args, **kwargs) as stream:
-            yield stream
-        self.responses.append(stream.get())
+            try:
+                yield stream
+            finally:
+                self.responses.append(stream.get())
 
 
 @dataclass
@@ -111,21 +126,38 @@ class AgentSession:
         Extra instructions for the default agent.
     trace
         A path the model trace of the conversation is appended to.
+    approve
+        Decides the tool calls FlowDash's approval policy holds back, e.g.
+        placing or configuring a source node, from the tool name and
+        arguments. Nobody is there to approve them headless, so by default
+        they are refused.
     """
 
     def __init__(self, source: Source, model: Any, *, agent: Any = None, instructions: str = "",
-                 trace: str | os.PathLike | None = None):
+                 trace: str | os.PathLike | None = None,
+                 approve: Callable[[str, dict[str, Any]], bool] | None = None):
         self.source = source
         self.model = Meter(streamable(model))
         self.editor = FlowDash(components=COMPONENTS)
         self.ops = DashboardOps(self.editor)
         self.source_node = source_node_name(source)
-        self._ref = bind_source(source, self.source_node)
-        self.ops.add_node(SOURCE_ID, source_config(source, self._ref), name=self.source_node)
+        bind_source(self.editor, source, self.source_node)
+        self.ops.add_node(SOURCE_ID, {"ref": self.source_node}, name=self.source_node)
         self.agent = agent if agent is not None else create_agent(self.model, instructions=instructions or None)
         self.deps = FlowDashDeps(self.ops)
-        self.runner = AgentRunner(self.agent, deps=self.deps, run_kwargs={"model": self.model})
+        policy = approval_policy(sensitive_components=SENSITIVE_COMPONENTS, ops=self.ops)
+        self.runner = AgentRunner(self.agent, deps=self.deps, run_kwargs={"model": self.model}, approval_policy=policy)
+        self.approve = approve
+        self._unsubscribe = self.runner.state.subscribe(self._on_event)
         self.recorder = ModelTraceRecorder(self.runner, trace) if trace is not None else None
+
+    def _on_event(self, event: ev.Event):
+        if isinstance(event, ev.ApprovalRequested):
+            asyncio.get_running_loop().call_soon(self._decide, event)
+
+    def _decide(self, event: ev.ApprovalRequested):
+        approved = bool(self.approve and self.approve(event.tool_name, dict(event.args)))
+        self.runner.state.resolve_approval(event.tool_call_id, approved, reason=None if approved else DENIED)
 
     def add_sql(self, name: str, sql: str) -> str:
         """Place a SQL node on the source node without the agent, e.g. a query a case starts from."""
@@ -167,6 +199,7 @@ class AgentSession:
     def close(self):
         if self.recorder is not None:
             self.recorder.close()
+        self._unsubscribe()
         self.runner.close()
-        unbind_source(self._ref)
+        unbind_source(self.editor, self.source_node)
         self.editor.dispose()

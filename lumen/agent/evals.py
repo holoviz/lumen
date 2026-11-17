@@ -178,12 +178,14 @@ def _reference_source() -> DuckDBSource:
 
 
 @functools.cache
-def agent_fingerprint() -> str:
+def agent_fingerprint(instructions: str = "") -> str:
     """
-    A hash of the instructions and tool schemas the agent offers on a DuckDB
-    source, as panel-agents stamps it on recorded responses. It is computed
-    from the first request of a run on a model that only captures it, in a
-    thread of its own so it can be called from a running event loop.
+    The hash of the instructions and tool schemas the agent offers, as
+    ``AgentRunner`` stamps it on every response it records. Neither depends
+    on the data, so it is the same for every source; extra ``instructions``,
+    e.g. a suite's, are part of it. It is computed from the first request of
+    a run on a model that only captures it, in a thread of its own so it can
+    be called from a running event loop.
     """
     from panel_agents.adapters.model_trace import fingerprint
 
@@ -194,7 +196,7 @@ def agent_fingerprint() -> str:
         return ModelResponse(parts=[TextPart("ok")])
 
     async def run():
-        session = AgentSession(_reference_source(), FunctionModel(capture))
+        session = AgentSession(_reference_source(), FunctionModel(capture), instructions=instructions)
         try:
             await session.ask("")
         finally:
@@ -217,8 +219,9 @@ class FlowDashSubject:
     recorded model trace, to run offline. ``traces`` is a directory each case's
     model trace is written to, by default ``$LUMEN_AGENT_TRACES`` if set, so
     the CLI and its BIRD workers can record them too. The suite instructions
-    given to ``build_model`` are appended to the agent's; they are not part
-    of ``fingerprint``, which the harness combines with them.
+    given to ``build_model`` are appended to the agent's. ``fingerprint`` is
+    the stamp of runs without them, since it may not depend on
+    ``build_model``; the harness combines it with the suite instructions.
     """
 
     name: ClassVar[str]

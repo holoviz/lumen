@@ -20,25 +20,19 @@ turns:
         component: Lumen/source
         config:
           ref: data
-          spec:
-            read_only: false
-            tables:
-              sales: SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)
-            uri: ':memory:'
-            type: duckdb
         position: [0, 0]
       total_amount_by_category:
         component: Lumen/sql
         config:
           sql: |-
             SELECT
-              category,
-              SUM(amount) AS total_amount
+              "category",
+              SUM("amount") AS total_amount
             FROM sales
             WHERE
-              NOT category IS NULL AND NOT amount IS NULL
+              NOT "category" IS NULL AND NOT "amount" IS NULL
             GROUP BY
-              category
+              "category"
           table: total_amount_by_category
         position: [350, 0]
     edges:
@@ -63,32 +57,27 @@ turns:
         component: Lumen/source
         config:
           ref: data
-          spec:
-            read_only: false
-            tables:
-              sales: SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)
-            uri: ':memory:'
-            type: duckdb
         position: [0, 0]
       total_amount_by_category:
         component: Lumen/sql
         config:
           sql: |-
             SELECT
-              category,
-              SUM(amount) AS total_amount
+              "category",
+              SUM("amount") AS total_amount
             FROM sales
             WHERE
-              NOT category IS NULL AND NOT amount IS NULL
+              NOT "category" IS NULL AND NOT "amount" IS NULL
             GROUP BY
-              category
+              "category"
           table: total_amount_by_category
         position: [350, 0]
       total_amount_by_category_chart:
         component: Lumen/view
         config:
           spec:
-            mark: bar
+            mark:
+              type: bar
             encoding:
               x:
                 field: category

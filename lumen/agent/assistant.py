@@ -4,20 +4,23 @@ from __future__ import annotations
 from typing import Any
 
 from panel_flowdash.agent import (
-    FlowDashDeps, OperationError, create_agent as create_flowdash_agent,
+    FlowDashDeps, create_agent as create_flowdash_agent,
 )
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.tools import ToolDefinition
 
-from ..flowdash import SOURCE_ID, SQL_ID, VIEW_ID
-from ..sources.base import BaseSQLSource
-from . import _graph
 from .authoring import authoring_toolset
 from .data import data_toolset
 
+# The instructions stay the same for a whole conversation, whatever the
+# dashboard holds, so the provider's prompt cache keeps them; what changes
+# reaches the model through tool results.
 INSTRUCTIONS = """\
 ## Answering questions about data
 The user asks questions about the data of the dashboard's Lumen source nodes.
-- Look before you write SQL: list_tables, describe_table for the columns you use, and
+- Look before you write SQL: list_tables (it also names the source nodes, their SQL
+  dialect and the SQL nodes already placed), describe_table for the columns you use, and
   distinct_values for the stored form of each text value you filter on. run_sql is for
   checks of your own; the user does not see its result.
 - Place each result that answers the question with add_sql, and each chart with add_chart
@@ -30,52 +33,19 @@ The user asks questions about the data of the dashboard's Lumen source nodes.
 - Finish with a short answer in text.
 """
 
-DIALECT_NOTES = {
-    "duckdb": """\
-DuckDB notes:
-- Quote column names with double quotes and strings with single quotes.
-- Range predicates: "date" >= '2023-06-01' AND "date" < '2023-09-01'.
-- Window filtering: QUALIFY ROW_NUMBER() OVER (...) <= 5.
-- Use TRY_CAST for conversions that may fail.""",
-    "snowflake": "Snowflake notes:\n- No quotes around database, schema or table names.",
-}
+# The dashboard tools a data agent has no use for: it neither stores,
+# opens nor shares dashboards.
+HIDDEN_TOOLS = frozenset({"save_dashboard", "delete_dashboard", "share_dashboard", "open_dashboard", "list_dashboards"})
 
 
-def lumen_context(ops) -> str:
-    """The source nodes with their SQL dialects, the dialect notes, and the Lumen nodes placed so far."""
-    lines, dialects = [], []
-    for name in _graph.nodes(ops, SOURCE_ID):
-        try:
-            source = _graph.output(ops, name, "source")
-        except OperationError:
-            continue
-        if isinstance(source, BaseSQLSource):
-            lines.append(f"- {name} ({source.dialect} SQL)")
-            dialects.append(source.dialect)
-    text = "Source nodes:\n" + ("\n".join(lines) or "- none")
-    notes = [DIALECT_NOTES[d] for d in dict.fromkeys(dialects) if d in DIALECT_NOTES]
-    if notes:
-        text += "\n\n" + "\n\n".join(notes)
-    placed = []
-    for name in _graph.nodes(ops):
-        component = _graph.component_of(ops, name)
-        if component == SQL_ID:
-            try:
-                frame = _graph.output(ops, name, "data")
-                columns = ", ".join(map(str, frame.columns)) if frame is not None else "no result"
-            except OperationError as exc:
-                columns = str(exc)
-            placed.append(f"- {name} (SQL; columns: {columns})")
-        elif component == VIEW_ID:
-            placed.append(f"- {name} (chart)")
-    if placed:
-        text += "\n\nLumen nodes on the dashboard:\n" + "\n".join(placed)
-    return text
+async def _hide_tools(ctx: RunContext[FlowDashDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    return [tool for tool in tool_defs if tool.name not in HIDDEN_TOOLS]
 
 
 def create_agent(model: Any = None, *, instructions: str | None = None, **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
-    The FlowDash agent with Lumen's data and authoring toolsets.
+    The FlowDash agent with Lumen's data and authoring toolsets, without the
+    dashboard tools in ``HIDDEN_TOOLS``.
 
     Parameters
     ----------
@@ -87,11 +57,6 @@ def create_agent(model: Any = None, *, instructions: str | None = None, **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
+    capabilities = [PrepareTools(_hide_tools), *kwargs.pop("capabilities", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
-    agent = create_flowdash_agent(model, instructions=text, toolsets=toolsets, **kwargs)
-
-    @agent.instructions
-    def data_context(ctx: RunContext[FlowDashDeps]) -> str:
-        return lumen_context(ctx.deps.ops)
-
-    return agent
+    return create_flowdash_agent(model, instructions=text, toolsets=toolsets, capabilities=capabilities, **kwargs)
