@@ -15,8 +15,9 @@ from pathlib import Path
 
 from lumen.ai.evals.bird import bird_source, database_path, download_questions
 from lumen.ai.evals.harness import (
-    APPLICABILITY, DEFAULT_SCORING, DEFAULT_SUBJECT, SUBJECTS,
-    case_fingerprint, evaluate, resolve_subject, run_settings,
+    APPLICABILITY, DEFAULT_SCORING, DEFAULT_SUBJECT, SUBJECTS, artifacts_path,
+    case_fingerprint, effective_scoring, evaluate, resolve_subject,
+    run_settings, subject_spec,
 )
 
 from .bird_runner import default_api, run_bird_case_process
@@ -65,10 +66,11 @@ def main():
     if not 1 <= args.workers <= 64:
         parser.error("--workers must be between 1 and 64")
     try:
-        subject = resolve_subject(args.subject)
+        subject = resolve_subject(args.subject, **subject_options(args.no_sql_cleanup))
     except (ImportError, AttributeError, ValueError, TypeError) as exc:
         parser.error(f"Invalid --subject: {exc}")
-    settings = run_settings(subject=args.subject, scoring=args.scoring)
+    scoring = effective_scoring(subject, args.scoring)
+    settings = run_settings(subject=subject.name, scoring=scoring)
 
     instructions, instruction_version = SUITE_INSTRUCTIONS[args.suite]
     if args.no_sql_cleanup:
@@ -99,46 +101,49 @@ def main():
         fixtures = {case.inputs.fixture: source(case.inputs).tables for case in dataset.cases}
 
     key = os.environ.get("OPENROUTER_API_KEY" if args.provider == "openrouter" else "OPENAI_API_KEY")
-    if not key:
+    if not key and getattr(subject, "requires_api_key", True):
         parser.error(f"A {args.provider} API key is required for live evaluations")
 
     llm = subject.build_model(args.model, provider=args.provider, api_key=key, api=args.api, instructions=instructions)
-    if args.no_sql_cleanup:
-        llm.disable_sql_cleanup = True
     output = args.output or RESULTS / f"{args.model.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     if args.bird_all or args.bird_stratified or args.bird_ids:
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
                                args.model, args.provider, key, args.resume, args.workers,
                                instructions=instructions, instruction_version=instruction_version,
-                               disable_sql_cleanup=args.no_sql_cleanup, settings=settings, api=args.api)
+                               disable_sql_cleanup=args.no_sql_cleanup, settings=settings, api=args.api,
+                               subject=subject_spec(subject))
         LOG.warning("BIRD run summary: %s", summary)
         if summary["failed"] or summary["unscorable"]:
             raise SystemExit(1)
         return
     report = asyncio.run(evaluate(llm, dataset, source_factory, output, args.case, documents_factory,
                                   fixtures, instruction_version=instruction_version, settings=settings,
-                                  subject=subject, scoring=args.scoring))
+                                  subject=subject, scoring=scoring, instructions=instructions))
     report.print()
     not_applicable = [case.name for case in report.cases if APPLICABILITY in case.labels]
     if not_applicable:
-        LOG.warning("Not applicable to subject %r with %s scoring: %s", args.subject, args.scoring, ", ".join(not_applicable))
+        LOG.warning("Not applicable to subject %r with %s scoring: %s", subject.name, scoring, ", ".join(not_applicable))
     if report.failures or any(not all(result.value for result in case.assertions.values()) for case in report.cases):
         raise SystemExit(1)
 
 
 def run_all_bird(dataset, output, questions, databases, model, provider, key, resume, workers,
                  worker=run_bird_case_process, case_timeout=240, instructions="", instruction_version="",
-                 disable_sql_cleanup=False, settings=None, api=None):
+                 disable_sql_cleanup=False, settings=None, api=None, subject=None):
     """
     Checkpoint a contiguous prefix while evaluating cases in separate workers.
 
     ``settings`` is passed to each worker and is part of the fingerprint, so a
     resumed run cannot mix results produced with different settings.
+    ``subject`` is a registered name or ``package.module:Class`` spec, by
+    default the subject named in ``settings``; workers import it by spec.
     """
     api = api or default_api(provider)
     settings = settings or {}
-    subject = resolve_subject(settings.get("subject"))
-    subject_fingerprint = subject.fingerprint()
+    resolved = resolve_subject(subject or settings.get("subject"), **subject_options(disable_sql_cleanup))
+    settings = run_settings(settings, resolved.name, effective_scoring(resolved, settings.get("scoring")))
+    spec = subject_spec(resolved)
+    subject_fingerprint = resolved.fingerprint()
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},
                                    instructions, instruction_version, settings, subject_fingerprint)
     previous = None
@@ -166,7 +171,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                 receiver, sender = context.Pipe(duplex=False)
                 case = dataset.cases[next_start - 1]
                 args = (next_start, case, databases, model, provider, key, output, instructions, instruction_version,
-                        disable_sql_cleanup, settings, api)
+                        disable_sql_cleanup, settings, api, spec)
                 process = context.Process(target=worker, args=(args, sender))
                 process.start()
                 sender.close()
@@ -206,8 +211,11 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                                            question_count=len(dataset.cases), suite_instructions=instructions,
                                            instruction_version=instruction_version, model=model,
                                            api=api, provider=provider, settings=settings,
-                                           subject=subject.name, subject_fingerprint=subject_fingerprint,
+                                           subject=resolved.name, subject_fingerprint=subject_fingerprint,
                                            scoring=settings.get("scoring", DEFAULT_SCORING))
+                if result.get("artifacts"):
+                    with artifacts_path(output).open("a", encoding="utf-8") as sidecar:
+                        sidecar.writelines(json.dumps(line, default=str) + "\n" for line in result["artifacts"])
                 previous["cases"].extend(result["cases"])
                 previous["failures"].extend(result["failures"])
                 output.parent.mkdir(parents=True, exist_ok=True)
@@ -232,6 +240,10 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
             "correct": sum(case["assertions"].get("execution_accuracy", False) for case in cases),
             "unscorable": sum("execution_accuracy" not in case["assertions"] for case in cases),
              "failed": len(previous["failures"]) if previous else 0}
+
+
+def subject_options(disable_sql_cleanup):
+    return {"sql_cleanup": False} if disable_sql_cleanup else {}
 
 
 def _failed_bird_case(name, message):

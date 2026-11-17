@@ -8,7 +8,8 @@ from pydantic_evals import Dataset
 
 from lumen.ai.evals.bird import BirdExecution, bird_source, database_path
 from lumen.ai.evals.harness import (
-    DEFAULT_SCORING, CheckResult, evaluate, model_metadata, resolve_subject,
+    DEFAULT_SCORING, CheckResult, artifacts_path, evaluate, model_metadata,
+    resolve_subject,
 )
 
 
@@ -18,11 +19,9 @@ def default_api(provider):
 
 def run_bird_case(args):
     (index, case, databases, model, provider, key, output, instructions, instruction_version,
-     disable_sql_cleanup, settings, api) = args
-    subject = resolve_subject(settings.get("subject"))
+     disable_sql_cleanup, settings, api, spec) = args
+    subject = resolve_subject(spec, **({"sql_cleanup": False} if disable_sql_cleanup else {}))
     llm = subject.build_model(model, provider=provider, api_key=key, api=api, instructions=instructions)
-    if disable_sql_cleanup:
-        llm.disable_sql_cleanup = True
     source_factory = lambda inputs: bird_source(database_path(databases, inputs.fixture.removeprefix("bird:")))
     one = Dataset(name="bird_case", cases=[case], evaluators=[CheckResult(), BirdExecution(databases)])
     part = output.with_name(f"{output.stem}.{index}.current.json")
@@ -30,9 +29,13 @@ def run_bird_case(args):
         report = asyncio.run(asyncio.wait_for(evaluate(llm, one, source_factory, part,
                                                      instruction_version=instruction_version,
                                                      settings=settings, subject=subject,
-                                                     scoring=settings.get("scoring", DEFAULT_SCORING)),
+                                                     scoring=settings.get("scoring", DEFAULT_SCORING),
+                                                     instructions=instructions),
                                               timeout=240))
         result = json.loads(part.read_text(encoding="utf-8"))
+        sidecar = artifacts_path(part)
+        if sidecar.exists():
+            result["artifacts"] = [json.loads(line) for line in sidecar.read_text(encoding="utf-8").splitlines()]
         if not result["cases"]:
             failure = report.failures[0].error_message if report.failures else "No case result returned"
             result["cases"] = [{"name": case.name, "turns": [], "usage": None, "assertions": {},
@@ -47,6 +50,7 @@ def run_bird_case(args):
         }
     finally:
         part.unlink(missing_ok=True)
+        artifacts_path(part).unlink(missing_ok=True)
     return result
 
 

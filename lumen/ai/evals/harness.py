@@ -42,6 +42,8 @@ MAX_ANSWER_LENGTH = 4000
 MAX_TOOL_RESULT_LENGTH = 4000
 EVALUATOR_VERSION = 2
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
+# Above LumenSubject's own 120s per-prompt limit, so its timeouts still apply first.
+PROMPT_TIMEOUT = 180
 DEFAULT_SUBJECT = "lumen"
 DEFAULT_SCORING = "all"
 PRICING_PER_MILLION = {
@@ -192,41 +194,47 @@ class Output:
 
 
 Scoring = Literal["all", "outcome"]
-OUTCOME = {"kind": "outcome"}
-ARCHITECTURE = {"kind": "architecture"}
+def _outcome(check: str) -> dict[str, str]:
+    return {"kind": "outcome", "check": check}
+
+
+def _architecture(check: str) -> dict[str, str]:
+    return {"kind": "architecture", "check": check}
 
 
 @dataclass
 class Expected:
     """
-    Expectations of a case. Each field is tagged as an outcome check, which
-    any subject can be scored on, or an architecture check, which asserts how
-    the current Lumen stack produced the outcome.
+    Expectations of a case. Each field is tagged with the check that scores
+    it and whether that is an outcome check, which any subject can be scored
+    on, or an architecture check, which asserts how the current Lumen stack
+    produced the outcome.
     """
 
-    status: str = field(default="success", metadata=OUTCOME)
-    actors: list[str] | None = field(default=None, metadata=ARCHITECTURE)
-    rows: list[list[Any]] | None = field(default=None, metadata=OUTCOME)
-    view_type: str | None = field(default=None, metadata=ARCHITECTURE)
-    columns: list[str] | None = field(default=None, metadata=OUTCOME)
-    answer_contains: str | None = field(default=None, metadata=OUTCOME)
-    listing_contains: str | None = field(default=None, metadata=OUTCOME)
-    chart_mark: str | None = field(default=None, metadata=OUTCOME)
-    chart_fields: dict[str, str] | None = field(default=None, metadata=OUTCOME)
-    tool_calls: list[str] | None = field(default=None, metadata=ARCHITECTURE)
-    tool_arguments: dict[str, dict[str, Any]] | None = field(default=None, metadata=ARCHITECTURE)
-    tool_result_contains: dict[str, list[str]] | None = field(default=None, metadata=ARCHITECTURE)
-    turn_rows: list[list[list[Any]] | None] | None = field(default=None, metadata=OUTCOME)
-    turn_tables: list[str] | None = field(default=None, metadata=OUTCOME)
-    sql_contains: list[str] | None = field(default=None, metadata=OUTCOME)
-    turn_planner_actors: list[list[str]] | None = field(default=None, metadata=ARCHITECTURE)
-    forbidden_actors: list[str] | None = field(default=None, metadata=ARCHITECTURE)
-    follow_up_types: list[str] | None = field(default=None, metadata=ARCHITECTURE)
-    planned_actors: list[str] | None = field(default=None, metadata=ARCHITECTURE)
-    document_contains: list[str] | None = field(default=None, metadata=OUTCOME)
-    validation_correct: bool | None = field(default=None, metadata=ARCHITECTURE)
-    gold_sql: str | None = field(default=None, metadata=OUTCOME)
-    error_contains: str | None = field(default=None, metadata=OUTCOME)
+    status: str = field(default="success", metadata=_outcome("status"))
+    actors: list[str] | None = field(default=None, metadata=_architecture("actors"))
+    rows: list[list[Any]] | None = field(default=None, metadata=_outcome("rows"))
+    view_type: str | None = field(default=None, metadata=_architecture("view_type"))
+    columns: list[str] | None = field(default=None, metadata=_outcome("columns"))
+    answer_contains: str | None = field(default=None, metadata=_outcome("answer"))
+    listing_contains: str | None = field(default=None, metadata=_outcome("listing"))
+    chart_mark: str | None = field(default=None, metadata=_outcome("chart_mark"))
+    chart_fields: dict[str, str] | None = field(default=None, metadata=_outcome("chart_fields"))
+    tool_calls: list[str] | None = field(default=None, metadata=_architecture("tool_calls"))
+    tool_arguments: dict[str, dict[str, Any]] | None = field(default=None, metadata=_architecture("tool_arguments"))
+    tool_result_contains: dict[str, list[str]] | None = field(default=None, metadata=_architecture("tool_results"))
+    turn_rows: list[list[list[Any]] | None] | None = field(default=None, metadata=_outcome("turn_rows"))
+    turn_tables: list[str] | None = field(default=None, metadata=_outcome("turn_tables"))
+    sql_contains: list[str] | None = field(default=None, metadata=_outcome("sql_contains"))
+    turn_planner_actors: list[list[str]] | None = field(default=None, metadata=_architecture("planner_actors"))
+    forbidden_actors: list[str] | None = field(default=None, metadata=_architecture("forbidden_actors"))
+    follow_up_types: list[str] | None = field(default=None, metadata=_architecture("follow_up_types"))
+    planned_actors: list[str] | None = field(default=None, metadata=_architecture("planned_actors"))
+    document_contains: list[str] | None = field(default=None, metadata=_outcome("document_summary"))
+    # Also scores the implicit check that no ValidationAgent reported a problem.
+    validation_correct: bool | None = field(default=None, metadata=_architecture("validation"))
+    gold_sql: str | None = field(default=None, metadata=_outcome("execution_accuracy"))
+    error_contains: str | None = field(default=None, metadata=_outcome("error"))
 
     def expectation_kinds(self) -> set[str]:
         """Kinds of the expectations this case sets beyond the defaults."""
@@ -236,10 +244,12 @@ class Expected:
         }
 
 
-ARCHITECTURE_CHECKS = frozenset({
-    "actors", "view_type", "tool_calls", "tool_arguments", "tool_results", "planner_actors",
-    "forbidden_actors", "follow_up_types", "planned_actors", "validation",
-})
+ARCHITECTURE_CHECKS = frozenset(
+    item.metadata["check"] for item in fields(Expected) if item.metadata["kind"] == "architecture"
+)
+OUTCOME_CHECKS = frozenset(
+    {"all_turns_completed", "output"} | {item.metadata["check"] for item in fields(Expected) if item.metadata["kind"] == "outcome"}
+)
 
 
 @runtime_checkable
@@ -247,17 +257,23 @@ class Subject(Protocol):
     """
     The system under evaluation.
 
-    ``run`` receives a case's inputs, the model built by ``build_model`` (of
-    whatever type the subject accepts, e.g. a Lumen ``Llm`` or a pydantic-ai
-    model), the source built for the case fixture and its documents, and
-    returns one ``Turn`` per answered prompt. It may stop early after a turn
-    that errors or times out, and may attach one ``TurnArtifacts`` per turn.
+    ``build_model`` turns the CLI's model options into whatever model type the
+    subject accepts, e.g. a Lumen ``Llm`` or a pydantic-ai model. ``run``
+    receives a case's inputs, that model, the source built for the case
+    fixture and its documents, and returns one ``Turn`` per answered prompt.
+    It may stop early after a turn that errors or times out, and may attach
+    one ``TurnArtifacts`` per turn.
 
     ``supports_architecture`` declares whether the ``Turn`` fields used by
     architecture checks (actors, planner and tool traces, Lumen view types)
-    are meaningful for this subject. ``fingerprint`` returns a stable string
-    describing the subject's agent surface (e.g. a hash of tool schemas and
-    instructions), or None to leave case fingerprints unchanged.
+    are meaningful for this subject; if not, runs are scored on outcome
+    checks only. ``fingerprint`` returns a stable string describing the
+    subject's agent surface (e.g. a hash of tool schemas and instructions),
+    or None to leave case fingerprints unchanged. It must not depend on
+    ``build_model`` or ``run`` having been called.
+
+    Subjects may also set ``requires_api_key = False`` (default True) when
+    they run offline, e.g. on a pydantic-ai ``FunctionModel`` or a cassette.
     """
 
     name: str
@@ -285,22 +301,45 @@ def register_subject(name: str):
     return decorator
 
 
+def subject_spec(subject: Subject) -> str:
+    """The ``package.module:Class`` spec that resolves to ``subject`` in a fresh process."""
+    cls = type(subject)
+    return f"{cls.__module__}:{cls.__qualname__}"
+
+
 def resolve_subject(name: str | None = None, **params) -> Subject:
     """
     Instantiate a registered subject, or one given as ``package.module:Class``,
-    which is imported (registering it as a side effect).
+    which is imported (registering it as a side effect). A class without a
+    ``name`` takes the spec as its name.
     """
     name = name or DEFAULT_SUBJECT
-    if name not in SUBJECTS and ":" in name:
+    if name in SUBJECTS:
+        cls = SUBJECTS[name]
+    elif ":" in name:
         module, attr = name.split(":", 1)
         cls = getattr(import_module(module), attr)
-        SUBJECTS[name] = cls
-    if name not in SUBJECTS:
+        if not isinstance(getattr(cls, "name", None), str):
+            cls.name = name
+    else:
         raise ValueError(f"Unknown eval subject {name!r}; registered: {', '.join(sorted(SUBJECTS))}")
-    subject = SUBJECTS[name](**params)
-    if not isinstance(subject, Subject):
-        raise TypeError(f"{name!r} does not implement the Subject protocol")
+    try:
+        subject = cls(**params)
+    except TypeError as exc:
+        if not params:
+            raise
+        raise TypeError(f"Subject {name!r} does not support the option(s) {', '.join(params)}: {exc}") from exc
+    missing = [member for member in ("name", "supports_architecture", "build_model", "fingerprint", "run")
+               if not hasattr(subject, member)]
+    if missing:
+        raise TypeError(f"{name!r} does not implement the Subject protocol; missing: {', '.join(missing)}")
+    SUBJECTS.setdefault(subject.name, cls)
     return subject
+
+
+def effective_scoring(subject: Subject, scoring: Scoring | None = None) -> Scoring:
+    """A subject without architecture support is always scored on outcomes only."""
+    return (scoring or DEFAULT_SCORING) if subject.supports_architecture else "outcome"
 
 
 def _snapshot(prompt: str, plan: Any, messages: list[Any], previous_tasks: tuple[Any, ...] = ()) -> Turn:
@@ -372,7 +411,7 @@ def _snapshot(prompt: str, plan: Any, messages: list[Any], previous_tasks: tuple
 
 
 def _direct_plan(inputs: Inputs, llm: Any, context: dict, interface: ChatInterface, prompt: str,
-                 agent_params: dict[str, Any] | None = None) -> Plan:
+                 agent_params: dict[str, Any] | None = None, sql_cleanup: bool = True) -> Plan:
     agents = {
         "SQLAgent": SQLAgent,
         "ChatAgent": ChatAgent,
@@ -386,7 +425,7 @@ def _direct_plan(inputs: Inputs, llm: Any, context: dict, interface: ChatInterfa
     for name in inputs.agents:
         agent_type = agents[name]
         agent = agent_type(llm=llm, **({"n_doc_pages": 0} if name == "VegaLiteAgent" else {}),
-                           **({"clean_data": False} if name == "SQLAgent" and getattr(llm, "disable_sql_cleanup", False) else {}),
+                           **({"clean_data": False} if name == "SQLAgent" and not sql_cleanup else {}),
                            **(agent_params or {}))
         tasks.append(ActorTask(agent, title=name))
     return Plan(*tasks, title="Direct agent evaluation", context=context,
@@ -407,14 +446,18 @@ class LumenSubject:
     The current Lumen stack: every prompt of a case runs through ExplorerUI,
     or through ``inputs.agents`` directly, passing ``ui_params`` or
     ``agent_params`` to their constructors. The model is a Lumen ``Llm``.
+    ``sql_cleanup=False`` disables SQLAgent's automatic SQL cleanup in
+    direct-agent cases.
     """
 
     name: ClassVar[str]
     supports_architecture = True
 
-    def __init__(self, ui_params: dict[str, Any] | None = None, agent_params: dict[str, Any] | None = None):
+    def __init__(self, ui_params: dict[str, Any] | None = None, agent_params: dict[str, Any] | None = None,
+                 sql_cleanup: bool = True):
         self.ui_params = ui_params
         self.agent_params = agent_params
+        self.sql_cleanup = sql_cleanup
 
     def build_model(self, model: str, *, provider: str = "openai", api_key: str | None = None,
                     api: str | None = None, instructions: str = "") -> EvalOpenAI:
@@ -464,7 +507,7 @@ class LumenSubject:
             with llm.capture_usage() as scope, llm.trace() as tool_calls:
                 try:
                     if inputs.agents:
-                        plan = _direct_plan(inputs, llm, context, interface, prompt, self.agent_params)
+                        plan = _direct_plan(inputs, llm, context, interface, prompt, self.agent_params, self.sql_cleanup)
                         with warnings.catch_warnings():
                             warnings.filterwarnings("ignore", message="Widget.name is deprecated", category=PendingDeprecationWarning)
                             await asyncio.wait_for(plan.execute(), timeout=120)
@@ -530,10 +573,12 @@ class CheckResult(Evaluator[Inputs, Output, Expected]):
     def evaluate(self, ctx: EvaluatorContext[Inputs, Output, Expected]) -> dict[str, bool | str]:
         expected = ctx.metadata or Expected()
         checks = self._checks(ctx, expected)
+        if unclassified := checks.keys() - OUTCOME_CHECKS - ARCHITECTURE_CHECKS:
+            raise ValueError(f"Unclassified checks: {', '.join(sorted(unclassified))}")
         if self.scoring == "all" and self.supports_architecture:
             return checks
         results: dict[str, bool | str] = {
-            name: passed for name, passed in checks.items() if name not in ARCHITECTURE_CHECKS
+            name: passed for name, passed in checks.items() if name in OUTCOME_CHECKS
         }
         if self.supports_architecture:
             results.update({
@@ -555,7 +600,8 @@ class CheckResult(Evaluator[Inputs, Output, Expected]):
         }
         if expected.status == "success":
             checks["output"] = any(
-                turn.answer is not None or turn.rows is not None or turn.listing is not None or bool(turn.view_types)
+                turn.answer is not None or turn.rows is not None or turn.listing is not None
+                or bool(turn.view_types) or bool(turn.chart_marks)
                 for turn in ctx.output.turns
             ) and not any(turn.task_errors for turn in ctx.output.turns)
             if expected.validation_correct is None:
@@ -632,7 +678,7 @@ def run_settings(settings: dict[str, Any] | None = None, subject: str | None = N
     """
     settings = dict(settings or {})
     if subject and subject != DEFAULT_SUBJECT:
-        settings.setdefault("subject", subject)
+        settings["subject"] = subject
     if scoring and scoring != DEFAULT_SCORING:
         settings["scoring"] = scoring
     return settings
@@ -671,33 +717,55 @@ def _record_artifacts(output: Output) -> list[dict[str, Any]] | None:
     return [asdict(item) for item in output.artifacts]
 
 
+def artifacts_path(output: Path) -> Path:
+    """
+    The JSON Lines sidecar holding per-turn artifacts of the cases in
+    ``output``, one ``{"name": ..., "artifacts": [...]}`` line per case.
+    """
+    return output.with_name(f"{output.stem}.artifacts.jsonl")
+
+
 async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path | None = None,
                    case_name: str | None = None, documents_factory: Any = None, fixtures: dict[str, Any] | None = None,
                    instruction_version: str = "", ui_params: dict[str, Any] | None = None,
                    agent_params: dict[str, Any] | None = None, settings: dict[str, Any] | None = None,
-                   subject: Subject | None = None, scoring: Scoring = DEFAULT_SCORING):
+                   subject: Subject | None = None, scoring: Scoring = DEFAULT_SCORING,
+                   instructions: str | None = None, prompt_timeout: float = PROMPT_TIMEOUT):
     """
     Evaluate the dataset with ``subject`` and optionally write the results to ``output``.
 
     ``llm`` is the model passed to the subject, which defaults to
     ``LumenSubject(ui_params, agent_params)``. ``scoring="outcome"`` scores
-    outcome checks only, see ``CheckResult``. ``settings`` describes the run
+    outcome checks only, see ``CheckResult``; a subject without architecture
+    support is always scored that way. ``settings`` describes the run
     configuration, e.g. which options produced ``ui_params``; it is recorded
     with the results and part of the fingerprint, together with the subject
-    and scoring mode when they are not the defaults.
+    and the effective scoring mode when they are not the defaults.
+    ``instructions`` are the suite instructions given to ``build_model``,
+    read from the model's ``suite_instructions`` if omitted. A case whose
+    subject run exceeds ``prompt_timeout`` seconds per prompt is recorded as
+    a timeout. Per-turn artifacts go to ``artifacts_path(output)``.
     """
     if subject is None:
         subject = LumenSubject(ui_params, agent_params)
     elif ui_params or agent_params:
         raise ValueError("ui_params and agent_params apply to the default subject only")
+    scoring = effective_scoring(subject, scoring)
     settings = run_settings(settings, subject.name, scoring)
+    if instructions is None:
+        instructions = getattr(llm, "suite_instructions", "")
+    subject_fingerprint = subject.fingerprint()
 
     async def task(inputs: Inputs) -> Output:
+        prompt = inputs.prompts[0] if inputs.prompts else ""
         try:
-            return await subject.run(inputs, llm, source_factory(inputs),
-                                     documents_factory(inputs) if documents_factory else None)
+            return await asyncio.wait_for(
+                subject.run(inputs, llm, source_factory(inputs), documents_factory(inputs) if documents_factory else None),
+                timeout=prompt_timeout * max(1, len(inputs.prompts)),
+            )
+        except TimeoutError:
+            return Output([Turn(prompt, "timeout", None, [], [], None, None, None, None, [])])
         except Exception as exc:
-            prompt = inputs.prompts[0] if inputs.prompts else ""
             error = _error_message(exc)
             return Output([Turn(prompt, "error", None, [], [], None, None, None, None, [], task_errors=[error])])
 
@@ -721,9 +789,7 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
         for case in report.cases:
             if case.evaluator_failures:
                 failures[case.name] = "; ".join(f"{failure.name}: {failure.error_message}" for failure in case.evaluator_failures)
-        instructions = getattr(llm, "suite_instructions", "")
-        subject_fingerprint = subject.fingerprint()
-        cases_out = []
+        cases_out, artifacts = [], []
         for case in cases:
             result = completed.get(case.name)
             record = {"name": case.name, "turns": [], "usage": None, "assertions": {}, "duration": None,
@@ -738,9 +804,14 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
                     applicable=labels.get(APPLICABILITY) != NOT_APPLICABLE,
                     diagnostics={name.removeprefix(DIAGNOSTIC_PREFIX): value == "pass" for name, value in labels.items() if name.startswith(DIAGNOSTIC_PREFIX)},
                 )
-                if (artifacts := _record_artifacts(result.output)) is not None:
-                    record["artifacts"] = artifacts
+                if (recorded := _record_artifacts(result.output)) is not None:
+                    artifacts.append({"name": case.name, "artifacts": recorded})
             cases_out.append(record)
+        sidecar = artifacts_path(output)
+        if artifacts:
+            sidecar.write_text("".join(json.dumps(line, default=str) + "\n" for line in artifacts), encoding="utf-8")
+        else:
+            sidecar.unlink(missing_ok=True)
         output.write_text(json.dumps({
             "run": {"timestamp": datetime.now(UTC).isoformat(), "commit": commit, "dirty": dirty, "dataset": selected.name,
                     "case_fingerprint": case_fingerprint(cases, fixtures, instructions, instruction_version, settings, subject_fingerprint),

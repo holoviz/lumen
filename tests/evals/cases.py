@@ -72,7 +72,7 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     Case(name="sales_data", inputs=Inputs(["What data is available?"]),
          metadata=Expected(answer_contains="sales")),
     Case(name="sales_chart", inputs=Inputs(["Plot the total amount by category as a bar chart."]),
-         metadata=Expected(view_type="VegaLiteEditor")),
+         metadata=Expected(view_type="VegaLiteEditor", chart_mark="bar")),
     Case(name="agent_sql_total", inputs=Inputs(["Calculate the overall sum of amount in sales."], agents=("SQLAgent",)),
          metadata=Expected(actors=["SQLAgent"], rows=[[35]])),
     Case(name="agent_sql_filter", inputs=Inputs(["Sum amount for category A in sales."], agents=("SQLAgent",)),
