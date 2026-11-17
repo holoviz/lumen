@@ -48,11 +48,11 @@ from lumen.ai.schemas import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
 from lumen.ai.utils import count_tokens, format_error
-from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml
+from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
 from lumen.sources.base import QueryTimeoutError
 from lumen.sources.duckdb import DuckDBSource
-from lumen.views import Panel, Table
+from lumen.views import Panel, Table, VegaLiteView
 
 root = str(Path(__file__).parent.parent / "sources")
 
@@ -695,6 +695,76 @@ async def test_vegalite_agent_multiple(llm, duckdb_source, test_messages):
     assert out[-1].editor._names == ["A vs B", "A vs C"]
     assert isinstance(out[-1].component, Panel)
     assert len(out[-1].component.object) == 2  # both plots stacked in the overview
+
+
+POLISH_BASE_CHART = {
+    "mark": "line",
+    "encoding": {
+        "x": {"field": "A", "type": "quantitative"},
+        "y": {"field": "B", "type": "quantitative"},
+    },
+}
+
+
+async def polish_chart(agent, llm, duckdb_source, test_messages, update):
+    """Polish POLISH_BASE_CHART with the given spec update and return the result."""
+    pipeline = Pipeline(source=duckdb_source, table="test_sql")
+    context = {
+        "source": duckdb_source,
+        "pipeline": pipeline,
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+    spec = await agent._extract_spec(context, {"yaml_spec": dump_yaml(POLISH_BASE_CHART)})
+    editor = VegaLiteEditor(component=VegaLiteView(pipeline=pipeline, **spec))
+    llm.set_responses([
+        VegaLiteSpecUpdate(chain_of_thought="polish", yaml_update=dump_yaml(update)),
+    ])
+    await agent._polish_plot(editor, test_messages, context)
+    return load_yaml(editor.spec)
+
+
+async def test_vegalite_polish_skips_update_with_fields_not_in_data(llm, duckdb_source, test_messages):
+    """A polish update that points the chart at a column the data does not have
+    would leave it empty, so the chart keeps its own fields."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+    update = {"encoding": {"x": {"field": "Year", "axis": {"format": "d"}}}}
+
+    spec = await polish_chart(agent, llm, duckdb_source, test_messages, update)
+
+    assert spec["encoding"]["x"] == {"field": "A", "type": "quantitative"}
+
+
+@pytest.mark.parametrize("update", [
+    {"encoding": {"tooltip": [
+        {"field": "A", "type": "quantitative"},
+        {"field": "B", "type": "quantitative"},
+    ]}},
+    {
+        "transform": [{"calculate": "datum.B / datum.A", "as": "ratio"}],
+        "encoding": {"tooltip": [{"field": "ratio", "type": "quantitative"}]},
+    },
+], ids=["data-columns", "transform-output"])
+async def test_vegalite_polish_applies_update_with_known_fields(llm, duckdb_source, test_messages, update):
+    """Tooltips over the data's columns, or over a field a transform derives,
+    are applied."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    spec = await polish_chart(agent, llm, duckdb_source, test_messages, update)
+
+    assert spec["encoding"]["tooltip"] == update["encoding"]["tooltip"]
+    assert spec["encoding"]["x"] == {"field": "A", "type": "quantitative"}
+
+
+def test_vegalite_polish_field_check_accepts_geojson_properties():
+    """A map over a table with geometry reads its columns as properties.<column>,
+    so a tooltip on another column is not mistaken for a missing field."""
+    previous = {"mark": "geoshape", "encoding": {"color": {"field": "properties.value", "type": "quantitative"}}}
+    update = dict(previous, encoding=dict(previous["encoding"], tooltip=[{"field": "properties.name"}]))
+
+    VegaLiteAgent._check_fields_exist(update, previous, {"name", "value", "geometry"})
 
 
 async def test_vegalite_agent_skips_unparseable_chart(llm, duckdb_source, test_messages):
