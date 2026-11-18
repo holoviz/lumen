@@ -18,6 +18,7 @@ def test_import_fails_clearly_without_optional_dependency(package, missing, mess
 
 
 def test_lumen_does_not_import_flowdash_or_agent():
+    pytest.importorskip("pydantic_evals")
     code = (
         "import sys, lumen, lumen.ai, lumen.ai.evals.harness; "
         "print(sorted(m for m in sys.modules if m.split('.')[:2] in (['lumen', 'flowdash'], ['lumen', 'agent']) "
