@@ -372,6 +372,45 @@ def test_sql_filter_numpy_nat():
     assert result == expected
 
 
+NS_STAMP = np.datetime64("2017-04-15T00:00:00.000000000")
+
+
+@pytest.mark.parametrize("value, where", [
+    (NS_STAMP, '"A" = \'2017-04-15 00:00:00\''),
+    ((NS_STAMP, None), '"A" >= \'2017-04-15 00:00:00\''),
+    ((np.datetime64("2017-04-14T00:00:00.000000000"), NS_STAMP), '"A" BETWEEN \'2017-04-14 00:00:00\' AND \'2017-04-15 00:00:00\''),
+    ([NS_STAMP], '"A" IN (\'2017-04-15 00:00:00\')'),
+    ((np.int64(1), np.int64(3)), '"A" BETWEEN \'1\' AND \'3\''),
+])
+def test_sql_filter_nanosecond_datetimes_and_numpy_values_in_ranges_and_lists(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+@pytest.mark.parametrize("value, where", [
+    ([np.bool_(True)], '"A" IN (TRUE)'),
+    ([np.bool_(True), np.bool_(False)], '"A" IN (TRUE, FALSE)'),
+])
+def test_sql_filter_numpy_booleans_in_lists_filter_as_booleans(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_does_not_compare_a_timedelta_as_an_integer():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.timedelta64(5_000_000_000, "ns"))])
+    assert result == "SELECT * FROM TABLE"
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("value", [(NS_STAMP, None), [NS_STAMP], (np.datetime64("2017-04-14T12:00:00.000000000"), NS_STAMP)])
+def test_sql_filter_nanosecond_datetimes_match_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2], "C": pd.date_range("2017-04-14", periods=3)})
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("C", value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("C", value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
 @pytest.mark.parametrize("value, where", [
     (True, '"A" = TRUE'),
     (np.bool_(True), '"A" = TRUE'),
