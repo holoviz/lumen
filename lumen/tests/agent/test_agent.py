@@ -415,3 +415,21 @@ async def test_model_trace_records_the_stubbed_history(tmp_path):
     recorded = ModelMessagesTypeAdapter.dump_python(load_messages(trace), mode="json")
     strip = lambda ms: [{k: v for k, v in m.items() if k not in ("metadata", "timestamp")} for m in ms]  # noqa: E731
     assert strip(recorded) == strip(held)
+
+
+async def test_instructions_and_tools_are_the_same_for_every_source():
+    import json
+
+    seen = []
+
+    def respond(messages, info):
+        seen.append((info.instructions, json.dumps([(t.name, t.description, t.parameters_json_schema) for t in info.function_tools])))
+        return ModelResponse(parts=[TextPart("ok")])
+
+    for tables in (TABLES, {"other": "SELECT 1 AS x"}):
+        session = AgentSession(DuckDBSource(uri=":memory:", tables=tables, name="warehouse"), FunctionModel(respond))
+        try:
+            await session.ask("Hi")
+        finally:
+            session.close()
+    assert seen[0] == seen[1]
