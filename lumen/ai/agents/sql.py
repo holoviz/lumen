@@ -1443,6 +1443,9 @@ class SQLAgent(BaseLumenAgent):
             findings: list[str] = []
             actionable: list[str] = []
             # The extra fetched row only reveals that the preview is a prefix of a longer result.
+            if preview is not None:
+                # A source may return its native frame (e.g. pyarrow), which lint_data cannot read.
+                preview = as_pandas(preview)
             capped = preview is not None and len(preview) > VALIDATION_MAX_ROWS
             if capped:
                 preview = preview.head(VALIDATION_MAX_ROWS)

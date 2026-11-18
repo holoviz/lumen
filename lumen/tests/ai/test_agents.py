@@ -293,6 +293,31 @@ async def test_sql_agent_lints_capped_preview_as_prefix(llm, test_messages):
     assert linted == [(VALIDATION_MAX_ROWS, True)]
 
 
+async def test_sql_agent_validates_arrow_results(llm, test_messages):
+    pa = pytest.importorskip("pyarrow")
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm)
+    model = make_sql_model([(source.name, "numbers")])
+    llm.set_responses([model(query="SELECT i FROM numbers", table_slug="numbers_result", tables=["numbers"])])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["numbers"])}
+    original = source.execute_with_timeout
+
+    async def as_arrow(query, timeout, fetch=False):
+        return pa.Table.from_pandas(await original(query, timeout, fetch), preserve_index=False)
+
+    linted = []
+
+    def capture(df, actionable_only=False, capped=False):
+        linted.append((len(df), capped))
+        return []
+
+    with patch.object(source, "execute_with_timeout", as_arrow), patch("lumen.ai.agents.sql.lint_data", capture):
+        out, _ = await agent.respond(test_messages, context)
+
+    assert linted[0] == (VALIDATION_MAX_ROWS, True)
+    assert len(out[0].component.data) == 6000
+
+
 @pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
 async def test_sql_exploration_caps_fetched_rows(backend):
     if backend:
