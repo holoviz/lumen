@@ -35,8 +35,9 @@ turns:
               o.status = 'paid'
             GROUP BY
               c.customer
-            QUALIFY
-              ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) = 1
+            ORDER BY
+              paid_order_count DESC
+            LIMIT 1
           table: customer_with_most_paid_orders
         position: [350, 0]
     edges:
