@@ -1,4 +1,4 @@
-"""Tests for lumen.ai.table_stats: tiered statistics, caching and rendering."""
+"""Tests for lumen.data.stats: tiered statistics, caching and rendering."""
 import asyncio
 import gc
 import json
@@ -16,13 +16,11 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-try:
-    import lumen.ai  # noqa
-except ModuleNotFoundError:
-    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+pytest.importorskip("duckdb")
 
-from lumen.ai.schemas import Metaset, TableCatalogEntry, get_metaset
-from lumen.ai.table_stats import (
+from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.data.catalog import Metaset, TableCatalogEntry, get_metaset
+from lumen.data.stats import (
     ESTIMATED, EXACT, SAMPLED, SCHEMA, TYPES_ONLY, BigQueryStatsAdapter,
     ColumnStats, DuckDBStatsAdapter, SnowflakeStatsAdapter,
     SQLAlchemyStatsAdapter, StatementTimeout, StatsAdapter, TableProfiler,
@@ -30,7 +28,6 @@ from lumen.ai.table_stats import (
     _quote_qualified, _run_abandonable, column_kind, format_number,
     format_value, render_column, render_stats_header,
 )
-from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
 
 try:
@@ -504,7 +501,7 @@ class TestStatementTimeouts:
         pool = ThreadPoolExecutor(max_workers=1)
         pool.submit(release.wait)
         try:
-            with patch("lumen.ai.table_stats._executor", return_value=pool), pytest.raises(StatementTimeout):
+            with patch("lumen.data.stats._executor", return_value=pool), pytest.raises(StatementTimeout):
                 _run_abandonable(ran.set, 0.1)
         finally:
             release.set()
@@ -777,7 +774,7 @@ class TestMetasetFixes:
             f"{duckdb_source.name}{SEP}orders", "orders", metaset.catalog[f"{duckdb_source.name}{SEP}orders"],
             "full", True, False, True, True, 0,
         )
-        from lumen.ai.utils import count_tokens
+        from lumen.data.utils import count_tokens
         tight = metaset.compact_context(max_tokens=count_tokens(full_orders) - 1, schema_tables=[
             f"{duckdb_source.name}{SEP}orders", f"{duckdb_source.name}{SEP}customers",
         ])
@@ -897,7 +894,7 @@ class _UntypedSnowflake(SnowflakeStatsAdapter):
 
 
 def test_sample_ranges_are_never_labelled_exact():
-    from lumen.ai.table_stats import _Budget
+    from lumen.data.stats import _Budget
     adapter = _UntypedSnowflake(_FakeSnowflake())
     stats = TableStats("t", columns=[ColumnStats("v")])
     TableProfiler()._compute(adapter, stats, "t", None, _Budget(None))
@@ -967,7 +964,7 @@ def test_untyped_dates_and_decimals_keep_their_ranges():
     import datetime as dt
     import decimal
 
-    from lumen.ai.table_stats import _Budget
+    from lumen.data.stats import _Budget
 
     class Untyped(StatsAdapter):
         def sample_sql(self, relation, rows, total, seed):
@@ -1077,7 +1074,7 @@ async def test_due_recheck_does_not_delay_cached_stats(duckdb_source):
 
 def test_geoparquet_crs_is_shown_as_its_code():
     pyproj = pytest.importorskip("pyproj")
-    from lumen.ai.table_stats import ColumnStats, render_column
+    from lumen.data.stats import ColumnStats, render_column
     projjson = pyproj.CRS.from_epsg(4326).to_json()
     line = render_column(ColumnStats(name="geometry", type=f"GEOMETRY('{projjson}')"), detail="types")
     assert line == "geometry GEOMETRY('EPSG:4326')"
