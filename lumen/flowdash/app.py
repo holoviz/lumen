@@ -50,9 +50,9 @@ def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
     Sources for files, URLs, database connection strings or sources, read
     as ``lumen serve`` reads them for Lumen AI.
     """
-    from ..ai.ui import ExplorerUI
+    from ..sources.data import resolve_data
 
-    return ExplorerUI._resolve_data([d if isinstance(d, Source) else str(d) for d in data])
+    return resolve_data([d if isinstance(d, Source) else str(d) for d in data])
 
 
 def build_routes(

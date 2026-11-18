@@ -10,6 +10,7 @@ pytest.importorskip("duckdb")
 from panel.command import Serve
 from panel_flowdash.agent import DashboardOps
 
+from lumen.ai.llm import OpenAI
 from lumen.command.ai import LumenAIServe
 from lumen.flowdash import (
     DATA_ID, SOURCE_ID, TABLE_ID, bound_sources,
@@ -54,7 +55,7 @@ def test_default_serve_path_is_unchanged(csv):
     original = bokeh_serve.build_single_handler_applications
     try:
         with patch.object(Serve, "invoke", return_value=True), \
-             patch("lumen.command.ai.get_available_llm") as get_llm:
+             patch("lumen.command.ai.get_available_llm", return_value=OpenAI) as get_llm:
             command.invoke(args)
         assert get_llm.called
         assert bokeh_serve.build_single_handler_applications is not original
