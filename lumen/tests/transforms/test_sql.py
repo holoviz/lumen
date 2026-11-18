@@ -387,6 +387,15 @@ def test_sql_filter_nanosecond_datetimes_and_numpy_values_in_ranges_and_lists(va
     assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
 
 
+@pytest.mark.parametrize("value, where", [
+    ([np.bool_(True)], '"A" IN (TRUE)'),
+    ([np.bool_(True), np.bool_(False)], '"A" IN (TRUE, FALSE)'),
+])
+def test_sql_filter_numpy_booleans_in_lists_filter_as_booleans(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
 def test_sql_filter_does_not_compare_a_timedelta_as_an_integer():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.timedelta64(5_000_000_000, "ns"))])
     assert result == "SELECT * FROM TABLE"

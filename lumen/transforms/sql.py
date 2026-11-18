@@ -733,7 +733,8 @@ class SQLFilterBase(SQLTransform):
                 continue
             val = _python_value(val)
             if isinstance(val, (tuple, list)):
-                val = type(val)(_python_value(v) for v in val)
+                # numpy booleans are left to the boolean list handling below
+                val = type(val)(v if isinstance(v, np.bool_) else _python_value(v) for v in val)
 
             if isinstance(val, bool):
                 filters.append(column_expr.eq(self._boolean(val)))
