@@ -85,8 +85,12 @@ def _total(turns: list[Turn]) -> Usage | None:
                  sum(c.cached_tokens for c in calls), sum(costs) if all(c is not None for c in costs) else None)
 
 
-def tool_calls(messages: list[Any]) -> list[ToolCall]:
-    """Each tool call of ``messages`` with its arguments and result, as the Lumen subject records them."""
+def tool_calls(messages: list[Any], returned: dict[str, str] | None = None) -> list[ToolCall]:
+    """
+    Each tool call of ``messages`` with its arguments and result, as the Lumen
+    subject records them. ``returned`` results by tool call id take precedence over the
+    history, which may hold shortened results.
+    """
     results = {
         part.tool_call_id: part for message in messages if isinstance(message, ModelRequest)
         for part in message.parts if isinstance(part, (ToolReturnPart, RetryPromptPart))
@@ -100,6 +104,7 @@ def tool_calls(messages: list[Any]) -> list[ToolCall]:
                 result = results.get(part.tool_call_id)
                 content = result.model_response() if isinstance(result, RetryPromptPart) else (
                     result.model_response_str() if result is not None else "")
+                content = (returned or {}).get(part.tool_call_id, content)
                 calls.append(ToolCall(part.tool_name, part.args_as_dict(), content[:MAX_TOOL_RESULT_LENGTH]))
     return calls
 
@@ -161,7 +166,7 @@ def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
             if frame is not None:
                 columns, rows, row_count = result_rows(frame)
     marks, encodings = chart_summary([_graph.config_of(ops, name).get("spec") or {} for name in views])
-    calls = tool_calls(turn.messages)
+    calls = tool_calls(turn.messages, turn.tool_results)
     listing = next((call.result for call in reversed(calls) if call.name == "list_tables"), None)
     answer = turn.output[:MAX_ANSWER_LENGTH] if turn.output is not None else None
     return Turn(

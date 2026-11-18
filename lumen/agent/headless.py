@@ -106,6 +106,8 @@ class TurnResult:
     messages: list[ModelMessage] = field(default_factory=list)
     responses: list[ModelResponse] = field(default_factory=list)
     """Every model response of the turn, also those of a failed run, which ``messages`` leaves out."""
+    tool_results: dict[str, str] = field(default_factory=dict)
+    """What each tool call of the turn returned, by tool call id, before the history was shortened."""
     error: str | None = None
 
 
@@ -153,10 +155,13 @@ class AgentSession:
         policy = approval_policy(sensitive_components=SENSITIVE_COMPONENTS, ops=self.ops)
         self.runner = AgentRunner(self.agent, deps=self.deps, run_kwargs={"model": self.model}, approval_policy=policy)
         self.approve = approve
+        self._results: dict[str, str] = {}
         self._unsubscribe = self.runner.state.subscribe(self._on_event)
         self.recorder = ModelTraceRecorder(self.runner, trace) if trace is not None else None
 
     def _on_event(self, event: ev.Event):
+        if isinstance(event, ev.ToolCallResult):
+            self._results[event.tool_call_id] = event.content if isinstance(event.content, str) else str(event.content)
         if isinstance(event, ev.ApprovalRequested):
             asyncio.get_running_loop().call_soon(self._decide, event)
 
@@ -179,6 +184,7 @@ class AgentSession:
     async def ask(self, prompt: str) -> TurnResult:
         """Run the agent on ``prompt``, continuing the conversation, and report what the turn did."""
         before = self._configs()
+        self._results = {}
         history = len(self.runner.messages)
         metered = len(self.model.responses)
         self.deps.start_request()
@@ -198,6 +204,7 @@ class AgentSession:
             changed=changed,
             messages=list(self.runner.messages[history:]),
             responses=self.model.responses[metered:],
+            tool_results=dict(self._results),
             error=f"{type(error).__name__}: {error}" if error is not None else None,
         )
 
