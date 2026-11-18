@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import sqlite3
 import time
+import traceback
 
 from pathlib import Path
 
@@ -17,7 +18,9 @@ from pydantic_evals import Case, Dataset
 from lumen.ai.agents.sql import SQLAgent, SQLCleanup, make_sql_model
 from lumen.ai.coordinator import Plan
 from lumen.ai.editors import VegaLiteEditor
-from lumen.ai.evals.bird import bird_source, database_path, execute_read_only
+from lumen.ai.evals.bird import (
+    SCORER_STARTUP_GRACE, bird_source, database_path, execute_read_only,
+)
 from lumen.ai.evals.harness import (
     APPLICABILITY, ARCHITECTURE_CHECKS, NOT_APPLICABLE, OUTCOME_CHECKS,
     SUBJECTS, CheckResult, EvalOpenAI, Expected, Inputs, LumenSubject, Output,
@@ -206,7 +209,11 @@ def test_parallel_bird_runner_reads_result_sent_before_worker_exit(tmp_path, mon
 
 def _nested_bird_score(path, sender):
     try:
-        sender.send(execute_read_only(path, "SELECT 1"))
+        result = (True, execute_read_only(path, "SELECT 1"))
+    except Exception:
+        result = (False, traceback.format_exc())
+    try:
+        sender.send(result)
     finally:
         sender.close()
 
@@ -221,15 +228,42 @@ def test_bird_scorer_spawns_inside_case_worker(tmp_path):
     worker.start()
     sender.close()
     try:
-        assert receiver.poll(20)
-        assert receiver.recv() == {(1,)}
+        # Two nested spawns each re-import lumen, which can take well over 20s
+        # on a loaded Windows runner. A crashed worker closes the pipe, so the
+        # poll returns early in that case.
+        assert receiver.poll(2 * SCORER_STARTUP_GRACE + 30), "Case worker sent no result"
+        try:
+            ok, result = receiver.recv()
+        except EOFError:
+            worker.join(timeout=30)
+            pytest.fail(f"Case worker exited without a result (exit code {worker.exitcode})")
+        assert ok, result
+        assert result == {(1,)}
     finally:
         receiver.close()
-        worker.join(timeout=5)
+        worker.join(timeout=30)
         if worker.is_alive():
             worker.terminate()
             worker.join()
     assert worker.exitcode == 0
+
+
+def test_bird_case_worker_sends_unexpected_errors(monkeypatch):
+    from tests.evals import bird_runner
+
+    def fail(args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(bird_runner, "run_bird_case", fail)
+    receiver, sender = multiprocessing.Pipe(duplex=False)
+    bird_runner.run_bird_case_process((1, Case(name="q1", inputs=None)), sender)
+
+    assert receiver.poll(5)
+    result = receiver.recv()
+    assert result["cases"][0]["name"] == "q1"
+    assert result["cases"][0]["error"] == "Worker failed: RuntimeError: boom"
+    assert result["cases"][0]["assertions"] == {}
+    receiver.close()
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+import traceback
 
 from pydantic_evals import Dataset
 
@@ -65,9 +66,19 @@ def _harness_failure(case, dataset, llm, model, provider, message):
     }
 
 
+def failed_bird_case(name, message):
+    return {"run": {}, "cases": [{"name": name, "turns": [], "usage": None, "assertions": {},
+                                  "duration": None, "error": message}], "failures": []}
+
+
 def run_bird_case_process(args, sender):
     try:
-        sender.send(run_bird_case(args))
+        result = run_bird_case(args)
+    except Exception as exc:
+        traceback.print_exc()
+        result = failed_bird_case(args[1].name, f"Worker failed: {type(exc).__name__}: {exc}")
+    try:
+        sender.send(result)
     finally:
         sender.close()
 

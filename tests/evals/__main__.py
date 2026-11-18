@@ -20,7 +20,7 @@ from lumen.ai.evals.harness import (
     run_settings, subject_spec,
 )
 
-from .bird_runner import default_api, run_bird_case_process
+from .bird_runner import default_api, failed_bird_case, run_bird_case_process
 from .cases import (
     BIRD_STRATIFIED_IDS, DATASET, QUESTION_IDS, QUESTION_URL,
     SUITE_INSTRUCTIONS, bird_dataset, documents, source,
@@ -188,9 +188,9 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
                     try:
                         result = receiver.recv()
                     except EOFError:
-                        result = _failed_bird_case(dataset.cases[index - 1].name, "Worker exited without a result")
+                        result = failed_bird_case(dataset.cases[index - 1].name, "Worker exited without a result")
                 else:
-                    result = _failed_bird_case(dataset.cases[index - 1].name, f"Case exceeded the {case_timeout:g}s wall-clock limit" if process.is_alive() else "Worker exited without a result")
+                    result = failed_bird_case(dataset.cases[index - 1].name, f"Case exceeded the {case_timeout:g}s wall-clock limit" if process.is_alive() else "Worker exited without a result")
                     if process.is_alive():
                         process.terminate()
                 receiver.close()
@@ -244,11 +244,6 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
 
 def subject_options(disable_sql_cleanup):
     return {"sql_cleanup": False} if disable_sql_cleanup else {}
-
-
-def _failed_bird_case(name, message):
-    return {"run": {}, "cases": [{"name": name, "turns": [], "usage": None, "assertions": {},
-                                    "duration": None, "error": message}], "failures": []}
 
 
 if __name__ == "__main__":
