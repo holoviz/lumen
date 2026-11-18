@@ -124,6 +124,8 @@ class AgentSession:
         The agent; defaults to ``create_agent(model, instructions=instructions)``.
     instructions
         Extra instructions for the default agent.
+    model_settings
+        Model settings for the default agent, by default its ``MODEL_SETTINGS``.
     trace
         A path the model trace of the conversation is appended to.
     approve
@@ -134,6 +136,7 @@ class AgentSession:
     """
 
     def __init__(self, source: Source, model: Any, *, agent: Any = None, instructions: str = "",
+                 model_settings: dict[str, Any] | None = None,
                  trace: str | os.PathLike | None = None,
                  approve: Callable[[str, dict[str, Any]], bool] | None = None):
         self.source = source
@@ -143,7 +146,9 @@ class AgentSession:
         self.source_node = source_node_name(source)
         bind_source(self.editor, source, self.source_node)
         self.ops.add_node(SOURCE_ID, {"ref": self.source_node}, name=self.source_node)
-        self.agent = agent if agent is not None else create_agent(self.model, instructions=instructions or None)
+        if agent is None:
+            agent = create_agent(self.model, instructions=instructions or None, model_settings=model_settings)
+        self.agent = agent
         self.deps = FlowDashDeps(self.ops)
         policy = approval_policy(sensitive_components=SENSITIVE_COMPONENTS, ops=self.ops)
         self.runner = AgentRunner(self.agent, deps=self.deps, run_kwargs={"model": self.model}, approval_policy=policy)

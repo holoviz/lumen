@@ -89,6 +89,7 @@ async def test_subject_scored_end_to_end_on_outcomes(tmp_path):
     assert saved["run"]["subject"] == "flowdash"
     assert saved["run"]["scoring"] == "outcome"
     assert saved["run"]["subject_fingerprint"] == agent_fingerprint()
+    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none"}}
     turn = next(case for case in saved["cases"] if case["name"] == "sales_chart")["turns"][0]
     assert turn["chart_marks"] == ["bar"]
     assert turn["chart_encodings"] == [{"x": {"field": "category", "type": "nominal"},

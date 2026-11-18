@@ -323,3 +323,19 @@ async def test_failed_run_keeps_usage_of_its_responses():
     assert turn.error is not None and "retries" in turn.error
     assert len(turn.responses) == len(calls) == 4
     assert turn.messages == []
+
+
+async def test_requests_turn_reasoning_off_unless_the_host_overrides_it():
+    seen = []
+
+    def respond(messages, info):
+        seen.append(info.model_settings)
+        return ModelResponse(parts=[TextPart("ok")])
+
+    for settings, expected in [(None, "none"), ({"openai_reasoning_effort": "low"}, "low")]:
+        session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond), model_settings=settings)
+        try:
+            await session.ask("Hi")
+        finally:
+            session.close()
+        assert seen[-1]["openai_reasoning_effort"] == expected
