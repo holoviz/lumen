@@ -12,6 +12,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -26,18 +27,18 @@ turns:
         config:
           sql: |-
             SELECT
-              c.customer,
-              COUNT(*) AS paid_order_count
-            FROM orders AS o
-            JOIN customers AS c
-              ON o.customer_id = c.customer_id
+              customers.customer,
+              COUNT(orders.order_id) AS paid_order_count
+            FROM customers
+            JOIN orders
+              ON customers.customer_id = orders.customer_id
             WHERE
-              o.status = 'paid'
+              orders.status = 'paid'
             GROUP BY
-              c.customer
-            ORDER BY
-              paid_order_count DESC
-            LIMIT 1
+              customers.customer,
+              customers.customer_id
+            QUALIFY
+              ROW_NUMBER() OVER (ORDER BY COUNT(orders.order_id) DESC, customers.customer_id) = 1
           table: customer_with_most_paid_orders
         position: [350, 0]
     edges:

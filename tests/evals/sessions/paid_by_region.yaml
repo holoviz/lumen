@@ -12,6 +12,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -26,15 +27,15 @@ turns:
         config:
           sql: |-
             SELECT
-              customers.region,
-              SUM(orders.amount) AS total_paid_order_amount
-            FROM orders
-            JOIN customers
-              ON orders.customer_id = customers.customer_id
+              c.region,
+              SUM(o.amount) AS total_paid_order_amount
+            FROM orders AS o
+            JOIN customers AS c
+              ON o.customer_id = c.customer_id
             WHERE
-              orders.status = 'paid' AND NOT customers.region IS NULL
+              o.status = 'paid' AND NOT c.region IS NULL AND NOT o.amount IS NULL
             GROUP BY
-              customers.region
+              c.region
           table: paid_order_amount_by_region
         position: [350, 0]
     edges:
@@ -42,7 +43,7 @@ turns:
         to: paid_order_amount_by_region.source
 - question: Only keep the west region.
   nodes:
-  - west_paid_order_amount
+  - paid_order_amount_by_region
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -51,6 +52,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -64,36 +66,15 @@ turns:
         component: Lumen/sql
         config:
           sql: |-
-            SELECT
-              customers.region,
-              SUM(orders.amount) AS total_paid_order_amount
-            FROM orders
-            JOIN customers
-              ON orders.customer_id = customers.customer_id
-            WHERE
-              orders.status = 'paid' AND NOT customers.region IS NULL
-            GROUP BY
-              customers.region
+            SELECT c.region, SUM(o.amount) AS total_paid_order_amount
+            FROM orders AS o
+            JOIN customers AS c ON o.customer_id = c.customer_id
+            WHERE o.status = 'paid'
+              AND c.region = 'west'
+              AND o.amount IS NOT NULL
+            GROUP BY c.region
           table: paid_order_amount_by_region
         position: [350, 0]
-      west_paid_order_amount:
-        component: Lumen/sql
-        config:
-          sql: |-
-            SELECT
-              customers.region,
-              SUM(orders.amount) AS total_paid_order_amount
-            FROM orders
-            JOIN customers
-              ON orders.customer_id = customers.customer_id
-            WHERE
-              orders.status = 'paid' AND customers.region = 'west'
-            GROUP BY
-              customers.region
-          table: west_paid_order_amount
-        position: [700, 0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
-      - from: data.source
-        to: west_paid_order_amount.source

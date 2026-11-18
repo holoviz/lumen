@@ -12,6 +12,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -49,6 +50,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
