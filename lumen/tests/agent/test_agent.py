@@ -463,3 +463,14 @@ async def test_list_tables_summarizes_placed_charts(ctx, session):
     add_chart(ctx, "paid_by_region", "paid_chart", BAR)
     text = await list_tables(ctx)
     assert "- paid_chart (chart of paid_by_region; bar; x=region, y=total)" in text
+
+
+async def test_list_tables_shortens_long_node_sql(ctx, monkeypatch):
+    import lumen.agent.data as data
+
+    monkeypatch.setattr(data, "NODE_SQL_SHOWN", 20)
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    text = await list_tables(ctx)
+    line = next(line for line in text.splitlines() if line.startswith("- paid_by_region"))
+    shown = " ".join(_graph.config_of(ctx.deps.ops, "paid_by_region")["sql"].split())
+    assert line.endswith(f"{shown[:20]} [... {len(shown) - 20} more characters]")
