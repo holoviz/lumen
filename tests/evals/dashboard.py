@@ -57,16 +57,23 @@ def run_subject(meta):
     return meta.get("subject") or "lumen", meta.get("scoring") or "all"
 
 
+def case_unscorable(case):
+    # BIRD records no execution accuracy when the gold query itself fails.
+    return "Gold SQL failed" in (case.get("error") or "") and "execution_accuracy" not in case.get("assertions", {})
+
+
 def summarize(run):
     failures = {failure["name"] for failure in run.get("failures", [])}
-    cases = [case for case in run["cases"] if case_applicable(case)]
+    applicable = [case for case in run["cases"] if case_applicable(case)]
+    cases = [case for case in applicable if not case_unscorable(case)]
     usage = [case["usage"] for case in cases if case.get("usage")]
     input_tokens = sum(item["input_tokens"] for item in usage)
     costs = [item.get("cost_usd") for item in usage]
     return {
         "passed": sum(case_passed(case, failures) for case in cases),
         "cases": len(cases),
-        "not_applicable": len(run["cases"]) - len(cases),
+        "not_applicable": len(run["cases"]) - len(applicable),
+        "unscorable": len(applicable) - len(cases),
         "seconds": sum(case.get("duration") or 0 for case in cases),
         "input": input_tokens if usage else None,
         "output": sum(item["output_tokens"] for item in usage) if usage else None,
@@ -111,6 +118,7 @@ def run_table(groups):
             "Suite": meta.get("dataset", "Unknown"), "Subject": run_subject(meta)[0], "Scoring": run_subject(meta)[1],
             "Attempts": count, "Passed": sum(stat["passed"] for stat in stats) / count, "Cases": stats[0]["cases"],
             "N/A": stats[0]["not_applicable"],
+            "Unscorable": stats[0]["unscorable"],
             "Seconds": round(sum(stat["seconds"] for stat in stats) / count, 1),
             "Cost ($)": sum(costs) / count if all(cost is not None for cost in costs) else None,
             "Input": round(total_input / count) if all(stat["input"] is not None for stat in stats) else None,
