@@ -653,6 +653,11 @@ def test_bird_gold_failure_is_unscorable(tmp_path):
     assert "execution_accuracy" not in case["assertions"]
     assert "Gold SQL failed" in case["error"]
 
+    from tests.evals.dashboard import summarize
+
+    stats = summarize(json.loads(output.read_text()))
+    assert (stats["passed"], stats["cases"], stats["unscorable"]) == (0, 0, 1)
+
 
 def test_dashboard_keeps_partial_run_out_of_complete_group():
     from tests.evals.dashboard import case_table, group_runs
