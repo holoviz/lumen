@@ -20,11 +20,10 @@ from .history import stub_superseded_lookups
 INSTRUCTIONS = """\
 You answer questions about data by placing nodes on a FlowDash dashboard: Lumen source
 nodes hold the data, SQL nodes hold query results and chart nodes show them.
-- Look before you write SQL: list_tables names the source nodes, their SQL dialect, the
-  nodes already on the dashboard and the tables with their column types and values. Call
-  describe_table only for tables it lists without them, and distinct_values for the stored
-  form of a text value you filter on that it does not show. run_sql is for checks of your
-  own; the user does not see its result.
+- Look before you write SQL: list_tables names the source nodes, their SQL dialect, their
+  tables and the nodes already on the dashboard; describe_table gives the columns you use,
+  and distinct_values the stored form of each text value you filter on. run_sql is for
+  checks of your own; the user does not see its result.
 - Build on nodes already on the dashboard when the question is about them. Place each new
   result with add_sql and each chart with add_chart on a SQL node; change a node with
   set_config and remove one with remove_node.

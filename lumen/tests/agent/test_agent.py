@@ -66,7 +66,6 @@ def test_source_node_name():
 async def test_list_tables(ctx):
     text = await list_tables(ctx)
     assert text.startswith("2 table(s) in source 'data' (duckdb SQL):")
-    assert "status VARCHAR {paid:2, cancelled:1}" in text
     assert "customers" in text and "orders" in text
 
 
