@@ -4,6 +4,7 @@ the agent, a person editing the node, an imported file or a replayed trace.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 
 from typing import Any
@@ -13,7 +14,12 @@ import sqlglot
 from sqlglot import exp
 
 from ..ai.agents.sql import validate_read_only_sql
-from ..sources.base import BaseSQLSource
+from ..ai.utils import format_tool_error
+from ..sources.base import BaseSQLSource, QueryTimeoutError
+from ..transforms.sql import SQLLimit
+
+# Seconds the engine may take to plan a query in ``check_sql_config``.
+PROBE_TIMEOUT = 3
 
 # Keys whose value makes a Vega-Lite chart fetch or link to something.
 URL_KEYS = ("url", "href", "baseURL")
@@ -187,13 +193,11 @@ def pipeline_columns(pipeline: Any) -> list[str]:
     return [str(column) for column in pipeline.schema if column != "__len__"]
 
 
-# SEAM(panel-flowdash#163): the functions below have the signature of the
-# ``check_config=`` hook in ``@register`` metadata, check(config, inputs),
-# where ``config`` is the node's merged config and ``inputs`` its live input
-# values without None and failures. Once the hook is released each is passed
-# to the ``@register`` call of its node, so a config that fails is refused
-# before it is applied instead of leaving the node in an error state. They
-# only inspect: none runs a query or fetches rows.
+# The ``check_config=`` hooks of the nodes, see ``panel_flowdash.register``:
+# check(config, inputs), where ``config`` is the node's whole config with the
+# change applied and ``inputs`` its live input values that are set and not
+# failed. A config that fails is refused in the inspector and by the agent
+# tools before it is applied. None of them fetches rows.
 
 def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/table`` config: the table must be one of the source's."""
@@ -217,16 +221,37 @@ def check_filter_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
     return None
 
 
-def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
-    """Check a ``Lumen/sql`` config with ``check_query``, without running the query."""
+async def probe_query(sql: str, source: BaseSQLSource, timeout: float = PROBE_TIMEOUT) -> None:
+    """
+    Raise ``ValueError`` with the engine's error if ``source``'s engine
+    refuses ``sql``, e.g. for a column it does not have. The query runs with
+    ``LIMIT 0``, so the engine binds and plans it but returns no rows. A probe
+    that takes longer than ``timeout`` seconds passes: the node reports any
+    problem when it runs the query.
+    """
+    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(sql)
+    try:
+        await source.execute_with_timeout(probe, timeout)
+    except QueryTimeoutError:
+        return
+    except Exception as exc:
+        raise ValueError(f"The engine refused the query: {format_tool_error(exc)}") from exc
+
+
+async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
+    """
+    Check a ``Lumen/sql`` config with ``check_query``, then let the engine
+    bind it with ``probe_query``, without running the full query.
+    """
     source, sql = inputs.get("source"), (config.get("sql") or "").strip()
     if source is None or not sql:
         return None
     if not isinstance(source, BaseSQLSource):
         return f"{type(source).__name__} does not run SQL."
     try:
-        check_query(sql, source)
-    except ValueError as exc:
+        await asyncio.to_thread(check_query, sql, source)
+        await probe_query(sql, source)
+    except (ValueError, sqlglot.errors.SqlglotError) as exc:
         return str(exc)
     return None
 

@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("duckdb")
 
 from panel.command import Serve
+from panel_flowdash import FlowDash
 from panel_flowdash.agent import DashboardOps
 
 from lumen.ai.llm import OpenAI
@@ -15,7 +16,7 @@ from lumen.command.ai import LumenAIServe
 from lumen.flowdash import (
     DATA_ID, SOURCE_ID, TABLE_ID, bound_sources,
 )
-from lumen.flowdash.app import LumenFlowDash, build_routes, source_refs
+from lumen.flowdash.app import build_routes, source_refs
 
 
 @pytest.fixture
@@ -81,7 +82,7 @@ def test_served_app_offers_lumen_nodes_over_the_data(csv):
     app = routes["/"]()
     editor = app._editor
 
-    assert isinstance(editor, LumenFlowDash)
+    assert type(editor) is FlowDash
     assert app.agent is False
     assert SOURCE_ID in app.agent_sensitive_components
     (source,) = bound_sources(editor).values()

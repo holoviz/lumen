@@ -10,34 +10,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import param
-
-from panel_flowdash import FlowDash
 from panel_flowdash.app import FlowDashApp
 from panel_flowdash.dashboard_store import DashboardStore
 
 from ..sources.base import Source
-from .nodes import SOURCE_ID, bind_source
+from .nodes import SOURCE_ID, SOURCES_KEY
 
 LIBRARY = "lumen.flowdash"
-
-
-class LumenFlowDash(FlowDash):
-    """
-    The FlowDash editor with the host's sources bound, so its source nodes
-    can name them by ref.
-
-    SEAM(panel-flowdash#166): once ``FlowDash.context`` is released this
-    class goes, and the app passes
-    ``editor_options={"context": {"lumen.sources": sources}}`` instead.
-    """
-
-    lumen_sources = param.Dict(default={}, doc="The sources source nodes may use, by ref.")
-
-    def __init__(self, **params):
-        super().__init__(**params)
-        for ref, source in self.lumen_sources.items():
-            bind_source(self, source, ref)
 
 
 def source_refs(sources: Sequence[Source]) -> dict[str, Source]:
@@ -91,13 +70,13 @@ def build_routes(
     else:
         agent = False
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
-    editor_options = dict(params.pop("editor_options", {}), lumen_sources=sources)
+    editor_options = dict(params.pop("editor_options", {}))
+    editor_options["context"] = {**editor_options.get("context", {}), SOURCES_KEY: sources}
     return FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
         registry={},
         store=DashboardStore(str(db_path)),
         component_libraries=[LIBRARY, *params.pop("component_libraries", [])],
-        editor_class=LumenFlowDash,
         editor_options=editor_options,
         agent=agent,
         agent_sensitive_components=[SOURCE_ID, *params.pop("agent_sensitive_components", [])],
