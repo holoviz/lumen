@@ -168,7 +168,7 @@ async def test_list_tables_names_dialect_notes_and_placed_nodes(ctx, session):
     await add_sql(ctx, "data", "paid_by_region", BY_REGION)
     text = await list_tables(ctx)
     assert "(duckdb SQL)" in text
-    assert "DuckDB notes" in text
+    assert "BY c.region" in text or "GROUP BY c.region" in text
     assert "- paid_by_region (SQL; columns: region, total)" in text
 
 
@@ -369,13 +369,14 @@ async def test_data_agent_leaves_out_flowdash_instructions_and_catalogue():
     assert FLOWDASH_INSTRUCTIONS in dashboard and "Components you may place" in dashboard
 
 
-async def test_lookups_are_stubbed_once_a_node_is_placed():
+async def test_lookups_are_stubbed_when_the_next_turn_starts():
     from lumen.agent.history import SUPERSEDED
 
     model, requests = script(
         [ToolCallPart("list_tables", {}, tool_call_id="l1")],
         [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="a1")],
         [TextPart("Done.")],
+        [TextPart("Still done.")],
     )
     seen = []
     inner = model.function
@@ -388,11 +389,13 @@ async def test_lookups_are_stubbed_once_a_node_is_placed():
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
     try:
         turn = await session.ask("Paid totals by region")
+        await session.ask("And now?")
     finally:
         session.close()
 
-    assert seen[1][0].startswith("2 table(s)")
-    assert seen[2] == [SUPERSEDED]
+    # Within the run the history only grows, so its prefix stays cacheable.
+    assert seen[1][0].startswith("2 table(s)") and seen[2][0].startswith("2 table(s)")
+    assert seen[3] == [SUPERSEDED]
     assert turn.error is None and turn.nodes == ["paid_by_region"]
 
 
@@ -404,17 +407,20 @@ async def test_model_trace_records_the_stubbed_history(tmp_path):
         [ToolCallPart("list_tables", {}, tool_call_id="l1")],
         [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="a1")],
         [TextPart("Done.")],
+        [TextPart("Still done.")],
     )
     trace = tmp_path / "trace.jsonl"
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, trace=trace)
     try:
         await session.ask("Paid totals by region")
+        await session.ask("And now?")
         held = ModelMessagesTypeAdapter.dump_python(session.runner.messages, mode="json")
     finally:
         session.close()
     recorded = ModelMessagesTypeAdapter.dump_python(load_messages(trace), mode="json")
     strip = lambda ms: [{k: v for k, v in m.items() if k not in ("metadata", "timestamp")} for m in ms]  # noqa: E731
     assert strip(recorded) == strip(held)
+    assert any("rewind" in line for line in trace.read_text().splitlines())
 
 
 async def test_instructions_and_tools_are_the_same_for_every_source():
@@ -433,3 +439,27 @@ async def test_instructions_and_tools_are_the_same_for_every_source():
         finally:
             session.close()
     assert seen[0] == seen[1]
+
+
+async def test_dashboard_tool_presets():
+    seen = []
+
+    def respond(messages, info):
+        seen.append(sorted(tool.name for tool in info.function_tools))
+        return ModelResponse(parts=[TextPart("ok")])
+
+    model = FunctionModel(respond)
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=create_agent(model, dashboard_tools="layout"))
+    try:
+        await session.ask("Hi")
+    finally:
+        session.close()
+    assert {"connect", "disconnect", "place_tile", "set_config", "remove_node"} <= set(seen[0])
+    assert "replace_dashboard" not in seen[0]
+
+
+async def test_list_tables_summarizes_placed_charts(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_chart(ctx, "paid_by_region", "paid_chart", BAR)
+    text = await list_tables(ctx)
+    assert "- paid_chart (chart of paid_by_region; bar; x=region, y=total)" in text

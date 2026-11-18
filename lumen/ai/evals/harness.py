@@ -276,7 +276,8 @@ class Subject(Protocol):
     they run offline, e.g. on a pydantic-ai ``FunctionModel`` or a cassette,
     and ``settings``, a JSON-serializable dict of options that change how the
     subject behaves (e.g. model settings), which is recorded with the run
-    settings and is part of the case fingerprint.
+    settings and is part of the case fingerprint, and ``partial_usage()``,
+    the ``Usage`` of the case run so far, recorded when it times out.
     """
 
     name: str
@@ -786,7 +787,10 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
                 timeout=prompt_timeout * max(1, len(inputs.prompts)),
             )
         except TimeoutError:
-            return Output([Turn(prompt, "timeout", None, [], [], None, None, None, None, [])])
+            # A subject may report what the cancelled run used so far, which would be lost otherwise.
+            partial = getattr(subject, "partial_usage", None)
+            usage = partial() if callable(partial) else None
+            return Output([Turn(prompt, "timeout", None, [], [], None, None, None, None, [], usage=usage)], usage)
         except Exception as exc:
             error = _error_message(exc)
             return Output([Turn(prompt, "error", None, [], [], None, None, None, None, [], task_errors=[error])])

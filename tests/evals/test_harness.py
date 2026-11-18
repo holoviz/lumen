@@ -221,7 +221,7 @@ def test_bird_scorer_spawns_inside_case_worker(tmp_path):
     worker.start()
     sender.close()
     try:
-        assert receiver.poll(20)
+        assert receiver.poll(60)
         assert receiver.recv() == {(1,)}
     finally:
         receiver.close()

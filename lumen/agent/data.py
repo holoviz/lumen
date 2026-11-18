@@ -27,16 +27,6 @@ STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
 SCHEMA_TABLES_SHOWN = 25
 
-DIALECT_NOTES = {
-    "duckdb": """\
-DuckDB notes:
-- Quote column names with double quotes and strings with single quotes.
-- Range predicates: "date" >= '2023-06-01' AND "date" < '2023-09-01'.
-- Window filtering: QUALIFY ROW_NUMBER() OVER (...) <= 5.
-- Use TRY_CAST for conversions that may fail.""",
-    "snowflake": "Snowflake notes:\n- No quotes around database, schema or table names.",
-}
-
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
 
 
@@ -75,19 +65,32 @@ def _sources(source: BaseSQLSource) -> dict[tuple[str, str], BaseSQLSource]:
 
 
 def placed_nodes(ops) -> str | None:
-    """The SQL and chart nodes on the dashboard, with the columns of each SQL node's result."""
+    """
+    The SQL and chart nodes on the dashboard: each SQL node's query on one
+    line and its result's columns, and each chart's mark, data node and
+    encoded fields, so the agent can change a node it did not place itself.
+    """
     lines = []
     for name in _graph.nodes(ops):
         component = _graph.component_of(ops, name)
+        config = _graph.config_of(ops, name)
         if component == SQL_ID:
             try:
                 frame = _graph.output(ops, name, "data")
                 columns = f"columns: {', '.join(map(str, frame.columns))}" if frame is not None else "no result"
             except OperationError as exc:
                 columns = str(exc)
-            lines.append(f"- {name} (SQL; {columns})")
+            sql = " ".join(str(config.get("sql", "")).split())
+            lines.append(f"- {name} (SQL; {columns}): {sql}")
         elif component == VIEW_ID:
-            lines.append(f"- {name} (chart)")
+            spec = config.get("spec") or {}
+            mark = spec.get("mark")
+            mark = mark.get("type") if isinstance(mark, dict) else mark
+            fields = ", ".join(
+                f"{channel}={definition['field']}" for channel, definition in (spec.get("encoding") or {}).items()
+                if isinstance(definition, dict) and "field" in definition
+            )
+            lines.append(f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})")
     return "\n".join(lines) or None
 
 
@@ -109,8 +112,6 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) 
     text += meta.compact_context(
         n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False, max_tokens=SCHEMA_MAX_TOKENS,
     )
-    if src.dialect in DIALECT_NOTES:
-        text += "\n\n" + DIALECT_NOTES[src.dialect]
     return text
 
 

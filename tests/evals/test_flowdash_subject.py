@@ -265,3 +265,21 @@ async def test_save_session_writes_loadable_file(tmp_path):
     case = session_case(tmp_path / "total.yaml", source)
     assert case.metadata.rows == [[35.0]]
     assert isinstance(case, Case)
+
+
+async def test_timed_out_case_keeps_its_usage(tmp_path):
+    import asyncio as _asyncio
+
+    async def respond(messages, info):
+        if sum(isinstance(m, ModelResponse) for m in messages) == 0:
+            return ModelResponse(parts=[ToolCallPart("list_tables", {})])
+        await _asyncio.sleep(30)
+        return ModelResponse(parts=[TextPart("late")])
+
+    subject = FlowDashSubject(model=FunctionModel(respond, model_name="gpt-6-luna"))
+    dataset = Dataset[Inputs, Output, Expected](name="timeout", cases=by_name("sales_total"), evaluators=[CheckResult()])
+    output = tmp_path / "timeout.json"
+    await evaluate(subject.build_model("x"), dataset, source, output, subject=subject, prompt_timeout=2)
+    (case,) = json.loads(output.read_text())["cases"]
+    assert case["turns"][0]["status"] == "timeout"
+    assert case["usage"]["input_tokens"] > 0

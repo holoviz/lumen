@@ -241,6 +241,11 @@ class FlowDashSubject:
         self.traces = Path(traces) if traces else None
         self.instructions = ""
 
+    def partial_usage(self) -> Usage | None:
+        """The usage of the case running now, for a run the harness cancels at its timeout."""
+        session = getattr(self, "_session", None)
+        return usage(session.model.responses) if session is not None else None
+
     @property
     def settings(self) -> dict[str, Any]:
         """The model settings of every request, recorded with the run settings."""
@@ -270,8 +275,8 @@ class FlowDashSubject:
             first = re.sub(r"\W+", "-", inputs.prompts[0].lower()).strip("-")[:40] if inputs.prompts else "case"
             digest = hashlib.sha1(json.dumps([inputs.fixture, inputs.prompts, inputs.query]).encode()).hexdigest()[:8]
             trace = self.traces / f"{first}-{digest}.jsonl"
-        session = AgentSession(source, model, instructions=self.instructions, trace=trace,
-                               model_settings=self.model_settings)
+        session = self._session = AgentSession(source, model, instructions=self.instructions, trace=trace,
+                                               model_settings=self.model_settings)
         turns, artifacts = [], []
         try:
             if inputs.query:
