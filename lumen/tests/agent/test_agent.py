@@ -474,6 +474,8 @@ async def test_list_tables_shortens_long_node_sql(ctx, monkeypatch):
     line = next(line for line in text.splitlines() if line.startswith("- paid_by_region"))
     shown = " ".join(_graph.config_of(ctx.deps.ops, "paid_by_region")["sql"].split())
     assert line.endswith(f"{shown[:20]} [... {len(shown) - 20} more characters]")
+
+
 async def test_node_listing_is_bounded(ctx, session):
     from lumen.agent.data import NODE_SQL_CHARS, NODES_SHOWN
 
@@ -509,3 +511,32 @@ async def test_answer_cut_off_at_the_output_limit_is_retried():
         session.close()
     assert result.output == "The total is 35."
     assert CUT_OFF in str(requests[1].parts[0].content)
+
+
+async def test_set_config_checks_and_runs_sql_and_chart_specs():
+    model, requests = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="a1")],
+        [ToolCallPart("add_chart", {"data": "paid_by_region", "name": "paid_chart", "spec": BAR}, tool_call_id="a2")],
+        [ToolCallPart("set_config", {"name": "paid_by_region", "config": {"sql": "SELECT region, SUM(missing) FROM customers GROUP BY region"}}, tool_call_id="s1")],
+        [ToolCallPart("set_config", {"name": "paid_by_region", "config": {"sql": "SELECT * FROM read_text('/etc/hosts')"}}, tool_call_id="s2")],
+        [ToolCallPart("set_config", {"name": "paid_chart", "config": {"spec": {**BAR, "mark": {"type": "bar", "href": "https://example.com"}}}}, tool_call_id="s3")],
+        [ToolCallPart("set_config", {"name": "paid_by_region", "config": {"sql": "SELECT region, COUNT(*) AS total FROM customers GROUP BY region"}}, tool_call_id="s4")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("Count customers per region instead")
+        config = _graph.config_of(session.ops, "paid_by_region")
+    finally:
+        session.close()
+
+    def returned(index):
+        (part,) = requests[index].parts
+        return part
+
+    retried = [str(returned(index).content) for index in (3, 4, 5)]
+    assert "missing" in retried[0] and "READ_TEXT" in retried[1] and "URL" in retried[2]
+    result = returned(6)
+    assert isinstance(result, ToolReturnPart) and "Result: 2 rows" in result.model_response_str()
+    assert all(not isinstance(returned(index), ToolReturnPart) or returned(index).outcome == "retried" for index in (3, 4, 5))
+    assert "COUNT(*)" in config["sql"] and turn.error is None

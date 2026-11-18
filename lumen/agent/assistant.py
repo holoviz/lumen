@@ -11,7 +11,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import ModelResponse
 
-from .authoring import authoring_toolset
+from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
 from .history import stub_superseded_lookups
 
@@ -128,7 +128,10 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     model_settings = MODEL_SETTINGS if model_settings is None else model_settings
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
-    capabilities = [ProcessHistory(stub_superseded_lookups), *kwargs.pop("capabilities", [])]
+    capabilities = [ProcessHistory(stub_superseded_lookups), CheckedConfig(), *kwargs.pop("capabilities", [])]
+    # set_config now runs the SQL it is given, so fixing a query may take a few tries, and a
+    # second cut-off answer in a run would otherwise end it.
+    kwargs.setdefault("retries", {"tools": 3, "output": 2})
     if isinstance(dashboard_tools, str):
         dashboard_tools = DASHBOARD_TOOLS[dashboard_tools]
     if dashboard_instructions is None:
