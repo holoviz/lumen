@@ -21,7 +21,7 @@ from lumen.agent.data import (
     run_sql,
 )
 from lumen.agent.headless import source_node_name
-from lumen.flowdash import check_chart
+from lumen.flowdash import FILTER_ID, TABLE_ID, check_chart
 from lumen.sources.duckdb import DuckDBSource
 
 TABLES = {
@@ -540,3 +540,45 @@ async def test_set_config_checks_and_runs_sql_and_chart_specs():
     assert isinstance(result, ToolReturnPart) and "Result: 2 rows" in result.model_response_str()
     assert all(not isinstance(returned(index), ToolReturnPart) or returned(index).outcome == "retried" for index in (3, 4, 5))
     assert "COUNT(*)" in config["sql"] and turn.error is None
+
+
+def _filtered_customers(session):
+    ops = session.ops
+    ops.add_node(TABLE_ID, {"table": "customers"}, name="customers")
+    ops.connect("data.source", "customers.source")
+    ops.add_node(FILTER_ID, {"field": "region"}, name="by_region")
+    ops.connect("customers.pipeline", "by_region.pipeline")
+
+
+REGION_COUNT = {"mark": "bar", "encoding": {"x": {"field": "region", "type": "nominal"}, "y": {"aggregate": "count", "type": "quantitative"}}}
+
+
+async def test_add_chart_charts_a_filter_node_and_checks_its_columns(ctx, session):
+    _filtered_customers(session)
+
+    assert add_chart(ctx, "by_region", "regions", REGION_COUNT) == "Placed chart 'regions' (bar) of 'by_region'."
+    assert "from: by_region.filtered\n    to: regions.pipeline" in session.graph()
+    with pytest.raises(ModelRetry, match="revenue"):
+        add_chart(ctx, "by_region", "other", {"mark": "bar", "encoding": {"x": {"field": "revenue", "type": "nominal"}}})
+    text = await list_tables(ctx)
+    assert "- by_region (filter on 'region' of customers)" in text
+    assert "- customers (table 'customers' of data)" in text
+
+
+async def test_set_config_checks_a_chart_fed_by_a_filter_node():
+    model, requests = script(
+        [ToolCallPart("set_config", {"name": "regions", "config": {"spec": {"mark": "bar", "encoding": {"x": {"field": "revenue", "type": "nominal"}}}}}, tool_call_id="s1")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        _filtered_customers(session)
+        add_chart(SimpleNamespace(deps=session.deps), "by_region", "regions", REGION_COUNT)
+        await session.ask("Chart revenue")
+        spec = _graph.config_of(session.ops, "regions")["spec"]
+    finally:
+        session.close()
+
+    (part,) = requests[1].parts
+    assert "revenue" in str(part.content) and part.outcome == "retried"
+    assert spec == REGION_COUNT

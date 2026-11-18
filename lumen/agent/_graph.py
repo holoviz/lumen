@@ -39,3 +39,12 @@ def upstream(ops: DashboardOps, name: str) -> str | None:
     """The node feeding ``name``'s first connected input."""
     edges = yaml.safe_load(ops.get_dashboard()).get("edges") or []
     return next((edge["from"].split(".")[0] for edge in edges if edge["to"].split(".")[0] == name), None)
+
+
+# The output port that carries a Lumen pipeline, by component.
+PIPELINE_PORTS = {"Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/sql": "pipeline"}
+
+
+def pipeline_port(ops: DashboardOps, name: str) -> str | None:
+    """The port of node ``name`` that outputs a Lumen pipeline, if it has one."""
+    return PIPELINE_PORTS.get(component_of(ops, name))

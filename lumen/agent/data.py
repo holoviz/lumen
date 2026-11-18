@@ -17,7 +17,8 @@ from ..ai.schemas import Metaset, get_metaset
 from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..flowdash import (
-    QUERY_TIMEOUT, SOURCE_ID, SQL_ID, VIEW_ID, check_query,
+    DATA_ID, FILTER_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID,
+    check_query,
 )
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
@@ -95,20 +96,32 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
             if isinstance(definition, dict) and "field" in definition
         )
         return f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})"
+    if component == TABLE_ID:
+        limit = f", limit {config['limit']}" if config.get("limit") else ""
+        return f"- {name} (table {config.get('table')!r} of {_graph.upstream(ops, name)}{limit})"
+    if component == FILTER_ID:
+        return f"- {name} (filter on {config.get('field')!r} of {_graph.upstream(ops, name)})"
+    if component == DATA_ID:
+        return f"- {name} (rows of {_graph.upstream(ops, name)})"
     return None
+
+
+# The nodes list_tables shows besides the sources.
+LISTED = (SQL_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID)
 
 
 def placed_nodes(ops) -> str | None:
     """
-    The SQL and chart nodes on the dashboard, most recently placed first:
+    The SQL, chart, table, filter and data nodes on the dashboard, most recently placed first:
     each SQL node's query on one line, cut after ``NODE_SQL_CHARS``
     characters, and its result's columns, and each chart's mark, data node
-    and encoded fields, so the agent can change a node it did not place
+    and encoded fields, and the table, field or input of each table,
+    filter and data node, so the agent can change a node it did not place
     itself. At most ``NODES_SHOWN`` are listed, followed by how many more
     there are.
     """
     limit = NODES_SHOWN
-    names = [n for n in reversed(_graph.nodes(ops)) if _graph.component_of(ops, n) in (SQL_ID, VIEW_ID)]
+    names = [n for n in reversed(_graph.nodes(ops)) if _graph.component_of(ops, n) in LISTED]
     lines = [_node_line(ops, name, NODE_SQL_CHARS) for name in names[:limit]]
     if len(names) > limit:
         lines.append(f"- and {len(names) - limit} more; list_tables(node=...) shows one in full.")
