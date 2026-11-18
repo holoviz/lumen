@@ -14,10 +14,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 
 from lumen.agent import AgentSession, _graph
-from lumen.agent.assistant import HIDDEN_TOOLS, INSTRUCTIONS
+from lumen.agent.assistant import INSTRUCTIONS, create_agent
 from lumen.agent.authoring import add_chart, add_sql
 from lumen.agent.data import (
-    check_data, describe_table, distinct_values, list_tables, run_sql,
+    check_data, data_toolset, describe_table, distinct_values, list_tables,
+    run_sql,
 )
 from lumen.agent.headless import source_node_name
 from lumen.flowdash import check_chart
@@ -87,7 +88,7 @@ async def test_run_sql_previews_and_refuses_writes(ctx, session):
     assert "READ_TEXT" in await run_sql(ctx, "SELECT * FROM read_text('/etc/hosts')")
     assert "not a table of this source" in await run_sql(ctx, "SELECT * FROM duckdb_tables")
     assert "not a table of this source" in await run_sql(ctx, "SELECT * FROM missing")
-    assert session.ops._names() and len(session.ops._names()) == 1
+    assert len(session.ops.nodes()) == 1
 
 
 async def test_unknown_source_with_several_source_nodes(ctx, session):
@@ -114,17 +115,18 @@ async def test_add_sql_places_node_and_previews(ctx, session):
 async def test_add_sql_retries_with_engine_error(ctx, session, sql, error):
     with pytest.raises(ModelRetry, match=error):
         await add_sql(ctx, "data", "result", sql)
-    assert list(session.ops._names().values()) == ["data"]
+    assert [node["name"] for node in session.ops.nodes()] == ["data"]
 
 
 async def test_add_sql_refuses_taken_name(ctx, session):
     await add_sql(ctx, "data", "result", BY_REGION)
     with pytest.raises(ModelRetry, match="result"):
         await add_sql(ctx, "data", "result", BY_REGION)
-    assert list(session.ops._names().values()) == ["data", "result"]
+    assert [node["name"] for node in session.ops.nodes()] == ["data", "result"]
 
 
 async def test_check_data_lints_result(ctx):
+    assert "check_data" in data_toolset(check=True).tools and "check_data" not in data_toolset().tools
     await add_sql(ctx, "data", "statuses", "SELECT status FROM orders")
     assert "Duplicate" in check_data(ctx, "statuses") or "duplicate" in check_data(ctx, "statuses")
     with pytest.raises(ModelRetry, match="No node 'nothing'"):
@@ -189,8 +191,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS in seen[0][0]
     tools = seen[0][1]
-    assert not HIDDEN_TOOLS & set(tools)
-    assert {"add_sql", "add_chart", "list_tables", "get_dashboard", "set_config"} <= set(tools)
+    assert tools == ["add_chart", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
 def evil_source_calls(session):
@@ -213,7 +214,8 @@ async def test_agent_cannot_place_or_change_source_nodes():
             return ModelResponse(parts=calls)
         return ModelResponse(parts=[TextPart("Done.")])
 
-    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    model = FunctionModel(respond)
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=create_agent(model, dashboard_tools=None))
     calls = evil_source_calls(session)
     before = session.graph()
     try:
@@ -237,7 +239,8 @@ async def test_approver_decides_source_changes():
         [ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "second"})],
         [TextPart("Done.")],
     )
-    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, approve=approve)
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, approve=approve,
+                           agent=create_agent(model, dashboard_tools=None))
     try:
         turn = await session.ask("Add a second source node")
     finally:
@@ -339,3 +342,4 @@ async def test_requests_turn_reasoning_off_unless_the_host_overrides_it():
         finally:
             session.close()
         assert seen[-1]["openai_reasoning_effort"] == expected
+    assert seen[0]["max_tokens"] == 4000

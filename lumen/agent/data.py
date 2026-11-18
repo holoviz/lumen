@@ -91,10 +91,10 @@ def placed_nodes(ops) -> str | None:
 
 
 async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) -> str:
-    """List the tables of a source node with their columns, the source's SQL dialect and the SQL nodes already placed.
+    """List a source node's tables and columns, its SQL dialect and the nodes already placed.
 
     Args:
-        source: The name of a source node; may be left out when there is only one.
+        source: Source node; defaults to the only one.
     """
     name, src = resolve_source(ctx.deps, source)
     tables = src.get_tables()
@@ -113,12 +113,12 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) 
 async def describe_table(
     ctx: RunContext[FlowDashDeps], table: str, source: str | None = None, columns: list[str] | None = None
 ) -> str:
-    """Describe the columns of a table: SQL type, keys, value ranges or most common values, and null share.
+    """Describe a table's columns: type, keys, ranges or common values, null share.
 
     Args:
-        table: The table name, as list_tables gives it.
-        source: The name of a source node; may be left out when there is only one.
-        columns: Only describe these columns.
+        table: Table name.
+        source: Source node; defaults to the only one.
+        columns: Only these columns.
     """
     _, src = resolve_source(ctx.deps, source)
     meta = await metaset(src)
@@ -133,13 +133,13 @@ async def describe_table(
 async def distinct_values(
     ctx: RunContext[FlowDashDeps], table: str, column: str, like: str | None = None, source: str | None = None
 ) -> str:
-    """List the most frequent stored values of a column with their row counts, to filter on the exact spelling.
+    """List a column's most frequent stored values with row counts.
 
     Args:
-        table: The table name.
-        column: The column name.
-        like: Only list values containing this text, ignoring case.
-        source: The name of a source node; may be left out when there is only one.
+        table: Table name.
+        column: Column name.
+        like: Only values containing this text, ignoring case.
+        source: Source node; defaults to the only one.
     """
     _, src = resolve_source(ctx.deps, source)
     return await execute_distinct_values(
@@ -148,13 +148,11 @@ async def distinct_values(
 
 
 async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = None) -> str:
-    """Run a read-only query to inspect the data and return its row count, column types and first rows.
-
-    The result is not placed on the dashboard; use add_sql for results the user should see.
+    """Run a read-only query for your own checks; returns row count, column types and first rows.
 
     Args:
         sql: One SELECT or WITH query.
-        source: The name of a source node; may be left out when there is only one.
+        source: Source node; defaults to the only one.
     """
     _, src = resolve_source(ctx.deps, source)
     try:
@@ -184,8 +182,11 @@ def check_data(ctx: RunContext[FlowDashDeps], node: str) -> str:
     return lint(frame)
 
 
-def data_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The data tools: list_tables, describe_table, distinct_values, run_sql and check_data."""
+def data_toolset(check: bool = False) -> FunctionToolset[FlowDashDeps]:
+    """
+    The data tools: list_tables, describe_table, distinct_values and run_sql,
+    and with ``check`` check_data, whose findings add_sql already reports.
+    """
     return FunctionToolset[FlowDashDeps](
-        [list_tables, describe_table, distinct_values, run_sql, check_data], max_retries=2,
+        [list_tables, describe_table, distinct_values, run_sql, *([check_data] if check else [])], max_retries=2,
     )
