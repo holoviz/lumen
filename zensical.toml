@@ -44,6 +44,7 @@ nav = [
   ]},
   {"Configuration" = [
     {"CLI" = "configuration/cli.md"},
+    {"FlowDash App" = "configuration/flowdash.md"},
     {"Prompts" = "configuration/prompts.md"},
     {"Data Sources" = "configuration/sources.md"},
     {"LLM Providers" = "configuration/llm_providers.md"},
