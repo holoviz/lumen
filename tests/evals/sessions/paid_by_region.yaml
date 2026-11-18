@@ -67,10 +67,9 @@ turns:
         config:
           sql: |-
             SELECT c."region", SUM(o."amount") AS "total_paid_order_amount"
-            FROM orders AS o
-            JOIN customers AS c ON o."customer_id" = c."customer_id"
-            WHERE o."status" = 'paid'
-              AND c."region" = 'west'
+            FROM orders o
+            JOIN customers c ON o."customer_id" = c."customer_id"
+            WHERE o."status" = 'paid' AND c."region" = 'west'
             GROUP BY c."region"
           table: paid_order_amount_by_region
         position: [350, 0]

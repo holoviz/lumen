@@ -16,8 +16,9 @@ from .history import stub_superseded_lookups
 
 # The instructions stay the same for a whole conversation and for every
 # source, so the provider's prompt cache keeps them; what changes reaches the
-# model through tool results. The SQL guidance and dialect notes are the
-# reference text of SQLAgent's prompt (prompts/SQLAgent/main.jinja2).
+# model through tool results. The SQL guidance and dialect notes follow the
+# reference text of SQLAgent's prompt (prompts/SQLAgent/main.jinja2), except
+# that a question about the single highest or lowest row gets a LIMIT.
 INSTRUCTIONS = """\
 You answer questions about data by placing nodes on a FlowDash dashboard: Lumen source
 nodes hold the data, SQL nodes hold query results and chart nodes show them.
@@ -39,7 +40,9 @@ nodes hold the data, SQL nodes hold query results and chart nodes show them.
 - Write SQL for the intent of the request rather than its literal wording, one SELECT or
   WITH query per node.
 - Quote column names with double quotes and string values with single quotes.
-- Do not rename columns unless asked, and add no LIMIT unless asked; results are paged.
+- Do not rename columns unless asked. Results are paged, so add no LIMIT unless the
+  question asks for a number of rows or for the single highest, lowest, first or last
+  one; then limit to that many.
 - Exclude NULLs unless asked, or unless the question is about missing data, completeness
   or data quality; then count and report them instead of filtering them out.
 - Clean data: TRIM("column") != '' on text columns only, never on a numeric or date one;
