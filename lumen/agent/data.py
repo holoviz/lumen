@@ -100,13 +100,14 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) 
     tables = src.get_tables()
     meta = await metaset(src)
     others = ", ".join(n for n in _graph.nodes(ctx.deps.ops, SOURCE_ID) if n != name)
-    text = f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
+    text = ""
+    if placed := placed_nodes(ctx.deps.ops):
+        text += "Nodes on the dashboard:\n" + placed + "\n\n"
+    text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
     text += f"; other source nodes: {others}):\n" if others else "):\n"
     text += meta.table_context(n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False)
     if src.dialect in DIALECT_NOTES:
         text += "\n\n" + DIALECT_NOTES[src.dialect]
-    if placed := placed_nodes(ctx.deps.ops):
-        text += "\n\nNodes on the dashboard:\n" + placed
     return text
 
 

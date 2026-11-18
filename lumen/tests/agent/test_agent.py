@@ -189,7 +189,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
 
     assert len(seen) == 3 and len({instructions for instructions, _ in seen}) == 1
     assert len({tuple(tools) for _, tools in seen}) == 1
-    assert INSTRUCTIONS in seen[0][0]
+    assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
     assert tools == ["add_chart", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
@@ -343,3 +343,26 @@ async def test_requests_turn_reasoning_off_unless_the_host_overrides_it():
             session.close()
         assert seen[-1]["openai_reasoning_effort"] == expected
     assert seen[0]["max_tokens"] == 4000
+
+
+async def test_data_agent_leaves_out_flowdash_instructions_and_catalogue():
+    from panel_flowdash.agent.assistant import (
+        INSTRUCTIONS as FLOWDASH_INSTRUCTIONS,
+    )
+
+    seen = []
+
+    def respond(messages, info):
+        seen.append(info.instructions)
+        return ModelResponse(parts=[TextPart("ok")])
+
+    model = FunctionModel(respond)
+    for agent in (None, create_agent(model, dashboard_tools=None)):
+        session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=agent)
+        try:
+            await session.ask("Hi")
+        finally:
+            session.close()
+    data, dashboard = seen
+    assert data.startswith(INSTRUCTIONS.strip()) and FLOWDASH_INSTRUCTIONS not in data and "Components you may place" not in data
+    assert FLOWDASH_INSTRUCTIONS in dashboard and "Components you may place" in dashboard
