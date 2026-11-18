@@ -46,7 +46,7 @@ SQL nodes accept one read-only `SELECT` or `WITH` query, checked in steps:
 - Before a source is connected, the query must parse in the dialect of one of the app's sources and be read-only.
 - Once a source is connected, it may only read the source's own tables.
 - On DuckDB and Snowflake, which can stop a running statement, the engine then binds the query with `LIMIT 0`, so a misspelled column is refused without running the query. If the engine does not answer within 3 seconds the change is applied with the warning "Could not verify the query" (panel-flowdash releases without check warnings apply it silently), and the node reports any error when it runs the query.
-- Other sources are never asked, since a slow check could not be stopped. There the query's columns are compared with the table schemas Lumen already read, when it has them.
+- Other sources are never asked, since a slow check could not be stopped. There the query's columns are compared with the table schemas Lumen already read, when it has them, ignoring case, so a column is only refused when no column of that name exists.
 
 A query placed before its source is connected is checked against the source when the node runs; the node reports what the engine refused, and validating the dashboard lists it.
 
