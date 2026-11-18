@@ -1083,3 +1083,22 @@ def test_cli_runs_offline_subject_without_key(monkeypatch, tmp_path):
     assert (saved["run"]["subject"], saved["run"]["scoring"]) == ("fake", "outcome")
     assert saved["cases"][0]["assertions"]["rows"] is True
     assert "actors" not in saved["cases"][0]["assertions"]
+
+
+@pytest.mark.parametrize(("error", "message"), [
+    (TimeoutError(), "Case exceeded the 240s evaluation limit"),
+    (OSError("disk full"), "Harness failed: OSError: disk full"),
+])
+def test_bird_case_labels_harness_errors(tmp_path, monkeypatch, error, message):
+    from tests.evals import bird_runner
+
+    async def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(bird_runner, "evaluate", fail)
+    case = Case(name="q1", inputs=None)
+    result = bird_runner.run_bird_case((1, case, tmp_path, "m", "openai", "test-key", tmp_path / "out.json",
+                                        "", "", False, {}, None, "fake"))
+
+    assert result["cases"][0]["error"] == message
+    assert result["cases"][0]["assertions"] == {}

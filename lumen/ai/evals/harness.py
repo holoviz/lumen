@@ -30,10 +30,10 @@ from lumen.ai.coordinator import Plan
 from lumen.ai.editors import VegaLiteEditor
 from lumen.ai.llm import OpenAI
 from lumen.ai.report import ActorTask
-from lumen.ai.schemas import get_metaset
 from lumen.ai.tool_trace import ToolCall
 from lumen.ai.ui import ExplorerUI
 from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.data.catalog import get_metaset
 from lumen.pipeline import Pipeline
 from lumen.util import as_pandas
 
@@ -725,6 +725,14 @@ def artifacts_path(output: Path) -> Path:
     return output.with_name(f"{output.stem}.artifacts.jsonl")
 
 
+def git_state() -> tuple[str, bool]:
+    """The checked out commit and whether files that can move results differ from it."""
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
+    # Any change to the package can move results, prompts and agents included.
+    dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", "lumen", "tests/evals", "pixi.toml", "pixi.lock", "pyproject.toml"], capture_output=True, text=True, check=False).stdout.strip())
+    return commit, dirty
+
+
 async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path | None = None,
                    case_name: str | None = None, documents_factory: Any = None, fixtures: dict[str, Any] | None = None,
                    instruction_version: str = "", ui_params: dict[str, Any] | None = None,
@@ -781,9 +789,7 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
     report = await selected.evaluate(task, max_concurrency=1)
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
-        commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False).stdout.strip()
-        # Any change to the package can move results, prompts and agents included.
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--", "lumen", "tests/evals", "pixi.toml", "pixi.lock", "pyproject.toml"], capture_output=True, text=True, check=False).stdout.strip())
+        commit, dirty = git_state()
         completed = {case.name: case for case in report.cases}
         failures = {failure.name: failure.error_message for failure in report.failures}
         for case in report.cases:

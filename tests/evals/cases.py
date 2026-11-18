@@ -10,7 +10,7 @@ from lumen.ai.evals.bird import BirdExecution, database_path, execute_read_only
 from lumen.ai.evals.harness import (
     CheckResult, Expected, Inputs, Output,
 )
-from lumen.ai.schemas import DocumentChunk
+from lumen.data.catalog import DocumentChunk
 from lumen.sources.duckdb import DuckDBSource
 
 SUITE_INSTRUCTIONS = {
