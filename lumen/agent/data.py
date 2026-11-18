@@ -9,8 +9,7 @@ from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..ai.agents.sql import (
-    PROMPT_OTHER_TABLES, SCHEMA_MAX_TOKENS, execute_distinct_values,
-    execute_exploration_sql,
+    PROMPT_OTHER_TABLES, execute_distinct_values, execute_exploration_sql,
 )
 from ..ai.data_quality import lint_data
 from ..ai.schemas import Metaset, get_metaset
@@ -92,7 +91,7 @@ def placed_nodes(ops) -> str | None:
 
 
 async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) -> str:
-    """List a source node's tables with column types and stats, its SQL dialect and the nodes already placed.
+    """List a source node's tables and columns, its SQL dialect and the nodes already placed.
 
     Args:
         source: Source node; defaults to the only one.
@@ -106,9 +105,7 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) 
         text += "Nodes on the dashboard:\n" + placed + "\n\n"
     text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
     text += f"; other source nodes: {others}):\n" if others else "):\n"
-    text += meta.compact_context(
-        n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False, max_tokens=SCHEMA_MAX_TOKENS,
-    )
+    text += meta.table_context(n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False)
     if src.dialect in DIALECT_NOTES:
         text += "\n\n" + DIALECT_NOTES[src.dialect]
     return text
