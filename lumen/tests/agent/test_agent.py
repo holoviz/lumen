@@ -343,7 +343,7 @@ async def test_requests_turn_reasoning_off_unless_the_host_overrides_it():
         finally:
             session.close()
         assert seen[-1]["openai_reasoning_effort"] == expected
-    assert seen[0]["max_tokens"] == 4000
+    assert seen[0]["max_tokens"] == 1000
 
 
 async def test_data_agent_leaves_out_flowdash_instructions_and_catalogue():
@@ -468,9 +468,44 @@ async def test_list_tables_summarizes_placed_charts(ctx, session):
 async def test_list_tables_shortens_long_node_sql(ctx, monkeypatch):
     import lumen.agent.data as data
 
-    monkeypatch.setattr(data, "NODE_SQL_SHOWN", 20)
+    monkeypatch.setattr(data, "NODE_SQL_CHARS", 20)
     await add_sql(ctx, "data", "paid_by_region", BY_REGION)
     text = await list_tables(ctx)
     line = next(line for line in text.splitlines() if line.startswith("- paid_by_region"))
     shown = " ".join(_graph.config_of(ctx.deps.ops, "paid_by_region")["sql"].split())
     assert line.endswith(f"{shown[:20]} [... {len(shown) - 20} more characters]")
+async def test_node_listing_is_bounded(ctx, session):
+    from lumen.agent.data import NODE_SQL_CHARS, NODES_SHOWN
+
+    long_sql = "SELECT status, " + ", ".join(f"amount AS a{i}" for i in range(80)) + " FROM orders"
+    for i in range(NODES_SHOWN + 3):
+        session.add_sql(f"node_{i:02d}", long_sql if i == NODES_SHOWN + 2 else "SELECT status FROM orders")
+    text = await list_tables(ctx)
+    listed = [line for line in text.split("\n\n")[0].splitlines()[1:]]
+    assert listed[0].startswith(f"- node_{NODES_SHOWN + 2:02d} (SQL;") and listed[0].endswith("more characters]")
+    assert len(listed[0]) < NODE_SQL_CHARS + 200
+    assert listed[-1] == "- and 3 more; list_tables(node=...) shows one in full."
+    detail = await list_tables(ctx, node=f"node_{NODES_SHOWN + 2:02d}")
+    assert detail.endswith("FROM orders")
+    with pytest.raises(ModelRetry, match="No node 'missing'"):
+        await list_tables(ctx, node="missing")
+
+
+async def test_answer_cut_off_at_the_output_limit_is_retried():
+    from lumen.agent.assistant import CUT_OFF
+
+    requests = []
+
+    def respond(messages, info):
+        requests.append(messages[-1])
+        if len(requests) == 1:
+            return ModelResponse(parts=[TextPart("The total is   ")], finish_reason="length")
+        return ModelResponse(parts=[TextPart("The total is 35.")])
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    try:
+        result = await create_agent(FunctionModel(respond)).run("Total?", deps=session.deps)
+    finally:
+        session.close()
+    assert result.output == "The total is 35."
+    assert CUT_OFF in str(requests[1].parts[0].content)

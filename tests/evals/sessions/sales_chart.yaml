@@ -31,7 +31,10 @@ turns:
               SUM("amount") AS "total_amount"
             FROM "sales"
             WHERE
-              TRIM("category") <> '' AND "amount" <> -9999
+              NOT "category" IS NULL
+              AND TRIM("category") <> ''
+              AND NOT "amount" IS NULL
+              AND "amount" <> -9999
             GROUP BY
               "category"
           table: total_amount_by_category
@@ -69,7 +72,10 @@ turns:
               SUM("amount") AS "total_amount"
             FROM "sales"
             WHERE
-              TRIM("category") <> '' AND "amount" <> -9999
+              NOT "category" IS NULL
+              AND TRIM("category") <> ''
+              AND NOT "amount" IS NULL
+              AND "amount" <> -9999
             GROUP BY
               "category"
           table: total_amount_by_category

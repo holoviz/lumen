@@ -25,8 +25,8 @@ try:
     _version = Version(panel_agents.__version__)
 except InvalidVersion:
     _version = None
-# A source checkout without version metadata reports 0.0.0+unknown and is let through.
-if _version is not None and _version.local is None and _version < Version(PANEL_AGENTS_MINIMUM):
+# Only a source checkout without version metadata, which reports 0.0.0+unknown, is let through.
+if _version is not None and str(_version) != "0.0.0+unknown" and Version(_version.public) < Version(PANEL_AGENTS_MINIMUM):
     raise ImportError(
         f"lumen.agent needs panel-agents >= {PANEL_AGENTS_MINIMUM}, found {panel_agents.__version__}: "
         f"pip install 'panel-agents>={PANEL_AGENTS_MINIMUM}'"

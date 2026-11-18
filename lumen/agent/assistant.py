@@ -7,8 +7,9 @@ from typing import Any
 from panel_flowdash.agent import (
     FlowDashDeps, create_agent as create_flowdash_agent,
 )
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.messages import ModelResponse
 
 from .authoring import authoring_toolset
 from .data import data_toolset
@@ -64,13 +65,18 @@ Use the dialect list_tables names for the source.
 """
 
 # gpt-6-luna and similar models otherwise reason before most tool calls,
-# which costs output tokens and time without changing the answers. The
-# output cap stops a response that degenerates into whitespace; a host that
-# turns reasoning back on must raise or drop it, since reasoning tokens count
-# against it. ``openai_reasoning_effort`` is only read by OpenAI models and is
-# untested with other providers. Model settings are recorded with the eval
-# run settings, not in the agent fingerprint a cassette checks.
-MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 4000}
+# which costs output tokens and time without changing the answers. Without
+# reasoning, a response sometimes ends its tool call and then streams
+# whitespace until the output limit; the cap bounds that at a few times the
+# longest legitimate response seen in the evals (about 250 tokens). A response
+# cut off by it is retried, see ``create_agent``. A host that turns reasoning
+# back on must raise or drop the cap, since reasoning tokens count against it.
+# ``openai_reasoning_effort`` is only read by OpenAI models and is untested
+# with other providers. Model settings are recorded with the eval run
+# settings, not in the agent fingerprint a cassette checks.
+MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 1000}
+
+CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
 DASHBOARD_TOOLS = {
@@ -127,8 +133,19 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         dashboard_tools = DASHBOARD_TOOLS[dashboard_tools]
     if dashboard_instructions is None:
         dashboard_instructions = dashboard_tools is None
-    return create_flowdash_agent(
+    agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",
         capabilities=capabilities, **kwargs,
     )
+
+    # A tool call cut off at the output limit fails its argument validation and is retried by
+    # pydantic-ai; a cut-off final answer would otherwise pass as complete.
+    @agent.output_validator
+    def complete(ctx: RunContext[FlowDashDeps], output: str) -> str:
+        last = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
+        if last is not None and last.finish_reason == "length":
+            raise ModelRetry(CUT_OFF)
+        return output
+
+    return agent

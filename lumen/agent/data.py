@@ -26,8 +26,11 @@ from . import _graph
 STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
 SCHEMA_TABLES_SHOWN = 25
-# Characters of a placed node's SQL list_tables shows; a node from a shared dashboard may hold any amount.
-NODE_SQL_SHOWN = 2000
+# Placed nodes list_tables shows, and the characters of SQL it shows of each.
+NODES_SHOWN = 12
+# A node from a shared dashboard may hold any amount of SQL.
+NODE_SQL_CHARS = 300
+NODE_COLUMNS = 12
 
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
 
@@ -66,52 +69,70 @@ def _sources(source: BaseSQLSource) -> dict[tuple[str, str], BaseSQLSource]:
     return {(source.name, table): source for table in source.get_tables()}
 
 
+def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
+    component = _graph.component_of(ops, name)
+    config = _graph.config_of(ops, name)
+    if component == SQL_ID:
+        try:
+            frame = _graph.output(ops, name, "data")
+            names = [str(c) for c in frame.columns] if frame is not None else []
+            if sql_chars is not None and len(names) > NODE_COLUMNS:
+                names = [*names[:NODE_COLUMNS], f"and {len(names) - NODE_COLUMNS} more"]
+            columns = f"columns: {', '.join(names)}" if frame is not None else "no result"
+        except OperationError as exc:
+            columns = str(exc)
+        sql = " ".join(str(config.get("sql", "")).split())
+        if sql_chars is not None and len(sql) > sql_chars:
+            sql = f"{sql[:sql_chars]} [... {len(sql) - sql_chars} more characters]"
+        return f"- {name} (SQL; {columns}): {sql}"
+    if component == VIEW_ID:
+        spec = config.get("spec")
+        spec = spec if isinstance(spec, dict) else {}
+        mark = spec.get("mark")
+        mark = mark.get("type") if isinstance(mark, dict) else mark
+        fields = ", ".join(
+            f"{channel}={definition['field']}" for channel, definition in (spec.get("encoding") or {}).items()
+            if isinstance(definition, dict) and "field" in definition
+        )
+        return f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})"
+    return None
+
+
 def placed_nodes(ops) -> str | None:
     """
-    The SQL and chart nodes on the dashboard: each SQL node's query on one
-    line and its result's columns, and each chart's mark, data node and
-    encoded fields, so the agent can change a node it did not place itself.
+    The SQL and chart nodes on the dashboard, most recently placed first:
+    each SQL node's query on one line, cut after ``NODE_SQL_CHARS``
+    characters, and its result's columns, and each chart's mark, data node
+    and encoded fields, so the agent can change a node it did not place
+    itself. At most ``NODES_SHOWN`` are listed, followed by how many more
+    there are.
     """
-    lines = []
-    for name in _graph.nodes(ops):
-        component = _graph.component_of(ops, name)
-        config = _graph.config_of(ops, name)
-        if component == SQL_ID:
-            try:
-                frame = _graph.output(ops, name, "data")
-                columns = f"columns: {', '.join(map(str, frame.columns))}" if frame is not None else "no result"
-            except OperationError as exc:
-                columns = str(exc)
-            sql = " ".join(str(config.get("sql", "")).split())
-            if len(sql) > NODE_SQL_SHOWN:
-                sql = f"{sql[:NODE_SQL_SHOWN]} [... {len(sql) - NODE_SQL_SHOWN} more characters]"
-            lines.append(f"- {name} (SQL; {columns}): {sql}")
-        elif component == VIEW_ID:
-            spec = config.get("spec")
-            spec = spec if isinstance(spec, dict) else {}
-            mark = spec.get("mark")
-            mark = mark.get("type") if isinstance(mark, dict) else mark
-            fields = ", ".join(
-                f"{channel}={definition['field']}" for channel, definition in (spec.get("encoding") or {}).items()
-                if isinstance(definition, dict) and "field" in definition
-            )
-            lines.append(f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})")
+    limit = NODES_SHOWN
+    names = [n for n in reversed(_graph.nodes(ops)) if _graph.component_of(ops, n) in (SQL_ID, VIEW_ID)]
+    lines = [_node_line(ops, name, NODE_SQL_CHARS) for name in names[:limit]]
+    if len(names) > limit:
+        lines.append(f"- and {len(names) - limit} more; list_tables(node=...) shows one in full.")
     return "\n".join(lines) or None
 
 
-async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) -> str:
+async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, node: str | None = None) -> str:
     """List a source node's tables with column types and stats, its SQL dialect and the nodes already placed.
 
     Args:
         source: Source node; defaults to the only one.
+        node: Only show this placed node, with its full SQL.
     """
+    if node is not None:
+        if node not in _graph.nodes(ctx.deps.ops):
+            raise ModelRetry(f"No node {node!r} on the dashboard.")
+        return _node_line(ctx.deps.ops, node, None) or f"{node!r} is not a SQL or chart node."
     name, src = resolve_source(ctx.deps, source)
     tables = src.get_tables()
     meta = await metaset(src)
     others = ", ".join(n for n in _graph.nodes(ctx.deps.ops, SOURCE_ID) if n != name)
     text = ""
     if placed := placed_nodes(ctx.deps.ops):
-        text += "Nodes on the dashboard:\n" + placed + "\n\n"
+        text += "Nodes on the dashboard, most recent first:\n" + placed + "\n\n"
     text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
     text += f"; other source nodes: {others}):\n" if others else "):\n"
     text += meta.compact_context(

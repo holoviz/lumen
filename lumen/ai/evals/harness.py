@@ -277,7 +277,7 @@ class Subject(Protocol):
     and ``settings``, a JSON-serializable dict of options that change how the
     subject behaves (e.g. model settings), which is recorded with the run
     settings and is part of the case fingerprint, and ``partial_usage()``,
-    the ``Usage`` of the case run so far, recorded when it times out.
+    the ``Usage`` of the case run so far, recorded when it times out or raises.
     """
 
     name: str
@@ -717,6 +717,12 @@ def case_fingerprint(cases: list[Case], fixtures: dict[str, Any] | None = None,
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _partial_usage(subject: Any) -> Usage | None:
+    """What a subject's run used before it timed out or raised, if the subject reports it."""
+    partial = getattr(subject, "partial_usage", None)
+    return partial() if callable(partial) else None
+
+
 def model_metadata(model: Any) -> dict[str, Any]:
     """Describe a Lumen ``Llm`` or a pydantic-ai model for the run metadata."""
     if hasattr(model, "model_kwargs"):
@@ -787,13 +793,12 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
                 timeout=prompt_timeout * max(1, len(inputs.prompts)),
             )
         except TimeoutError:
-            # A subject may report what the cancelled run used so far, which would be lost otherwise.
-            partial = getattr(subject, "partial_usage", None)
-            usage = partial() if callable(partial) else None
+            usage = _partial_usage(subject)
             return Output([Turn(prompt, "timeout", None, [], [], None, None, None, None, [], usage=usage)], usage)
         except Exception as exc:
             error = _error_message(exc)
-            return Output([Turn(prompt, "error", None, [], [], None, None, None, None, [], task_errors=[error])])
+            usage = _partial_usage(subject)
+            return Output([Turn(prompt, "error", None, [], [], None, None, None, None, [], task_errors=[error], usage=usage)], usage)
 
     cases = [case for case in dataset.cases if case.name == case_name] if case_name else dataset.cases
     if not cases:
