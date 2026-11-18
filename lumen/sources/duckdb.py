@@ -6,7 +6,7 @@ import re
 import sys
 import threading
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import duckdb
 # https://duckdb.org/docs/stable/clients/python/known_issues#numpy-import-multithreading
@@ -110,6 +110,8 @@ class DuckDBSource(BaseSQLSource):
     source_type = 'duckdb'
 
     dialect = 'duckdb'
+
+    cancels_queries: ClassVar[bool] = True
 
     _install_extension_pattern = re.compile(r"^\s*INSTALL\s+([A-Za-z_][\w]*)\s*;?\s*$", re.IGNORECASE)
 

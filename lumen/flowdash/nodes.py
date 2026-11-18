@@ -56,8 +56,8 @@ from ..transforms.base import Filter as FilterTransform, Iloc
 from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
 from .checks import (
-    check_chart, check_filter_config, check_query, check_sql_config,
-    check_table_config, check_view_config, pipeline_columns,
+    check_chart, check_filter_config, check_query, check_source_config,
+    check_sql_config, check_table_config, check_view_config, pipeline_columns,
 )
 
 SOURCE_TYPE = register_port_type("lumen.Source")
@@ -122,6 +122,17 @@ def host_sources(context: Mapping[str, Any] | None = None) -> dict[str, Source]:
     """
     context = dashboard_context() if context is None else context
     return dict(context.get(SOURCES_KEY) or {})
+
+
+def missing_source(ref: str, sources: Mapping[str, Source]) -> str:
+    """What a source node naming ``ref`` reports when the host provides only ``sources``."""
+    if sources:
+        return f"The app provides no source `{ref}`; its sources are: {', '.join(f'`{r}`' for r in sorted(sources))}."
+    return (
+        "The app provides no Lumen sources. Serve the data with `lumen serve <data> --flowdash`, "
+        "or set `editor_options = {\"context\": {\"lumen.sources\": {\"data\": source}}}` "
+        "in the FlowDash project's `__init__.py`."
+    )
 
 
 def set_row_ceiling(editor: Any, rows: int) -> None:
@@ -480,6 +491,7 @@ class LumenNode(Viewer):
     component=True, page=False, title="Lumen Source", icon="storage",
     description="A Lumen data source the app provides, named by its ref.",
     config=["ref"],
+    check_config=check_source_config,
     provides=[{"key": "source", "type": SOURCE_TYPE}],
 )
 class SourceNode(LumenNode):
@@ -499,17 +511,9 @@ class SourceNode(LumenNode):
         if not self.ref:
             return None
         sources = host_sources(self._context)
-        if self.ref in sources:
-            return sources[self.ref]
-        if sources:
-            raise ValueError(
-                f"The app provides no source {self.ref!r}; its sources are: {', '.join(sorted(sources))}."
-            )
-        raise ValueError(
-            "The app provides no Lumen sources. Serve the data with `lumen serve <data> --flowdash`, "
-            "or set `editor_options = {\"context\": {\"lumen.sources\": {\"data\": source}}}` "
-            "in the FlowDash project's __init__.py."
-        )
+        if self.ref not in sources:
+            raise ValueError(missing_source(self.ref, sources))
+        return sources[self.ref]
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")

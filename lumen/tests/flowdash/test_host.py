@@ -20,7 +20,8 @@ from panel_flowdash.ui.status_bar import select_on_canvas
 
 from lumen.flowdash import (
     COMPONENTS, DATA_ID, SOURCE_ID, SOURCES_KEY, SQL_ID, TABLE_ID, bind_source,
-    bound_sources, check_sql_config, host_sources, unbind_source,
+    bound_sources, check_sql_config, checks as checks_module, host_sources,
+    unbind_source,
 )
 from lumen.flowdash.app import build_routes
 from lumen.pipeline import Pipeline
@@ -39,6 +40,12 @@ def failure(ops, name, port):
     value = output(ops, name, port)
     assert not isinstance(value, Pipeline)
     return str(getattr(value, "exception", value))
+
+
+def place_unchecked(ops, component, config, name):
+    """Place a node with a config its check would refuse, as a dashboard saved before the check existed has."""
+    ops.add_node(component, {}, name=name)
+    ops.editor._apply_config_patch(ops._instance(name), config)
 
 
 def query_dashboard(editor):
@@ -68,7 +75,12 @@ def test_source_nodes_read_the_editor_context(source):
 
 def test_binding_after_placing_reaches_the_node(source):
     editor = FlowDash(components=COMPONENTS)
-    ops = query_dashboard(editor)
+    ops = DashboardOps(editor)
+    with pytest.raises(OperationError, match="provides no Lumen sources"):
+        ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
+    place_unchecked(ops, SOURCE_ID, {"ref": "data"}, "data")
+    ops.add_node(SQL_ID, {"sql": QUERY, "table": "by_category"}, name="by_category")
+    ops.connect("data.source", "by_category.source")
     assert "provides no Lumen sources" in failure(ops, "data", "source")
 
     bind_source(editor, source)
@@ -113,8 +125,10 @@ def test_sessions_keep_their_own_sources(tmp_path, monkeypatch):
     assert list(bound_sources(second)) == ["data"]
 
     ops = DashboardOps(second)
-    ops.add_node(SOURCE_ID, {"ref": "extra"}, name="extra")
-    assert "no source 'extra'; its sources are: data" in failure(ops, "extra", "source")
+    with pytest.raises(OperationError, match="no source `extra`; its sources are: `data`"):
+        ops.add_node(SOURCE_ID, {"ref": "extra"}, name="extra")
+    place_unchecked(ops, SOURCE_ID, {"ref": "extra"}, "extra")
+    assert "no source `extra`; its sources are: `data`" in failure(ops, "extra", "source")
     ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
     ops.add_node(TABLE_ID, {"table": "sales_csv"}, name="sales")
     ops.connect("data.source", "sales.source")
@@ -127,8 +141,11 @@ def test_flowdash_app_without_sources_says_how_to_provide_them(tmp_path, source)
     store = DashboardStore(str(tmp_path / "dashboards.db"))
     plain = FlowDashApp(project_dir=str(tmp_path), registry={}, store=store, component_libraries=["lumen.flowdash"])
     ops = DashboardOps(plain._editor)
-    ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
-    assert 'editor_options = {"context": {"lumen.sources"' in failure(ops, "data", "source")
+    place_unchecked(ops, SOURCE_ID, {"ref": "data"}, "data")
+    message = failure(ops, "data", "source")
+    assert "`lumen serve <data> --flowdash`" in message
+    assert '`editor_options = {"context": {"lumen.sources": {"data": source}}}`' in message
+    assert "`__init__.py`" in message
 
     configured = FlowDashApp(
         project_dir=str(tmp_path), registry={}, store=store, component_libraries=["lumen.flowdash"],
@@ -207,3 +224,102 @@ async def test_inspector_holds_back_sql_the_engine_rejects(source):
     await settle()
     assert editor._component_instances[node].sql == fixed
     assert alerts() == []
+
+
+def test_add_node_refuses_unsafe_sql_before_a_source_is_connected(source):
+    ops = DashboardOps(FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"data": source}}))
+    with pytest.raises(OperationError, match="read-only"):
+        ops.add_node(SQL_ID, {"sql": "DROP TABLE sales"}, name="drop")
+    with pytest.raises(OperationError, match="does not parse"):
+        ops.add_node(SQL_ID, {"sql": "SELECT FROM WHERE ("}, name="garbled")
+    ops.add_node(SQL_ID, {"sql": "SELECT * FROM glob('/etc/*')"}, name="duckdb_syntax")
+
+
+def test_add_node_then_connect_runs_the_check_on_the_node(source):
+    ops = DashboardOps(FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"data": source}}))
+    ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
+    ops.add_node(SQL_ID, {"sql": BROKEN, "table": "q"}, name="q")
+
+    ops.connect("data.source", "q.source")
+
+    assert "price" in failure(ops, "q", "data")
+    assert any("price" in issue.message for issue in ops.validate())
+
+
+def test_engine_errors_name_the_query_not_the_probe(source):
+    problem = asyncio.run(check_sql_config({"sql": BROKEN}, {"source": source}))
+    assert "price" in problem and "LIMIT 0" not in problem
+
+
+def test_unchanged_sql_is_not_probed_again(source, executed):
+    ops = query_dashboard(FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"data": source}}))
+    executed.clear()
+
+    ops.set_config("by_category", {"sql": QUERY.replace("SUM", "MAX")})
+    ops.set_config("by_category", {"limit": 1})
+    ops.set_config("by_category", {"table": "renamed"})
+
+    assert [q for q in executed if q.endswith("LIMIT 0")] == [f"{QUERY.replace('SUM', 'MAX')} LIMIT 0"]
+
+
+async def test_a_probe_that_times_out_is_a_warning(source, monkeypatch):
+    async def slow(sql, timeout, fetch=False):
+        raise QueryTimeoutError("slow")
+
+    monkeypatch.setattr(source, "execute_with_timeout", slow)
+    result = await check_sql_config({"sql": BROKEN}, {"source": source})
+    try:
+        from panel_flowdash import CheckWarning
+    except ImportError:
+        assert result is None
+    else:
+        assert isinstance(result, CheckWarning) and "Could not verify the query" in result
+
+
+async def test_probes_run_one_at_a_time_per_source(source, monkeypatch):
+    running, most = 0, 0
+
+    async def slow(sql, timeout, fetch=False):
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.1)
+        running -= 1
+
+    monkeypatch.setattr(source, "execute_with_timeout", slow)
+    queries = [f"SELECT category FROM sales WHERE amount > {i}" for i in range(4)]
+    results = await asyncio.gather(*(check_sql_config({"sql": q}, {"source": source}) for q in queries))
+
+    assert results == [None] * 4 and most == 1
+
+
+async def test_probe_timeout_is_read_when_the_check_runs(source, monkeypatch):
+    seen = []
+
+    async def record(sql, timeout, fetch=False):
+        seen.append(timeout)
+
+    monkeypatch.setattr(source, "execute_with_timeout", record)
+    monkeypatch.setattr(checks_module, "PROBE_TIMEOUT", 0.5)
+    await check_sql_config({"sql": QUERY}, {"source": source})
+    assert seen and seen[0] <= 0.5
+
+
+class UncancellableSource(DuckDBSource):
+    cancels_queries = False
+
+
+async def test_sources_that_cannot_stop_a_query_are_never_probed(monkeypatch):
+    source = UncancellableSource(uri=":memory:", tables={"sales": "SELECT * FROM (VALUES ('A', 10)) AS t(category, amount)"})
+
+    async def fail(*args, **kwargs):
+        raise AssertionError("probed")
+
+    monkeypatch.setattr(source, "execute_with_timeout", fail)
+    assert await check_sql_config({"sql": BROKEN}, {"source": source}) is None
+
+    source.get_schema("sales")
+    problem = await check_sql_config({"sql": BROKEN}, {"source": source})
+    assert "price" in problem
+    assert await check_sql_config({"sql": QUERY}, {"source": source}) is None
+    assert "read-only" in await check_sql_config({"sql": "DROP TABLE sales"}, {"source": source})

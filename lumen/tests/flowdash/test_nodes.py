@@ -44,6 +44,12 @@ def view_error(ops, name):
     return ops.editor._component_instances[ops._instance(name)]._error or ""
 
 
+def place_unchecked(ops, component, config, name):
+    """Place a node with a config its check would refuse, as a dashboard saved before the check existed has."""
+    ops.add_node(component, {}, name=name)
+    ops.editor._apply_config_patch(ops._instance(name), config)
+
+
 def editor_with(source, ref="data"):
     editor = FlowDash(components=COMPONENTS)
     bind_source(editor, source, ref)
@@ -114,10 +120,10 @@ def test_node_path_stops_slow_query_after_node_timeout(source):
 
 def test_sql_node_reports_failed_source(source):
     ops = editor_with(source)
-    ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    place_unchecked(ops, SOURCE_ID, {"ref": "missing"}, "other")
     ops.add_node(SQL_ID, {"sql": QUERY}, name="q")
     ops.connect("other.source", "q.source")
-    assert "The app provides no source 'missing'; its sources are: data." in failure(ops, "q")
+    assert "The app provides no source `missing`; its sources are: `data`." in failure(ops, "q")
 
 
 def test_sql_node_times_out(source):
@@ -158,7 +164,9 @@ def test_sql_node_table_does_not_shadow_source_table(source):
     ("SELECT * FROM other.sales", "not a table of this source"),
 ])
 def test_sql_node_refuses_unsafe_queries_on_every_path(source, executed, sql, error):
-    ops = dashboard(source, sql)
+    ops = editor_with(source)
+    place_unchecked(ops, SQL_ID, {"sql": sql, "table": "by_category"}, "by_category")
+    ops.connect("data.source", "by_category.source")
     assert error in failure(ops, "by_category")
     assert ops.preview()["nodes"]["by_category"]["outputs"]["data"]["type"] == "failure"
 
@@ -212,9 +220,11 @@ def test_source_node_has_no_spec_to_build_a_source_from(source):
 
 def test_source_node_reports_unbound_ref(source):
     ops = editor_with(source)
-    ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    with pytest.raises(OperationError, match="no source `missing`; its sources are: `data`"):
+        ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    place_unchecked(ops, SOURCE_ID, {"ref": "missing"}, "other")
 
-    assert "The app provides no source 'missing'" in failure(ops, "other", "source")
+    assert "The app provides no source `missing`" in failure(ops, "other", "source")
 
 
 def test_bindings_belong_to_their_editor():

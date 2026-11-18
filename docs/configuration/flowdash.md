@@ -37,7 +37,18 @@ Edges between Lumen nodes carry a Lumen pipeline rather than a table of rows, so
 
 Rows are fetched where they are needed: by a **Lumen Data** node, which outputs a DataFrame for any FlowDash component that takes one, by a chart, or by a node's own preview when it is shown. Every query is capped at 100,000 rows; a table or SQL node's `limit` can lower that.
 
-SQL nodes accept one read-only `SELECT` or `WITH` query over the source's own tables, which the source's engine must accept: before a query is applied the engine binds it with `LIMIT 0`, so a misspelled column is refused without running the query. Chart specs may only name columns of their input and may not load data or URLs, and table and filter nodes only name tables and columns that exist. These checks apply however the config arrives: typed in the editor's inspector, set by an agent or checked when a dashboard is validated; a refused change leaves the node as it was.
+### Checks
+
+Each node's config is checked before it is applied, whether it is typed in the editor's inspector or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
+
+SQL nodes accept one read-only `SELECT` or `WITH` query, checked in steps:
+
+- Before a source is connected, the query must parse in the dialect of one of the app's sources and be read-only.
+- Once a source is connected, it may only read the source's own tables.
+- On DuckDB and Snowflake, which can stop a running statement, the engine then binds the query with `LIMIT 0`, so a misspelled column is refused without running the query. If the engine does not answer within 3 seconds the change is applied with the warning "Could not verify the query" (panel-flowdash releases without check warnings apply it silently), and the node reports any error when it runs the query.
+- Other sources are never asked, since a slow check could not be stopped. There the query's columns are compared with the table schemas Lumen already read, when it has them.
+
+A query placed before its source is connected is checked against the source when the node runs; the node reports what the engine refused, and validating the dashboard lists it.
 
 ## In your own app
 
