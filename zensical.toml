@@ -86,6 +86,7 @@ nav = [
         {"Reports" = "reference/api/ai/reports.md"},
         {"Core" = "reference/api/ai/core.md"}
       ]},
+      {"Data" = "reference/api/data.md"},
       {"Pipeline" = "reference/api/pipeline.md"},
       {"Filters" = "reference/api/filters.md"},
       {"Variables" = "reference/api/variables.md"},

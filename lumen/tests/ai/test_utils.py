@@ -930,7 +930,7 @@ class TestCountTokens:
     def test_falls_back_when_encoder_unavailable(self):
         """A missing tokenizer must degrade to a char estimate, not raise."""
         text = "a" * 300
-        with patch("lumen.ai.utils._get_token_encoder", return_value=None):
+        with patch("lumen.data.utils._get_token_encoder", return_value=None):
             assert count_tokens(text) == pytest.approx(300 / FALLBACK_CHARS_PER_TOKEN, abs=1)
 
     def test_encoder_is_cached(self):
