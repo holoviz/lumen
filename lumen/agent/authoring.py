@@ -11,8 +11,8 @@ from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    QUERY_TIMEOUT, RESULT_LIMIT, SQL_ID, VIEW_ID, check_chart, check_query,
-    primed_result, result_sql,
+    QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query, primed_result,
+    result_sql, row_ceiling,
 )
 from ..pipeline import Pipeline
 from . import _graph
@@ -57,7 +57,8 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     try:
         sql = clean_sql(sql.strip(), src.dialect, prettify=True)
         check_query(sql, src)
-        statement = result_sql(src, sql)
+        limit = row_ceiling(ops.editor)
+        statement = result_sql(src, sql, limit)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
         raise ModelRetry(format_error(exc)) from exc
     try:
@@ -71,7 +72,7 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     except OperationError as exc:
         ops.remove_node(name)
         raise ModelRetry(str(exc)) from exc
-    capped = f" (capped at {RESULT_LIMIT} rows)" if len(frame) >= RESULT_LIMIT else ""
+    capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
     return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 

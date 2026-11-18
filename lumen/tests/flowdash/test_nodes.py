@@ -1,3 +1,5 @@
+import time
+
 from pathlib import Path
 
 import pytest
@@ -10,8 +12,9 @@ from panel_flowdash.agent import (
 )
 
 from lumen.flowdash import (
-    COMPONENTS, SOURCE_ID, SQL_ID, VIEW_ID, bind_source, check_query,
-    compile_sql, primed_result, result_sql,
+    COMPONENTS, NODE_TIMEOUT, RESULT_LIMIT, SOURCE_ID, SQL_ID, VIEW_ID,
+    bind_source, check_chart, check_query, compile_sql, primed_result,
+    result_sql, set_row_ceiling,
 )
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
@@ -98,6 +101,37 @@ def test_sql_node_limit_caps_rows(source):
     assert len(output(ops, "by_category", "data")) == 2
 
 
+def test_sql_node_limit_cannot_exceed_host_ceiling():
+    big = DuckDBSource(uri=":memory:", tables={"big": "SELECT * FROM range(300000) AS t(i)"})
+    ops = editor_with(big)
+    ops.add_node(SQL_ID, {"sql": "SELECT * FROM big", "limit": 10**12}, name="rows")
+    ops.connect("data.source", "rows.source")
+    assert len(output(ops, "rows", "data")) == RESULT_LIMIT
+
+    set_row_ceiling(ops.editor, 200_000)
+    ops.set_config("rows", {"limit": None})
+    assert len(output(ops, "rows", "data")) == 200_000
+    ops.set_config("rows", {"limit": 50})
+    assert len(output(ops, "rows", "data")) == 50
+
+
+def test_node_path_stops_slow_query_after_node_timeout(source):
+    ops = dashboard(source)
+    endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT COUNT(*) FROM n, sales"
+    started = time.monotonic()
+    ops.set_config("by_category", {"sql": endless})
+    assert "did not finish" in failure(ops, "by_category")
+    assert time.monotonic() - started < NODE_TIMEOUT + 5
+
+
+def test_sql_node_reports_failed_source(source):
+    ops = editor_with(source)
+    ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    ops.add_node(SQL_ID, {"sql": QUERY}, name="q")
+    ops.connect("other.source", "q.source")
+    assert "No source is bound as 'missing'" in failure(ops, "q")
+
+
 def test_sql_node_times_out(source):
     endless = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT COUNT(*) FROM n, sales"
     with pytest.raises(Exception, match="did not finish within 0.5 seconds"):
@@ -124,9 +158,16 @@ def test_sql_node_table_does_not_shadow_source_table(source):
     ("SELECT * FROM read_csv('/etc/hosts')", "READ_CSV"),
     ("SELECT * FROM '/etc/hosts'", "not a table of this source"),
     ("SELECT * FROM 'https://example.invalid/x.parquet'", "not a table of this source"),
-    ("SELECT * FROM duckdb_settings()", "DUCKDB_SETTINGS"),
+    ("SELECT * FROM duckdb_settings()", "duckdb_settings"),
     ("SELECT * FROM information_schema.tables", "information_schema.tables"),
     ("SELECT * FROM other_table", "not a table of this source"),
+    ("WITH x AS (SELECT 1 AS x) SELECT * FROM x", "reads no table"),
+    ("WITH a AS (SELECT 1 AS x), b AS (SELECT * FROM a) SELECT * FROM b", "reads no table"),
+    ("WITH sales AS (SELECT 42 AS total) SELECT * FROM sales", "reads no table"),
+    ("WITH unused AS (SELECT * FROM sales) SELECT 42 AS answer FROM (SELECT 1) AS t", "reads no table"),
+    ("SELECT current_setting('home_directory') AS h FROM sales", "current_setting"),
+    ("SELECT getenv('HOME') AS h FROM sales", "getenv"),
+    ("SELECT * FROM other.sales", "not a table of this source"),
 ])
 def test_sql_node_refuses_unsafe_queries_on_every_path(source, executed, sql, error):
     ops = dashboard(source, sql)
@@ -144,6 +185,16 @@ def test_sql_node_refuses_unsafe_queries_on_every_path(source, executed, sql, er
     imported.import_dashboard(dashboard_from_yaml(text))
     assert error in failure(DashboardOps(imported), "by_category")
     assert not any(word in query.upper() for query in executed for word in ("DROP", "INSERT", "CREATE", "DELETE", "/ETC/", "HTTPS:", "DUCKDB_SETTINGS", "INFORMATION_SCHEMA"))
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT * FROM main.sales",
+    "SELECT * FROM memory.main.sales",
+    "WITH a AS (SELECT * FROM sales), b AS (SELECT * FROM a) SELECT * FROM b",
+    "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3) SELECT * FROM n, sales",
+])
+def test_check_query_accepts(source, sql):
+    check_query(sql, source)
 
 
 def test_check_query_allows_ctes_and_declared_table_functions():
@@ -221,6 +272,29 @@ def test_view_node_checks_spec_on_every_path(source, spec, error):
     ops.add_node(VIEW_ID, {"spec": spec}, name="other_chart")
     ops.connect("by_category.pipeline", "other_chart.pipeline")
     assert error in view_error(ops, "other_chart")
+
+
+@pytest.mark.parametrize("spec", [
+    {"layer": [SPEC, {"mark": "rule", "data": {"values": [{"total": 1}]}, "encoding": {"y": {"field": "total", "type": "quantitative"}}}]},
+    {**SPEC, "data": {"sequence": {"start": 0, "stop": 10}}},
+    {**SPEC, "datasets": {"x": [{"total": 1}]}},
+    {**SPEC, "transform": [{"lookup": "category", "from": {"data": {"name": "other"}, "key": "category", "fields": ["total"]}}]},
+])
+def test_check_chart_refuses_data_at_any_depth(spec):
+    with pytest.raises(ValueError, match="remove `data` and `datasets`"):
+        check_chart(spec, ["category", "total"])
+
+
+def test_source_node_picks_up_a_binding_made_after_import(source):
+    text = dashboard_to_yaml(dashboard(source).editor)
+    editor = FlowDash(components=COMPONENTS)
+    editor.import_dashboard(dashboard_from_yaml(text))
+    ops = DashboardOps(editor)
+    assert "No source is bound" in failure(ops, "data", "source")
+
+    bind_source(editor, source)
+    assert output(ops, "data", "source") is source
+    assert len(output(ops, "by_category", "data")) == 2
 
 
 def test_view_node_drops_named_data(source):
