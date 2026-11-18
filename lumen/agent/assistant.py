@@ -33,6 +33,10 @@ The user asks questions about the data of the dashboard's Lumen source nodes.
 - Finish with a short answer in text.
 """
 
+# gpt-6-luna and similar models otherwise reason before most tool calls,
+# which costs output tokens and time without changing the answers.
+MODEL_SETTINGS = {"openai_reasoning_effort": "none"}
+
 # The dashboard tools a data agent has no use for: it neither stores,
 # opens nor shares dashboards.
 HIDDEN_TOOLS = frozenset({"save_dashboard", "delete_dashboard", "share_dashboard", "open_dashboard", "list_dashboards"})
@@ -42,7 +46,8 @@ async def _hide_tools(ctx: RunContext[FlowDashDeps], tool_defs: list[ToolDefinit
     return [tool for tool in tool_defs if tool.name not in HIDDEN_TOOLS]
 
 
-def create_agent(model: Any = None, *, instructions: str | None = None, **kwargs: Any) -> Agent[FlowDashDeps, str]:
+def create_agent(model: Any = None, *, instructions: str | None = None, model_settings: dict[str, Any] | None = None,
+                 **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
     The FlowDash agent with Lumen's data and authoring toolsets, without the
     dashboard tools in ``HIDDEN_TOOLS``.
@@ -53,10 +58,15 @@ def create_agent(model: Any = None, *, instructions: str | None = None, **kwargs
         A pydantic-ai model or model name, e.g. ``"openai:gpt-6-luna"``.
     instructions
         Extra instructions appended to Lumen's.
+    model_settings
+        pydantic-ai model settings for every request; defaults to
+        ``MODEL_SETTINGS``. Settings a model does not know are ignored.
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
+    model_settings = MODEL_SETTINGS if model_settings is None else model_settings
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
     capabilities = [PrepareTools(_hide_tools), *kwargs.pop("capabilities", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
-    return create_flowdash_agent(model, instructions=text, toolsets=toolsets, capabilities=capabilities, **kwargs)
+    return create_flowdash_agent(model, instructions=text, toolsets=toolsets, capabilities=capabilities,
+                                 model_settings=dict(model_settings), **kwargs)

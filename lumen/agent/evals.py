@@ -30,6 +30,7 @@ from ..flowdash import SQL_ID, VIEW_ID
 from ..sources.duckdb import DuckDBSource
 from ..util import as_pandas
 from . import _graph
+from .assistant import MODEL_SETTINGS
 from .headless import AgentSession, TurnResult
 
 # Name of the SQL node a case's pre-seeded query is placed as.
@@ -216,7 +217,8 @@ class FlowDashSubject:
     as a SQL node named ``result`` first.
 
     Pass ``model``, e.g. a ``FunctionModel``, or ``cassette``, the path of a
-    recorded model trace, to run offline. ``traces`` is a directory each case's
+    recorded model trace, to run offline. ``model_settings`` replaces the
+    agent's default model settings, ``MODEL_SETTINGS``. ``traces`` is a directory each case's
     model trace is written to, by default ``$LUMEN_AGENT_TRACES`` if set, so
     the CLI and its BIRD workers can record them too. The suite instructions
     given to ``build_model`` are appended to the agent's. ``fingerprint`` is
@@ -228,12 +230,18 @@ class FlowDashSubject:
     supports_architecture = False
 
     def __init__(self, model: Any = None, cassette: str | os.PathLike | None = None,
-                 traces: str | os.PathLike | None = None):
+                 traces: str | os.PathLike | None = None, model_settings: dict[str, Any] | None = None):
         self.model = model
+        self.model_settings = dict(MODEL_SETTINGS if model_settings is None else model_settings)
         self.cassette = cassette
         traces = traces if traces is not None else os.environ.get(TRACES_ENV)
         self.traces = Path(traces) if traces else None
         self.instructions = ""
+
+    @property
+    def settings(self) -> dict[str, Any]:
+        """The model settings of every request, recorded with the run settings."""
+        return {"model_settings": self.model_settings}
 
     @property
     def requires_api_key(self) -> bool:
@@ -259,7 +267,8 @@ class FlowDashSubject:
             first = re.sub(r"\W+", "-", inputs.prompts[0].lower()).strip("-")[:40] if inputs.prompts else "case"
             digest = hashlib.sha1(json.dumps([inputs.fixture, inputs.prompts, inputs.query]).encode()).hexdigest()[:8]
             trace = self.traces / f"{first}-{digest}.jsonl"
-        session = AgentSession(source, model, instructions=self.instructions, trace=trace)
+        session = AgentSession(source, model, instructions=self.instructions, trace=trace,
+                               model_settings=self.model_settings)
         turns, artifacts = [], []
         try:
             if inputs.query:
