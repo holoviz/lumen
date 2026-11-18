@@ -16,7 +16,8 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, EChartsView, Panel, Table, VegaLiteView, View, hvOverlayView,
+    hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -782,3 +783,115 @@ def test_vega_point_map_layers_get_the_table(set_root):
 
     assert final_spec["data"] == {"name": "test"}
     assert "test" in final_spec["datasets"]
+
+
+_ECHARTS_BAR = {
+    "xAxis": {"type": "category"},
+    "yAxis": {"type": "value"},
+    "series": [{"type": "bar", "encode": {"x": "species", "y": "body_mass_g"}}],
+}
+
+
+def _penguins_pipeline(df=None):
+    if df is None:
+        df = pd.DataFrame({
+            "species": ["Adelie", "Chinstrap", "Gentoo"],
+            "body_mass_g": [3700, 3800, 5000],
+        })
+    return Pipeline(source=InMemorySource(tables={"penguins": df}), table="penguins")
+
+
+def test_echarts_injects_dataset_from_pipeline():
+    pipeline = _penguins_pipeline()
+    view = EChartsView(spec=dict(_ECHARTS_BAR), pipeline=pipeline)
+
+    source = view._get_params()["object"]["dataset"]["source"]
+
+    assert source[0] == ["species", "body_mass_g"]
+    assert source[1:] == [["Adelie", 3700], ["Chinstrap", 3800], ["Gentoo", 5000]]
+    assert "dataset" not in view.spec
+
+
+def test_echarts_own_dataset_is_left_untouched():
+    pipeline = _penguins_pipeline()
+    spec = {
+        **_ECHARTS_BAR,
+        "dataset": {"source": [["product", "sales"], ["Matcha", 12], ["Milk Tea", 20]]},
+    }
+    view = EChartsView(spec=spec, pipeline=pipeline)
+
+    encoded = view._get_params()["object"]
+
+    assert encoded["dataset"]["source"] == spec["dataset"]["source"]
+    assert spec["dataset"]["source"][1] == ["Matcha", 12]
+
+
+def test_echarts_serializes_temporals_as_iso_and_nan_as_null():
+    df = pd.DataFrame({
+        "when": [pd.Timestamp("2024-01-02 03:04:05"), pd.NaT],
+        "value": [1.5, float("nan")],
+    })
+    view = EChartsView(
+        spec={"xAxis": {}, "yAxis": {}, "series": [{"type": "line", "encode": {"x": "when", "y": "value"}}]},
+        pipeline=_penguins_pipeline(df),
+    )
+
+    source = view._get_params()["object"]["dataset"]["source"]
+
+    assert source[0] == ["when", "value"]
+    assert source[1][0].startswith("2024-01-02T03:04:05")
+    assert source[1][1] == 1.5
+    assert source[2] == [None, None]
+    json.dumps(source)
+
+
+def test_echarts_from_spec_to_spec_roundtrip():
+    source = InMemorySource(tables={"penguins": pd.DataFrame({
+        "species": ["Adelie"], "body_mass_g": [3700],
+    })})
+    spec = {
+        "type": "echarts",
+        "table": "penguins",
+        "spec": dict(_ECHARTS_BAR),
+        "renderer": "svg",
+        "theme": "dark",
+    }
+
+    view = View.from_spec(spec, source, [])
+    exported = view.to_spec()
+
+    assert isinstance(view, EChartsView)
+    assert exported["type"] == "echarts"
+    assert exported["spec"] == _ECHARTS_BAR
+    assert exported["renderer"] == "svg"
+    assert exported["theme"] == "dark"
+    assert "selection" not in exported
+
+    again = View.from_spec(exported)
+    assert again.renderer == "svg"
+    assert again.spec == _ECHARTS_BAR
+
+
+def test_echarts_renderer_and_theme_pass_to_pane():
+    view = EChartsView(
+        spec=dict(_ECHARTS_BAR),
+        pipeline=_penguins_pipeline(),
+        renderer="svg",
+        theme="dark",
+    )
+    pane = view.get_panel()
+
+    assert isinstance(pane, pn.pane.ECharts)
+    assert pane.renderer == "svg"
+    assert pane.theme == "dark"
+    assert pane.object["dataset"]["source"][0] == ["species", "body_mass_g"]
+    assert pane._py_callbacks["click"][None] == [view._on_click]
+
+
+def test_echarts_click_maps_data_index_to_row():
+    view = EChartsView(spec=dict(_ECHARTS_BAR), pipeline=_penguins_pipeline())
+    view.get_panel()
+
+    view._on_click(type("Event", (), {"data": {"dataIndex": 1}})())
+
+    assert view.selection == {"species": "Chinstrap", "body_mass_g": 3800}
