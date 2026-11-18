@@ -26,13 +26,13 @@ turns:
         config:
           sql: |-
             SELECT
-              "category",
-              SUM("amount") AS total_amount
+              category,
+              SUM(amount) AS total_amount
             FROM sales
             WHERE
-              NOT "category" IS NULL AND NOT "amount" IS NULL
+              NOT category IS NULL AND NOT amount IS NULL
             GROUP BY
-              "category"
+              category
           table: total_amount_by_category
         position: [350, 0]
     edges:
@@ -40,7 +40,7 @@ turns:
         to: total_amount_by_category.source
 - question: Show that as a bar chart.
   nodes:
-  - total_amount_by_category_chart
+  - total_amount_by_category_bar_chart
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -63,21 +63,20 @@ turns:
         config:
           sql: |-
             SELECT
-              "category",
-              SUM("amount") AS total_amount
+              category,
+              SUM(amount) AS total_amount
             FROM sales
             WHERE
-              NOT "category" IS NULL AND NOT "amount" IS NULL
+              NOT category IS NULL AND NOT amount IS NULL
             GROUP BY
-              "category"
+              category
           table: total_amount_by_category
         position: [350, 0]
-      total_amount_by_category_chart:
+      total_amount_by_category_bar_chart:
         component: Lumen/view
         config:
           spec:
-            mark:
-              type: bar
+            mark: bar
             encoding:
               x:
                 field: category
@@ -92,4 +91,4 @@ turns:
       - from: data.source
         to: total_amount_by_category.source
       - from: total_amount_by_category.pipeline
-        to: total_amount_by_category_chart.pipeline
+        to: total_amount_by_category_bar_chart.pipeline
