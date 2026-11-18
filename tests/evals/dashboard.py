@@ -40,11 +40,21 @@ def load_runs(paths):
     return runs
 
 
+def case_applicable(case):
+    # Results recorded before subjects and outcome scoring have no flag and
+    # were always scored.
+    return case.get("applicable", True)
+
+
 def case_passed(case, failures):
     # A recorded error covers evaluator failures such as an unscorable BIRD gold
     # query, whose remaining assertions can all be true.
-    return (case["name"] not in failures and not case.get("error")
+    return (case_applicable(case) and case["name"] not in failures and not case.get("error")
             and bool(case.get("assertions")) and all(case["assertions"].values()))
+
+
+def run_subject(meta):
+    return meta.get("subject") or "lumen", meta.get("scoring") or "all"
 
 
 def case_unscorable(case):
@@ -53,15 +63,17 @@ def case_unscorable(case):
 
 
 def summarize(run):
-    cases = [case for case in run["cases"] if not case_unscorable(case)]
     failures = {failure["name"] for failure in run.get("failures", [])}
+    applicable = [case for case in run["cases"] if case_applicable(case)]
+    cases = [case for case in applicable if not case_unscorable(case)]
     usage = [case["usage"] for case in cases if case.get("usage")]
     input_tokens = sum(item["input_tokens"] for item in usage)
     costs = [item.get("cost_usd") for item in usage]
     return {
         "passed": sum(case_passed(case, failures) for case in cases),
         "cases": len(cases),
-        "unscorable": len(run["cases"]) - len(cases),
+        "not_applicable": len(run["cases"]) - len(applicable),
+        "unscorable": len(applicable) - len(cases),
         "seconds": sum(case.get("duration") or 0 for case in cases),
         "input": input_tokens if usage else None,
         "output": sum(item["output_tokens"] for item in usage) if usage else None,
@@ -79,7 +91,7 @@ def group_runs(runs, suite):
         # A partial BIRD run keeps the full suite's fingerprint, so only runs that
         # also recorded the same cases are attempts of one another.
         names = tuple(sorted(case["name"] for case in report["cases"]))
-        key = (meta.get("provider"), meta.get("model"), meta.get("commit"), meta.get("api"),
+        key = (meta.get("provider"), meta.get("model"), *run_subject(meta), meta.get("commit"), meta.get("api"),
                meta.get("case_fingerprint"), names,
                run_id if meta.get("dirty") else None)
         grouped.setdefault(key, []).append((run_id, report))
@@ -103,8 +115,9 @@ def run_table(groups):
         rows.append({
             "Run": run_id, "Model": meta.get("model", "Unknown"), "Commit": (meta.get("commit") or "")[:8],
             "Timestamp": max(report["run"].get("timestamp", "") for _, report in attempts)[:19].replace("T", " "),
-            "Suite": meta.get("dataset", "Unknown"), "Attempts": count,
-            "Passed": sum(stat["passed"] for stat in stats) / count, "Cases": stats[0]["cases"],
+            "Suite": meta.get("dataset", "Unknown"), "Subject": run_subject(meta)[0], "Scoring": run_subject(meta)[1],
+            "Attempts": count, "Passed": sum(stat["passed"] for stat in stats) / count, "Cases": stats[0]["cases"],
+            "N/A": stats[0]["not_applicable"],
             "Unscorable": stats[0]["unscorable"],
             "Seconds": round(sum(stat["seconds"] for stat in stats) / count, 1),
             "Cost ($)": sum(costs) / count if all(cost is not None for cost in costs) else None,
@@ -127,9 +140,10 @@ def case_table(groups):
             outputs = [item.get("output_tokens") for item in usage]
             passing = sum(case_passed(case, {failure["name"] for failure in report.get("failures", [])})
                           for case, (_, report) in zip(cases, attempts, strict=True))
+            applicable = sum(case_applicable(case) for case in cases)
             rows.append({
                 "Run": run_id, "Model": meta.get("model", "Unknown"), "Commit": (meta.get("commit") or "")[:8],
-                "Case": name, "Checks": f"{passing}/{len(cases)}", "Attempts": len(cases),
+                "Case": name, "Checks": f"{passing}/{applicable}" if applicable else "n/a", "Attempts": len(cases),
                 "Seconds": round(sum(case.get("duration") or 0 for case in cases) / len(cases), 1),
                 "Cost ($)": sum(costs) / len(cases) if all(cost is not None for cost in costs) else None,
                 "Input": round(sum(inputs) / len(cases)) if all(value is not None for value in inputs) else None,
@@ -241,7 +255,14 @@ def _details(case):
         return "Select a case to inspect its outputs."
     checks = case.get("assertions", {})
     failed = ", ".join(name for name, passed in checks.items() if not passed)
-    parts = [f"**Failed checks:** {failed}" if failed else "**All checks passed**" if checks else "**Evaluation failed**"]
+    if not case_applicable(case):
+        parts = ["**Not applicable:** the case only has architecture expectations"]
+    else:
+        parts = [f"**Failed checks:** {failed}" if failed else "**All checks passed**" if checks else "**Evaluation failed**"]
+    diagnostics = case.get("diagnostics") or {}
+    if diagnostics:
+        parts.append("**Architecture diagnostics:** " + ", ".join(
+            f"{name} {'passed' if passed else 'failed'}" for name, passed in diagnostics.items()))
     if case.get("error"):
         parts.append(f"**Error:** {html.escape(case['error'])}")
     for index, turn in enumerate(case.get("turns", []), 1):
