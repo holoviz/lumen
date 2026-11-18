@@ -310,8 +310,8 @@ def subject_spec(subject: Subject) -> str:
 def resolve_subject(name: str | None = None, **params) -> Subject:
     """
     Instantiate a registered subject, or one given as ``package.module:Class``,
-    which is imported (registering it as a side effect). A class without a
-    ``name`` takes the spec as its name.
+    which is imported (registering it as a side effect). An instance of a
+    class without a ``name`` takes the spec as its name.
     """
     name = name or DEFAULT_SUBJECT
     if name in SUBJECTS:
@@ -319,8 +319,6 @@ def resolve_subject(name: str | None = None, **params) -> Subject:
     elif ":" in name:
         module, attr = name.split(":", 1)
         cls = getattr(import_module(module), attr)
-        if not isinstance(getattr(cls, "name", None), str):
-            cls.name = name
     else:
         raise ValueError(f"Unknown eval subject {name!r}; registered: {', '.join(sorted(SUBJECTS))}")
     try:
@@ -329,6 +327,8 @@ def resolve_subject(name: str | None = None, **params) -> Subject:
         if not params:
             raise
         raise TypeError(f"Subject {name!r} does not support the option(s) {', '.join(params)}: {exc}") from exc
+    if not isinstance(getattr(subject, "name", None), str):
+        subject.name = name
     missing = [member for member in ("name", "supports_architecture", "build_model", "fingerprint", "run")
                if not hasattr(subject, member)]
     if missing:

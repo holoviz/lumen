@@ -23,6 +23,19 @@ Completions API; pass `--api responses` to use its Responses API instead.
 The command exits with status 1 when any case fails or errors. `python -m tests.evals --help`
 lists every option.
 
+## Other subjects and outcome scoring
+
+By default the suites evaluate Lumen's `ExplorerUI`. `--subject` selects another registered
+subject, or any class implementing the subject protocol given as `package.module:Class`.
+`--scoring outcome` scores only the result (status, answer, SQL, rows, charts, errors) and keeps
+Lumen-specific architecture checks such as actors and tool calls as diagnostics, which is how to
+compare a subject that does not share Lumen's agents. The unit tests ship an offline subject with
+canned answers:
+
+```bash
+pixi run -e evals python -m tests.evals --subject tests.evals.test_harness:FakeSubject --scoring outcome
+```
+
 ## Running BIRD Mini-Dev
 
 The BIRD suite scores text-to-SQL execution accuracy on

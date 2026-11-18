@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 import multiprocessing
 import sqlite3
@@ -829,6 +830,7 @@ def test_resolve_subject_errors():
     with pytest.raises(TypeError, match="missing: supports_architecture, build_model, fingerprint, run"):
         resolve_subject("tests.evals.test_harness:NotASubject")
     assert "tests.evals.test_harness:NotASubject" not in SUBJECTS
+    assert not hasattr(importlib.import_module("tests.evals.test_harness").NotASubject, "name")
     with pytest.raises(TypeError, match="does not support the option\\(s\\) sql_cleanup"):
         resolve_subject("fake", sql_cleanup=False)
 
@@ -837,6 +839,7 @@ def test_unnamed_spec_subject_takes_spec_as_name():
     subject = resolve_subject("tests.evals.test_harness:UnnamedSubject")
     assert subject.name == "tests.evals.test_harness:UnnamedSubject"
     assert SUBJECTS[subject.name] is type(subject)
+    assert not hasattr(type(subject), "name")
 
 
 class NotASubject:
