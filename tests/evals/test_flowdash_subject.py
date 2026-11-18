@@ -6,10 +6,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("panel_flowdash")
-pytest.importorskip("panel_agents")
-pytest.importorskip("pydantic_ai")
-
 from panel_agents.adapters.cassette import Cassette
 from panel_agents.adapters.model_trace import load_messages
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart

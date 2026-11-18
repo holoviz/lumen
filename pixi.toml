@@ -47,6 +47,9 @@ sqlglot = ">=26.26.0"
 tornado = "*"
 tqdm = "*"
 
+[pypi-dependencies]
+panel-flowdash = { version = ">=0.1.0rc3", extras = ["agent"] }
+
 [feature.py311.dependencies]
 python = "3.11.*"
 

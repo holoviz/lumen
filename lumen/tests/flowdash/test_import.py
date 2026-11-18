@@ -1,23 +1,23 @@
+import importlib.metadata
 import subprocess
 import sys
 
 import pytest
 
-BLOCK = "import sys; sys.modules[{module!r}] = None; "
+from packaging.requirements import Requirement
 
 
-@pytest.mark.parametrize("package, missing, message", [
-    ("lumen.flowdash", "panel_flowdash", "lumen.flowdash needs panel-flowdash"),
-    ("lumen.agent", "panel_agents", "lumen.agent needs panel-flowdash with its agent extra"),
-])
-def test_import_fails_clearly_without_optional_dependency(package, missing, message):
-    code = BLOCK.format(module=missing) + f"import {package}"
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
-    assert result.returncode != 0
-    assert message in result.stderr
+def test_panel_flowdash_with_its_agent_extra_is_a_core_dependency():
+    requirements = [Requirement(r) for r in importlib.metadata.requires("lumen") or []]
+    flowdash = [r for r in requirements if r.name == "panel-flowdash"]
+
+    assert len(flowdash) == 1
+    assert flowdash[0].marker is None
+    assert flowdash[0].extras == {"agent"}
 
 
 def test_lumen_does_not_import_flowdash_or_agent():
+    pytest.importorskip("lumen.ai")
     pytest.importorskip("pydantic_evals")
     code = (
         "import sys, lumen, lumen.ai, lumen.ai.evals.harness; "
@@ -26,16 +26,3 @@ def test_lumen_does_not_import_flowdash_or_agent():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "[]"
-
-
-@pytest.mark.parametrize("version, refused", [
-    ("0.1.0b2", True), ("0.1.0b2.dev4+g1234abc", True), ("0.1.0b3", False), ("0.1.1.dev2+gabc", False), ("0.0.0+unknown", False),
-])
-def test_agent_checks_the_panel_agents_version(version, refused):
-    pytest.importorskip("panel_agents")
-    pytest.importorskip("panel_flowdash")
-    code = f"import panel_agents; panel_agents.__version__ = {version!r}; import lumen.agent"
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
-    assert (result.returncode != 0) is refused
-    if refused:
-        assert f"needs panel-agents >= 0.1.0b3, found {version}" in result.stderr

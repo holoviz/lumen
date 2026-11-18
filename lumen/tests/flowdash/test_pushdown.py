@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 import yaml
 
-pytest.importorskip("panel_flowdash")
+pytest.importorskip("duckdb")
 
 from panel_flowdash import FlowDash
 from panel_flowdash.agent import (
