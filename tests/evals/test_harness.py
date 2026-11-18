@@ -699,3 +699,13 @@ def test_bird_case_labels_harness_errors(tmp_path, monkeypatch, error, message):
 
     assert result["cases"][0]["error"] == message
     assert result["cases"][0]["assertions"] == {}
+
+
+def test_evals_without_extra_names_it(monkeypatch):
+    import importlib
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pydantic_evals", None)
+    monkeypatch.delitem(sys.modules, "lumen.ai.evals")
+    with pytest.raises(ImportError, match=r"pip install lumen\[evals\]"):
+        importlib.import_module("lumen.ai.evals")
