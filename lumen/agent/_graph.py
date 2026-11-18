@@ -5,7 +5,9 @@ from typing import Any
 
 import yaml
 
-from panel_flowdash.agent import DashboardOps
+from panel_flowdash.agent import (
+    DashboardOps, OperationError, OutputUnavailable,
+)
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
@@ -22,8 +24,15 @@ def config_of(ops: DashboardOps, name: str) -> dict[str, Any]:
 
 
 def output(ops: DashboardOps, name: str, port: str) -> Any:
-    """The current value of a node's output port; raises ``OperationError`` for a failed output."""
-    return ops.node_output(name, port)
+    """
+    The current value of a node's output port. A node that is waiting or
+    failed raises ``OperationError`` with the reason, which the authoring
+    tools pass to the model to fix.
+    """
+    try:
+        return ops.node_output(f"{name}.{port}")
+    except OutputUnavailable as exc:
+        raise OperationError(str(exc)) from exc
 
 
 def upstream(ops: DashboardOps, name: str) -> str | None:
