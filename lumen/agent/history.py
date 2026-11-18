@@ -1,9 +1,22 @@
-"""Keeping the conversation short: data lookups the agent has acted on are not sent again."""
+"""
+Keeping the conversation short: data lookups the agent acted on in earlier
+turns are not sent again.
+
+Shortening rewrites earlier messages, which ends the provider's cached prefix
+there, so it only happens when a new user turn starts: within a run every
+request extends the previous one and stays cacheable. A model trace records
+the rewrite as a rewind followed by the shortened history, so after a rewind
+the trace pairs later responses with the stubbed results; what was actually
+sent before is in the records before the rewind (``Cassette.from_trace``
+replays from those).
+"""
 from __future__ import annotations
 
 import dataclasses
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart,
+)
 
 # Tools whose results only inform a query, and the tools that place one.
 LOOKUP_TOOLS = frozenset({"list_tables", "describe_table", "distinct_values", "run_sql", "check_data"})
@@ -21,11 +34,16 @@ def _placed(part) -> bool:
 
 def stub_superseded_lookups(messages: list[ModelMessage]) -> list[ModelMessage]:
     """
-    Replace the results of lookup tools that came before the last node the
-    agent placed with a short stub. The agent has acted on them, and they
-    would otherwise be sent with every later request.
+    At the first request of a user turn, replace the results of lookup tools
+    that came before the last node the agent placed in earlier turns with a
+    short stub. The agent has acted on them, and they would otherwise be
+    sent with every later request.
     """
-    last = max((i for i, m in enumerate(messages) if isinstance(m, ModelRequest) and any(map(_placed, m.parts))), default=None)
+    if not messages or not isinstance(messages[-1], ModelRequest) or not any(
+        isinstance(part, UserPromptPart) for part in messages[-1].parts
+    ):
+        return messages
+    last = max((i for i, m in enumerate(messages[:-1]) if isinstance(m, ModelRequest) and any(map(_placed, m.parts))), default=None)
     if last is None:
         return messages
     trimmed = list(messages)
