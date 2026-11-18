@@ -89,7 +89,7 @@ async def test_subject_scored_end_to_end_on_outcomes(tmp_path):
     assert saved["run"]["subject"] == "flowdash"
     assert saved["run"]["scoring"] == "outcome"
     assert saved["run"]["subject_fingerprint"] == agent_fingerprint()
-    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none"}}
+    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 4000}}
     turn = next(case for case in saved["cases"] if case["name"] == "sales_chart")["turns"][0]
     assert turn["chart_marks"] == ["bar"]
     assert turn["chart_encodings"] == [{"x": {"field": "category", "type": "nominal"},
@@ -237,7 +237,7 @@ async def test_rerun_during_live_session_keeps_its_source():
     try:
         session_case(SESSIONS / "paid_by_region.yaml", source)
         live.ops.replace_yaml(live.ops.get_dashboard())
-        assert live.ops.editor.graph.get_state(live.ops._instance("data")).source is live.source
+        assert live.ops.node_output("data", "source") is live.source
     finally:
         live.close()
 

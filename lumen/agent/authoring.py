@@ -42,15 +42,12 @@ def _marks(spec: dict[str, Any]) -> list[str]:
 
 
 async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
-    """Place a SQL node that runs a read-only query on a source node, and return a preview of its result.
-
-    The query is executed first; if it fails, the engine's error comes back for you to fix the
-    query and call again. Use it for every result the user should see.
+    """Place a SQL node with a read-only query and return a preview of its result; errors come back to fix.
 
     Args:
-        source: The name of the source node to query.
-        name: A short descriptive snake_case name for the new node, e.g. "paid_total_by_region".
-        sql: One SELECT or WITH query over the source's tables.
+        source: Source node.
+        name: Descriptive snake_case node name.
+        sql: One SELECT or WITH query.
     """
     ops = ctx.deps.ops
     source_node, src = resolve_source(ctx.deps, source)
@@ -80,9 +77,9 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     """Place a Vega-Lite chart of a SQL node's result.
 
     Args:
-        data: The name of the SQL node whose result the chart shows.
-        name: A short descriptive snake_case name for the chart node, e.g. "revenue_by_region_chart".
-        spec: A Vega-Lite spec without `data` or URLs; its encodings use the SQL node's column names.
+        data: SQL node to chart.
+        name: Descriptive snake_case node name.
+        spec: Vega-Lite spec using the node's columns, without data or URLs.
     """
     ops = ctx.deps.ops
     try:

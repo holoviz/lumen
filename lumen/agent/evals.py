@@ -141,9 +141,7 @@ def answer_nodes(ops: Any, names: Iterable[str]) -> tuple[str | None, list[str]]
     if queries:
         return queries[-1], views
     if views:
-        instance = ops._instance(views[-1])
-        upstream = next((e["source"] for e in ops.editor.graph.edges if e["target"] == instance), None)
-        return ops._names().get(upstream), views
+        return _graph.upstream(ops, views[-1]), views
     return None, views
 
 

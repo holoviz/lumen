@@ -1,14 +1,13 @@
 """The FlowDash agent with Lumen's data and authoring tools."""
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from panel_flowdash.agent import (
     FlowDashDeps, create_agent as create_flowdash_agent,
 )
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import PrepareTools
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai import Agent
 
 from .authoring import authoring_toolset
 from .data import data_toolset
@@ -34,23 +33,19 @@ The user asks questions about the data of the dashboard's Lumen source nodes.
 """
 
 # gpt-6-luna and similar models otherwise reason before most tool calls,
-# which costs output tokens and time without changing the answers.
-MODEL_SETTINGS = {"openai_reasoning_effort": "none"}
+# which costs output tokens and time without changing the answers. The
+# output cap stops a response that degenerates into whitespace.
+MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 4000}
 
-# The dashboard tools a data agent has no use for: it neither stores,
-# opens nor shares dashboards.
-HIDDEN_TOOLS = frozenset({"save_dashboard", "delete_dashboard", "share_dashboard", "open_dashboard", "list_dashboards"})
-
-
-async def _hide_tools(ctx: RunContext[FlowDashDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-    return [tool for tool in tool_defs if tool.name not in HIDDEN_TOOLS]
+# The dashboard tools a data agent needs besides its own: changing or
+# removing a node it placed. Pass ``dashboard_tools=None`` for all of them.
+DATA_DASHBOARD_TOOLS = ("set_config", "remove_node")
 
 
 def create_agent(model: Any = None, *, instructions: str | None = None, model_settings: dict[str, Any] | None = None,
-                 **kwargs: Any) -> Agent[FlowDashDeps, str]:
+                 dashboard_tools: Collection[str] | None = DATA_DASHBOARD_TOOLS, **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
-    The FlowDash agent with Lumen's data and authoring toolsets, without the
-    dashboard tools in ``HIDDEN_TOOLS``.
+    The FlowDash agent with Lumen's data and authoring toolsets.
 
     Parameters
     ----------
@@ -61,12 +56,14 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     model_settings
         pydantic-ai model settings for every request; defaults to
         ``MODEL_SETTINGS``. Settings a model does not know are ignored.
+    dashboard_tools
+        The FlowDash dashboard tools to offer, by default
+        ``DATA_DASHBOARD_TOOLS``; None offers all of them.
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
     model_settings = MODEL_SETTINGS if model_settings is None else model_settings
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
-    capabilities = [PrepareTools(_hide_tools), *kwargs.pop("capabilities", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
-    return create_flowdash_agent(model, instructions=text, toolsets=toolsets, capabilities=capabilities,
+    return create_flowdash_agent(model, instructions=text, toolsets=toolsets, tools=dashboard_tools,
                                  model_settings=dict(model_settings), **kwargs)
