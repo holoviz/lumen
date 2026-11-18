@@ -14,10 +14,10 @@ import sqlglot
 from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
-    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Func, Identifier,
-    Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV, Select,
-    Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_, func, or_,
-    replace_placeholders, select, to_identifier,
+    LT, Alias, ArrayAgg, Boolean, Column, Count, Distinct, Expression, Func,
+    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV,
+    Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_,
+    func, or_, replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
@@ -658,10 +658,21 @@ class SQLSort(SQLTransform):
         return self.to_sql(expression)
 
 
+# Dialects, by their SQLAlchemy or sqlglot names, without TRUE and FALSE literals.
+NO_BOOLEAN_LITERALS = frozenset({"mssql", "tsql", "oracle"})
+
+
 class SQLFilterBase(SQLTransform):
     """
     Base class for SQL filtering transforms that provides common filtering logic.
     """
+
+    boolean_literals = param.Boolean(default=True, doc="""
+        Whether the engine has TRUE and FALSE literals; without them (SQL
+        Server, Oracle before 23ai) boolean conditions compare with 1 and 0.""")
+
+    def _boolean(self, value: bool) -> Expression:
+        return Boolean(this=value) if self.boolean_literals else SQLLiteral.number(int(value))
 
     @staticmethod
     def _range_condition(column_expr: Column, start, end) -> Expression | None:
@@ -707,10 +718,8 @@ class SQLFilterBase(SQLTransform):
             if isinstance(val, np.generic):
                 val = val.item()
 
-            # Skip boolean values - they are not supported
             if isinstance(val, bool):
-                self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
-                continue
+                filters.append(column_expr.eq(self._boolean(val)))
             elif val is None:
                 filters.append(column_expr.is_(Null()))
             elif isinstance(val, (int, float)):
@@ -727,8 +736,10 @@ class SQLFilterBase(SQLTransform):
                 range_filter = self._range_condition(column_expr, *val)
                 if range_filter is not None:
                     filters.append(range_filter)
+            elif isinstance(val, list) and val and all(isinstance(v, (bool, np.bool_)) for v in val):
+                filters.append(column_expr.isin(*[self._boolean(bool(v)) for v in val]))
             elif isinstance(val, list):
-                # Check for boolean values in list and skip them
+                # Booleans mixed with other values have no single SQL type, so skip them
                 if any(isinstance(v, bool) for v in val):
                     self.param.warning(f"Boolean values in list condition on {col!r} column not supported. Filter query will not be applied.")
                     continue
