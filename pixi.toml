@@ -49,6 +49,9 @@ tqdm = "*"
 
 [pypi-dependencies]
 panel-flowdash = { version = ">=0.1.0rc3", extras = ["agent"] }
+# Lumen's FlowDash nodes report failures with param.ReactiveError, new in param 2.5;
+# naming the pre-release keeps the conda param from pyviz/label/dev in place.
+param = ">=2.5.0b5"
 
 [feature.py311.dependencies]
 python = "3.11.*"
