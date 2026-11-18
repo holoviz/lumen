@@ -76,6 +76,11 @@ EMPTY_RESULT_HINT = (
 )
 
 
+def _row_count(n: int) -> str:
+    """Rows of a result fetched with one row past VALIDATION_MAX_ROWS."""
+    return f"more than {VALIDATION_MAX_ROWS}" if n > VALIDATION_MAX_ROWS else str(n)
+
+
 def _table_reference_resolver(sources: list[tuple[str, str]]):
     """
     Map a model-supplied table reference to its ``(source, table)`` pair, or None.
@@ -884,7 +889,8 @@ class SQLAgent(BaseLumenAgent):
                 validated = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
                 result = await source.execute_with_timeout(validated, self.query_timeout)
                 step.stream("\n\n✅ SQL validation successful")
-                return sql_query, result
+                # A source may return its native frame (e.g. pyarrow), which lint_data cannot read.
+                return sql_query, as_pandas(result)
             except Exception as e:
                 feedback = format_error(e)
                 # Rewriting the query cannot make a listed table resolvable, and
@@ -1001,14 +1007,16 @@ class SQLAgent(BaseLumenAgent):
             return sql_query
 
         try:
-            cleaned_result = await source.execute_with_timeout(cleaned, self.query_timeout)
+            # Only emptiness and the row count are used, so the same bound as validation applies.
+            limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(cleaned)
+            cleaned_result = await source.execute_with_timeout(limited, self.query_timeout)
         except Exception as e:
             step.stream(f"\n\n⚠️ Cleaned query failed, keeping the original: {e}")
             return sql_query
 
         # An empty result means the cleaning filtered away the answer itself.
         # Silently returning nothing is worse than returning dirty data.
-        if cleaned_result.empty:
+        if not len(cleaned_result):
             step.stream("\n\n⚠️ Cleaned query returned no rows, keeping the original")
             return sql_query
 
@@ -1017,7 +1025,7 @@ class SQLAgent(BaseLumenAgent):
         step.stream(
             f"\n\n🧹 Cleaned the query: {cleanup.chain_of_thought}"
             f"\n\n```sql\n{cleaned}\n```"
-            f"\n\n{original_rows} rows before cleaning, {len(cleaned_result)} after."
+            f"\n\n{_row_count(original_rows)} rows before cleaning, {_row_count(len(cleaned_result))} after."
         )
         return cleaned
 
@@ -1327,7 +1335,7 @@ class SQLAgent(BaseLumenAgent):
             sql_query = clean_sql(output.query.strip(), source.dialect, prettify=True)
             limited = SQLLimit(limit=VALIDATION_MAX_ROWS + 1, write=source.dialect).apply(sql_query)
             try:
-                preview = await source.execute_with_timeout(limited, self.query_timeout)
+                preview = as_pandas(await source.execute_with_timeout(limited, self.query_timeout))
             except Exception as e:
                 feedback = format_error(e)
                 # As in _validate_sql: a rewrite cannot make a listed table
@@ -1443,9 +1451,6 @@ class SQLAgent(BaseLumenAgent):
             findings: list[str] = []
             actionable: list[str] = []
             # The extra fetched row only reveals that the preview is a prefix of a longer result.
-            if preview is not None:
-                # A source may return its native frame (e.g. pyarrow), which lint_data cannot read.
-                preview = as_pandas(preview)
             capped = preview is not None and len(preview) > VALIDATION_MAX_ROWS
             if capped:
                 preview = preview.head(VALIDATION_MAX_ROWS)
@@ -1473,7 +1478,7 @@ class SQLAgent(BaseLumenAgent):
                 )
             if actionable:
                 validated_sql = await self._clean_data_pass(
-                    validated_sql, actionable, 0 if preview is None else len(preview),
+                    validated_sql, actionable, 0 if preview is None else len(preview) + capped,
                     source, messages, context, step
                 )
 

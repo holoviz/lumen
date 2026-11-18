@@ -293,8 +293,14 @@ async def test_sql_agent_lints_capped_preview_as_prefix(llm, test_messages):
     assert linted == [(VALIDATION_MAX_ROWS, True)]
 
 
-async def test_sql_agent_validates_arrow_results(llm, test_messages):
-    pa = pytest.importorskip("pyarrow")
+def _as_backend(backend, df):
+    if backend == "pyarrow":
+        return pytest.importorskip("pyarrow").Table.from_pandas(df, preserve_index=False)
+    return pytest.importorskip("polars").from_pandas(df)
+
+
+@pytest.mark.parametrize("backend", ["pyarrow", "polars"])
+async def test_sql_agent_validates_native_frame_results(llm, test_messages, backend):
     source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
     agent = SQLAgent(llm=llm)
     model = make_sql_model([(source.name, "numbers")])
@@ -302,20 +308,50 @@ async def test_sql_agent_validates_arrow_results(llm, test_messages):
     context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["numbers"])}
     original = source.execute_with_timeout
 
-    async def as_arrow(query, timeout, fetch=False):
-        return pa.Table.from_pandas(await original(query, timeout, fetch), preserve_index=False)
+    async def native(query, timeout, fetch=False):
+        return _as_backend(backend, await original(query, timeout, fetch))
 
     linted = []
 
     def capture(df, actionable_only=False, capped=False):
-        linted.append((len(df), capped))
+        linted.append((type(df), len(df), capped))
         return []
 
-    with patch.object(source, "execute_with_timeout", as_arrow), patch("lumen.ai.agents.sql.lint_data", capture):
+    with patch.object(source, "execute_with_timeout", native), patch("lumen.ai.agents.sql.lint_data", capture):
         out, _ = await agent.respond(test_messages, context)
 
-    assert linted[0] == (VALIDATION_MAX_ROWS, True)
+    assert linted[0] == (pd.DataFrame, VALIDATION_MAX_ROWS, True)
     assert len(out[0].component.data) == 6000
+
+
+@pytest.mark.parametrize("backend", ["pyarrow", "polars"])
+@pytest.mark.parametrize(("cleaned", "kept"), [
+    ("SELECT i FROM numbers WHERE i >= 0", True),
+    ("SELECT i FROM numbers WHERE i < 0", False),
+])
+async def test_sql_agent_clean_data_pass_reads_native_frames(llm, test_messages, backend, cleaned, kept):
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm)
+    original = source.execute_with_timeout
+    queries = []
+
+    async def native(query, timeout, fetch=False):
+        queries.append(query)
+        return _as_backend(backend, await original(query, timeout, fetch))
+
+    cleanup = SQLCleanup(chain_of_thought="Drop negative values.", query=cleaned)
+    step = SimpleNamespace(stream=lambda text: streamed.append(text))
+    streamed = []
+    with patch.object(source, "execute_with_timeout", native), \
+            patch.object(agent, "_invoke_prompt", AsyncMock(return_value=cleanup)):
+        result = await agent._clean_data_pass(
+            "SELECT i FROM numbers", ["finding"], VALIDATION_MAX_ROWS + 1, source, test_messages, {}, step
+        )
+
+    assert (result != "SELECT i FROM numbers") is kept
+    assert "LIMIT" in queries[0].upper()
+    if kept:
+        assert f"more than {VALIDATION_MAX_ROWS} rows before cleaning, more than {VALIDATION_MAX_ROWS} after" in streamed[-1]
 
 
 @pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
