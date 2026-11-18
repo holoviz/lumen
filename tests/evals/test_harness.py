@@ -1113,5 +1113,5 @@ def test_evals_without_extra_names_it(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "pydantic_evals", None)
     monkeypatch.delitem(sys.modules, "lumen.ai.evals")
-    with pytest.raises(ImportError, match=r"pip install lumen\[evals\]"):
+    with pytest.raises(ImportError, match=r"pip install \"lumen\[evals\]\""):
         importlib.import_module("lumen.ai.evals")
