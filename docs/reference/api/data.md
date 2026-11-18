@@ -13,3 +13,21 @@ Model-free data tools: describing data to a language model and making model-writ
       show_root_heading: true
       show_source: false
       members: true
+
+::: lumen.data.catalog
+    options:
+      show_root_heading: true
+      show_source: false
+      members: true
+
+::: lumen.data.stats
+    options:
+      show_root_heading: true
+      show_source: false
+      members: true
+
+::: lumen.data.quality
+    options:
+      show_root_heading: true
+      show_source: false
+      members: true

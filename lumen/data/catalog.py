@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from .config import SOURCE_TABLE_SEPARATOR
+from ..config import SOURCE_TABLE_SEPARATOR
 from .sharing import shares_values
-from .table_stats import (
+from .stats import (
     ESTIMATED, SAMPLED, TYPES_ONLY, ColumnStats, TableStats, get_stats_store,
     render_column, render_stats_header,
 )
