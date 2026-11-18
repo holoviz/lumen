@@ -948,6 +948,12 @@ def make_apply_filter_llm_tool(context: TContext):
 
 class SQLInputs(ContextModel):
 
+    """Inputs available to the SQL agent.
+
+    The optional data field may contain a previously produced query result
+    or other data supplied through the shared AI context.
+    """
+
     data: t.NotRequired[t.Any]
 
     source: Source
@@ -962,6 +968,12 @@ class SQLInputs(ContextModel):
 
 
 class SQLOutputs(ContextModel):
+
+    """Outputs produced by the SQL agent.
+
+    The data field contains the query result and remains flexible to support
+    the different result types used by Lumen.
+    """
 
     data: t.Any
 
