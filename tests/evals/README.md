@@ -4,6 +4,9 @@ The evaluation suites run Lumen's agents against live models and score the answe
 for development: the unit tests in this directory run offline as part of `pixi run test-unit`,
 while the suites themselves call a model and need an API key.
 
+The harness lives in `lumen.ai.evals` and needs the `evals` extra (`pip install lumen[evals]`);
+the `evals` and `test-*` pixi environments include it.
+
 ## Running the local suite
 
 The local suite asks questions about small fixtures (in-memory tables, `fixtures/orders.csv` and

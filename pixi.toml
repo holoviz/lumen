@@ -10,11 +10,11 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
-test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
-evals = ["py314", "test-core", "ai", "sql"]
+test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+evals = ["py314", "test-core", "ai", "sql", "evals"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -78,7 +78,6 @@ nbformat = "*"
 openai = "*"
 pyarrow = "*"
 pydantic = ">=2.8.0"
-pydantic-evals = ">=2.60"
 pydantic-extra-types = "*"
 semchunk = "*"
 tiktoken = "*"
@@ -91,6 +90,9 @@ panel-graphic-walker = ">=0.6.4"
 duckdb = "*"
 intake-sql = "*"
 sqlalchemy = "*"
+
+[feature.evals.dependencies]
+pydantic-evals = ">=2.60"
 
 [feature.docx.dependencies]
 python-docx = "*"

@@ -56,7 +56,6 @@ dependencies = [
     "platformdirs",
     "pyarrow",
     "pydantic >=2.8.0",
-    "pydantic-evals >=2.60",
     "pydantic-extra-types",
     "pyyaml",
     "requests",
@@ -77,7 +76,7 @@ HoloViz = "https://holoviz.org/"
 [project.optional-dependencies]
 tests = ['pytest', 'pytest-rerunfailures', 'pytest-asyncio', 'pytest-xdist', 'lxml', 'polars', 'pyarrow']
 dev = [
-    'lumen[tests,sql,ai-openai,xarray,geo]',
+    'lumen[tests,sql,ai-openai,xarray,geo,evals]',
     'panel>=1.9.0rc0',
 ]
 sql = ['sqlalchemy']
@@ -102,6 +101,7 @@ geo = ['datashader', 'geopandas', 'geoviews']
 snowflake = ['snowflake-connector-python', 'cryptography']
 ae5 = ['ae5-tools']
 mcp = ['fastmcp']
+evals = ['pydantic-evals >=2.60']
 
 [project.scripts]
 lumen-spec = "lumen.command:main"
