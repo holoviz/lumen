@@ -242,9 +242,11 @@ class FlowDashSubject:
         self.instructions = ""
 
     def partial_usage(self) -> Usage | None:
-        """The usage of the case running now, for a run the harness cancels at its timeout."""
+        """The usage of the case running now, or of the one that just ended, e.g. by a timeout or an error."""
         session = getattr(self, "_session", None)
-        return usage(session.model.responses) if session is not None else None
+        if session is not None:
+            return usage(session.model.responses)
+        return getattr(self, "_last_usage", None)
 
     @property
     def settings(self) -> dict[str, Any]:
@@ -275,6 +277,7 @@ class FlowDashSubject:
             first = re.sub(r"\W+", "-", inputs.prompts[0].lower()).strip("-")[:40] if inputs.prompts else "case"
             digest = hashlib.sha1(json.dumps([inputs.fixture, inputs.prompts, inputs.query]).encode()).hexdigest()[:8]
             trace = self.traces / f"{first}-{digest}.jsonl"
+        self._session = self._last_usage = None
         session = self._session = AgentSession(source, model, instructions=self.instructions, trace=trace,
                                                model_settings=self.model_settings)
         turns, artifacts = [], []
@@ -293,4 +296,6 @@ class FlowDashSubject:
                     break
         finally:
             session.close()
+            self._session = None
+            self._last_usage = usage(session.model.responses)
         return Output(turns, _total(turns), artifacts)

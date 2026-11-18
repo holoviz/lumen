@@ -29,8 +29,8 @@ turns:
             SELECT
               c."customer",
               COUNT(*) AS paid_order_count
-            FROM orders AS o
-            JOIN customers AS c
+            FROM "orders" AS o
+            JOIN "customers" AS c
               ON o."customer_id" = c."customer_id"
             WHERE
               o."status" = 'paid'

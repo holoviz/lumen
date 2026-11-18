@@ -89,7 +89,7 @@ async def test_subject_scored_end_to_end_on_outcomes(tmp_path):
     assert saved["run"]["subject"] == "flowdash"
     assert saved["run"]["scoring"] == "outcome"
     assert saved["run"]["subject_fingerprint"] == agent_fingerprint()
-    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 4000}}
+    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
     turn = next(case for case in saved["cases"] if case["name"] == "sales_chart")["turns"][0]
     assert turn["chart_marks"] == ["bar"]
     assert turn["chart_encodings"] == [{"x": {"field": "category", "type": "nominal"},
@@ -283,3 +283,29 @@ async def test_timed_out_case_keeps_its_usage(tmp_path):
     (case,) = json.loads(output.read_text())["cases"]
     assert case["turns"][0]["status"] == "timeout"
     assert case["usage"]["input_tokens"] > 0
+    assert subject._session is None
+
+
+async def test_partial_usage_belongs_to_the_current_case():
+    subject = FlowDashSubject(model=scripted([TextPart("ok")]))
+    case = by_name("sales_total")[0]
+    await subject.run(case.inputs, subject.build_model("x"), source(case.inputs))
+    assert subject.partial_usage().input_tokens > 0
+    assert subject._session is None
+
+    class Boom(Exception):
+        pass
+
+    def fail(*args, **kwargs):
+        raise Boom()
+
+    from lumen.agent import evals as agent_evals
+
+    original = agent_evals.AgentSession
+    agent_evals.AgentSession = fail
+    try:
+        with pytest.raises(Boom):
+            await subject.run(case.inputs, subject.build_model("x"), source(case.inputs))
+    finally:
+        agent_evals.AgentSession = original
+    assert subject.partial_usage() is None
