@@ -294,6 +294,11 @@ class SQLFormat(SQLTransform):
         return self.to_sql(replaced_expression,)
 
 
+def _alias(name: str) -> Identifier | None:
+    # An empty Identifier renders as AS "" under identify=True, which is invalid SQL
+    return Identifier(this=name) if name else None
+
+
 class SQLSelectFrom(SQLFormat):
 
     sql_expr = param.String(
@@ -346,7 +351,7 @@ class SQLSelectFrom(SQLFormat):
                 else:
                     tables[existing_table] = Table(
                         this=Identifier(this=renamed_table),
-                        alias=Identifier(this=existing_table.alias),
+                        alias=_alias(existing_table.alias),
                     )
 
         else:
@@ -356,12 +361,12 @@ class SQLSelectFrom(SQLFormat):
                 elif isinstance(renamed_key, Table):
                     tables[renamed_key] = Table(
                         Identifier(this=renamed_value),
-                        alias=Identifier(this=renamed_key.alias),
+                        alias=_alias(renamed_key.alias),
                     )
                 elif isinstance(renamed_value, Table):
                     tables[
                         Table(
-                            this=renamed_key, alias=Identifier(this=renamed_value.alias)
+                            this=renamed_key, alias=_alias(renamed_value.alias)
                         )
                     ] = renamed_value
                 else:
@@ -375,7 +380,7 @@ class SQLSelectFrom(SQLFormat):
                     )
                     key_table = Table(
                         this=Identifier(this=renamed_key),
-                        alias=Identifier(this=alias),
+                        alias=_alias(alias),
                     )
                     # Try to parse renamed_value as SQL if it looks like a SQL expression
                     value_expr = None
@@ -391,7 +396,7 @@ class SQLSelectFrom(SQLFormat):
                     if value_expr is None:
                         value_expr = Table(
                             this=Identifier(this=renamed_value),
-                            alias=Identifier(this=alias),
+                            alias=_alias(alias),
                         )
                     tables[key_table] = value_expr
 

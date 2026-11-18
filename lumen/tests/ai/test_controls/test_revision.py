@@ -176,7 +176,7 @@ class TestRevisionControls:
         )
         
         # Set input value
-        controls._text_input.value_input = "Make the chart bigger"
+        controls._text_input._process_events({'value_input': "Make the chart bigger"})
         
         # Trigger enter
         controls._enter_reason(None)
