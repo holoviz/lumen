@@ -3,9 +3,9 @@ fixture: commerce
 turns:
 - question: Which customer has the most paid orders? Show only that customer and the count.
   nodes:
-  - customer_with_most_paid_orders
+  - top_customer_paid_orders
   dashboard: |
-    flowdash: 1
+    flowdash: 2
     title: Untitled
     settings:
       description: ''
@@ -16,31 +16,43 @@ turns:
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
+    turns:
+      - id: t15590959
+        actor: user
+        at: '2026-11-18T22:31:27Z'
+        summary: Added data.
+      - id: t94c6a56f
+        actor: agent
+        at: '2026-11-18T22:31:30Z'
+        run: run-bafe56b7f197
+        summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
+        origin: t15590959
         config:
           ref: data
         position: [0, 0]
-      customer_with_most_paid_orders:
+      top_customer_paid_orders:
         component: Lumen/sql
+        origin: t94c6a56f
         config:
           sql: |-
             SELECT
-              c."customer",
-              COUNT(*) AS paid_order_count
-            FROM "orders" AS o
-            JOIN "customers" AS c
-              ON o."customer_id" = c."customer_id"
+              customers."customer",
+              COUNT(orders."order_id") AS paid_order_count
+            FROM customers
+            JOIN orders
+              ON customers."customer_id" = orders."customer_id"
             WHERE
-              o."status" = 'paid'
+              orders."status" = 'paid' AND TRIM(customers."customer") <> ''
             GROUP BY
-              c."customer"
+              customers."customer"
             ORDER BY
               paid_order_count DESC
             LIMIT 1
-          table: customer_with_most_paid_orders
+          table: top_customer_paid_orders
         position: [350, 0]
     edges:
       - from: data.source
-        to: customer_with_most_paid_orders.source
+        to: top_customer_paid_orders.source
