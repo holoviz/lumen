@@ -14,7 +14,7 @@ Importing ``lumen`` does not import this package or panel-flowdash.
 from .checks import (
     PROBE_TIMEOUT, check_chart, check_columns, check_filter_config,
     check_query, check_source_config, check_sql_config, check_table_config,
-    check_view_config, pipeline_columns, probe_query,
+    check_view_config, forget_probes, pipeline_columns, probe_query,
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
@@ -68,6 +68,7 @@ __all__ = [
     "filter_condition",
     "filtered_pipeline",
     "forget",
+    "forget_probes",
     "host_sources",
     "missing_source",
     "pipeline_columns",

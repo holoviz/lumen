@@ -34,7 +34,7 @@ PROBE_CACHE_SIZE = 32
 
 _GUARD = threading.Lock()
 _PROBE_LOCKS: weakref.WeakKeyDictionary[BaseSQLSource, threading.Lock] = weakref.WeakKeyDictionary()
-_PROBED: weakref.WeakKeyDictionary[BaseSQLSource, OrderedDict[str, None]] = weakref.WeakKeyDictionary()
+_PROBED: weakref.WeakKeyDictionary[BaseSQLSource, OrderedDict[tuple[str, str], None]] = weakref.WeakKeyDictionary()
 
 # Keys whose value makes a Vega-Lite chart fetch or link to something.
 URL_KEYS = ("url", "href", "baseURL")
@@ -236,12 +236,21 @@ def check_filter_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
     return None
 
 
+def _folded(node: exp.Expression) -> exp.Expression:
+    if isinstance(node, exp.Identifier):
+        return exp.Identifier(this=node.this.lower(), quoted=node.quoted)
+    return node
+
+
 def check_columns(sql: str, source: BaseSQLSource) -> None:
     """
     Raise ``ValueError`` if ``sql`` names a column that none of the tables it
     reads has, using the schemas ``source`` already stored. Nothing is asked
     of the engine, so it checks only queries whose tables all have a stored
-    schema, and it reports only columns it can tell are missing.
+    schema. Names are compared case-insensitively whatever the dialect's
+    rules, so a column is only refused when no column of that name exists
+    in any case; the engine reports a column of the wrong case when the
+    query runs.
     """
     stored = source._get_schema_cache() or {}
     parsed = sqlglot.parse_one(sql, read=_read(source.dialect))
@@ -250,15 +259,15 @@ def check_columns(sql: str, source: BaseSQLSource) -> None:
     for table in parsed.find_all(exp.Table):
         if not isinstance(table.this, exp.Identifier) or table.db:
             return
-        name = table.name
-        if name.lower() in ctes:
+        name = table.name.lower()
+        if name in ctes:
             continue
-        columns = next((value for key, value in stored.items() if key.lower() == name.lower()), None)
+        columns = next((value for key, value in stored.items() if key.lower() == name), None)
         if not isinstance(columns, dict):
             return
-        schema[name] = {str(column): "UNKNOWN" for column in columns if column != "__len__"}
+        schema[name] = {str(column).lower(): "UNKNOWN" for column in columns if column != "__len__"}
     try:
-        qualify(parsed, schema=schema, dialect=_read(source.dialect), validate_qualify_columns=True)
+        qualify(parsed.transform(_folded), schema=schema, validate_qualify_columns=True)
     except OptimizeError as exc:
         if "could not be resolved" in str(exc):
             raise ValueError(f"{str(exc).split('. Line:')[0]}.") from exc
@@ -281,21 +290,24 @@ async def probe_query(sql: str, source: BaseSQLSource, timeout: float | None = N
     thread. A probe that does not
     finish within ``timeout`` seconds (``PROBE_TIMEOUT`` by default), waiting
     for the source's previous probe included, raises ``QueryTimeoutError``.
-    Queries the engine accepted are remembered.
+    Queries the engine accepted are remembered until the source's table
+    definitions change or ``forget_probes`` is called.
     """
     timeout = PROBE_TIMEOUT if timeout is None else timeout
+    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(sql)
+    # A table the host redefines makes the queries accepted before unknown again.
+    key = (sql, repr(source.tables))
     with _GUARD:
         probed = _PROBED.setdefault(source, OrderedDict())
         lock = _PROBE_LOCKS.setdefault(source, threading.Lock())
-        if sql in probed:
-            probed.move_to_end(sql)
+        if key in probed:
+            probed.move_to_end(key)
             return None
     deadline = time.monotonic() + timeout
     while not lock.acquire(blocking=False):
         if time.monotonic() >= deadline:
             raise QueryTimeoutError(f"The engine did not get to the query within {timeout} seconds.")
         await asyncio.sleep(0.02)
-    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(sql)
     try:
         await source.execute_with_timeout(probe, max(deadline - time.monotonic(), 0.01))
     except QueryTimeoutError:
@@ -308,10 +320,16 @@ async def probe_query(sql: str, source: BaseSQLSource, timeout: float | None = N
         lock.release()
     if problem is None:
         with _GUARD:
-            probed[sql] = None
+            probed[key] = None
             while len(probed) > PROBE_CACHE_SIZE:
                 probed.popitem(last=False)
     return problem
+
+
+def forget_probes(source: BaseSQLSource) -> None:
+    """Forget the queries ``source``'s engine accepted, e.g. when the dashboard refreshes."""
+    with _GUARD:
+        _PROBED.pop(source, None)
 
 
 def check_unbound_sql(sql: str) -> None:
@@ -380,6 +398,8 @@ async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> An
         return ANSI_ESCAPE.sub("", str(exc))
     try:
         return await probe_query(sql, source)
+    except (ValueError, sqlglot.errors.SqlglotError) as exc:
+        return ANSI_ESCAPE.sub("", str(exc))
     except QueryTimeoutError:
         return _unverified(
             f"Could not verify the query: the engine did not answer within {PROBE_TIMEOUT} seconds. "

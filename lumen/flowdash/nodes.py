@@ -57,7 +57,8 @@ from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
 from .checks import (
     check_chart, check_filter_config, check_query, check_source_config,
-    check_sql_config, check_table_config, check_view_config, pipeline_columns,
+    check_sql_config, check_table_config, check_view_config, forget_probes,
+    pipeline_columns,
 )
 
 SOURCE_TYPE = register_port_type("lumen.Source")
@@ -456,6 +457,8 @@ class LumenNode(Viewer):
         source = getattr(self, "source", None)
         if isinstance(source, Source):
             source.clear_cache()
+        if isinstance(source, BaseSQLSource):
+            forget_probes(source)
         self._refresh()
 
     def _resolve(self) -> Any:

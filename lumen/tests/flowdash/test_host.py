@@ -5,6 +5,8 @@ how the nodes' config checks refuse a config before it is applied.
 import asyncio
 import time
 
+from types import SimpleNamespace
+
 import panel as pn
 import pytest
 
@@ -20,8 +22,8 @@ from panel_flowdash.ui.status_bar import select_on_canvas
 
 from lumen.flowdash import (
     COMPONENTS, DATA_ID, SOURCE_ID, SOURCES_KEY, SQL_ID, TABLE_ID, bind_source,
-    bound_sources, check_sql_config, checks as checks_module, host_sources,
-    unbind_source,
+    bound_sources, check_columns, check_sql_config, checks as checks_module,
+    forget_probes, host_sources, unbind_source,
 )
 from lumen.flowdash.app import build_routes
 from lumen.pipeline import Pipeline
@@ -317,3 +319,64 @@ async def test_sources_that_cannot_stop_a_query_are_never_probed(monkeypatch):
     assert "price" in problem
     assert await check_sql_config({"sql": QUERY}, {"source": source}) is None
     assert "read-only" in await check_sql_config({"sql": "DROP TABLE sales"}, {"source": source})
+
+
+def stored_schema_source(dialect, columns):
+    """A source of ``dialect`` whose stored schema has a table ``sales`` with ``columns``."""
+    return SimpleNamespace(dialect=dialect, _get_schema_cache=lambda: {"sales": {c: {} for c in columns}})
+
+
+@pytest.mark.parametrize("dialect, columns, sql", [
+    ("postgres", ["Amount"], 'SELECT "Amount" FROM sales'),
+    ("postgres", ["amount"], "SELECT Amount FROM sales"),
+    ("postgres", ["Amount"], "SELECT amount FROM sales"),
+    ("mysql", ["Amount"], "SELECT amount FROM sales"),
+    ("mysql", ["amount"], "SELECT `Amount` FROM sales"),
+    ("snowflake", ["AMOUNT"], "SELECT amount FROM sales"),
+    ("snowflake", ["AMOUNT"], 'SELECT "AMOUNT" FROM sales'),
+    ("snowflake", ["Amount"], 'SELECT "Amount", amount FROM sales'),
+    ("duckdb", ["Amount"], "SELECT amount, \"AMOUNT\" FROM sales"),
+    ("duckdb", ["amount"], 'SELECT s."Amount" FROM sales AS s'),
+])
+def test_column_check_never_refuses_on_case_alone(dialect, columns, sql):
+    check_columns(sql, stored_schema_source(dialect, columns))
+
+
+@pytest.mark.parametrize("dialect, sql", [
+    ("postgres", 'SELECT "Price" FROM sales'),
+    ("mysql", "SELECT price FROM sales"),
+    ("snowflake", "SELECT PRICE FROM sales"),
+    ("duckdb", 'SELECT "price" FROM sales'),
+])
+def test_column_check_refuses_columns_missing_in_every_case(dialect, sql):
+    with pytest.raises(ValueError, match="(?i)price"):
+        check_columns(sql, stored_schema_source(dialect, ["Amount"]))
+
+
+async def test_a_failed_probe_rewrite_does_not_hold_the_sources_lock(source, monkeypatch):
+    from lumen.transforms.sql import SQLLimit
+
+    def broken(self, sql):
+        raise ValueError("cannot rewrite")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SQLLimit, "apply", broken)
+        assert "cannot rewrite" in await check_sql_config({"sql": QUERY}, {"source": source})
+    assert await check_sql_config({"sql": QUERY}, {"source": source}) is None
+
+
+async def test_accepted_probes_are_forgotten_when_tables_change_or_on_refresh(source, executed):
+    sql = "SELECT category, amount FROM sales"
+    probes = lambda: [q for q in executed if q.endswith("LIMIT 0")]  # noqa: E731
+
+    assert await check_sql_config({"sql": sql}, {"source": source}) is None
+    assert await check_sql_config({"sql": sql}, {"source": source}) is None
+    assert len(probes()) == 1
+
+    forget_probes(source)
+    assert await check_sql_config({"sql": sql}, {"source": source}) is None
+    assert len(probes()) == 2
+
+    source.tables = {**source.tables, "other": "SELECT 1 AS x"}
+    assert await check_sql_config({"sql": sql}, {"source": source}) is None
+    assert len(probes()) == 3
