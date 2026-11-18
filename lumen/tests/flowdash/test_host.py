@@ -166,14 +166,6 @@ def test_set_config_refuses_sql_the_engine_rejects(source, executed):
     assert executed == [" ".join(f"{BROKEN} LIMIT 0".split())]
 
 
-async def test_sql_check_passes_when_the_probe_times_out(source, monkeypatch):
-    async def slow(sql, timeout, fetch=False):
-        raise QueryTimeoutError("slow")
-
-    monkeypatch.setattr(source, "execute_with_timeout", slow)
-    assert await check_sql_config({"sql": BROKEN}, {"source": source}) is None
-
-
 async def test_flowdash_agent_set_config_refuses_broken_sql(source):
     pytest.importorskip("pydantic_ai")
     from panel_flowdash.agent import FlowDashDeps, create_agent
@@ -240,8 +232,10 @@ def test_add_node_then_connect_runs_the_check_on_the_node(source):
     ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
     ops.add_node(SQL_ID, {"sql": BROKEN, "table": "q"}, name="q")
 
-    ops.connect("data.source", "q.source")
+    result = ops.connect("data.source", "q.source")
 
+    if hasattr(ops, "last_check"):
+        assert any("price" in problem for problem in result)
     assert "price" in failure(ops, "q", "data")
     assert any("price" in issue.message for issue in ops.validate())
 

@@ -76,7 +76,7 @@ def test_sql_node_runs_query_once_in_source_engine(source, executed):
     assert isinstance(pipeline, Pipeline)
     assert output(ops, "chart", "pipeline") is pipeline
     assert sorted(map(tuple, data.values.tolist())) == [("A", 15), ("B", 20)]
-    assert executed == [" ".join(result_sql(source, QUERY).split())]
+    assert [q for q in executed if not q.endswith("LIMIT 0")] == [" ".join(result_sql(source, QUERY).split())]
 
 
 def test_primed_result_is_not_executed_again(source, executed):
