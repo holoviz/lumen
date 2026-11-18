@@ -14,6 +14,7 @@ test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
 test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
 test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
 test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx"]
+evals = ["py314", "test-core", "ai", "sql", "evals"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -121,6 +122,9 @@ pytest-asyncio = "*"
 
 [feature.test-core.tasks]
 test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
+
+[feature.evals.pypi-dependencies]
+pydantic-evals = "*"
 
 [feature.test.dependencies]
 dask-core = "*"
