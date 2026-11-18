@@ -32,7 +32,7 @@ turns:
             JOIN customers
               ON orders.customer_id = customers.customer_id
             WHERE
-              orders.status = 'paid'
+              orders.status = 'paid' AND NOT customers.region IS NULL
             GROUP BY
               customers.region
           table: paid_order_amount_by_region
@@ -42,7 +42,7 @@ turns:
         to: paid_order_amount_by_region.source
 - question: Only keep the west region.
   nodes:
-  - paid_order_amount_by_region
+  - west_paid_order_amount
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -64,14 +64,36 @@ turns:
         component: Lumen/sql
         config:
           sql: |-
-            SELECT customers.region, SUM(orders.amount) AS total_paid_order_amount
+            SELECT
+              customers.region,
+              SUM(orders.amount) AS total_paid_order_amount
             FROM orders
-            JOIN customers ON orders.customer_id = customers.customer_id
-            WHERE orders.status = 'paid'
-              AND customers.region = 'west'
-            GROUP BY customers.region
+            JOIN customers
+              ON orders.customer_id = customers.customer_id
+            WHERE
+              orders.status = 'paid' AND NOT customers.region IS NULL
+            GROUP BY
+              customers.region
           table: paid_order_amount_by_region
         position: [350, 0]
+      west_paid_order_amount:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              customers.region,
+              SUM(orders.amount) AS total_paid_order_amount
+            FROM orders
+            JOIN customers
+              ON orders.customer_id = customers.customer_id
+            WHERE
+              orders.status = 'paid' AND customers.region = 'west'
+            GROUP BY
+              customers.region
+          table: west_paid_order_amount
+        position: [700, 0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
+      - from: data.source
+        to: west_paid_order_amount.source
