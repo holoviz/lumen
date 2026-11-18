@@ -27,15 +27,15 @@ turns:
         config:
           sql: |-
             SELECT
-              c.region,
-              SUM(o.amount) AS total_paid_order_amount
+              c."region",
+              SUM(o."amount") AS "total_paid_order_amount"
             FROM orders AS o
             JOIN customers AS c
-              ON o.customer_id = c.customer_id
+              ON o."customer_id" = c."customer_id"
             WHERE
-              o.status = 'paid' AND NOT c.region IS NULL AND NOT o.amount IS NULL
+              o."status" = 'paid'
             GROUP BY
-              c.region
+              c."region"
           table: paid_order_amount_by_region
         position: [350, 0]
     edges:
@@ -66,13 +66,12 @@ turns:
         component: Lumen/sql
         config:
           sql: |-
-            SELECT c.region, SUM(o.amount) AS total_paid_order_amount
+            SELECT c."region", SUM(o."amount") AS "total_paid_order_amount"
             FROM orders AS o
-            JOIN customers AS c ON o.customer_id = c.customer_id
-            WHERE o.status = 'paid'
-              AND c.region = 'west'
-              AND o.amount IS NOT NULL
-            GROUP BY c.region
+            JOIN customers AS c ON o."customer_id" = c."customer_id"
+            WHERE o."status" = 'paid'
+              AND c."region" = 'west'
+            GROUP BY c."region"
           table: paid_order_amount_by_region
         position: [350, 0]
     edges:

@@ -27,18 +27,18 @@ turns:
         config:
           sql: |-
             SELECT
-              customers.customer,
-              COUNT(orders.order_id) AS paid_order_count
-            FROM customers
-            JOIN orders
-              ON customers.customer_id = orders.customer_id
+              c."customer",
+              COUNT(*) AS paid_order_count
+            FROM orders AS o
+            JOIN customers AS c
+              ON o."customer_id" = c."customer_id"
             WHERE
-              orders.status = 'paid'
+              o."status" = 'paid'
             GROUP BY
-              customers.customer,
-              customers.customer_id
-            QUALIFY
-              ROW_NUMBER() OVER (ORDER BY COUNT(orders.order_id) DESC, customers.customer_id) = 1
+              c."customer"
+            ORDER BY
+              paid_order_count DESC
+            LIMIT 1
           table: customer_with_most_paid_orders
         position: [350, 0]
     edges:
