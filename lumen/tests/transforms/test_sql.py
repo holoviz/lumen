@@ -384,6 +384,12 @@ def test_sql_filter_bool(value, where):
     assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
 
 
+@pytest.mark.parametrize("value, where", [(True, '"A" = 1'), (False, '"A" = 0'), ([True, False], '"A" IN (1, 0)')])
+def test_sql_filter_bool_without_boolean_literals(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)], boolean_literals=False)
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
 def test_sql_filter_skips_booleans_mixed_with_other_values():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", [True, "x"])])
     assert result == "SELECT * FROM TABLE"
