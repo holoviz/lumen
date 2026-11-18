@@ -9,6 +9,8 @@ import sqlglot
 
 import lumen as lm
 
+from lumen.pipeline import Pipeline
+from lumen.sources.base import InMemorySource
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
@@ -370,10 +372,34 @@ def test_sql_filter_numpy_nat():
     assert result == expected
 
 
-@pytest.mark.parametrize("value", [True, np.bool_(True)])
-def test_sql_filter_bool_not_applied(value):
+@pytest.mark.parametrize("value, where", [
+    (True, '"A" = TRUE'),
+    (np.bool_(True), '"A" = TRUE'),
+    (False, '"A" = FALSE'),
+    ([True, False], '"A" IN (TRUE, FALSE)'),
+    ([np.bool_(False)], '"A" IN (FALSE)'),
+])
+def test_sql_filter_bool(value, where):
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_skips_booleans_mixed_with_other_values():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", [True, "x"])])
     assert result == "SELECT * FROM TABLE"
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_boolean_widget_filter_matches_on_sql_and_pandas_sources():
+    table = "SELECT * FROM (VALUES ('A', TRUE), ('B', FALSE), ('C', TRUE)) AS t(s, b)"
+    duckdb = DuckDBSource(uri=":memory:", tables={"t": table})
+    memory = InMemorySource(tables={"t": duckdb.execute(table)})
+    results = []
+    for source in (duckdb, memory):
+        pipeline = Pipeline.from_spec({"source": source, "table": "t", "filters": [{"type": "widget", "field": "b"}]})
+        pipeline.filters[0].value = False
+        results.append(pipeline.data.values.tolist())
+    assert results == [[["B", False]], [["B", False]]]
 
 
 @pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
@@ -792,17 +818,13 @@ def test_sql_prefilter_unsupported_condition_type():
     assert "metadata" not in result or 'WHERE "valid_col" = \'valid_value\'' in result
 
 
-def test_sql_prefilter_boolean_values_unsupported():
-    """Test that boolean True/False values are not supported and get skipped."""
+def test_sql_prefilter_boolean_values():
     result = SQLPreFilter.apply_to(
         "SELECT * FROM data",
         conditions=[("data", [("bool_col", True), ("valid_col", "valid_value")])]
     )
-    # Boolean values are not supported and should be skipped with a warning
-    # Only the valid condition should be processed
+    assert '"bool_col" = TRUE' in result
     assert '"valid_col" = \'valid_value\'' in result
-    # The boolean condition should not appear in the result
-    assert "bool_col" not in result or "bool_col = True" not in result
 
 
 def test_sql_prefilter_empty_condition_value():
