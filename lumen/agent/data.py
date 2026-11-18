@@ -26,6 +26,8 @@ from . import _graph
 STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
 SCHEMA_TABLES_SHOWN = 25
+# Characters of a placed node's SQL list_tables shows; a node from a shared dashboard may hold any amount.
+NODE_SQL_SHOWN = 2000
 
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
 
@@ -81,9 +83,12 @@ def placed_nodes(ops) -> str | None:
             except OperationError as exc:
                 columns = str(exc)
             sql = " ".join(str(config.get("sql", "")).split())
+            if len(sql) > NODE_SQL_SHOWN:
+                sql = f"{sql[:NODE_SQL_SHOWN]} [... {len(sql) - NODE_SQL_SHOWN} more characters]"
             lines.append(f"- {name} (SQL; {columns}): {sql}")
         elif component == VIEW_ID:
-            spec = config.get("spec") or {}
+            spec = config.get("spec")
+            spec = spec if isinstance(spec, dict) else {}
             mark = spec.get("mark")
             mark = mark.get("type") if isinstance(mark, dict) else mark
             fields = ", ".join(
