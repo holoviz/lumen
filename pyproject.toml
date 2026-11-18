@@ -218,7 +218,7 @@ lines_between_types = 1
 include_trailing_comma = true
 
 [tool.pyright]
-include = ["lumen/ai"]
+include = ["lumen/ai", "lumen/data"]
 exclude = ["**/__pycache__"]
 reportMissingImports = false
 reportMissingTypeStubs = false
