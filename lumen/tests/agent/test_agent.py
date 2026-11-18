@@ -367,3 +367,51 @@ async def test_data_agent_leaves_out_flowdash_instructions_and_catalogue():
     data, dashboard = seen
     assert data.startswith(INSTRUCTIONS.strip()) and FLOWDASH_INSTRUCTIONS not in data and "Components you may place" not in data
     assert FLOWDASH_INSTRUCTIONS in dashboard and "Components you may place" in dashboard
+
+
+async def test_lookups_are_stubbed_once_a_node_is_placed():
+    from lumen.agent.history import SUPERSEDED
+
+    model, requests = script(
+        [ToolCallPart("list_tables", {}, tool_call_id="l1")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="a1")],
+        [TextPart("Done.")],
+    )
+    seen = []
+    inner = model.function
+
+    def respond(messages, info):
+        seen.append([part.content for m in messages if isinstance(m, ModelRequest) for part in m.parts
+                     if isinstance(part, ToolReturnPart) and part.tool_name == "list_tables"])
+        return inner(messages, info)
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    try:
+        turn = await session.ask("Paid totals by region")
+    finally:
+        session.close()
+
+    assert seen[1][0].startswith("2 table(s)")
+    assert seen[2] == [SUPERSEDED]
+    assert turn.error is None and turn.nodes == ["paid_by_region"]
+
+
+async def test_model_trace_records_the_stubbed_history(tmp_path):
+    from panel_agents.adapters.model_trace import load_messages
+    from pydantic_ai.messages import ModelMessagesTypeAdapter
+
+    model, _ = script(
+        [ToolCallPart("list_tables", {}, tool_call_id="l1")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="a1")],
+        [TextPart("Done.")],
+    )
+    trace = tmp_path / "trace.jsonl"
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, trace=trace)
+    try:
+        await session.ask("Paid totals by region")
+        held = ModelMessagesTypeAdapter.dump_python(session.runner.messages, mode="json")
+    finally:
+        session.close()
+    recorded = ModelMessagesTypeAdapter.dump_python(load_messages(trace), mode="json")
+    strip = lambda ms: [{k: v for k, v in m.items() if k not in ("metadata", "timestamp")} for m in ms]  # noqa: E731
+    assert strip(recorded) == strip(held)

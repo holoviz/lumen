@@ -8,9 +8,11 @@ from panel_flowdash.agent import (
     FlowDashDeps, create_agent as create_flowdash_agent,
 )
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import ProcessHistory
 
 from .authoring import authoring_toolset
 from .data import data_toolset
+from .history import stub_superseded_lookups
 
 # The instructions stay the same for a whole conversation, whatever the
 # dashboard holds, so the provider's prompt cache keeps them; what changes
@@ -74,9 +76,11 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     model_settings = MODEL_SETTINGS if model_settings is None else model_settings
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
+    capabilities = [ProcessHistory(stub_superseded_lookups), *kwargs.pop("capabilities", [])]
     if dashboard_instructions is None:
         dashboard_instructions = dashboard_tools is None
     return create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
-        default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none", **kwargs,
+        default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",
+        capabilities=capabilities, **kwargs,
     )
