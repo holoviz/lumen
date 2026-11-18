@@ -8,6 +8,7 @@ from copy import deepcopy
 from typing import ClassVar
 
 import numpy as np
+import pandas as pd
 import param  # type: ignore
 import sqlglot
 
@@ -662,6 +663,23 @@ class SQLSort(SQLTransform):
 NO_BOOLEAN_LITERALS = frozenset({"mssql", "tsql", "oracle"})
 
 
+def _python_value(value):
+    """
+    A numpy scalar as the equivalent Python value. datetime64 and
+    timedelta64 go through pandas, since ``.item()`` turns nanosecond
+    precision into an integer; NaT becomes None.
+    """
+    if isinstance(value, (np.datetime64, np.timedelta64)):
+        if np.isnat(value):
+            return None
+        if isinstance(value, np.datetime64):
+            return pd.Timestamp(value).to_pydatetime(warn=False)
+        return pd.Timedelta(value).to_pytimedelta()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 class SQLFilterBase(SQLTransform):
     """
     Base class for SQL filtering transforms that provides common filtering logic.
@@ -709,14 +727,13 @@ class SQLFilterBase(SQLTransform):
             column_expr = Column(this=Identifier(this=col, quoted=True))
 
             # NumPy scalars are filtered like the equivalent Python values
-            if isinstance(val, np.datetime64):
-                if np.isnat(val):
-                    # NaT never compares equal, so it matches no rows (like Filter)
-                    filters.append(column_expr.eq(Null()))
-                    continue
-                val = val.astype("datetime64[us]")
-            if isinstance(val, np.generic):
-                val = val.item()
+            if isinstance(val, np.datetime64) and np.isnat(val):
+                # NaT never compares equal, so it matches no rows (like Filter)
+                filters.append(column_expr.eq(Null()))
+                continue
+            val = _python_value(val)
+            if isinstance(val, (tuple, list)):
+                val = type(val)(_python_value(v) for v in val)
 
             if isinstance(val, bool):
                 filters.append(column_expr.eq(self._boolean(val)))
