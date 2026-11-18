@@ -7,9 +7,12 @@ import time
 from pydantic_evals import Dataset
 
 from lumen.ai.evals.bird import BirdExecution, bird_source, database_path
-from lumen.ai.evals.harness import CheckResult, EvalOpenAI, evaluate
+from lumen.ai.evals.harness import (
+    CheckResult, EvalOpenAI, evaluate, git_state,
+)
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
+CASE_TIMEOUT = 240
 
 
 def default_api(provider):
@@ -39,23 +42,32 @@ def run_bird_case(args):
     try:
         report = asyncio.run(asyncio.wait_for(evaluate(llm, one, source_factory, part,
                                                      instruction_version=instruction_version,
-                                                     settings=settings), timeout=240))
+                                                     settings=settings), timeout=CASE_TIMEOUT))
         result = json.loads(part.read_text(encoding="utf-8"))
         if not result["cases"]:
             failure = report.failures[0].error_message if report.failures else "No case result returned"
             result["cases"] = [{"name": case.name, "turns": [], "usage": None, "assertions": {},
                                 "duration": None, "error": failure}]
-    except (TimeoutError, ValueError, OSError) as exc:
-        result = {
-            "run": {"commit": "", "dirty": True, "dataset": one.name, "model": model,
-                    "api": llm.api, "provider": provider},
-            "cases": [{"name": case.name, "turns": [], "usage": None, "assertions": {},
-                       "duration": None, "error": f"Gold SQL or scoring failed: {type(exc).__name__}: {exc}"}],
-            "failures": [],
-        }
+    except TimeoutError:
+        result = _harness_failure(case, one, llm, model, provider, f"Case exceeded the {CASE_TIMEOUT}s evaluation limit")
+    except (ValueError, OSError) as exc:
+        # Subject errors become error turns and gold SQL errors evaluator
+        # failures inside evaluate(), so only harness errors reach this point.
+        result = _harness_failure(case, one, llm, model, provider, f"Harness failed: {type(exc).__name__}: {exc}")
     finally:
         part.unlink(missing_ok=True)
     return result
+
+
+def _harness_failure(case, dataset, llm, model, provider, message):
+    commit, dirty = git_state()
+    return {
+        "run": {"commit": commit, "dirty": dirty, "dataset": dataset.name, "model": model,
+                "api": llm.api, "provider": provider},
+        "cases": [{"name": case.name, "turns": [], "usage": None, "assertions": {},
+                   "duration": None, "error": message}],
+        "failures": [],
+    }
 
 
 def run_bird_case_process(args, sender):

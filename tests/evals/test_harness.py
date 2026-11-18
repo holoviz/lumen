@@ -680,3 +680,22 @@ def test_bird_scorer_times_out_inside_the_child(tmp_path):
         execute_read_only(path, slow, timeout=1)
     # The child enforces the deadline, so the startup grace is not spent waiting.
     assert time.monotonic() - started < 30
+
+
+@pytest.mark.parametrize(("error", "message"), [
+    (TimeoutError(), "Case exceeded the 240s evaluation limit"),
+    (OSError("disk full"), "Harness failed: OSError: disk full"),
+])
+def test_bird_case_labels_harness_errors(tmp_path, monkeypatch, error, message):
+    from tests.evals import bird_runner
+
+    async def fail(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(bird_runner, "evaluate", fail)
+    case = Case(name="q1", inputs=None)
+    result = bird_runner.run_bird_case((1, case, tmp_path, "m", "openai", "test-key", tmp_path / "out.json",
+                                        "", "", False, {}, None))
+
+    assert result["cases"][0]["error"] == message
+    assert result["cases"][0]["assertions"] == {}
