@@ -13,13 +13,15 @@ except ImportError as exc:
 
 from .checks import check_chart, check_query
 from .nodes import (
-    COMPONENTS, PIPELINE_TYPE, QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ID,
-    SOURCE_TYPE, SQL_ID, VIEW_ID, SourceNode, SQLNode, ViewNode, bind_source,
-    bound_sources, compile_sql, primed_result, result_sql, unbind_source,
+    COMPONENTS, NODE_TIMEOUT, PIPELINE_TYPE, QUERY_TIMEOUT, RESULT_LIMIT,
+    SOURCE_ID, SOURCE_TYPE, SQL_ID, VIEW_ID, SourceNode, SQLNode, ViewNode,
+    bind_source, bound_sources, compile_sql, primed_result, result_sql,
+    row_ceiling, set_row_ceiling, unbind_source,
 )
 
 __all__ = [
     "COMPONENTS",
+    "NODE_TIMEOUT",
     "PIPELINE_TYPE",
     "QUERY_TIMEOUT",
     "RESULT_LIMIT",
@@ -37,5 +39,7 @@ __all__ = [
     "compile_sql",
     "primed_result",
     "result_sql",
+    "row_ceiling",
+    "set_row_ceiling",
     "unbind_source",
 ]

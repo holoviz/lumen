@@ -9,7 +9,12 @@ output reads that object.
 Source nodes never build a source from their config: the host binds the
 sources an editor may use with ``bind_source``, and a source node only
 names one of them by ``ref``. Whoever edits a dashboard can therefore only
-point it at sources the host chose, never open a new connection.
+point it at sources the host chose, never open a new connection. To load a
+saved dashboard, create the editor, bind its sources, then import the
+dashboard; a source node whose ref is bound later picks the source up then.
+
+The host also sets how many rows a SQL node may keep (``set_row_ceiling``);
+a node's ``limit`` can lower that, never raise it.
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ import param
 
 from panel.viewable import Viewer
 from panel_flowdash import current_dashboard, register, register_port_type
+from panel_flowdash.dataflow_engine import failure_text
 from panel_flowdash.util import is_failure
 
 from ..pipeline import Pipeline
@@ -43,17 +49,29 @@ SOURCE_ID = "Lumen/source"
 SQL_ID = "Lumen/sql"
 VIEW_ID = "Lumen/view"
 
-# Rows a SQL node keeps in memory unless its config sets another limit.
+# Rows a SQL node keeps in memory, unless the host sets another ceiling.
 RESULT_LIMIT = 100_000
+# Seconds a query placed by add_sql may run; it runs off the event loop.
 QUERY_TIMEOUT = 30
+# Seconds a query may run when a node resolves it itself, e.g. after set_config or an
+# import: that happens in a synchronous watcher, which blocks the event loop meanwhile.
+NODE_TIMEOUT = 5
 
 _BOUND: weakref.WeakKeyDictionary[Any, dict[str, Source]] = weakref.WeakKeyDictionary()
+_CEILINGS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+_SOURCE_NODES: weakref.WeakKeyDictionary[Any, weakref.WeakSet] = weakref.WeakKeyDictionary()
 _RESULTS: dict[tuple[int, str], Any] = {}
 
 
 def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
-    """Let source nodes of ``editor`` whose ``ref`` is ``ref`` use ``source``. Returns the ref."""
+    """
+    Let source nodes of ``editor`` whose ``ref`` is ``ref`` use ``source``,
+    including nodes already placed. Returns the ref.
+    """
     _BOUND.setdefault(editor, {})[ref] = source
+    for node in list(_SOURCE_NODES.get(editor, ())):
+        if node.ref == ref:
+            node._refresh()
     return ref
 
 
@@ -64,6 +82,15 @@ def unbind_source(editor: Any, ref: str) -> None:
 
 def bound_sources(editor: Any) -> dict[str, Source]:
     return dict(_BOUND.get(editor, {}))
+
+
+def set_row_ceiling(editor: Any, rows: int) -> None:
+    """Let the SQL nodes of ``editor`` keep up to ``rows`` rows instead of ``RESULT_LIMIT``."""
+    _CEILINGS[editor] = rows
+
+
+def row_ceiling(editor: Any) -> int:
+    return _CEILINGS.get(editor, RESULT_LIMIT) if editor is not None else RESULT_LIMIT
 
 
 def result_sql(source: BaseSQLSource, sql: str, limit: int = RESULT_LIMIT) -> str:
@@ -95,13 +122,15 @@ def execute(source: BaseSQLSource, sql: str, timeout: float = QUERY_TIMEOUT) -> 
 
 
 def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
-                timeout: float = QUERY_TIMEOUT) -> Pipeline:
+                timeout: float = NODE_TIMEOUT) -> Pipeline:
     """
     A pipeline whose table is ``sql`` evaluated by ``source``'s engine, with
     its result fetched once under ``limit`` rows and ``timeout`` seconds.
 
     Raises ``ValueError`` unless ``sql`` passes ``check_query``.
     """
+    if is_failure(source):
+        raise ValueError(f"The source failed: {failure_text(source)}")
     if not isinstance(source, BaseSQLSource):
         raise ValueError(f"{type(source).__name__} does not run SQL.")
     check_query(sql, source)
@@ -126,6 +155,15 @@ class LumenNode(Viewer):
     _error = param.String(default=None, allow_None=True, precedence=-1)
 
     __abstract = True
+
+    def __init__(self, **params):
+        editor = current_dashboard()
+        self._editor = weakref.ref(editor) if editor is not None else None
+        super().__init__(**params)
+
+    @property
+    def editor(self) -> Any:
+        return self._editor() if self._editor is not None else None
 
     def _resolve(self) -> Any:
         raise NotImplementedError
@@ -167,9 +205,9 @@ class SourceNode(LumenNode):
     ref = param.String(default="", doc="Name of a source the host bound with bind_source.")
 
     def __init__(self, **params):
-        editor = current_dashboard()
-        self._editor = weakref.ref(editor) if editor is not None else None
         super().__init__(**params)
+        if self.editor is not None:
+            _SOURCE_NODES.setdefault(self.editor, weakref.WeakSet()).add(self)
 
     @param.depends("ref", watch=True, on_init=True)
     def _refresh(self, *events):
@@ -178,8 +216,7 @@ class SourceNode(LumenNode):
     def _resolve(self) -> Source | None:
         if not self.ref:
             return None
-        editor = self._editor() if self._editor is not None else None
-        bound = bound_sources(editor) if editor is not None else {}
+        bound = bound_sources(self.editor) if self.editor is not None else {}
         if self.ref not in bound:
             raise ValueError(f"No source is bound as {self.ref!r}; the app binds the sources a dashboard may use.")
         return bound[self.ref]
@@ -214,7 +251,9 @@ class SQLNode(LumenNode):
 
     table = param.String(default="", doc="Name of the result table; derived from the SQL if empty.")
 
-    limit = param.Integer(default=RESULT_LIMIT, bounds=(1, None), doc="Rows of the result kept in memory.")
+    limit = param.Integer(default=None, bounds=(1, None), allow_None=True, doc="""
+        Rows of the result kept in memory, at most the host's row ceiling,
+        which is also the default.""")
 
     @param.depends("source", "sql", "table", "limit", watch=True, on_init=True)
     def _refresh(self, *events):
@@ -223,7 +262,9 @@ class SQLNode(LumenNode):
     def _resolve(self) -> Pipeline | None:
         if self.source is None or not self.sql.strip():
             return None
-        return compile_sql(self.source, self.sql, self.table or default_table(self.sql), self.limit)
+        ceiling = row_ceiling(self.editor)
+        limit = ceiling if self.limit is None else min(self.limit, ceiling)
+        return compile_sql(self.source, self.sql, self.table or default_table(self.sql), limit)
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")

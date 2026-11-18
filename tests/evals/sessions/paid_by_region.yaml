@@ -3,7 +3,7 @@ fixture: commerce
 turns:
 - question: What is the total paid order amount per region?
   nodes:
-  - paid_amount_by_region
+  - paid_order_amount_by_region
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -21,28 +21,30 @@ turns:
         config:
           ref: data
         position: [0, 0]
-      paid_amount_by_region:
+      paid_order_amount_by_region:
         component: Lumen/sql
         config:
           sql: |-
             SELECT
               customers.region,
-              SUM(orders.amount) AS total_paid_amount
+              SUM(orders.amount) AS total_paid_order_amount
             FROM orders
             JOIN customers
               ON orders.customer_id = customers.customer_id
             WHERE
-              orders.status = 'paid' AND NOT customers.region IS NULL
+              orders.status = 'paid'
             GROUP BY
               customers.region
-          table: paid_amount_by_region
+            ORDER BY
+              customers.region
+          table: paid_order_amount_by_region
         position: [350, 0]
     edges:
       - from: data.source
-        to: paid_amount_by_region.source
+        to: paid_order_amount_by_region.source
 - question: Only keep the west region.
   nodes:
-  - paid_amount_by_region
+  - paid_order_amount_by_region
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -60,13 +62,13 @@ turns:
         config:
           ref: data
         position: [0, 0]
-      paid_amount_by_region:
+      paid_order_amount_by_region:
         component: Lumen/sql
         config:
           sql: |-
             SELECT
               customers.region,
-              SUM(orders.amount) AS total_paid_amount
+              SUM(orders.amount) AS total_paid_order_amount
             FROM orders
             JOIN customers
               ON orders.customer_id = customers.customer_id
@@ -75,8 +77,8 @@ turns:
               AND customers.region = 'west'
             GROUP BY
               customers.region
-          table: paid_amount_by_region
+          table: paid_order_amount_by_region
         position: [350, 0]
     edges:
       - from: data.source
-        to: paid_amount_by_region.source
+        to: paid_order_amount_by_region.source

@@ -3,7 +3,7 @@ fixture: commerce
 turns:
 - question: Which customer has the most paid orders? Show only that customer and the count.
   nodes:
-  - top_paid_customer
+  - top_customer_paid_orders
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -21,24 +21,24 @@ turns:
         config:
           ref: data
         position: [0, 0]
-      top_paid_customer:
+      top_customer_paid_orders:
         component: Lumen/sql
         config:
           sql: |-
             SELECT
-              c.customer,
-              COUNT(o.order_id) AS paid_orders
-            FROM orders AS o
-            JOIN customers AS c
-              ON c.customer_id = o.customer_id
+              customers.customer,
+              COUNT(orders.order_id) AS paid_order_count
+            FROM orders
+            JOIN customers
+              ON orders.customer_id = customers.customer_id
             WHERE
-              o.status = 'paid'
+              orders.status = 'paid'
             GROUP BY
-              c.customer
+              customers.customer
             QUALIFY
-              ROW_NUMBER() OVER (ORDER BY COUNT(o.order_id) DESC, c.customer ASC) = 1
-          table: top_paid_customer
+              ROW_NUMBER() OVER (ORDER BY COUNT(orders.order_id) DESC) = 1
+          table: top_customer_paid_orders
         position: [350, 0]
     edges:
       - from: data.source
-        to: top_paid_customer.source
+        to: top_customer_paid_orders.source
