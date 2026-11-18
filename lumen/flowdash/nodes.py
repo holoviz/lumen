@@ -45,13 +45,12 @@ from panel.viewable import Viewer
 from panel_flowdash import current_dashboard, register, register_port_type
 from panel_flowdash.dataflow_engine import failure_text
 from panel_flowdash.util import is_failure
-from sqlglot.expressions import Boolean, Column, Identifier
 
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.base import Filter as FilterTransform, Iloc
-from ..transforms.sql import SQLFilter, SQLLimit
+from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
 from .checks import check_chart, check_query, pipeline_columns
 
@@ -137,27 +136,6 @@ def effective_limit(editor: Any, limit: int | None) -> int:
 def result_sql(source: BaseSQLSource, sql: str, limit: int = RESULT_LIMIT) -> str:
     """The statement a SQL node runs for ``sql``, with its row cap."""
     return SQLLimit(limit=limit, write=source.dialect, pretty=True, identify=False).apply(sql)
-
-
-class ConditionFilter(SQLFilter):
-    """
-    ``SQLFilter`` that also renders boolean conditions, as ``= TRUE`` or
-    ``IN (TRUE, FALSE)``, which Lumen's ``SQLFilter`` skips.
-    """
-
-    transform_type: ClassVar[str] = "flowdash_condition_filter"
-
-    def _build_filter_conditions(self, conditions: list) -> list:
-        filters, rest = [], []
-        for col, val in conditions:
-            column = Column(this=Identifier(this=col, quoted=True))
-            if isinstance(val, bool):
-                filters.append(column.eq(Boolean(this=val)))
-            elif isinstance(val, list) and val and all(isinstance(v, bool) for v in val):
-                filters.append(column.isin(*[Boolean(this=v) for v in val]))
-            else:
-                rest.append((col, val))
-        return filters + super()._build_filter_conditions(rest)
 
 
 def python_value(value: Any) -> Any:
@@ -320,7 +298,10 @@ def filtered_pipeline(pipeline: Pipeline, field: str, value: Any, limit: int = R
     if at is None:
         at = len(sql_transforms)
         sql_transforms.append(SQLLimit(limit=limit, write=pipeline.source.dialect))
-    sql_transforms.insert(at, ConditionFilter(conditions=condition, write=pipeline.source.dialect))
+    dialect = pipeline.source.dialect
+    sql_transforms.insert(at, SQLFilter(
+        conditions=condition, write=dialect, boolean_literals=dialect not in NO_BOOLEAN_LITERALS,
+    ))
     return _clone(pipeline, sql_transforms=sql_transforms)
 
 
