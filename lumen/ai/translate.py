@@ -283,6 +283,10 @@ def parameter_to_field(parameter: param.Parameter, created_models: dict[str, typ
             type_ = _create_literal(current_literals)
         else:  # Fallback if no literals or objects
             type_ = Any if parameter.allow_None else str  # Or object, or more specific based on context
+        # The LLM turns an option off by answering null, e.g. no y on a map of
+        # geometry, so the None default has to be a value it may send.
+        if parameter.default is None:
+            type_ = type_ | None
     elif issubclass(param_type, param.DataFrame):
         type_ = PandasDataFrame
     elif parameter.name == "align":

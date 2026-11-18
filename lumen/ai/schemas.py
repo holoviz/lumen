@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from .config import SOURCE_TABLE_SEPARATOR
+from .sharing import shares_values
 from .table_stats import (
     ESTIMATED, SAMPLED, TYPES_ONLY, ColumnStats, TableStats, get_stats_store,
     render_column, render_stats_header,
@@ -799,7 +800,7 @@ class DbtslMetadata:
         for dimension, dimension_spec in self.dimensions.items():
             dtype = dimension_spec["type"]
             enums = dimension_spec.get("enum", [])
-            if enums:
+            if enums and shares_values(dimension, enums):
                 dimensions_str += f"- {dimension} ({dtype}): {enums}\n"
             else:
                 dimensions_str += f"- {dimension} ({dtype})\n"

@@ -12,7 +12,6 @@ import duckdb
 import numpy.core.multiarray  # noqa: F401
 import pandas as pd
 import param
-import pyarrow as pa
 import sqlglot
 
 from ..config import config
@@ -32,6 +31,8 @@ from .base import (
 
 if TYPE_CHECKING:
     import pandas as pd
+    import polars as pl
+    import pyarrow as pa
 
 # DuckDB reports a geometry column carrying a CRS as GEOMETRY('EPSG:4326')
 GEOMETRY_CRS = re.compile(r"GEOMETRY\('(.+)'\)")
@@ -115,6 +116,10 @@ class DuckDBSource(BaseSQLSource):
         connection = params.pop('_connection', None)
         params["read_only"] = params.get('read_only', params.get("uri") not in (None, ':memory:'))
         super().__init__(**params)
+        # A connection handed in belongs to the caller, so close() leaves it open
+        self._owns_connection = not connection
+        # The Pipelines mirrored in, and the watchers re-ingesting their data
+        self._mirror_watchers: list = []
         if connection:
             self._connection = connection
         else:
@@ -187,7 +192,7 @@ class DuckDBSource(BaseSQLSource):
                         df[col] = df[col].astype(object)
                     self._ingest_table(table, df)
                     self._set_cache(df, table)
-                mirror.param.watch(update, 'data')
+                self._mirror_watchers.append((mirror, mirror.param.watch(update, 'data')))
             df = as_pandas(df)
             try:
                 for col in df.select_dtypes(include=['string']).columns:
@@ -195,6 +200,12 @@ class DuckDBSource(BaseSQLSource):
                 self._ingest_table(table, df)
             except (duckdb.CatalogException, duckdb.ParserException):
                 continue
+
+    def stop_mirroring(self) -> None:
+        """Stop re-ingesting mirrored Pipelines when their data changes; the tables keep what they hold."""
+        for mirror, watcher in self._mirror_watchers:
+            mirror.param.unwatch(watcher)
+        self._mirror_watchers = []
 
     @property
     def connection(self):
@@ -269,6 +280,7 @@ class DuckDBSource(BaseSQLSource):
             for c in df.columns
         )
         self._connection.execute('INSTALL spatial;\nLOAD spatial;')
+        self._set_axis_order()
         self._connection.register(f'{name}__wkb', wkb)
         try:
             self._drop_relation('VIEW', name)
@@ -294,10 +306,26 @@ class DuckDBSource(BaseSQLSource):
         except duckdb.CatalogException:
             pass
 
+    def _set_axis_order(self) -> None:
+        """
+        Keep the spatial extension's pre-2.0 axis order, (latitude, longitude)
+        for the sphere and spheroid functions, whatever the DuckDB version.
+        DuckDB 2.0 raises from them until the order is set explicitly, and
+        2.1 will assume (longitude, latitude), which would make the flipped
+        queries Lumen advises wrong without an error. Global, so cursors see it.
+        """
+        try:
+            self._connection.execute('SET GLOBAL geometry_always_xy = false')
+        except duckdb.Error:
+            # Versions before 2.0 have no such setting
+            pass
+
     def _run_initializer(self, init: str) -> None:
         try:
             with self._connection.cursor() as cursor:
                 cursor.execute(init)
+            if re.search(r'\bLOAD\s+spatial\b', init, re.IGNORECASE):
+                self._set_axis_order()
         except duckdb.IOException as e:
             message = str(e)
             if "delete file" in message and "duckdb_extension" in message:
@@ -313,6 +341,8 @@ class DuckDBSource(BaseSQLSource):
                 extension = match.group(1)
                 with self._connection.cursor() as cursor:
                     cursor.execute(f"LOAD {extension};")
+                if extension.lower() == 'spatial':
+                    self._set_axis_order()
                 return
             raise
 
@@ -424,15 +454,17 @@ class DuckDBSource(BaseSQLSource):
         return spec
 
     @classmethod
-    def from_df(cls, tables: dict[str, pd.DataFrame], **kwargs):
+    def from_df(cls, tables: dict[str, pd.DataFrame | pa.Table | pl.DataFrame], **kwargs):
         """
         Creates an ephemeral, in-memory DuckDBSource containing the
         supplied dataframe.
 
         Arguments
         ---------
-        tables: dict[str, pandas.DataFrame]
-            A dictionary mapping from table names to DataFrames
+        tables: dict[str, pandas.DataFrame | pyarrow.Table | polars.DataFrame]
+            A dictionary mapping from table names to DataFrames. Frames
+            other than pandas are read through the Arrow stream, without
+            a conversion to pandas.
         kwargs: any
             Additional keyword arguments for the source
 
@@ -443,10 +475,13 @@ class DuckDBSource(BaseSQLSource):
         source = DuckDBSource(uri=':memory:', ephemeral=True, **kwargs)
         table_defs = {}
         for name, df in tables.items():
-            # DuckDB occasionally has issues with the new pandas string dtype
-            for col in df.select_dtypes(include=['string']).columns:
-                df[col] = df[col].astype(object)
-            source._ingest_table(name, df)
+            if isinstance(df, pd.DataFrame):
+                # DuckDB occasionally has issues with the new pandas string dtype
+                for col in df.select_dtypes(include=['string']).columns:
+                    df[col] = df[col].astype(object)
+                source._ingest_table(name, df)
+            else:
+                source._connection.from_arrow(df).to_view(name)
             table_defs[name] = source.sql_expr.format(table=name)
         source.tables = table_defs
         return source
@@ -464,7 +499,19 @@ class DuckDBSource(BaseSQLSource):
         else:
             ephemeral_tables = {}
 
-        mirrors = spec.pop("mirrors", {})
+        # Mirrors are ingested when the source is built, so they have to be
+        # rebuilt from their specs before it, not after
+        mirrors = {}
+        for table, mirror in spec.pop("mirrors", {}).items():
+            if isinstance(mirror, (tuple, list)):  # a tuple comes back from YAML as a list
+                src_spec, src_table = mirror
+                mirrors[table] = (cls.from_spec(src_spec), src_table)
+            elif 'serializer' in mirror:  # a serialized DataFrame
+                mirrors[table] = Serializer.deserialize(mirror)
+            else:
+                mirrors[table] = Pipeline.from_spec(mirror)
+        if mirrors:
+            spec['mirrors'] = mirrors
 
         source = super().from_spec(spec)
         if not ephemeral_tables:
@@ -480,18 +527,6 @@ class DuckDBSource(BaseSQLSource):
                 continue
             new_tables[t] = source.sql_expr.format(table=t)
         source.tables = dict(new_tables, **tables)
-
-        resolved_mirrors = {}
-        for table, mirror in mirrors.items():
-            if isinstance(mirror, tuple):
-                src_spec, src_table = mirror
-                source = cls.from_spec(src_spec)
-                resolved_mirrors[table] = (source, src_table)
-            elif mirror.get('type') == 'pipeline':
-                resolved_mirrors[table] = Pipeline.from_spec(mirror)
-            else:
-                resolved_mirrors[table] = Serializer.deserialize(mirror)
-        spec['mirrors'] = resolved_mirrors
         return source
 
     def create_sql_expr_source(
@@ -625,9 +660,15 @@ class DuckDBSource(BaseSQLSource):
         other library would hold the column as opaque bytes, drop it from the
         schema, and render a blank map with nothing raising.
         """
-        rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
+        if backend in ('polars', 'pyarrow'):
+            # Through a relation on every version: what execute() returns
+            # has no pl() or arrow() on duckdb 2. pandas stays on execute()
+            # since relations lack fetch_df on duckdb 1.2.
+            rel = cursor.sql(sql_expr, params=params)
+        else:
+            rel = cursor.execute(sql_expr, params) if params else cursor.execute(sql_expr)
         geom_crs = {
-            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self.geometry_crs)
+            d[0]: (m.group(1) if (m := GEOMETRY_CRS.search(str(d[1]))) else self._missing_crs(sql_expr, d[0]))
             for d in rel.description if str(d[1]).startswith('GEOMETRY')
         }
         geom_cols = list(geom_crs)
@@ -635,12 +676,7 @@ class DuckDBSource(BaseSQLSource):
             if backend == 'polars':
                 return rel.pl()
             if backend == 'pyarrow':
-                # Through pa.table because arrow() returns a Table up to
-                # duckdb 1.3 and a RecordBatchReader from 1.4, and
-                # Pipeline.data rejects the reader. Not fetch_arrow_table,
-                # which 1.5 deprecates and the suite turns that into an
-                # error, nor to_arrow_table, which 1.4 does not have.
-                return pa.table(rel.arrow())
+                return rel.to_arrow_table()
             return rel.fetch_df(date_as_object=date_as_object)
 
         selected = ', '.join(
@@ -659,12 +695,50 @@ class DuckDBSource(BaseSQLSource):
             df = gpd.GeoDataFrame(df, geometry=geom_cols[0])
         return df
 
+    def _missing_crs(self, sql_expr: str, column: str) -> str | None:
+        """
+        The CRS of a result geometry column whose type carries none.
+
+        DuckDB drops the CRS through ST_Transform, so a transformed result
+        takes its target. Otherwise it is the source's geometry_crs, or the
+        one CRS every geometry column on the connection shares.
+        """
+        try:
+            parsed = sqlglot.parse_one(sql_expr, read='duckdb')
+        except sqlglot.errors.SqlglotError:
+            parsed = None
+        if parsed is not None:
+            select = parsed if isinstance(parsed, sqlglot.exp.Select) else parsed.find(sqlglot.exp.Select)
+            projected = [p for p in (select.expressions if select else []) if p.alias_or_name == column]
+            # The column's own projection, outermost transform first, else the query's only target
+            scopes = projected or [parsed]
+            targets = [
+                f.expressions[2].name for scope in scopes for f in scope.find_all(sqlglot.exp.Anonymous)
+                if f.name.upper() == 'ST_TRANSFORM' and len(f.expressions) > 2
+                and isinstance(f.expressions[2], sqlglot.exp.Literal)
+            ]
+            if projected and targets:
+                return targets[0]
+            if len(set(targets)) == 1:
+                return targets[0]
+            if targets:
+                return None
+        if self.geometry_crs:
+            return self.geometry_crs
+        # Its own cursor: the caller's cursor still holds the result being fetched
+        with self._connection.cursor() as meta:
+            types = meta.execute(
+                "SELECT DISTINCT data_type FROM information_schema.columns WHERE data_type LIKE 'GEOMETRY(%'"
+            ).fetchall()
+        crs = {m.group(1) for (kind,) in types if (m := GEOMETRY_CRS.search(kind))}
+        return crs.pop() if len(crs) == 1 else None
+
     def execute(self, sql_query: str, params: list | dict | None = None, *args, **kwargs):
         with self._connection.cursor() as cursor:
             return self._fetch_df(cursor, sql_query, params)
 
-    def fetch(self, sql_query: str, params: list | dict | None = None):
-        """Fetch query results in `dataframe_backend`, built by DuckDB itself.
+    def fetch(self, sql_query: str, params: list | dict | None = None, backend: str | None = None):
+        """Fetch query results in `dataframe_backend`, or backend if given, built by DuckDB itself.
 
         Not the inherited fetch, which reads through execute. Two reasons: the
         data path asks for date_as_object so a DATE stays a date rather than
@@ -677,7 +751,7 @@ class DuckDBSource(BaseSQLSource):
         with self._connection.cursor() as cursor:
             return self._fetch_df(
                 cursor, sql_query, params, date_as_object=True,
-                backend=self.dataframe_backend,
+                backend=backend or self.dataframe_backend,
             )
 
     def get_tables(self):
@@ -755,5 +829,6 @@ class DuckDBSource(BaseSQLSource):
         connection leaks and properly clean up server-side resources.
         """
         if self._connection is not None:
-            self._connection.close()
+            if self._owns_connection:
+                self._connection.close()
             self._connection = None

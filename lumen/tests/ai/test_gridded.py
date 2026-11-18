@@ -11,6 +11,7 @@ from hvplot.ui import hvDataFrameExplorer, hvGridExplorer
 xr = pytest.importorskip("xarray")
 pytest.importorskip("xarray_sql")
 
+from lumen.ai.answer import Answer
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import (
     _spec_field_references, get_gridded_metadata, render_template,
@@ -435,3 +436,27 @@ def test_hvplotuiview_uses_dataframe_explorer_for_tabular(tabular_pipeline):
     """A non-xarray pipeline still uses the dataframe explorer."""
     view = hvPlotUIView(pipeline=tabular_pipeline, kind="scatter", x="x", y="y")
     assert isinstance(view.get_panel(), hvDataFrameExplorer)
+
+
+def test_tweak_opens_a_gridded_answer_in_the_grid_explorer(xarray_pipeline):
+    view = hvPlotView(pipeline=xarray_pipeline, kind="quadmesh", x="lon", y="lat", z="air", cmap="fire", grid=True)
+    explorer = Answer(question="?", view=view, status="success").tweak()
+    assert isinstance(explorer, hvGridExplorer)
+    assert (explorer.kind, explorer.x, explorer.y) == ("quadmesh", "lon", "lat")
+    assert explorer.colormapping.cmap == "fire"
+    assert isinstance(explorer.hvplot(), hv.QuadMesh)
+
+
+def test_the_explorer_opens_on_the_variable_the_chart_shows(xarray_source):
+    source = xarray_source.create_sql_expr_source({"derived": "SELECT lat, lon, air AS first_air, air - 5 AS air_change FROM air"})
+    pipeline = Pipeline(source=source, table="derived")
+    assert set(pipeline.get_dataset().data_vars) == {"first_air", "air_change"}
+    explorer = hvPlotUIView(pipeline=pipeline, kind="quadmesh", x="lon", y="lat", z="air_change").get_panel()
+    assert explorer.hvplot().vdims[0].name == "air_change"
+
+
+def test_tweak_frames_a_map_on_its_data(xarray_pipeline):
+    view = hvPlotView(pipeline=xarray_pipeline, kind="quadmesh", x="lon", y="lat", z="air", geo=True, coastline=True)
+    settings = Answer(question="?", view=view, status="success").tweak().settings()
+    assert settings["projection"] == "PlateCarree"
+    assert settings.get("global_extent") in (None, False)

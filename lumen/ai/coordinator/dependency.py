@@ -89,7 +89,7 @@ class DependencyResolver(Coordinator):
                 try:
                     output = await self._choose_agent(messages, context, self.agents, primary=True)
                 except Exception as e:
-                    if self.interface.callback_exception not in ("raise", "verbose"):
+                    if self.interface is not None and self.interface.callback_exception not in ("raise", "verbose"):
                         step.failed_title = "Failed to select main agent..."
                         step.stream(str(e), replace=True)
                     else:

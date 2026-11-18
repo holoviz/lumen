@@ -51,7 +51,7 @@ dependencies = [
     "panel-graphic-walker[kernel] >=0.6.4",
     "panel-material-ui >=0.14.0",
     "panel-splitjs >=0.4.0",
-    "param >=2.2.1,<2.5.0",
+    "param >=2.2.1",
     "pillow >=13.0.0",
     "platformdirs",
     "pyarrow",
@@ -60,7 +60,7 @@ dependencies = [
     "pyyaml",
     "requests",
     "semchunk",
-    "sqlglot[c]",
+    "sqlglot[c] >=26.26.0",
     "tabulate",
     "tiktoken",
     "tornado",
@@ -95,9 +95,9 @@ ai-litellm = ['litellm !=1.107.0']
 ai-ollama = ['ollama']
 chromadb = ['chromadb']
 bigquery = ['google-cloud-bigquery', 'sqlalchemy-bigquery']
-xarray = ['xarray', 'xarray-sql >=0.3.1', 'netCDF4', 'zarr']
+xarray = ['xarray', 'xarray-sql >=0.4.0', 'netCDF4', 'zarr']
 xarray-grib = ['lumen[xarray]', 'cfgrib', 'eccodes']
-geo = ['geopandas', 'geoviews']
+geo = ['datashader', 'geopandas', 'geoviews']
 snowflake = ['snowflake-connector-python', 'cryptography']
 ae5 = ['ae5-tools']
 mcp = ['fastmcp']

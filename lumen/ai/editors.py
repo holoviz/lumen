@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import pathlib
 import re
 import traceback
@@ -48,6 +49,11 @@ if TYPE_CHECKING:
 
     from .report import Task
 
+
+# vl-convert logs Vega-Lite's spec warnings, e.g. on charts rendered to an
+# image for the LLM. Without any logging set up Python prints them, so in a
+# notebook they land in the cell; a configured logger still receives them.
+logging.getLogger("vl_convert").addHandler(logging.NullHandler())
 
 _PAGINATED_TABLE_STYLES = """
 .tabulator-footer {
@@ -129,9 +135,10 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # Set before the view, which renders at once when no event loop runs
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
     def _code_editor(self) -> CodeEditor:
         """A CodeEditor two-way bound to this editor's spec."""

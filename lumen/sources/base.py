@@ -53,6 +53,11 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
+    from ..ai.answer import Answer, Chat
+    from ..ai.checks import CheckResult
+    from ..ai.llm import Llm
+    from ..ai.overview import Overview
+
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
 
@@ -224,6 +229,18 @@ def _merge_column_metadata(generated, user: dict) -> dict:
     return columns
 
 
+def _apply_descriptions(generated: dict, described: dict) -> None:
+    """
+    Writes what describe() set over the generated metadata, so a user's
+    words replace a description the database already had.
+    """
+    if "description" in described:
+        generated["description"] = described["description"]
+    columns = generated.setdefault("columns", {})
+    for column, entry in described.get("columns", {}).items():
+        columns[column] = {**_as_column_metadata(columns.get(column)), **entry}
+
+
 def _merge_user_metadata(generated: dict, user: dict) -> None:
     """
     Merges user supplied table metadata into the generated metadata,
@@ -319,6 +336,11 @@ class Source(MultiTypeComponent):
         Whether the Source can be shared across all instances of the
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
+
+    descriptions = param.Dict(default={}, doc="""
+        Table and column descriptions set with describe(), in the same
+        format as metadata. Unlike metadata, they replace a description
+        the database already has rather than filling in a missing one.""")
 
     metadata = param.Dict(default={}, doc="""
         Optional metadata about the source tables. Should follow the format:
@@ -437,6 +459,8 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
+        # Bumped when describe() changes the metadata, so caches of it refresh
+        self._metadata_revision = 0
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -660,6 +684,107 @@ class Source(MultiTypeComponent):
         """
         return None
 
+    def ask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
+    ) -> Answer:
+        """
+        Ask this source a question with Lumen AI and return the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask
+        return ask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    async def aask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
+    ) -> Answer:
+        """
+        Ask this source a question with Lumen AI and await the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask
+        return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
+        """
+        Describe a table and its columns in your own words, for the LLM to
+        read when it plans and writes SQL. Your text replaces any description
+        the database has for the same table or column.
+
+        Parameters
+        ----------
+        table: str
+            The table to describe.
+        description: str | None
+            What the table holds, e.g. "One row per order since 2020".
+        columns: dict | None
+            Column descriptions by name, e.g. {"amount": "Order value in EUR"}.
+
+        Returns
+        -------
+        The source, so calls can be chained.
+        """
+        if table not in self.get_tables():
+            raise ValueError(f"No table {table!r}; the tables are {self.get_tables()}.")
+        known = set(self.get_metadata(table).get("columns", {}))
+        if unknown := set(columns or {}) - known:
+            raise ValueError(f"No column {sorted(unknown)} in {table!r}; it has {sorted(known)}.")
+        described = dict(self.descriptions.get(table, {}))
+        if description is not None:
+            described["description"] = description
+        if columns:
+            described["columns"] = {
+                **described.get("columns", {}),
+                **{column: _as_column_metadata(value) for column, value in columns.items()},
+            }
+        # A parameter, so specs and answer.code carry it. Without events: a
+        # parameter change otherwise clears the data cache, on disk too, for
+        # what is only a change of words.
+        with param.parameterized.discard_events(self):
+            self.descriptions = {**self.descriptions, table: described}
+        self._metadata_cache = {}
+        self._metadata_revision += 1
+        return self
+
+    def chat(self, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
+        """
+        Start a conversation with this source, where each question can follow
+        up on the answers before it. See :func:`lumen.ai.answer.chat`.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import chat
+        return chat(self, llm=llm, agents=agents)
+
+    def overview(self, *, questions: bool = True, llm: Llm | None = None) -> Overview:
+        """
+        A first look at this source: each table's columns with their
+        types, nulls and ranges, what looks wrong in the data, and five
+        questions to ask it, as buttons in a notebook. questions=False
+        skips the one LLM call that writes them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.overview import overview
+        return overview(self, questions=questions, llm=llm)
+
+    def check(self, rule: str, table: str | None = None, *, llm: Llm | None = None) -> CheckResult:
+        """
+        Check a rule the data should keep and return the rows that break
+        it. rule is a SELECT returning those rows, or a rule in plain
+        language that one LLM call turns into one. The result is falsy when
+        rows break the rule, so ``assert source.check(...)`` works in pytest
+        and its message shows them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.checks import check
+        return check(self, rule, table, llm=llm)
+
     def get_tables(self) -> list[str]:
         """
         Returns the list of tables available on this source.
@@ -766,6 +891,7 @@ class Source(MultiTypeComponent):
         # Merge source.metadata with metadata_func output
         for table_name in tables:
             _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
+            _apply_descriptions(metadata[table_name], self.descriptions.get(table_name, {}))
 
         return metadata
 

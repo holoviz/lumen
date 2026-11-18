@@ -9,10 +9,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from hvplot.tests.util import makeMixedDataFrame
-
 from lumen.sources.base import Source, cached
 from lumen.state import state
+from lumen.tests.utils import makeMixedDataFrame
 from lumen.transforms.sql import SQLLimit
 
 
