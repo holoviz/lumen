@@ -1621,6 +1621,27 @@ def has_categorical_color(spec: Any) -> bool:
     return False
 
 
+VIEW_COMPOSITION_KEYS = ("concat", "hconcat", "vconcat", "facet", "repeat")
+
+FACET_CHANNELS = ("row", "column", "facet")
+
+
+def is_compound_vegalite(spec: dict[str, Any]) -> bool:
+    """
+    Whether a Vega-Lite spec lays out several views, by view composition or
+    by a row, column or facet encoding channel (on the spec or one of its
+    layers). Vega-Lite cannot size such a chart to its container: a
+    ``"container"`` width or height applies to each cell.
+    """
+    if any(key in spec for key in VIEW_COMPOSITION_KEYS):
+        return True
+    views = [spec, *(layer for layer in spec.get("layer") or [] if isinstance(layer, dict))]
+    return any(
+        isinstance(view.get("encoding"), dict) and any(channel in view["encoding"] for channel in FACET_CHANNELS)
+        for view in views
+    )
+
+
 def normalize_vegalite_spec(
     vega_spec: dict[str, Any], *, editor_type: type[VegaLiteEditor] | None = None
 ) -> dict[str, Any]:
@@ -1628,7 +1649,8 @@ def normalize_vegalite_spec(
 
     Injects ``$schema``, defaults ``width``/``height`` to ``"container"``
     (skipping compound charts such as ``hconcat``/``vconcat``/``concat``/
-    ``facet``/``repeat``), validates the spec via ``editor_type.validate_spec``
+    ``facet``/``repeat`` and charts faceted by a ``row``, ``column`` or
+    ``facet`` channel), validates the spec via ``editor_type.validate_spec``
     and adds geographic pan/zoom interactivity for maps. The spec dict is
     mutated in place and returned wrapped in the view metadata Lumen expects.
 
@@ -1647,12 +1669,10 @@ def normalize_vegalite_spec(
     if "$schema" not in vega_spec:
         vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
-    # Check if this is a compound chart (hconcat, vconcat, concat, facet, repeat)
-    is_compound = any(key in vega_spec for key in ['hconcat', 'vconcat', 'concat', 'facet', 'repeat'])
-
-    if is_compound:
-        # Remove invalid top-level width/height for compound charts
-        # Altair's config.view.continuousWidth/Height handles sub-chart sizing
+    if is_compound_vegalite(vega_spec):
+        # A top-level width/height is invalid on a composition and sizes each
+        # cell of a faceted chart, which the pane's stretch_both would turn
+        # into "container"; config.view.continuousWidth/Height sizes the cells.
         vega_spec.pop('width', None)
         vega_spec.pop('height', None)
     else:
