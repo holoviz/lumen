@@ -16,7 +16,9 @@ from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 from pydantic_ai.exceptions import (
     ModelAPIError, ModelRequestRejectedError, RetryModelRequest,
 )
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import (
+    ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart,
+)
 
 from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
@@ -211,6 +213,25 @@ HAS_ARRANGE_TILES = any(tool.__name__ == "arrange_tiles" for tool in FLOWDASH_TO
 
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
+UNPLACED = ("The user only sees nodes on the dashboard, not run_sql results. Place the query your answer "
+            "is based on with add_sql, or change a node with set_config, then answer again.")
+# The tools that place or change a node: the authoring tools, and FlowDash's add_node and set_config.
+PLACING_TOOLS = frozenset({*authoring_toolset().tools, "add_node", "set_config"})
+
+
+def answered_from_run_sql(messages: list[ModelMessage]) -> bool:
+    """
+    Whether the current run, since the last user prompt, ran SQL with
+    run_sql but placed or changed no node: small models then state a result
+    the dashboard does not hold.
+    """
+    start = max((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)
+                 and any(isinstance(p, UserPromptPart) for p in m.parts)), default=0)
+    calls = {part.tool_name for m in messages[start:] if isinstance(m, ModelResponse)
+             for part in m.parts if isinstance(part, ToolCallPart)}
+    return "run_sql" in calls and not calls & PLACING_TOOLS
+
+
 # How the drawer's agent treats a question about an answer already on the dashboard.
 FOLLOW_UPS = """\
 - When the user narrows or changes an answer already on the dashboard, e.g. "only show the
@@ -343,6 +364,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         last = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
         if last is not None and last.finish_reason == "length":
             raise ModelRetry(CUT_OFF)
+        if answered_from_run_sql(ctx.messages):
+            raise ModelRetry(UNPLACED)
         return output
 
     return agent
