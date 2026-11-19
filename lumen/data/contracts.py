@@ -111,8 +111,12 @@ def _sql_family(name: str) -> str:
 
 
 def compatible(expected: str, actual: str) -> bool:
-    """Whether a column of family ``actual`` can stand in for one recorded as ``expected``."""
-    return expected in (actual, "other") or actual in _WIDER.get(expected, ())
+    """
+    Whether a column of family ``actual`` can stand in for one recorded as
+    ``expected``. A type that is unknown on either side (``other``) passes;
+    ``schema_problems`` warns about an unknown actual type.
+    """
+    return "other" in (expected, actual) or expected == actual or actual in _WIDER.get(expected, ())
 
 
 def source_dialect(source: Source) -> str | None:
@@ -181,20 +185,29 @@ def _find_table(name: str, names: Iterable[str]) -> str | None:
         return name
     if name.lower() in lowered:
         return lowered[name.lower()]
-    if "." in name:
-        return None
-    matches = [n for n in names if n.lower().rpartition(".")[2] == name.lower()]
+    parts = name.lower().split(".")
+    matches = [n for n in names if n.lower().split(".")[-len(parts):] == parts]
     return matches[0] if len(matches) == 1 else None
 
 
-def source_schema(source: Source, tables: Iterable[str] | None = None) -> dict[str, dict[str, str]]:
+class SourceSchema(dict):
+    """Table to column to family, and in ``unreadable`` the tables that exist but could not be read, with why."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unreadable: dict[str, str] = {}
+
+
+def source_schema(source: Source, tables: Iterable[str] | None = None) -> SourceSchema:
     """
     The schemas of ``tables`` of ``source``, by default all of them, keyed as
-    given. ``orders`` finds ``public.orders`` when no other table has that
-    name. A table the source lacks, or cannot describe, is left out.
+    given. A name matches a table whose trailing name parts it equals, so
+    ``orders`` finds ``public.orders`` and ``analytics.orders`` finds
+    ``DB.ANALYTICS.ORDERS`` when no other table matches. A table the source
+    lacks is left out, and one it cannot describe is listed in ``unreadable``.
     """
     names = list(source.get_tables())
-    found = {}
+    found = SourceSchema()
     for table in names if tables is None else tables:
         actual = _find_table(table, names)
         if actual is None:
@@ -203,6 +216,8 @@ def source_schema(source: Source, tables: Iterable[str] | None = None) -> dict[s
             found[table] = table_schema(source, actual)
         except Exception as exc:
             logger.warning("Could not read the columns of table %r: %s", actual, exc)
+            text = str(exc).strip()
+            found.unreadable[table] = text.splitlines()[0] if text else type(exc).__name__
     return found
 
 
@@ -264,11 +279,24 @@ def _projected_star(scope: Scope, any_source: bool = False) -> list[str]:
     return stars
 
 
-def _alias_ref(column: exp.Column, outputs: set[str]) -> bool:
-    """Whether an unqualified column names an output alias, where GROUP BY, HAVING, ORDER BY or QUALIFY may."""
-    return column.name.lower() in outputs and column.find_ancestor(
-        exp.Group, exp.Having, exp.Order, exp.Qualify
-    ) is not None
+def _alias_ref(column: exp.Column, scope: Scope, outputs: set[str]) -> bool:
+    """
+    Whether an unqualified column names an output alias: in GROUP BY,
+    HAVING, ORDER BY or QUALIFY, or in another projection of the same
+    SELECT, as DuckDB's lateral aliases allow.
+    """
+    name = column.name.lower()
+    if name not in outputs:
+        return False
+    if column.find_ancestor(exp.Group, exp.Having, exp.Order, exp.Qualify) is not None:
+        return True
+    inside = column.find_ancestor(exp.Alias)
+    for projection in getattr(scope.expression, "selects", []):
+        if not isinstance(projection, exp.Alias) or projection.alias.lower() != name:
+            continue
+        renames = not (isinstance(projection.this, exp.Column) and projection.this.name.lower() == name)
+        return renames and inside is not None and inside is not projection
+    return False
 
 
 class _Resolver:
@@ -319,7 +347,7 @@ class _Resolver:
             elif source is not None:
                 self.opaque(source)
             return
-        if _alias_ref(column, outputs):
+        if _alias_ref(column, scope, outputs):
             return
         if len(sources) == 1:
             source = next(iter(sources.values()))
@@ -333,8 +361,11 @@ class _Resolver:
         self.found.unresolved.add(column.name)
 
 
-def _scopes(parsed: exp.Expression, schema: dict, dialect: str | None) -> list[Scope]:
-    """The query levels of ``parsed``, qualified as far as the schema allows."""
+def _scopes(parsed: exp.Expression, schema: dict, dialect: str | None) -> tuple[list[Scope], bool]:
+    """
+    The query levels of ``parsed``, qualified as far as the schema allows,
+    and whether its columns are left as written because qualify gave up.
+    """
     # A qualified column the schema lacks makes qualify refuse the query; read
     # without the schema it is kept as written, so a check can say it is missing.
     # Without a schema, output aliases in HAVING or GROUP BY make qualify give up,
@@ -346,7 +377,7 @@ def _scopes(parsed: exp.Expression, schema: dict, dialect: str | None) -> list[S
         try:
             qualified = qualify(parsed.copy(), dialect=dialect, expand_stars=False,
                                 validate_qualify_columns=False, quote_identifiers=False, **options)
-            return traverse_scope(qualified)
+            return traverse_scope(qualified), options.get("qualify_columns") is False
         except (OptimizeError, SqlglotError) as exc:
             error = exc
     raise OptimizeError(str(error))
@@ -375,11 +406,28 @@ def query_columns(sql: str, schema: Schema | None = None, dialect: str | None = 
         if _is_table(table) and table.name.lower() not in ctes and schema.get(name):
             known[name] = {str(c): "TEXT" for c in schema[name]}
     try:
-        scopes = _scopes(parsed, known, dialect)
+        scopes, as_written = _scopes(parsed, known, dialect)
     except OptimizeError as exc:
         found.coverage = NONE
         found.reason = f"The query could not be analysed: {str(exc).split('. Line:')[0]}"
         return found
+    if as_written and (len(scopes) != 1 or len(scopes[0].sources) != 1):
+        # Unqualified columns across several query levels or sources, e.g. a
+        # correlated subquery, cannot be told apart without the tables' columns.
+        found.coverage = NONE
+        found.reason = "The query reads several tables or levels; their columns need a schema."
+        for table in parsed.find_all(exp.Table):
+            if _is_table(table) and table.name.lower() not in ctes:
+                found.add(resolver.table(table))
+        return found
+    for pivot in parsed.find_all(exp.Pivot):
+        if not _is_table(pivot.this):
+            continue
+        for part in (*pivot.expressions, *(pivot.args.get("using") or [])):
+            for column in part.find_all(exp.Column):
+                resolver.add(pivot.this, column.name)
+        found.add(resolver.table(pivot.this))
+        found.partly(f"It pivots {pivot.this.name}, whose output columns are not recorded.")
     for scope in scopes:
         for source in scope.sources.values():
             if _is_table(source):
@@ -408,11 +456,16 @@ def query_columns(sql: str, schema: Schema | None = None, dialect: str | None = 
 
 @dataclass(frozen=True)
 class ColumnProblem:
-    """A table or column a contract records that a schema lacks or holds with another type."""
+    """
+    A table or column a contract records that a schema lacks or holds with
+    another type. A ``warning`` does not break the contract, e.g. a column
+    whose type the source cannot tell.
+    """
 
     table: str
     column: str | None
     message: str
+    warning: bool = False
 
 
 def schema_problems(expected: Schema, schema: Schema) -> list[ColumnProblem]:
@@ -423,15 +476,24 @@ def schema_problems(expected: Schema, schema: Schema) -> list[ColumnProblem]:
     a table also by its last name part.
     """
     problems = []
+    unreadable = getattr(schema, "unreadable", {})
     for table, columns in expected.items():
         actual_table = _find_table(table, schema)
         if actual_table is None:
-            problems.append(ColumnProblem(table, None, f"The data has no table {table!r}."))
+            message = (
+                f"Table {table!r} could not be read: {unreadable[table]}" if table in unreadable
+                else f"The data has no table {table!r}."
+            )
+            problems.append(ColumnProblem(table, None, message))
             continue
         actual = {c.lower(): kind for c, kind in schema[actual_table].items()}
         for column, kind in columns.items():
             if column.lower() not in actual:
                 problems.append(ColumnProblem(table, column, f"Table {table!r} has no column {column!r}."))
+            elif actual[column.lower()] == "other" and kind != "other":
+                problems.append(ColumnProblem(table, column, (
+                    f"The type of {table}.{column} cannot be told; the contract expects {kind}."
+                ), warning=True))
             elif not compatible(kind, actual[column.lower()]):
                 problems.append(ColumnProblem(table, column, (
                     f"Column {table}.{column} is {actual[column.lower()]} now; the contract expects {kind}."

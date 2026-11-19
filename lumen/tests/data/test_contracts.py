@@ -88,6 +88,13 @@ def test_compatibility_is_one_way():
     assert compatible("number", "integer") and not compatible("integer", "number")
     assert compatible("datetime", "date") and not compatible("date", "datetime")
     assert compatible("other", "string") and not compatible("integer", "string")
+    assert compatible("integer", "other")
+
+
+def test_an_unknown_type_is_a_warning():
+    assert schema_problems({"t": {"a": "integer"}}, {"t": {"a": "other"}}) == [
+        ColumnProblem("t", "a", "The type of t.a cannot be told; the contract expects integer.", warning=True),
+    ]
 
 
 def test_table_functions_and_pivots_are_partly_covered():
@@ -115,8 +122,7 @@ def test_qualify_windows_are_read():
 
 @pytest.mark.parametrize("sql, expected", [
     ("SELECT status AS s, COUNT(*) AS n FROM orders GROUP BY s HAVING n > 1", {"orders": ["status"]}),
-    ("SELECT amount FROM orders WHERE order_id IN (SELECT order_id FROM refunds)",
-     {"orders": ["amount", "order_id"], "refunds": ["order_id"]}),
+    ("SELECT amount AS d, d + 1 AS e FROM orders", {"orders": ["amount"]}),
     ("WITH t AS (SELECT * FROM orders) SELECT amount FROM t WHERE status = 'paid'",
      {"orders": ["amount", "status"]}),
     ("SELECT customer_id AS amount FROM orders WHERE amount > 0", {"orders": ["amount", "customer_id"]}),
@@ -125,6 +131,25 @@ def test_single_tables_need_no_schema(sql, expected):
     found = query_columns(sql, dialect="duckdb")
     assert found.coverage in (FULL, PARTIAL) and not found.unresolved
     assert columns(found) == expected
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT name FROM customers c WHERE (SELECT SUM(amount) FROM orders o WHERE o.cid = c.id) > 10",
+    "SELECT name FROM customers WHERE id IN (SELECT cid FROM orders WHERE amount > 1)",
+    "SELECT region, COUNT(*) AS n FROM orders GROUP BY region HAVING COUNT(*) > (SELECT COUNT(*) FROM refunds WHERE amount > n)",
+    "SELECT c.name FROM customers c, LATERAL (SELECT amount FROM orders WHERE cid = c.id) AS o",
+])
+def test_columns_across_levels_are_never_guessed_without_a_schema(sql):
+    found = query_columns(sql, dialect="duckdb")
+    assert found.coverage != FULL
+    assert "amount" not in found.tables.get("customers", set())
+
+
+def test_statement_pivots_record_their_source():
+    found = query_columns("PIVOT orders ON status USING SUM(amount)", dialect="duckdb")
+    assert found.coverage == PARTIAL and columns(found) == {"orders": ["amount", "status"]}
+    found = query_columns("UNPIVOT orders ON jan, feb INTO NAME month VALUE total", dialect="duckdb")
+    assert found.coverage == PARTIAL and columns(found) == {"orders": ["feb", "jan"]}
 
 
 def test_schema_prefixes_keep_tables_apart():
@@ -184,8 +209,11 @@ def test_a_table_that_cannot_be_read_is_left_out(caplog):
     source = duckdb_source.DuckDBSource(uri=":memory:", tables={
         "ok": "SELECT 1 AS a", "broken": "SELECT * FROM nowhere",
     })
-    assert source_schema(source) == {"ok": {"a": "integer"}}
+    schema = source_schema(source)
+    assert schema == {"ok": {"a": "integer"}} and "broken" in schema.unreadable
     assert "Could not read the columns of table 'broken'" in caplog.text
+    (problem,) = schema_problems({"broken": {"a": "integer"}}, schema)
+    assert problem.message.startswith("Table 'broken' could not be read: ")
     with pytest.raises(Exception):
         table_schema(source, "broken")
 
@@ -199,3 +227,9 @@ def test_a_bare_name_finds_a_table_with_a_schema_prefix():
             return {"id": {"type": "integer"}}
 
     assert source_schema(Prefixed(), ["orders", "customers"]) == {"orders": {"id": "integer"}}
+
+    class Snowflake(Prefixed):
+        def get_tables(self):
+            return ["DB.ANALYTICS.ORDERS", "DB.RAW.ORDERS"]
+
+    assert source_schema(Snowflake(), ["analytics.orders", "orders"]) == {"analytics.orders": {"id": "integer"}}
