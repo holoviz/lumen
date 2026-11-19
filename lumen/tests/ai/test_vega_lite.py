@@ -13,7 +13,9 @@ import vl_convert
 from lumen.ai.agents.vega_lite import VegaLiteAgent
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.editors import VegaLiteEditor
-from lumen.ai.utils import category_palette, normalize_vegalite_spec
+from lumen.ai.utils import (
+    category_palette, is_compound_vegalite, normalize_vegalite_spec,
+)
 from lumen.config import dump_yaml
 
 
@@ -61,6 +63,39 @@ def test_normalize_vegalite_spec_strips_sizing_for_compound_charts():
     assert "width" not in spec
     assert "height" not in spec
     assert spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
+
+
+BAR = {
+    "mark": "bar",
+    "encoding": {
+        "x": {"field": "A", "type": "nominal"},
+        "y": {"field": "B", "type": "quantitative"},
+    },
+}
+
+
+@pytest.mark.parametrize("channel", ["row", "column", "facet"])
+def test_normalize_vegalite_spec_strips_sizing_for_charts_faceted_by_encoding(channel):
+    """A container size would apply to each cell of a chart faceted by an encoding channel."""
+    raw = {**BAR, "encoding": {**BAR["encoding"], channel: {"field": "C", "type": "nominal"}}, "width": 400}
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+
+    assert "width" not in spec
+    assert "height" not in spec
+
+
+@pytest.mark.parametrize("spec, compound", [
+    (BAR, False),
+    ({"layer": [BAR, BAR]}, False),
+    ({"hconcat": [BAR, BAR]}, True),
+    ({"facet": {"field": "C"}, "spec": BAR}, True),
+    ({"repeat": ["B"], "spec": BAR}, True),
+    ({**BAR, "encoding": {**BAR["encoding"], "column": {"field": "C"}}}, True),
+    ({"layer": [{**BAR, "encoding": {**BAR["encoding"], "row": {"field": "C"}}}]}, True),
+])
+def test_is_compound_vegalite(spec, compound):
+    assert is_compound_vegalite(spec) is compound
 
 
 def test_normalize_vegalite_spec_thins_band_labels_on_heatmaps():
