@@ -716,6 +716,27 @@ async def test_list_tables_points_at_describe_table_for_unprofiled_tables(ctx, m
     assert "describe_table gives their statistics" in text and "load_table_schemas" not in text
 
 
+@pytest.mark.parametrize(("shape_check", "sql", "requests_made"), [
+    (True, BY_REGION, 3),
+    (True, "SELECT SUM(amount) AS total FROM orders", 2),
+    (False, BY_REGION, 2),
+])
+async def test_shape_check_sends_the_answer_back_once_only_when_enabled(shape_check, sql, requests_made):
+    model, requests = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "result", "sql": sql})],
+        [TextPart("Done.")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           agent=create_agent(model, shape_check=shape_check))
+    try:
+        turn = await session.ask("Totals")
+    finally:
+        session.close()
+    assert turn.error is None and len(requests) == requests_made
+    assert ("check the result you placed" in str(requests[-1])) == (requests_made == 3)
+
+
 def _filtered_customers(session):
     ops = session.ops
     ops.add_node(TABLE_ID, {"table": "customers"}, name="customers")
