@@ -52,9 +52,10 @@ def streamable(model: Any) -> Any:
     """
     A ``FunctionModel`` that also streams: its function's response, part by
     part. ``AgentRunner`` streams every request, which a ``FunctionModel``
-    without a ``stream_function`` refuses.
+    without a ``stream_function`` refuses. A subclass such as a cassette
+    streams by itself and is left as it is.
     """
-    if not isinstance(model, FunctionModel) or model.stream_function is not None or model.function is None:
+    if type(model) is not FunctionModel or model.stream_function is not None or model.function is None:
         return model
     function = model.function
 
