@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import pathlib
 
@@ -6,8 +7,8 @@ import param  # type: ignore
 import pytest
 
 from lumen.transforms.base import (
-    Aggregate, Columns, Count, DropNA, Eval, Filter, SetIndex, Sort, Sum,
-    Transform, project_lnglat,
+    Aggregate, Columns, Count, DropNA, Eval, Filter, Range, SetIndex, Sort,
+    Sum, Transform, project_lnglat,
 )
 
 
@@ -152,3 +153,48 @@ def test_requires_columns_is_unknown_for_open_ended_parameters():
     assert Aggregate(by=['a']).requires_columns() is None
     assert SetIndex().requires_columns() is None
     assert Sort().requires_columns() == set()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (Range(1, 3), [1, 2, 3]),
+        (Range(1, 3, closed="left"), [1, 2]),
+        (Range(None, 2, closed="left"), [0, 1]),
+        (Range(3, None, closed="left"), [3, 4]),
+        (Range(None, None, closed="left"), [0, 1, 2, 3, 4]),
+    ],
+)
+def test_filter_range_value(value, expected):
+    df = pd.DataFrame({'A': [0, 1, 2, 3, 4]})
+
+    assert Filter.apply_to(df, conditions=[('A', value)])['A'].tolist() == expected
+
+
+def test_filter_range_value_on_dates_leaves_out_the_end_day():
+    df = pd.DataFrame({'A': pd.date_range('2017-01-31', periods=4)})
+
+    left = Filter.apply_to(df, conditions=[('A', Range(dt.date(2017, 2, 1), dt.date(2017, 2, 3), closed="left"))])
+    both = Filter.apply_to(df, conditions=[('A', Range(dt.date(2017, 2, 1), dt.date(2017, 2, 3)))])
+
+    assert left['A'].dt.day.tolist() == [1, 2]
+    assert both['A'].dt.day.tolist() == [1, 2, 3]
+
+
+def test_range_value_checks_closed():
+    with pytest.raises(ValueError, match="'both' or 'left'"):
+        Range(1, 2, closed="right")
+
+
+def test_consecutive_left_closed_ranges_split_rows_without_overlap():
+    df = pd.DataFrame({'A': [0.0, 0.5, 1.0, 1.5, 2.0]})
+    first = Filter.apply_to(df, conditions=[('A', Range(0, 1, closed="left"))])
+    second = Filter.apply_to(df, conditions=[('A', Range(1, 2, closed="left"))])
+    assert first['A'].tolist() + second['A'].tolist() == [0.0, 0.5, 1.0, 1.5]
+
+
+def test_filter_range_value_without_narwhals():
+    column = pd.Series([0, 1, 2, 3])
+    assert column[Filter._range_filter(column, 1, 3, "left")].tolist() == [1, 2]
+    assert column[Filter._range_filter(column, None, 1, "left")].tolist() == [0]
+    assert column[Filter._range_filter(column, 2, None, "left")].tolist() == [2, 3]

@@ -9,6 +9,7 @@ import math
 import warnings
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import reduce
 from operator import and_, or_
 from typing import (
@@ -330,6 +331,29 @@ class Transform(MultiTypeComponent):
         return {k: v for k, v in kwargs.items() if v is not None}
 
 
+@dataclass(frozen=True)
+class Range:
+    """
+    A range filter value whose end can be left out of the range.
+
+    A plain ``(start, end)`` tuple keeps values from ``start`` to ``end``,
+    both included, and widens date bounds to whole days. ``Range(start, end,
+    closed="left")`` keeps ``start <= value < end``, so consecutive ranges,
+    such as the months of a year, do not overlap at their shared bound;
+    dates are then compared from midnight and the end day is left out. Either
+    bound may be None to leave that side open. ``Filter``, ``SQLFilter`` and
+    ``SQLPreFilter`` accept it wherever they accept a range tuple.
+    """
+
+    start: Any = None
+    end: Any = None
+    closed: Literal["both", "left"] = "both"
+
+    def __post_init__(self):
+        if self.closed not in ("both", "left"):
+            raise ValueError(f"Range.closed must be 'both' or 'left', not {self.closed!r}.")
+
+
 class Filter(Transform):
     """
     `Filter` transform implement the filtering behavior of `Filter` components.
@@ -339,6 +363,7 @@ class Filter(Transform):
 
       * scalar: A scalar value will be matched using equality operators
       * tuple:  A tuple value specifies a numeric or date range.
+      * Range:  A range that may leave out its end, see ``Range``.
       * list:   A list value specifies a set of categories to match against.
       * list(tuple): A list of tuples specifies a list of ranges.
     """
@@ -358,19 +383,29 @@ class Filter(Transform):
             end = dt.datetime(*end.timetuple()[:3], 23, 59, 59)
         return start, end
 
+    @staticmethod
+    def _midnight(value: Any) -> Any:
+        if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
+            return dt.datetime(*value.timetuple()[:3])
+        return value
+
     @classmethod
-    def _range_expr(cls, temporal: bool, name: str, start: Any, end: Any):
+    def _range_expr(cls, temporal: bool, name: str, start: Any, end: Any, closed: str = "both"):
         """Narwhals counterpart of _range_filter, expressed against a column name."""
         if temporal:
-            start, end = cls._widen_dates(start, end)
+            if closed == "left":
+                start, end = cls._midnight(start), cls._midnight(end)
+            else:
+                start, end = cls._widen_dates(start, end)
         if start is None and end is None:
             return None
         column = nw.col(name)
-        if start is None:
-            return column <= end
         if end is None:
             return column >= start
-        return (column >= start) & (column <= end)
+        upper = (column < end) if closed == "left" else (column <= end)
+        if start is None:
+            return upper
+        return (column >= start) & upper
 
     def _apply_narwhals(self, df):
         schema = df.collect_schema()
@@ -409,6 +444,8 @@ class Filter(Transform):
                     expr = expr | nw.col(k).is_null()
             elif isinstance(val, tuple):
                 expr = self._range_expr(temporal, k, *val)
+            elif isinstance(val, Range):
+                expr = self._range_expr(temporal, k, val.start, val.end, val.closed)
             else:
                 self.param.warning(
                     f'Condition {val!r} on {k!r} column not understood. '
@@ -422,18 +459,18 @@ class Filter(Transform):
         return df
 
     @classmethod
-    def _range_filter(cls, column: Series, start: Any, end: Any) -> Series | None:
+    def _range_filter(cls, column: Series, start: Any, end: Any, closed: str = "both") -> Series | None:
         if column.dtype.kind == 'M':
-            start, end = cls._widen_dates(start, end)
+            if closed == "left":
+                start, end = cls._midnight(start), cls._midnight(end)
+            else:
+                start, end = cls._widen_dates(start, end)
         if start is None and end is None:
             return None
-        elif start is None:
-            mask = column<=end
-        elif end is None:
-            mask = column>=start
-        else:
-            mask = (column>=start) & (column<=end)
-        return mask
+        if end is None:
+            return column>=start
+        upper = (column<end) if closed == "left" else (column<=end)
+        return upper if start is None else (column>=start) & upper
 
     def apply(self, df: DataFrame) -> DataFrame:
         result, df = self._try_narwhals(df, self._apply_narwhals)
@@ -461,6 +498,8 @@ class Filter(Transform):
                 mask = column.isin(val)
             elif isinstance(val, tuple):
                 mask = self._range_filter(column, *val)
+            elif isinstance(val, Range):
+                mask = self._range_filter(column, val.start, val.end, val.closed)
             else:
                 self.param.warning(
                     f'Condition {val!r} on {k!r} column not understood. '
@@ -1414,4 +1453,4 @@ class project_lnglat(Transform):
         return table
 
 
-__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Transform)]
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Transform)] + ["Range"]

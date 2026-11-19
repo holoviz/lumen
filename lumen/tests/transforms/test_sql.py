@@ -11,6 +11,7 @@ import lumen as lm
 
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
+from lumen.transforms.base import Range
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
@@ -1610,3 +1611,54 @@ def test_sql_filter_empty_list_conditions():
 
     result = pipeline.data
     assert len(result) == len(df)
+
+
+@pytest.mark.parametrize("value, where", [
+    (Range(1, 3), '"A" BETWEEN \'1\' AND \'3\''),
+    (Range(1, 3, closed="left"), '"A" >= \'1\' AND "A" < \'3\''),
+    (Range(None, 3, closed="left"), '"A" < \'3\''),
+    (Range(1, None, closed="left"), '"A" >= \'1\''),
+    (Range(np.int64(1), np.float64(2.5), closed="left"), '"A" >= \'1\' AND "A" < \'2.5\''),
+    (
+        Range(dt.date(2017, 2, 1), dt.date(2017, 3, 1), closed="left"),
+        '"A" >= \'2017-02-01 00:00:00\' AND "A" < \'2017-03-01 00:00:00\'',
+    ),
+    (
+        Range(dt.date(2017, 2, 1), dt.date(2017, 3, 1)),
+        '"A" BETWEEN \'2017-02-01 00:00:00\' AND \'2017-03-01 23:59:59\'',
+    ),
+])
+def test_sql_filter_range_value(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_unbounded_range_value_filters_nothing():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", Range(None, None, closed="left"))])
+    assert result == "SELECT * FROM TABLE"
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("value", [
+    Range(1, 3, closed="left"),
+    Range(1, 3),
+    Range(None, 2, closed="left"),
+    Range(pd.Timestamp("2017-04-15").to_pydatetime(), pd.Timestamp("2017-04-16").to_pydatetime(), closed="left"),
+    Range(dt.date(2017, 4, 14), dt.date(2017, 4, 16), closed="left"),
+])
+def test_sql_filter_range_value_matches_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2, 3], "C": pd.date_range("2017-04-14", periods=4)})
+    column = "C" if isinstance(value.end, dt.date) else "A"
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[(column, value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+    assert len(expected) not in (0, len(df))
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_source_query_with_a_range_value():
+    df = pd.DataFrame({"A": [0, 1, 2, 3]})
+    source = DuckDBSource.from_df({"df": df})
+    assert source.get("df", A=Range(1, 3, closed="left"))["A"].tolist() == [1, 2]
+    assert source.get("df", A=Range(1, 3))["A"].tolist() == [1, 2, 3]

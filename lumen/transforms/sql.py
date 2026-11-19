@@ -24,7 +24,7 @@ from sqlglot.optimizer import optimize
 
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..util import detect_file_encoding
-from .base import Transform
+from .base import Range, Transform
 
 Dialect.classes['postgresql'] = Dialect.get('postgres')
 Dialect.classes['mssql'] = Dialect.get('tsql')
@@ -693,18 +693,26 @@ class SQLFilterBase(SQLTransform):
         return Boolean(this=value) if self.boolean_literals else SQLLiteral.number(int(value))
 
     @staticmethod
-    def _range_condition(column_expr: Column, start, end) -> Expression | None:
-        """Build a range condition where a None bound leaves that side open."""
+    def _range_condition(column_expr: Column, start, end, closed: str = "both") -> Expression | None:
+        """
+        Build a range condition where a None bound leaves that side open;
+        with ``closed="left"`` the end is left out of the range.
+        """
         if start is None and end is None:
             return None
         if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
             start = f"{start} 00:00:00"
         if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-            end = f"{end} 23:59:59"
+            end = f"{end} 00:00:00" if closed == "left" else f"{end} 23:59:59"
+        if end is not None:
+            end_literal = SQLLiteral.string(str(end))
+            upper = column_expr < end_literal if closed == "left" else column_expr <= end_literal
         if start is None:
-            return column_expr <= SQLLiteral.string(str(end))
+            return upper
         if end is None:
             return column_expr >= SQLLiteral.string(str(start))
+        if closed == "left":
+            return and_(column_expr >= SQLLiteral.string(str(start)), upper)
         return column_expr.between(SQLLiteral.string(str(start)), SQLLiteral.string(str(end)))
 
     def _build_filter_conditions(self, conditions: list) -> list:
@@ -752,6 +760,12 @@ class SQLFilterBase(SQLTransform):
                 filters.append(column_expr.between(start, end))
             elif isinstance(val, tuple) and len(val) == 2:
                 range_filter = self._range_condition(column_expr, *val)
+                if range_filter is not None:
+                    filters.append(range_filter)
+            elif isinstance(val, Range):
+                range_filter = self._range_condition(
+                    column_expr, _python_value(val.start), _python_value(val.end), val.closed
+                )
                 if range_filter is not None:
                     filters.append(range_filter)
             elif isinstance(val, list) and val and all(isinstance(v, (bool, np.bool_)) for v in val):
