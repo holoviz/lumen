@@ -6,6 +6,9 @@ Lumen's agent framework.
 from .catalog import (
     Column, Metaset, TableCatalogEntry, get_metaset,
 )
+from .contracts import (
+    ColumnProblem, QueryColumns, query_columns, schema_problems, source_schema,
+)
 from .quality import lint_data
 from .sql import (
     build_distinct_values_sql, execute_distinct_values,
@@ -16,7 +19,9 @@ from .utils import clean_sql, format_error
 
 __all__ = [
     "Column",
+    "ColumnProblem",
     "Metaset",
+    "QueryColumns",
     "TableCatalogEntry",
     "build_distinct_values_sql",
     "clean_sql",
@@ -27,5 +32,8 @@ __all__ = [
     "get_metaset",
     "get_stats_store",
     "lint_data",
+    "query_columns",
+    "schema_problems",
+    "source_schema",
     "validate_read_only_sql",
 ]
