@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart,
 )
 
+from . import _graph
 from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
 from .history import stub_superseded_lookups
@@ -85,17 +86,60 @@ UNPLACED = ("The user only sees nodes on the dashboard, not run_sql results. Pla
 PLACING_TOOLS = frozenset({"add_sql", "add_chart", "set_config"})
 
 
+def _feedback(part: UserPromptPart) -> bool:
+    return isinstance(part.content, str) and any(text in part.content for text in (CUT_OFF, UNPLACED, SHAPE_CHECK))
+
+
+def current_run(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """
+    The messages since the user's last prompt. pydantic-ai sends an output
+    validator's feedback as a user prompt too, so those are skipped.
+    """
+    start = max((i for i, m in enumerate(messages) if isinstance(m, ModelRequest) and any(
+        isinstance(p, UserPromptPart) and not _feedback(p) for p in m.parts)), default=0)
+    return messages[start:]
+
+
+def _calls(run: list[ModelMessage]) -> set[str]:
+    return {part.tool_name for m in run if isinstance(m, ModelResponse)
+            for part in m.parts if isinstance(part, ToolCallPart)}
+
+
 def answered_from_run_sql(messages: list[ModelMessage]) -> bool:
     """
-    Whether the current run, since the last user prompt, ran SQL with
-    run_sql but placed or changed no node: small models then state a result
-    the dashboard does not hold.
+    Whether the current run ran SQL with run_sql but placed or changed no
+    node: small models then state a result the dashboard does not hold.
     """
-    start = max((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)
-                 and any(isinstance(p, UserPromptPart) for p in m.parts)), default=0)
-    calls = {part.tool_name for m in messages[start:] if isinstance(m, ModelResponse)
-             for part in m.parts if isinstance(part, ToolCallPart)}
+    calls = _calls(current_run(messages))
     return "run_sql" in calls and not calls & PLACING_TOOLS
+
+
+SHAPE_CHECK = (
+    "Before you answer, check the result you placed against the question. It should have a column for "
+    "each thing the question asks for, including what it groups or lists by, and no others: no ids, "
+    "counts or parts of a ratio the question does not ask for. If a column is missing or extra, change the "
+    "node with set_config; otherwise give your answer again unchanged."
+)
+
+
+def needs_shape_check(messages: list[ModelMessage]) -> bool:
+    """Whether the current run placed or changed a node and has not been asked to check its shape yet."""
+    run = current_run(messages)
+    asked = any(SHAPE_CHECK in str(getattr(p, "content", "")) for m in run if isinstance(m, ModelRequest) for p in m.parts)
+    return bool(_calls(run) & {"add_sql", "set_config"}) and not asked
+
+
+def single_value(ops: Any, messages: list[ModelMessage]) -> bool:
+    """Whether the SQL node the current run placed or changed last holds a single value, which has no shape to check."""
+    names = [part.args_as_dict().get("name") for m in current_run(messages) if isinstance(m, ModelResponse)
+             for part in m.parts if isinstance(part, ToolCallPart) and part.tool_name in ("add_sql", "set_config")]
+    if not names:
+        return False
+    try:
+        frame = _graph.output(ops, names[-1], "data")
+    except Exception:
+        return False
+    return frame is not None and frame.shape == (1, 1)
 
 
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
@@ -110,7 +154,8 @@ DATA_DASHBOARD_TOOLS = DASHBOARD_TOOLS["data"]
 
 def create_agent(model: Any = None, *, instructions: str | None = None, model_settings: dict[str, Any] | None = None,
                  dashboard_tools: str | Collection[str] | None = "data",
-                 dashboard_instructions: bool | None = None, **kwargs: Any) -> Agent[FlowDashDeps, str]:
+                 dashboard_instructions: bool | None = None, shape_check: bool = True,
+                 **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
     The FlowDash agent with Lumen's data and authoring toolsets.
 
@@ -142,6 +187,10 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         Whether to add FlowDash's instructions about the dashboard YAML and
         its tools and its component catalogue, which an agent with all the
         dashboard tools needs; by default only with ``dashboard_tools=None``.
+    shape_check
+        Whether to send the first final answer of a run that placed or
+        changed a SQL node back once, asking the agent to check the
+        result's columns and rows against the question.
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
@@ -171,6 +220,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
             raise ModelRetry(CUT_OFF)
         if answered_from_run_sql(ctx.messages):
             raise ModelRetry(UNPLACED)
+        if shape_check and needs_shape_check(ctx.messages) and not single_value(ctx.deps.ops, ctx.messages):
+            raise ModelRetry(SHAPE_CHECK)
         return output
 
     return agent

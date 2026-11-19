@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("panel_flowdash")
 pytest.importorskip("panel_agents")
@@ -36,9 +37,20 @@ SESSION_NAMES = sorted(path.stem for path in SESSIONS.glob("*.yaml"))
 def scripted(*responses):
     def respond(messages, info):
         count = sum(isinstance(message, ModelResponse) for message in messages)
-        return ModelResponse(parts=list(responses[count % len(responses)]))
+        return ModelResponse(parts=list(responses[min(count, len(responses) - 1)]))
 
     return FunctionModel(respond, model_name="gpt-6-luna")
+
+
+def stable(graph):
+    """A dashboard without the ids and times of its turns, which a playback stamps anew."""
+    data = yaml.safe_load(graph)
+    for turn in data.get("turns", []):
+        for key in ("id", "at", "run"):
+            turn.pop(key, None)
+    for node in data.get("nodes", {}).values():
+        node.pop("origin", None)
+    return data
 
 
 def by_name(*names):
@@ -218,7 +230,7 @@ async def test_cassette_playback_rebuilds_recorded_graph(playback, name):
 
     assert [turn.error for turn in turns] == [None] * len(turns)
     assert cassette.remaining == 0
-    assert [turn.graph for turn in turns] == [turn.dashboard for turn in session.turns]
+    assert [stable(turn.graph) for turn in turns] == [stable(turn.dashboard) for turn in session.turns]
     assert [[*turn.nodes, *turn.changed] for turn in turns] == [turn.nodes for turn in session.turns]
 
 
