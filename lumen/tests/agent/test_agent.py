@@ -53,7 +53,7 @@ def script(*responses):
 
     def respond(messages, info):
         requests.append(messages[-1])
-        return ModelResponse(parts=list(responses[len(requests) - 1]))
+        return ModelResponse(parts=list(responses[min(len(requests), len(responses)) - 1]))
 
     return FunctionModel(respond, model_name="scripted"), requests
 
@@ -188,7 +188,8 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     finally:
         session.close()
 
-    assert len(seen) == 3 and len({instructions for instructions, _ in seen}) == 1
+    # The first answer is sent back once to check the placed result's shape.
+    assert len(seen) == 4 and len({instructions for instructions, _ in seen}) == 1
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
@@ -287,14 +288,15 @@ async def test_agent_retries_bad_query_and_answers_from_node():
     assert turn.output == "East has 50 in paid orders."
     assert turn.nodes == ["paid_by_region", "paid_chart"]
     assert turn.changed == []
-    assert len(turn.responses) == 4
-    assert sum(isinstance(m, ModelRequest) for m in turn.messages) == 4
+    assert len(turn.responses) == 5
+    assert sum(isinstance(m, ModelRequest) for m in turn.messages) == 5
     assert "WHERE\n          o.status = 'paid'" in turn.graph
 
 
 async def test_follow_up_changes_node_in_same_graph():
     model, _ = script(
         [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION})],
+        [TextPart("Done.")],
         [TextPart("Done.")],
         [ToolCallPart("set_config", {"name": "paid_by_region", "config": {"sql": BY_REGION.replace("GROUP", "AND c.region = 'west' GROUP")}})],
         [TextPart("Only west.")],
@@ -376,6 +378,7 @@ async def test_lookups_are_stubbed_when_the_next_turn_starts():
         [ToolCallPart("list_tables", {}, tool_call_id="l1")],
         [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="a1")],
         [TextPart("Done.")],
+        [TextPart("Done.")],
         [TextPart("Still done.")],
     )
     seen = []
@@ -395,7 +398,7 @@ async def test_lookups_are_stubbed_when_the_next_turn_starts():
 
     # Within the run the history only grows, so its prefix stays cacheable.
     assert seen[1][0].startswith("2 table(s)") and seen[2][0].startswith("2 table(s)")
-    assert seen[3] == [SUPERSEDED]
+    assert seen[4] == [SUPERSEDED]
     assert turn.error is None and turn.nodes == ["paid_by_region"]
 
 
@@ -540,3 +543,43 @@ async def test_set_config_checks_and_runs_sql_and_chart_specs():
     assert isinstance(result, ToolReturnPart) and "Result: 2 rows" in result.model_response_str()
     assert all(not isinstance(returned(index), ToolReturnPart) or returned(index).outcome == "retried" for index in (3, 4, 5))
     assert "COUNT(*)" in config["sql"] and turn.error is None
+
+
+async def test_an_answer_from_run_sql_alone_is_sent_back_to_be_placed():
+    model, requests = script(
+        [ToolCallPart("run_sql", {"sql": "SELECT SUM(amount) AS total FROM orders"})],
+        [TextPart("The total is 90.")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "total", "sql": "SELECT SUM(amount) AS total FROM orders"})],
+        [TextPart("The total is 90.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("What is the total amount?")
+    finally:
+        session.close()
+    assert "Place the query your answer is based on" in str(requests[2])
+    assert turn.nodes == ["total"] and turn.error is None
+
+
+async def test_list_tables_points_at_describe_table_for_unprofiled_tables(ctx, monkeypatch):
+    monkeypatch.setattr("lumen.agent.data.SCHEMA_MAX_TOKENS", 40)
+    text = await list_tables(ctx)
+    assert "describe_table gives their statistics" in text and "load_table_schemas" not in text
+
+
+@pytest.mark.parametrize(("sql", "requests_made"), [
+    (BY_REGION, 3),
+    ("SELECT SUM(amount) AS total FROM orders", 2),
+])
+async def test_answer_is_sent_back_once_to_check_the_placed_result(sql, requests_made):
+    model, requests = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "result", "sql": sql})],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("Totals")
+    finally:
+        session.close()
+    assert turn.error is None and len(requests) == requests_made
+    assert ("check the result you placed" in str(requests[-1])) == (requests_made == 3)

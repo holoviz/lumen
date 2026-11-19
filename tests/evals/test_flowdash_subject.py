@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("panel_flowdash")
 pytest.importorskip("panel_agents")
@@ -14,10 +15,11 @@ from panel_agents.adapters.cassette import Cassette
 from panel_agents.adapters.model_trace import load_messages
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RequestUsage
 from pydantic_evals import Case, Dataset
 
 from lumen.agent import AgentSession
-from lumen.agent.evals import FlowDashSubject, agent_fingerprint
+from lumen.agent.evals import FlowDashSubject, agent_fingerprint, usage
 from lumen.agent.sessions import (
     dump_session, load_session, save_session, session_case,
 )
@@ -35,9 +37,20 @@ SESSION_NAMES = sorted(path.stem for path in SESSIONS.glob("*.yaml"))
 def scripted(*responses):
     def respond(messages, info):
         count = sum(isinstance(message, ModelResponse) for message in messages)
-        return ModelResponse(parts=list(responses[count % len(responses)]))
+        return ModelResponse(parts=list(responses[min(count, len(responses) - 1)]))
 
     return FunctionModel(respond, model_name="gpt-6-luna")
+
+
+def stable(graph):
+    """A dashboard without the ids and times of its turns, which a playback stamps anew."""
+    data = yaml.safe_load(graph)
+    for turn in data.get("turns", []):
+        for key in ("id", "at", "run"):
+            turn.pop(key, None)
+    for node in data.get("nodes", {}).values():
+        node.pop("origin", None)
+    return data
 
 
 def by_name(*names):
@@ -217,7 +230,7 @@ async def test_cassette_playback_rebuilds_recorded_graph(playback, name):
 
     assert [turn.error for turn in turns] == [None] * len(turns)
     assert cassette.remaining == 0
-    assert [turn.graph for turn in turns] == [turn.dashboard for turn in session.turns]
+    assert [stable(turn.graph) for turn in turns] == [stable(turn.dashboard) for turn in session.turns]
     assert [[*turn.nodes, *turn.changed] for turn in turns] == [turn.nodes for turn in session.turns]
 
 
@@ -309,3 +322,24 @@ async def test_partial_usage_belongs_to_the_current_case():
     finally:
         agent_evals.AgentSession = original
     assert subject.partial_usage() is None
+
+
+def test_usage_counts_requests_and_prices_the_first_uncached_when_cold():
+    responses = [ModelResponse(parts=[TextPart("x")], model_name="gpt-6-luna",
+                               usage=RequestUsage(input_tokens=n, output_tokens=10, cache_read_tokens=cached))
+                 for n, cached in [(1000, 800), (2000, 1500)]]
+    warm, cold = usage(responses), usage(responses, first=True)
+
+    assert warm.requests == cold.requests == 2
+    assert warm.cost_usd == pytest.approx(((200 + 500) * 0.10 + 2300 * 0.01 + 20 * 0.50) / 1_000_000)
+    assert warm.cold_cost_usd == pytest.approx(warm.cost_usd)
+    assert cold.cold_cost_usd == pytest.approx(warm.cost_usd + 800 * (0.10 - 0.01) / 1_000_000)
+
+
+def test_anthropic_on_openrouter_caches_the_static_prefix():
+    from lumen.agent.evals import build_model
+
+    model = build_model("anthropic/claude-haiku-5.5", provider="openrouter", api_key="x")
+    assert type(model).__name__ == "OpenRouterModel"
+    assert model.settings["openrouter_cache_instructions"] and model.settings["openrouter_cache_tool_definitions"]
+    assert type(build_model("openai/gpt-6-luna", provider="openrouter", api_key="x")).__name__ == "OpenAIChatModel"

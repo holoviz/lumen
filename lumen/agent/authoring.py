@@ -159,6 +159,8 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             raise ModelRetry(str(exc)) from exc
         capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
         preview = f"\n\nResult{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+        if isinstance(result, str):
+            return result + preview
         if isinstance(result, ToolReturn) and isinstance(result.return_value, str):
             return dataclasses.replace(result, return_value=result.return_value + preview)
         return result

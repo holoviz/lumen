@@ -62,6 +62,10 @@ def documents(inputs: Inputs) -> list[DocumentChunk] | None:
     ]
 
 
+PAID_BY_REGION = ("SELECT c.region, SUM(o.amount) AS total_amount FROM orders o JOIN customers c "
+                  "ON o.customer_id = c.customer_id WHERE o.status = 'paid' GROUP BY c.region")
+PAID_BY_CUSTOMER = "SELECT customer_id, SUM(amount) AS total FROM orders WHERE status = 'paid' GROUP BY customer_id"
+
 DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     Case(name="sales_total", inputs=Inputs(["What is the total amount overall?"]),
          metadata=Expected(actors=["SQLAgent"], rows=[[35]])),
@@ -159,6 +163,19 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     ], fixture="commerce"),
          metadata=Expected(actors=["VegaLiteAgent"], view_type="VegaLiteEditor", chart_mark="bar",
                            forbidden_actors=["SQLAgent"], follow_up_types=["new", "direct"], planned_actors=["VegaLiteAgent"])),
+    Case(name="edit_seeded_filter", inputs=Inputs(["Change the result to keep only the west region."], fixture="commerce",
+                                                  query=PAID_BY_REGION),
+         metadata=Expected(rows=[["west", 40]])),
+    Case(name="edit_seeded_status", inputs=Inputs(["Change the result to include cancelled orders too."], fixture="commerce",
+                                                  query="SELECT order_id, amount FROM orders WHERE status = 'paid'"),
+         metadata=Expected(rows=[[101, 30], [102, 20], [103, 40], [104, 10], [105, 15]])),
+    Case(name="edit_seeded_top", inputs=Inputs(["Change the result so it only shows the customer with the highest total."],
+                                               fixture="commerce", query=PAID_BY_CUSTOMER),
+         metadata=Expected(rows=[[1, 50]])),
+    Case(name="edit_seeded_followup", inputs=Inputs([
+        "Change the result to keep only the east region.", "Now add the number of paid orders as order_count."
+    ], fixture="commerce", query=PAID_BY_REGION),
+         metadata=Expected(turn_rows=[[["east", 65]], [["east", 65, 3]]])),
     Case(name="document_list", inputs=Inputs(["List the available documents."], fixture="documents", agents=("DocumentListAgent",)),
          metadata=Expected(actors=["DocumentListAgent"], listing_contains="2 documents")),
     Case(name="document_summary", inputs=Inputs(["Summarize the return window in returns.md."], fixture="documents",
@@ -180,6 +197,23 @@ BIRD_STRATIFIED_IDS = {
     "all_pass": (39, 377, 544, 1476, 1039, 112, 862, 1340, 739, 1162, 232),
     "mixed": (48, 405, 547, 1472, 1032, 98, 859, 1351, 723, 1198, 195),
     "all_fail": (17, 340, 532, 1480, 1028, 94, 847, 1322, 726, 1149, 197),
+}
+# 100 questions drawn from one gpt-6-luna run of the ExplorerUI and FlowDash subjects over
+# all 500: all_pass both correct, mixed one correct, all_fail neither, taken round-robin across
+# databases with a fixed seed; questions without a score were left out.
+BIRD_SAMPLE_IDS = {
+    "all_pass": (
+        45, 47, 62, 93, 100, 137, 239, 240, 242, 356, 379, 477, 571, 687, 704, 723, 739, 761, 825, 846, 859,
+        960, 1102, 1105, 1147, 1164, 1208, 1220, 1339, 1351, 1380, 1483, 1484, 1514,
+    ),
+    "mixed": (
+        24, 48, 79, 82, 98, 173, 192, 195, 208, 228, 346, 391, 486, 563, 598, 604, 744, 781, 829, 861, 904,
+        1002, 1040, 1078, 1136, 1171, 1189, 1198, 1387, 1410, 1464, 1479, 1524,
+    ),
+    "all_fail": (
+        23, 31, 41, 95, 129, 152, 219, 231, 255, 344, 345, 459, 587, 640, 682, 728, 736, 794, 847, 931, 962,
+        1028, 1029, 1144, 1168, 1205, 1225, 1338, 1422, 1427, 1480, 1490, 1526,
+    ),
 }
 REVISION = "f65faf4ae3b638c1fa6df1d3370c8d92c8366301"
 QUESTION_URL = (

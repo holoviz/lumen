@@ -60,11 +60,12 @@ Any directory that contains `<db_id>/<db_id>.sqlite`, `dev_databases/<db_id>/<db
 BIRD="--suite bird --bird-questions tests/evals/results/bird-mini-dev-sqlite.json --bird-databases tests/evals/results"
 pixi run -e evals python -m tests.evals $BIRD                    # six default questions
 pixi run -e evals python -m tests.evals $BIRD --bird-stratified  # 33 questions across all databases
+pixi run -e evals python -m tests.evals $BIRD --bird-sample      # 100 questions, stratified the same way
 pixi run -e evals python -m tests.evals $BIRD --bird-all --workers 8 --output tests/evals/results/full.json
 pixi run -e evals python -m tests.evals $BIRD --bird-all --resume --output tests/evals/results/full.json
 ```
 
-`--bird-all`, `--bird-stratified` and `--bird-ids` run each case in its own process with a
+`--bird-all`, `--bird-stratified`, `--bird-sample` and `--bird-ids` run each case in its own process with a
 240 second limit and checkpoint after every case, so an interrupted run can continue with
 `--resume`. A case whose gold SQL cannot run is reported as unscorable rather than as a miss.
 
