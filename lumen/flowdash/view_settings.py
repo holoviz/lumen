@@ -28,7 +28,7 @@ COLOR_SCHEMES = [
 
 MARKS = {"Bar": "bar", "Line": "line", "Area": "area", "Point": "point"}
 
-FIELD_TYPES = ["nominal", "ordinal", "quantitative", "temporal"]
+FIELD_TYPES = ["nominal", "ordinal", "quantitative", "temporal", "geojson"]
 
 AGGREGATES = {"None": None, "Sum": "sum", "Mean": "mean", "Median": "median",
               "Min": "min", "Max": "max", "Count": "count"}
@@ -84,22 +84,20 @@ def set_points(spec: dict, value: bool) -> None:
         _drop_from_mark(spec, "point")
 
 
-def tooltip(spec: dict) -> bool:
-    mark = spec.get("mark")
+def tooltip(spec: dict) -> Any:
+    """Whether the mark shows tooltips, or the tooltip encoding, which the switch cannot show."""
     encoding = spec.get("encoding")
-    in_mark = isinstance(mark, dict) and bool(mark.get("tooltip"))
-    return in_mark or (isinstance(encoding, dict) and bool(encoding.get("tooltip")))
+    if isinstance(encoding, dict) and encoding.get("tooltip") is not None:
+        return encoding["tooltip"]
+    mark = spec.get("mark")
+    return mark.get("tooltip") if isinstance(mark, dict) else None
 
 
 def set_tooltip(spec: dict, value: bool) -> None:
-    """Turn tooltips on in the mark, or off in the mark and the encoding."""
     if value:
         _mark(spec)["tooltip"] = True
-        return
-    _drop_from_mark(spec, "tooltip")
-    encoding = spec.get("encoding")
-    if isinstance(encoding, dict):
-        encoding.pop("tooltip", None)
+    else:
+        _drop_from_mark(spec, "tooltip")
 
 
 def size(spec: dict) -> str:
@@ -130,8 +128,35 @@ def _pixels(key: str):
     return get, set
 
 
-def _fixed(spec: dict) -> bool:
-    return size(spec) == "fixed"
+def _compound(spec: dict) -> bool:
+    from ..ai.utils import is_compound_vegalite
+
+    return is_compound_vegalite(spec)
+
+
+def _single_view(spec: dict) -> bool | str:
+    """Whether the top-level mark and encoding draw the chart, or why the layers or views do."""
+    if _compound(spec):
+        return "This chart is faceted, repeated or concatenated, so its size, mark and fields are set in the spec."
+    if "layer" in spec:
+        return "This chart has layers, so its mark and fields are set in the spec."
+    return True
+
+
+def _unsized(spec: dict) -> bool | str:
+    if _compound(spec):
+        return _single_view(spec)
+    return True
+
+
+def _fixed(spec: dict) -> bool | str:
+    unsized = _unsized(spec)
+    return unsized if unsized is not True else size(spec) == "fixed"
+
+
+def _points(spec: dict) -> bool | str:
+    single = _single_view(spec)
+    return single if single is not True else mark_type(spec) in ("line", "area")
 
 
 def title(spec: dict) -> Any:
@@ -152,15 +177,26 @@ def set_title(spec: dict, value: Any) -> None:
         spec["title"] = value
 
 
+def _object(value: Any) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
 def color_scheme(spec: dict) -> Any:
-    category = spec.get("config", {}).get("range", {}).get("category")
-    return category.get("scheme") if isinstance(category, dict) else None
+    """The scheme of categorical colours, or the colours themselves, which the select cannot show."""
+    category = _object(_object(spec.get("config")).get("range")).get("category")
+    if isinstance(category, dict) and set(category) == {"scheme"}:
+        return category["scheme"]
+    return category
 
 
 def set_color_scheme(spec: dict, value: Any) -> None:
     """Set the scheme of categorical and continuous colours, or leave both to the dashboard."""
-    config = spec.setdefault("config", {})
-    ranges = config.setdefault("range", {})
+    if not isinstance(spec.get("config"), dict):
+        spec["config"] = {}
+    config = spec["config"]
+    if not isinstance(config.get("range"), dict):
+        config["range"] = {}
+    ranges = config["range"]
     for key in ("category", "ramp"):
         if value is None:
             ranges.pop(key, None)
@@ -173,15 +209,19 @@ def set_color_scheme(spec: dict, value: Any) -> None:
 
 
 def legend(spec: dict) -> str:
-    config = spec.get("config", {}).get("legend", {})
+    config = _object(_object(spec.get("config")).get("legend"))
     if config.get("disable"):
         return "off"
     return config.get("orient", "auto")
 
 
 def set_legend(spec: dict, value: str) -> None:
-    config = spec.setdefault("config", {})
-    legend = config.setdefault("legend", {})
+    if not isinstance(spec.get("config"), dict):
+        spec["config"] = {}
+    config = spec["config"]
+    if not isinstance(config.get("legend"), dict):
+        config["legend"] = {}
+    legend = config["legend"]
     legend.pop("disable", None)
     legend.pop("orient", None)
     if value == "off":
@@ -201,24 +241,24 @@ def _settings() -> list:
     height_get, height_set = _pixels("height")
     return [
         SpecSetting("mark.type", label="Mark", widget="radio", options=MARKS, group="Chart",
-                    get=mark_type, set=set_mark_type, restrict=False),
+                    get=mark_type, set=set_mark_type, restrict=False, enabled=_single_view),
         SpecSetting("mark.point", label="Points", widget="switch", group="Chart",
-                    get=points, set=set_points, default=False,
-                    enabled=lambda spec: mark_type(spec) in ("line", "area")),
+                    get=points, set=set_points, default=False, enabled=_points),
         SpecSetting("encoding.x.field", label="X", widget="select", group="Chart",
-                    choices="columns", of="pipeline", restrict=False),
+                    choices="columns", of="pipeline", restrict=False, enabled=_single_view),
         SpecSetting("encoding.x.type", label="X type", widget="select", group="Chart",
-                    options=FIELD_TYPES),
+                    options=FIELD_TYPES, enabled=_single_view),
         SpecSetting("encoding.y.field", label="Y", widget="select", group="Chart",
-                    choices="columns", of="pipeline", restrict=False),
+                    choices="columns", of="pipeline", restrict=False, enabled=_single_view),
         SpecSetting("encoding.y.type", label="Y type", widget="select", group="Chart",
-                    options=FIELD_TYPES),
+                    options=FIELD_TYPES, enabled=_single_view),
         SpecSetting("encoding.y.aggregate", label="Aggregate", widget="select", group="Chart",
-                    options=AGGREGATES),
+                    options=AGGREGATES, enabled=_single_view),
         SpecSetting("encoding.color.field", label="Colour by", widget="select", group="Chart",
-                    choices="columns", of="pipeline", restrict=False),
+                    choices="columns", of="pipeline", restrict=False, enabled=_single_view),
         SpecSetting("size", label="Size", widget="radio", options=SIZE, default="fill",
                     group="Size and style", get=size, set=set_size, covers=("width", "height"),
+                    enabled=_unsized,
                     doc="Fill the tile, or a fixed width and height in pixels."),
         SpecSetting("width", label="Width", widget="integer", group="Size and style",
                     get=width_get, set=width_set, enabled=_fixed),
@@ -228,15 +268,14 @@ def _settings() -> list:
                     options={"Follow dashboard": None, **{s: s for s in COLOR_SCHEMES}},
                     group="Size and style", get=color_scheme, set=set_color_scheme,
                     covers=("config.range.ramp",), restrict=False),
-        SpecSetting("config.legend.orient", label="Legend", widget="radio", options=LEGEND,
+        SpecSetting("config.legend.orient", label="Legend", widget="select", options=LEGEND,
                     default="auto", group="Size and style", get=legend, set=set_legend,
                     covers=("config.legend.disable",)),
         SpecSetting("mark.tooltip", label="Tooltips", widget="switch", default=False,
-                    group="Size and style", get=tooltip, set=set_tooltip,
-                    covers=("encoding.tooltip",)),
+                    group="Size and style", get=tooltip, set=set_tooltip, enabled=_single_view),
         SpecSetting("title", label="Title", group="Labels", get=title, set=set_title),
-        SpecSetting("encoding.x.title", label="X title", group="Labels"),
-        SpecSetting("encoding.y.title", label="Y title", group="Labels"),
+        SpecSetting("encoding.x.title", label="X title", group="Labels", enabled=_single_view),
+        SpecSetting("encoding.y.title", label="Y title", group="Labels", enabled=_single_view),
     ]
 
 

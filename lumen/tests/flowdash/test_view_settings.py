@@ -118,10 +118,41 @@ def test_size_fills_the_tile_or_fixes_width_and_height():
     assert read({**SPEC, "width": "container"}, "width") is None
 
 
-def test_tooltips_off_drops_the_tooltip_encoding():
+def test_a_tooltip_encoding_is_left_to_the_spec():
     spec = {**SPEC, "encoding": {**SPEC["encoding"], "tooltip": [{"field": "total"}]}}
-    assert read(spec, "mark.tooltip") is True
-    assert "tooltip" not in write(spec, "mark.tooltip", False)["encoding"]
+    assert spec_settings.shown_in_spec(spec, VEGA_LITE_SETTINGS) == [SETTINGS["mark.tooltip"]]
+    flagged = [".".join(p) for p in spec_settings.unrepresented_paths(spec, VEGA_LITE_SETTINGS)]
+    assert "encoding.tooltip" in flagged
+    on = write(SPEC, "mark.tooltip", True)
+    assert on["mark"] == {"type": "bar", "tooltip": True}
+    assert write(on, "mark.tooltip", False) == SPEC
+
+
+def test_a_colour_list_is_flagged_and_kept():
+    spec = {**SPEC, "config": {"range": {"category": ["#f00", "#0f0"]}}}
+    assert SETTINGS["config.range.category"] in spec_settings.shown_in_spec(spec, VEGA_LITE_SETTINGS)
+    flagged = [".".join(p) for p in spec_settings.unrepresented_paths(spec, VEGA_LITE_SETTINGS)]
+    assert "config.range.category" in flagged
+
+
+@pytest.mark.parametrize("config", [None, {"range": None, "legend": None}, {"legend": {"orient": None}}])
+def test_null_config_reads_as_unset(config):
+    spec = {**SPEC, "config": config}
+    assert read(spec, "config.range.category") is None
+    assert read(spec, "config.legend.orient") in ("auto", None)
+    assert read(write(spec, "config.legend.orient", "off"), "config.legend.orient") == "off"
+    assert read(write(spec, "config.range.category", "set2"), "config.range.category") == "set2"
+
+
+@pytest.mark.parametrize("spec, disabled", [
+    ({"facet": {"field": "category"}, "spec": SPEC}, {"size", "width", "mark.type", "encoding.x.field", "encoding.x.title"}),
+    ({"hconcat": [SPEC, SPEC]}, {"size", "mark.type", "encoding.y.field"}),
+    ({"layer": [SPEC]}, {"mark.type", "encoding.y.field", "encoding.color.field", "mark.tooltip"}),
+])
+def test_compound_and_layered_specs_leave_their_parts_to_the_spec(spec, disabled):
+    reasons = {key: s.disabled_reason(spec) for key, s in SETTINGS.items()}
+    assert all(reasons[key] for key in disabled)
+    assert reasons["title"] is None
 
 
 def test_colours_follow_the_dashboard_unless_a_scheme_is_set():
