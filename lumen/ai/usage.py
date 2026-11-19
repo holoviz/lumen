@@ -131,7 +131,7 @@ def parse_usage(response: Any, provider: str, requested_model: str, pricing: dic
     cached = (_field(details, "cached_tokens") or _field(raw, "cache_read_input_tokens")
               or _field(raw, "cached_content_token_count") or 0)
     # Anthropic reports cache writes separately from input_tokens.
-    cache_write = _field(raw, "cache_creation_input_tokens") or 0
+    cache_write = _field(raw, "cache_creation_input_tokens") or _field(details, "cache_write_tokens") or 0
     if provider == "anthropic":
         input_tokens += cached + cache_write
     model = _field(response, "model") or _field(response, "model_version") or requested_model

@@ -22,8 +22,8 @@ from lumen.ai.evals.harness import (
     APPLICABILITY, ARCHITECTURE_CHECKS, NOT_APPLICABLE, OUTCOME_CHECKS,
     SUBJECTS, CheckResult, EvalOpenAI, Expected, Inputs, LumenSubject, Output,
     Subject, Turn, TurnArtifacts, _snapshot, artifacts_path, case_fingerprint,
-    evaluate, register_subject, resolve_subject, run_case, run_settings,
-    subject_spec,
+    cold_surcharge, evaluate, records_usage, register_subject, request_cost,
+    resolve_subject, run_case, run_settings, subject_spec, total_usage,
 )
 from lumen.ai.report import ActorTask
 from lumen.ai.tool_trace import ToolCall
@@ -1120,3 +1120,23 @@ def test_evals_without_extra_names_it(monkeypatch):
     monkeypatch.delitem(sys.modules, "lumen.ai.evals")
     with pytest.raises(ImportError, match=r"pip install \"lumen\[evals\]\""):
         importlib.import_module("lumen.ai.evals")
+
+
+def test_records_usage_prices_first_request_uncached_when_cold():
+    records = [LlmUsage("gpt-6-luna", 1000, 10, 800, None), LlmUsage("gpt-6-luna", 2000, 20, 1500, None)]
+    records = [LlmUsage(r.model, r.input_tokens, r.output_tokens, r.cached_tokens,
+                        request_cost(r.model, r.input_tokens, r.output_tokens, r.cached_tokens)) for r in records]
+    warm = records_usage(records)
+    cold = records_usage(records, first=True)
+
+    assert warm.requests == cold.requests == 2
+    assert warm.cold_cost_usd == pytest.approx(warm.cost_usd)
+    assert cold.cold_cost_usd == pytest.approx(cold.cost_usd + 800 * (0.10 - 0.01) / 1_000_000)
+    total = total_usage([cold, warm])
+    assert total.requests == 4 and total.cold_cost_usd == pytest.approx(cold.cold_cost_usd + warm.cost_usd)
+
+
+def test_cold_cost_prices_cache_writes_where_the_provider_charges_them():
+    assert cold_surcharge("anthropic/claude-haiku-5.5", 1000) == pytest.approx(1000 * (0.125 - 0.01) / 1_000_000)
+    assert cold_surcharge("unknown-model", 1000) is None
+    assert request_cost("anthropic/claude-haiku-5.5", 1000, 0, 0, 1000) == pytest.approx(1000 * 0.125 / 1_000_000)

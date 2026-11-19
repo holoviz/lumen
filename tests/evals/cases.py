@@ -62,6 +62,10 @@ def documents(inputs: Inputs) -> list[DocumentChunk] | None:
     ]
 
 
+PAID_BY_REGION = ("SELECT c.region, SUM(o.amount) AS total_amount FROM orders o JOIN customers c "
+                  "ON o.customer_id = c.customer_id WHERE o.status = 'paid' GROUP BY c.region")
+PAID_BY_CUSTOMER = "SELECT customer_id, SUM(amount) AS total FROM orders WHERE status = 'paid' GROUP BY customer_id"
+
 DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     Case(name="sales_total", inputs=Inputs(["What is the total amount overall?"]),
          metadata=Expected(actors=["SQLAgent"], rows=[[35]])),
@@ -159,6 +163,19 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     ], fixture="commerce"),
          metadata=Expected(actors=["VegaLiteAgent"], view_type="VegaLiteEditor", chart_mark="bar",
                            forbidden_actors=["SQLAgent"], follow_up_types=["new", "direct"], planned_actors=["VegaLiteAgent"])),
+    Case(name="edit_seeded_filter", inputs=Inputs(["Change the result to keep only the west region."], fixture="commerce",
+                                                  query=PAID_BY_REGION),
+         metadata=Expected(rows=[["west", 40]])),
+    Case(name="edit_seeded_status", inputs=Inputs(["Change the result to include cancelled orders too."], fixture="commerce",
+                                                  query="SELECT order_id, amount FROM orders WHERE status = 'paid'"),
+         metadata=Expected(rows=[[101, 30], [102, 20], [103, 40], [104, 10], [105, 15]])),
+    Case(name="edit_seeded_top", inputs=Inputs(["Change the result so it only shows the customer with the highest total."],
+                                               fixture="commerce", query=PAID_BY_CUSTOMER),
+         metadata=Expected(rows=[[1, 50]])),
+    Case(name="edit_seeded_followup", inputs=Inputs([
+        "Change the result to keep only the east region.", "Now add the number of paid orders as order_count."
+    ], fixture="commerce", query=PAID_BY_REGION),
+         metadata=Expected(turn_rows=[[["east", 65]], [["east", 65, 3]]])),
     Case(name="document_list", inputs=Inputs(["List the available documents."], fixture="documents", agents=("DocumentListAgent",)),
          metadata=Expected(actors=["DocumentListAgent"], listing_contains="2 documents")),
     Case(name="document_summary", inputs=Inputs(["Summarize the return window in returns.md."], fixture="documents",

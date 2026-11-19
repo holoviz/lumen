@@ -14,10 +14,11 @@ from panel_agents.adapters.cassette import Cassette
 from panel_agents.adapters.model_trace import load_messages
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RequestUsage
 from pydantic_evals import Case, Dataset
 
 from lumen.agent import AgentSession
-from lumen.agent.evals import FlowDashSubject, agent_fingerprint
+from lumen.agent.evals import FlowDashSubject, agent_fingerprint, usage
 from lumen.agent.sessions import (
     dump_session, load_session, save_session, session_case,
 )
@@ -309,3 +310,15 @@ async def test_partial_usage_belongs_to_the_current_case():
     finally:
         agent_evals.AgentSession = original
     assert subject.partial_usage() is None
+
+
+def test_usage_counts_requests_and_prices_the_first_uncached_when_cold():
+    responses = [ModelResponse(parts=[TextPart("x")], model_name="gpt-6-luna",
+                               usage=RequestUsage(input_tokens=n, output_tokens=10, cache_read_tokens=cached))
+                 for n, cached in [(1000, 800), (2000, 1500)]]
+    warm, cold = usage(responses), usage(responses, first=True)
+
+    assert warm.requests == cold.requests == 2
+    assert warm.cost_usd == pytest.approx(((200 + 500) * 0.10 + 2300 * 0.01 + 20 * 0.50) / 1_000_000)
+    assert warm.cold_cost_usd == pytest.approx(warm.cost_usd)
+    assert cold.cold_cost_usd == pytest.approx(warm.cost_usd + 800 * (0.10 - 0.01) / 1_000_000)
