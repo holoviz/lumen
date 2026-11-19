@@ -35,7 +35,8 @@ from lumen.views import VegaLiteView
 
 from .bird_runner import simulated_bird_case_process
 from .cases import (
-    BIRD_STRATIFIED_IDS, DATASET, SUITE_INSTRUCTIONS, bird_dataset, source,
+    BIRD_SAMPLE_IDS, BIRD_STRATIFIED_IDS, DATASET, SUITE_INSTRUCTIONS,
+    bird_dataset, source,
 )
 
 
@@ -64,6 +65,12 @@ def test_bird_stratified_cases_cover_all_databases():
     dataset = bird_dataset(questions, databases, ids)
     assert len(ids) == len(set(ids)) == len(dataset.cases) == 33
     assert len({case.inputs.fixture for case in dataset.cases}) == 11
+
+
+def test_bird_sample_has_100_distinct_questions_in_three_strata():
+    ids = [question_id for group in BIRD_SAMPLE_IDS.values() for question_id in group]
+    assert len(ids) == len(set(ids)) == 100
+    assert [len(group) for group in BIRD_SAMPLE_IDS.values()] == [34, 33, 33]
 
 
 def test_local_file_commerce_fixture_uses_read_functions():

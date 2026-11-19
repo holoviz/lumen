@@ -198,6 +198,23 @@ BIRD_STRATIFIED_IDS = {
     "mixed": (48, 405, 547, 1472, 1032, 98, 859, 1351, 723, 1198, 195),
     "all_fail": (17, 340, 532, 1480, 1028, 94, 847, 1322, 726, 1149, 197),
 }
+# 100 questions drawn from one gpt-6-luna run of the ExplorerUI and FlowDash subjects over
+# all 500: all_pass both correct, mixed one correct, all_fail neither, taken round-robin across
+# databases with a fixed seed; questions without a score were left out.
+BIRD_SAMPLE_IDS = {
+    "all_pass": (
+        45, 47, 62, 93, 100, 137, 239, 240, 242, 356, 379, 477, 571, 687, 704, 723, 739, 761, 825, 846, 859,
+        960, 1102, 1105, 1147, 1164, 1208, 1220, 1339, 1351, 1380, 1483, 1484, 1514,
+    ),
+    "mixed": (
+        24, 48, 79, 82, 98, 173, 192, 195, 208, 228, 346, 391, 486, 563, 598, 604, 744, 781, 829, 861, 904,
+        1002, 1040, 1078, 1136, 1171, 1189, 1198, 1387, 1410, 1464, 1479, 1524,
+    ),
+    "all_fail": (
+        23, 31, 41, 95, 129, 152, 219, 231, 255, 344, 345, 459, 587, 640, 682, 728, 736, 794, 847, 931, 962,
+        1028, 1029, 1144, 1168, 1205, 1225, 1338, 1422, 1427, 1480, 1490, 1526,
+    ),
+}
 REVISION = "f65faf4ae3b638c1fa6df1d3370c8d92c8366301"
 QUESTION_URL = (
     f"https://huggingface.co/datasets/birdsql/bird_mini_dev/resolve/{REVISION}/"

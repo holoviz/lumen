@@ -22,7 +22,7 @@ from lumen.ai.evals.harness import (
 
 from .bird_runner import default_api, run_bird_case_process
 from .cases import (
-    BIRD_STRATIFIED_IDS, DATASET, QUESTION_IDS, QUESTION_URL,
+    BIRD_SAMPLE_IDS, BIRD_STRATIFIED_IDS, DATASET, QUESTION_IDS, QUESTION_URL,
     SUITE_INSTRUCTIONS, bird_dataset, documents, source,
 )
 
@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--bird-databases", type=Path, help="Extracted BIRD Mini-Dev database directory")
     parser.add_argument("--bird-all", action="store_true", help="Run all 500 Mini-Dev SQLite questions (requires --suite bird)")
     parser.add_argument("--bird-stratified", action="store_true", help="Run 33 fixed all-pass, mixed, and all-fail BIRD cases")
+    parser.add_argument("--bird-sample", action="store_true", help="Run 100 fixed all-pass, mixed, and all-fail BIRD cases")
     parser.add_argument("--download-bird-questions", type=Path, help="Download pinned Mini-Dev question JSON and exit")
     parser.add_argument("--case", help="Run one case by name")
     parser.add_argument("--bird-ids", type=int, nargs="+", help="Run specified Mini-Dev question IDs through the parallel BIRD runner")
@@ -57,11 +58,11 @@ def main():
     if args.download_bird_questions:
         download_questions(args.download_bird_questions, QUESTION_URL)
         return
-    if (args.bird_all or args.bird_stratified or args.bird_ids) and args.suite != "bird":
+    if (args.bird_all or args.bird_stratified or args.bird_sample or args.bird_ids) and args.suite != "bird":
         parser.error("BIRD case selection requires --suite bird")
-    if sum(bool(option) for option in (args.bird_all, args.bird_stratified, args.bird_ids)) > 1:
-        parser.error("--bird-all, --bird-stratified and --bird-ids are mutually exclusive")
-    if args.resume and (not (args.bird_all or args.bird_stratified or args.bird_ids) or not args.output):
+    if sum(bool(option) for option in (args.bird_all, args.bird_stratified, args.bird_sample, args.bird_ids)) > 1:
+        parser.error("--bird-all, --bird-stratified, --bird-sample and --bird-ids are mutually exclusive")
+    if args.resume and (not (args.bird_all or args.bird_stratified or args.bird_sample or args.bird_ids) or not args.output):
         parser.error("--resume requires parallel BIRD case selection and --output")
     if not 1 <= args.workers <= 64:
         parser.error("--workers must be between 1 and 64")
@@ -90,6 +91,8 @@ def main():
             ids = ()
         elif args.bird_stratified:
             ids = tuple(question_id for group in BIRD_STRATIFIED_IDS.values() for question_id in group)
+        elif args.bird_sample:
+            ids = tuple(question_id for group in BIRD_SAMPLE_IDS.values() for question_id in group)
         elif args.bird_ids:
             ids = tuple(args.bird_ids)
         else:
@@ -106,7 +109,7 @@ def main():
 
     llm = subject.build_model(args.model, provider=args.provider, api_key=key, api=args.api, instructions=instructions)
     output = args.output or RESULTS / f"{args.model.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
-    if args.bird_all or args.bird_stratified or args.bird_ids:
+    if args.bird_all or args.bird_stratified or args.bird_sample or args.bird_ids:
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
                                args.model, args.provider, key, args.resume, args.workers,
                                instructions=instructions, instruction_version=instruction_version,
