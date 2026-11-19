@@ -339,9 +339,25 @@ def test_view_node_fills_its_tile_unless_the_spec_sets_a_size(source, size, rend
     {"hconcat": [SPEC, SPEC]},
     {"facet": {"field": "category"}, "spec": SPEC},
     {"repeat": ["total"], "spec": SPEC},
+    *({**SPEC, "encoding": {**SPEC["encoding"], channel: {"field": "category"}}} for channel in ("row", "column", "facet")),
+    {"layer": [{**SPEC, "encoding": {**SPEC["encoding"], "column": {"field": "category"}}}]},
+    {**SPEC, "autosize": "pad"},
+    {**SPEC, "autosize": {"type": "none"}},
 ])
-def test_responsive_spec_leaves_compound_charts_alone(spec):
+def test_responsive_spec_leaves_compound_and_fixed_charts_alone(spec):
     assert responsive_spec(spec) is spec
+
+
+@pytest.mark.parametrize("view, rendered", [
+    ({"continuousWidth": 300}, {"height": "container"}),
+    ({"discreteWidth": 300}, {"height": "container"}),
+    ({"continuousHeight": 200}, {"width": "container"}),
+    ({"discreteHeight": {"step": 20}}, {"width": "container"}),
+    ({"continuousWidth": 300, "continuousHeight": 200}, {}),
+])
+def test_responsive_spec_keeps_view_sizes_from_config(view, rendered):
+    spec = {**SPEC, "config": {"view": view}}
+    assert responsive_spec(spec) == {**rendered, **spec}
 
 
 def test_responsive_spec_does_not_change_the_spec():
