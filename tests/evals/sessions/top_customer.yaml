@@ -5,7 +5,7 @@ turns:
   nodes:
   - customer_with_most_paid_orders
   dashboard: |
-    flowdash: 1
+    flowdash: 4
     title: Untitled
     settings:
       description: ''
@@ -16,21 +16,33 @@ turns:
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
+    turns:
+      - id: t542d9ce8
+        actor: user
+        at: '2026-11-19T12:01:42Z'
+        summary: Added data.
+      - id: td2c8c333
+        actor: agent
+        at: '2026-11-19T12:01:45Z'
+        run: run-21a086219436
+        summary: Added customer_with_most_paid_orders. Connected data to customer_with_most_paid_orders.
     nodes:
       data:
         component: Lumen/source
+        origin: t542d9ce8
         config:
           ref: data
-        position: [0, 0]
+        position: [0.0, 23.0]
       customer_with_most_paid_orders:
         component: Lumen/sql
+        origin: td2c8c333
         config:
           sql: |-
             SELECT
               c."customer",
               COUNT(*) AS paid_order_count
-            FROM "orders" AS o
-            JOIN "customers" AS c
+            FROM orders AS o
+            JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
               o."status" = 'paid'
@@ -40,7 +52,13 @@ turns:
               paid_order_count DESC
             LIMIT 1
           table: customer_with_most_paid_orders
-        position: [350, 0]
+        position: [360.0, 0.0]
     edges:
       - from: data.source
         to: customer_with_most_paid_orders.source
+    layout:
+      tiles:
+        - node: data
+          visible: false
+        - node: customer_with_most_paid_orders
+          visible: false
