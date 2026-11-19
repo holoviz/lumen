@@ -47,15 +47,19 @@ import param
 
 from panel.viewable import Viewer
 from panel_flowdash import (
-    current_dashboard, dashboard_context, register, register_port_type,
+    current_dashboard, current_node_id, dashboard_context, register,
+    register_port_type,
 )
 from panel_flowdash.dataflow_engine import failure_text
+from panel_flowdash.selection import (
+    DEBOUNCE, EMPTY, SELECTION_TYPE, Selection, link_selection,
+)
 from panel_flowdash.util import is_failure
 
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, Source
 from ..sources.duckdb import DuckDBSource
-from ..transforms.base import Filter as FilterTransform, Iloc
+from ..transforms.base import Filter as FilterTransform, Iloc, Range
 from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
 from .checks import (
@@ -289,10 +293,31 @@ def filter_condition(value: Any) -> Any:
     if (isinstance(value, tuple) and len(value) == 2 and any(v is not None for v in value)
             and all(v is None or (isinstance(v, (int, float, dt.date)) and not isinstance(v, bool)) for v in value)):
         return value
+    if isinstance(value, Range):
+        bounds = filter_condition((value.start, value.end))
+        return Range(*bounds, closed=value.closed)
     raise ValueError(
         f"Cannot filter on {value!r}: give a single value, a list of values, or a (start, end) "
         "range of numbers or dates."
     )
+
+
+def selection_conditions(selection: Selection) -> list[tuple[str, Any]]:
+    """
+    ``selection``'s predicates as filter conditions: a range closed on both
+    ends is a ``(start, end)`` tuple, one closed on the left a ``Range``, and
+    ``in`` a list. Raises ``ValueError`` for a selection of rows by position.
+    """
+    selection.check_filterable()
+    conditions = []
+    for predicate in selection.predicates:
+        if predicate.op == "in":
+            conditions.append((predicate.field, list(predicate.values)))
+        elif predicate.closed == "left":
+            conditions.append((predicate.field, Range(*predicate.values, closed="left")))
+        else:
+            conditions.append((predicate.field, tuple(predicate.values)))
+    return conditions
 
 
 def filtered_pipeline(pipeline: Pipeline, field: str, value: Any, limit: int = RESULT_LIMIT) -> Pipeline:
@@ -312,16 +337,33 @@ def filtered_pipeline(pipeline: Pipeline, field: str, value: Any, limit: int = R
     text column is lexical, while filtering fetched rows compares the
     Python values.
     """
-    if is_failure(pipeline):
-        raise ValueError(f"The input failed: {failure_text(pipeline)}")
-    if not isinstance(pipeline, Pipeline):
-        raise ValueError(f"Expected a Lumen pipeline, got {type(pipeline).__name__}.")
+    _check_pipeline(pipeline)
     columns = pipeline_columns(pipeline)
     if field not in columns:
         raise ValueError(f"The data has no column {field!r}. Its columns are: {', '.join(columns)}.")
     if not filter_value(value):
         return pipeline
-    condition = [(field, filter_condition(value))]
+    return conditioned_pipeline(pipeline, [(field, value)], limit)
+
+
+def _check_pipeline(pipeline: Any) -> None:
+    if is_failure(pipeline):
+        raise ValueError(f"The input failed: {failure_text(pipeline)}")
+    if not isinstance(pipeline, Pipeline):
+        raise ValueError(f"Expected a Lumen pipeline, got {type(pipeline).__name__}.")
+
+
+def conditioned_pipeline(pipeline: Pipeline, conditions: list[tuple[str, Any]],
+                         limit: int = RESULT_LIMIT) -> Pipeline:
+    """``pipeline`` keeping the rows that match every ``(field, value)`` condition, as one filter step."""
+    _check_pipeline(pipeline)
+    columns = pipeline_columns(pipeline)
+    for field, _ in conditions:
+        if field not in columns:
+            raise ValueError(f"The data has no column {field!r}. Its columns are: {', '.join(columns)}.")
+    condition = [(field, filter_condition(value)) for field, value in conditions if filter_value(value)]
+    if not condition:
+        return pipeline
     if pipeline.pipeline is not None:
         return pipeline.chain(transforms=[FilterTransform(conditions=condition)])
     if not pipeline.source._supports_sql:
@@ -691,6 +733,7 @@ class LumenNode(Viewer):
     def __init__(self, **params):
         editor = current_dashboard()
         self._editor = weakref.ref(editor) if editor is not None else None
+        self._node_id = current_node_id()
         # Taken now, while the editor creating the node is known; it follows later bindings.
         self._context = dashboard_context()
         super().__init__(**params)
@@ -700,6 +743,12 @@ class LumenNode(Viewer):
     @property
     def editor(self) -> Any:
         return self._editor() if self._editor is not None else None
+
+    def node_id(self) -> str | None:
+        """The id of the node the component was created for."""
+        if self._node_id is None and self.editor is not None:
+            self._node_id = self.editor.node_id(self)
+        return self._node_id
 
     # Whether the node reads a source directly, and so runs again on the dashboard's refresh.
     _reads_source: ClassVar[bool] = False
@@ -930,14 +979,17 @@ class TableNode(PipelineNode):
     description=(
         "Keeps the rows of a Lumen pipeline whose field matches the value input: equal to a "
         "single value, one of a list, or within a (start, end) range of numbers or dates. An "
-        "empty value keeps every row, and a value of another shape is refused. On a table read "
-        "from a SQL source the source applies the filter in its query, before the table's limit."
+        "empty value keeps every row, and a value of another shape is refused. The selection "
+        "input takes a chart's selection output and keeps the rows matching it; the field is "
+        "then optional. On a table read from a SQL source the source applies the filter in its "
+        "query, before the table's limit."
     ),
     config=["field"],
     check_config=check_filter_config,
     requires=[
         {"key": "pipeline", "type": PIPELINE_TYPE, "required": True},
         {"key": "value", "required": False, "blocking": False},
+        {"key": "selection", "type": SELECTION_TYPE, "required": False, "blocking": False},
     ],
     provides=[{"key": "filtered", "type": PIPELINE_TYPE}],
 )
@@ -947,6 +999,9 @@ class FilterNode(PipelineNode):
 
     value = param.Parameter(doc="The value to keep, e.g. a widget's selection.")
 
+    selection = param.ClassSelector(class_=Selection, default=None, allow_None=True, doc="""
+        A plot selection; each of its predicates becomes a condition.""")
+
     field = param.String(
         default="", doc="The column to filter on.",
         metadata={"flowdash": {"choices": "columns", "of": "pipeline"}},
@@ -954,14 +1009,20 @@ class FilterNode(PipelineNode):
 
     _waiting = "Waiting for a pipeline and a field"
 
-    @param.depends("pipeline", "value", "field", watch=True, on_init=True)
+    @param.depends("pipeline", "value", "selection", "field", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
 
     def _resolve(self) -> Pipeline | None:
-        if self.pipeline is None or not self.field:
+        if self.pipeline is None or not (self.field or self.selection is not None):
             return None
-        return filtered_pipeline(self.pipeline, self.field, self.value, row_ceiling(self.editor))
+        limit = row_ceiling(self.editor)
+        pipeline = self.pipeline
+        if self.field:
+            pipeline = filtered_pipeline(pipeline, self.field, self.value, limit)
+        if self.selection is not None and not self.selection.empty:
+            pipeline = conditioned_pipeline(pipeline, selection_conditions(self.selection), limit)
+        return pipeline
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -1039,10 +1100,16 @@ def responsive_spec(spec: dict[str, Any]) -> dict[str, Any]:
 
 @register(
     component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart",
-    description="A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings no data or URLs.",
-    config=["spec"],
+    description=(
+        "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
+        "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
+        "selection output gives what is selected: wire it to a filter's selection input that "
+        "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
+    ),
+    config=["spec", "debounce"],
     check_config=check_view_config,
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
+    provides=[{"key": "selection", "type": SELECTION_TYPE}],
 )
 class ViewNode(LumenNode):
 
@@ -1054,7 +1121,16 @@ class ViewNode(LumenNode):
         ``color_scheme`` setting, if it has one.""",
         metadata={"flowdash": {"widget": "spec", "settings": VEGA_LITE_SETTINGS}})
 
+    debounce = param.Integer(default=DEBOUNCE, bounds=(0, None), doc="""
+        Milliseconds the chart waits after the last change of a selection
+        before reporting it, so a drag reports once rather than on every
+        mouse move.""")
+
+    selection = param.ClassSelector(class_=Selection, default=EMPTY, doc="""
+        What is selected on the chart, by the spec's selection params.""")
+
     def __init__(self, **params):
+        self._link = None
         super().__init__(**params)
         settings = getattr(self.editor, "settings", None)
         if settings is not None and "color_scheme" in settings.param:
@@ -1085,7 +1161,22 @@ class ViewNode(LumenNode):
         # The rows come through fetch, so the chart shares one query with the pipeline's other readers.
         rows = fetch(self.pipeline, row_ceiling(self.editor))
         spec = themed_spec(responsive_spec(spec), self._color_scheme())
-        return VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=spec)
+        view = VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=spec)
+        view.update()
+        if isinstance(view._panel, pn.pane.Vega):
+            # A new chart starts with nothing selected; the link reports that.
+            self._link = link_selection(
+                self, view._panel, debounce=self.debounce, link=self._link, source=self.node_id,
+            )
+        return view
+
+    @param.depends("debounce", watch=True)
+    def _update_debounce(self):
+        if self._link is not None:
+            self._link.debounce = self.debounce
+            pane = getattr(self._object, "_panel", None)
+            if isinstance(pane, pn.pane.Vega):
+                pane.debounce = self.debounce
 
     def _body(self):
         view = self._object

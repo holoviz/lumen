@@ -16,7 +16,7 @@ from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
     QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query, effective_limit,
-    pipeline_columns, primed_result, result_sql,
+    pipeline_columns, primed_result, result_sql, selection_warnings,
 )
 from ..pipeline import Pipeline
 from . import _graph
@@ -110,7 +110,9 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     except ValueError as exc:
         raise ModelRetry(str(exc)) from exc
     _place(ops, VIEW_ID, name, {"spec": spec}, f"{data}.{port}", f"{name}.pipeline")
-    return f"Placed chart {name!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
+    placed = f"Placed chart {name!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
+    notes = selection_warnings(spec)
+    return placed + "".join(f"\nNote: {note}" for note in notes)
 
 
 def _upstream_port(ops, data: str) -> str:
