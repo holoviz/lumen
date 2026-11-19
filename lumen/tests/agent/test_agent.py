@@ -710,6 +710,12 @@ async def test_an_answer_from_run_sql_alone_is_sent_back_to_be_placed():
     assert turn.nodes == ["total"] and turn.error is None
 
 
+async def test_list_tables_points_at_describe_table_for_unprofiled_tables(ctx, monkeypatch):
+    monkeypatch.setattr("lumen.agent.data.SCHEMA_MAX_TOKENS", 40)
+    text = await list_tables(ctx)
+    assert "describe_table gives their statistics" in text and "load_table_schemas" not in text
+
+
 def _filtered_customers(session):
     ops = session.ops
     ops.add_node(TABLE_ID, {"table": "customers"}, name="customers")
