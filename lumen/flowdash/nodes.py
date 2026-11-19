@@ -63,6 +63,9 @@ from .checks import (
     check_sql_config, check_table_config, check_view_config, forget_probes,
     pipeline_columns,
 )
+from .contracts import (
+    DATA_ID, FILTER_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SourceContract,
+)
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
 SOURCE_COLOR = "#6D4C41"
@@ -85,13 +88,6 @@ SOURCE_TYPE = _register_port_type("lumen.Source", color=SOURCE_COLOR)
 PIPELINE_TYPE = _register_port_type(
     "lumen.Pipeline", color=PIPELINE_COLOR, columns=pipeline_columns
 )
-
-SOURCE_ID = "Lumen/source"
-TABLE_ID = "Lumen/table"
-FILTER_ID = "Lumen/filter"
-SQL_ID = "Lumen/sql"
-DATA_ID = "Lumen/data"
-VIEW_ID = "Lumen/view"
 
 # The key of the editor context the host puts its sources in, by ref.
 SOURCES_KEY = "lumen.sources"
@@ -762,6 +758,7 @@ class LumenNode(Viewer):
     description="A Lumen data source the app provides, named by its ref.",
     config=["ref"],
     check_config=check_source_config,
+    contract=SourceContract(),
     provides=[{"key": "source", "type": SOURCE_TYPE}],
 )
 class SourceNode(LumenNode):
