@@ -21,11 +21,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..ai.evals.harness import (
     MAX_ANSWER_LENGTH, MAX_ROWS, MAX_TOOL_RESULT_LENGTH, OPENROUTER_ENDPOINT,
-    PRICING_PER_MILLION, Inputs, Output, Turn, TurnArtifacts, Usage,
-    register_subject,
+    Inputs, Output, Turn, TurnArtifacts, Usage, cold_surcharge,
+    register_subject, request_cost, total_usage,
 )
 from ..ai.tool_trace import ToolCall
-from ..ai.usage import _rates
 from ..flowdash import METRIC_ID, SQL_ID, VIEW_ID
 from ..flowdash.metrics import table_sql
 from ..pipeline import Pipeline
@@ -71,33 +70,27 @@ def build_model(model: str, *, provider: str = "openai", api_key: str | None = N
     return cls(model, provider=provider_)
 
 
-def usage(responses: list[ModelResponse]) -> Usage | None:
-    """Tokens and cost of ``responses``, priced like the Lumen subject's calls."""
+def usage(responses: list[ModelResponse], first: bool = False) -> Usage | None:
+    """
+    Tokens and cost of ``responses``, priced like the Lumen subject's calls;
+    ``first`` if they start the case, whose first request ``cold_cost_usd``
+    prices uncached.
+    """
     if not responses:
         return None
-    inputs = sum(r.usage.input_tokens for r in responses)
-    outputs = sum(r.usage.output_tokens for r in responses)
-    cached = sum(r.usage.cache_read_tokens for r in responses)
-    costs = []
-    for r in responses:
-        rates = _rates(PRICING_PER_MILLION, r.model_name or "")
-        if rates is None:
-            costs.append(None)
-            continue
-        u = r.usage
-        costs.append(((u.input_tokens - u.cache_read_tokens) * rates["input"]
-                      + u.cache_read_tokens * rates.get("cached", rates["input"])
-                      + u.output_tokens * rates["output"]) / 1_000_000)
-    return Usage(inputs, outputs, cached, sum(costs) if all(c is not None for c in costs) else None)
+    costs = [request_cost(r.model_name or "", r.usage.input_tokens, r.usage.output_tokens,
+                          r.usage.cache_read_tokens, r.usage.cache_write_tokens) for r in responses]
+    cost = sum(costs) if all(c is not None for c in costs) else None
+    head = responses[0]
+    surcharge = cold_surcharge(head.model_name or "", head.usage.cache_read_tokens) if first else 0
+    return Usage(sum(r.usage.input_tokens for r in responses), sum(r.usage.output_tokens for r in responses),
+                 sum(r.usage.cache_read_tokens for r in responses), cost, len(responses),
+                 cost + surcharge if cost is not None and surcharge is not None else None,
+                 sum(r.usage.cache_write_tokens for r in responses))
 
 
 def _total(turns: list[Turn]) -> Usage | None:
-    calls = [turn.usage for turn in turns if turn.usage is not None]
-    if not calls:
-        return None
-    costs = [call.cost_usd for call in calls]
-    return Usage(sum(c.input_tokens for c in calls), sum(c.output_tokens for c in calls),
-                 sum(c.cached_tokens for c in calls), sum(costs) if all(c is not None for c in costs) else None)
+    return total_usage([turn.usage for turn in turns])
 
 
 def tool_calls(messages: list[Any], returned: dict[str, str] | None = None) -> list[ToolCall]:
@@ -224,8 +217,8 @@ def final_rows(ops: Any, answers: list[str | None]) -> list[list[list[Any]] | No
     return rows
 
 
-def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
-    """Read a ``Turn`` off the dashboard, from the nodes the turn added or changed."""
+def snapshot(session: AgentSession, turn: TurnResult, first: bool = False) -> Turn:
+    """Read a ``Turn`` off the dashboard, from the nodes the turn added or changed; ``first`` if it is the case's first."""
     ops = session.ops
     data, views = answer_nodes(ops, [*turn.nodes, *turn.changed])
     sql = columns = rows = row_count = None
@@ -246,7 +239,7 @@ def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
     return Turn(
         prompt=turn.prompt, status="error" if turn.error else "success", answer=answer,
         actors=[], task_statuses=[], sql=sql, columns=columns, rows=rows, row_count=row_count, view_types=[],
-        usage=usage(turn.responses), listing=listing, chart_marks=marks, chart_encodings=encodings,
+        usage=usage(turn.responses, first), listing=listing, chart_marks=marks, chart_encodings=encodings,
         tool_calls=calls, task_errors=errors,
     )
 
@@ -327,7 +320,7 @@ class FlowDashSubject:
         """The usage of the case running now, or of the one that just ended, e.g. by a timeout or an error."""
         session = getattr(self, "_session", None)
         if session is not None:
-            return usage(session.model.responses)
+            return usage(session.model.responses, first=True)
         return getattr(self, "_last_usage", None)
 
     @property
@@ -376,7 +369,7 @@ class FlowDashSubject:
                 session.add_sql(SEEDED_QUERY, inputs.query)
             for prompt in inputs.prompts:
                 result = await session.ask(prompt)
-                turn = snapshot(session, result)
+                turn = snapshot(session, result, first=not turns)
                 answer, _ = answer_nodes(session.ops, [*result.nodes, *result.changed])
                 turn.reads = reads(session.ops, answer, answers)
                 answers.append(answer)
@@ -391,5 +384,5 @@ class FlowDashSubject:
         finally:
             session.close()
             self._session = None
-            self._last_usage = usage(session.model.responses)
+            self._last_usage = usage(session.model.responses, first=True)
         return Output(turns, _total(turns), artifacts, final_rows=final)

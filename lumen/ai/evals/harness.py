@@ -32,6 +32,8 @@ from lumen.ai.llm import OpenAI
 from lumen.ai.report import ActorTask
 from lumen.ai.tool_trace import ToolCall
 from lumen.ai.ui import ExplorerUI
+from lumen.ai.usage import _rates
+from lumen.ai.utils import describe_data
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.data.catalog import get_metaset
 from lumen.pipeline import Pipeline
@@ -42,6 +44,9 @@ MAX_ANSWER_LENGTH = 4000
 MAX_TOOL_RESULT_LENGTH = 4000
 EVALUATOR_VERSION = 2
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
+# OpenRouter caches Anthropic prompts only below a breakpoint; a top-level one
+# moves with the end of each request's prompt.
+ANTHROPIC_CACHE = {"cache_control": {"type": "ephemeral"}}
 # Above LumenSubject's own 120s per-prompt limit, so its timeouts still apply first.
 PROMPT_TIMEOUT = 180
 DEFAULT_SUBJECT = "lumen"
@@ -60,23 +65,73 @@ PRICING_PER_MILLION = {
     "google/gemini-3.8-flash": {"input": 0.75, "cached": 0.075, "output": 3.75},
     "xiaomi/mimo-v2.6-flash": {"input": 0.14, "cached": 0.0028, "output": 0.28},
     "z-ai/glm-5.3-flash": {"input": 0.15, "cached": 0.03, "output": 0.50},
-    "anthropic/claude-sonnet-5": {"input": 2.00, "cached": 0.20, "output": 10.00},
-    "anthropic/claude-haiku-4.5": {"input": 1.00, "cached": 0.10, "output": 5.00},
-    "openai/gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50},
+    "anthropic/claude-sonnet-5": {"input": 2.00, "cached": 0.20, "output": 10.00, "cache_write": 2.50},
+    "anthropic/claude-haiku-4.5": {"input": 1.00, "cached": 0.10, "output": 5.00, "cache_write": 1.25},
+    "anthropic/claude-haiku-5.5": {"input": 0.10, "cached": 0.01, "output": 0.50, "cache_write": 0.125},
+    "ibm-granite/granite-4.2-8b": {"input": 0.06, "cached": 0.015, "output": 0.15},
+    "mistralai/ministral-8b-2512": {"input": 0.15, "cached": 0.015, "output": 0.15},
+    "qwen/qwen3.5-9b": {"input": 0.154, "cached": 0.138, "output": 0.226},
+    # OpenRouter reports and bills cache writes for gpt-6-luna.
+    "openai/gpt-6-luna": {"input": 0.10, "cached": 0.01, "output": 0.50, "cache_write": 0.125},
     "deepseek/deepseek-v4.1-flash": {"input": 0.003, "cached": 0.003, "output": 2.40},
 }
 
 
 @dataclass
 class Usage:
+    """
+    Tokens and cost of model requests. ``cold_cost_usd`` is what they would
+    cost if the case's first request found nothing in the provider's prompt
+    cache, i.e. if cases did not run back to back: the cached tokens of that
+    request are priced at the cache write rate, or else the input rate.
+    """
+
     input_tokens: int
     output_tokens: int
     cached_tokens: int
     cost_usd: float | None
+    requests: int | None = None
+    cold_cost_usd: float | None = None
+    cache_write_tokens: int = 0
 
     @property
     def cached_percent(self) -> float | None:
         return 100 * self.cached_tokens / self.input_tokens if self.input_tokens else None
+
+
+def request_cost(model: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0,
+                 cache_write_tokens: int = 0) -> float | None:
+    """The cost of one request at ``PRICING_PER_MILLION``, or None for a model without a price."""
+    rates = _rates(PRICING_PER_MILLION, model or "")
+    if rates is None:
+        return None
+    return ((input_tokens - cached_tokens - cache_write_tokens) * rates["input"]
+            + cached_tokens * rates.get("cached", rates["input"])
+            + cache_write_tokens * rates.get("cache_write", rates["input"])
+            + output_tokens * rates["output"]) / 1_000_000
+
+
+def cold_surcharge(model: str, cached_tokens: int) -> float | None:
+    """What ``cached_tokens`` of a request would cost more if they were not in the cache."""
+    rates = _rates(PRICING_PER_MILLION, model or "")
+    if rates is None:
+        return None
+    return cached_tokens * (rates.get("cache_write", rates["input"]) - rates.get("cached", rates["input"])) / 1_000_000
+
+
+def total_usage(usages: list[Usage | None]) -> Usage | None:
+    """The sum of ``usages``; a cost is only summed when every part has one."""
+    usages = [u for u in usages if u is not None]
+    if not usages:
+        return None
+
+    def total(name):
+        values = [getattr(u, name) for u in usages]
+        return sum(values) if all(v is not None for v in values) else None
+
+    return Usage(sum(u.input_tokens for u in usages), sum(u.output_tokens for u in usages),
+                 sum(u.cached_tokens for u in usages), total("cost_usd"), total("requests"),
+                 total("cold_cost_usd"), sum(u.cache_write_tokens for u in usages))
 
 
 class EvalOpenAI(OpenAI):
@@ -102,6 +157,8 @@ class EvalOpenAI(OpenAI):
             # Qwen 3.8 comparable with earlier non-thinking results.
             if self.api != "responses" and self.model_kwargs["default"]["model"].startswith("qwen/qwen3.8-"):
                 params["extra_body"] = {**params.get("extra_body", {}), "reasoning": {"enabled": False}}
+            if self.endpoint == OPENROUTER_ENDPOINT and self.model_kwargs["default"]["model"].startswith("anthropic/"):
+                params["extra_body"] = {**params.get("extra_body", {}), **ANTHROPIC_CACHE}
 
             async def wait_for_retry(exc, attempt):
                 retry_after = exc.response.headers.get("retry-after") if exc.response else None
@@ -533,7 +590,7 @@ class LumenSubject:
 
             query_source = DuckDBSource(uri=":memory:", tables={**source.tables, "result": inputs.query})
             pipeline = Pipeline(source=query_source, table="result")
-            context.update(pipeline=pipeline, data=pipeline.data, table="result")
+            context.update(pipeline=pipeline, data=await describe_data(pipeline.data), table="result")
         turns = []
         for prompt in inputs.prompts:
             before = len(interface.objects)
@@ -566,18 +623,28 @@ class LumenSubject:
                     else:
                         turn = Turn(prompt, "error", error, [], [], None, None, None, None, [], task_errors=[error])
                 finally:
-                    calls = scope.records
                     turn.tool_calls = [ToolCall(call.name, call.arguments, call.result[:MAX_TOOL_RESULT_LENGTH]) for call in tool_calls if isinstance(call, ToolCall)]
-                    if calls:
-                        costs = [call.cost_usd for call in calls]
-                        turn.usage = Usage(sum(call.input_tokens for call in calls), sum(call.output_tokens for call in calls), sum(call.cached_tokens for call in calls), sum(costs) if all(cost is not None for cost in costs) else None)
+                    turn.usage = records_usage(scope.records, first=not turns)
             turns.append(turn)
             if turn.status in ("error", "timeout"):
                 break
-        calls = [turn.usage for turn in turns if turn.usage is not None]
-        costs = [call.cost_usd for call in calls]
-        total = Usage(sum(call.input_tokens for call in calls), sum(call.output_tokens for call in calls), sum(call.cached_tokens for call in calls), sum(costs) if all(cost is not None for cost in costs) else None) if calls else None
-        return Output(turns, total)
+        return Output(turns, total_usage([turn.usage for turn in turns]))
+
+
+def records_usage(records: list[Any], first: bool = False) -> Usage | None:
+    """
+    The ``Usage`` of Lumen ``Llm`` usage records; ``first`` if they include
+    the case's first request, which ``cold_cost_usd`` prices uncached.
+    """
+    if not records:
+        return None
+    costs = [record.cost_usd for record in records]
+    cost = sum(costs) if all(c is not None for c in costs) else None
+    surcharge = cold_surcharge(records[0].model, records[0].cached_tokens) if first else 0
+    return Usage(sum(r.input_tokens for r in records), sum(r.output_tokens for r in records),
+                 sum(r.cached_tokens for r in records), cost, len(records),
+                 cost + surcharge if cost is not None and surcharge is not None else None,
+                 sum(getattr(r, "cache_write_tokens", 0) for r in records))
 
 
 async def run_case(inputs: Inputs, llm: Any, source: Any, documents: list[Any] | None = None,
