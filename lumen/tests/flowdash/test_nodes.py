@@ -22,6 +22,7 @@ from lumen.flowdash import (
     check_chart, check_query, compile_sql, nodes as flowdash_nodes,
     primed_result, result_sql, set_row_ceiling,
 )
+from lumen.flowdash.nodes import responsive_spec
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.duckdb import DuckDBSource
@@ -316,6 +317,37 @@ def test_view_node_drops_named_data(source):
     ops.set_config("chart", {"spec": {**SPEC, "data": {"name": "by_category"}}})
     view = ops.editor._component_instances[ops._instance("chart")]._object
     assert "data" not in view.spec
+
+
+@pytest.mark.parametrize("size, rendered, sizing_mode", [
+    ({}, {"width": "container", "height": "container"}, "stretch_both"),
+    ({"width": 300}, {"width": 300, "height": "container"}, "stretch_height"),
+    ({"height": 200}, {"width": "container", "height": 200}, "stretch_width"),
+    ({"width": 300, "height": 200}, {"width": 300, "height": 200}, None),
+])
+def test_view_node_fills_its_tile_unless_the_spec_sets_a_size(source, size, rendered, sizing_mode):
+    ops = dashboard(source)
+    ops.set_config("chart", {"spec": {**SPEC, **size}})
+
+    pane = ops.editor._component_instances[ops._instance("chart")]._object.panel
+    assert {key: pane.object[key] for key in ("width", "height")} == rendered
+    assert pane.get_root().sizing_mode == sizing_mode
+    assert ops.node_config("chart")["spec"] == {**SPEC, **size}
+
+
+@pytest.mark.parametrize("spec", [
+    {"hconcat": [SPEC, SPEC]},
+    {"facet": {"field": "category"}, "spec": SPEC},
+    {"repeat": ["total"], "spec": SPEC},
+])
+def test_responsive_spec_leaves_compound_charts_alone(spec):
+    assert responsive_spec(spec) is spec
+
+
+def test_responsive_spec_does_not_change_the_spec():
+    spec = dict(SPEC)
+    assert responsive_spec(spec) == {**SPEC, "width": "container", "height": "container"}
+    assert spec == SPEC
 
 
 def test_pipeline_does_not_connect_to_source_input(source):
