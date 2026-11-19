@@ -1662,3 +1662,10 @@ def test_source_query_with_a_range_value():
     source = DuckDBSource.from_df({"df": df})
     assert source.get("df", A=Range(1, 3, closed="left"))["A"].tolist() == [1, 2]
     assert source.get("df", A=Range(1, 3))["A"].tolist() == [1, 2, 3]
+
+
+def test_sql_prefilter_range_value():
+    result = SQLPreFilter.apply_to(
+        "SELECT n FROM obs", conditions=[("obs", [("A", Range(1, 3, closed="left"))])]
+    )
+    assert "\"A\" >= '1' AND \"A\" < '3'" in result
