@@ -104,12 +104,15 @@ class TestCheck:
             ("by_region", "Table 'customers' has no column 'region'."),
         ]
 
-    def test_a_changed_type_fails_but_integer_to_number_does_not(self):
+    def test_a_changed_type_fails_but_number_to_integer_does_not(self):
         problems = check(self.doc(), "data", self.contract(), self.changed("orders", amount="string"), "duckdb")
         assert [(p.node, p.message) for p in problems] == [
             ("by_region", "Column orders.amount is string now; the contract expects integer."),
         ]
-        assert check(self.doc(), "data", self.contract(), self.changed("orders", amount="number"), "duckdb") == []
+        assert [p.node for p in check(self.doc(), "data", self.contract(), self.changed("orders", amount="number"), "duckdb")] == ["by_region"]
+        contract = self.contract()
+        contract["tables"]["orders"]["amount"] = "number"
+        assert check(self.doc(), "data", contract, SCHEMA, "duckdb") == []
 
     def test_a_missing_table_names_its_readers(self):
         schema = {"orders": SCHEMA["orders"]}
