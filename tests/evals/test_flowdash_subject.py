@@ -322,3 +322,12 @@ def test_usage_counts_requests_and_prices_the_first_uncached_when_cold():
     assert warm.cost_usd == pytest.approx(((200 + 500) * 0.10 + 2300 * 0.01 + 20 * 0.50) / 1_000_000)
     assert warm.cold_cost_usd == pytest.approx(warm.cost_usd)
     assert cold.cold_cost_usd == pytest.approx(warm.cost_usd + 800 * (0.10 - 0.01) / 1_000_000)
+
+
+def test_anthropic_on_openrouter_caches_the_static_prefix():
+    from lumen.agent.evals import build_model
+
+    model = build_model("anthropic/claude-haiku-5.5", provider="openrouter", api_key="x")
+    assert type(model).__name__ == "OpenRouterModel"
+    assert model.settings["openrouter_cache_instructions"] and model.settings["openrouter_cache_tool_definitions"]
+    assert type(build_model("openai/gpt-6-luna", provider="openrouter", api_key="x")).__name__ == "OpenAIChatModel"

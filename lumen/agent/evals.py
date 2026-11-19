@@ -20,9 +20,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ..ai.evals.harness import (
-    ANTHROPIC_CACHE, MAX_ANSWER_LENGTH, MAX_ROWS, MAX_TOOL_RESULT_LENGTH,
-    OPENROUTER_ENDPOINT, Inputs, Output, Turn, TurnArtifacts, Usage,
-    cold_surcharge, register_subject, request_cost, total_usage,
+    MAX_ANSWER_LENGTH, MAX_ROWS, MAX_TOOL_RESULT_LENGTH, OPENROUTER_ENDPOINT,
+    Inputs, Output, Turn, TurnArtifacts, Usage, cold_surcharge,
+    register_subject, request_cost, total_usage,
 )
 from ..ai.tool_trace import ToolCall
 from ..flowdash import SQL_ID, VIEW_ID
@@ -38,24 +38,27 @@ SEEDED_QUERY = "result"
 TRACES_ENV = "LUMEN_AGENT_TRACES"
 
 
-def provider_settings(model: str, provider: str) -> dict[str, Any] | None:
-    """
-    Model settings a provider needs for its prompt cache: OpenRouter caches
-    an Anthropic model's prompt only with a breakpoint, here the top-level
-    one that moves with the end of the conversation, as the Lumen subject
-    sets it.
-    """
-    if provider == "openrouter" and model.startswith("anthropic/"):
-        return {"extra_body": dict(ANTHROPIC_CACHE)}
-    return None
-
-
 def build_model(model: str, *, provider: str = "openai", api_key: str | None = None, api: str | None = None) -> Any:
-    """A pydantic-ai model for the harness's model options: OpenAI, or OpenRouter's OpenAI-compatible endpoint."""
+    """
+    A pydantic-ai model for the harness's model options: OpenAI, or
+    OpenRouter's OpenAI-compatible endpoint. OpenRouter caches an Anthropic
+    model's prompt only below a breakpoint, so an Anthropic model gets
+    breakpoints after the instructions, the tool definitions and the last
+    message, and the static prefix is cached across cases as it would be
+    across conversations.
+    """
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     if provider == "openrouter":
+        if model.startswith("anthropic/") and (api or "chat_completions") == "chat_completions":
+            from pydantic_ai.models.openrouter import OpenRouterModel
+            from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+            return OpenRouterModel(model, provider=OpenRouterProvider(api_key=api_key), settings={
+                "openrouter_cache_instructions": True, "openrouter_cache_tool_definitions": True,
+                "openrouter_cache_messages": True,
+            })
         provider_ = OpenAIProvider(base_url=OPENROUTER_ENDPOINT, api_key=api_key)
         api = api or "chat_completions"
     elif provider == "openai":
@@ -64,7 +67,7 @@ def build_model(model: str, *, provider: str = "openai", api_key: str | None = N
     else:
         raise ValueError(f"Unknown provider {provider!r}")
     cls = OpenAIResponsesModel if api == "responses" else OpenAIChatModel
-    return cls(model, provider=provider_, settings=provider_settings(model, provider))
+    return cls(model, provider=provider_)
 
 
 def usage(responses: list[ModelResponse], first: bool = False) -> Usage | None:
