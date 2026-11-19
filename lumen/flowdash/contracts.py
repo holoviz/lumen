@@ -206,7 +206,9 @@ def check(doc: Mapping[str, Any], source_node: str, contract: Mapping[str, Any],
             u.node for u in node_usages if problem.table in u.tables
             and (problem.column is None or problem.column in u.tables[problem.table])
         ]
-        problems += [Problem(node, problem.message) for node in readers] or [Problem(None, problem.message)]
+        problems += [Problem(node, problem.message, problem.warning) for node in readers] or [
+            Problem(None, problem.message, problem.warning)
+        ]
     for usage in node_usages:
         if usage.coverage != FULL:
             problems.append(Problem(usage.node, f"Not fully covered by the contract: {usage.reason}",
