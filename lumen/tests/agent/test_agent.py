@@ -540,3 +540,19 @@ async def test_set_config_checks_and_runs_sql_and_chart_specs():
     assert isinstance(result, ToolReturnPart) and "Result: 2 rows" in result.model_response_str()
     assert all(not isinstance(returned(index), ToolReturnPart) or returned(index).outcome == "retried" for index in (3, 4, 5))
     assert "COUNT(*)" in config["sql"] and turn.error is None
+
+
+async def test_an_answer_from_run_sql_alone_is_sent_back_to_be_placed():
+    model, requests = script(
+        [ToolCallPart("run_sql", {"sql": "SELECT SUM(amount) AS total FROM orders"})],
+        [TextPart("The total is 90.")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "total", "sql": "SELECT SUM(amount) AS total FROM orders"})],
+        [TextPart("The total is 90.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("What is the total amount?")
+    finally:
+        session.close()
+    assert "Place the query your answer is based on" in str(requests[2])
+    assert turn.nodes == ["total"] and turn.error is None

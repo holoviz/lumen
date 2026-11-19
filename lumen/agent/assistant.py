@@ -9,7 +9,9 @@ from panel_flowdash.agent import (
 )
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import ProcessHistory
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import (
+    ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart,
+)
 
 from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
@@ -77,6 +79,24 @@ Use the dialect list_tables names for the source.
 MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 1000}
 
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
+
+UNPLACED = ("The user only sees nodes on the dashboard, not run_sql results. Place the query your answer "
+            "is based on with add_sql, or change a node with set_config, then answer again.")
+PLACING_TOOLS = frozenset({"add_sql", "add_chart", "set_config"})
+
+
+def answered_from_run_sql(messages: list[ModelMessage]) -> bool:
+    """
+    Whether the current run, since the last user prompt, ran SQL with
+    run_sql but placed or changed no node: small models then state a result
+    the dashboard does not hold.
+    """
+    start = max((i for i, m in enumerate(messages) if isinstance(m, ModelRequest)
+                 and any(isinstance(p, UserPromptPart) for p in m.parts)), default=0)
+    calls = {part.tool_name for m in messages[start:] if isinstance(m, ModelResponse)
+             for part in m.parts if isinstance(part, ToolCallPart)}
+    return "run_sql" in calls and not calls & PLACING_TOOLS
+
 
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
 DASHBOARD_TOOLS = {
@@ -149,6 +169,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         last = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
         if last is not None and last.finish_reason == "length":
             raise ModelRetry(CUT_OFF)
+        if answered_from_run_sql(ctx.messages):
+            raise ModelRetry(UNPLACED)
         return output
 
     return agent
