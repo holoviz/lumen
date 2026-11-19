@@ -1,10 +1,13 @@
 import datetime as dt
+import json
 import os
 import pathlib
 
+import numpy as np
 import pandas as pd
 import param  # type: ignore
 import pytest
+import yaml
 
 from lumen.transforms.base import (
     Aggregate, Columns, Count, DropNA, Eval, Filter, Range, SetIndex, Sort,
@@ -182,8 +185,8 @@ def test_filter_range_value_on_dates_leaves_out_the_end_day():
 
 
 def test_range_value_checks_closed():
-    with pytest.raises(ValueError, match="'both' or 'left'"):
-        Range(1, 2, closed="right")
+    with pytest.raises(ValueError, match="must be one of 'both', 'left', 'right', 'neither'"):
+        Range(1, 2, closed="middle")
 
 
 def test_consecutive_left_closed_ranges_split_rows_without_overlap():
@@ -195,6 +198,70 @@ def test_consecutive_left_closed_ranges_split_rows_without_overlap():
 
 def test_filter_range_value_without_narwhals():
     column = pd.Series([0, 1, 2, 3])
-    assert column[Filter._range_filter(column, 1, 3, "left")].tolist() == [1, 2]
-    assert column[Filter._range_filter(column, None, 1, "left")].tolist() == [0]
-    assert column[Filter._range_filter(column, 2, None, "left")].tolist() == [2, 3]
+    assert column[Filter._range_value_mask(column, Range(1, 3, closed="left"))].tolist() == [1, 2]
+    assert column[Filter._range_value_mask(column, Range(None, 1, closed="left"))].tolist() == [0]
+    assert column[Filter._range_value_mask(column, Range(2, None, closed="left"))].tolist() == [2, 3]
+    assert column[Filter._range_value_mask(column, Range(1, 3, closed="neither"))].tolist() == [2]
+
+
+@pytest.mark.parametrize("value", [
+    Range(1, 3, closed="left"),
+    Range(None, None, closed="neither"),
+    Range(dt.date(2017, 1, 1), dt.date(2017, 1, 2), closed="right"),
+    Range(dt.datetime(2017, 1, 1, 12, 30), None),
+    Range(pd.Timestamp("2017-01-01 12:00", tz="UTC"), None, closed="neither"),
+    Range(np.datetime64("2017-01-01T06:00"), np.float64(2.5)),
+    Range("a", "c", closed="left"),
+])
+def test_range_spec_round_trips_through_yaml_and_json(value):
+    spec = value.to_spec()
+    assert Range.is_spec(spec)
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        restored = Range.from_spec(yaml.safe_load(text))
+        assert restored.bounds(True) == value.bounds(True)
+        assert restored.closed == value.closed
+
+
+def test_filter_with_range_values_round_trips_through_a_spec():
+    conditions = [("A", Range(1, 3, closed="left")), ("B", [Range(0, 1), Range(2, 3)]), ("C", "x")]
+    spec = Filter(conditions=conditions).to_spec()
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        restored = Filter.from_spec(yaml.safe_load(text))
+        assert [tuple(c) for c in restored.conditions] == conditions
+
+
+@pytest.mark.parametrize("closed, expected", [
+    ("both", [1, 2, 3]), ("left", [1, 2]), ("right", [2, 3]), ("neither", [2]),
+])
+def test_filter_range_value_closed(closed, expected):
+    df = pd.DataFrame({'A': [0, 1, 2, 3, 4]})
+    assert Filter.apply_to(df, conditions=[('A', Range(1, 3, closed=closed))])['A'].tolist() == expected
+
+
+@pytest.mark.parametrize("closed, expected", [
+    ("both", [1, 2]), ("left", [1]), ("right", [2]), ("neither", []),
+])
+def test_filter_range_value_date_bounds_stand_for_whole_days(closed, expected):
+    df = pd.DataFrame({'A': pd.date_range('2017-01-31 12:00', periods=4)})
+    value = Range(dt.date(2017, 2, 1), dt.date(2017, 2, 2), closed=closed)
+    assert Filter.apply_to(df, conditions=[('A', value)])['A'].dt.day.tolist() == expected
+
+
+def test_filter_list_of_range_values_keeps_rows_in_any():
+    df = pd.DataFrame({'A': [0, 1, 2, 3, 4, 5]})
+    value = [Range(0, 2, closed="left"), (4, 5)]
+    assert Filter.apply_to(df, conditions=[('A', value)])['A'].tolist() == [0, 1, 4, 5]
+
+
+@pytest.mark.parametrize("bound", [np.datetime64("NaT", "ns"), pd.NaT])
+def test_filter_nat_range_bound_matches_nothing(bound):
+    df = pd.DataFrame({'A': pd.date_range('2017-01-01', periods=3)})
+    assert Filter.apply_to(df, conditions=[('A', Range(bound, None))]).empty
+    assert Filter._range_value_mask(df['A'], Range(None, bound)).sum() == 0
+
+
+def test_filter_naive_range_bounds_are_read_in_the_columns_timezone():
+    df = pd.DataFrame({'A': pd.date_range('2017-01-01', periods=4, freq='h', tz='America/New_York')})
+    value = Range(dt.datetime(2017, 1, 1, 1), dt.datetime(2017, 1, 1, 3), closed="left")
+    assert Filter.apply_to(df, conditions=[('A', value)])['A'].dt.hour.tolist() == [1, 2]
+    assert df['A'][Filter._range_value_mask(df['A'], value)].dt.hour.tolist() == [1, 2]

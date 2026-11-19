@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 
 from textwrap import dedent
 
@@ -6,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import sqlglot
+import yaml
 
 import lumen as lm
 
@@ -1625,7 +1627,7 @@ def test_sql_filter_empty_list_conditions():
     ),
     (
         Range(dt.date(2017, 2, 1), dt.date(2017, 3, 1)),
-        '"A" BETWEEN \'2017-02-01 00:00:00\' AND \'2017-03-01 23:59:59\'',
+        '"A" >= \'2017-02-01 00:00:00\' AND "A" < \'2017-03-02 00:00:00\'',
     ),
 ])
 def test_sql_filter_range_value(value, where):
@@ -1669,3 +1671,71 @@ def test_sql_prefilter_range_value():
         "SELECT n FROM obs", conditions=[("obs", [("A", Range(1, 3, closed="left"))])]
     )
     assert "\"A\" >= '1' AND \"A\" < '3'" in result
+
+
+@pytest.mark.parametrize("closed, where", [
+    ("both", '"A" BETWEEN \'1\' AND \'3\''),
+    ("left", '"A" >= \'1\' AND "A" < \'3\''),
+    ("right", '"A" > \'1\' AND "A" <= \'3\''),
+    ("neither", '"A" > \'1\' AND "A" < \'3\''),
+])
+def test_sql_filter_range_value_closed(closed, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", Range(1, 3, closed=closed))])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_list_of_range_values_keeps_rows_in_any():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", [Range(1, 3, closed="left"), (5, 6)])]
+    )
+    assert result == (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "
+        "(\"A\" >= '1' AND \"A\" < '3') OR \"A\" BETWEEN '5' AND '6'"
+    )
+
+
+@pytest.mark.parametrize("bound", [np.datetime64("NaT", "ns"), pd.NaT])
+def test_sql_filter_nat_range_bound_matches_nothing(bound):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", Range(bound, None))])
+    assert result == 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = NULL'
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("closed", ["both", "left", "right", "neither"])
+@pytest.mark.parametrize("bounds", [
+    (1, 3),
+    (dt.date(2017, 4, 15), dt.date(2017, 4, 16)),
+    (dt.datetime(2017, 4, 15), dt.datetime(2017, 4, 16)),
+    (np.datetime64("NaT", "ns"), None),
+])
+def test_sql_filter_range_value_closed_matches_pandas_filter(bounds, closed):
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4], "C": pd.date_range("2017-04-14", periods=5)})
+    column = "A" if isinstance(bounds[0], int) else "C"
+    value = Range(*bounds, closed=closed)
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[(column, value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_filter_list_of_range_values_matches_pandas_filter():
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4, 5]})
+    value = [Range(0, 2, closed="left"), Range(3, 5, closed="right")]
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("A", value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("A", value)])
+    assert result["A"].tolist() == expected["A"].tolist() == [0, 1, 4, 5]
+
+
+@pytest.mark.parametrize("transform, conditions", [
+    (SQLFilter, [("A", Range(1, 3, closed="left")), ("B", [Range(dt.date(2017, 1, 1), None), Range(4, 5)])]),
+    (SQLPreFilter, [("obs", [("A", Range(dt.datetime(2017, 1, 1, 12), None, closed="neither"))])]),
+])
+def test_sql_filter_range_values_round_trip_through_a_spec(transform, conditions):
+    spec = transform(conditions=conditions).to_spec()
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        loaded = yaml.safe_load(text)
+        restored = transform.from_spec(loaded)
+        assert [tuple(c) for c in restored.conditions] == conditions
+        assert restored.apply("SELECT * FROM obs") == transform(conditions=conditions).apply("SELECT * FROM obs")
