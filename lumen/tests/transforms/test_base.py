@@ -265,3 +265,25 @@ def test_filter_naive_range_bounds_are_read_in_the_columns_timezone():
     value = Range(dt.datetime(2017, 1, 1, 1), dt.datetime(2017, 1, 1, 3), closed="left")
     assert Filter.apply_to(df, conditions=[('A', value)])['A'].dt.hour.tolist() == [1, 2]
     assert df['A'][Filter._range_value_mask(df['A'], value)].dt.hour.tolist() == [1, 2]
+
+
+def test_range_spec_keeps_the_kind_of_each_bound():
+    value = Range(dt.date(2017, 1, 1), dt.datetime(2017, 1, 3, 12), closed="neither")
+    spec = value.to_spec()
+    assert spec["type"] == {"start": "date", "end": "datetime"}
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        assert Range.from_spec(yaml.safe_load(text)) == value
+
+
+def test_filter_list_mixing_a_range_and_a_tuple_round_trips_through_a_spec():
+    df = pd.DataFrame({'A': [0, 1, 2, 3, 4, 5]})
+    conditions = [('A', [Range(0, 2, closed="left"), (3, 4)])]
+    spec = Filter(conditions=conditions).to_spec()
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        restored = Filter.from_spec(yaml.safe_load(text))
+        assert restored.apply(df)['A'].tolist() == [0, 1, 3, 4]
+
+
+def test_filter_list_mixing_ranges_with_values_is_not_applied():
+    df = pd.DataFrame({'A': [0, 1, 2, 3]})
+    assert Filter.apply_to(df, conditions=[('A', [Range(0, 1), 3])])['A'].tolist() == [0, 1, 2, 3]

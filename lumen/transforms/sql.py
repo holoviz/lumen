@@ -806,6 +806,12 @@ class SQLFilterBase(SQLTransform):
                     self.param.warning(f"Boolean values in list condition on {col!r} column not supported. Filter query will not be applied.")
                     continue
 
+                if any(isinstance(v, Range) for v in val) and not all(_is_range(v) for v in val):
+                    self.param.warning(
+                        f"Condition {val!r} on {col!r} column mixes ranges with other values. "
+                        "Filter query will not be applied."
+                    )
+                    continue
                 if all(_is_range(v) for v in val):
                     range_filters = [
                         f for f in (

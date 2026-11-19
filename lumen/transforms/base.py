@@ -412,29 +412,36 @@ class Range:
         """
         Return the range as a dict that YAML and JSON can hold: ``start``,
         ``end`` and ``closed``, with datetimes and dates written in ISO
-        format and their kind in ``type``.
+        format and their kind in ``type``, per bound when they differ, e.g.
+        ``{"start": "date", "end": "datetime"}``.
         """
-        start, end = _as_bound(self.start), _as_bound(self.end)
-        spec: dict[str, Any] = {"start": start, "end": end, "closed": self.closed}
-        kinds = {("datetime" if isinstance(v, dt.datetime) else "date") for v in (start, end) if isinstance(v, dt.date)}
-        if kinds:
-            spec["type"] = "datetime" if "datetime" in kinds else "date"
-            for key in ("start", "end"):
-                if isinstance(spec[key], dt.date):
-                    spec[key] = spec[key].isoformat()
+        bounds = {"start": _as_bound(self.start), "end": _as_bound(self.end)}
+        spec: dict[str, Any] = dict(bounds, closed=self.closed)
+        kinds = {
+            key: "datetime" if isinstance(value, dt.datetime) else "date"
+            for key, value in bounds.items() if isinstance(value, dt.date)
+        }
+        for key in kinds:
+            spec[key] = bounds[key].isoformat()
+        if len(set(kinds.values())) == 1:
+            spec["type"] = next(iter(kinds.values()))
+        elif kinds:
+            spec["type"] = kinds
         return spec
 
     @classmethod
     def from_spec(cls, spec: dict[str, Any]) -> Range:
         """Return the range ``to_spec`` wrote."""
-        kind = spec.get("type")
-        def parse(value):
-            if value is None or not isinstance(value, str) or kind is None:
+        kinds = spec.get("type")
+        def parse(key):
+            value = spec.get(key)
+            kind = kinds.get(key) if isinstance(kinds, dict) else kinds
+            if not isinstance(value, str) or kind is None:
                 return value
             if kind == "date":
                 return dt.date.fromisoformat(value)
             return dt.datetime.fromisoformat(value)
-        return cls(parse(spec.get("start")), parse(spec.get("end")), spec.get("closed", "both"))
+        return cls(parse("start"), parse("end"), spec.get("closed", "both"))
 
     @staticmethod
     def is_spec(value: Any) -> bool:
@@ -476,7 +483,12 @@ def _spec_condition_value(value: Any) -> Any:
     if isinstance(value, Range):
         return value.to_spec()
     if isinstance(value, list) and any(isinstance(v, Range) for v in value):
-        return [v.to_spec() if isinstance(v, Range) else v for v in value]
+        # A tuple in a list would come back as a list, so every range is written as a Range.
+        return [
+            v.to_spec() if isinstance(v, Range)
+            else Range(*v).to_spec() if isinstance(v, tuple) and len(v) == 2 else v
+            for v in value
+        ]
     return value
 
 
@@ -601,6 +613,12 @@ class Filter(Transform):
                 if not ranges:
                     continue
                 expr = reduce(or_, ranges)
+            elif isinstance(val, list) and any(isinstance(v, Range) for v in val):
+                self.param.warning(
+                    f'Condition {val!r} on {k!r} column mixes ranges with other values. '
+                    'Filter query will not be applied.'
+                )
+                continue
             elif isinstance(val, list):
                 if not val:
                     continue
@@ -670,6 +688,12 @@ class Filter(Transform):
                 if not masks:
                     continue
                 mask = reduce(or_, masks)
+            elif isinstance(val, list) and any(isinstance(v, Range) for v in val):
+                self.param.warning(
+                    f'Condition {val!r} on {k!r} column mixes ranges with other values. '
+                    'Filter query will not be applied.'
+                )
+                continue
             elif isinstance(val, list):
                 if not val:
                     continue

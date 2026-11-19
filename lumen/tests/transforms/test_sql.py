@@ -1739,3 +1739,23 @@ def test_sql_filter_range_values_round_trip_through_a_spec(transform, conditions
         restored = transform.from_spec(loaded)
         assert [tuple(c) for c in restored.conditions] == conditions
         assert restored.apply("SELECT * FROM obs") == transform(conditions=conditions).apply("SELECT * FROM obs")
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_filter_list_mixing_a_range_and_a_tuple_round_trips_through_a_spec():
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4, 5]})
+    source = DuckDBSource.from_df({"df": df})
+    conditions = [("A", [Range(0, 2, closed="left"), (3, 4)])]
+    spec = SQLFilter(conditions=conditions).to_spec()
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        restored = SQLFilter.from_spec(yaml.safe_load(text))
+        assert all(isinstance(v, Range) for v in restored.conditions[0][1])
+        result = source.execute(restored.apply("SELECT * FROM df"))
+        assert result["A"].tolist() == [0, 1, 3, 4]
+
+
+def test_sql_filter_never_renders_a_range_as_a_value():
+    transform = SQLFilter(conditions=[("A", [Range(0, 2), [3, 4]])])
+    result = transform.apply("SELECT * FROM TABLE")
+    assert "Range" not in result
+    assert result == "SELECT * FROM TABLE"
