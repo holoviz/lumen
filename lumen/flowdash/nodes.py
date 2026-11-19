@@ -25,8 +25,11 @@ The host also sets how many rows a query of these nodes may return
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
 import hashlib
+import inspect
+import json
 import math
 import weakref
 
@@ -58,11 +61,22 @@ from ..util import get_dataframe_schema
 from .checks import (
     check_chart, check_filter_config, check_query, check_source_config,
     check_sql_config, check_table_config, check_view_config, forget_probes,
-    pipeline_columns,
+    parse_spec_json, pipeline_columns,
 )
 
-SOURCE_TYPE = register_port_type("lumen.Source")
-PIPELINE_TYPE = register_port_type("lumen.Pipeline")
+SOURCE_COLOR = "#6D4C41"
+PIPELINE_COLOR = "#0072B5"
+
+
+def _register_port_type(name: str, color: str) -> str:
+    params = inspect.signature(register_port_type).parameters
+    if "color" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return register_port_type(name, color=color)
+    return register_port_type(name)
+
+
+SOURCE_TYPE = _register_port_type("lumen.Source", SOURCE_COLOR)
+PIPELINE_TYPE = _register_port_type("lumen.Pipeline", PIPELINE_COLOR)
 
 SOURCE_ID = "Lumen/source"
 TABLE_ID = "Lumen/table"
@@ -423,6 +437,85 @@ def default_table(sql: str) -> str:
     return f"query_{hashlib.sha1(sql.encode()).hexdigest()[:8]}"
 
 
+def _source_summary(source: Source) -> pd.DataFrame:
+    """Compact table summary for a SourceNode preview without triggering queries."""
+    tables = source.get_tables()
+    cached = source._get_schema_cache() or {}
+    in_memory = source.tables if isinstance(getattr(source, "tables", None), Mapping) else {}
+    entries: list[tuple[str, int | None, int | None]] = []
+    for table in tables:
+        rows: int | None = None
+        cols: int | None = None
+        schema = cached.get(table)
+        if isinstance(schema, dict):
+            cols = sum(1 for key in schema if key != "__len__")
+            length = schema.get("__len__")
+            if isinstance(length, int) and not isinstance(length, bool):
+                rows = length
+        elif (frame := in_memory.get(table)) is not None:
+            shape = getattr(frame, "shape", None)
+            if isinstance(shape, tuple) and len(shape) == 2 and hasattr(frame, "columns"):
+                if isinstance(shape[0], int) and not isinstance(shape[0], bool):
+                    rows = shape[0]
+                if isinstance(shape[1], int) and not isinstance(shape[1], bool):
+                    cols = shape[1]
+        entries.append((table, rows, cols))
+    data: dict[str, list[Any]] = {"table": [table for table, _, _ in entries]}
+    if any(rows is not None for _, rows, _ in entries):
+        data["rows"] = [rows if rows is not None else "" for _, rows, _ in entries]
+    if any(cols is not None for _, _, cols in entries):
+        data["cols"] = [cols if cols is not None else "" for _, _, cols in entries]
+    return pd.DataFrame(data)
+
+
+def format_spec_json(spec: Any) -> str:
+    """Format a Vega-Lite spec dict as pretty-printed JSON for the code editor."""
+    if spec is None:
+        return "{}"
+    if isinstance(spec, str):
+        return spec
+    return json.dumps(spec, indent=2)
+
+
+def view_config_editor(
+    config: dict[str, Any],
+    schema: dict[str, Any] | None = None,
+    *,
+    on_patch: Any = None,
+    **kwargs: Any,
+) -> Any:
+    """Edit a ``ViewNode`` spec as pretty-printed JSON text that round-trips to a dict."""
+    text = format_spec_json(config.get("spec"))
+    try:
+        from panel_flowdash.ui.code_field import CodeField
+    except ImportError:
+        widget: Any = pn.widgets.CodeEditor(
+            name="Spec",
+            value=text,
+            language="json",
+            height=140,
+            on_keyup=False,
+            sizing_mode="stretch_width",
+        )
+    else:
+        widget = CodeField(label="Spec", value=text, language="json")
+
+    def _on_change(event: param.parameterized.Event) -> None:
+        if on_patch is None:
+            return
+        raw = event.new or ""
+        try:
+            parsed = parse_spec_json(raw)
+        except ValueError:
+            # Let ConfigDraft run check_view_config and report the JSON error.
+            on_patch({"spec": raw})
+            return
+        on_patch({"spec": parsed})
+
+    widget.param.watch(_on_change, "value")
+    return widget
+
+
 class LumenNode(Viewer):
 
     _object = param.Parameter(default=None, precedence=-1)
@@ -486,6 +579,13 @@ class LumenNode(Viewer):
     def _body(self):
         return pn.pane.Str(str(self._object))
 
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is not None or self._object is None:
+            return None
+        if isinstance(self._object, Pipeline):
+            return fetch(self._object, PREVIEW_ROWS)
+        return self._object
+
     def __panel__(self):
         return pn.panel(self._render)
 
@@ -529,6 +629,11 @@ class SourceNode(LumenNode):
             return pn.pane.Markdown("No source")
         return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(source.get_tables())}")
 
+    def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | None:
+        if self._error is not None or self._object is None:
+            return None
+        return _source_summary(self._object)
+
 
 @register(
     component=True, page=False, title="Lumen SQL", icon="code",
@@ -547,7 +652,11 @@ class SQLNode(LumenNode):
 
     source = param.Parameter(doc="The upstream source.")
 
-    sql = param.String(default="", doc="One read-only SELECT or WITH query.")
+    sql = param.String(
+        default="",
+        doc="One read-only SELECT or WITH query.",
+        metadata={"flowdash": {"widget": "code", "language": "sql"}},
+    )
 
     table = param.String(default="", doc="Name of the result table; derived from the SQL if empty.")
 
@@ -581,6 +690,12 @@ class SQLNode(LumenNode):
         if pipeline is None:
             return pn.pane.Markdown("Waiting for a source and a query")
         return pn.widgets.Tabulator(pipeline.data, disabled=True, sizing_mode="stretch_both")
+
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is not None or self._object is None:
+            return None
+        data = self._object.data
+        return data if data is not None else fetch(self._object, PREVIEW_ROWS)
 
 
 class PipelineNode(LumenNode):
@@ -723,6 +838,7 @@ class DataNode(LumenNode):
     component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart",
     description="A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings no data or URLs.",
     config=["spec"],
+    config_editor=view_config_editor,
     check_config=check_view_config,
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
 )
@@ -730,7 +846,16 @@ class ViewNode(LumenNode):
 
     pipeline = param.Parameter(doc="The upstream pipeline.")
 
-    spec = param.Dict(default={}, doc="The Vega-Lite spec, without data.")
+    spec = param.Dict(
+        default={},
+        doc="The Vega-Lite spec, without data.",
+        metadata={"flowdash": {"widget": "code", "language": "json"}},
+    )
+
+    def __init__(self, **params):
+        if "spec" in params and isinstance(params["spec"], str):
+            params = {**params, "spec": parse_spec_json(params["spec"])}
+        super().__init__(**params)
 
     @param.depends("pipeline", "spec", watch=True, on_init=True)
     def _refresh(self, *events):
@@ -751,6 +876,20 @@ class ViewNode(LumenNode):
     def _body(self):
         view = self._object
         return pn.pane.Markdown("Waiting for a pipeline") if view is None else view.panel
+
+    def __flowdash_preview__(self, output: str | None = None) -> dict[str, Any] | None:
+        if self._error is not None or self._object is None:
+            return None
+        pipeline = getattr(self._object, "pipeline", None)
+        data = getattr(pipeline, "data", None) if pipeline is not None else None
+        if data is not None and hasattr(data, "head"):
+            data = data.head(PREVIEW_ROWS)
+        return {
+            "__flowdash_preview_kind__": "chart",
+            "format": "vega-lite",
+            "spec": copy.deepcopy(self._object.spec),
+            "data": data,
+        }
 
 
 COMPONENTS = {
