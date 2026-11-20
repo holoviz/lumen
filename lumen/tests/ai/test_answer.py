@@ -2781,6 +2781,19 @@ async def test_answers_table_has_a_row_per_question(frame_source):
     assert repr(answers) == "Answers(success=2)"
 
 
+async def test_answers_table_holds_typed_results(frame_source):
+    class Counting(KeyedLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if getattr(response_model, "__name__", "") == "Result":
+                return response_model(result=len(self._question(messages)))
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=Counting(QUESTIONS), returns=int)
+    table = answers.to_frame()
+    assert table["result"].tolist() == [len(q) for q in QUESTIONS[:2]]
+    assert [a.result for a in answers] == table["result"].tolist()
+
+
 async def test_answers_show_each_question_over_its_card(frame_source):
     answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=KeyedLLM(QUESTIONS))
     html_out = answers._repr_mimebundle_()["text/html"]
