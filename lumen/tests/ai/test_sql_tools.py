@@ -494,6 +494,26 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     assert not is_gridded({(joined.name, "plain"): joined})
 
 
+def test_a_joined_grid_keeps_its_units_and_longitude_range_for_review():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+    import pandas as pd
+
+    from lumen.ai.sql_review import review_sql
+    from lumen.sources.data import read
+    grid = xr.Dataset(
+        {"air": (("lat", "lon"), np.full((2, 3), 280.0), {"units": "degK", "long_name": "Air temperature"})},
+        coords={"lat": ("lat", [10.0, 20.0], {"units": "degrees_north"}), "lon": ("lon", [200.0, 250.0, 330.0], {"units": "degrees_east"})},
+    )
+    joined = read({"air": grid, "plain": pd.DataFrame({"a": [1]})})
+    facts = SQLAgent._table_facts(joined, ["air"])["air"]
+    assert facts.units["air"] == "degK" and facts.lon_range == {"lon": (200.0, 330.0)}
+    assert "[degK]" in joined.get_metadata("air")["columns"]["air"]["description"]
+    (finding,) = review_sql("SELECT * FROM air WHERE air > 25", {"air": facts})
+    assert "looks like degrees Celsius" in finding
+
+
 async def _main_prompt(sql_context, test_messages, llm, tool_names=(), **flags):
     agent = SQLAgent(llm=llm)
     return await agent._render_prompt(
