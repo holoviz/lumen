@@ -2623,3 +2623,86 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
+
+
+# ---- An area drawn on a map ----
+
+def _points_map(lon=(1.0, 2.0, 5.0), lat=(1.0, 2.0, 5.0), geo=True):
+    source = read({"places": pd.DataFrame({"lon": list(lon), "lat": list(lat), "v": [10.0, 20.0, 30.0]})})
+    pipeline = Pipeline(source=source, table="places")
+    view = hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", z="v", geo=geo)
+    return Answer(question="Map the places", value="Three places.", status="success", source=source, pipeline=pipeline, view=view)
+
+
+def _draw(answer, xs, ys):
+    from holoviews.streams import PolyDraw
+    (stream,) = [s for s in answer._streams if isinstance(s, PolyDraw)]
+    stream.event(data={"xs": [xs], "ys": [ys]})
+
+
+def test_a_map_gets_a_draw_tool_and_a_plain_chart_does_not():
+    from holoviews.streams import PolyDraw, Selection1D
+    mapped = _points_map()
+    mapped.__panel__()
+    assert any(isinstance(s, PolyDraw) for s in mapped._streams)
+    # The drawing layer holds no data, so it gets no click stream of its own
+    assert len([s for s in mapped._streams if isinstance(s, Selection1D)]) == 1
+    plain = _points_map(geo=False)
+    plain.__panel__()
+    assert not any(isinstance(s, PolyDraw) for s in plain._streams)
+
+
+def test_drawing_an_area_selects_the_rows_inside_it():
+    answer = _points_map()
+    answer.__panel__()
+    _draw(answer, [0, 3, 3, 0], [0, 0, 3, 3])
+    assert answer.region.bounds == (0.0, 0.0, 3.0, 3.0)
+    assert list(answer.selection["v"]) == [10.0, 20.0]
+    _draw(answer, [0, 3], [0, 0])
+    assert answer.region is None and answer.selection is None
+
+
+def test_an_area_drawn_on_a_0_to_360_grid_matches_its_longitudes():
+    answer = _points_map(lon=(181.0, 182.0, 185.0))
+    answer.__panel__()
+    _draw(answer, [-180, -177, -177, -180], [0, 0, 3, 3])
+    assert list(answer.selection["v"]) == [10.0, 20.0]
+
+
+def test_an_area_selects_shapes_that_touch_it():
+    from lumen.ai.selection import split_by_region
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    regions = gpd.GeoDataFrame({"name": ["near", "far"]}, geometry=[Polygon([(0, 0), (2, 0), (2, 2)]), Polygon([(5, 5), (6, 5), (6, 6)])])
+    inside, outside = split_by_region(regions, Polygon([(1, 0), (3, 0), (3, 3), (1, 3)]))
+    assert list(inside["name"]) == ["near"] and list(outside["name"]) == ["far"]
+
+
+async def test_ask_about_an_area_sends_it_with_the_rows_inside_and_out(llm):
+    answer = _points_map()
+    answer._llm, answer._agents = llm, [ChatAgent(), SQLAgent()]
+    llm.set_responses([_plan(("ChatAgent", "Explain")), "Two places are inside."])
+    sent = []
+    invoke = llm.invoke
+
+    async def recording(messages, *args, **kwargs):
+        sent.append(messages)
+        return await invoke(messages, *args, **kwargs)
+
+    llm.invoke = recording
+    follow_up = await answer.aask_about("How many are inside?", region=[(0, 0), (3, 0), (3, 3), (0, 3)])
+    assert follow_up.value == "Two places are inside."
+    content = sent[0][-1]["content"]
+    assert content.startswith("How many are inside?") and "POLYGON ((0 0, 3 0, 3 3, 0 3, 0 0))" in content
+    assert "2 of the data's 3 rows fall inside it" in content and "inside mean" in content
+    assert "ST_Within(ST_Point(lon, lat)" in content
+
+
+def test_asking_about_an_area_keeps_to_the_sharing_level():
+    from lumen.ai.selection import about_region
+    configure(share="schema")
+    try:
+        with pytest.raises(ValueError, match="share='schema' does not allow"):
+            about_region("?", Polygon([(0, 0), (1, 0), (1, 1)]), pd.DataFrame({"v": [1]}), pd.DataFrame({"v": [2]}))
+    finally:
+        configure(share="sample")
