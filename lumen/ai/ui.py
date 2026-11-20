@@ -37,6 +37,7 @@ from lumen.ai.agents.deck_gl import DeckGLAgent
 from ..sources.data import resolve_data
 from ..sources.xarray_sql import XArraySQLSource
 from ..util import log, try_import_xarray
+from ..views import View
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
@@ -55,12 +56,15 @@ from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
 from .llm import (
-    Llm, OpenAI, get_available_llm, local_cli_providers,
+    Llm, OpenAI, get_available_llm, signed_in_cli_hint,
 )
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
 from .report import ActorTask, Section
+from .selection import (
+    Selected, about, ask_box, watch_clicks,
+)
 from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
@@ -377,11 +381,9 @@ LLM-generated code may be unpredictable. While validation layers reduce accident
 
 def _keyless_options_message() -> str:
     """Tell a user with no provider configured what works without an API key on this machine."""
-    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
-    cli_hint = f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
     return (
         "No LLM provider found, so chat is disabled. Open Settings > Configure AI Models and choose "
-        f"Kilo for free models without an account{cli_hint}. Or set an API key such as "
+        f"Kilo for free models without an account{signed_in_cli_hint()}. Or set an API key such as "
         "OPENAI_API_KEY and restart, or pass llm=lmai.llm.Kilo() to the UI."
     )
 
@@ -2176,16 +2178,31 @@ class ExplorerUI(UI):
         # Flush UI
         await asyncio.sleep(0.01)
 
-        prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
         sql_out = self._explorer.create_sql_output()
         out_context = dict(self.context, **(await sql_out.render_context()))
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
+        await self.add_plan_exploration(plan)
 
+    async def add_plan_exploration(self, plan: Plan, views: list | None = None):
+        """
+        Show an executed Plan as a new exploration, with its views and its
+        output context, so follow-up questions continue from it.
+
+        Parameters
+        ----------
+        plan: Plan
+            A Plan that has already been executed, e.g. ``answer.plan``
+            from ``source.ask(...)``.
+        views: list | None
+            The views to show instead of the plan's own, e.g. with a
+            refined chart in place of the one the plan made.
+        """
+        prev = self._explorations.value
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
-            self._add_views(exploration, items=plan.views)
+            self._add_views(exploration, items=plan.views if views is None else views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
@@ -2503,8 +2520,10 @@ class ExplorerUI(UI):
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
         editor = view.editor
+        # Last in the tab, so the pop-out lookups still find the body at index 1
+        box = [self._ask_box(view)] if isinstance(view.component, View) else []
         if editor is None:
-            view = Column(controls, view)
+            view = Column(controls, view, *box)
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
@@ -2523,7 +2542,7 @@ class ExplorerUI(UI):
         # the Column's body (a watcher swaps it in and out) rather than wrapped
         # in a reactive pane, so the pop-out helpers still find it as a VSplit.
         filter_paper = getattr(view, "_filter_paper", None)
-        view = Column(controls, vsplit)
+        view = Column(controls, vsplit, *box)
         if filter_paper is not None:
             def _toggle_filter_pane(event):
                 if event.new:
@@ -2537,6 +2556,21 @@ class ExplorerUI(UI):
             filter_paper.param.watch(_toggle_filter_pane, "visible")
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
+
+    def _ask_box(self, view: LumenEditor) -> Column:
+        """
+        A box for asking about a point clicked or selected on the view's
+        chart; the question and the point's rows go to the chat as the next
+        message, so the follow-up runs in this exploration.
+        """
+        selected = Selected()
+        # Kept on the editor so the streams live as long as the chart
+        view._click_streams = watch_clicks(view.component, lambda rows: setattr(selected, "selection", rows))
+
+        async def ask(question: str):
+            self.interface.send(about(question, selected.selection), respond=True)
+
+        return ask_box(selected, ask)
 
     def _vsplit_has_view(self, content, view) -> bool:
         # The body is the editor/table VSplit, or - when filters are active - a
@@ -2758,6 +2792,7 @@ class ExplorerUI(UI):
             exploration.parent.conversation = exploration.conversation
 
         error_type = plan.out_context.pop("__error_type__", Exception)
+        plan.out_context.pop("__exception__", None)
         error = plan.out_context.pop("__error__", "Unknown error")
         _, todos = plan.render_task_history(failed=True)
 
@@ -2800,5 +2835,6 @@ class ExplorerUI(UI):
             if not is_home:
                 context['prev_plan'] = exploration.plan
             plan = await self._coordinator.respond(messages, context)
-            if plan is not None:
+            # An unanswerable plan has no steps, and respond has told the user why
+            if plan is not None and not plan.unanswerable:
                 await self._execute_plan(plan)

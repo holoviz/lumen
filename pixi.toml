@@ -10,10 +10,11 @@ install = 'python -m pip install --no-deps --disable-pip-version-check -e .'
 PYTHONIOENCODING = "utf-8"
 
 [environments]
-test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "docx"]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "docx"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "docx"]
-test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "docx"]
+test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+evals = ["py314", "test-core", "ai", "sql", "evals"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
 build = ["py312", "build"]
@@ -42,7 +43,7 @@ pip = "*"
 platformdirs = "*"
 pyyaml = "*"
 requests = "*"
-sqlglot = "*"
+sqlglot = ">=26.26.0"
 tornado = "*"
 tqdm = "*"
 
@@ -90,6 +91,9 @@ duckdb = "*"
 intake-sql = "*"
 sqlalchemy = "*"
 
+[feature.evals.dependencies]
+pydantic-evals = ">=2.60"
+
 [feature.docx.dependencies]
 python-docx = "*"
 
@@ -99,7 +103,13 @@ netcdf4 = "*"
 zarr = "*"
 
 [feature.xarray.pypi-dependencies]
-xarray-sql = ">=0.3.1"
+xarray-sql = ">=0.4.0"
+
+[feature.geo.dependencies]
+datashader = "*"
+geopandas = "*"
+geoviews = "*"
+shapely = "*"
 
 # =============================================
 # =================== TESTS ===================
@@ -114,11 +124,13 @@ pytest-xdist = "*"
 pytest-asyncio = "*"
 
 [feature.test-core.tasks]
-test-unit = 'pytest lumen/tests -n logical --dist loadgroup'
+test-unit = 'pytest lumen/tests tests/evals -n logical --dist loadgroup'
 
 [feature.test.dependencies]
 dask-core = "*"
+datashader = "*"
 fastparquet = "*"
+ipython = "*"  # the notebook status line and answer.to_cell
 polars = "*"
 pyarrow = "*"
 matplotlib-base = ">=3.4" # Ubuntu + Python 3.9 installs old version matplotlib (3.3.2)
