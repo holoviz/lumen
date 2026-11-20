@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import duckdb
 import pandas as pd
 import pytest
 import yaml
@@ -2018,3 +2019,43 @@ def test_describe_survives_a_round_trip_through_the_spec(described_source):
         metadata = restored.get_metadata("orders")
     assert metadata["description"] == "Mine"
     assert metadata["columns"]["amount"]["description"] == "Order value in EUR"
+
+
+@pytest.mark.parametrize("init, name", [
+    ("INSTALL spatial;", "spatial"),
+    ("INSTALL h3 FROM community;", "h3"),
+    ("install h3 from community", "h3"),
+])
+def test_the_windows_retry_pattern_reads_community_installs(init, name):
+    assert DuckDBSource._install_extension_pattern.match(init).group(1) == name
+
+
+def _h3_source(**kwargs):
+    import lumen
+    try:
+        return lumen.read({"q": pd.DataFrame({"lat": [52.5, 48.9], "lon": [13.4, 2.3]})}, extensions=["h3"], **kwargs)
+    except duckdb.Error as e:
+        pytest.skip(f"the h3 extension could not be installed: {e}")
+
+
+def test_read_loads_h3_from_the_community_repository_and_spatial_with_it():
+    source = _h3_source()
+    assert source.initializers == ["INSTALL h3 FROM community;", "LOAD h3;", "INSTALL spatial;", "LOAD spatial;"]
+    cells = source.execute(
+        "SELECT h3_latlng_to_cell(lat, lon, 4) AS cell, "
+        "ST_GeomFromText(h3_cell_to_boundary_wkt(h3_latlng_to_cell(lat, lon, 4)))::GEOMETRY('EPSG:4326') AS geometry FROM q"
+    )
+    assert len(cells) == 2 and str(cells.crs) == "EPSG:4326"
+
+
+def test_a_core_extension_installs_from_the_core_repository():
+    source = DuckDBSource(uri=":memory:").load_extension("spatial")
+    assert source.initializers == ["INSTALL spatial;", "LOAD spatial;"]
+
+
+def test_extensions_need_a_duckdb_source():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import lumen
+    with pytest.raises(ValueError, match="extensions load into DuckDB"):
+        lumen.read(xr.Dataset({"t": ("x", [1.0])}), extensions=["h3"])
