@@ -700,3 +700,12 @@ def test_sqlalchemy_missing_table_by_dialect(memory_source, dialect, message):
     with patch.object(SQLAlchemySource, "dialect", new_callable=PropertyMock, return_value=dialect):
         assert memory_source.missing_table(Exception(message)) == "orders"
         assert memory_source.missing_table(Exception("syntax error at or near \"FORM\"")) is None
+
+
+@pytest.mark.parametrize("dialect, where", [("sqlite", '"D" = TRUE'), ("mssql", '"D" = 1'), ("oracle", '"D" IN (1, 0)')])
+def test_sqlalchemy_boolean_filter_uses_the_dialect_literals(sqlalchemy_source, dialect, where):
+    value = [True, False] if dialect == "oracle" else True
+    with patch.object(SQLAlchemySource, "dialect", new_callable=PropertyMock, return_value=dialect), \
+         patch.object(SQLAlchemySource, "fetch", return_value=pd.DataFrame()) as fetch:
+        sqlalchemy_source.get("test_sql", D=value)
+    assert where in fetch.call_args[0][0]

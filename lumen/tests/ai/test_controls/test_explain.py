@@ -160,7 +160,7 @@ class TestExplainControls:
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls.active = True
-        controls._text_input.value_input = ""
+        controls._text_input._process_events({'value_input': ""})
 
         controls._enter_reason(None)
 
@@ -179,7 +179,7 @@ class TestExplainControls:
 
         controls = ExplainControls(interface=interface, view=view, task=task)
         controls.active = True
-        controls._text_input.value_input = "  WHERE clause  "
+        controls._text_input._process_events({'value_input': "  WHERE clause  "})
 
         controls._enter_reason(None)
 
@@ -196,12 +196,12 @@ class TestExplainControls:
         task.set_explain_chunks(["ok"])
 
         controls = ExplainControls(interface=interface, view=view, task=task)
-        controls._text_input.value_input = ""
+        controls._text_input._process_events({'value_input': ""})
 
         controls._enter_reason(None)
         assert controls._explain_count == 1
 
-        controls._text_input.value_input = "JOIN"
+        controls._text_input._process_events({'value_input': "JOIN"})
         controls._enter_reason(None)
         assert controls._explain_count == 2
 

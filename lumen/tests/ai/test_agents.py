@@ -293,6 +293,67 @@ async def test_sql_agent_lints_capped_preview_as_prefix(llm, test_messages):
     assert linted == [(VALIDATION_MAX_ROWS, True)]
 
 
+def _as_backend(backend, df):
+    if backend == "pyarrow":
+        return pytest.importorskip("pyarrow").Table.from_pandas(df, preserve_index=False)
+    return pytest.importorskip("polars").from_pandas(df)
+
+
+@pytest.mark.parametrize("backend", ["pyarrow", "polars"])
+async def test_sql_agent_validates_native_frame_results(llm, test_messages, backend):
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm)
+    model = make_sql_model([(source.name, "numbers")])
+    llm.set_responses([model(query="SELECT i FROM numbers", table_slug="numbers_result", tables=["numbers"])])
+    context = {"source": source, "sources": [source], "metaset": await get_metaset([source], ["numbers"])}
+    original = source.execute_with_timeout
+
+    async def native(query, timeout, fetch=False):
+        return _as_backend(backend, await original(query, timeout, fetch))
+
+    linted = []
+
+    def capture(df, actionable_only=False, capped=False):
+        linted.append((type(df), len(df), capped))
+        return []
+
+    with patch.object(source, "execute_with_timeout", native), patch("lumen.ai.agents.sql.lint_data", capture):
+        out, _ = await agent.respond(test_messages, context)
+
+    assert linted[0] == (pd.DataFrame, VALIDATION_MAX_ROWS, True)
+    assert len(out[0].component.data) == 6000
+
+
+@pytest.mark.parametrize("backend", ["pyarrow", "polars"])
+@pytest.mark.parametrize(("cleaned", "kept"), [
+    ("SELECT i FROM numbers WHERE i >= 0", True),
+    ("SELECT i FROM numbers WHERE i < 0", False),
+])
+async def test_sql_agent_clean_data_pass_reads_native_frames(llm, test_messages, backend, cleaned, kept):
+    source = DuckDBSource(tables={"numbers": "SELECT i FROM range(6000) AS t(i)"})
+    agent = SQLAgent(llm=llm)
+    original = source.execute_with_timeout
+    queries = []
+
+    async def native(query, timeout, fetch=False):
+        queries.append(query)
+        return _as_backend(backend, await original(query, timeout, fetch))
+
+    cleanup = SQLCleanup(chain_of_thought="Drop negative values.", query=cleaned)
+    step = SimpleNamespace(stream=lambda text: streamed.append(text))
+    streamed = []
+    with patch.object(source, "execute_with_timeout", native), \
+            patch.object(agent, "_invoke_prompt", AsyncMock(return_value=cleanup)):
+        result = await agent._clean_data_pass(
+            "SELECT i FROM numbers", ["finding"], VALIDATION_MAX_ROWS + 1, source, test_messages, {}, step
+        )
+
+    assert (result != "SELECT i FROM numbers") is kept
+    assert "LIMIT" in queries[0].upper()
+    if kept:
+        assert f"more than {VALIDATION_MAX_ROWS} rows before cleaning, more than {VALIDATION_MAX_ROWS} after" in streamed[-1]
+
+
 @pytest.mark.parametrize("backend", [None, "polars", "pyarrow"])
 async def test_sql_exploration_caps_fetched_rows(backend):
     if backend:
@@ -1527,3 +1588,45 @@ def test_exploration_tool_doc_quotes_every_name():
     doc = make_run_exploration_sql_tool(sources).function.__doc__
     assert "one of `src_a`, `src_b`." in doc
     assert doc.count("`") % 2 == 0
+
+
+async def test_sql_agent_validate_reviews_an_area_in_degrees_once(llm):
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    from lumen.sources.data import read
+    source = read({"parks": gpd.GeoDataFrame({"p": ["x"]}, geometry=[Polygon([(13, 52), (14, 52), (14, 53)])], crs="EPSG:4326")})
+    agent = SQLAgent(llm=llm)
+    agent.revise = AsyncMock(return_value="SELECT ST_Area_Spheroid(ST_FlipCoordinates(geometry)) AS area FROM parks")
+    step = SimpleNamespace(stream=lambda msg: None)
+
+    sql, result = await agent._validate_sql({}, "SELECT ST_Area(geometry) AS area FROM parks", "slug", source, [], step)
+
+    assert "ST_Area(geometry) returns square degrees" in agent.revise.await_args.args[0]
+    assert agent.revise.await_count == 1 and "ST_AREA_SPHEROID" in sql.upper()
+    # The triangle over half the 1 x 1 degree box at 52-53 N is about 3,821 km²; unflipped it reads 5,976 km²
+    assert 3.70e9 < result["area"].iloc[0] < 3.86e9
+
+
+async def test_sql_agent_review_revision_does_not_use_up_a_retry(llm):
+    from lumen.sources.data import read
+    source = read({"t": pd.DataFrame({"a": [1]})})
+    agent = SQLAgent(llm=llm)
+    # The review's revision breaks the query; one real retry is still left to fix it
+    agent.revise = AsyncMock(side_effect=["SELECT nope FROM t", "SELECT a FROM t"])
+    step = SimpleNamespace(stream=lambda msg: None)
+    with patch("lumen.ai.agents.sql.review_sql", side_effect=[["Looks wrong."], []]):
+        sql, result = await agent._validate_sql({}, "SELECT a FROM t", "slug", source, [], step)
+    assert agent.revise.await_count == 2 and result["a"].tolist() == [1]
+
+
+async def test_sql_revise_without_op_replaces_a_line_with_a_cast(llm):
+    """SQL casts look like YAML keys, so a missing op must not become an insert."""
+    llm.set_responses([lambda: RetrySpec.model_validate({
+        "chain_of_thought": "Cast b instead",
+        "edits": [{"line_no": 1, "line": "SELECT b::INT AS a"}],
+    })])
+    revised = await BaseLumenAgent.revise(
+        SQLAgent(llm=llm), "Use b", [], {}, spec="SELECT a::INT AS a\nFROM t", language="sql"
+    )
+    assert revised == "SELECT b::INT AS a\nFROM t"

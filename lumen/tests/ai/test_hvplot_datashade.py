@@ -146,7 +146,7 @@ async def test_a_distinct_groupby_survives():
 
 
 async def test_z_is_dropped_for_non_gridded_kinds():
-    spec = await extract({"kind": "points", "x": "x", "y": "y", "z": "c"}, 10)
+    spec = await extract({"kind": "line", "x": "x", "y": "y", "z": "c"}, 10)
 
     assert "z" not in spec
 

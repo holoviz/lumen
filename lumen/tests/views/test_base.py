@@ -1,4 +1,5 @@
 import importlib.util
+import itertools
 import json
 
 from pathlib import Path
@@ -8,6 +9,7 @@ import panel as pn
 import pytest
 
 from bokeh.core.serialization import Serializer
+from holoviews import Dataset
 
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
@@ -453,6 +455,39 @@ def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
     assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
 
 
+def _layered_spec(layer_data):
+    return {"layer": [{"data": layer_data, "mark": "bar", "encoding": {"x": {"field": "A", "type": "quantitative"}}}]}
+
+
+def test_vega_layer_naming_an_unknown_dataset_gets_the_table(set_root):
+    """A layer naming a dataset that was never registered draws nothing and
+    raises nothing, so it is left to inherit the table's data."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _layered_spec({"name": "avg_by_group"})
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert "data" not in final_spec["layer"][0]
+    assert len(final_spec["data"]["values"]) == len(pipeline.data)
+    assert spec["layer"][0]["data"] == {"name": "avg_by_group"}
+
+
+@pytest.mark.parametrize("layer_data", [
+    {"name": "populations"},
+    {"values": [{"A": 1}]},
+    {"sphere": True},
+], ids=["registered-name", "inline-values", "generator"])
+def test_vega_layer_with_resolvable_data_is_left_alone(set_root, layer_data):
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = dict(_layered_spec(layer_data), datasets={"populations": [{"A": 1}]})
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == layer_data
+
+
 def test_vega_datasets_are_not_accumulated_across_renders(set_root):
     """self.spec is reused between renders, so registering into its own datasets
     dict would leave a DataFrame behind on the caller's spec."""
@@ -632,6 +667,55 @@ def _serialize(view):
     return Serializer().encode(view.get_panel().get_root())
 
 
+def test_hvplot_view_sizes_points_by_a_column():
+    view = _points_view(size="lat")
+    size = view.get_plot(view.get_data()).opts.get().kwargs["size"]
+    assert size.dimension.name == "lat"
+    # Scaled, so a column of large numbers still gives markers a few pixels wide
+    assert size.apply(Dataset(view.get_data())).max() == 24
+
+
+def test_hvplot_view_gives_a_constant_size_column_one_size():
+    from lumen.sources.base import InMemorySource
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9], "n": [7, 7]})
+    pipeline = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    view = hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", size="n")
+    # hvPlot's size is the square root of the area s=12 asked for
+    assert view.get_plot(view.get_data()).opts.get().kwargs["size"] == pytest.approx(12 ** 0.5)
+
+
+@requires_geopandas
+@pytest.mark.parametrize("version", ["2.2.0", "2.0.7"])
+def test_geometry_to_geojson_winds_clockwise_only_when_asked(monkeypatch, version):
+    import shapely
+
+    from lumen.util import geometry_to_geojson
+    ccw = Polygon([(0, 0), (1, 0), (1, 1)])
+    gdf = gpd.GeoDataFrame({"geometry": [ccw]}, crs="EPSG:4326")
+    monkeypatch.setattr(shapely, "__version__", version)
+    if version == "2.0.7":
+        monkeypatch.delattr(shapely, "orient_polygons", raising=False)
+
+    def ring(frame, **kw):
+        coords = geometry_to_geojson(frame, **kw)["features"][0]["geometry"]["coordinates"][0]
+        return shapely.geometry.LinearRing(coords)
+
+    assert ring(gdf).is_ccw and not ring(gdf, clockwise=True).is_ccw
+
+
+def test_hvplot_view_colours_points_by_z():
+    view = _points_view(z="lat")
+    plot = view.get_plot(view.get_data())
+    assert plot.opts.get().kwargs['color'] == 'lat'
+
+
+@requires_geopandas
+def test_hvplot_view_colours_geometry_by_z():
+    view = hvPlotView(pipeline=_geo_pipeline(), z='pop')
+    plot = view.get_plot(view.get_data())
+    assert plot.opts.get().kwargs['color'].dimension.name == 'pop'
+
+
 @requires_geopandas
 def test_vegalite_view_geometry_as_geoshape_data():
     """VegaLiteView hands a GeoDataFrame to the Vega pane as a list of GeoJSON
@@ -644,6 +728,9 @@ def test_vegalite_view_geometry_as_geoshape_data():
     assert obj['data'] == {'name': 'geo'}
     assert len(obj['datasets']['geo']) == 2
     assert obj['datasets']['geo'][0]['properties']['pop'] == 1
+    # Clockwise, or Vega fills everything outside the polygon
+    ring = obj['datasets']['geo'][0]['geometry']['coordinates'][0]
+    assert sum((x2 - x1) * (y2 + y1) for (x1, y1), (x2, y2) in itertools.pairwise(ring)) > 0
     json.dumps(obj['datasets'])
     _serialize(view)
 
@@ -782,3 +869,37 @@ def test_vega_point_map_layers_get_the_table(set_root):
 
     assert final_spec["data"] == {"name": "test"}
     assert "test" in final_spec["datasets"]
+
+
+def _points_view(**params):
+    from lumen.sources.base import InMemorySource
+    from lumen.views.base import hvPlotView
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9]})
+    pipeline = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    return hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", **params)
+
+
+def test_hvplot_view_draws_tiles_under_a_geo_plot():
+    pytest.importorskip("geoviews")
+    plot = _points_view(geo=True, tiles="OSM").get_plot(_points_view().get_data())
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+    # geo reaches hvPlot, so the points are projected geoviews points, not plain ones
+    points = [el for el in plot if type(el).__name__ == "Points"]
+    assert points and type(points[0]).__module__.startswith("geoviews")
+
+
+@pytest.mark.parametrize("tiles", ["true", "True"])
+def test_hvplot_view_reads_tiles_given_as_a_string(tiles):
+    pytest.importorskip("geoviews")
+    plot = _points_view(geo=True, tiles=tiles).get_plot(_points_view().get_data())
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+
+
+def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "geoviews" else real(name, *a))
+    view = _points_view(geo=True, tiles="OSM", coastline=True)
+    plot = view.get_plot(view.get_data())
+    assert type(plot).__name__ == "Points"
+    assert "needs geoviews" in caplog.text
