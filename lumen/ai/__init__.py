@@ -6,8 +6,8 @@ from . import (
 )
 from .analysis import Analysis
 from .answer import (
-    Answer, Answers, Chat, aask, aask_many, ask, ask_many, chat, clear_cache,
-    configure,
+    Answer, Answers, Chat, Comparison, aask, aask_many, acompare, ask, ask_many,
+    chat, clear_cache, compare, configure,
 )
 from .coordinator import Coordinator, DependencyResolver, Planner
 from .decisions import (
@@ -19,10 +19,10 @@ from .vector_store import DuckDBVectorStore, NumpyVectorStore
 
 # Declared so type checkers treat these as public now that lumen ships py.typed
 __all__ = [
-    "Analysis", "Answer", "Answers", "Chat", "ChatUI", "Choice", "Coordinator",
+    "Analysis", "Answer", "Answers", "Chat", "ChatUI", "Choice", "Comparison", "Coordinator",
     "DecisionModel", "DecisionResult", "DependencyResolver", "DuckDBVectorStore",
     "ExplorerUI", "Jev", "Noul", "NumpyVectorStore", "OpenRouterDecisionModel",
-    "Planner", "Score", "aask", "aask_many", "actor", "agents", "ask", "ask_many", "chat", "clear_cache", "configure",
+    "Planner", "Score", "aask", "aask_many", "acompare", "actor", "agents", "ask", "ask_many", "chat", "clear_cache", "compare", "configure",
     "embeddings", "llm", "read",
 ]
 
