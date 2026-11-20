@@ -138,3 +138,4 @@ examples/*/cache
 pixi.lock
 .pixi
 _version.py
+/tests/evals/results/

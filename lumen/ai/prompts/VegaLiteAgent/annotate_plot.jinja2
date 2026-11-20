@@ -11,10 +11,12 @@ Add top-level `encoding` block with `scale.domain` for both axes before `layer` 
 
 ## Annotation Patterns
 
+Use muted named colors (`gray`, `firebrick`) and opacity instead of light-mode hex values so annotations remain visible in both themes.
+
 **Reference lines** (horizontal/vertical rules):
 - Position with `y: {datum: value}` or `x: {datum: value}`
 - Style: `opacity: 0.5`, muted colors, `strokeDash: [4, 4]`
-- For solid baseline/zero lines: `color: '#333333', size: 2` (no strokeDash)
+- For solid baseline/zero lines: `color: gray, size: 2` (no strokeDash)
 
 **Shaded bands** (rect marks):
 - Horizontal: `y: {datum: 26}, y2: {datum: 28}`
@@ -76,18 +78,18 @@ layer:
 - encoding:
     y: {datum: 26}
     y2: {datum: 28}
-  mark: {type: rect, color: '#cccccc', opacity: 0.3}
+  mark: {type: rect, color: gray, opacity: 0.3}
 # 2. Vertical highlight band
 - encoding:
     x: {datum: 1997}
     x2: {datum: 1998}
-  mark: {type: rect, color: '#ffcccc', opacity: 0.4}
+  mark: {type: rect, color: firebrick, opacity: 0.2}
 # 3. Band label
 - encoding:
     text: {value: 'El Niño'}
     x: {datum: 1997.5}
     y: {datum: 26}
-  mark: {type: text, fontSize: 9, color: '#cc0000', baseline: bottom, dy: -5}
+  mark: {type: text, fontSize: 9, color: firebrick, baseline: bottom, dy: -5}
 # 4. Main data layer
 - encoding:
     x: {field: year, axis: {title: Year}}
@@ -106,7 +108,7 @@ layer:
 # 7. Vertical reference line
 - encoding:
     x: {datum: 2024}
-  mark: {type: rule, color: '#666666', opacity: 0.5, strokeDash: [4, 4]}
+  mark: {type: rule, color: gray, opacity: 0.5, strokeDash: [4, 4]}
 # 8. Point annotation
 - encoding:
     x: {datum: 2015}
@@ -123,7 +125,7 @@ layer:
     text: {value: '↑ Trend note'}
     x: {value: 0}
     y: {value: 0}
-  mark: {type: text, align: left, baseline: top, dx: 10, dy: 10, fontSize: 12, fontWeight: bold, color: '#cc0000'}
+  mark: {type: text, align: left, baseline: top, dx: 10, dy: 10, fontSize: 12, fontWeight: bold, color: firebrick}
 title: Chart with Annotations
 ```
 
@@ -132,9 +134,9 @@ title: Chart with Annotations
 Reference line with label:
 ```yaml
 - encoding: {y: {datum: 5000}}
-  mark: {type: rule, color: '#666', strokeDash: [4, 4], opacity: 0.5}
+  mark: {type: rule, color: gray, strokeDash: [4, 4], opacity: 0.5}
 - encoding: {text: {value: 'Target'}, y: {datum: 5000}, x: {value: 0}}
-  mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: '#666'}
+  mark: {type: text, align: left, dx: 5, dy: -5, fontSize: 10, color: gray}
 ```
 
 Value labels with units (use transform + calculate):
@@ -189,6 +191,6 @@ Conditional highlight:
   encoding:
     x: {field: category, type: nominal}
     y: {field: value, type: quantitative}
-  mark: {type: bar, color: '#e74c3c'}
+  mark: {type: bar, color: firebrick}
 ```
 {% endblock %}
