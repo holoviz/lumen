@@ -36,7 +36,7 @@ from .util import (
 from .validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
-    from .ai.answer import Answer, Answers
+    from .ai.answer import Answer, Answers, Comparison
     from .ai.llm import Llm
 
 
@@ -283,6 +283,30 @@ class Pipeline(Viewer, Component):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import aask_many
         return await aask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    def compare(
+        self, question: str, llms: list[Llm], *, agents: list | None = None, returns: Any = None,
+        concurrency: int = 4,
+    ) -> Comparison:
+        """
+        Ask this pipeline's table one question with several LLMs at once and return their
+        answers side by side, each LLM with its own copy of the agents.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from .ai.answer import compare
+        return compare(self, question, llms, agents=agents, returns=returns, concurrency=concurrency)
+
+    async def acompare(
+        self, question: str, llms: list[Llm], *, agents: list | None = None, returns: Any = None,
+        concurrency: int = 4,
+    ) -> Comparison:
+        """
+        Ask this pipeline's table one question with several LLMs at once and await their
+        answers side by side, each LLM with its own copy of the agents.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from .ai.answer import acompare
+        return await acompare(self, question, llms, agents=agents, returns=returns, concurrency=concurrency)
 
     def __panel__(self) -> Row:
         controls = self.control_panel
