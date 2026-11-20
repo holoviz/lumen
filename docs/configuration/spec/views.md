@@ -72,6 +72,7 @@ Use pipelines when you need filtering or transforms. Use sources directly for ra
 | `hvplot_ui` | Plot with UI controls | Exploratory analysis |
 | `altair` | Altair visualizations | Grammar of graphics plots |
 | `plotly` | Plotly charts | 3D plots, complex interactivity |
+| `echarts` | Apache ECharts | Gauges, funnels, sunbursts, treemaps, sankeys, radar |
 
 This guide focuses on the most common types: `hvplot` and `table`.
 
@@ -297,6 +298,53 @@ views:
     responsive: true
     legend: 'top_left'
 ```
+
+## ECharts views
+
+The `echarts` view type draws charts with [Apache ECharts](https://echarts.apache.org/) through Panel's `ECharts` pane. Use it for chart types hvPlot and Vega-Lite cover poorly: gauges, funnels, sunbursts, treemaps, sankeys, calendars, radar, and parallel coordinates.
+
+The pipeline fills `dataset.source` at render time (first row is column names). The spec names those columns with `encode` and must not embed the rows.
+
+=== "YAML"
+
+    ```yaml
+    views:
+      - type: echarts
+        pipeline: penguins
+        spec:
+          xAxis: {type: category}
+          yAxis: {type: value}
+          series:
+            - type: bar
+              encode: {x: species, y: body_mass_g}
+    ```
+
+=== "Python"
+
+    ```python
+    from lumen.views import EChartsView
+
+    chart = EChartsView(
+        pipeline=pipeline,
+        spec={
+            "xAxis": {"type": "category"},
+            "yAxis": {"type": "value"},
+            "series": [
+                {"type": "bar", "encode": {"x": "species", "y": "body_mass_g"}}
+            ],
+        },
+    )
+    ```
+
+Optional view parameters:
+
+| Parameter | Type | Purpose | Default |
+|-----------|------|---------|---------|
+| `spec` | dict | ECharts option (axes, series, encode) | `{}` |
+| `renderer` | string | `canvas` or `svg` | `canvas` |
+| `theme` | string | `default`, `light`, or `dark` | `default` |
+
+A spec that already includes `dataset.source` is left unchanged. Clicks map the ECharts `dataIndex` to the matching pipeline row on `selection`.
 
 ## Table views
 
