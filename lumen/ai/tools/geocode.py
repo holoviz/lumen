@@ -26,7 +26,7 @@ def _nominatim() -> Any:
         from geopy.extra.rate_limiter import RateLimiter
         from geopy.geocoders import Nominatim
     except ImportError as e:
-        raise ImportError("Geocoding needs geopy: pip install geopy") from e
+        raise ImportError("Geocoding needs geopy: pip install geopy, or lumen[geo]") from e
     # Nominatim's policy: an identifying user agent and at most one request a second
     service = Nominatim(user_agent=f"lumen/{__version__} (https://github.com/holoviz/lumen)", timeout=10)
     return RateLimiter(service.geocode, min_delay_seconds=1)
