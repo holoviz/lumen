@@ -54,7 +54,9 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
-    from ..ai.answer import Answer, Answers, Chat, Comparison
+    from ..ai.answer import (
+        Answer, Answers, Chat, Comparison,
+    )
     from ..ai.checks import CheckResult
     from ..ai.llm import Llm
     from ..ai.overview import Overview

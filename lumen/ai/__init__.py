@@ -6,8 +6,8 @@ from . import (
 )
 from .analysis import Analysis
 from .answer import (
-    Answer, Answers, Chat, Comparison, aask, aask_many, acompare, ask, ask_many,
-    chat, clear_cache, compare, configure,
+    Answer, Answers, Chat, Comparison, aask, aask_many, acompare, ask,
+    ask_many, chat, clear_cache, compare, configure,
 )
 from .coordinator import Coordinator, DependencyResolver, Planner
 from .decisions import (
