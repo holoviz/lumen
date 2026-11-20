@@ -141,7 +141,7 @@ llm = lmai.llm.OpenRouter(
 | `chat` | ChatAgent |
 | `source` | SourceAgent |
 
-**Providers:** `OpenAI`,`OpenRouter`,`Anthropic`, `Google`, `Ollama`, `AnthropicBedrock`, `Bedrock`, `LiteLLM`, `Mistral`, `LlamaCpp`
+**Providers:** `OpenAI`,`OpenRouter`,`OrcaRouter`,`Anthropic`, `Google`, `Ollama`, `AnthropicBedrock`, `Bedrock`, `LiteLLM`, `Mistral`, `LlamaCpp`
 
 See [LLM Providers](../configuration/llm_providers.md) for setup and model recommendations.
 
