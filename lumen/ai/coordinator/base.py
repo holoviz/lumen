@@ -530,7 +530,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
                 )
                 self._analyses.extend(agent.analyses)
             # must use the same interface or else nothing shows
-            if agent.llm is None:
+            if not getattr(agent, "_llm_user_provided", False):
                 agent.llm = llm
 
             for tool in llm_tools:

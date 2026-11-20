@@ -1875,7 +1875,7 @@ def test_a_redefined_class_is_another_cache_key():
 
     first = Total
 
-    class Total(BaseModel):  # noqa: F811
+    class Total(BaseModel):
         total: float
         note: str = ""
 
@@ -2608,3 +2608,57 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
+
+async def test_aask_reuses_agents_across_questions_with_per_question_llm(frame_source):
+    """The same agent instances can answer with different LLMs per question."""
+    PlanModel = make_plan_model(["ChatAgent", "SQLAgent"], [])
+    (Step,) = get_args(PlanModel.__annotations__["steps"])
+
+    def plan():
+        return PlanModel(
+            chain_of_thought="x",
+            title="t",
+            steps=[Step(actor="ChatAgent", instruction="Explain", title="Explain")],
+        )
+
+    class Named(MockLLM):
+        def __init__(self, name, **params):
+            super().__init__(**params)
+            self.who = name
+
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if response_model is not None and "Plan" in response_model.__name__:
+                return plan()
+            return f"answered by {self.who}"
+
+    agents = [ChatAgent(), SQLAgent()]
+    assert (await aask(frame_source, "How many rows?", llm=Named("A"), agents=agents)).value == "answered by A"
+    assert (await aask(frame_source, "How many rows?", llm=Named("B"), agents=agents)).value == "answered by B"
+
+
+async def test_aask_respects_agent_explicit_llm(frame_source):
+    """An agent given an LLM on purpose keeps it across questions."""
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (Step,) = get_args(PlanModel.__annotations__["steps"])
+
+    def plan():
+        return PlanModel(
+            chain_of_thought="x",
+            title="t",
+            steps=[Step(actor="ChatAgent", instruction="Explain", title="Explain")],
+        )
+
+    class Named(MockLLM):
+        def __init__(self, name, **params):
+            super().__init__(**params)
+            self.who = name
+
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if response_model is not None and "Plan" in response_model.__name__:
+                return plan()
+            return f"answered by {self.who}"
+
+    pinned = Named("pinned")
+    agents = [ChatAgent(llm=pinned)]
+    assert (await aask(frame_source, "How many rows?", llm=Named("A"), agents=agents)).value == "answered by pinned"
+    assert (await aask(frame_source, "How many rows?", llm=Named("B"), agents=agents)).value == "answered by pinned"

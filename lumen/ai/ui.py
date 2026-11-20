@@ -1518,9 +1518,10 @@ class UI(Viewer):
         # Update the coordinator's LLM reference
         self._coordinator.llm = new_llm
 
-        # Update all agent LLMs
+        # Update all agent LLMs (respect agents given an LLM on purpose)
         for agent in self._coordinator.agents:
-            agent.llm = new_llm
+            if not getattr(agent, "_llm_user_provided", False):
+                agent.llm = new_llm
 
         # Initialize the new LLM asynchronously
         param.parameterized.async_executor(self._initialize_new_llm)
