@@ -75,6 +75,14 @@ def _env_mask_pii() -> bool:
     return True
 
 
+def _env_geocode() -> bool:
+    value = os.environ.get("LUMEN_AI_GEOCODE", "").strip().lower()
+    if value not in ("", "0", "false", "no", "off", "1", "true", "yes", "on"):
+        # A mistyped opt-in sends nothing
+        warnings.warn(f"LUMEN_AI_GEOCODE={value!r} is not a yes or no; geocoding stays off.", stacklevel=2)
+    return value in ("1", "true", "yes", "on")
+
+
 class DataSharing(param.Parameterized):
 
     share = param.Selector(default=_env_share(), objects=list(SHARE_LEVELS), doc="""
@@ -83,6 +91,11 @@ class DataSharing(param.Parameterized):
 
     mask_pii = param.Boolean(default=_env_mask_pii(), doc="""
         Withhold the values of columns that look like personal data.""")
+
+    geocode = param.Boolean(default=_env_geocode(), doc="""
+        Let the SQL agent look up place names with OpenStreetMap's
+        Nominatim service, which sends each place name over the internet.
+        Off unless turned on.""")
 
 
 sharing = DataSharing()
