@@ -334,6 +334,7 @@ configure(llm=Kilo(), max_rows=100_000, share="schema", mask_pii=True)
 | `share` | `LUMEN_AI_SHARE` | What of the data prompts contain, see below |
 | `mask_pii` | `LUMEN_AI_MASK_PII` | Withhold the values of columns that look like personal data |
 | `cache` | `LUMEN_AI_CACHE` | Keep answers in memory, so the same question of the same data and model returns without LLM calls; `lumen.ai.clear_cache()` empties it |
+| `geocode` | `LUMEN_AI_GEOCODE` | Let the SQL agent look up place names ("within 50 km of Delhi") with OpenStreetMap's Nominatim; off by default, see below |
 
 Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sales": "data/*.parquet"})` does not load the data into memory. Name tables with a dict, as there; a bare path names the table after the whole path.
 
@@ -372,3 +373,7 @@ Lumen only writes SQL and declarative chart specs, and shows both to you. It nev
 The default, `"sample"` with `mask_pii=False`, sends values from your data to the provider. `mask_pii=True` withholds columns that look like personal data, and with it Lumen also skips the exploration queries and chart images that could show them. It is a best-effort heuristic: columns are judged by name, and a renamed column (`first_name AS who`) is only caught when its values look like emails, phone numbers, SSNs or IP addresses. For data that must not leave your machine, use `share="schema"` or `"none"`.
 
 The query always runs on the full data on your machine, so tables and charts are the same at every level; with less to go on, the written answers and the SQL the model writes can be plainer. Error messages from the database may still quote a value.
+
+## Place names
+
+With `configure(geocode=True)` (or `LUMEN_AI_GEOCODE=1`, and `pip install geopy`), a question that names a place, such as "Which of these places are within 50 km of Delhi?", has the SQL agent look the place up with [OpenStreetMap's Nominatim](https://nominatim.org) instead of guessing its coordinates. Only the place name is sent, to Nominatim's public server, never your data; it is off by default because that name still leaves your machine. Lookups are cached for the session and sent at most once a second, as Nominatim's usage policy asks, and the answer card lists the places it looked up with the OpenStreetMap attribution. Nominatim is for occasional lookups, not for geocoding a column of addresses. The coding-CLI providers (Claude Code, Codex, Copilot) do not pass tools to the model, so they answer from memory instead.
