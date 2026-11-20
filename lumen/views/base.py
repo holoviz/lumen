@@ -133,6 +133,40 @@ _HVPLOT_OPTIONS = {
 }
 
 
+_FORCE_LIGHT_THEME = contextvars.ContextVar(
+    'lumen_force_light_theme', default=False
+)
+
+_VEGA_THEME_VIEWS: WeakSet = WeakSet()
+
+
+@contextmanager
+def _force_light_theme():
+    """Render Vega-Lite charts with the light theme inside this context.
+
+    Exports must not inherit the dashboard's dark theme: a PNG, SVG or
+    standalone HTML page has no surrounding page to provide contrast, and
+    plots that looked right on a dark dashboard become unreadable on their
+    own. Charts therefore render light while an export is being produced,
+    independent of the theme used on screen.
+    """
+    token = _FORCE_LIGHT_THEME.set(True)
+    try:
+        yield
+    finally:
+        _FORCE_LIGHT_THEME.reset(token)
+
+
+def _theme_views_changed(*events: param.parameterized.Event) -> None:
+    # A single watcher on the global config avoids pinning every VegaLiteView
+    # (and its pipeline and data) in memory for the life of the process.
+    for view in list(_VEGA_THEME_VIEWS):
+        view._on_theme_change(*events)
+
+
+pn.config.param.watch(_theme_views_changed, '_theme')
+
+
 class View(MultiTypeComponent, Viewer):
     """
     `View` components provide a visual representation for the data returned
@@ -1689,41 +1723,6 @@ class PerspectiveView(View):
 
     def get_panel(self) -> pn.pane.Perspective:
         return self._panel_type(**self._normalize_params(self._get_params()))
-
-
-_FORCE_LIGHT_THEME = contextvars.ContextVar(
-    'lumen_force_light_theme', default=False
-)
-
-
-@contextmanager
-def _force_light_theme():
-    """Render Vega-Lite charts with the light theme inside this context.
-
-    Exports must not inherit the dashboard's dark theme: a PNG, SVG or
-    standalone HTML page has no surrounding page to provide contrast, and
-    plots that looked right on a dark dashboard become unreadable on their
-    own. Charts therefore render light while an export is being produced,
-    independent of the theme used on screen.
-    """
-    token = _FORCE_LIGHT_THEME.set(True)
-    try:
-        yield
-    finally:
-        _FORCE_LIGHT_THEME.reset(token)
-
-
-_VEGA_THEME_VIEWS: WeakSet = WeakSet()
-
-
-def _theme_views_changed(*events: param.parameterized.Event) -> None:
-    # A single watcher on the global config avoids pinning every VegaLiteView
-    # (and its pipeline and data) in memory for the life of the process.
-    for view in list(_VEGA_THEME_VIEWS):
-        view._on_theme_change(*events)
-
-
-pn.config.param.watch(_theme_views_changed, '_theme')
 
 
 class VegaLiteView(View):
