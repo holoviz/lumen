@@ -4,6 +4,7 @@ object.
 """
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import copy
 import html
@@ -1786,7 +1787,11 @@ class VegaLiteView(View):
             # before the new value is visible. Defer a tick so the update
             # reads the settled theme instead of the validation artifact.
             pn.state.execute(self._apply_theme_change, schedule=True)
-        else:
+            return
+        try:
+            # A notebook has no session but runs an event loop.
+            asyncio.get_running_loop().call_soon(self._apply_theme_change)
+        except RuntimeError:
             self._apply_theme_change()
 
     def _apply_theme_change(self) -> None:
