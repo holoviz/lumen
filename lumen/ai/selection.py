@@ -279,7 +279,11 @@ def split_by_region(df: pd.DataFrame, area: Any) -> tuple[pd.DataFrame, pd.DataF
 
 def _draw_stream(layer: hv.Polygons, on_region: Callable[[Any], None]) -> hv.streams.PolyDraw:
     layer.opts(fill_alpha=0.15, line_width=2)
-    stream = hv.streams.PolyDraw(source=layer, num_objects=1, drag=False)
+    # Bokeh 3.4+ starts and ends a polygon on a press and hold, not a double tap
+    stream = hv.streams.PolyDraw(
+        source=layer, num_objects=1, drag=False,
+        tooltip="Draw an area: press and hold to start, click to add corners, press and hold to finish",
+    )
     stream.add_subscriber(lambda data: on_region(region(data)))
     return stream
 
