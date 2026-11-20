@@ -563,3 +563,8 @@ def test_has_geometry_counts_only_the_tables_of_the_sources():
     here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
     assert has_geometry(metaset, {("src", "t"): here}) is True
     assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
+
+
+async def test_sql_prompt_asks_for_the_geocode_tool_only_when_on(sql_context, test_messages, llm):
+    assert "## Place names" not in await _main_prompt(sql_context, test_messages, llm)
+    assert "## Place names" in await _main_prompt(sql_context, test_messages, llm, geocode=True)
