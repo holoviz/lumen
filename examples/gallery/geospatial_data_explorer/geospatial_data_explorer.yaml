@@ -1,0 +1,79 @@
+config:
+  title: NYC 311 Service Requests Explorer
+  theme: dark
+
+sources:
+  service_requests:
+    type: file
+    tables:
+      requests: ["./nyc_311_requests.csv", "csv"]
+
+pipelines:
+  requests:
+    source: service_requests
+    table: requests
+    filters:
+      - type: widget
+        field: borough
+      - type: widget
+        field: complaint_type
+      - type: widget
+        field: resolution_hours
+    transforms:
+      - type: columns
+        columns:
+          - unique_key
+          - created_date
+          - closed_date
+          - complaint_type
+          - borough
+          - status
+          - longitude
+          - latitude
+          - resolution_hours
+      - type: project_lnglat
+        longitude: longitude
+        latitude: latitude
+
+  selected:
+    pipeline: requests
+    filters:
+      - type: param
+        parameter: service_map.selection_expr
+
+layouts:
+  - title: NYC 311 Service Requests
+    views:
+      service_map:
+        type: hvplot
+        pipeline: requests
+        kind: points
+        x: longitude
+        y: latitude
+        c: borough
+        tiles: OSM
+        responsive: true
+        height: 500
+        xaxis: null
+        yaxis: null
+        padding: 0.1
+        selection_group: service_requests
+
+      service_table:
+        type: table
+        pipeline: selected
+        hidden_columns:
+          - longitude
+          - latitude
+        page_size: 10
+        sizing_mode: stretch_width
+        show_index: false
+
+      resolution_hist:
+        type: hvplot
+        pipeline: requests
+        kind: hist
+        y: resolution_hours
+        responsive: true
+        height: 250
+        selection_group: service_requests
