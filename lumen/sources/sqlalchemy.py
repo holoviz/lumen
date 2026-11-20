@@ -19,7 +19,7 @@ except ImportError as e:
     ) from e
 
 from ..transforms.base import Filter
-from ..transforms.sql import SQLFilter
+from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter
 from .base import BaseSQLSource, cached, cached_schema
 
 if TYPE_CHECKING:
@@ -401,7 +401,7 @@ class SQLAlchemySource(BaseSQLSource):
         conditions = list(query.items())
 
         if self.filter_in_sql:
-            sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
+            sql_transforms = [SQLFilter(conditions=conditions, boolean_literals=self.dialect not in NO_BOOLEAN_LITERALS)] + sql_transforms
 
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)
@@ -434,7 +434,7 @@ class SQLAlchemySource(BaseSQLSource):
         conditions = list(query.items())
 
         if self.filter_in_sql:
-            sql_transforms = [SQLFilter(conditions=conditions)] + sql_transforms
+            sql_transforms = [SQLFilter(conditions=conditions, boolean_literals=self.dialect not in NO_BOOLEAN_LITERALS)] + sql_transforms
 
         for st in sql_transforms:
             sql_expr = st.apply(sql_expr)

@@ -17,6 +17,7 @@ nav = [
     {"Launching Lumen" = "getting_started/launching_lumen.md"},
     {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
     {"Using Lumen AI" = "getting_started/using_lumen_ai.md"},
+    {"Lumen in Notebooks" = "getting_started/lumen_in_notebooks.md"},
     {"Building Lumen Apps" = "getting_started/building_lumen_apps.md"}
   ]},
   {"Examples" = [
@@ -85,6 +86,7 @@ nav = [
         {"Reports" = "reference/api/ai/reports.md"},
         {"Core" = "reference/api/ai/core.md"}
       ]},
+      {"Data" = "reference/api/data.md"},
       {"Pipeline" = "reference/api/pipeline.md"},
       {"Filters" = "reference/api/filters.md"},
       {"Variables" = "reference/api/variables.md"},

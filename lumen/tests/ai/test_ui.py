@@ -150,6 +150,14 @@ async def explorer_ui_with_error(explorer_ui):
 
     yield explorer_ui
 
+async def test_unanswerable_plan_is_not_executed_in_the_chat_ui(explorer_ui):
+    plan = Plan(title="Elevation", unanswerable="No table holds elevation.", context=explorer_ui.context)
+    explorer_ui._coordinator.respond = AsyncMock(return_value=plan)
+    explorer_ui._execute_plan = AsyncMock()
+    await explorer_ui._chat_invoke("How high?", "User", explorer_ui.interface)
+    explorer_ui._execute_plan.assert_not_awaited()
+
+
 async def test_explorer_ui_initialization(explorer_ui):
     """Test that ExplorerUI initializes correctly."""
     assert explorer_ui is not None
@@ -202,7 +210,7 @@ async def test_ui_without_provider_explains_options_instead_of_failing(monkeypat
     for env_var in PROVIDER_ENV_VARS.values():
         monkeypatch.delenv(env_var, raising=False)
     monkeypatch.setattr("lumen.ai.llm.requests.get", MagicMock(side_effect=requests.ConnectionError))
-    monkeypatch.setattr("lumen.ai.ui.local_cli_providers", lambda: {ClaudeCode: True})
+    monkeypatch.setattr("lumen.ai.llm.local_cli_providers", lambda: {ClaudeCode: True})
     ui = ExplorerUI()
     ui.llm.initialize = AsyncMock()
     await ui._initialize_new_llm()
@@ -1531,6 +1539,114 @@ def test_read_frame(make):
     assert list(source.get('data')['a']) == [1, 2, 3]
 
 
+def test_read_mixed_dict_is_one_source(tmp_path):
+    pl = pytest.importorskip('polars')
+    csv = tmp_path / 'orders.csv'
+    pd.DataFrame({'amount': [10, 20]}).to_csv(csv, index=False)
+    source = read({'people': pd.DataFrame({'name': ['a', 'b']}), 'scores': pl.DataFrame({'s': [1.5]}), 'orders': str(csv)})
+    assert sorted(source.get_tables()) == ['orders', 'people', 'scores']
+    totals = source.execute('SELECT (SELECT COUNT(*) FROM people) AS p, (SELECT SUM(amount) FROM orders) AS o')
+    assert totals.to_dict('records') == [{'p': 2, 'o': 30.0}]
+
+
+def test_read_mixed_dict_joins_a_frame_a_grid_and_a_connection(tmp_path):
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    conn = duckdb.connect(str(tmp_path / 'user.duckdb'))
+    conn.execute("CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 10), ('B', 20)) t(species, amount)")
+    grid = xr.Dataset({'temp': (('species', 'day'), [[9.0, 11.0], [19.0, 21.0]])}, coords={'species': ['A', 'B'], 'day': [1, 2]})
+    source = read({'people': pd.DataFrame({'species': ['A', 'B'], 'mass': [3700, 5000]}), 'climate': grid, 'shop': conn})
+
+    assert sorted(source.get_tables()) == ['climate', 'orders', 'people']
+    joined = source.execute(
+        'SELECT p.species, o.amount, AVG(c.temp) AS temp FROM people p '
+        'JOIN orders o USING (species) JOIN climate c USING (species) GROUP BY ALL ORDER BY 1'
+    )
+    assert joined.values.tolist() == [['A', 10, 10.0], ['B', 20, 20.0]]
+    # The user's database only ever had its own table
+    assert conn.execute('SELECT table_name FROM information_schema.tables').fetchall() == [('orders',)]
+
+
+def test_read_mixed_connection_table_clashing_with_a_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE people AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'people' has the same name"):
+        read({'people': pd.DataFrame({'a': [2]}), 'shop': conn})
+
+
+def test_read_mixed_connection_table_clashing_with_an_unnamed_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE data AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'data' has the same name"):
+        read([pd.DataFrame({'a': [2]}), conn])
+
+
+def test_read_two_grids_share_one_source():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    a = xr.Dataset({'t': ('x', [1.0, 2.0])}, coords={'x': [0, 1]})
+    b = xr.Dataset({'u': ('x', [3.0, 4.0])}, coords={'x': [0, 1]})
+    source = read({'a': a, 'b': b})
+    assert source.execute('SELECT SUM(t + u) AS s FROM a JOIN b USING (x)').iloc[0, 0] == 10.0
+
+
+def _view_sql(source, name):
+    """The SQL of a DuckDB view; a table copied into DuckDB has none."""
+    rows = source._connection.execute('SELECT sql FROM duckdb_views() WHERE view_name = ?', [name]).fetchall()
+    return rows[0][0] if rows else ''
+
+
+def test_read_glob_stays_a_scan_over_the_files(tmp_path):
+    for i in range(2):
+        pd.DataFrame({'a': range(i * 5, i * 5 + 5)}).to_parquet(tmp_path / f'part{i}.parquet')
+    source = read({'parts': str(tmp_path / '*.parquet')})
+    # A view reading the files on each query, not a table copied into DuckDB
+    assert 'parquet' in _view_sql(source, 'parts').lower()
+    assert source.execute('SELECT COUNT(*) AS n, MAX(a) AS m FROM parts').values.tolist() == [[10, 9]]
+
+
+def test_read_url_is_queried_over_http(tmp_path):
+    import functools
+    import http.server
+    import threading
+    try:
+        duckdb.connect().execute('LOAD httpfs')
+    except duckdb.Error:
+        pytest.skip('DuckDB httpfs extension is not available')
+    pd.DataFrame({'a': [1, 2, 3]}).to_parquet(tmp_path / 'remote.parquet')
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f'http://127.0.0.1:{server.server_port}/remote.parquet'
+        source = read({'remote': url})
+        assert url in _view_sql(source, 'remote')
+        assert source.execute('SELECT SUM(a) AS s FROM remote').iloc[0, 0] == 6
+    finally:
+        server.shutdown()
+
+
+def test_read_keeps_a_chunked_dataset_lazy():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    pytest.importorskip('dask')
+    ds = xr.Dataset({'t': (('x', 'y'), np.arange(400.0).reshape(20, 20))}).chunk({'x': 5})
+    source = read(ds)
+    assert source.execute('SELECT COUNT(*) AS n FROM t WHERE x < 5').iloc[0, 0] == 100
+    # Still dask-backed after the query, so nothing was loaded whole
+    assert source._dataset.t.chunks is not None
+
+
+def test_read_geojson_names_its_crs_on_the_column_type(tmp_path):
+    gpd = pytest.importorskip('geopandas')
+    from shapely.geometry import Point
+    gpd.GeoDataFrame({'n': ['a']}, geometry=[Point(13.4, 52.5)], crs='EPSG:4326').to_file(tmp_path / 'p.geojson')
+    source = read(str(tmp_path / 'p.geojson'))
+    table = source.get_tables()[0]
+    types = dict((row[0], row[1]) for row in source._connection.execute(f'DESCRIBE "{table}"').fetchall())
+    assert types['geometry'] == "GEOMETRY('EPSG:4326')"
+
+
 def test_read_duckdb_connection():
     conn = duckdb.connect()
     conn.execute('CREATE TABLE t AS SELECT * FROM range(3) r(a)')
@@ -1558,8 +1674,10 @@ def test_read_names_a_dataarray_from_its_key():
 
 
 def test_read_several_sources_raises():
+    # Ready-made Sources stay as they are, so two of them cannot be one source
+    first, second = DuckDBSource(uri=':memory:', tables={}), DuckDBSource(uri=':memory:', tables={})
     with pytest.raises(ValueError, match='resolved to 2 sources'):
-        read([pd.DataFrame({'a': [1]}), duckdb.connect()])
+        read([first, second])
 
 
 def test_read_duckdb_connection_leaves_it_open():
@@ -2431,3 +2549,72 @@ def test_cli_version_reports_the_installed_version(monkeypatch, capsys):
         main()
 
     assert capsys.readouterr().out.strip() == f"Lumen AI {__version__}"
+
+
+def _bar_editor(source):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    table = source.get_tables()[0]
+    data = source.get(table)
+    column = next(c for c in data.columns if not pd.api.types.is_numeric_dtype(data[c]))
+    view = VegaLiteView(
+        pipeline=Pipeline(source=source, table=table),
+        spec={"mark": "bar", "encoding": {"x": {"field": column, "type": "nominal"}}},
+    )
+    return VegaLiteEditor(component=view), column, data
+
+
+async def test_a_click_in_an_exploration_chart_asks_the_chat_about_it(explorer_ui, monkeypatch):
+    from lumen.ai.selection import CLICK
+    editor, column, data = _bar_editor(explorer_ui.context["source"])
+    sent = []
+    monkeypatch.setattr(explorer_ui.interface, "send", lambda message, **kwargs: sent.append((message, kwargs)))
+    box = explorer_ui._ask_box(editor)
+    assert not box.visible and "params" not in editor.component.spec
+
+    value = data[column].iloc[0]
+    editor.component._panel.selection.param.update(**{CLICK: [{column: value}]})
+    assert box.visible
+    _selected, (question, ask), _answers = box
+    question.value_input = "What is this?"
+    ask.clicks += 1
+    await async_wait_until(lambda: len(sent) == 1)
+    message, kwargs = sent[0]
+    assert kwargs == {"respond": True}
+    assert message.startswith("What is this?\n\nThis is about") and str(value) in message
+
+
+async def test_an_exploration_chart_tab_ends_with_the_ask_box(explorer_ui, monkeypatch):
+    editor, _column, _data = _bar_editor(explorer_ui.context["source"])
+    exploration = SimpleNamespace(plan=[SimpleNamespace(views=[editor])])
+    monkeypatch.setattr(explorer_ui, "_render_pop_out", lambda *args: Row())
+    _title, tab = explorer_ui._render_view(exploration, editor)
+    assert isinstance(tab[1], VSplit) and not tab[-1].visible and len(tab) == 3
+
+
+async def test_an_exploration_table_tab_has_no_ask_box(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    exploration = explorer_ui._explorations.items[1]['view']
+    await async_wait_until(lambda: len(exploration.plan.views) > 0)
+    sql_output = next(v for v in exploration.plan.views if isinstance(v, SQLEditor))
+    _title, tab = explorer_ui._render_view(exploration, sql_output)
+    assert len(tab) == 2
+
+
+async def test_a_click_on_a_point_in_an_exploration_finds_its_row_by_number(explorer_ui):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.ai.selection import CLICK, Selected, watch_clicks
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    source = read({"birds": pd.DataFrame({"bill": [58.0, 46.5], "flipper": [181.0, 207.0], "species": ["A", "B"]})})
+    view = VegaLiteView(pipeline=Pipeline(source=source, table="birds"), spec={"mark": "point", "encoding": {
+        "x": {"field": "flipper", "type": "quantitative"}, "y": {"field": "bill", "type": "quantitative"},
+        "color": {"field": "species", "type": "nominal"}}})
+    editor = VegaLiteEditor(component=view)
+    box = explorer_ui._ask_box(editor)
+    # Vega-Lite sends whole floats as JSON integers
+    editor.component._panel.selection.param.update(**{CLICK: [{"bill": 58}, {"flipper": 181}, {"species": "A"}]})
+    assert box.visible and box[0].object == "**Selected:** bill: 58, flipper: 181, species: A"

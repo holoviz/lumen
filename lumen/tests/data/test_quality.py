@@ -2,13 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-try:
-    import lumen.ai  # noqa
-except ModuleNotFoundError:
-    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
-
-from lumen.ai.data_quality import lint_data
-from lumen.ai.utils import PROFILE_SAMPLE_ROWS
+from lumen.data.quality import lint_data
+from lumen.data.utils import PROFILE_SAMPLE_ROWS
 
 
 class TestLintData:
