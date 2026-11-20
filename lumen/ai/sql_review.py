@@ -229,6 +229,12 @@ def _unshifted_longitudes(tree: exp.Expression, tables: dict[str, TableFacts]) -
     no rows instead of failing.
     """
     aliases = {table.alias_or_name: table.name for table in tree.find_all(exp.Table)}
+    # A CTE that passes a grid's longitude through unshifted counts as that grid
+    for cte in tree.find_all(exp.CTE):
+        sources = {table.name for table in cte.this.find_all(exp.Table)}
+        if "360" not in cte.this.sql() and sources & set(tables):
+            aliases[cte.alias] = next(iter(sources & set(tables)))
+    aliases.update({name: aliases[target] for name, target in list(aliases.items()) if target in aliases and target != name})
     if not any(tables[name].geometry for name in set(aliases.values()) if name in tables):
         # Without geometry in the query a 0 to 360 point is fine
         return []
@@ -258,7 +264,7 @@ def _unshifted_longitudes(tree: exp.Expression, tables: dict[str, TableFacts]) -
                     seen.add(column.name)
                     findings.append(
                         f"{hit[0][0]}.{column.name} runs from 0 to 360 but the geometry uses -180 to 180, so this "
-                        f"point matches no polygon and the query returns no rows. Use CASE WHEN {column.name} > 180 "
+                        f"point or cell matches no polygon and the query returns no rows. Use CASE WHEN {column.name} > 180 "
                         f"THEN {column.name} - 360 ELSE {column.name} END in place of {column.name}."
                     )
     return findings

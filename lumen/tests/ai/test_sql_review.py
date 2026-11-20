@@ -76,6 +76,9 @@ WRAPPED = {
     "SELECT s.name FROM air a JOIN states s ON ST_Within(ST_Point(a.lon, a.lat), s.geometry)",
     "SELECT name FROM air, states WHERE ST_Within(ST_Point(lon, lat), geometry)",
     "SELECT s.name FROM air a JOIN states s ON ST_Intersects(ST_MakeEnvelope(a.lon - 1.25, a.lat - 1.25, a.lon + 1.25, a.lat + 1.25), s.geometry)",
+    # Passed through a CTE first, still unshifted
+    "WITH c AS (SELECT lat, lon, air - 273.15 AS t FROM air) "
+    "SELECT s.name FROM states s JOIN c ON ST_Intersects(s.geometry, ST_MakeEnvelope(c.lon - 1, c.lat - 1, c.lon + 1, c.lat + 1))",
 ])
 def test_review_finds_a_0_to_360_longitude_against_geometry(sql):
     (finding,) = review_sql(sql, WRAPPED)
