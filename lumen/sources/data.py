@@ -214,7 +214,8 @@ def read(
         source = read(data, variables=variables, sel=sel, bbox=bbox)
         if not isinstance(source, DuckDBSource):
             raise ValueError(f"extensions load into DuckDB, but this data reads as a {type(source).__name__}.")
-        for name in extensions:
+        # A map of H3 hexagons turns them into geometry, which needs spatial
+        for name in [*extensions, *(["spatial"] if "h3" in extensions and "spatial" not in extensions else [])]:
             source.load_extension(name)
         return source
     if variables or sel or bbox:
