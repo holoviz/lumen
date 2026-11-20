@@ -1971,17 +1971,11 @@ class VegaLiteView(View):
         it never lands in the spec, in serialized output, or in an export.
         Explicit colors are respected.
         """
-        if theme != 'dark':
+        config = spec.get('config') or {}
+        text = config.get('text') or {}
+        if theme != 'dark' or 'color' in text or 'fill' in text:
             return spec
-        config = spec.get('config')
-        text = config.get('text') if isinstance(config, dict) else None
-        if isinstance(text, dict) and ('color' in text or 'fill' in text):
-            return spec
-        config = dict(config) if isinstance(config, dict) else {}
-        text = dict(text) if isinstance(text, dict) else {}
-        text['color'] = '#ffffff'
-        config['text'] = text
-        return dict(spec, config=config)
+        return dict(spec, config=dict(config, text=dict(text, color='#ffffff')))
 
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
