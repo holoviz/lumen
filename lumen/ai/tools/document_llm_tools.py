@@ -29,6 +29,30 @@ def _doc_metadata_filters(
     return filters
 
 
+def _record_document_sources(context: TContext, results: list[dict[str, Any]]) -> None:
+    """
+    Remember the chunks a document search returned so the answer can cite them.
+
+    The search tool hands its results to the LLM as text, which leaves the user
+    unable to tell which document an answer came from. Recording the chunks on
+    the working memory lets the responding agent show them alongside the answer.
+    """
+    recorded = context.setdefault("document_sources", [])
+    seen = {(source["filename"], source["text"]) for source in recorded}
+    for result in results:
+        metadata = result.get("metadata") or {}
+        filename = metadata.get("filename")
+        text = " ".join((result.get("text") or "").split())
+        if not filename or not text or (filename, text) in seen:
+            continue
+        seen.add((filename, text))
+        recorded.append({
+            "filename": filename,
+            "similarity": float(result.get("similarity", 0.0)),
+            "text": text,
+        })
+
+
 def make_document_vector_llm_tools(context: TContext) -> list[Any]:
     """
     Build ``FunctionTool`` instances for the document vector store in *context*.
@@ -116,6 +140,8 @@ def make_document_vector_llm_tools(context: TContext) -> list[Any]:
                 for r in results
                 if (r.get("metadata") or {}).get("filename") in visible_docs
             ]
+
+        _record_document_sources(context, results)
 
         if not results:
             return (
