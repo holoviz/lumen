@@ -1713,7 +1713,6 @@ def _force_light_theme():
 
 
 _VEGA_THEME_VIEWS: WeakSet = WeakSet()
-_VEGA_THEME_WATCHER: list = []
 
 
 def _theme_views_changed(*events: param.parameterized.Event) -> None:
@@ -1723,11 +1722,7 @@ def _theme_views_changed(*events: param.parameterized.Event) -> None:
         view._on_theme_change(*events)
 
 
-def _ensure_theme_watcher() -> None:
-    if not _VEGA_THEME_WATCHER:
-        _VEGA_THEME_WATCHER.append(
-            pn.config.param.watch(_theme_views_changed, '_theme')
-        )
+pn.config.param.watch(_theme_views_changed, '_theme')
 
 
 class VegaLiteView(View):
@@ -1758,7 +1753,6 @@ class VegaLiteView(View):
         self._doc = pn.state.curdoc
         self._theme_update_scheduled = False
         _VEGA_THEME_VIEWS.add(self)
-        _ensure_theme_watcher()
 
     def __panel__(self):
         # The active document is normally available by the time the View is
