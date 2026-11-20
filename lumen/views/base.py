@@ -1741,8 +1741,7 @@ class VegaLiteView(View):
         objects=['auto', 'light', 'dark'] + [
             name for name in pn.pane.Vega.param.theme.objects
             if name not in ('light', 'dark')
-        ],
-        allow_None=True, doc="""
+        ], doc="""
         The theme to render the chart with. Defaults to 'auto', which follows
         the active Panel theme so the chart adapts to light and dark dashboards
         without baking colors into the exported specification. 'light' uses the
