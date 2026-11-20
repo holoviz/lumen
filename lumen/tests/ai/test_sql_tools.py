@@ -563,3 +563,13 @@ def test_has_geometry_counts_only_the_tables_of_the_sources():
     here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
     assert has_geometry(metaset, {("src", "t"): here}) is True
     assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
+
+
+@pytest.mark.parametrize("flags, shown", [
+    ({"has_geometry": True}, False),
+    ({"gridded": True}, False),
+    ({"has_geometry": True, "gridded": True}, True),
+])
+async def test_sql_prompt_adds_grid_by_polygon_rules_only_for_both(sql_context, test_messages, llm, flags, shown):
+    prompt = await _main_prompt(sql_context, test_messages, llm, **flags)
+    assert ("## Grid by polygon" in prompt, "lon - 360" in prompt) == (shown, shown)
