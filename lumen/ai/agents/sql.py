@@ -281,6 +281,14 @@ def is_gridded(sources: dict[tuple[str, str], BaseSQLSource]) -> bool:
     )
 
 
+def loads_h3(sources: dict[tuple[str, str], BaseSQLSource]) -> bool:
+    """Whether a DuckDB source has the H3 extension loaded, as lumen.read(..., extensions=["h3"]) does."""
+    return any(
+        isinstance(source, DuckDBSource) and any(init.strip().upper().startswith("LOAD H3") for init in source.initializers)
+        for source in sources.values()
+    )
+
+
 def make_run_exploration_sql_tool(
     sources: dict[tuple[str, str], BaseSQLSource], timeout: float | None = None
 ) -> FunctionTool:
@@ -1399,6 +1407,7 @@ class SQLAgent(BaseLumenAgent):
                         dialect=dialect,
                         has_geometry=has_geometry(metaset, sources),
                         gridded=is_gridded(sources),
+                        h3=loads_h3(sources),
                         step_number=1,
                         is_final_step=True,
                         current_step="",
