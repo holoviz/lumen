@@ -1989,18 +1989,19 @@ class Answer(param.Parameterized):
 
     @property
     def _usage_note(self) -> str:
-        """One line on what the answer cost, or nothing when no call was counted."""
+        """One line on what the answer cost and the places it geocoded, or nothing when neither applies."""
+        parts = []
         if self.cached:
-            return "From the answer cache, no LLM calls"
-        if self.usage is None or not self.usage.records:
-            return ""
-        note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
-        if self.usage.cost_usd is not None:
-            note += f" · ${self.usage.cost_usd:.4f}"
+            parts.append("From the answer cache, no LLM calls")
+        elif self.usage is not None and self.usage.records:
+            note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
+            if self.usage.cost_usd is not None:
+                note += f" · ${self.usage.cost_usd:.4f}"
+            parts.append(note)
         if self.geocoded:
             # What left the machine, and the attribution OpenStreetMap's licence asks for
-            note += " · " + ATTRIBUTION.replace("Geocoded", f"Geocoded {', '.join(map(repr, self.geocoded))}")
-        return note
+            parts.append(ATTRIBUTION.replace("Geocoded", f"Geocoded {', '.join(map(repr, self.geocoded))}"))
+        return " · ".join(parts)
 
     def _usage_pane(self) -> Markdown:
         return Markdown(
