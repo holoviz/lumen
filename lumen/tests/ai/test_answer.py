@@ -2708,6 +2708,18 @@ async def test_one_failing_question_leaves_the_others(frame_source):
     assert [a.status for a in answers] == ["success", "error", "success"]
 
 
+async def test_ask_many_keeps_going_when_the_llm_fails_on_one_question(frame_source):
+    class PlanFails(KeyedLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if "Plan" in getattr(response_model, "__name__", "") and QUESTIONS[1] in json.dumps(messages):
+                raise RuntimeError("provider down")
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+
+    answers = await answer_module.aask_many(frame_source, QUESTIONS, llm=PlanFails(QUESTIONS))
+    assert [a.status for a in answers] == ["success", "error", "success"]
+    assert "provider down" in answers[1].error
+
+
 async def test_ask_many_gives_each_question_its_own_agents(frame_source):
     agents = [ChatAgent(), SQLAgent()]
     answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=KeyedLLM(QUESTIONS), agents=agents)
