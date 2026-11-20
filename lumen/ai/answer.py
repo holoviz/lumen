@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
+import numpy as np
 import pandas as pd
 import panel as pn
 import param
@@ -57,7 +58,7 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import input_kinds, joins_grids, read
+from ..sources.data import input_kinds, joins_grids, mesh_of, read
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
@@ -1489,9 +1490,33 @@ class Answer(param.Parameterized):
         or None otherwise. xarray-sql builds it from the answer's query,
         so it keeps the grid's dimensions instead of a long table.
         """
-        if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
+        if self.pipeline is None:
+            return None
+        if (mesh := self._mesh()) is not None:
+            return mesh
+        if not isinstance(self.pipeline.source, XArraySQLSource):
             return None
         return self.pipeline.get_dataset()
+
+    def _mesh(self) -> Any:
+        """
+        The answer's data on its mesh, as an xugrid UgridDataset, when it
+        came from a mesh and keeps the face index; faces the query left out
+        are NaN.
+        """
+        grids = mesh_of(self.pipeline.source)
+        if not grids:
+            return None
+        df = as_pandas(self.pipeline.data)
+        grid = next((g for g in grids.values() if g.face_dimension in df.columns), None)
+        if grid is None:
+            return None
+        # Deferred: xugrid is optional; a mesh source exists only when it is installed
+        import xugrid as xu
+        index = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])] + [grid.face_dimension]
+        values = [c for c in df.select_dtypes("number").columns if c not in index]
+        ds = df.set_index(index)[values].to_xarray().reindex({grid.face_dimension: np.arange(grid.n_face)})
+        return xu.UgridDataset(ds, grids=[grid])
 
     @property
     def data(self) -> Any:
@@ -1739,7 +1764,13 @@ class Answer(param.Parameterized):
         """
         An interactive map of the answer's geometry: lonboard's when it is
         installed, otherwise hvPlot's, on a basemap when geoviews is installed.
+        An answer about a mesh is drawn on its triangles with hvPlot.
         """
+        if self.pipeline is not None and (mesh := self._mesh()) is not None:
+            # Deferred: registers hvPlot's xugrid accessor, and xugrid is optional
+            import hvplot.xugrid  # noqa: F401
+            # hvPlot's xugrid backend draws a mesh as triangles, one value per face
+            return mesh[next(iter(mesh.data_vars))].hvplot()
         gdf = self.gdf
         if gdf is None:
             raise ValueError("This answer has no geometry to map.")
