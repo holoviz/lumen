@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import json
 import threading
 import time
 import weakref
@@ -170,32 +169,7 @@ def _has_key(spec: Any, keys: tuple[str, ...]) -> bool:
     return False
 
 
-def parse_spec_json(spec: Any) -> dict[str, Any]:
-    """
-    Parse a Vega-Lite ``spec`` given as a dict or JSON object string.
-
-    An empty or whitespace-only string becomes ``{}``. Invalid JSON raises
-    ``ValueError`` with the line and column from ``JSONDecodeError``, and any
-    non-object value raises ``ValueError``.
-    """
-    if isinstance(spec, dict):
-        return spec
-    if isinstance(spec, str):
-        if not spec.strip():
-            return {}
-        try:
-            parsed = json.loads(spec)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Invalid JSON in spec (line {exc.lineno}, column {exc.colno}): {exc.msg}."
-            ) from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("The spec must be a Vega-Lite JSON object.")
-        return parsed
-    raise ValueError("The spec must be a Vega-Lite JSON object.")
-
-
-def check_chart(spec: dict[str, Any] | str, columns: list[str]) -> dict[str, Any]:
+def check_chart(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     """
     The spec to render for a chart of a table with ``columns``, or
     ``ValueError`` saying what to fix. The data comes from the node's input,
@@ -206,7 +180,9 @@ def check_chart(spec: dict[str, Any] | str, columns: list[str]) -> dict[str, Any
     """
     from ..ai.utils import _spec_field_references, normalize_vegalite_spec
 
-    spec = copy.deepcopy(parse_spec_json(spec))
+    if not isinstance(spec, dict):
+        raise ValueError("The spec must be a Vega-Lite JSON object.")
+    spec = copy.deepcopy(spec)
     if isinstance(spec.get("data"), dict) and set(spec["data"]) <= {"name"}:
         spec.pop("data")
     spec.pop("usermeta", None)
@@ -445,16 +421,10 @@ def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
 def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/view`` config with ``check_chart`` against the input's columns."""
     pipeline, spec = inputs.get("pipeline"), config.get("spec")
-    if spec is None or spec == {} or (isinstance(spec, str) and not spec.strip()):
+    if pipeline is None or not spec:
         return None
     try:
-        parsed = parse_spec_json(spec)
-    except ValueError as exc:
-        return str(exc)
-    if pipeline is None or not parsed:
-        return None
-    try:
-        check_chart(parsed, pipeline_columns(pipeline))
+        check_chart(spec, pipeline_columns(pipeline))
     except ValueError as exc:
         return str(exc)
     return None

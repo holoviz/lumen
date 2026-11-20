@@ -14,18 +14,16 @@ Importing ``lumen`` does not import this package or panel-flowdash.
 from .checks import (
     PROBE_TIMEOUT, check_chart, check_columns, check_filter_config,
     check_query, check_source_config, check_sql_config, check_table_config,
-    check_view_config, forget_probes, parse_spec_json, pipeline_columns,
-    probe_query,
+    check_view_config, forget_probes, pipeline_columns, probe_query,
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
     QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ID, SOURCE_TYPE, SOURCES_KEY, SQL_ID,
     TABLE_ID, VIEW_ID, DataNode, FilterNode, SourceNode, SQLNode, TableNode,
     ViewNode, bind_source, bound_sources, compile_sql, effective_limit, fetch,
-    filter_condition, filtered_pipeline, forget, format_spec_json,
-    host_sources, missing_source, pipeline_sql, primed_result, python_value,
-    result_sql, row_ceiling, set_row_ceiling, table_pipeline, unbind_source,
-    view_config_editor,
+    filter_condition, filtered_pipeline, forget, host_sources, missing_source,
+    pipeline_sql, primed_result, python_value, result_sql, row_ceiling,
+    set_row_ceiling, table_pipeline, unbind_source,
 )
 
 # What the package offers as a FlowDash component library, under stable ids
@@ -71,10 +69,8 @@ __all__ = [
     "filtered_pipeline",
     "forget",
     "forget_probes",
-    "format_spec_json",
     "host_sources",
     "missing_source",
-    "parse_spec_json",
     "pipeline_columns",
     "pipeline_sql",
     "primed_result",
@@ -85,5 +81,4 @@ __all__ = [
     "set_row_ceiling",
     "table_pipeline",
     "unbind_source",
-    "view_config_editor",
 ]

@@ -1,11 +1,10 @@
-import json
+import asyncio
 import time
 
 from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
-import param
 import pytest
 import yaml
 
@@ -15,15 +14,13 @@ from panel_flowdash import FlowDash
 from panel_flowdash.agent import (
     DashboardOps, OperationError, dashboard_from_yaml, dashboard_to_yaml,
 )
-from panel_flowdash.ui.code_field import CodeField
-from panel_flowdash.ui.node_preview import hook_preview
+from panel_flowdash.ui.node_preview import hook_preview, summarize_value
 
 from lumen.flowdash import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PREVIEW_ROWS, RESULT_LIMIT,
     SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SQLNode, ViewNode, bind_source,
-    check_chart, check_query, check_view_config, compile_sql, format_spec_json,
-    nodes as flowdash_nodes, parse_spec_json, primed_result, result_sql,
-    set_row_ceiling, view_config_editor,
+    check_chart, check_query, compile_sql, nodes as flowdash_nodes,
+    primed_result, result_sql, set_row_ceiling,
 )
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
@@ -393,11 +390,38 @@ def test_sql_node_preview_returns_dataframe_without_requerying(source, executed)
     assert _instance(ops, "bad_sql").__flowdash_preview__() is None
 
 
-def test_table_and_filter_node_previews_cap_rows_and_cache(executed):
-    big = DuckDBSource(uri=":memory:", tables={"nums": "SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END AS kind FROM range(120) AS t(i)"})
+def numbers_editor(rows=120):
+    big = DuckDBSource(uri=":memory:", tables={
+        "nums": f"SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END AS kind FROM range({rows}) AS t(i)"
+    })
     ops = editor_with(big)
     ops.add_node(TABLE_ID, {"table": "nums"}, name="nums")
     ops.connect("data.source", "nums.source")
+    return big, ops
+
+
+def slow_queries(monkeypatch, source, delay):
+    """Make each query of ``source`` take ``delay`` seconds longer, counting them."""
+    calls = []
+    original = source.execute_with_timeout
+
+    async def slow(sql, timeout, *args, **kwargs):
+        calls.append(sql)
+        await asyncio.sleep(delay)
+        return await original(sql, timeout, *args, **kwargs)
+
+    monkeypatch.setattr(source, "execute_with_timeout", slow)
+    return calls
+
+
+def refreshes(node):
+    revisions = []
+    node.param.watch(lambda event: revisions.append(event.new), "_preview_rev")
+    return revisions
+
+
+def test_table_and_filter_node_previews_cap_rows_and_cache(executed):
+    _, ops = numbers_editor()
     ops.add_node(FILTER_ID, {"field": "kind"}, name="filtered")
     ops.connect("nums.pipeline", "filtered.pipeline")
     ops.add_node("Widgets/Select", {"default_options": ["even", "odd"]}, name="pick")
@@ -411,7 +435,7 @@ def test_table_and_filter_node_previews_cap_rows_and_cache(executed):
     t1 = table_node.__flowdash_preview__()
     assert isinstance(t1, pd.DataFrame) and len(t1) == PREVIEW_ROWS
     after_first = list(executed)
-    assert len(after_first) >= 1
+    assert len(after_first) == 1
 
     t2 = table_node.__flowdash_preview__(output="pipeline")
     assert len(t2) == PREVIEW_ROWS
@@ -439,6 +463,112 @@ def test_table_and_filter_node_previews_cap_rows_and_cache(executed):
     assert _instance(ops, "bad_table").__flowdash_preview__() is None
 
 
+def test_table_preview_caption_counts_rows_not_the_preview_cap():
+    _, ops = numbers_editor(rows=120)
+    node = _instance(ops, "nums")
+
+    capped = node.__flowdash_preview__()
+    assert len(capped) == PREVIEW_ROWS
+    assert summarize_value(capped) == f"{PREVIEW_ROWS}+ rows, 2 columns"
+    assert f"{PREVIEW_ROWS} rows" not in hook_preview(node).html
+
+    # Once a reader has fetched all the rows, the caption gives their number.
+    ops.add_node(DATA_ID, {}, name="rows")
+    ops.connect("nums.pipeline", "rows.pipeline")
+    full = node.__flowdash_preview__()
+    assert len(full) == PREVIEW_ROWS
+    assert summarize_value(full) == "120 rows, 2 columns"
+    assert type(full.head(2)) is pd.DataFrame
+
+    ops.set_config("nums", {"limit": 10})
+    assert summarize_value(_instance(ops, "nums").__flowdash_preview__()) == "10 rows, 2 columns"
+
+
+def test_table_preview_on_the_event_loop_does_not_wait_for_a_slow_query(monkeypatch):
+    big, ops = numbers_editor()
+    node = _instance(ops, "nums")
+    calls = slow_queries(monkeypatch, big, 1)
+    revisions = refreshes(node)
+
+    async def card_refreshes():
+        started = time.monotonic()
+        first = node.__flowdash_preview__()
+        again = node.__flowdash_preview__()
+        waited = time.monotonic() - started
+        await asyncio.wrap_future(flowdash_nodes._preview_future(node._object))
+        for _ in range(3):
+            await asyncio.sleep(0)
+        return first, again, waited
+
+    first, again, waited = asyncio.run(card_refreshes())
+
+    assert waited < 0.5
+    assert first == again == "Fetching rows..."
+    assert len(calls) == 1
+    # The card refreshes once the rows are there, and then shows them without another query.
+    assert revisions == [1]
+    rows = node.__flowdash_preview__()
+    assert len(rows) == PREVIEW_ROWS
+    assert len(calls) == 1
+
+
+def test_filter_preview_fetches_only_the_latest_value(monkeypatch):
+    big, ops = numbers_editor()
+    ops.add_node(FILTER_ID, {"field": "kind"}, name="filtered")
+    ops.connect("nums.pipeline", "filtered.pipeline")
+    node = _instance(ops, "filtered")
+    slow_queries(monkeypatch, big, 0.3)
+    revisions = refreshes(node)
+
+    async def drag():
+        futures = []
+        for value in ("even", "odd", "even", "odd"):
+            node.value = value
+            assert node.__flowdash_preview__() == "Fetching rows..."
+            futures.append(flowdash_nodes._preview_future(node._object))
+        for future in futures:
+            if not future.cancelled():
+                await asyncio.wrap_future(future)
+        for _ in range(3):
+            await asyncio.sleep(0)
+        return futures
+
+    futures = asyncio.run(drag())
+
+    assert any(future.cancelled() for future in futures)
+    assert revisions == [1]
+    assert set(node.__flowdash_preview__()["kind"]) == {"odd"}
+
+
+def test_failed_preview_is_kept_and_not_queried_again(monkeypatch, caplog):
+    big, ops = numbers_editor()
+    node = _instance(ops, "nums")
+    calls = []
+
+    async def failing(sql, timeout, *args, **kwargs):
+        calls.append(sql)
+        raise TimeoutError(f"The query did not finish within {timeout} seconds.\nMore detail")
+
+    monkeypatch.setattr(big, "execute_with_timeout", failing)
+
+    with caplog.at_level("ERROR"):
+        assert node.__flowdash_preview__() == "No preview: The query did not finish within 5 seconds."
+        preview = hook_preview(node)
+    assert preview is not None and "No preview" in preview.html
+    assert len(calls) == 1
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+    async def card_refresh():
+        return node.__flowdash_preview__()
+
+    assert asyncio.run(card_refresh()).startswith("No preview")
+    assert len(calls) == 1
+
+    flowdash_nodes.forget(node._object)
+    node.__flowdash_preview__()
+    assert len(calls) == 2
+
+
 def test_data_node_preview(source):
     ops = editor_with(source)
     ops.add_node(TABLE_ID, {"table": "sales"}, name="sales")
@@ -455,7 +585,7 @@ def test_data_node_preview(source):
     assert _instance(ops, "empty_data").__flowdash_preview__() is None
 
 
-def test_view_node_preview_returns_chart_payload_and_handles_none_data():
+def chart_editor():
     big = DuckDBSource(uri=":memory:", tables={"pts": "SELECT i AS x, i * 2 AS y FROM range(80) AS t(i)"})
     ops = editor_with(big)
     ops.add_node(TABLE_ID, {"table": "pts"}, name="pts")
@@ -463,28 +593,50 @@ def test_view_node_preview_returns_chart_payload_and_handles_none_data():
     spec = {"mark": "line", "encoding": {"x": {"field": "x", "type": "quantitative"}, "y": {"field": "y", "type": "quantitative"}}}
     ops.add_node(VIEW_ID, {"spec": spec}, name="chart")
     ops.connect("pts.pipeline", "chart.pipeline")
+    return ops
 
+
+def test_view_node_preview_is_a_line_of_text_on_a_host_without_chart_previews(monkeypatch):
+    monkeypatch.setattr(flowdash_nodes, "_preview_kinds", lambda: {"table", "text"})
+    ops = chart_editor()
+    node = _instance(ops, "chart")
+
+    assert node.__flowdash_preview__() == "Line chart of x and y, 80 rows"
+    preview = hook_preview(node)
+    assert "__flowdash" not in preview.html and "&lt;" not in preview.html
+
+    node._object = SimpleNamespace(spec={"mark": {"type": "bar"}}, pipeline=SimpleNamespace(data=None), panel=None)
+    assert node.__flowdash_preview__() == "Bar chart"
+
+
+def test_view_node_preview_on_panel_flowdash_main_shows_no_internal_keys():
+    node = _instance(chart_editor(), "chart")
+    preview = hook_preview(node)
+    assert preview is not None
+    if "chart" not in flowdash_nodes._preview_kinds():
+        assert "__flowdash_preview_kind__" not in preview.html
+        assert "fd-preview-entries" not in preview.html
+
+
+def test_view_node_preview_returns_an_evenly_sampled_chart_payload(monkeypatch):
+    monkeypatch.setattr(flowdash_nodes, "_preview_kinds", lambda: {"table", "chart"})
+    ops = chart_editor()
     node = _instance(ops, "chart")
     payload = node.__flowdash_preview__()
     assert payload["__flowdash_preview_kind__"] == "chart"
     assert payload["format"] == "vega-lite"
     assert payload["spec"] == node._object.spec
-    assert isinstance(payload["data"], pd.DataFrame)
-    assert len(payload["data"]) == PREVIEW_ROWS
+    data = payload["data"]
+    assert isinstance(data, pd.DataFrame) and len(data) == PREVIEW_ROWS
+    assert data["x"].iloc[0] == 0 and data["x"].iloc[-1] == 79
+    assert data["x"].is_monotonic_increasing
 
     # Mutating the returned spec copy does not alter the live view.
     payload["spec"]["mark"] = "point"
     assert node._object.spec["mark"] == "line"
 
-    # Graceful handling when pipeline.data is None.
     node._object = SimpleNamespace(spec={"mark": "bar"}, pipeline=SimpleNamespace(data=None), panel=None)
-    none_payload = node.__flowdash_preview__(output="chart")
-    assert none_payload == {
-        "__flowdash_preview_kind__": "chart",
-        "format": "vega-lite",
-        "spec": {"mark": "bar"},
-        "data": None,
-    }
+    assert node.__flowdash_preview__(output="chart")["data"] is None
 
     ops.add_node(VIEW_ID, {}, name="empty_view")
     assert _instance(ops, "empty_view").__flowdash_preview__() is None
@@ -494,118 +646,37 @@ def test_view_node_preview_returns_chart_payload_and_handles_none_data():
     assert _instance(ops, "bad_view").__flowdash_preview__() is None
 
 
-def test_code_field_metadata_on_sql_and_view_spec():
+def test_sql_is_a_code_field_and_the_view_spec_is_left_to_the_inspector():
     assert SQLNode.param.sql.metadata == {"flowdash": {"widget": "code", "language": "sql"}}
-    assert ViewNode.param.spec.metadata == {"flowdash": {"widget": "code", "language": "json"}}
-    assert type(ViewNode.param.spec) is param.Dict
+    assert not ViewNode.param.spec.metadata
 
 
-def test_view_spec_json_parsing_and_validation(source):
-    ops = dashboard(source)
-    pipeline = output(ops, "by_category", "pipeline")
-
-    assert parse_spec_json(SPEC) is SPEC
-    assert parse_spec_json(json.dumps(SPEC, indent=2)) == SPEC
-    assert parse_spec_json("") == {}
-    assert parse_spec_json("   ") == {}
-
-    with pytest.raises(ValueError, match=r"line 1, column"):
-        parse_spec_json('{"mark": }')
-    with pytest.raises(ValueError, match="Vega-Lite JSON object"):
-        parse_spec_json("[1, 2, 3]")
-    with pytest.raises(ValueError, match="Vega-Lite JSON object"):
-        parse_spec_json("42")
-
-    assert check_view_config({"spec": SPEC}, {"pipeline": pipeline}) is None
-    assert check_view_config({"spec": json.dumps(SPEC)}, {"pipeline": pipeline}) is None
-    assert check_view_config({"spec": ""}, {"pipeline": pipeline}) is None
-    assert check_view_config({"spec": "{}"}, {"pipeline": pipeline}) is None
-
-    # Invalid JSON is refused even before a pipeline is connected.
-    err = check_view_config({"spec": '{\n  "mark": @\n}'}, {})
-    assert err is not None and "line 2" in err and "column 11" in err
-    assert "Vega-Lite JSON object" in check_view_config({"spec": "[1, 2]"}, {})
-
-    unknown_err = check_view_config(
-        {"spec": json.dumps({"mark": "bar", "encoding": {"x": {"field": "missing", "type": "nominal"}}})},
-        {"pipeline": pipeline},
-    )
-    assert unknown_err is not None and "missing" in unknown_err
-
-    from_dict = ViewNode(spec=SPEC)
-    from_json = ViewNode(spec=json.dumps(SPEC))
-    assert from_dict.spec == SPEC and type(from_dict.spec) is dict
-    assert from_json.spec == SPEC and type(from_json.spec) is dict
-    with pytest.raises(ValueError, match="line 1"):
-        ViewNode(spec="{bad")
-    with pytest.raises(ValueError, match="Vega-Lite JSON object"):
-        ViewNode(spec='["not", "an", "object"]')
-
-
-def test_view_config_editor_round_trips_pretty_json_to_dict(source):
-    ops = dashboard(source)
-    editor = ops.editor
-    chart_id = ops._instance("chart")
-
-    assert format_spec_json(None) == "{}"
-    assert format_spec_json(SPEC) == json.dumps(SPEC, indent=2)
-    assert "'mark'" not in format_spec_json(SPEC)
-
-    # Exercise the live Inspector + ConfigDraft integration.
-    editor._flow.selection = {"nodes": [chart_id], "edges": []}
-    editor._inspector.refresh(force=True)
-    fields = editor._inspector._body.select(CodeField)
-    assert len(fields) == 1
-    field = fields[0]
-    assert field.language == "json"
-    assert field.value == json.dumps(SPEC, indent=2)
-
-    # Invalid JSON is rejected by ConfigDraft without overwriting the valid dict.
-    field.value = '{"mark": '
-    assert _instance(ops, "chart").spec == SPEC
-    assert editor._inspector._draft is not None
-    assert len(editor._inspector._draft.alert) == 1
-    assert "line 1" in str(editor._inspector._draft.alert[0].object)
-
-    # Non-object JSON is rejected too.
-    field.value = "[1, 2, 3]"
-    assert _instance(ops, "chart").spec == SPEC
-    assert "Vega-Lite JSON object" in str(editor._inspector._draft.alert[0].object)
-
-    # Valid JSON round-trips to a dict on ViewNode and serializes cleanly in YAML.
-    updated = {**SPEC, "mark": "line"}
-    field.value = json.dumps(updated, indent=2)
-    assert _instance(ops, "chart").spec == updated
-    assert isinstance(_instance(ops, "chart").spec, dict)
-    assert len(editor._inspector._draft.alert) == 0
-
-    dumped = yaml.safe_load(dashboard_to_yaml(editor))
-    assert dumped["nodes"]["chart"]["config"]["spec"] == updated
-    assert isinstance(dumped["nodes"]["chart"]["config"]["spec"], dict)
-
-    # Clearing the editor resets spec to {}.
-    patches = []
-    standalone = view_config_editor({"spec": SPEC}, on_patch=patches.append)
-    standalone.value = ""
-    assert patches == [{"spec": {}}]
-
-
-def test_register_port_type_passes_color_when_supported(monkeypatch):
+def test_register_port_type_passes_the_options_panel_flowdash_accepts(monkeypatch):
     calls = []
 
     def with_color(name, *, aliases=(), subtype_of=(), columns=None, color=None):
-        calls.append((name, color))
+        calls.append((name, color, columns))
         return name.lower()
 
     def without_color(name, *, aliases=(), subtype_of=(), columns=None):
-        calls.append((name, None))
+        calls.append((name, None, columns))
         return name.lower()
 
-    monkeypatch.setattr(flowdash_nodes, "register_port_type", with_color)
-    assert flowdash_nodes._register_port_type("lumen.Source", "#6D4C41") == "lumen.source"
-    assert calls == [("lumen.Source", "#6D4C41")]
+    def neither(name, *, aliases=(), subtype_of=()):
+        calls.append((name, None, None))
+        return name.lower()
 
-    calls.clear()
-    monkeypatch.setattr(flowdash_nodes, "register_port_type", without_color)
-    assert flowdash_nodes._register_port_type("lumen.Pipeline", "#0072B5") == "lumen.pipeline"
-    assert calls == [("lumen.Pipeline", None)]
+    def any_options(name, **options):
+        calls.append((name, options.get("color"), options.get("columns")))
+        return name.lower()
+
+    for register, expected in [
+        (with_color, ("lumen.Pipeline", "#0072B5", len)),
+        (without_color, ("lumen.Pipeline", None, len)),
+        (neither, ("lumen.Pipeline", None, None)),
+        (any_options, ("lumen.Pipeline", "#0072B5", len)),
+    ]:
+        calls.clear()
+        monkeypatch.setattr(flowdash_nodes, "register_port_type", register)
+        assert flowdash_nodes._register_port_type("lumen.Pipeline", color="#0072B5", columns=len) == "lumen.pipeline"
+        assert calls == [expected]
