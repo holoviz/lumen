@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
-    from ..ai.answer import Answer, Answers, Chat
+    from ..ai.answer import Answer, Answers, Chat, Comparison
     from ..ai.checks import CheckResult
     from ..ai.llm import Llm
     from ..ai.overview import Overview
@@ -736,6 +736,30 @@ class Source(MultiTypeComponent):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import aask_many
         return await aask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    def compare(
+        self, question: str, llms: list[Llm], *, agents: list | None = None, returns: Any = None,
+        concurrency: int = 4,
+    ) -> Comparison:
+        """
+        Ask this source one question with several LLMs at once and return their
+        answers side by side, each LLM with its own copy of the agents.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import compare
+        return compare(self, question, llms, agents=agents, returns=returns, concurrency=concurrency)
+
+    async def acompare(
+        self, question: str, llms: list[Llm], *, agents: list | None = None, returns: Any = None,
+        concurrency: int = 4,
+    ) -> Comparison:
+        """
+        Ask this source one question with several LLMs at once and await their
+        answers side by side, each LLM with its own copy of the agents.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import acompare
+        return await acompare(self, question, llms, agents=agents, returns=returns, concurrency=concurrency)
 
     def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
         """
