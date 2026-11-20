@@ -58,7 +58,9 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import input_kinds, joins_grids, mesh_of, read
+from ..sources.data import (
+    input_kinds, joins_grids, mesh_of, read,
+)
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
@@ -1770,6 +1772,7 @@ class Answer(param.Parameterized):
         if self.pipeline is not None and (mesh := self._mesh()) is not None:
             # Deferred: registers hvPlot's xugrid accessor, and xugrid is optional
             import hvplot.xugrid  # noqa: F401
+
             # hvPlot's xugrid backend draws a mesh as triangles; filled and
             # coloured by its value column "z", or only the edges show
             return mesh[next(iter(mesh.data_vars))].hvplot(filled=True).opts(edge_color="z", node_size=0)
