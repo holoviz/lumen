@@ -64,8 +64,11 @@ def mock_panel():
     class FakePanel:
         def __init__(self):
             self.calls = []
+            self.light = None
 
         def export(self, fmt, **kwargs):
+            from lumen.views.base import _FORCE_LIGHT_THEME
+            self.light = _FORCE_LIGHT_THEME.get()
             self.calls.append((fmt, kwargs))
             return _make_png_bytes()
 
@@ -124,6 +127,11 @@ def test_code_editor_matches_body_font_size(sql_editor):
 
 def test_vegalite_export_formats_includes_pillow_formats():
     assert {"webp", "tiff", "eps"} <= set(VegaLiteEditor.export_formats)
+
+
+def test_vegalite_export_renders_light(vegalite_editor, mock_panel):
+    vegalite_editor.export('png')
+    assert mock_panel.light is True
 
 
 @pytest.mark.parametrize("fmt,validate", [
@@ -388,7 +396,7 @@ def make_multi_vegalite_editor(monkeypatch):
     monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
     monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
 
-    class FakePanel:
+    class FakePanel(pn.pane.Markdown):
         def export(self, fmt, **kwargs):
             if fmt == "svg":
                 return '<svg width="20" height="30"><rect/></svg>'
@@ -397,14 +405,14 @@ def make_multi_vegalite_editor(monkeypatch):
     def factory(n_charts, unserializable=()):
         charts = [
             VegaLiteEditor(
-                component=MockVegaComponent(_mock_panel=FakePanel()),
+                component=MockVegaComponent(_mock_panel=FakePanel(f"Chart {c}")),
                 spec=None if c in unserializable else _MINIMAL_VEGALITE_SPEC,
                 title=f"Chart {c}",
             )
             for c in range(n_charts)
         ]
-        # The composite's own component supplies the live stacked view that the
-        # html export saves; a plain Column stands in for it here.
+        # The composite's own component supplies the live stacked view; the
+        # html export rebuilds it from the charts above instead.
         composite = MockVegaComponent(_mock_panel=pn.Column(*(
             pn.pane.Markdown(f"Chart {c}") for c in range(n_charts)
         )))
@@ -467,6 +475,33 @@ def test_multichart_export_html_is_one_offline_page(make_multi_vegalite_editor):
     content = make_multi_vegalite_editor(2).export("html").getvalue()
     assert content.lstrip().startswith("<!DOCTYPE html>")
     assert "Chart 0" in content and "Chart 1" in content
+
+
+def test_multichart_export_html_renders_light(monkeypatch):
+    """The saved page must not inherit a dark dashboard theme, and must be
+    rebuilt rather than reusing panes cached with the dashboard's theme."""
+    from lumen.views.base import _FORCE_LIGHT_THEME
+
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
+    seen = []
+
+    class RecordingComponent(MockVegaComponent):
+        def get_panel(self):
+            seen.append(_FORCE_LIGHT_THEME.get())
+            return pn.pane.Markdown("Chart")
+
+    chart = VegaLiteEditor(
+        component=RecordingComponent(), spec=_MINIMAL_VEGALITE_SPEC
+    )
+    multi = MultiChartEditor(
+        component=MockVegaComponent(_mock_panel=pn.pane.Markdown("All")),
+        title="All", chart_editors=[chart]
+    )
+
+    multi.export("html")
+
+    assert seen == [True]
 
 
 def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor):

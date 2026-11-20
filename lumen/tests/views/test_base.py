@@ -16,7 +16,8 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, Table, VegaLiteView, View, _force_light_theme,
+    hvOverlayView, hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -571,6 +572,86 @@ def test_vegalite_explicit_theme_overrides_dark_config():
 
 def test_vegalite_explicit_dark_theme():
     assert _vega_theme_view(theme='dark').get_panel().theme == 'dark'
+
+
+def test_vegalite_dark_theme_sets_readable_text_marks():
+    """Vega's dark theme leaves text marks black; default them to white at
+    render time, without writing the color into the spec."""
+    view = _vega_theme_view()
+
+    with pn.config.set(theme='dark'):
+        pane = view.get_panel()
+
+    assert pane.object['config']['text']['color'] == '#ffffff'
+    assert 'config' not in view.spec
+    assert 'config' not in view.to_spec()['spec']
+
+
+def test_vegalite_dark_theme_keeps_explicit_text_color():
+    view = _vega_theme_view()
+    view.spec = dict(view.spec, config={'text': {'color': 'red'}})
+
+    with pn.config.set(theme='dark'):
+        pane = view.get_panel()
+
+    assert pane.object['config']['text']['color'] == 'red'
+
+
+def test_vegalite_rerenders_when_config_theme_changes(monkeypatch):
+    """Existing charts follow a dark-mode toggle instead of staying on the
+    theme they were first rendered with."""
+    # A server document defers theme updates until Panel's hidden config
+    # parameter has finished validating and config.theme is settled.
+    class _Request:
+        arguments = {}
+
+    class _SessionContext:
+        session = None
+        request = _Request()
+
+    class _Doc:
+        session_context = _SessionContext()
+        _session_context = None
+
+        def __init__(self):
+            self.callbacks = []
+
+        def add_next_tick_callback(self, callback):
+            self.callbacks.append(callback)
+
+    doc = _Doc()
+    monkeypatch.setattr(pn.state, 'curdoc', doc)
+    view = _vega_theme_view()
+    assert view.panel is not None
+
+    def flush():
+        while doc.callbacks:
+            doc.callbacks.pop(0)()
+
+    assert view._panel.theme is None
+
+    pn.config.theme = 'dark'
+    flush()
+
+    assert view._panel.theme == 'dark'
+    assert view._panel.object['config']['text']['color'] == '#ffffff'
+
+    pn.config.theme = 'default'
+    flush()
+
+    assert view._panel.theme is None
+    assert 'config' not in view._panel.object
+
+
+def test_vegalite_exports_force_light_theme():
+    """A chart pinned to dark still exports light."""
+    view = _vega_theme_view(theme='dark')
+
+    with _force_light_theme():
+        pane = view.get_panel()
+
+    assert pane.theme is None
+    assert 'config' not in pane.object
 
 
 def test_vegalite_auto_theme_is_not_serialized():
