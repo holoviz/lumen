@@ -92,6 +92,23 @@ answers.to_frame() # one row per question: status, answer, SQL, seconds, tokens 
 
 At most four questions are in flight at a time; `concurrency=` changes that, e.g. `concurrency=1` to stay under a provider's rate limit. A question asked twice is asked once. A question that fails comes back with `status="error"` without stopping the others, and interrupting the kernel cancels them all. `await source.aask_many(...)` is the async form. Each question is asked on its own, so use a [chat](#follow-up) when one builds on another.
 
+### Compare models
+
+`compare` asks one question with several LLMs at once and shows the answers side by side, each under its provider and model:
+
+``` py
+from lumen.ai.llm import ClaudeCode, Kilo
+
+result = source.compare(
+    "Which species is heaviest on average?",
+    llms=[Kilo(), ClaudeCode(model_kwargs={"default": {"model": "claude-haiku-4-5"}})],
+)
+result             # the cards side by side
+result.to_frame()  # one row per model: answer, SQL, seconds, tokens and cost
+```
+
+Each model plans, queries and writes its own answer with its own copy of the agents, so comparing three models costs what asking three times would. `await source.acompare(...)` is the async form.
+
 ## Check the data
 
 `source.check` takes a rule the data should keep and returns the rows that break it:
