@@ -4,6 +4,8 @@ object.
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import copy
 import html
 import importlib.util
@@ -11,11 +13,12 @@ import re
 import sys
 import warnings
 
+from contextlib import contextmanager
 from io import BytesIO, StringIO
 from typing import (
     IO, TYPE_CHECKING, Any, ClassVar, Literal,
 )
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 
 import hvplot.pandas  # type: ignore  # noqa: F401
 import numpy as np
@@ -46,6 +49,7 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
 )
 from panel.param import Param
+from panel.theme import DarkTheme
 from panel.util import classproperty
 from panel.viewable import Child, Viewable, Viewer
 from panel_material_ui import FileDownload
@@ -127,6 +131,34 @@ _HVPLOT_OPTIONS = {
     option for name, group in vars(HoloViewsConverter).items()
     if name.endswith('_options') and isinstance(group, list) for option in group
 }
+
+
+_FORCE_LIGHT_THEME = contextvars.ContextVar(
+    'lumen_force_light_theme', default=False
+)
+
+_VEGA_THEME_VIEWS: WeakSet = WeakSet()
+
+
+@contextmanager
+def _force_light_theme():
+    """Render Vega-Lite charts light, whatever the dashboard theme, since an
+    exported chart has no surrounding page to contrast with."""
+    token = _FORCE_LIGHT_THEME.set(True)
+    try:
+        yield
+    finally:
+        _FORCE_LIGHT_THEME.reset(token)
+
+
+def _theme_views_changed(*events: param.parameterized.Event) -> None:
+    # A single watcher on the global config avoids pinning every VegaLiteView
+    # (and its pipeline and data) in memory for the life of the process.
+    for view in list(_VEGA_THEME_VIEWS):
+        view._on_theme_change(*events)
+
+
+pn.config.param.watch(_theme_views_changed, '_theme')
 
 
 class View(MultiTypeComponent, Viewer):
@@ -1694,9 +1726,59 @@ class VegaLiteView(View):
 
     spec = param.Dict()
 
+    theme = param.Selector(
+        default='auto',
+        objects=['auto', 'light', 'dark'] + [
+            name for name in pn.pane.Vega.param.theme.objects
+            if name not in ('light', 'dark')
+        ], doc="""
+        The theme to render the chart with. Defaults to 'auto', which follows
+        the active Panel theme so the chart adapts to light and dark dashboards
+        without baking colors into the exported specification. 'light' uses the
+        Vega default theme, 'dark' the Vega dark theme, and any other value is
+        passed through to the Vega pane as a named Vega theme.""")
+
     view_type = 'vegalite'
 
     _extension = 'vega'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._doc = pn.state.curdoc
+        self._theme_update_scheduled = False
+        _VEGA_THEME_VIEWS.add(self)
+
+    def __panel__(self):
+        # A View built outside the session learns its document on render.
+        if self._doc is None:
+            self._doc = pn.state.curdoc
+        return super().__panel__()
+
+    def _on_theme_change(self, *events: param.parameterized.Event) -> None:
+        if self.theme != 'auto' or not self._initialized:
+            return
+        curdoc = pn.state.curdoc
+        if curdoc is not self._doc:
+            # pn.config watchers fire for every session.
+            return
+        if self._theme_update_scheduled:
+            return
+        self._theme_update_scheduled = True
+        if curdoc is not None:
+            # Panel validates config.theme by setting and restoring _theme, so
+            # watchers fire before the new value lands. Defer to read it.
+            pn.state.execute(self._apply_theme_change, schedule=True)
+            return
+        try:
+            # A notebook has no session but runs an event loop.
+            asyncio.get_running_loop().call_soon(self._apply_theme_change)
+        except RuntimeError:
+            self._apply_theme_change()
+
+    def _apply_theme_change(self) -> None:
+        self._theme_update_scheduled = False
+        if self.theme == 'auto' and self._initialized:
+            self.update(invalidate_cache=False)
 
     @classmethod
     def _declares_own_data(cls, node: Any) -> bool:
@@ -1856,6 +1938,29 @@ class VegaLiteView(View):
             return re.sub(r"([.\[\]])", r"\\\1", field)
         return field
 
+    @staticmethod
+    def _detect_theme() -> str:
+        # A served dashboard sets its theme on the template, not on pn.config.
+        if pn.config.theme == 'dark':
+            return 'dark'
+        curdoc = pn.state.curdoc
+        template = pn.state._templates.get(curdoc) if curdoc else pn.state._template
+        return 'dark' if template and issubclass(template.theme, DarkTheme) else 'light'
+
+    def _pane_theme(self) -> str | None:
+        theme = self._detect_theme() if self.theme == 'auto' else self.theme
+        return None if theme == 'light' else theme
+
+    @staticmethod
+    def _apply_text_default(spec: dict, theme: str | None) -> dict:
+        """Vega's dark theme leaves text marks black, so default them to white
+        at render time, keeping the color out of the spec and its exports."""
+        config = spec.get('config') or {}
+        text = config.get('text') or {}
+        if theme != 'dark' or 'color' in text or 'fill' in text:
+            return spec
+        return dict(spec, config=dict(config, text=dict(text, color='#ffffff')))
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1895,10 +2000,18 @@ class VegaLiteView(View):
         else:
             self._drop_dangling_view_data(spec, set(spec.get('datasets', {})))
             encoded = dict(spec, data={'values': df, **spec_data})
-        return dict(object=encoded, **self.kwargs)
-
+        # Always set the theme so switching back to light clears a dark theme
+        # left on a reused pane. Exports force the light theme regardless of
+        # the dashboard the chart is displayed in.
+        theme = None if _FORCE_LIGHT_THEME.get() else self._pane_theme()
+        encoded = self._apply_text_default(encoded, theme)
+        params = dict(object=encoded, **self.kwargs)
+        params['theme'] = theme
+        return params
 
     def get_panel(self) -> pn.pane.Vega:
+        if self._doc is None:
+            self._doc = pn.state.curdoc
         spec = self._normalize_params(self._get_params())
         return pn.pane.Vega(**spec)
 
