@@ -609,6 +609,12 @@ def test_vegalite_explicit_dark_theme():
     assert _vega_theme_view(theme='dark').get_panel().theme == 'dark'
 
 
+def test_vegalite_explicit_theme_roundtrip():
+    spec = _vega_theme_view(theme='dark').to_spec()
+
+    assert View.from_spec(spec).theme == 'dark'
+
+
 def test_vegalite_dark_theme_sets_readable_text_marks():
     """Vega's dark theme leaves text marks black; default them to white at
     render time, without writing the color into the spec."""

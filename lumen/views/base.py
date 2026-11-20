@@ -1980,7 +1980,7 @@ class VegaLiteView(View):
             return 'dark'
         return 'light'
 
-    def _resolve_theme(self) -> str | None:
+    def _pane_theme(self) -> str | None:
         """Resolve the View theme to a value the Vega pane understands."""
         theme = self.theme
         if theme == 'auto':
@@ -2052,7 +2052,7 @@ class VegaLiteView(View):
         # Always set the theme so switching back to light clears a dark theme
         # left on a reused pane. Exports force the light theme regardless of
         # the dashboard the chart is displayed in.
-        theme = None if _FORCE_LIGHT_THEME.get() else self._resolve_theme()
+        theme = None if _FORCE_LIGHT_THEME.get() else self._pane_theme()
         encoded = self._apply_text_default(encoded, theme)
         params = dict(object=encoded, **self.kwargs)
         params['theme'] = theme
