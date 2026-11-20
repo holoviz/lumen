@@ -1761,13 +1761,6 @@ class VegaLiteView(View):
             self._doc = pn.state.curdoc
         return super().__panel__()
 
-    @staticmethod
-    def _active_template():
-        curdoc = pn.state.curdoc
-        if curdoc is not None:
-            return pn.state._templates.get(curdoc)
-        return pn.state._template
-
     def _on_theme_change(self, *events: param.parameterized.Event) -> None:
         if self.theme != 'auto' or not self._initialized:
             return
@@ -1958,21 +1951,12 @@ class VegaLiteView(View):
 
     @staticmethod
     def _detect_theme() -> str:
-        """
-        Resolve the theme the chart is being displayed in.
-
-        ``pn.config.theme`` reflects an explicit light/dark choice for the
-        session, while a served Lumen dashboard carries its theme on the
-        template registered with the current document. Checking both means a
-        chart follows the dashboard it is rendered into even when the global
-        config still reports its default.
-        """
+        # A served dashboard sets its theme on the template, not on pn.config.
         if pn.config.theme == 'dark':
             return 'dark'
-        template = VegaLiteView._active_template()
-        if template is None:
-            return 'light'
-        return 'dark' if issubclass(template.theme, DarkTheme) else 'light'
+        curdoc = pn.state.curdoc
+        template = pn.state._templates.get(curdoc) if curdoc else pn.state._template
+        return 'dark' if template and issubclass(template.theme, DarkTheme) else 'light'
 
     def _pane_theme(self) -> str | None:
         """Resolve the View theme to a value the Vega pane understands."""
