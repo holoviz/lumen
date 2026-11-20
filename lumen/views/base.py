@@ -142,14 +142,8 @@ _VEGA_THEME_VIEWS: WeakSet = WeakSet()
 
 @contextmanager
 def _force_light_theme():
-    """Render Vega-Lite charts with the light theme inside this context.
-
-    Exports must not inherit the dashboard's dark theme: a PNG, SVG or
-    standalone HTML page has no surrounding page to provide contrast, and
-    plots that looked right on a dark dashboard become unreadable on their
-    own. Charts therefore render light while an export is being produced,
-    independent of the theme used on screen.
-    """
+    """Render Vega-Lite charts light, whatever the dashboard theme, since an
+    exported chart has no surrounding page to contrast with."""
     token = _FORCE_LIGHT_THEME.set(True)
     try:
         yield
@@ -1755,8 +1749,7 @@ class VegaLiteView(View):
         _VEGA_THEME_VIEWS.add(self)
 
     def __panel__(self):
-        # The active document is normally available by the time the View is
-        # rendered, even if it was constructed outside the session.
+        # A View built outside the session learns its document on render.
         if self._doc is None:
             self._doc = pn.state.curdoc
         return super().__panel__()
@@ -1766,18 +1759,14 @@ class VegaLiteView(View):
             return
         curdoc = pn.state.curdoc
         if curdoc is not self._doc:
-            # Panel's config is global, so its watchers fire for every
-            # session. Only react to changes in the session this View
-            # belongs to.
+            # pn.config watchers fire for every session.
             return
         if self._theme_update_scheduled:
             return
         self._theme_update_scheduled = True
         if curdoc is not None:
-            # Panel sets config.theme by validating the hidden _theme
-            # parameter: it sets and immediately restores it, so watchers run
-            # before the new value is visible. Defer a tick so the update
-            # reads the settled theme instead of the validation artifact.
+            # Panel validates config.theme by setting and restoring _theme, so
+            # watchers fire before the new value lands. Defer to read it.
             pn.state.execute(self._apply_theme_change, schedule=True)
             return
         try:
@@ -1964,13 +1953,8 @@ class VegaLiteView(View):
 
     @staticmethod
     def _apply_text_default(spec: dict, theme: str | None) -> dict:
-        """Make text marks readable on the Vega dark theme.
-
-        Vega's dark theme colors the background, axes and titles, but leaves
-        text marks at their black default. Set their color at render time so
-        it never lands in the spec, in serialized output, or in an export.
-        Explicit colors are respected.
-        """
+        """Vega's dark theme leaves text marks black, so default them to white
+        at render time, keeping the color out of the spec and its exports."""
         config = spec.get('config') or {}
         text = config.get('text') or {}
         if theme != 'dark' or 'color' in text or 'fill' in text:

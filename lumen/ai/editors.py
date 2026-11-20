@@ -885,10 +885,8 @@ class MultiChartEditor(LumenEditor):
         if fmt == "yaml":
             return StringIO("---\n".join(editor.spec for editor in editors))
         if fmt == "html":
-            # Rebuild the stack instead of saving the live composite: its
-            # reactive wrappers hold panes rendered with the dashboard theme,
-            # which a light-theme context alone would not replace. Rendering
-            # fresh charts keeps the exported page light in either case.
+            # Rebuilt rather than saved live: the live stack caches panes
+            # rendered in the dashboard theme.
             buf = StringIO()
             with _force_light_theme():
                 stacked = Column(
