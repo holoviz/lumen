@@ -694,9 +694,9 @@ def test_view_node_preview_returns_an_evenly_sampled_chart_payload(monkeypatch):
     assert _instance(ops, "bad_view").__flowdash_preview__() is None
 
 
-def test_sql_is_a_code_field_and_the_view_spec_is_left_to_the_inspector():
+def test_sql_is_a_code_field_and_the_view_spec_uses_the_spec_editor():
     assert SQLNode.param.sql.metadata == {"flowdash": {"widget": "code", "language": "sql"}}
-    assert not ViewNode.param.spec.metadata
+    assert ViewNode.param.spec.metadata["flowdash"]["widget"] == "spec"
 
 
 def test_register_port_type_passes_the_options_panel_flowdash_accepts(monkeypatch):
