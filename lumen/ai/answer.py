@@ -1058,6 +1058,11 @@ async def _ask_many(
     data: DataT | Pipeline, questions: list[str], llm: Llm | None, agents: list | None,
     returns: Any, concurrency: int,
 ) -> Answers:
+    if isinstance(questions, str):
+        # A string is iterable, so it would be asked one character at a time
+        raise TypeError("ask_many takes a list of questions; use ask for one question.")
+    if not questions:
+        return Answers()
     # Read once, so every question shares one Source and its Planner cache
     data = data if isinstance(data, Source | Pipeline) else read(data)
     # Resolved before any question starts, so a missing provider raises once
