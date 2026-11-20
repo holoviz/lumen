@@ -58,3 +58,13 @@ def test_an_answer_without_the_face_index_is_not_put_on_the_mesh(mesh):
     result = source.create_sql_expr_source({"mean": "SELECT AVG(face_z) AS z FROM face_z"})
     answer = Answer(question="?", status="success", pipeline=Pipeline(source=result, table="mean"))
     assert answer.ds is None
+
+
+def test_a_mesh_answer_joined_with_face_centres_maps_the_values(mesh):
+    source = lumen.read(mesh)
+    result = source.create_sql_expr_source({"high": (
+        'SELECT z."mesh2d_nFaces", f.x, f.y, z.face_z FROM face_z z JOIN mesh2d_faces f USING ("mesh2d_nFaces") WHERE z.face_z > 5'
+    )})
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=result, table="high"))
+    assert list(answer.ds.data_vars) == ["face_z"]
+    assert answer.map().nodes.vdims[0].label == "face_z"
