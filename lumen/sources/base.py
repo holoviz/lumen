@@ -40,8 +40,9 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
-    SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
+    ARRAY_AGG_DISTINCT_DIALECTS, NO_BOOLEAN_LITERALS, SQLCount, SQLDistinct,
+    SQLFilter, SQLLimit, SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom,
+    SQLTransform,
 )
 from ..util import (
     DATAFRAME_BACKENDS, as_narwhals, collect_lazy, get_dataframe_schema,
@@ -1474,7 +1475,7 @@ class BaseSQLSource(Source):
 
         conditions = list(query.items())
         if conditions:
-            sql_filter = SQLFilter(conditions=conditions)
+            sql_filter = SQLFilter(conditions=conditions, boolean_literals=self.dialect not in NO_BOOLEAN_LITERALS)
             sql_expr = sql_filter.apply(sql_expr)
 
         # Through execute_async rather than fetch, because a source with a

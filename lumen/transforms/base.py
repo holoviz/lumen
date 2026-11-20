@@ -9,6 +9,7 @@ import math
 import warnings
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import reduce
 from operator import and_, or_
 from typing import (
@@ -330,6 +331,191 @@ class Transform(MultiTypeComponent):
         return {k: v for k, v in kwargs.items() if v is not None}
 
 
+_CLOSED = ("both", "left", "right", "neither")
+
+_RANGE_KEYS = {"start", "end", "closed", "type"}
+
+
+def _is_nat(value: Any) -> bool:
+    return value is pd.NaT or (isinstance(value, np.datetime64) and np.isnat(value))
+
+
+def _as_bound(value: Any) -> Any:
+    if isinstance(value, np.datetime64):
+        return None if np.isnat(value) else pd.Timestamp(value).to_pydatetime(warn=False)
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime(warn=False)
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _is_day(value: Any) -> bool:
+    return isinstance(value, dt.date) and not isinstance(value, dt.datetime)
+
+
+@dataclass(frozen=True)
+class Range:
+    """
+    A range filter value that says which of its bounds are included.
+
+    A plain ``(start, end)`` tuple keeps values from ``start`` to ``end``,
+    both included. A ``Range`` says it with ``closed``, as ``pd.Interval``
+    does: ``"both"``, ``"left"`` (``start <= value < end``), ``"right"`` or
+    ``"neither"``, so consecutive ranges such as the months of a year can
+    share a bound without overlapping. Either bound may be None to leave that
+    side open; a NaT bound matches nothing.
+
+    On a datetime column a date bound stands for the whole day: an included
+    start keeps it from midnight, an excluded one from the next midnight, an
+    included end keeps the whole day and an excluded one stops at its
+    midnight. Datetime bounds are compared as they are; naive bounds against
+    a timezone-aware column are read in the column's timezone.
+
+    ``Filter``, ``SQLFilter`` and ``SQLPreFilter`` accept it wherever they
+    accept a range tuple, also in a list of ranges, which keeps rows in any
+    of them. In a spec it is written as ``{start, end, closed}``, see
+    ``to_spec``.
+    """
+
+    start: Any = None
+    end: Any = None
+    closed: Literal["both", "left", "right", "neither"] = "both"
+
+    def __post_init__(self):
+        if self.closed not in _CLOSED:
+            raise ValueError(f"Range.closed must be one of {', '.join(map(repr, _CLOSED))}, not {self.closed!r}.")
+
+    @property
+    def matches_nothing(self) -> bool:
+        """Whether a bound is NaT, which no value compares with."""
+        return _is_nat(self.start) or _is_nat(self.end)
+
+    def bounds(self, temporal: bool = False) -> tuple[Any, bool, Any, bool]:
+        """
+        Return ``(start, start_included, end, end_included)``, with date
+        bounds turned into midnights when ``temporal`` says the values
+        compared are datetimes.
+        """
+        start, end = _as_bound(self.start), _as_bound(self.end)
+        start_in = self.closed in ("both", "left")
+        end_in = self.closed in ("both", "right")
+        if temporal and _is_day(start):
+            day = start if start_in else start + dt.timedelta(days=1)
+            start, start_in = dt.datetime(day.year, day.month, day.day), True
+        if temporal and _is_day(end):
+            day = end + dt.timedelta(days=1) if end_in else end
+            end, end_in = dt.datetime(day.year, day.month, day.day), False
+        return start, start_in, end, end_in
+
+    def to_spec(self) -> dict[str, Any]:
+        """
+        Return the range as a dict that YAML and JSON can hold: ``start``,
+        ``end`` and ``closed``, with datetimes and dates written in ISO
+        format and their kind in ``type``, per bound when they differ, e.g.
+        ``{"start": "date", "end": "datetime"}``.
+        """
+        bounds = {"start": _as_bound(self.start), "end": _as_bound(self.end)}
+        spec: dict[str, Any] = dict(bounds, closed=self.closed)
+        kinds = {
+            key: "datetime" if isinstance(value, dt.datetime) else "date"
+            for key, value in bounds.items() if isinstance(value, dt.date)
+        }
+        for key in kinds:
+            spec[key] = bounds[key].isoformat()
+        if len(set(kinds.values())) == 1:
+            spec["type"] = next(iter(kinds.values()))
+        elif kinds:
+            spec["type"] = kinds
+        return spec
+
+    @classmethod
+    def from_spec(cls, spec: dict[str, Any]) -> Range:
+        """Return the range ``to_spec`` wrote."""
+        kinds = spec.get("type")
+        def parse(key):
+            value = spec.get(key)
+            kind = kinds.get(key) if isinstance(kinds, dict) else kinds
+            if not isinstance(value, str) or kind is None:
+                return value
+            if kind == "date":
+                return dt.date.fromisoformat(value)
+            return dt.datetime.fromisoformat(value)
+        return cls(parse("start"), parse("end"), spec.get("closed", "both"))
+
+    @staticmethod
+    def is_spec(value: Any) -> bool:
+        """Whether ``value`` is a dict ``to_spec`` could have written."""
+        return isinstance(value, dict) and "closed" in value and set(value) <= _RANGE_KEYS
+
+
+def _localize(value: Any, time_zone: Any) -> Any:
+    """A naive datetime bound read in ``time_zone``, the timezone of the column it is compared with."""
+    if isinstance(value, dt.datetime) and value.tzinfo is None:
+        return pd.Timestamp(value).tz_localize(time_zone).to_pydatetime()
+    return value
+
+
+def _range_mask(column: Any, start: Any, start_in: bool, end: Any, end_in: bool) -> Any:
+    """``column`` within the bounds; works on pandas Series and narwhals expressions alike."""
+    if start is None and end is None:
+        return None
+    lower = None if start is None else (column >= start if start_in else column > start)
+    upper = None if end is None else (column <= end if end_in else column < end)
+    if lower is None:
+        return upper
+    return lower if upper is None else lower & upper
+
+
+def _is_range(value: Any) -> bool:
+    return isinstance(value, Range) or (isinstance(value, tuple) and len(value) == 2)
+
+
+def _parse_condition_value(value: Any) -> Any:
+    if Range.is_spec(value):
+        return Range.from_spec(value)
+    if isinstance(value, list) and any(Range.is_spec(v) for v in value):
+        return [Range.from_spec(v) if Range.is_spec(v) else v for v in value]
+    return value
+
+
+def _spec_condition_value(value: Any) -> Any:
+    if isinstance(value, Range):
+        return value.to_spec()
+    if isinstance(value, list) and any(isinstance(v, Range) for v in value):
+        # A tuple in a list would come back as a list, so every range is written as a Range.
+        return [
+            v.to_spec() if isinstance(v, Range)
+            else Range(*v).to_spec() if isinstance(v, tuple) and len(v) == 2 else v
+            for v in value
+        ]
+    return value
+
+
+def parse_conditions(conditions: list) -> list:
+    """``conditions`` with the ranges a spec writes as dicts turned back into ``Range``."""
+    parsed = []
+    for condition in conditions:
+        if isinstance(condition, (list, tuple)) and len(condition) == 2:
+            value = _parse_condition_value(condition[1])
+            if value is not condition[1]:
+                condition = (condition[0], value)
+        parsed.append(condition)
+    return parsed
+
+
+def spec_conditions(conditions: list) -> list:
+    """``conditions`` as a spec holds them, with each ``Range`` written as its dict."""
+    written = []
+    for condition in conditions:
+        if isinstance(condition, (list, tuple)) and len(condition) == 2:
+            value = _spec_condition_value(condition[1])
+            if value is not condition[1]:
+                condition = [condition[0], value]
+        written.append(condition)
+    return written
+
+
 class Filter(Transform):
     """
     `Filter` transform implement the filtering behavior of `Filter` components.
@@ -339,8 +525,9 @@ class Filter(Transform):
 
       * scalar: A scalar value will be matched using equality operators
       * tuple:  A tuple value specifies a numeric or date range.
+      * Range:  A range that says which of its bounds are included, see ``Range``.
       * list:   A list value specifies a set of categories to match against.
-      * list(tuple): A list of tuples specifies a list of ranges.
+      * list(tuple): A list of tuples or ``Range`` values specifies a list of ranges.
     """
 
     conditions = param.List(doc="""
@@ -348,6 +535,40 @@ class Filter(Transform):
       name and the filter value.""")
 
     _narwhals: ClassVar[bool] = True
+
+    def __init__(self, **params):
+        if "conditions" in params:
+            params["conditions"] = parse_conditions(params["conditions"])
+        super().__init__(**params)
+
+    def to_spec(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        spec = super().to_spec(context=context)
+        if "conditions" in spec:
+            spec["conditions"] = spec_conditions(spec["conditions"])
+        return spec
+
+    @staticmethod
+    def _range_value_expr(name: str, value: Range, dtype: Any):
+        """The narwhals expression of a ``Range`` against the column ``name`` of type ``dtype``."""
+        column = nw.col(name)
+        if value.matches_nothing:
+            return column.is_null() & ~column.is_null()
+        temporal = isinstance(dtype, (nw.Datetime, nw.Date))
+        start, start_in, end, end_in = value.bounds(temporal)
+        time_zone = getattr(dtype, "time_zone", None)
+        if time_zone:
+            start, end = (_localize(b, time_zone) for b in (start, end))
+        return _range_mask(column, start, start_in, end, end_in)
+
+    @staticmethod
+    def _range_value_mask(column: Series, value: Range) -> Series | None:
+        if value.matches_nothing:
+            return pd.Series(False, index=column.index)
+        start, start_in, end, end_in = value.bounds(column.dtype.kind == "M")
+        time_zone = getattr(column.dtype, "tz", None)
+        if time_zone is not None:
+            start, end = (_localize(b, time_zone) for b in (start, end))
+        return _range_mask(column, start, start_in, end, end_in)
 
     @staticmethod
     def _widen_dates(start: Any, end: Any) -> tuple[Any, Any]:
@@ -383,14 +604,21 @@ class Filter(Transform):
                 if temporal:
                     val, _ = self._widen_dates(val, None)
                 expr = nw.col(k) == val
-            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
+            elif isinstance(val, list) and all(_is_range(v) for v in val):
                 ranges = [
-                    self._range_expr(temporal, k, *v) for v in val if v is not None
+                    self._range_value_expr(k, v, schema[k]) if isinstance(v, Range)
+                    else self._range_expr(temporal, k, *v) for v in val
                 ]
                 ranges = [r for r in ranges if r is not None]
                 if not ranges:
                     continue
                 expr = reduce(or_, ranges)
+            elif isinstance(val, list) and any(isinstance(v, Range) for v in val):
+                self.param.warning(
+                    f'Condition {val!r} on {k!r} column mixes ranges with other values. '
+                    'Filter query will not be applied.'
+                )
+                continue
             elif isinstance(val, list):
                 if not val:
                     continue
@@ -409,6 +637,8 @@ class Filter(Transform):
                     expr = expr | nw.col(k).is_null()
             elif isinstance(val, tuple):
                 expr = self._range_expr(temporal, k, *val)
+            elif isinstance(val, Range):
+                expr = self._range_value_expr(k, val, schema[k])
             else:
                 self.param.warning(
                     f'Condition {val!r} on {k!r} column not understood. '
@@ -449,18 +679,29 @@ class Filter(Transform):
                     and not isinstance(val, dt.datetime)):
                     val, _ = self._widen_dates(val, None)
                 mask = column == val
-            elif isinstance(val, list) and all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                masks = [self._range_filter(column, *v) for v in val if v is not None]
+            elif isinstance(val, list) and all(_is_range(v) for v in val):
+                masks = [
+                    self._range_value_mask(column, v) if isinstance(v, Range)
+                    else self._range_filter(column, *v) for v in val
+                ]
                 masks = [m for m in masks if m is not None]
                 if not masks:
                     continue
                 mask = reduce(or_, masks)
+            elif isinstance(val, list) and any(isinstance(v, Range) for v in val):
+                self.param.warning(
+                    f'Condition {val!r} on {k!r} column mixes ranges with other values. '
+                    'Filter query will not be applied.'
+                )
+                continue
             elif isinstance(val, list):
                 if not val:
                     continue
                 mask = column.isin(val)
             elif isinstance(val, tuple):
                 mask = self._range_filter(column, *val)
+            elif isinstance(val, Range):
+                mask = self._range_value_mask(column, val)
             else:
                 self.param.warning(
                     f'Condition {val!r} on {k!r} column not understood. '
@@ -1414,4 +1655,4 @@ class project_lnglat(Transform):
         return table
 
 
-__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Transform)]
+__all__ = [name for name, obj in locals().items() if isinstance(obj, type) and issubclass(obj, Transform)] + ["Range"]
