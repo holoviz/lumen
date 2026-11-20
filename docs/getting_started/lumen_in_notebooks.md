@@ -297,6 +297,8 @@ mean_air = air.ask("Map the mean air temperature in degrees Celsius", llm=Kilo()
 2. A table with `lat` and `lon` columns is drawn as points on a basemap.
 3. The air temperature grid is drawn as a quadmesh over coastlines.
 
+A grid and polygons read into one source join in one query: `lumen.read({"air": grid, "states": states_gdf})`, then "What is the area-weighted mean air temperature in each US state?" averages each cell by the share of it inside each state and by latitude, after moving a 0 to 360 grid onto -180 to 180 longitudes. The [zonal statistics notebook](https://github.com/holoviz/lumen/blob/main/examples/notebooks/zonal_statistics.ipynb) walks through it with sample data and with ERA5.
+
 An answer over a table with a geometry column, or over an xarray Dataset, has a few more fields:
 
 | Field | What it is |
