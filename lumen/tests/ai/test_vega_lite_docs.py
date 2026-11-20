@@ -63,13 +63,18 @@ def test_documentation_coverage_ignores_negative_and_property_headings():
     ) == {"scatter": pages[0]}
 
 
-def test_chart_title_promotion_keeps_selected_sections():
+@pytest.mark.parametrize("query", [
+    "Make a density plot of delivery times",
+    "Show revenue density plot",
+    "Plot revenue as density plot",
+])
+def test_chart_title_promotion_keeps_selected_sections(query):
     transform = {"metadata": {"section_title": "View-level Transform Property"}}
     example = {"metadata": {"section_title": "Example: Density Plot"}}
     context = {"metadata": {"section_title": "Scale Ranges"}}
 
     assert VegaLiteAgent._prioritize_chart_documentation(
-        "Make a density plot of delivery times", [transform, example, context],
+        query, [transform, example, context],
     ) == [example, transform, context]
 
 

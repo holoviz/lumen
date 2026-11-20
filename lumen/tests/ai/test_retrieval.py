@@ -1,6 +1,25 @@
+import pytest
+
 from lumen.ai.retrieval import (
     focused_document_queries, fuse_ranked_documents, rerank_documents,
+    retrieval_tokens,
 )
+
+
+@pytest.mark.parametrize("left,right", [
+    ("filled", "fill"), ("shading", "shade"), ("axis", "axes"),
+    ("encoding", "encodings"), ("scaled", "scale"), ("normalized", "normalize"),
+])
+def test_inflections_match(left, right):
+    """Inflected documentation terms should share the same lookup token."""
+    assert retrieval_tokens(left) == retrieval_tokens(right)
+
+
+def test_focused_queries_exclude_fields():
+    """Field names before a chart type must not reserve documentation slots."""
+    assert focused_document_queries(
+        "Show sales by region in a bar chart with a threshold line and tooltips"
+    ) == ["bar", "threshold line", "tooltips"]
 
 
 def candidate(

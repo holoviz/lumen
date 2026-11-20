@@ -1130,6 +1130,7 @@ class DuckDBVectorStore(VectorStore):
     def __init__(self, **params):
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
+        self._lexical_cache = None
 
         # Reuse existing connection for this URI if still open
         # (e.g. on Panel hot-reload within the same process).
@@ -1412,9 +1413,21 @@ class DuckDBVectorStore(VectorStore):
         """
         if not self._initialized:
             return []
-        query_embedding = np.array(
-            (await self.embeddings.embed([text]))[0], dtype=np.float32
-        ).tolist()
+        query_embedding = (await self.embeddings.embed([text]))[0]
+        return self._query_embedding(query_embedding, top_k, filters, threshold)
+
+    async def query_batch(
+        self, texts: list[str], top_k: int = 5,
+        filters: dict | None = None, threshold: float = -1.0,
+    ) -> list[list[dict]]:
+        """Embed related queries in one provider request."""
+        if not texts or not self._initialized:
+            return [[] for _ in texts]
+        embeddings = await self.embeddings.embed(texts)
+        return [self._query_embedding(embedding, top_k, filters, threshold) for embedding in embeddings]
+
+    def _query_embedding(self, embedding, top_k, filters, threshold) -> list[dict]:
+        query_embedding = np.asarray(embedding, dtype=np.float32).tolist()
         vector_dim = len(query_embedding)
 
         base_query = f"""
@@ -1464,11 +1477,17 @@ class DuckDBVectorStore(VectorStore):
         """
         if not self._initialized:
             return []
+        rows = None
+        if not self.read_only or self._lexical_cache is None:
+            rows = self.connection.execute("SELECT id, text, metadata FROM documents").fetchall()
+        return await asyncio.to_thread(self._query_lexical, text, top_k, filters, rows)
+
+    def _query_lexical(self, text: str, top_k: int, filters: dict | None, rows) -> list[dict]:
         terms = set(retrieval_tokens(text))
         if not terms:
             return []
         phrase = " ".join(text.lower().split())
-        prepared = self._lexical_documents()
+        prepared = self._lexical_documents(rows)
         if filters:
             prepared = [row for row in prepared if _metadata_matches_filters(json.loads(row[2]), filters)]
         document_frequency = {
@@ -1522,15 +1541,13 @@ class DuckDBVectorStore(VectorStore):
             })
         return sorted(matches, key=lambda item: item["similarity"], reverse=True)[:top_k]
 
-    def _lexical_documents(self) -> list[tuple]:
+    def _lexical_documents(self, rows) -> list[tuple]:
         # Only cache immutable stores. Writable stores can change through other connections.
-        cached = getattr(self, "_lexical_cache", None)
+        cached = self._lexical_cache
         if self.read_only and cached is not None:
             return cached
         prepared = []
-        for identifier, document, metadata_json in self.connection.execute(
-            "SELECT id, text, metadata FROM documents"
-        ).fetchall():
+        for identifier, document, metadata_json in rows:
             metadata = json.loads(metadata_json)
             title = doc_title(metadata).lower()
             body = f"{document}\n{metadata.get('description', '')}".lower()

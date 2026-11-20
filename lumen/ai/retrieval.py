@@ -10,7 +10,7 @@ from itertools import zip_longest
 from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
-RETRIEVAL_STOP_WORDS = frozenset({
+_RAW_STOP_WORDS = frozenset({
     "a", "an", "and", "by", "controlled", "create", "data", "for", "from",
     "in", "make", "of", "on", "show", "the", "to", "use", "with",
 })
@@ -20,16 +20,25 @@ _CLAUSE_SPLIT_RE = re.compile(r"[,;]|\b(?:and|with|plus|including|using)\b")
 def normalize_retrieval_token(token: str) -> str:
     """Apply lightweight English inflection normalization for retrieval."""
     if len(token) > 4 and token.endswith("ies"):
-        return f"{token[:-3]}y"
+        token = f"{token[:-3]}y"
+    elif len(token) >= 4 and token.endswith("is"):
+        token = token[:-2]
+    elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        token = token[:-1]
     for suffix in ("ing", "ed"):
         if len(token) > len(suffix) + 3 and token.endswith(suffix):
-            stem = token[:-len(suffix)]
-            if len(stem) > 2 and stem[-1] == stem[-2]:
-                stem = stem[:-1]
-            return stem
-    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-        return token[:-1]
+            token = token[:-len(suffix)]
+            if len(token) > 2 and token[-1] == token[-2] and token[-1] not in "lsz":
+                token = token[:-1]
+            break
+    if len(token) >= 3 and token.endswith("e"):
+        token = token[:-1]
     return token
+
+
+# Embedding stop words include technical terms such as "line" and "mean".
+# Keep documentation stop words narrow and normalize them with the corpus.
+RETRIEVAL_STOP_WORDS = frozenset(map(normalize_retrieval_token, _RAW_STOP_WORDS))
 
 
 def retrieval_tokens(value: Any) -> list[str]:
@@ -82,28 +91,24 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 
 
 def focused_document_queries(query: str, limit: int = 4) -> list[str]:
-    """Break a request into focused, document-searchable clauses.
-
-    The clauses come entirely from the user's words. Each one is queried
-    separately so that a specific requirement is not lost behind a broader
-    chart request. This works for any documented feature rather than a fixed
-    list of chart types or interaction names.
-    """
+    """Extract concise documentation clauses, excluding chart data fields."""
     clauses = []
     for clause in _CLAUSE_SPLIT_RE.split(query.lower().replace("-", " ")):
-        terms = [term for term in _TOKEN_RE.findall(clause) if term not in RETRIEVAL_STOP_WORDS]
-        # ``chart`` and ``plot`` add little when a clause already names a more
-        # specific feature, but retain them for a request that contains nothing
-        # else (for example, "make a chart").
-        if len(terms) > 1:
-            terms = [term for term in terms if term not in {"chart", "plot"}]
-        # Long clauses usually contain dataset fields and values rather than a
-        # separable documentation need. The broad semantic + lexical searches
-        # already handle those; focused searches are for concise sub-requests.
+        raw_terms = _TOKEN_RE.findall(clause)
+        chart_positions = [i for i, term in enumerate(raw_terms) if term in {"chart", "plot"}]
+        if chart_positions:
+            position = chart_positions[0]
+            terms = raw_terms[max(0, position - 1):position]
+            if not terms or normalize_retrieval_token(terms[0]) in RETRIEVAL_STOP_WORDS:
+                terms = [raw_terms[position]]
+        else:
+            terms = raw_terms
+            # Field clauses use broad search rather than reserving a slot.
+            if set(terms) & {"by", "versus", "vs", "per"}:
+                continue
+        terms = [term for term in terms if normalize_retrieval_token(term) not in RETRIEVAL_STOP_WORDS]
         if terms and len(terms) <= 3:
             clauses.append(" ".join(terms))
-
-    # De-duplicate without changing the order in which the user stated needs.
     return list(dict.fromkeys(clauses))[:limit]
 
 

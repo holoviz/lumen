@@ -1,6 +1,7 @@
 import asyncio
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -573,6 +574,15 @@ class TestNumpyVectorStore(VectorStoreTestKit):
 
 @pytest.mark.xdist_group("vss")
 class TestDuckDBVectorStore(VectorStoreTestKit):
+    async def test_batch_queries_embed_once(self, empty_store, monkeypatch):
+        """Batch retrieval should make one embedding call for all queries."""
+        await empty_store.add([{"text": "slider", "metadata": {}}])
+        embed = AsyncMock(wraps=empty_store.embeddings.embed)
+        monkeypatch.setattr(empty_store.embeddings, "embed", embed)
+        results = await empty_store.query_batch(["slider", "binding"])
+        assert len(results) == 2
+        embed.assert_awaited_once_with(["slider", "binding"])
+
 
     @pytest.fixture
     async def store(self, tmp_path) -> DuckDBVectorStore:
