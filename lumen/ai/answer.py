@@ -1026,7 +1026,15 @@ async def _gather(data: Source | Pipeline, jobs: list[tuple[str, Llm, list | Non
                 step_title_callback.set(lambda title: outer(f"{answered} of {len(jobs)} answered · {title}"))
             start = time.monotonic()
             messages = [{"role": "user", "content": question}]
-            answer = await _aask_messages(data, question, messages, llm, agents, returns=returns)
+            try:
+                answer = await _aask_messages(data, question, messages, llm, agents, returns=returns)
+            except Exception as e:
+                # ask raises when the LLM itself fails, e.g. the provider is down;
+                # in a batch that question fails alone and the others go on
+                answer = Answer(
+                    agents=agents, data=data, error=format_error(e), llm=llm, question=question,
+                    source=_resolve(data)[0], status="error", value=f"Lumen could not answer {question!r}.",
+                )
             seconds[i] = time.monotonic() - start
             answered += 1
             if outer is not None:
