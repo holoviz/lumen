@@ -7,6 +7,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+import asyncio
 import datetime
 
 from unittest.mock import AsyncMock
@@ -33,8 +34,8 @@ async def test_documentation_selection_follows_up_once_or_falls_back(llm, valid_
         follow_up_query="missing topic",
     )])
     store = AsyncMock()
-    store.query.return_value = [extra]
-    store.query_lexical.return_value = [extra]
+    store.query.return_value = [*baseline, extra]
+    store.query_lexical.return_value = [*baseline, extra]
 
     result = await agent._select_doc_pages(
         "Configure and add missing topic", [*baseline, sibling], baseline,
@@ -61,6 +62,34 @@ def test_documentation_coverage_ignores_negative_and_property_headings():
     assert documentation_coverage(
         ["scatter", "brush selection", "tooltip"], pages,
     ) == {"scatter": pages[0]}
+
+
+async def test_selection_preserves_chart_order(llm):
+    """The selected chart example should lead the final documentation context."""
+    agent = VegaLiteAgent(llm=llm)
+    overview = {"text": "Transform overview", "metadata": {"section_title": "Transforms"}}
+    chart = {"text": "Line chart example", "metadata": {"section_title": "Line Chart"}}
+    llm.set_responses([DocumentationSelection(
+        matches=[DocumentationMatch(requirement="line", document_id=1)],
+    )])
+    pages = await agent._select_doc_pages(
+        "Show revenue line chart", [overview, chart], [overview, chart],
+        AsyncMock(), set(), ["line"], [overview],
+    )
+    assert pages[0] == chart
+
+
+async def test_selection_timeout_is_configurable(llm, monkeypatch):
+    """A short configured timeout should return the existing hybrid results."""
+    async def slow_response(*args, **kwargs):
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(llm, "invoke", slow_response)
+    agent = VegaLiteAgent(llm=llm, doc_selection_timeout=0.001)
+    baseline = [{"text": "Overview", "metadata": {}}]
+    assert await agent._select_doc_pages(
+        "Show a chart", baseline, baseline, AsyncMock(), set(), ["chart"], [],
+    ) == baseline
 
 
 @pytest.mark.parametrize("query", [

@@ -120,7 +120,7 @@ def documentation_coverage(queries: list[str], pages: list[dict]) -> dict[str, d
         heading = metadata.get("section_title") or ""
         # A setting or a section describing removal is weak evidence for
         # implementing the operation itself.
-        if heading.startswith("`") or _tokens(heading) & {"disable", "remove", "suppress"}:
+        if heading.startswith("`") or _tokens(heading) & _tokens("disable remove suppress"):
             continue
         evidence.append((page, _tokens(" ".join((
             metadata.get("page_title") or "", heading,

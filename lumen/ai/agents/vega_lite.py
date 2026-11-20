@@ -186,6 +186,9 @@ class VegaLiteAgent(BaseCodeAgent):
         Number of documentation sections to inject into the prompt.
         Set to 0 to disable documentation lookup entirely.""")
 
+    doc_selection_timeout = param.Number(default=10, bounds=(0, None), inclusive_bounds=(False, True), doc="""
+        Maximum time in seconds to wait for the optional documentation selector.""")
+
     llm_doc_selection = param.Boolean(default=False, doc="""
         Ask the configured LLM to fill documentation gaps in multi-part requests.""")
 
@@ -804,19 +807,20 @@ class VegaLiteAgent(BaseCodeAgent):
                 "section": (metadata.get("section_title") or "")[:100],
                 "excerpt": " ".join(page["text"].split())[:160],
             })
-        started = perf_counter()
         messages = [{"role": "user", "content": json.dumps({
             "request": query, "requirements_to_check": gaps, "candidates": entries,
         }, ensure_ascii=False)}]
         system = await self._render_prompt("select_documentation", messages, {})
+        response_model = self._get_model("select_documentation")
+        started = perf_counter()
         try:
             selection = await asyncio.wait_for(self.llm.invoke(
                 messages,
                 system=system,
-                response_model=self._get_model("select_documentation"),
+                response_model=response_model,
                 model_spec=self.llm_spec_key,
                 max_retries=1,
-            ), timeout=10)
+            ), timeout=self.doc_selection_timeout)
         except UNRECOVERABLE_ERRORS:
             raise
         except Exception as exc:  # cleanup: ignore[blind-except] Optional selection supports multiple LLM providers.
@@ -837,7 +841,12 @@ class VegaLiteAgent(BaseCodeAgent):
             try:
                 semantic, lexical = await self._search_doc_pages(store, follow_up_query, 5)
                 extra = fuse_ranked_documents([(None, semantic), (None, lexical)])
-                follow_up_pages = self._drop_forbidden_examples(extra[:1])
+                existing = {doc_key(page) for page in [
+                    *protected_pages, *(shortlist[i] for i in identifiers), *baseline,
+                ]}
+                follow_up_pages = self._drop_forbidden_examples(
+                    [page for page in extra if doc_key(page) not in existing][:1]
+                )
             except UNRECOVERABLE_ERRORS:
                 raise
             except Exception as exc:  # cleanup: ignore[blind-except] A failed optional search leaves the selected docs usable.
@@ -858,7 +867,7 @@ class VegaLiteAgent(BaseCodeAgent):
             selected.append(page)
             selected_keys.add(key)
             groups[slug] += 1
-        return selected or baseline
+        return self._prioritize_chart_documentation(query, selected or baseline)
 
     async def _get_doc_pages(self, user_query: str) -> list[dict]:
         if not self.n_doc_pages:
