@@ -1514,7 +1514,8 @@ class Answer(param.Parameterized):
         # Deferred: xugrid is optional; a mesh source exists only when it is installed
         import xugrid as xu
         index = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])] + [grid.face_dimension]
-        values = [c for c in df.select_dtypes("number").columns if c not in index]
+        # The face centres the faces table adds are the mesh's own, not values to draw
+        values = [c for c in df.select_dtypes("number").columns if c not in index and c not in ("x", "y", "lon", "lat")]
         ds = df.set_index(index)[values].to_xarray().reindex({grid.face_dimension: np.arange(grid.n_face)})
         return xu.UgridDataset(ds, grids=[grid])
 
