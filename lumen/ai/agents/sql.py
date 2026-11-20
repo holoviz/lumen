@@ -23,7 +23,7 @@ from ...filters import ConstantFilter
 from ...pipeline import Pipeline
 from ...sources.base import BaseSQLSource, QueryTimeoutError, Source
 from ...sources.duckdb import DuckDBSource
-from ...sources.xarray_sql import XArraySQLSource
+from ...sources.xarray_sql import XArraySQLSource, grid_facts
 from ...transforms.sql import SQLLimit
 from ...util import as_pandas
 from ..config import (
@@ -1297,8 +1297,12 @@ class SQLAgent(BaseLumenAgent):
                     column: bool(props.get("geographic")) for column, props in schema.items()
                     if isinstance(props, dict) and props.get("format") == "geometry"
                 }
-            units = source.column_units(table) if isinstance(source, XArraySQLSource) else {}
-            facts[table] = TableFacts(geometry=geometry, units=units)
+            if isinstance(source, XArraySQLSource) and table in source.dataset.data_vars:
+                grid = grid_facts(source.dataset[[table]])
+            else:
+                # A grid joined into DuckDB keeps the same facts in its metadata
+                grid = (source.metadata or {}).get(table, {})
+            facts[table] = TableFacts(geometry=geometry, units=grid.get("units", {}), lon_range=grid.get("lon_range", {}))
         return facts
 
     def _submit_sql_tool(
