@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import itertools
 import json
@@ -682,6 +683,22 @@ def test_vegalite_rerenders_when_config_theme_changes(monkeypatch):
 
     assert view._panel.theme is None
     assert 'config' not in view._panel.object
+
+
+def test_vegalite_rerenders_on_theme_change_without_session(monkeypatch):
+    """A notebook has no session, but its event loop lets the update wait for
+    config.theme to settle."""
+    monkeypatch.setattr(pn.config, '_theme_', None)
+    view = _vega_theme_view()
+    assert view.panel is not None
+
+    async def toggle(theme):
+        pn.config.theme = theme
+        await asyncio.sleep(0)
+        return view._panel.theme
+
+    assert asyncio.run(toggle('dark')) == 'dark'
+    assert asyncio.run(toggle('default')) is None
 
 
 def test_vegalite_exports_force_light_theme():
