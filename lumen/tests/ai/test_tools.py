@@ -1,6 +1,8 @@
 import asyncio
 import threading
 
+from types import SimpleNamespace
+
 import pytest
 
 try:
@@ -15,7 +17,9 @@ from panel_material_ui import (
 
 from lumen.ai.coordinator import Coordinator
 from lumen.ai.schemas import DocumentChunk, Metaset, TableCatalogEntry
-from lumen.ai.tools import FunctionTool, MetadataLookup, define_tool
+from lumen.ai.tools import (
+    FunctionTool, MetadataLookup, ToolUser, define_tool,
+)
 from lumen.ai.tools.clarification_llm_tool import make_clarification_llm_tool
 from lumen.ai.tools.document_llm_tools import make_document_vector_llm_tools
 from lumen.ai.vector_store import NumpyVectorStore
@@ -70,7 +74,7 @@ async def test_function_tool_requires():
     tool = FunctionTool(add, requires=["a", "b"])
     context = {"a": 1, "b": 3}
     views, out_context = await tool.respond([], context)
-    assert views[0] == "add(a=1, b=3) returned: 4"
+    assert views == ["add(a=1, b=3) returned: 4"]
 
 
 async def test_function_tool_define_tool_decorator():
@@ -89,6 +93,7 @@ async def test_function_tool_define_tool_render_output():
     views, out_context = await tool.respond([], {})
     assert tool.render_output is True
     assert out_context == {}
+    assert len(views) == 1
     assert isinstance(views[0], Viewable)
 
 
@@ -159,6 +164,10 @@ async def test_function_tool_provides():
     context = {"a": 1, "b": 3}
     views, out_context = await tool.respond([], context)
     assert out_context["c"] == 4
+    tool_user = SimpleNamespace(_tools={"main": [tool]}, tools=[])
+    tool_context = await ToolUser._use_tools(tool_user, "main", [], context)
+    assert "add(a=1, b=3) returned: 4" in tool_context
+    assert "FunctionCall" not in tool_context
 
 
 class TestVectorLookupToolUser:
