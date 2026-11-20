@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import duckdb
 import pandas as pd
 import pytest
 import yaml
