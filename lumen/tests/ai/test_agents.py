@@ -819,13 +819,103 @@ async def test_vegalite_polish_applies_update_with_known_fields(llm, duckdb_sour
     assert spec["encoding"]["x"] == {"field": "A", "type": "quantitative"}
 
 
-def test_vegalite_polish_field_check_accepts_geojson_properties():
-    """A map over a table with geometry reads its columns as properties.<column>,
-    so a tooltip on another column is not mistaken for a missing field."""
-    previous = {"mark": "geoshape", "encoding": {"color": {"field": "properties.value", "type": "quantitative"}}}
-    update = dict(previous, encoding=dict(previous["encoding"], tooltip=[{"field": "properties.name"}]))
+@pytest.mark.parametrize(("previous", "update", "columns"), [
+    (
+        {"mark": "geoshape", "encoding": {"color": {"field": "properties.value"}}},
+        {"mark": "geoshape", "encoding": {"color": {"field": "properties.value"}, "tooltip": [{"field": "properties.name"}]}},
+        {"name", "value", "geometry"},
+    ),
+    (
+        {"mark": "geoshape"},
+        {"mark": "geoshape", "encoding": {"tooltip": [{"field": "properties.name"}]}},
+        {"name", "value", "geometry"},
+    ),
+    (
+        {"data": {"name": "t", "format": {"parse": {"rate": "number"}}}, "mark": "geoshape", "encoding": {"color": {"field": "rate"}}},
+        {
+            "data": {"name": "t", "format": {"parse": {"rate": "number"}}},
+            "transform": [{"lookup": "state", "from": {"data": {"url": "population.csv"}, "key": "name", "fields": ["population"]}}],
+            "mark": "geoshape",
+            "encoding": {"color": {"field": "rate"}, "tooltip": [{"field": "state"}, {"field": "population"}]},
+        },
+        {"state", "rate"},
+    ),
+    (
+        {"mark": "bar", "encoding": {"x": {"field": "rate"}}},
+        {
+            "transform": [{"bin": True, "field": "rate", "as": "rate_bin"}],
+            "mark": "bar",
+            "encoding": {"x": {"field": "rate_bin"}, "x2": {"field": "rate_bin_end"}},
+        },
+        {"state", "rate"},
+    ),
+    (
+        {"layer": [{"mark": "line", "encoding": {"x": {"field": "rate"}}}, {"data": {"values": [{"t": 5}]}, "mark": "rule", "encoding": {"y": {"field": "t"}}}]},
+        {"layer": [{"mark": "line", "encoding": {"x": {"field": "rate"}}}, {"data": {"values": [{"t": 5, "label": "target"}]}, "mark": "rule", "encoding": {"y": {"field": "t"}, "tooltip": [{"field": "label"}]}}]},
+        {"state", "rate"},
+    ),
+    (
+        {"mark": "bar", "encoding": {"x": {"field": "event"}}},
+        {"mark": "bar", "encoding": {"x": {"field": "event"}, "tooltip": [{"field": "properties.browser"}]}},
+        {"event", "properties"},
+    ),
+], ids=["geojson-properties", "first-geojson-property", "lookup-fields", "bin-end", "inline-values-layer", "properties-column"])
+def test_vegalite_polish_field_check_accepts_known_fields(previous, update, columns):
+    """Fields a map reads as properties.<column>, fields a lookup joins in, the
+    end of a bin, a layer's inline values and a table's own properties column
+    are not mistaken for missing fields."""
+    VegaLiteAgent._check_fields_exist(update, previous, columns)
 
-    VegaLiteAgent._check_fields_exist(update, previous, {"name", "value", "geometry"})
+
+@pytest.mark.parametrize(("previous", "update", "columns", "message"), [
+    (
+        {"mark": "geoshape", "encoding": {"color": {"field": "properties.value"}}},
+        {"mark": "geoshape", "encoding": {"color": {"field": "properties.value"}, "tooltip": [{"field": "properties.Name"}]}},
+        {"name", "value", "geometry"},
+        "fields not in the data: properties.Name",
+    ),
+    (
+        {"data": {"name": "t", "format": {"parse": {"rate": "number"}}}, "mark": "bar", "encoding": {"x": {"field": "rate"}}},
+        {"data": {"name": "t", "format": {"parse": {"rate": "number"}}}, "mark": "bar", "encoding": {"x": {"field": "Rate"}}},
+        {"state", "rate"},
+        "fields not in the data: Rate",
+    ),
+], ids=["geojson-property-wrong-case", "named-data-with-format"])
+def test_vegalite_polish_field_check_rejects_unknown_fields(previous, update, columns, message):
+    """A properties.<column> the table lacks is caught even when other
+    properties are known, and a view that names the table is checked."""
+    with pytest.raises(ValueError) as excinfo:
+        VegaLiteAgent._check_fields_exist(update, previous, columns)
+    assert str(excinfo.value) == message
+
+
+async def test_vegalite_polish_skips_update_when_data_fails_to_load(llm, duckdb_source, test_messages):
+    """If the pipeline cannot load its data, the polish is skipped rather than
+    failing the chart."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+    pipeline = Pipeline(source=duckdb_source, table="test_sql")
+    context = {
+        "source": duckdb_source,
+        "pipeline": pipeline,
+        "table": "test_sql",
+        "sources": [duckdb_source],
+        "metaset": await get_metaset([duckdb_source], ["test_sql"]),
+        "data": duckdb_source.get("test_sql")
+    }
+    spec = await agent._extract_spec(context, {"yaml_spec": dump_yaml(POLISH_BASE_CHART)})
+    editor = VegaLiteEditor(component=VegaLiteView(pipeline=pipeline, **spec))
+    before = editor.spec
+    update = {"encoding": {"tooltip": [{"field": "A", "type": "quantitative"}]}}
+    llm.set_responses([
+        VegaLiteSpecUpdate(chain_of_thought="polish", yaml_update=dump_yaml(update)),
+    ])
+
+    # A stale pipeline reloads its data on access, and the source can fail.
+    with patch.object(pipeline, "_update_data", side_effect=RuntimeError("source unavailable")):
+        pipeline._stale = True
+        await agent._polish_plot(editor, test_messages, context)
+
+    assert editor.spec == before
 
 
 async def test_vegalite_agent_skips_unparseable_chart(llm, duckdb_source, test_messages):
