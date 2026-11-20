@@ -45,7 +45,7 @@ from panel.pane import Markdown, Vega
 from panel.pane.vega import ds_to_records
 from panel.widgets import CodeEditor
 from panel_material_ui import (
-    Alert, Button, Card, ChatInterface, Column, Row,
+    Alert, Button, Card, ChatInterface, Column, FlexBox, Row,
 )
 from panel_material_ui.chat import ChatMessage
 from pydantic import TypeAdapter, ValidationError, create_model
@@ -1094,6 +1094,54 @@ def ask_many(
     return _run(_ask_many(data, questions, llm, agents, returns, concurrency), f"Asking {len(questions)} questions")
 
 
+def _llm_label(llm: Llm) -> str:
+    """The provider and model an answer came from, e.g. "Kilo · kilo-auto/free"."""
+    name = llm.display_name or type(llm).__name__
+    model = llm.model_kwargs["default"].get("model")
+    return f"{name} · {model}" if model else name
+
+
+async def acompare(
+    data: DataT | Pipeline, question: str, llms: list[Llm], *, agents: list | None = None,
+    returns: Any = None, concurrency: int = 4,
+) -> Comparison:
+    """
+    Ask one question with several LLMs at once, to compare their answers.
+
+    Takes the same arguments as aask, with llms in place of llm. Each LLM
+    gets its own copy of the agents, so each answers with its own model
+    throughout. Returns a Comparison: the Answers in the order of llms,
+    shown side by side.
+    """
+    return await _on_loop(_compare(data, question, llms, agents, returns, concurrency))
+
+
+async def _compare(
+    data: DataT | Pipeline, question: str, llms: list[Llm], agents: list | None,
+    returns: Any, concurrency: int,
+) -> Comparison:
+    if len(llms) < 2:
+        raise ValueError(f"compare needs two or more LLMs, got {len(llms)}; use ask for one.")
+    data = data if isinstance(data, Source | Pipeline) else read(data)
+    agents = _settings["agents"] if agents is None else agents
+    # An agent keeps the first LLM it is given, so each LLM needs its own copies
+    jobs = [(question, llm, _own_agents(agents, llm=llm)) for llm in llms]
+    asked = await _gather(data, jobs, returns, concurrency)
+    return Comparison(asked, seconds=asked.seconds, labels=[_llm_label(llm) for llm in llms])
+
+
+def compare(
+    data: DataT | Pipeline, question: str, llms: list[Llm], *, agents: list | None = None,
+    returns: Any = None, concurrency: int = 4,
+) -> Comparison:
+    """
+    Ask one question with several LLMs at once and return their answers
+    side by side. Takes the same arguments as acompare. Each LLM makes its
+    own calls, so a comparison costs what asking each one would.
+    """
+    return _run(_compare(data, question, llms, agents, returns, concurrency), f"Asking {len(llms)} models")
+
+
 @dataclass(frozen=True)
 class Step:
     """One step of an answer's plan, as it ran."""
@@ -1344,6 +1392,34 @@ class Answers(list):
             # VS Code renders Panel through jupyter_bokeh, which may be missing
             bundle = None
         return bundle or {"text/plain": repr(self), "text/html": self._html()}
+
+
+class Comparison(Answers):
+    """
+    One question's answers from several LLMs, in the order they were given:
+    shown side by side, each under its provider and model.
+    """
+
+    def __init__(self, answers=(), *, seconds: list[float] | None = None, labels: list[str] = ()):
+        super().__init__(answers, seconds=seconds)
+        #: The provider and model of each answer, in the same order
+        self.labels = list(labels)
+
+    def __repr__(self) -> str:
+        return f"Comparison({', '.join(f'{label}: {a.status}' for label, a in zip(self.labels, self, strict=True))})"
+
+    def _heading(self, i: int) -> str:
+        return self.labels[i]
+
+    def to_frame(self) -> pd.DataFrame:
+        """One row per LLM, as Answers.to_frame gives with an llm column first."""
+        return super().to_frame().assign(llm=self.labels).set_index("llm").reset_index()
+
+    def __panel__(self) -> FlexBox:
+        return FlexBox(*(
+            Column(Markdown(f"### {html.escape(label)}"), answer.__panel__(), min_width=360, sizing_mode="stretch_width")
+            for label, answer in zip(self.labels, self, strict=True)
+        ), flex_wrap="wrap", sizing_mode="stretch_width")
 
 
 class Answer(param.Parameterized):
