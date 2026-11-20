@@ -455,6 +455,52 @@ def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
     assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
 
 
+def test_vega_inline_values_with_lookup_registers_the_table(set_root):
+    """A spec whose own data is inline values plus a lookup against the
+    pipeline table must register the table, or the join yields nulls.
+
+    ``_declares_own_data`` used to check for an ``inline`` key, which is not
+    a Vega-Lite data key, so a spec like this fell through to the plain-data
+    branch and the lookup's named dataset was never registered."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "data": {"values": [{"A": "a"}]},
+        "transform": [{
+            "lookup": "A",
+            "from": {"data": {"name": "test"}, "key": "A", "fields": ["B"]},
+        }],
+        "mark": "point",
+        "encoding": {"x": {"field": "B", "type": "quantitative"}},
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["data"] == {"values": [{"A": "a"}]}
+    assert "test" in final_spec["datasets"]
+    assert final_spec["transform"][0]["from"]["data"]["name"] == "test"
+
+
+def test_vega_lookup_with_its_own_values_still_gets_the_table(set_root):
+    """A lookup carrying its own inline values is the lookup's source, not
+    the view's data: the pipeline table must still become the primary data."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = {
+        "transform": [{
+            "lookup": "A",
+            "from": {"data": {"values": [{"A": 1, "B": 2}]}, "key": "A", "fields": ["B"]},
+        }],
+        "mark": "point",
+        "encoding": {"x": {"field": "B", "type": "quantitative"}},
+    }
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
+    assert len(final_spec["data"]["values"]) == len(pipeline.data)
+
+
 def _layered_spec(layer_data):
     return {"layer": [{"data": layer_data, "mark": "bar", "encoding": {"x": {"field": "A", "type": "quantitative"}}}]}
 

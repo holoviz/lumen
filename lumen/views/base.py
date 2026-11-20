@@ -1706,15 +1706,23 @@ class VegaLiteView(View):
         the top level, so looking only at ``spec['data']`` would miss it, inject
         the table as primary data, and leave the lookup's named dataset
         unregistered -- which renders the boundaries with every value null.
+
+        Only a view's own ``data`` counts: a lookup's ``from.data`` is the
+        lookup's source, not the view's data, so it must not keep the pipeline
+        table out of the primary slot.
         """
         if isinstance(node, list):
             return any(cls._declares_own_data(item) for item in node)
         if not isinstance(node, dict):
             return False
         data = node.get("data")
-        if isinstance(data, dict) and ("url" in data or "inline" in data):
+        if isinstance(data, dict) and ("url" in data or "values" in data):
             return True
-        return any(cls._declares_own_data(value) for value in node.values())
+        return any(
+            cls._declares_own_data(value)
+            for key, value in node.items()
+            if key not in ("from", "datasets")
+        )
 
     @classmethod
     def _retarget_lookup_datasets(cls, node: Any, known: set[str], table: str) -> None:
