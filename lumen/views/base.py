@@ -1959,13 +1959,8 @@ class VegaLiteView(View):
         return 'dark' if template and issubclass(template.theme, DarkTheme) else 'light'
 
     def _pane_theme(self) -> str | None:
-        """Resolve the View theme to a value the Vega pane understands."""
-        theme = self.theme
-        if theme == 'auto':
-            theme = self._detect_theme()
-        if theme == 'light':
-            return None
-        return theme
+        theme = self._detect_theme() if self.theme == 'auto' else self.theme
+        return None if theme == 'light' else theme
 
     @staticmethod
     def _apply_text_default(spec: dict, theme: str | None) -> dict:
