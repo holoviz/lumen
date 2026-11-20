@@ -1400,6 +1400,7 @@ class SQLAgent(BaseLumenAgent):
                         dialect=dialect,
                         has_geometry=has_geometry(metaset, sources),
                         gridded=is_gridded(sources),
+                        geocode=sharing.geocode,
                         step_number=1,
                         is_final_step=True,
                         current_step="",
