@@ -35,7 +35,9 @@ from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..util import as_pandas
-from ..views.base import Panel, Table, View, _force_light_theme
+from ..views.base import (
+    Panel, Table, View, _force_light_theme,
+)
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (

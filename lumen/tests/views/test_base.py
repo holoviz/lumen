@@ -16,8 +16,8 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Table, VegaLiteView, View, _force_light_theme,
-    hvOverlayView, hvPlotView,
+    DeckGLView, Table, VegaLiteView, View, _force_light_theme, hvOverlayView,
+    hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
