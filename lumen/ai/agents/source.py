@@ -505,6 +505,10 @@ class SourceAgent(Agent):
 
             get_ticker_details(AAPL) + get_ticker_details(GOOG)
             \u2192 aapl_goog_get_ticker_details
+
+            Load Cells {min_size: 20}
+            \u2192 load_cells_20 (the action name leads when the shortest
+            value is numeric, since a name may not start with a digit)
         """
         MAX_PARTS = 4
 
@@ -522,11 +526,22 @@ class SourceAgent(Agent):
             parts = items[:MAX_PARTS]
             parts.append(action_name)
             base = normalize_table_name("_".join(parts))
+            if base[:1].isdigit():
+                # A name starting with a digit is not a valid unquoted SQL
+                # identifier (DuckDB rejects it, e.g. "20_load_cells"),
+                # so lead with the action name instead of the shortest
+                # value: "load_cells_20".
+                base = normalize_table_name("_".join([action_name, *parts[:-1]]))
         elif source_actions and len(source_actions) == 1:
             name = next(iter(source_actions))
             base = normalize_table_name(name)
         else:
             base = "source_data"
+
+        if base[:1].isdigit():
+            # Still digit-leading (e.g. a source action named "2024
+            # report"): prefix it so the name is a valid identifier.
+            base = f"table_{base}"
 
         # Deduplicate against actual registered tables
         if existing_tables:
