@@ -678,7 +678,7 @@ class VegaLiteAgent(BaseCodeAgent):
         chart_phrase = ()
         for i, term in enumerate(query_terms):
             if term in {"chart", "plot"} and i and query_terms[i - 1] not in RETRIEVAL_STOP_WORDS:
-                start = i - 2 if i > 1 and query_terms[i - 2] not in RETRIEVAL_STOP_WORDS else i - 1
+                start = i - 1
                 chart_phrase = tuple(query_terms[start:i + 1])
                 break
         if not chart_phrase or not documents:
@@ -789,9 +789,14 @@ class VegaLiteAgent(BaseCodeAgent):
             focused_queries = focused_document_queries(user_query, min(self.n_doc_pages, 3))
             focused_queries = [query for query in focused_queries if query != user_query.strip().casefold()]
             queries = [(user_query, broad_pool), *((query, focused_pool) for query in focused_queries)]
-            pairs = await asyncio.gather(*(
-                self._search_doc_pages(vector_store, query, pool) for query, pool in queries
-            ))
+            semantic_pages, lexical_pages = await asyncio.gather(
+                vector_store.query_batch([query for query, _ in queries], top_k=broad_pool),
+                asyncio.gather(*(vector_store.query_lexical(query, top_k=pool) for query, pool in queries)),
+            )
+            pairs = [
+                (semantic[:pool], lexical)
+                for (_, pool), semantic, lexical in zip(queries, semantic_pages, lexical_pages, strict=True)
+            ]
             vector_scores = {page["id"]: page["similarity"] for page in pairs[0][0] if "id" in page}
             searches = []
             for i, (semantic, lexical) in enumerate(pairs):
