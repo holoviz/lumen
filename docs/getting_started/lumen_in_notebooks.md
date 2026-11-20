@@ -107,7 +107,7 @@ result             # the cards side by side
 result.to_frame()  # one row per model: answer, SQL, seconds, tokens and cost
 ```
 
-Each model plans, queries and writes its own answer with its own copy of the agents, so comparing three models costs what asking three times would. `await source.acompare(...)` is the async form.
+Each model plans, queries and writes its own answer with its own copy of the agents, so comparing three models costs what asking three times would. `await source.acompare(...)` is the async form. `ClaudeCode` runs the `claude` CLI, which will not start from a kernel launched inside a Claude Code session; start Jupyter from a plain terminal.
 
 ## Check the data
 
