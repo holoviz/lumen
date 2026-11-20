@@ -2212,6 +2212,21 @@ def test_a_click_on_a_vega_lite_chart_selects_its_rows_and_shows_the_ask_box(cha
     assert chart_answer.selection is None and not box.visible
 
 
+def test_a_choropleth_with_a_multipolygon_selects_whole_shapes():
+    from shapely.geometry import MultiPolygon
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    islands = MultiPolygon([Polygon([(2, 0), (3, 0), (3, 1)]), Polygon([(4, 0), (5, 0), (5, 1), (4, 1)])])
+    source = read({"regions": gpd.GeoDataFrame({"name": ["mainland", "islands"], "v": [1.0, 2.0]}, geometry=[square, islands], crs="EPSG:4326")})
+    pipeline = Pipeline(source=source, table="regions")
+    view = hvPlotView(pipeline=pipeline, kind="polygons", z="v")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    answer._streams[-1].event(index=[1])
+    assert list(answer.selection["name"]) == ["islands"]
+
+
 def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
     pipeline = Pipeline(source=frame_source, table="tiny")
     view = hvPlotView(pipeline=pipeline, kind="scatter", x="category", y="value")
