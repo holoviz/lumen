@@ -48,6 +48,7 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
 )
 from panel.param import Param
+from panel.theme import DarkTheme
 from panel.util import classproperty
 from panel.viewable import Child, Viewable, Viewer
 from panel_material_ui import FileDownload
@@ -1973,11 +1974,7 @@ class VegaLiteView(View):
         template = VegaLiteView._active_template()
         if template is None:
             return 'light'
-        if getattr(template.theme, '_name', None) == 'dark':
-            return 'dark'
-        if getattr(template, 'dark_theme', False):
-            return 'dark'
-        return 'light'
+        return 'dark' if issubclass(template.theme, DarkTheme) else 'light'
 
     def _pane_theme(self) -> str | None:
         """Resolve the View theme to a value the Vega pane understands."""
