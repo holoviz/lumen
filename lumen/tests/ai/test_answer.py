@@ -2678,6 +2678,22 @@ def test_ask_many_refuses_a_concurrency_below_one(frame_source):
         answer_module.ask_many(frame_source, QUESTIONS, llm=KeyedLLM(QUESTIONS), concurrency=0)
 
 
+def test_ask_many_refuses_a_single_string(frame_source):
+    with pytest.raises(TypeError, match="list of questions"):
+        answer_module.ask_many(frame_source, "How many rows?", llm=KeyedLLM(QUESTIONS))
+
+
+async def test_ask_many_with_no_questions_needs_no_llm(frame_source):
+    with patch("lumen.ai.answer._default_llm", side_effect=AssertionError("no LLM needed")):
+        answers = await answer_module.aask_many(frame_source, [])
+    assert answers == [] and repr(answers) == "Answers()" and answers.to_frame().empty
+
+
+async def test_ask_many_keeps_agent_classes(frame_source):
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:1], llm=KeyedLLM(QUESTIONS), agents=[ChatAgent, SQLAgent])
+    assert answers[0]._agents == [ChatAgent, SQLAgent]
+
+
 async def test_ask_many_asks_a_repeated_question_once(frame_source):
     llm = KeyedLLM(QUESTIONS)
     asked = [QUESTIONS[0], QUESTIONS[1], QUESTIONS[0]]
