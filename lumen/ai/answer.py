@@ -1770,8 +1770,9 @@ class Answer(param.Parameterized):
         if self.pipeline is not None and (mesh := self._mesh()) is not None:
             # Deferred: registers hvPlot's xugrid accessor, and xugrid is optional
             import hvplot.xugrid  # noqa: F401
-            # hvPlot's xugrid backend draws a mesh as triangles, one value per face
-            return mesh[next(iter(mesh.data_vars))].hvplot()
+            # hvPlot's xugrid backend draws a mesh as triangles; filled and
+            # coloured by its value column "z", or only the edges show
+            return mesh[next(iter(mesh.data_vars))].hvplot(filled=True).opts(edge_color="z", node_size=0)
         gdf = self.gdf
         if gdf is None:
             raise ValueError("This answer has no geometry to map.")

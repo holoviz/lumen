@@ -50,7 +50,11 @@ def test_an_answer_on_a_mesh_comes_back_on_its_faces_and_maps_as_triangles(mesh)
     ds = answer.ds
     assert isinstance(ds, xu.UgridDataset) and ds.ugrid.grid.n_face == 384
     assert int(ds["face_z"].notnull().sum()) == int((mesh["face_z"] > 3).sum())
-    assert isinstance(answer.map(), hv.TriMesh)
+    tri = answer.map()
+    assert isinstance(tri, hv.TriMesh)
+    # Filled faces coloured by value, not a bare wireframe
+    assert hv.Store.lookup_options("bokeh", tri, "plot").kwargs["filled"]
+    assert hv.Store.lookup_options("bokeh", tri, "style").kwargs["edge_color"] == "z"
 
 
 def test_an_answer_without_the_face_index_is_not_put_on_the_mesh(mesh):
