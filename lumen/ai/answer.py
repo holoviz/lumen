@@ -1413,7 +1413,9 @@ class Comparison(Answers):
 
     def to_frame(self) -> pd.DataFrame:
         """One row per LLM, as Answers.to_frame gives with an llm column first."""
-        return super().to_frame().assign(llm=self.labels).set_index("llm").reset_index()
+        frame = super().to_frame()
+        frame.insert(0, "llm", self.labels)
+        return frame
 
     def __panel__(self) -> FlexBox:
         return FlexBox(*(
