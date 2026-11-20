@@ -2809,3 +2809,72 @@ async def test_source_and_pipeline_ask_many_delegate(frame_source):
     assert sync_many.call_args.args == (frame_source, ["q"])
     assert sync_many.call_args.kwargs == {"llm": "x", "agents": None, "returns": None, "concurrency": 2}
     assert async_many.call_args.args == (pipeline, ["q"])
+
+
+class TaggedLLM(KeyedLLM):
+    """A KeyedLLM that says which model answered and records usage under it."""
+
+    def __init__(self, tag, **params):
+        super().__init__(QUESTIONS, model_kwargs={"default": {"model": tag}}, **params)
+        self.tag = tag
+        self.calls = 0
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        self.calls += 1
+        record_usage(self, self.usage, Usage(self.tag, 10, 1))
+        out = await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+        return f"{self.tag}: {out}" if isinstance(out, str) else out
+
+
+async def test_compare_puts_each_llms_answer_under_its_label(frame_source):
+    first, second = TaggedLLM("model-a"), TaggedLLM("model-b")
+    result = await answer_module.acompare(frame_source, QUESTIONS[0], [first, second])
+    assert [a.value for a in result] == [f"model-a: Answer to {QUESTIONS[0]}", f"model-b: Answer to {QUESTIONS[0]}"]
+    assert result.labels == ["TaggedLLM · model-a", "TaggedLLM · model-b"]
+    assert [{r.model for r in a.usage.records} for a in result] == [{"model-a"}, {"model-b"}]
+
+
+async def test_compare_runs_each_llm_with_its_own_agents(frame_source):
+    # One agents list for both: an agent keeps the first LLM it is given
+    first, second = TaggedLLM("model-a"), TaggedLLM("model-b")
+    result = await answer_module.acompare(frame_source, QUESTIONS[0], [first, second], agents=[ChatAgent(), SQLAgent()])
+    assert result[1].value.startswith("model-b: ")
+    assert first.calls == second.calls
+
+
+async def test_compare_overrides_an_llm_an_earlier_question_left_on_the_agents(frame_source):
+    agents = [ChatAgent(), SQLAgent()]
+    earlier = TaggedLLM("earlier")
+    await answer_module.aask(frame_source, QUESTIONS[0], llm=earlier, agents=agents)
+    assert agents[0].llm is earlier
+    result = await answer_module.acompare(frame_source, QUESTIONS[0], [TaggedLLM("model-a"), TaggedLLM("model-b")], agents=agents)
+    assert [a.value.split(":")[0] for a in result] == ["model-a", "model-b"]
+
+
+def test_compare_needs_two_llms(frame_source):
+    with pytest.raises(ValueError, match="two or more LLMs"):
+        answer_module.compare(frame_source, QUESTIONS[0], [TaggedLLM("model-a")])
+
+
+async def test_comparison_table_and_card_name_each_llm(frame_source):
+    result = await answer_module.acompare(frame_source, QUESTIONS[0], [TaggedLLM("model-a"), TaggedLLM("model-b")])
+    table = result.to_frame()
+    assert list(table.columns[:2]) == ["llm", "question"] and table["llm"].tolist() == result.labels
+    html_out = result._repr_mimebundle_()["text/html"]
+    assert html_out.index("model-a") < html_out.index("model-b")
+    assert repr(result) == "Comparison(TaggedLLM · model-a: success, TaggedLLM · model-b: success)"
+
+
+def test_llm_label_leaves_out_an_unset_model():
+    llm = MockLLM(model_kwargs={"default": {"model": None}})
+    assert answer_module._llm_label(llm) == "MockLLM"
+
+
+async def test_source_and_pipeline_compare_delegate(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    with patch("lumen.ai.answer.compare") as sync_compare, patch("lumen.ai.answer.acompare", new_callable=AsyncMock) as async_compare:
+        frame_source.compare("q", ["a", "b"], concurrency=2)
+        await pipeline.acompare("q", ["a", "b"])
+    assert sync_compare.call_args.args == (frame_source, "q", ["a", "b"])
+    assert sync_compare.call_args.kwargs == {"agents": None, "returns": None, "concurrency": 2}
+    assert async_compare.call_args.args == (pipeline, "q", ["a", "b"])
