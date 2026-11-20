@@ -56,16 +56,17 @@ from panel_flowdash.selection import (
 )
 from panel_flowdash.util import is_failure
 
+from ..data.utils import ANSI_ESCAPE
 from ..pipeline import Pipeline
-from ..sources.base import BaseSQLSource, Source
+from ..sources.base import BaseSQLSource, QueryTimeoutError, Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.base import Filter as FilterTransform, Iloc, Range
 from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
 from .checks import (
-    check_chart, check_filter_config, check_query, check_source_config,
-    check_sql_config, check_table_config, check_view_config, forget_probes,
-    pipeline_columns,
+    _engine_error, _read, check_chart, check_filter_config, check_query,
+    check_source_config, check_sql_config, check_table_config,
+    check_view_config, forget_probes, pipeline_columns,
 )
 from .choices import pipeline_column_types, source_choices, table_choices
 from .contracts import (
@@ -73,8 +74,19 @@ from .contracts import (
 )
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
+try:
+    from panel_flowdash import Choices
+except ImportError:
+    Choices = None
+
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
+
+
+def _supported(options: dict[str, Any]) -> dict[str, Any]:
+    """The ``register`` options the installed panel-flowdash accepts."""
+    params = inspect.signature(register).parameters
+    return {key: value for key, value in options.items() if key in params}
 
 
 def _register_port_type(name: str, **options: Any) -> str:
@@ -486,8 +498,12 @@ def default_table(sql: str) -> str:
     return f"query_{hashlib.sha1(sql.encode()).hexdigest()[:8]}"
 
 
-def _source_summary(source: Source) -> pd.DataFrame:
-    """Compact table summary for a SourceNode preview without triggering queries."""
+def _source_summary(source: Source) -> pd.DataFrame | str:
+    """
+    Compact table summary for a SourceNode preview without triggering queries.
+    Without a stored size for any table it is a line naming the tables: a
+    one-column frame would be captioned as its own shape, e.g. "1 row, 1 column".
+    """
     tables = source.get_tables()
     cached = source._get_schema_cache() or {}
     in_memory = source.tables if isinstance(getattr(source, "tables", None), Mapping) else {}
@@ -509,6 +525,10 @@ def _source_summary(source: Source) -> pd.DataFrame:
                 if isinstance(shape[1], int) and not isinstance(shape[1], bool):
                     cols = shape[1]
         entries.append((table, rows, cols))
+    if all(rows is None and cols is None for _, rows, cols in entries):
+        count = len(entries)
+        names = ", ".join(table for table, _, _ in entries)
+        return f"{count:,} table{'' if count == 1 else 's'}: {names}" if entries else "No tables"
     data: dict[str, list[Any]] = {"table": [table for table, _, _ in entries]}
     if any(rows is not None for _, rows, _ in entries):
         data["rows"] = [rows if rows is not None else "" for _, rows, _ in entries]
@@ -776,7 +796,10 @@ class LumenNode(Viewer):
             self._object = self._resolve()
         except Exception as exc:
             self._object = None
-            self._error = str(exc)
+            self._error = self._error_text(exc)
+
+    def _error_text(self, exc: Exception) -> str:
+        return str(exc)
 
     def _value(self):
         if self._error is not None:
@@ -844,10 +867,38 @@ class SourceNode(LumenNode):
             return pn.pane.Markdown("No source")
         return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(source.get_tables())}")
 
-    def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | None:
+    def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | str | None:
         if self._error is not None or self._object is None:
             return None
         return _source_summary(self._object)
+
+
+def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    The table and column names of the wired source, completed in the SQL
+    field while typing. Columns come from the schemas the source stored, or
+    are read once per table otherwise.
+    """
+    source = inputs.get("source")
+    if Choices is None or not isinstance(source, Source) or is_failure(source):
+        return None
+    tables = list(source.get_tables())
+    stored = source._get_schema_cache() or {}
+    types: dict[str, str] = dict.fromkeys(tables, "table")
+    words = list(tables)
+    for table in tables:
+        schema = stored.get(table)
+        if not isinstance(schema, dict):
+            try:
+                schema = source.get_schema(table)
+            except Exception:
+                continue
+        for column, spec in schema.items():
+            if column == "__len__" or column in types:
+                continue
+            words.append(column)
+            types[column] = spec.get("type", "") if isinstance(spec, dict) else ""
+    return {"sql": Choices(words, restrict=False, types=types)}
 
 
 @register(
@@ -860,6 +911,7 @@ class SourceNode(LumenNode):
     check_config=check_sql_config,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
+    **_supported({"config_completions": sql_completions}),
 )
 class SQLNode(LumenNode):
 
@@ -879,15 +931,68 @@ class SQLNode(LumenNode):
         Rows of the result kept in memory, at most the host's row ceiling,
         which is also the default.""")
 
+    # Bumped per run, so the result of a query superseded while it ran is dropped.
+    _run = 0
+
     @param.depends("source", "sql", "table", "limit", watch=True, on_init=True)
     def _refresh(self, *events):
-        super()._refresh()
+        self._run += 1
+        if self.source is None or not self.sql.strip() or not _blocks_event_loop() or self._primed():
+            super()._refresh()
+            return
+        # The previous error describes a query that is being replaced.
+        self._error = None
+        run, doc = self._run, pn.state.curdoc if getattr(pn.state.curdoc, "session_context", None) else None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        def work():
+            try:
+                return self._resolve(), None
+            except Exception as exc:
+                return None, self._error_text(exc)
+
+        def apply(result):
+            if run != self._run:
+                return
+            self._object, self._error = result if result[1] is None else (None, result[1])
+
+        future = _preview_pool().submit(work)
+        future.add_done_callback(lambda f: f.cancelled() or _schedule(lambda: apply(f.result()), doc, loop))
+
+    def _primed(self) -> bool:
+        """Whether the caller already ran the query, so resolving it is quick and its result is read at once."""
+        if not isinstance(self.source, BaseSQLSource):
+            return True
+        limit = effective_limit(self.editor, self.limit)
+        try:
+            return (id(self.source), result_sql(self.source, self.sql, limit)) in _RESULTS
+        except Exception:
+            return True
 
     def _resolve(self) -> Pipeline | None:
         if self.source is None or not self.sql.strip():
             return None
         limit = effective_limit(self.editor, self.limit)
         return compile_sql(self.source, self.sql, self.table or default_table(self.sql), limit)
+
+    def _error_text(self, exc: Exception) -> str:
+        """The error as one readable message, with the line and column of the query it concerns."""
+        diagnostic = getattr(exc, "diagnostic", None)
+        if diagnostic is None and isinstance(self.source, BaseSQLSource) and not isinstance(
+            exc, (ValueError, QueryTimeoutError)
+        ):
+            limit = effective_limit(self.editor, self.limit)
+            diagnostic = _engine_error(
+                exc, result_sql(self.source, self.sql, limit), self.sql, dialect=_read(self.source.dialect)
+            )
+        text = ANSI_ESCAPE.sub("", str(diagnostic if diagnostic is not None else exc)).strip()
+        line, column = getattr(diagnostic, "line", None), getattr(diagnostic, "column", None)
+        if line and column:
+            return f"Line {line}, column {column}: {text}"
+        return f"Line {line}: {text}" if line else text
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -910,7 +1015,9 @@ class SQLNode(LumenNode):
         if self._error is not None or self._object is None:
             return None
         data = self._object.data
-        return data if data is not None else _pipeline_preview(self, self._object)
+        if output == "pipeline" or data is None:
+            return _pipeline_preview(self, self._object)
+        return data
 
 
 class PipelineNode(LumenNode):

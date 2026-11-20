@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 
 from pathlib import Path
@@ -383,9 +384,7 @@ def test_source_node_preview_uses_cached_schema_without_querying(source, execute
     node = _instance(ops, "data")
     executed.clear()
 
-    uncached = node.__flowdash_preview__()
-    assert isinstance(uncached, pd.DataFrame)
-    assert uncached["table"].tolist() == ["sales"]
+    assert node.__flowdash_preview__() == "1 table: sales"
     assert executed == []
 
     source.get_schema("sales")
@@ -728,3 +727,67 @@ def test_register_port_type_passes_the_options_panel_flowdash_accepts(monkeypatc
         monkeypatch.setattr(flowdash_nodes, "register_port_type", register)
         assert flowdash_nodes._register_port_type("lumen.Pipeline", color="#0072B5", columns=len) == "lumen.pipeline"
         assert calls == [expected]
+
+
+def test_sql_completions_offer_tables_and_columns(source):
+    choices = flowdash_nodes.Choices
+    if choices is None:
+        pytest.skip("panel-flowdash without Choices")
+    words = flowdash_nodes.sql_completions({"sql": ""}, {"source": source})["sql"]
+    assert isinstance(words, choices) and not words.restrict
+    assert set(words.values()) >= {"sales", "category", "amount"}
+    assert words.types["sales"] == "table"
+    assert flowdash_nodes.sql_completions({}, {}) is None
+
+
+def test_sql_preview_follows_the_output(source):
+    ops = dashboard(source)
+    node = _instance(ops, "by_category")
+    data = node.__flowdash_preview__(output="data")
+    assert data is node._object.data
+    pipeline = node.__flowdash_preview__(output="pipeline")
+    assert isinstance(pipeline, pd.DataFrame) and pipeline is not data
+    assert len(pipeline) == 2
+
+
+def test_sql_error_names_line_and_column_and_clears_on_a_fix(source):
+    node = SQLNode(source=source, sql="SELECT category,\n  amout FROM sales")
+    assert node._error.startswith("Line 2, column 3: ")
+    assert "\x1b" not in node._error
+    node.sql = QUERY
+    assert node._error is None and node._object is not None
+
+
+async def test_sql_node_runs_the_query_off_the_event_loop(source, monkeypatch):
+    loop_thread = threading.get_ident()
+    threads = []
+    compile_sql_ = flowdash_nodes.compile_sql
+
+    def recording(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return compile_sql_(*args, **kwargs)
+
+    monkeypatch.setattr(flowdash_nodes, "compile_sql", recording)
+    node = SQLNode(source=source, sql=QUERY)
+    assert node._object is None
+    for _ in range(200):
+        if node._object is not None:
+            break
+        await asyncio.sleep(0.01)
+    assert node._object is not None and len(node._object.data) == 2
+    assert threads and loop_thread not in threads
+
+    node.sql = "SELECT nope FROM sales"
+    node.sql = QUERY
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if len(threads) == 3 and node._object is not None:
+            break
+    await asyncio.sleep(0.05)
+    assert node._error is None and len(node._object.data) == 2
+
+
+def test_source_preview_without_stored_sizes_names_the_tables(source):
+    ops = editor_with(source)
+    preview = _instance(ops, "data").__flowdash_preview__()
+    assert preview == "1 table: sales"
