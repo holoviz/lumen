@@ -50,6 +50,155 @@ def validate_read_only_sql(sql_query: str, dialect: str) -> None:
         raise ValueError("Only one read-only SELECT query is allowed.")
 
 
+def _with_of(query: sqlglot.exp.Expression) -> sqlglot.exp.With | None:
+    return next((arg for arg in query.iter_expressions() if isinstance(arg, sqlglot.exp.With)), None)
+
+
+def _binding(table: sqlglot.exp.Table) -> sqlglot.exp.CTE | None:
+    """The CTE that ``table`` reads, following SQL's scoping: a CTE sees the ones before it, a recursive one itself too."""
+    name = table.name.lower()
+    child, node = table, table.parent
+    while node is not None:
+        if isinstance(node, sqlglot.exp.With):
+            index = node.expressions.index(child)
+            visible = node.expressions[:index + 1] if node.args.get("recursive") else node.expressions[:index]
+            if cte := next((c for c in visible if c.alias_or_name.lower() == name), None):
+                return cte
+            # The query owning the WITH clause is skipped: its body's scope does not reach into the clause.
+            child, node = node.parent, node.parent.parent if node.parent is not None else None
+            continue
+        if (with_ := _with_of(node)) is not None and child is not with_:
+            if cte := next((c for c in with_.expressions if c.alias_or_name.lower() == name), None):
+                return cte
+        child, node = node, node.parent
+    return None
+
+
+def _table_refs(tree: sqlglot.exp.Expression) -> list[tuple[sqlglot.exp.Table, sqlglot.exp.CTE | None]]:
+    """Each unqualified table name ``tree`` reads, with the CTE it is bound to, if any."""
+    return [
+        (table, _binding(table)) for table in tree.find_all(sqlglot.exp.Table)
+        if isinstance(table.this, sqlglot.exp.Identifier) and not table.args.get("db") and not table.args.get("catalog")
+    ]
+
+
+def _rename_ref(table: sqlglot.exp.Table, name: str) -> None:
+    if table.name == name:
+        return
+    if not table.alias:
+        # Columns qualified with the old name keep resolving.
+        table.set("alias", sqlglot.exp.TableAlias(this=table.this.copy()))
+    table.set("this", sqlglot.exp.to_identifier(name))
+
+
+def _unique(name: str, taken: set[str]) -> str:
+    candidate, n = name, 1
+    while candidate.lower() in taken:
+        candidate, n = f"{name}_{n}", n + 1
+    taken.add(candidate.lower())
+    return candidate
+
+
+def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = None, *, pretty: bool = False) -> str:
+    """
+    Rewrite ``sql`` into one self-contained statement by defining each table
+    of ``tables`` it reads, directly or through another of them, as a CTE.
+
+    ``tables`` maps a table name to the query that defines it, which may
+    read other tables of ``tables``. The CTEs come in dependency order,
+    before the query's own. A definition's own WITH clause is hoisted into
+    the statement's, since not every engine accepts a WITH inside a CTE.
+    Names that would collide, with the query's own CTEs, another
+    definition's CTEs or a table the statement reads, are renamed, and a
+    renamed table keeps its old name as its alias. A name bound to a CTE
+    of the query, or qualified with a schema, is never inlined.
+
+    Returns ``sql`` unchanged when it reads none of ``tables``; raises
+    ``ValueError`` when the definitions read each other in a cycle.
+    """
+    read = None if dialect in (None, "any") else dialect
+    definitions = {name.lower(): (name, text) for name, text in tables.items()}
+
+    def parse(text: str) -> sqlglot.exp.Expression:
+        tree = sqlglot.parse_one(text, read=read)
+        if not isinstance(tree, sqlglot.exp.Query):
+            # DuckDB's top-level PIVOT takes no WITH clause; as a subquery it can follow one.
+            tree = sqlglot.select("*").from_(tree.subquery())
+        return tree
+
+    def inlined(table, cte) -> bool:
+        return cte is None and table.name.lower() in definitions
+
+    query = parse(sql)
+    query_refs = _table_refs(query)
+    if not any(inlined(table, cte) for table, cte in query_refs):
+        return sql
+
+    trees: dict[str, sqlglot.exp.Expression] = {}
+    refs: dict[str, list] = {}
+    order: list[str] = []
+    active: list[str] = []
+
+    def visit(key: str) -> None:
+        if key in trees:
+            if key in active:
+                cycle = [definitions[k][0] for k in active[active.index(key):] + [key]]
+                raise ValueError(f"The tables read each other in a cycle: {' -> '.join(cycle)}.")
+            return
+        active.append(key)
+        trees[key] = parse(definitions[key][1])
+        refs[key] = _table_refs(trees[key])
+        for table, cte in refs[key]:
+            if inlined(table, cte):
+                visit(table.name.lower())
+        active.pop()
+        order.append(key)
+
+    for table, cte in query_refs:
+        if inlined(table, cte):
+            visit(table.name.lower())
+
+    own = _with_of(query)
+    taken = {cte.alias_or_name.lower() for cte in (own.expressions if own else [])}
+    taken |= {
+        table.name.lower()
+        for found in [query_refs, *refs.values()] for table, cte in found
+        if cte is None and table.name.lower() not in definitions
+    }
+    names = {key: _unique(definitions[key][0], taken) for key in order}
+
+    ctes, recursive = [], bool(own and own.args.get("recursive"))
+    for key in order:
+        tree, with_ = trees[key], _with_of(trees[key])
+        hoisted = {}
+        if with_ is not None:
+            recursive = recursive or bool(with_.args.get("recursive"))
+            for cte in with_.expressions:
+                hoisted[id(cte)] = _unique(cte.alias_or_name, taken)
+        for table, cte in refs[key]:
+            if inlined(table, cte):
+                _rename_ref(table, names[table.name.lower()])
+            elif cte is not None and id(cte) in hoisted:
+                _rename_ref(table, hoisted[id(cte)])
+        if with_ is not None:
+            for cte in list(with_.expressions):
+                cte.args["alias"].set("this", sqlglot.exp.to_identifier(hoisted[id(cte)]))
+                ctes.append(cte.pop())
+            with_.pop()
+        alias = sqlglot.exp.TableAlias(this=sqlglot.exp.to_identifier(names[key]))
+        ctes.append(sqlglot.exp.CTE(this=tree, alias=alias))
+
+    for table, cte in query_refs:
+        if inlined(table, cte):
+            _rename_ref(table, names[table.name.lower()])
+    if own is not None:
+        ctes.extend(cte.pop() for cte in list(own.expressions))
+        own.pop()
+    key = "with_" if "with_" in query.arg_types else "with"
+    query.set(key, sqlglot.exp.With(expressions=ctes, recursive=recursive))
+    return query.sql(dialect=read, pretty=pretty)
+
+
 def format_exploration_result(df: "IntoFrame | Frame", *, capped: bool = False) -> str:
     """
     Render an exploration query result as a compact preview for the LLM.
