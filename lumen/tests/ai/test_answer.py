@@ -12,6 +12,7 @@ from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
+import yaml
 import panel as pn
 import pytest
 
@@ -51,7 +52,7 @@ from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
 from lumen.transforms.sql import SQLLimit
-from lumen.util import log as lumen_log
+from lumen.util import as_pandas, log as lumen_log
 from lumen.views.base import VegaLiteView, hvPlotView
 
 QUESTION = [{"role": "user", "content": "Total value?"}]
@@ -2164,6 +2165,34 @@ def test_chat_to_notebook_runs_without_an_llm(two_answer_chat, tmp_path):
     script = code + "\nassert isinstance(view, lm.views.View) and len(pipeline.data) == 3\n"
     (tmp_path / "chat.py").write_text(script)
     subprocess.run([sys.executable, str(tmp_path / "chat.py")], check=True, cwd=tmp_path, timeout=300)
+
+
+def test_chat_to_app_is_a_dashboard_of_each_answer_with_its_data(two_answer_chat, tmp_path):
+    from lumen.dashboard import Dashboard
+    text = two_answer_chat.to_app(tmp_path / "app.yaml", title="Penguins")
+    assert (tmp_path / "app.yaml").read_text(encoding="utf-8") == text
+    spec = yaml.safe_load(text)
+    assert spec["config"] == {"title": "Penguins", "layout": "tabs"}
+    # Tabs load lazily, so all of them at once for the test
+    dashboard = Dashboard({**spec, "config": {**spec["config"], "layout": "column"}})
+    dashboard._render_dashboard()
+    # The failed answer has no data, so no tab
+    assert [layout.title for layout in dashboard.layouts] == ["Value by category?", "Total value?"]
+    assert dashboard.layouts[1].description == "The total is 38."
+    chart, table = (layout._cards[0].views[0] for layout in dashboard.layouts)
+    assert chart.view_type == two_answer_chat.answers[0].view.view_type and table.view_type == "table"
+    expected = as_pandas(two_answer_chat.answers[1].pipeline.data)
+    # Text comes back as a string dtype rather than object
+    pd.testing.assert_frame_equal(
+        as_pandas(table.pipeline.data).reset_index(drop=True), expected.reset_index(drop=True), check_dtype=False,
+    )
+
+
+def test_chat_to_app_needs_an_answer_with_data(frame_source):
+    conversation = chat(frame_source)
+    conversation.answers = [Answer(question="Wingspan?", value="", error="No such column", status="error")]
+    with pytest.raises(ValueError, match="No answer in this conversation has data"):
+        conversation.to_app()
 
 
 def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable_answer):

@@ -1111,6 +1111,42 @@ class Chat(param.Parameterized):
             Path(path).write_text(text, encoding="utf-8")
         return text
 
+    def to_app(self, path: str | Path | None = None, title: str | None = None) -> str:
+        """
+        The conversation as a Lumen dashboard spec, to run with
+        ``lumen serve``: a tab per answer with its chart, or its table when
+        it has none, and its written answer. Each answer's result is in the
+        spec as CSV, so the file runs on its own, with no LLM and no access
+        to the original data; it shows the results as they were, not a new
+        query. Returns the YAML, and writes it to path when given.
+        """
+        tables, layouts = {}, []
+        for i, answer in enumerate(self.answers, 1):
+            pipeline = answer.view.pipeline if answer.view is not None else answer.pipeline
+            if answer.status != "success" or pipeline is None:
+                continue
+            name = f"answer_{i}"
+            tables[name] = as_pandas(pipeline.data)
+            view = {"type": "table"} if answer.view is None else answer.view.to_spec()
+            # Every view reads its answer's result, which the spec holds
+            view.pop("pipeline", None)
+            layouts.append({"title": answer.question, "description": answer.value, "pipeline": name, "views": {name: view}})
+        if not layouts:
+            raise ValueError("No answer in this conversation has data to put in an app.")
+        with config.param.update(serializer="csv"):
+            # CSV keeps the data in the file; the default keeps it in this session only
+            source = DuckDBSource.from_df(tables).to_spec()
+        spec = {
+            "config": {"title": title or "Lumen", "layout": "tabs"},
+            "sources": {"chat": source},
+            "pipelines": {layout["pipeline"]: {"source": "chat", "table": layout["pipeline"]} for layout in layouts},
+            "layouts": layouts,
+        }
+        text = yaml.dump(spec, sort_keys=False, allow_unicode=True)
+        if path is not None:
+            Path(path).write_text(text, encoding="utf-8")
+        return text
+
     def to_report(self, title: str | None = None) -> Report:
         """
         The conversation as a Lumen Report, with its own to_html, to_notebook
