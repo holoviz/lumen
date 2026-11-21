@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import importlib.util
 import json
 import logging
 import subprocess
@@ -922,7 +923,9 @@ def test_answer_in_a_kernel_loads_the_extension_once(chart_answer):
 
 def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_answer):
     pytest.importorskip("IPython")
+    find_spec = importlib.util.find_spec
     with (
+        patch("lumen.ai.answer.importlib.util.find_spec", side_effect=lambda name, *a: None if name == "anywidget" else find_spec(name, *a)),
         patch("lumen.ai.answer._in_kernel", return_value=True),
         patch.object(panel_extension, "_loaded_extensions", ["vega", "codeeditor"]),
         patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
@@ -935,6 +938,17 @@ def test_answer_falls_back_to_separate_outputs_when_panel_cannot_render(chart_an
     assert chart["application/vnd.vegalite.v5+json"]["mark"] == "bar"
     assert "image/png" in chart
     assert "SELECT * FROM tiny" in last["text/html"]
+
+
+def test_answer_shows_as_a_widget_when_panel_cannot_render_and_anywidget_can(chart_answer):
+    pytest.importorskip("anywidget")
+    with (
+        patch("lumen.ai.answer._in_kernel", return_value=True),
+        patch.object(panel_extension, "_loaded_extensions", ["vega", "codeeditor"]),
+        patch.object(type(chart_answer.__panel__()), "_repr_mimebundle_", side_effect=ImportError("jupyter_bokeh")),
+    ):
+        data, _metadata = chart_answer._repr_mimebundle_()
+    assert "application/vnd.jupyter.widget-view+json" in data
 
 
 def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
