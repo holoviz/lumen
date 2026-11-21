@@ -563,3 +563,19 @@ def test_has_geometry_counts_only_the_tables_of_the_sources():
     here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
     assert has_geometry(metaset, {("src", "t"): here}) is True
     assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
+
+
+async def test_sql_prompt_adds_h3_rules_only_when_loaded(sql_context, test_messages, llm):
+    assert "## H3 hexagons" not in await _main_prompt(sql_context, test_messages, llm)
+    prompt = await _main_prompt(sql_context, test_messages, llm, h3=True)
+    assert "## H3 hexagons" in prompt and "h3_cell_to_boundary_wkt" in prompt
+
+
+def test_loads_h3_reads_the_source_initializers():
+    from lumen.ai.agents.sql import loads_h3
+    plain = DuckDBSource(uri=":memory:")
+    assert not loads_h3({(plain.name, "t"): plain})
+    with_h3 = DuckDBSource(uri=":memory:")
+    # Set afterwards, so the test does not download the extension
+    with_h3.initializers = ["INSTALL h3 FROM community;", "LOAD h3;"]
+    assert loads_h3({(with_h3.name, "t"): with_h3})
