@@ -93,7 +93,9 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     Args:
         data: SQL, table or filter node to chart.
         name: Descriptive snake_case node name.
-        spec: Vega-Lite spec using the node's columns, without data or URLs.
+        spec: Vega-Lite spec using the node's columns, without data or URLs. Leave out
+            width and height so the chart fills its tile and follows resizes; set
+            them only when the user asks for a fixed size.
     """
     ops = ctx.deps.ops
     port = _upstream_port(ops, data)
