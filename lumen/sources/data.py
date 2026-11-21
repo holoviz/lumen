@@ -23,7 +23,9 @@ from ..pipeline import Pipeline
 from ..util import as_pandas, normalize_table_name, try_import_xarray
 from .base import Source
 from .duckdb import DuckDBSource
-from .xarray_sql import XARRAY_EXTENSIONS, XArraySQLSource
+from .xarray_sql import (
+    XARRAY_EXTENSIONS, XArraySQLSource, _cf_description, grid_facts,
+)
 
 if TYPE_CHECKING:
     import polars as pl
@@ -436,8 +438,13 @@ def _add_grids(source: DuckDBSource, grids: dict) -> None:
         # Read lazily: DuckDB pulls record batches from the Dataset per query
         source._connection.from_arrow(arrow_dataset(ds)).to_view(name)
         source.tables[name] = f'SELECT * FROM "{name}"'
-        # So the SQL prompt knows the table is a grid, as with XArraySQLSource
-        source.metadata = {**source.metadata, name: {**source.metadata.get(name, {}), "gridded": True}}
+        # So the SQL prompt knows the table is a grid, and the SQL review its
+        # units and longitude range, as with XArraySQLSource
+        source.metadata = {**source.metadata, name: {**source.metadata.get(name, {}), "gridded": True, **grid_facts(ds)}}
+        columns = {**{dim: ds.coords[dim] for dim in ds.dims if dim in ds.coords}, **dict(ds.data_vars)}
+        described = {column: {"description": text} for column, var in columns.items() if (text := _cf_description(var.attrs))}
+        if described:
+            source.descriptions = {**source.descriptions, name: {"columns": described, **source.descriptions.get(name, {})}}
     JOINED_GRIDS.add(source)
 
 

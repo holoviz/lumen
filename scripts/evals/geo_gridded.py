@@ -27,6 +27,7 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+import shapely
 import xarray as xr
 
 from pyproj import Geod
@@ -408,6 +409,43 @@ def extra_grid_cases() -> list[Case]:
     ]
 
 
+def zonal_cases(air: xr.Dataset, states: gpd.GeoDataFrame) -> list[Case]:
+    """A grid averaged over polygons: each state's share of every cell, weighted by latitude."""
+    cells = (air.air.mean("time") - 273.15).to_dataframe().reset_index()
+    # The grid runs 0 to 360, the states -180 to 180
+    cells["lon"] = np.where(cells.lon > 180, cells.lon - 360, cells.lon)
+    half = 1.25
+    cells = gpd.GeoDataFrame(cells, geometry=shapely.box(cells.lon - half, cells.lat - half, cells.lon + half, cells.lat + half), crs=states.crs)
+    pieces = gpd.overlay(cells, states[["state", "geometry"]].assign(geometry=states.geometry.make_valid()), keep_geom_type=True)
+    pieces["w"] = pieces.geometry.area * np.cos(np.deg2rad(pieces.lat))
+    expected = (pieces.air * pieces.w).groupby(pieces.state).sum() / pieces.w.groupby(pieces.state).sum()
+
+    def every_state(df, _):
+        for key_col in df.select_dtypes(exclude="number").columns:
+            keys = df[key_col].astype(str)
+            if not set(expected.index) <= set(keys):
+                continue
+            for val_col in df.select_dtypes("number").columns:
+                got = dict(zip(keys, df[val_col], strict=False))
+                if all(abs(float(got[k]) - v) <= 0.3 for k, v in expected.items()):
+                    return True
+        return False
+
+    cells_sql = "SELECT lat, CASE WHEN lon > 180 THEN lon - 360 ELSE lon END AS lon, AVG(air) - 273.15 AS t FROM air GROUP BY 1, 2"
+    envelope = f"ST_MakeEnvelope(c.lon - {half}, c.lat - {half}, c.lon + {half}, c.lat + {half})"
+    return [
+        Case("gridded", "state_means", "zonal",
+             "What is the area-weighted mean air temperature in degrees Celsius in each US state?",
+             every_state,
+             f"WITH c AS ({cells_sql}) SELECT state, SUM(t * w) / SUM(w) AS t FROM ("
+             f"SELECT s.state, c.t, ST_Area(ST_Intersection({envelope}, ST_MakeValid(s.geometry))) * COS(RADIANS(c.lat)) AS w "
+             f"FROM c JOIN states s ON ST_Intersects({envelope}, s.geometry)) GROUP BY 1",
+             # Cell centres miss the small states
+             f"WITH c AS ({cells_sql}) SELECT s.state, SUM(c.t * COS(RADIANS(c.lat))) / SUM(COS(RADIANS(c.lat))) AS t "
+             "FROM c JOIN states s ON ST_Within(ST_Point(c.lon, c.lat), s.geometry) GROUP BY 1"),
+    ]
+
+
 def selfcheck(cases: list[Case], sources: dict) -> bool:
     """Each reference SQL must pass its check and each trap SQL must fail it."""
     ok = True
@@ -444,14 +482,16 @@ async def main(args):
     model = args.model or llm.model_kwargs.get("default", {}).get("model") or "default"
     era5 = xr.open_dataset(args.era5) if args.era5 else None
     air = hvsampledata.air_temperature("xarray")
+    states = hvsampledata.us_states("geopandas")
     sources = {
         "spatial": lumen.read(spatial_fixture()),
         "air": lumen.read({"air": air}),
         **({"era5": lumen.read({"t2m": era5})} if era5 is not None else {}),
         "era5_like": lumen.read({"t2m": era5_like()}),
         "noleap": lumen.read({"tas": noleap_grid()}),
+        "zonal": lumen.read({"air": air, "states": states}),
     }
-    cases = spatial_cases(spatial_fixture()) + gridded_cases(air, era5) + extra_grid_cases()
+    cases = spatial_cases(spatial_fixture()) + gridded_cases(air, era5) + extra_grid_cases() + zonal_cases(air, states)
     if args.selfcheck:
         raise SystemExit(0 if selfcheck(cases, sources) else 1)
     if args.only:

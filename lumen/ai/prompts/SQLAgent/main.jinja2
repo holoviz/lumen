@@ -87,6 +87,12 @@ Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as co
 - Monthly climatology: `GROUP BY EXTRACT(MONTH FROM time)`; an anomaly is the value minus the climatology for its month.
 - The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`, with x first moved into the grid's longitude range (on a 0 to 360 grid, add 360 to a negative x).
 {%- endif %}
+{%- if gridded is defined and gridded and has_geometry is defined and has_geometry %}
+
+## Grid by polygon
+- Before any spatial predicate between grid cells and geometry, bring a 0 to 360 grid longitude into -180 to 180: `CASE WHEN lon > 180 THEN lon - 360 ELSE lon END`. Without it a lon/lat polygon matches no cell and the query returns no rows.
+- Per-region means: average each cell over time first, then weight by the area of the cell inside the region times `COS(RADIANS(lat))`: `ST_Area(ST_Intersection(ST_MakeEnvelope(lon - h, lat - h, lon + h, lat + h), ST_MakeValid(geom))) * COS(RADIANS(lat))`, h being half the distance between neighbouring grid points (1.25 on a 2.5 degree grid, 0.125 on a 0.25 degree grid), joined on `ST_Intersects` with the same envelope. Testing cell centres with `ST_Within` misses regions smaller than a cell. `ST_MakeValid` stops a self-intersecting polygon from failing the intersection.
+{%- endif %}
 {%- endblock -%}
 
 {%- block context -%}

@@ -48,6 +48,8 @@ class TableFacts:
     geometry: dict[str, bool] = field(default_factory=dict)
     #: CF units of the columns that declare them
     units: dict[str, str] = field(default_factory=dict)
+    #: (min, max) of each longitude column of a grid
+    lon_range: dict[str, tuple[float, float]] = field(default_factory=dict)
 
 
 def geographic_crs(column_type: str) -> bool:
@@ -142,6 +144,7 @@ def review_sql(sql: str, tables: dict[str, TableFacts], dialect: str | None = "d
             )
     findings += _unpredicated_joins(tree, tables)
     findings += _unit_mismatches(tree, tables)
+    findings += _unshifted_longitudes(tree, tables)
     return findings
 
 
@@ -216,4 +219,58 @@ def _unit_mismatches(tree: exp.Expression, tables: dict[str, TableFacts]) -> lis
                 f"{column.name} is in {unit}, so {value:g} looks like Kelvin ({value - 273.15:g} °C). "
                 f"Compare with {value - 273.15:g} instead."
             )
+    return findings
+
+
+#: Functions that build a point, longitude first
+_POINTS = ("ST_POINT", "STPOINT", "ST_MAKEPOINT", "ST_POINT2D", "ST_POINT3D", "ST_POINT4D")
+
+
+def _unshifted_longitudes(tree: exp.Expression, tables: dict[str, TableFacts]) -> list[str]:
+    """
+    A point or cell envelope built from a 0 to 360 grid longitude and used
+    against lon/lat geometry, which then matches nothing: the query returns
+    no rows instead of failing.
+    """
+    aliases = {table.alias_or_name: table.name for table in tree.find_all(exp.Table)}
+    # A CTE that passes a grid's longitude through unshifted counts as that grid
+    for cte in tree.find_all(exp.CTE):
+        sources = {table.name for table in cte.this.find_all(exp.Table)}
+        if "360" not in cte.this.sql() and sources & set(tables):
+            aliases[cte.alias] = next(iter(sources & set(tables)))
+    aliases.update({name: aliases[target] for name, target in list(aliases.items()) if target in aliases and target != name})
+    if not any(tables[name].geometry for name in set(aliases.values()) if name in tables):
+        # Without geometry in the query a 0 to 360 point is fine
+        return []
+    wrapped = {
+        (name, col) for name, facts in tables.items()
+        for col, (_, high) in facts.lon_range.items() if high > 180
+    }
+    lons = []
+    for node in tree.find_all(exp.Func):
+        # Newer sqlglot parses ST_Point into its own expression (key stpoint), older as Anonymous
+        name = _name(node) or node.key.upper()
+        if name in _POINTS:
+            # Longitude is the first argument
+            lons.append(node.expressions[0] if isinstance(node, exp.Anonymous) else node.this)
+        elif name == "ST_MAKEENVELOPE":
+            # (min_lon, min_lat, max_lon, max_lat)
+            lons += _args(node)[::2]
+        elif name in ("ST_XMIN", "ST_XMAX") and isinstance(node.parent, (exp.Between, exp.Binary)):
+            # A box test against a geometry's extent, e.g. lon BETWEEN ST_XMin(geom) AND ST_XMax(geom)
+            lons += [side for side in node.parent.iter_expressions() if side is not node]
+    findings, seen = [], set()
+    for arg in lons:
+        if "360" in arg.sql():
+            continue
+        for column in arg.find_all(exp.Column):
+            table = aliases.get(column.table) if column.table else None
+            hit = [(t, c) for t, c in wrapped if c == column.name and (table is None or t == table)]
+            if hit and column.name not in seen and not (column.table and table is None):
+                seen.add(column.name)
+                findings.append(
+                    f"{hit[0][0]}.{column.name} runs from 0 to 360 but the geometry uses -180 to 180, so this "
+                    f"point or cell matches no polygon and the query returns no rows. Use CASE WHEN {column.name} > 180 "
+                    f"THEN {column.name} - 360 ELSE {column.name} END in place of {column.name}."
+                )
     return findings

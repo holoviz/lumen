@@ -49,6 +49,21 @@ def _cf_description(attrs: dict, calendar: str | None = None) -> str:
     return " ".join(part for part in parts if part)
 
 
+def grid_facts(ds: Any) -> dict[str, Any]:
+    """
+    A grid's CF units by column, and the range of each longitude coordinate
+    (degrees_east), so a SQL review can tell a 0 to 360 grid from one in
+    -180 to 180 without querying it.
+    """
+    columns = {**{name: ds.coords[name] for name in ds.dims if name in ds.coords}, **dict(ds.data_vars)}
+    units = {name: var.attrs["units"] for name, var in columns.items() if var.attrs.get("units")}
+    lon_range = {
+        name: (float(coord.min()), float(coord.max())) for name, coord in ds.coords.items()
+        if coord.ndim == 1 and coord.size and coord.attrs.get("units") == "degrees_east"
+    }
+    return {"units": units, "lon_range": lon_range}
+
+
 class XArraySQLSource(BaseSQLSource):
     """
     SQL-queryable xarray data source for Lumen.

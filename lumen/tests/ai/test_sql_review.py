@@ -64,3 +64,43 @@ def test_geographic_crs_reads_the_column_type(column_type, expected):
     pytest.importorskip("pyproj")
     from lumen.ai.sql_review import geographic_crs
     assert geographic_crs(column_type) is expected
+
+
+WRAPPED = {
+    "air": TableFacts(units={"air": "degK"}, lon_range={"lon": (200.0, 330.0)}),
+    "states": TableFacts(geometry={"geometry": True}),
+}
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT s.name FROM air a JOIN states s ON ST_Within(ST_Point(a.lon, a.lat), s.geometry)",
+    "SELECT name FROM air, states WHERE ST_Within(ST_Point(lon, lat), geometry)",
+    "SELECT s.name FROM air a JOIN states s ON ST_Intersects(ST_MakeEnvelope(a.lon - 1.25, a.lat - 1.25, a.lon + 1.25, a.lat + 1.25), s.geometry)",
+    # Passed through a CTE first, still unshifted
+    "WITH c AS (SELECT lat, lon, air - 273.15 AS t FROM air) "
+    "SELECT s.name FROM states s JOIN c ON ST_Intersects(s.geometry, ST_MakeEnvelope(c.lon - 1, c.lat - 1, c.lon + 1, c.lat + 1))",
+    "SELECT s.name FROM air a JOIN states s ON ST_Contains(s.geometry, ST_MakePoint(a.lon, a.lat))",
+    "SELECT s.name FROM air a JOIN states s ON ST_Within(ST_Point2D(a.lon, a.lat), s.geometry)",
+    # A box test against each state's extent
+    "SELECT s.name FROM air a JOIN states s ON a.lon BETWEEN ST_XMin(s.geometry) AND ST_XMax(s.geometry)",
+    "SELECT s.name FROM air a JOIN states s ON a.lon >= ST_XMin(s.geometry) AND a.lat <= ST_YMax(s.geometry)",
+])
+def test_review_finds_a_0_to_360_longitude_against_geometry(sql):
+    (finding,) = review_sql(sql, WRAPPED)
+    assert "runs from 0 to 360" in finding and "lon - 360" in finding
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT s.name FROM air a JOIN states s ON ST_Within(ST_Point(CASE WHEN a.lon > 180 THEN a.lon - 360 ELSE a.lon END, a.lat), s.geometry)",
+    "WITH c AS (SELECT lat, CASE WHEN lon > 180 THEN lon - 360 ELSE lon END AS lon FROM air) "
+    "SELECT s.name FROM c JOIN states s ON ST_Intersects(ST_MakeEnvelope(c.lon - 1, c.lat - 1, c.lon + 1, c.lat + 1), s.geometry)",
+    "SELECT ST_Point(lon, lat) FROM air",
+    "SELECT s.name FROM air a JOIN states s ON a.lon - 360 BETWEEN ST_XMin(s.geometry) AND ST_XMax(s.geometry)",
+])
+def test_review_leaves_shifted_longitudes_and_grids_alone(sql):
+    assert review_sql(sql, WRAPPED) == []
+
+
+def test_a_grid_already_in_minus_180_to_180_is_fine():
+    facts = {**WRAPPED, "air": TableFacts(lon_range={"lon": (-180.0, 177.5)})}
+    assert review_sql("SELECT 1 FROM air a JOIN states s ON ST_Within(ST_Point(a.lon, a.lat), s.geometry)", facts) == []
