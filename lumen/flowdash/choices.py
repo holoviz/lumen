@@ -69,17 +69,31 @@ def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, l
     return {"table": sorted(listed_tables(source))}
 
 
-# Tables per source, read once: the palette asks for presets whenever it is drawn.
-_TABLES: weakref.WeakKeyDictionary[Source, list[str]] = weakref.WeakKeyDictionary()
+# Tables per source, read once per reload: the palette asks for presets whenever it
+# is drawn, and listing a remote database's tables is a query.
+_TABLES: weakref.WeakKeyDictionary[Source, tuple[Any, Any, list[str]]] = weakref.WeakKeyDictionary()
 
 
 def _tables(source: Source) -> list[str]:
-    if source not in _TABLES:
-        try:
-            _TABLES[source] = sorted(source.get_tables())
-        except Exception:
-            return []
-    return _TABLES[source]
+    """
+    The tables of ``source``, cached until it reloads: ``Source.clear_cache``,
+    which a change of its reload params calls, replaces its schema cache, and
+    a change of its ``tables`` changes the declared tables.
+    """
+    declared = getattr(source, "tables", None)
+    declared = sorted(declared) if isinstance(declared, (dict, list)) else declared
+    cached = _TABLES.get(source)
+    token = getattr(source, "_schema_cache", None)
+    if cached is not None and cached[0] is token and cached[1] == declared:
+        return cached[2]
+    from .nodes import listed_tables
+
+    try:
+        tables = sorted(listed_tables(source))
+    except Exception:
+        return []
+    _TABLES[source] = (token, declared, tables)
+    return tables
 
 
 def _host_sources(context: Mapping[str, Any]) -> dict[str, Source]:

@@ -143,3 +143,19 @@ def test_palette_presets_place_working_nodes(source):
     ops.connect(f"{source_node}.source", f"{table_node}.source")
     assert ops.node_output(f"{source_node}.source") is source
     assert ops.node_output(f"{table_node}.pipeline").table == "sales"
+
+
+def test_presets_read_each_sources_tables_once_until_it_reloads(source, monkeypatch):
+    calls = []
+    get_tables = DuckDBSource.get_tables
+    monkeypatch.setattr(DuckDBSource, "get_tables", lambda self: calls.append(1) or get_tables(self))
+    context = {SOURCES_KEY: {"shop": source}}
+    for _ in range(3):
+        table_presets(context)
+        source_presets(context)
+    assert len(calls) == 1
+    source.clear_cache()
+    table_presets(context)
+    assert len(calls) == 2
+    source.tables = {**source.tables, "extra": "SELECT 1 AS x"}
+    assert "extra (shop)" in [p["title"] for p in table_presets(context)]
