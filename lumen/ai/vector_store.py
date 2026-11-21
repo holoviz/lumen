@@ -4,10 +4,12 @@ import importlib
 import importlib.util
 import io
 import json
+import math
 import os
 import typing as t
 
 from abc import abstractmethod
+from collections import Counter
 from collections.abc import Callable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -26,6 +28,7 @@ from .actor import PROMPTS_DIR, LLMUser
 from .config import get_markitdown
 from .embeddings import Embeddings, NumpyEmbeddings
 from .models import YesNo
+from .retrieval import doc_title, retrieval_tokens
 from .utils import log_debug
 
 # tqdm.auto draws notebook widgets, which need ipywidgets; without it tqdm
@@ -1134,6 +1137,7 @@ class DuckDBVectorStore(VectorStore):
     def __init__(self, **params):
         super().__init__(**params)
         self._add_items_lock = asyncio.Lock()
+        self._lexical_cache = None
 
         # Reuse existing connection for this URI if still open
         # (e.g. on Panel hot-reload within the same process).
@@ -1416,9 +1420,21 @@ class DuckDBVectorStore(VectorStore):
         """
         if not self._initialized:
             return []
-        query_embedding = np.array(
-            (await self.embeddings.embed([text]))[0], dtype=np.float32
-        ).tolist()
+        query_embedding = (await self.embeddings.embed([text]))[0]
+        return self._query_embedding(query_embedding, top_k, filters, threshold)
+
+    async def query_batch(
+        self, texts: list[str], top_k: int = 5,
+        filters: dict | None = None, threshold: float = -1.0,
+    ) -> list[list[dict]]:
+        """Embed related queries in one provider request."""
+        if not texts or not self._initialized:
+            return [[] for _ in texts]
+        embeddings = await self.embeddings.embed(texts)
+        return [self._query_embedding(embedding, top_k, filters, threshold) for embedding in embeddings]
+
+    def _query_embedding(self, embedding, top_k, filters, threshold) -> list[dict]:
+        query_embedding = np.asarray(embedding, dtype=np.float32).tolist()
         vector_dim = len(query_embedding)
 
         base_query = f"""
@@ -1456,6 +1472,101 @@ class DuckDBVectorStore(VectorStore):
         except duckdb.Error as e:
             log_debug(f"Error during query: {e}")
             return []
+
+    async def query_lexical(
+        self, text: str, top_k: int = 5, filters: dict | None = None,
+    ) -> list[dict]:
+        """Rank documents with BM25-style lexical relevance.
+
+        Vector search captures semantic similarity but can overlook an exact
+        property or control name. Lexical retrieval complements it using the
+        stored document text and descriptive metadata, with a small title boost.
+        """
+        if not self._initialized:
+            return []
+        rows = None
+        if not self.read_only or self._lexical_cache is None:
+            rows = self.connection.execute("SELECT id, text, metadata FROM documents").fetchall()
+        return await asyncio.to_thread(self._query_lexical, text, top_k, filters, rows)
+
+    def _query_lexical(self, text: str, top_k: int, filters: dict | None, rows) -> list[dict]:
+        terms = set(retrieval_tokens(text))
+        if not terms:
+            return []
+        phrase = " ".join(text.lower().split())
+        prepared = self._lexical_documents(rows)
+        if filters:
+            prepared = [row for row in prepared if _metadata_matches_filters(json.loads(row[2]), filters)]
+        document_frequency = {
+            term: sum(term in row[4] or term in row[5] for row in prepared)
+            for term in terms
+        }
+
+        document_count = len(prepared)
+        average_length = (
+            sum(item[-1] for item in prepared) / document_count
+            if document_count else 1
+        )
+        inverse_document_frequency = {
+            term: math.log(
+                1 + (document_count - frequency + 0.5) / (frequency + 0.5)
+            )
+            for term, frequency in document_frequency.items()
+        }
+        k1, length_normalization = 1.5, 0.75
+        matches = []
+        for (
+            identifier, document, metadata_json, searchable, body_tokens,
+            title_tokens, document_length,
+        ) in prepared:
+            term_score = 0.0
+            for term in terms:
+                # Titles identify a section more precisely than prose, while
+                # body occurrences still provide the bulk of the evidence.
+                frequency = body_tokens[term] + 2 * title_tokens[term]
+                if not frequency:
+                    continue
+                denominator = frequency + k1 * (
+                    1 - length_normalization
+                    + length_normalization * document_length / average_length
+                )
+                term_score += (
+                    inverse_document_frequency[term]
+                    * frequency * (k1 + 1)
+                    / denominator
+                )
+            if not term_score:
+                continue
+            phrase_score = 0.25 * sum(inverse_document_frequency.values()) * (
+                phrase in searchable
+            )
+            matches.append({
+                "id": identifier,
+                "text": document,
+                "metadata": json.loads(metadata_json),
+                "similarity": term_score + phrase_score,
+            })
+        return sorted(matches, key=lambda item: item["similarity"], reverse=True)[:top_k]
+
+    def _lexical_documents(self, rows) -> list[tuple]:
+        # Only cache immutable stores. Writable stores can change through other connections.
+        cached = self._lexical_cache
+        if self.read_only and cached is not None:
+            return cached
+        prepared = []
+        for identifier, document, metadata_json in rows:
+            metadata = json.loads(metadata_json)
+            title = doc_title(metadata).lower()
+            body = f"{document}\n{metadata.get('description', '')}".lower()
+            title_tokens = Counter(retrieval_tokens(title))
+            body_tokens = Counter(retrieval_tokens(body))
+            prepared.append((
+                identifier, document, metadata_json, f"{title}\n{body}", body_tokens,
+                title_tokens, sum(body_tokens.values()) + sum(title_tokens.values()),
+            ))
+        if self.read_only:
+            self._lexical_cache = prepared
+        return prepared
 
     def filter_by(
         self, filters: dict, limit: int | None = None, offset: int = 0

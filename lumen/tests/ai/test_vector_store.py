@@ -1,6 +1,7 @@
 import asyncio
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -573,6 +574,15 @@ class TestNumpyVectorStore(VectorStoreTestKit):
 
 @pytest.mark.xdist_group("vss")
 class TestDuckDBVectorStore(VectorStoreTestKit):
+    async def test_batch_queries_embed_once(self, empty_store, monkeypatch):
+        """Batch retrieval should make one embedding call for all queries."""
+        await empty_store.add([{"text": "slider", "metadata": {}}])
+        embed = AsyncMock(wraps=empty_store.embeddings.embed)
+        monkeypatch.setattr(empty_store.embeddings, "embed", embed)
+        results = await empty_store.query_batch(["slider", "binding"])
+        assert len(results) == 2
+        embed.assert_awaited_once_with(["slider", "binding"])
+
 
     @pytest.fixture
     async def store(self, tmp_path) -> DuckDBVectorStore:
@@ -609,6 +619,35 @@ class TestDuckDBVectorStore(VectorStoreTestKit):
         results = await store.query("First doc")
         assert len(results) == 0
         store.close()
+
+    @pytest.mark.asyncio
+    async def test_query_lexical_prefers_specific_terms(self, empty_store):
+        await empty_store.add([
+            {
+                "text": "Bind a parameter to a range slider input element.",
+                "metadata": {"section_title": "Input binding"},
+            },
+            {
+                "text": "A chart can contain marks and encodings.",
+                "metadata": {"section_title": "Chart overview"},
+            },
+            {
+                "text": "A chart can use a title.",
+                "metadata": {"section_title": "Chart title"},
+            },
+            {
+                "text": "A chart can use a legend.",
+                "metadata": {"section_title": "Chart legend"},
+            },
+            {
+                "text": "A chart can use an axis.",
+                "metadata": {"section_title": "Chart axis"},
+            },
+        ])
+
+        results = await empty_store.query_lexical("slider")
+
+        assert results[0]["metadata"]["section_title"] == "Input binding"
 
     async def test_check_embeddings_consistency(self, tmp_path):
         db_path = str(tmp_path / "test_duckdb.db")
