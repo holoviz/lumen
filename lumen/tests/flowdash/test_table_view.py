@@ -47,6 +47,8 @@ def node(ops, name="rows"):
 def test_the_table_view_is_a_registered_view_that_needs_no_spec():
     meta = TableViewNode.__panel_app_metadata__
     assert COMPONENTS[TABLE_VIEW_ID] is TableViewNode
+    assert meta.title == "Lumen Tabulator view" and "page_size" not in meta.description
+    assert "page_size" in TableViewNode.param.spec.doc
     assert meta.requires == [{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}]
     assert meta.config == ["spec"]
     assert "table" in meta.tags
@@ -83,6 +85,17 @@ def test_spec_options_become_tabulator_options(source):
     assert table.sorters == [{"field": "amount", "dir": "desc"}]
     assert table.formatters == {"amount": {"type": "progress", "max": 20}}
     assert table.titles == {"category": "Category"} and table.widths == {"category": 120}
+
+
+@pytest.mark.parametrize("page_size", [None, 2])
+def test_a_sorter_without_a_direction_sorts_ascending(source, page_size):
+    spec = {"sorters": [{"field": "amount"}], **({"page_size": page_size} if page_size else {})}
+    rows = node(dashboard(source, spec))
+    assert rows._error is None
+    table = rows._object.panel
+    assert table.sorters == [{"dir": "asc", "field": "amount"}]
+    assert list(table.current_view["amount"]) == [5, 10, 20]
+    assert rows.spec == spec
 
 
 def test_tabulator_options_do_not_change_the_spec():
