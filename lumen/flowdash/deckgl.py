@@ -130,6 +130,8 @@ _BRACKETS = re.compile(r"(?<![\w$.])(this|properties)\s*\[\s*('(?:[^'\\]|\\.)*'|
 _NAMES = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?:\s*\.\s*([A-Za-z_$][\w$]*))?")
 _CALL = re.compile(r"[\w$)\]]\s*\(")
 _LITERALS = frozenset({"true", "false", "null"})
+# Object internals deck.gl refuses to read, as a member or in brackets.
+_HIDDEN = re.compile(r"(?<![\w$])(constructor|prototype|__proto__)(?![\w$])")
 # Names deck.gl does not resolve on the datum, so an expression reading them draws nothing.
 _GLOBALS = frozenset({
     "Math", "Number", "String", "Boolean", "Date", "JSON", "Object", "Array", "NaN",
@@ -272,6 +274,11 @@ def _check_expression(name: str, expression: str, feature: bool, columns: list[s
             f"{name} calls a function in \"@@={expression}\"; deck.gl expressions take no function "
             "calls, so use arithmetic, comparisons and ?: instead, e.g. \"@@=value * 10\"."
         )
+    if hidden := sorted(set(_HIDDEN.findall(expression))):
+        raise ValueError(
+            f"{name} reads {', '.join(hidden)} in \"@@={expression}\"; deck.gl expressions can only "
+            "read the row's columns and their values, not object internals."
+        )
     fields, stray = expression_names(expression, feature)
     if globals_read := sorted(stray & _GLOBALS):
         raise ValueError(
@@ -326,7 +333,7 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     if unknown := [key for key in spec if key not in SPEC_KEYS]:
         raise ValueError(f"The spec may not set {', '.join(map(repr, unknown))}; its keys are {', '.join(SPEC_KEYS)}.")
     style = spec.get("mapStyle")
-    if style is not None and style not in MAP_STYLES:
+    if style is not None and (not isinstance(style, str) or style not in MAP_STYLES):
         raise ValueError(
             "`mapStyle` must be one of CARTO's basemaps or null for none; leave it out for one "
             f"that follows the page's theme. The basemaps are: {', '.join(sorted(MAP_STYLES))}."

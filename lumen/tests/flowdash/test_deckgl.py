@@ -113,6 +113,10 @@ def test_check_accepts_a_spec_reading_the_datas_columns():
     ({"layers": [{"@@type": "ScatterplotLayer"}], "tooltip": {"text": "{name}"}}, "The tooltip reads name"),
     ({"layers": [{"@@type": "ScatterplotLayer"}], "views": [{"@@type": "FirstPersonView"}]}, "MapView"),
     ({"layers": [{"@@type": "ScatterplotLayer"}], "getTooltip": "@@=state"}, "may not set 'getTooltip'"),
+    ({"layers": [{"@@type": "ScatterplotLayer"}], "mapStyle": {"version": 8}}, "must be one of CARTO's basemaps"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=state.constructor"}]}, "reads constructor"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=state.__proto__.x"}]}, "reads __proto__"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=state['prototype']"}]}, "reads prototype"),
 ])
 def test_check_refuses_what_it_cannot_draw(spec, message):
     with pytest.raises(ValueError, match=message.replace("(", r"\(").replace("[", r"\[")):
