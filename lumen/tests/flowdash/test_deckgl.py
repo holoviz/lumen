@@ -16,7 +16,8 @@ from lumen.flowdash import (
 )
 from lumen.flowdash.contracts import usages
 from lumen.flowdash.deckgl import (
-    BASEMAPS, SCHEME_COLORS, deckgl_fields, expression_names, fit_view_state,
+    BASEMAPS, SCHEME_COLORS, WORLD_VIEW, deckgl_fields, expression_names,
+    fit_view_state,
 )
 from lumen.views.base import DeckGLView
 
@@ -101,12 +102,62 @@ def test_check_accepts_a_spec_reading_the_datas_columns():
     ({"layers": [{"@@type": "ScatterplotLayer", "id": "pts", "getPosition": "@@=[lon, ylat]"}]}, "Layer 'pts' reads lon"),
     ({"layers": [{"@@type": "GeoJsonLayer", "getFillColor": "@@=[capacity, 0, 0]"}]}, "properties.capacity"),
     ({"layers": [{"@@type": "ScatterplotLayer"}], "map_style": "light"}, "`mapStyle`"),
-    ({"layers": [{"@@type": "ScatterplotLayer"}], "mapStyle": "mapbox://styles/mapbox/dark-v9"}, "API key"),
     ({"layers": [{"@@type": "ScatterplotLayer"}], "initialViewState": [0, 0]}, "must be an object"),
+    ({"layers": [{"@@type": "ScatterplotLayer"}], "initialViewState": {"zoom": "3"}}, "object of numbers"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=Math.sqrt(capacity)"}]}, "calls a function"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=sqrt(capacity)"}]}, "calls a function"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=Math.PI * capacity"}]}, "reads Math"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=this.cap"}]}, "reads cap"),
+    ({"layers": [{"@@type": "ScatterplotLayer", "getRadius": "@@=this['cap ity']"}]}, "reads cap ity"),
+    ({"layers": [{"@@type": "ScatterplotLayer"}], "tooltip": {"html": "<img src=x>"}}, "`tooltip` is true, false"),
+    ({"layers": [{"@@type": "ScatterplotLayer"}], "tooltip": {"text": "{name}"}}, "The tooltip reads name"),
+    ({"layers": [{"@@type": "ScatterplotLayer"}], "views": [{"@@type": "FirstPersonView"}]}, "MapView"),
+    ({"layers": [{"@@type": "ScatterplotLayer"}], "getTooltip": "@@=state"}, "may not set 'getTooltip'"),
 ])
 def test_check_refuses_what_it_cannot_draw(spec, message):
     with pytest.raises(ValueError, match=message.replace("(", r"\(").replace("[", r"\[")):
         check_deckgl(spec, COLUMNS)
+
+
+FETCHES = [
+    {"mapStyle": "https://canary.example/style.json"},
+    {"mapStyle": "mapbox://styles/mapbox/dark-v9"},
+    {"layers": [{"@@type": "ScatterplotLayer", "extensions": [{"@@type": "FillStyleExtension", "pattern": True}],
+                 "fillPatternAtlas": "https://canary.example/atlas.png"}]},
+    {"layers": [{"@@type": "ScatterplotLayer", "fillPatternAtlas": "https://canary.example/atlas.png"}]},
+    {"layers": [{"@@type": "ScatterplotLayer", "fillPatternAtlas": "atlas.png"}]},
+    {"layers": [{"@@type": "ScatterplotLayer",
+                 "source": {"@@function": "vectorQuerySource", "apiBaseUrl": "https://canary.example", "sqlQuery": "x"}}]},
+    {"layers": [{"@@type": "ScatterplotLayer", "source": {"@@type": "Tiles3DLoader"}}]},
+    {"layers": [{"@@type": "ScatterplotLayer", "loadOptions": {"fetch": {"mode": 1}}}]},
+    {"layers": [{"@@type": "GeoJsonLayer", "_subLayerProps": {"points": {"radiusScale": 2}}}]},
+    {"layers": [{"@@type": "GeoJsonLayer", "pointType": "icon", "iconAtlas": "data:image/png;base64,AAAA"}]},
+    {"layers": [{"@@type": "TextLayer", "fontFamily": "url(https://canary.example/font)"}]},
+    {"layers": [{"@@type": "TextLayer", "getText": "@@='https://canary.example/x.png'"}]},
+    {"layers": [{"@@type": "ScatterplotLayer"}], "views": [{"@@type": "MapView", "id": "https://canary.example"}]},
+]
+
+
+@pytest.mark.parametrize("spec", FETCHES)
+def test_check_refuses_anything_the_browser_would_load(spec):
+    spec = {"layers": [{"@@type": "ScatterplotLayer"}], **spec}
+    with pytest.raises(ValueError, match="URL|string|function|builds a|may not set|basemaps"):
+        check_deckgl(spec, COLUMNS)
+
+
+def test_check_accepts_plain_names_constants_and_carto_basemaps():
+    spec = {
+        "mapStyle": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+        "views": [{"@@type": "MapView", "controller": True}], "controller": True,
+        "tooltip": {"text": "{state}: {capacity}"},
+        "layers": [{
+            "@@type": "TextLayer", "id": "labels", "getPosition": "@@=[xlong, ylat]", "getText": "@@=state",
+            "fontFamily": "Monaco, monospace", "sizeUnits": "pixels", "getSize": 12,
+            "coordinateSystem": "@@#COORDINATE_SYSTEM.LNGLAT", "parameters": {"depthTest": False},
+        }],
+    }
+    assert check_deckgl(spec, COLUMNS) == spec
+    assert check_deckgl({**spec, "mapStyle": None}, COLUMNS)["mapStyle"] is None
 
 
 def test_check_suggests_a_close_column():
@@ -118,7 +169,9 @@ def test_check_suggests_a_close_column():
 def test_expressions_read_columns_but_not_globals_strings_or_calls():
     assert expression_names("[xlong, ylat]") == ({"xlong", "ylat"}, set())
     assert expression_names("capacity > 2 ? [255, 0, 0] : [0, 0, 255]") == ({"capacity"}, set())
-    assert expression_names("Math.sqrt(capacity) * 1e3") == ({"capacity"}, set())
+    assert expression_names("Math.PI * capacity * 1e3") == ({"capacity"}, {"Math"})
+    assert expression_names("this.capacity + this['ylat'] + this[\"x y\"]") == ({"capacity", "ylat", "x y"}, set())
+    assert expression_names("properties['a b']", feature=True) == ({"a b"}, set())
     assert expression_names("state === 'TX' ? 1 : 0") == ({"state"}, set())
     assert expression_names("-") == (set(), set())
     assert expression_names("[properties.value, 0, 0]", feature=True) == ({"value"}, set())
@@ -133,6 +186,7 @@ def test_spec_fields_are_the_columns_its_layers_read():
     ]}
     assert deckgl_fields(spec) == {"xlong", "ylat", "capacity", "share"}
     assert deckgl_fields({"layers": "nope"}) == set()
+    assert deckgl_fields({**spec, "tooltip": {"text": "{state} {capacity}"}}) == {"xlong", "ylat", "capacity", "share", "state"}
     assert DeckGLNode.spec_fields is deckgl_fields
 
 
@@ -193,17 +247,26 @@ def test_the_map_follows_the_dashboards_colour_scheme(turbines):
     assert node(ops)._object.spec["layers"][0]["getFillColor"] == SCHEME_COLORS["oranges"]
 
 
-def test_the_basemap_follows_the_pages_theme(turbines, monkeypatch):
+def test_the_basemap_follows_the_pages_theme_without_sending_the_rows_again(turbines, monkeypatch):
     ops = map_of(turbines, {**POINTS, "mapStyle": BASEMAPS["light"]})
+    view = node(ops)._object
+    pane = view._panel
     frame = node(ops)._body()
-    assert frame.dark_theme is False
+    assert frame.dark_theme is False and pane.configuration == "" and pane.stylesheets == []
+    model = pane.get_root()
+    sources = list(model.data_sources)
+    columns = {id(cds): dict(cds.data) for cds in sources}
     # A page switches the session's theme before its components.
     monkeypatch.setattr(pn.config, "theme", "dark")
     frame.dark_theme = True
-    assert node(ops)._object.spec["mapStyle"] == BASEMAPS["dark"]
+    assert node(ops)._object is view and view._panel is pane
+    assert view.spec["mapStyle"] == pane.object["mapStyle"] == BASEMAPS["dark"]
+    assert pane.configuration == "{}" and pane.stylesheets
+    assert list(model.data_sources) == sources
+    assert all(cds.data[c] is columns[id(cds)][c] for cds in sources for c in cds.data)
     monkeypatch.setattr(pn.config, "theme", "default")
     frame.dark_theme = False
-    assert node(ops)._object.spec["mapStyle"] == BASEMAPS["light"]
+    assert pane.object["mapStyle"] == BASEMAPS["light"] and pane.configuration == ""
 
 
 def test_a_chosen_basemap_is_not_drawn_again_on_a_theme_switch(turbines):
@@ -256,3 +319,25 @@ def test_fitting_skips_rows_off_the_globe_and_maps_without_positions():
     assert fit_view_state({"layers": [{"@@type": "HexagonLayer"}]}, data) is None
     assert fit_view_state(POINTS, data.iloc[2:]) is None
     assert fit_view_state(POINTS, pd.DataFrame({"x": [1]})) is None
+    assert fit_view_state(POINTS, pd.DataFrame({"xlong": [float("nan")], "ylat": [float("nan")]})) is None
+
+
+def test_a_map_without_positions_starts_on_the_whole_world(turbines):
+    spec = {"layers": [{"@@type": "ArcLayer", "getSourcePosition": [0, 0], "getTargetPosition": [10, 10]}]}
+    assert node(map_of(turbines, spec))._object.spec["initialViewState"] == WORLD_VIEW
+
+
+def test_only_the_columns_the_spec_reads_go_to_the_browser(turbines):
+    ops = map_of(turbines, POINTS)
+    view = node(ops)._object
+    assert list(view.pipeline.data.columns) == ["xlong", "ylat", "capacity"]
+    assert set(view.get_panel().object["layers"][0]["data"][0]) == {"xlong", "ylat", "capacity"}
+    ops.set_config("map", {"spec": {**POINTS, "tooltip": {"text": "{state}"}}})
+    view = node(ops)._object
+    assert list(view.pipeline.data.columns) == COLUMNS
+    assert view.tooltips == {"text": "{state}"} and "tooltip" not in view.spec
+    whole = {"layers": [{**POINTS["layers"][0], "getText": "@@=-"}]}
+    ops.set_config("map", {"spec": whole})
+    assert list(node(ops)._object.pipeline.data.columns) == COLUMNS
+    preview = node(ops).__flowdash_preview__()
+    assert list(preview.columns) == COLUMNS

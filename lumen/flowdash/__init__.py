@@ -45,6 +45,8 @@ from .transforms import (
 COMPONENTS.update(TRANSFORM_COMPONENTS)
 COMPONENTS[TABLE_VIEW_ID] = TableViewNode
 
+COMPONENTS[DECKGL_ID] = DeckGLNode
+
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.
 __flowdash_components__ = COMPONENTS
