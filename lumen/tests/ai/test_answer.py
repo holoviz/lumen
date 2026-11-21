@@ -1,12 +1,15 @@
 import asyncio
 import base64
+import io
 import json
 import logging
+import re
 import subprocess
 import sys
 import threading
 import time
 import warnings
+import zipfile
 
 from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import panel as pn
 import pytest
+import yaml
 
 try:
     import lumen.ai  # noqa
@@ -51,7 +55,7 @@ from lumen.sources.data import read
 from lumen.tests.ai.conftest import MockLLM
 from lumen.tests.utils import Polygon, gpd
 from lumen.transforms.sql import SQLLimit
-from lumen.util import log as lumen_log
+from lumen.util import as_pandas, log as lumen_log
 from lumen.views.base import VegaLiteView, hvPlotView
 
 QUESTION = [{"role": "user", "content": "Total value?"}]
@@ -2164,6 +2168,58 @@ def test_chat_to_notebook_runs_without_an_llm(two_answer_chat, tmp_path):
     script = code + "\nassert isinstance(view, lm.views.View) and len(pipeline.data) == 3\n"
     (tmp_path / "chat.py").write_text(script)
     subprocess.run([sys.executable, str(tmp_path / "chat.py")], check=True, cwd=tmp_path, timeout=300)
+
+
+def test_chat_to_app_is_a_dashboard_of_each_answer_with_its_data(two_answer_chat, tmp_path):
+    from lumen.dashboard import Dashboard
+    text = two_answer_chat.to_app(tmp_path / "app.yaml", title="Penguins")
+    assert (tmp_path / "app.yaml").read_text(encoding="utf-8") == text
+    spec = yaml.safe_load(text)
+    assert spec["config"] == {"title": "Penguins", "layout": "tabs"}
+    # Tabs load lazily, so all of them at once for the test
+    dashboard = Dashboard({**spec, "config": {**spec["config"], "layout": "column"}})
+    dashboard._render_dashboard()
+    # The failed answer has no data, so no tab
+    assert [layout.title for layout in dashboard.layouts] == ["Value by category?", "Total value?"]
+    assert dashboard.layouts[1].description == "The total is 38."
+    chart, table = (layout._cards[0].views[0] for layout in dashboard.layouts)
+    assert chart.view_type == two_answer_chat.answers[0].view.view_type and table.view_type == "table"
+    expected = as_pandas(two_answer_chat.answers[1].pipeline.data)
+    # Text comes back as a string dtype rather than object
+    pd.testing.assert_frame_equal(
+        as_pandas(table.pipeline.data).reset_index(drop=True), expected.reset_index(drop=True), check_dtype=False,
+    )
+
+
+def test_chat_to_app_as_html_is_one_page_with_lumen_inside(two_answer_chat, tmp_path):
+    page = two_answer_chat.to_app(tmp_path / "app.html", title="Penguins")
+    assert (tmp_path / "app.html").read_text(encoding="utf-8") == page
+    assert "loadPyodide" in page and page.count("data:application/zip;base64,") == 1
+    # Nothing else to fetch from beside the page
+    assert "app.resources.zip'" not in page and "serviceWorker" not in page
+    archive = re.search(r"data:application/zip;base64,([^']+)'", page).group(1)
+    names = zipfile.ZipFile(io.BytesIO(base64.b64decode(archive))).namelist()
+    assert "lumen/dashboard.py" in names and not any(name.startswith(("lumen/ai/", "lumen/tests/")) for name in names)
+
+
+def test_chat_to_app_as_html_refuses_a_map(frame_source, tmp_path):
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    regions = gpd.GeoDataFrame({"v": [1.0]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])], crs="EPSG:4326")
+    source = read({"regions": regions})
+    pipeline = Pipeline(source=source, table="regions")
+    conversation = chat(source)
+    conversation.answers = [Answer(question="Map?", value="", status="success", pipeline=pipeline)]
+    with pytest.raises(ValueError, match="spatial extension has no Pyodide build"):
+        conversation.to_app(tmp_path / "app.html")
+    assert not (tmp_path / "app.html").exists()
+
+
+def test_chat_to_app_needs_an_answer_with_data(frame_source):
+    conversation = chat(frame_source)
+    conversation.answers = [Answer(question="Wingspan?", value="", error="No such column", status="error")]
+    with pytest.raises(ValueError, match="No answer in this conversation has data"):
+        conversation.to_app()
 
 
 def test_chat_to_report_has_each_answer_and_its_chart(two_answer_chat, refinable_answer):

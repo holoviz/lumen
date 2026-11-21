@@ -522,7 +522,8 @@ class DuckDBSource(BaseSQLSource):
             for col in df.select_dtypes(include=['string']).columns:
                 df[col] = df[col].astype(object)
             try:
-                source._connection.from_df(df).to_view(t)
+                # Geometry columns need the spatial extension, which ingesting loads
+                source._ingest_table(t, df)
             except duckdb.ParserException:
                 continue
             new_tables[t] = source.sql_expr.format(table=t)
