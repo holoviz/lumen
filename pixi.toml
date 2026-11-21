@@ -127,6 +127,7 @@ pytest-asyncio = "*"
 test-unit = 'pytest lumen/tests tests/evals -n logical --dist loadgroup'
 
 [feature.test.dependencies]
+anndata = "*"  # lumen.read of AnnData stores and objects
 dask-core = "*"
 datashader = "*"
 fastparquet = "*"
