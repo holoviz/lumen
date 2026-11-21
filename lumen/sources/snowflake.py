@@ -7,7 +7,7 @@ import decimal
 import re
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pandas as pd
 import param
@@ -117,6 +117,8 @@ class SnowflakeSource(BaseSQLSource):
         Timeout in seconds for schema retrieval. If None, no timeout is applied.""")
 
     dialect = 'snowflake'
+
+    cancels_queries: ClassVar[bool] = True
 
     def __init__(self, **params):
         conn = params.pop('conn', None)

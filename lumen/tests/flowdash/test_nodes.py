@@ -44,6 +44,12 @@ def view_error(ops, name):
     return ops.editor._component_instances[ops._instance(name)]._error or ""
 
 
+def place_unchecked(ops, component, config, name):
+    """Place a node with a config its check would refuse, as a dashboard saved before the check existed has."""
+    ops.add_node(component, {}, name=name)
+    ops.editor._apply_config_patch(ops._instance(name), config)
+
+
 def editor_with(source, ref="data"):
     editor = FlowDash(components=COMPONENTS)
     bind_source(editor, source, ref)
@@ -70,7 +76,7 @@ def test_sql_node_runs_query_once_in_source_engine(source, executed):
     assert isinstance(pipeline, Pipeline)
     assert output(ops, "chart", "pipeline") is pipeline
     assert sorted(map(tuple, data.values.tolist())) == [("A", 15), ("B", 20)]
-    assert executed == [" ".join(result_sql(source, QUERY).split())]
+    assert [q for q in executed if not q.endswith("LIMIT 0")] == [" ".join(result_sql(source, QUERY).split())]
 
 
 def test_primed_result_is_not_executed_again(source, executed):
@@ -114,10 +120,10 @@ def test_node_path_stops_slow_query_after_node_timeout(source):
 
 def test_sql_node_reports_failed_source(source):
     ops = editor_with(source)
-    ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    place_unchecked(ops, SOURCE_ID, {"ref": "missing"}, "other")
     ops.add_node(SQL_ID, {"sql": QUERY}, name="q")
     ops.connect("other.source", "q.source")
-    assert "No source is bound as 'missing'" in failure(ops, "q")
+    assert "The app provides no source `missing`; its sources are: `data`." in failure(ops, "q")
 
 
 def test_sql_node_times_out(source):
@@ -158,14 +164,22 @@ def test_sql_node_table_does_not_shadow_source_table(source):
     ("SELECT * FROM other.sales", "not a table of this source"),
 ])
 def test_sql_node_refuses_unsafe_queries_on_every_path(source, executed, sql, error):
-    ops = dashboard(source, sql)
+    ops = editor_with(source)
+    place_unchecked(ops, SQL_ID, {"sql": sql, "table": "by_category"}, "by_category")
+    ops.connect("data.source", "by_category.source")
     assert error in failure(ops, "by_category")
     assert ops.preview()["nodes"]["by_category"]["outputs"]["data"]["type"] == "failure"
 
     ops.set_config("by_category", {"sql": QUERY})
     assert len(output(ops, "by_category", "data")) == 2
-    ops.set_config("by_category", {"sql": sql})
+    with pytest.raises(OperationError, match="was not changed") as refused:
+        ops.set_config("by_category", {"sql": sql})
+    assert error in str(refused.value)
+    assert ops._item(ops._instance("by_category"))["config"]["sql"] == QUERY
+    assert len(output(ops, "by_category", "data")) == 2
+    ops.editor._apply_config_patch(ops._instance("by_category"), {"sql": sql})
     assert error in failure(ops, "by_category")
+    assert any(error in issue.message for issue in ops.validate())
 
     text = dashboard_to_yaml(ops.editor)
     imported = FlowDash(components=COMPONENTS)
@@ -206,9 +220,11 @@ def test_source_node_has_no_spec_to_build_a_source_from(source):
 
 def test_source_node_reports_unbound_ref(source):
     ops = editor_with(source)
-    ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    with pytest.raises(OperationError, match="no source `missing`; its sources are: `data`"):
+        ops.add_node(SOURCE_ID, {"ref": "missing"}, name="other")
+    place_unchecked(ops, SOURCE_ID, {"ref": "missing"}, "other")
 
-    assert "No source is bound as 'missing'" in failure(ops, "other", "source")
+    assert "The app provides no source `missing`" in failure(ops, "other", "source")
 
 
 def test_bindings_belong_to_their_editor():
@@ -227,7 +243,7 @@ def test_bindings_belong_to_their_editor():
 
     unbound = FlowDash(components=COMPONENTS)
     unbound.import_dashboard(dashboard_from_yaml(dashboard_to_yaml(a.editor)))
-    assert "No source is bound as 'data'" in failure(DashboardOps(unbound), "data", "source")
+    assert "provides no Lumen sources" in failure(DashboardOps(unbound), "data", "source")
 
 
 def test_yaml_round_trip_reruns_pushed_down_query(source, executed):
@@ -255,7 +271,10 @@ def test_yaml_round_trip_reruns_pushed_down_query(source, executed):
 ])
 def test_view_node_checks_spec_on_every_path(source, spec, error):
     ops = dashboard(source)
-    ops.set_config("chart", {"spec": spec})
+    with pytest.raises(OperationError, match="was not changed") as refused:
+        ops.set_config("chart", {"spec": spec})
+    assert error in str(refused.value)
+    ops.editor._apply_config_patch(ops._instance("chart"), {"spec": spec})
     assert error in view_error(ops, "chart")
 
     ops.add_node(VIEW_ID, {"spec": spec}, name="other_chart")
@@ -279,7 +298,7 @@ def test_source_node_picks_up_a_binding_made_after_import(source):
     editor = FlowDash(components=COMPONENTS)
     editor.import_dashboard(dashboard_from_yaml(text))
     ops = DashboardOps(editor)
-    assert "No source is bound" in failure(ops, "data", "source")
+    assert "editor_options = {\"context\": {\"lumen.sources\"" in failure(ops, "data", "source")
 
     bind_source(editor, source)
     assert output(ops, "data", "source") is source
