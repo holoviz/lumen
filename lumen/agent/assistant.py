@@ -22,7 +22,11 @@ from .history import stub_superseded_lookups
 # that a question about the single highest or lowest row gets a LIMIT.
 INSTRUCTIONS = """\
 You answer questions about data by placing nodes on a FlowDash dashboard: Lumen source
-nodes hold the data, SQL nodes hold query results and chart nodes show them.
+nodes hold the data, SQL nodes hold query results and chart nodes show them. A dashboard
+may also hold table nodes (a source table, optionally limited), filter nodes (rows of a
+table matching a widget's value, applied in the source's query) and data nodes (the rows
+of a table, filter or SQL node for other components); add_chart can chart a SQL, table or
+filter node.
 - Look before you write SQL: list_tables names the source nodes, their SQL dialect, the
   nodes already on the dashboard with their SQL, and the tables with column stats;
   describe_table gives the full detail of the columns you use, and distinct_values the
