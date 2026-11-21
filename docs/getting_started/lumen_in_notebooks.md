@@ -148,7 +148,7 @@ explorer.settings()        # the hvPlot keywords you ended up with
 
 ## When a question fails
 
-A question that cannot be answered still returns an `Answer`, with `status` set to `"error"`. Its card shows the error and the failed SQL, open. Ask again with a hint:
+A failure during planning or execution returns an `Answer` with `status` set to `"error"`. Its card shows the error and opens the failed SQL if there is any. For a temporary model provider outage, use `answer.retry()` once the provider is available again. You can also retry with a hint:
 
 ``` py
 answer = source.ask("Average flipper length by island in cm?", llm=Kilo())

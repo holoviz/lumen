@@ -79,6 +79,7 @@ from .llm import (
 from .report import ActorTask, Report, TaskGroup
 from .selection import about, ask_box, watch_clicks
 from .sharing import mask_frame, sharing
+from .testing import MissingRecording
 from .tools import MetadataLookup
 from .ui import ExplorerUI
 from .usage import UsageCollector
@@ -465,12 +466,22 @@ async def _respond(
 ) -> tuple[Answer, dict[str, Any]]:
     """
     Run one question through the Planner, returning the Answer and the
-    context it left. A failed plan gives an Answer with status "error".
+    context it left. A planning or execution failure gives an Answer with status "error".
     With confirm, stop after planning and return a "planned" Answer.
     """
     with _asking(planner), _counting(planner) as usage:
         await planner.sync(context)
-        plan = await planner.respond(messages, context)
+        try:
+            plan = await planner.respond(messages, context)
+        except MissingRecording:
+            raise
+        except Exception as e:
+            return Answer(
+                agents=agents, data=data, error=format_error(e), llm=planner.llm,
+                question=question, source=context["source"], status="error", usage=usage,
+                value=f"Lumen could not plan an answer to {question!r}.",
+                visible_slugs=context.get("visible_slugs"),
+            ), context
     if plan is None:
         raise RuntimeError(f"Lumen could not plan an answer to {question!r}.")
     if confirm and not plan.unanswerable:
