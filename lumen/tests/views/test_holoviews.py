@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import holoviews as hv
@@ -35,6 +36,16 @@ def test_serialize_holoviews_element():
     assert view.pipeline is None
     assert np.array_equal(view.object.data['x'], element.data['x'])
     assert np.array_equal(view.object.data['y'], element.data['y'])
+
+def test_serialize_holoviews_element_json_serializable():
+    element = hv.Curve([1, 2, 3])
+    view = HoloViews(object=element)
+
+    spec = view.to_spec()
+
+    # The spec must round-trip through JSON, i.e. NumPy scalars and
+    # arrays in the element data must be plain Python types.
+    assert json.loads(json.dumps(spec)) == spec
 
 def test_serialize_holoviews_element_with_pipeline(set_root):
     set_root(str(Path(__file__).parent.parent))
