@@ -50,3 +50,41 @@ def test_sanitize_tool_callable_resolves_postponed_annotations_with_skip_params(
     schema = function_to_model(wrapped).model_json_schema()
     assert list(schema["properties"]) == ["kind"]
     assert schema["properties"]["kind"]["enum"] == ["a", "b"]
+
+
+def test_derive_table_name_numeric_value_leads_with_action_name():
+    # Issue #2134: a numeric kwarg value sorted first, so the derived name
+    # started with a digit ("20_load_cells") and DuckDB rejected it.
+    name = SourceAgent._derive_table_name(tool_results=[{"action": "Load Cells", "kwargs": {"min_size": 20}}])
+    assert name == "load_cells_20"
+    assert not name[0].isdigit()
+
+
+def test_derive_table_name_numeric_value_loads_from_duckdb():
+    # The issue's end-to-end reproducer: the derived name must be usable
+    # as an unquoted table name in DuckDB.
+    from lumen.sources.duckdb import DuckDBSource
+
+    name = SourceAgent._derive_table_name(tool_results=[{"action": "Load Cells", "kwargs": {"min_size": 20}}])
+    source = DuckDBSource.from_df(tables={name: pd.DataFrame({"area": [1.0]})})
+    source.tables[name] = f"SELECT * FROM {name}"
+    assert source.get(name).shape == (1, 1)
+
+
+def test_derive_table_name_keeps_short_values_first_otherwise():
+    # The shortest-first ordering is unchanged when no value is numeric.
+    name = SourceAgent._derive_table_name(
+        tool_results=[
+            {
+                "action": "List Aggs",
+                "kwargs": {"ticker": "AAPL", "timespan": "day", "from_": "2024-01-01"},
+            }
+        ]
+    )
+    assert name == "day_aapl_2024_01_01_list_aggs"
+
+
+def test_derive_table_name_digit_leading_source_action_gets_prefix():
+    name = SourceAgent._derive_table_name(source_actions={"2024 report": None})
+    assert name == "table_2024_report"
+    assert not name[0].isdigit()
