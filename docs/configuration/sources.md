@@ -303,6 +303,11 @@ source.get_schema('daymet-daily-hi')   # {'prcp': {...}, 'tmax': {...}, 'tmin': 
 df = source.get('daymet-daily-hi:prcp')
 ```
 
+Give `datetime='2020-01-01/2020-01-31'` to read only those time steps of a
+gridded collection. A query reads whole chunks and does not stop early at a
+`LIMIT`, so on a long record such as Daymet's 40 years of daily data this is
+what keeps it to seconds rather than minutes.
+
 `get()` is row-capped at `default_limit=100_000` so naive calls against a
 TB-scale collection do not materialize the full xarray grid. Pass
 `default_limit=None` on the source, or pass `sql_transforms=[...]` explicitly
