@@ -5,8 +5,9 @@ can be rerun on other data and refuse data it cannot use before any query
 runs.
 
 The columns of each ``Lumen/sql`` node come from ``lumen.data.contracts``;
-the fields of filter and view nodes on a ``Lumen/table`` node, or on a SQL
-node that selects ``*``, are columns of that table. A node is covered fully
+the fields of filter, view and transform nodes on a ``Lumen/table`` node, or
+on a SQL node that selects ``*``, are columns of that table, traced back
+through the transform nodes between them. A node is covered fully
 when every column it reads is known, partly when it reads a table with
 ``*``, and not at all when its SQL does not parse or its columns cannot be
 resolved.
@@ -99,34 +100,47 @@ def _spec_fields(spec: Any) -> set[str]:
     return fields
 
 
-def _pipeline_readers(doc: Mapping[str, Any], node: str) -> list[str]:
-    """The filter, data and view nodes fed by ``node``'s pipeline, through filter nodes."""
-    nodes = doc.get("nodes") or {}
-    edges = _edges(doc)
-    found, queue = [], [node]
-    while queue:
-        current = queue.pop(0)
-        for source, _, target, _ in edges:
-            if source != current or target in found:
-                continue
-            component = (nodes.get(target) or {}).get("component")
-            if component in (FILTER_ID, DATA_ID, VIEW_ID):
-                found.append(target)
-                if component == FILTER_ID:
-                    queue.append(target)
-    return found
+def _through(lineage, upstream):
+    """The columns of the pipeline ``upstream`` maps back from, for a column of a step after it."""
+    def columns(column: str) -> set[str]:
+        return set().union(*(upstream(c) for c in lineage(column)))
+    return columns
 
 
 def _reader_fields(doc: Mapping[str, Any], node: str) -> dict[str, set[str]]:
+    """
+    The columns of ``node``'s pipeline read by the filter, view and transform
+    nodes it feeds, through filter and transform nodes. A column read after
+    a transform node is traced back to the columns it comes from, e.g. a
+    derived column to those its expression reads.
+    """
+    from .transforms import COLUMN_USES
+
     nodes = doc.get("nodes") or {}
-    fields = {}
-    for reader in _pipeline_readers(doc, node):
-        config = (nodes.get(reader) or {}).get("config") or {}
-        component = nodes[reader].get("component")
-        if component == FILTER_ID and config.get("field"):
-            fields[reader] = {config["field"]}
-        elif component == VIEW_ID:
-            fields[reader] = _spec_fields(config.get("spec") or {})
+    edges = _edges(doc)
+    fields: dict[str, set[str]] = {}
+    seen: set[str] = set()
+    queue = [(node, lambda column: {column})]
+    while queue:
+        current, upstream = queue.pop(0)
+        for source, _, target, _ in edges:
+            if source != current or target in seen:
+                continue
+            component = (nodes.get(target) or {}).get("component")
+            config = (nodes.get(target) or {}).get("config") or {}
+            if component == FILTER_ID:
+                seen.add(target)
+                if config.get("field"):
+                    fields[target] = upstream(config["field"])
+                queue.append((target, upstream))
+            elif component == VIEW_ID:
+                seen.add(target)
+                fields[target] = set().union(*(upstream(f) for f in _spec_fields(config.get("spec") or {})))
+            elif component in COLUMN_USES:
+                seen.add(target)
+                use = COLUMN_USES[component](config)
+                fields[target] = set().union(*(upstream(c) for c in use.reads))
+                queue.append((target, _through(use.lineage, upstream)))
     return fields
 
 
@@ -135,7 +149,8 @@ def usages(doc: Mapping[str, Any], source_node: str, schema: Mapping[str, Mappin
     """
     What each node reading ``source_node`` directly reads of its tables, and the
     nodes that read those nodes' output where it passes table columns through:
-    filters and views on a table node, or on a SQL node that selects ``*``.
+    filters, views and transforms on a table node, or on a SQL node that
+    selects ``*``.
     """
     nodes = doc.get("nodes") or {}
     table_name, column_name = _resolver(schema)

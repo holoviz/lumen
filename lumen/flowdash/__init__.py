@@ -26,14 +26,22 @@ from .nodes import (
     pipeline_sql, primed_result, python_value, result_sql, row_ceiling,
     selection_conditions, set_row_ceiling, table_pipeline, unbind_source,
 )
+from .transforms import (
+    AGGREGATE_ID, DERIVE_ID, SELECT_ID, SORT_ID, TRANSFORM_COMPONENTS,
+    AggregateNode, DeriveNode, SelectNode, SortNode, transformed_pipeline,
+)
+
+COMPONENTS = {**COMPONENTS, **TRANSFORM_COMPONENTS}
 
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.
 __flowdash_components__ = COMPONENTS
 
 __all__ = [
+    "AGGREGATE_ID",
     "COMPONENTS",
     "DATA_ID",
+    "DERIVE_ID",
     "FILTER_ID",
     "NODE_TIMEOUT",
     "PIPELINE_TYPE",
@@ -41,16 +49,22 @@ __all__ = [
     "PROBE_TIMEOUT",
     "QUERY_TIMEOUT",
     "RESULT_LIMIT",
+    "SELECT_ID",
+    "SORT_ID",
     "SOURCES_KEY",
     "SOURCE_ID",
     "SOURCE_TYPE",
     "SQL_ID",
     "TABLE_ID",
     "VIEW_ID",
+    "AggregateNode",
     "CheckDiagnostic",
     "DataNode",
+    "DeriveNode",
     "FilterNode",
     "SQLNode",
+    "SelectNode",
+    "SortNode",
     "SourceNode",
     "TableNode",
     "ViewNode",
@@ -85,5 +99,6 @@ __all__ = [
     "selection_warnings",
     "set_row_ceiling",
     "table_pipeline",
+    "transformed_pipeline",
     "unbind_source",
 ]
