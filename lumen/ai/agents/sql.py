@@ -36,7 +36,7 @@ from ..data_quality import lint_data
 from ..editors import LumenEditor, SQLEditor
 from ..llm import Message, SubmitTool
 from ..models import RetrySpec
-from ..schemas import Metaset, resolve_table_slug
+from ..schemas import Metaset, get_metaset, resolve_table_slug
 from ..sharing import shares_values, sharing
 from ..sql_review import TableFacts, geographic_crs, review_sql
 from ..table_stats import get_stats_store
@@ -1550,6 +1550,22 @@ class SQLAgent(BaseLumenAgent):
         metaset = context["metaset"]
         # Do not pin schema_tables: initial prompt uses a capped summary; the model pulls detail via tools.
         metaset.schema_tables = None
+
+        # Tables uploaded after the plan started are in context["sources"]
+        # but not in the metaset catalog, which was built earlier in the
+        # plan. Refresh the metaset so the agent can see and query them
+        # instead of failing when the plan asks about the new data.
+        all_slugs = [
+            f"{src.name}{SOURCE_TABLE_SEPARATOR}{table}"
+            for src in sources
+            if isinstance(src, BaseSQLSource)
+            for table in src.get_tables()
+        ]
+        if any(slug not in metaset.catalog for slug in all_slugs):
+            metaset = await get_metaset(
+                sources, all_slugs, prev=metaset, stats_timeout=self.stats_wait
+            )
+            context["metaset"] = metaset
 
         # Build source lookup, skipping slugs whose source no longer
         # exists in the context (stale entries from prior materializations).
