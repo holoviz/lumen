@@ -32,7 +32,7 @@ turns:
         origin: t958ecd5c
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       total_amount_by_category:
         component: Lumen/sql
         origin: t8013de70
@@ -98,7 +98,7 @@ turns:
         origin: t958ecd5c
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       total_amount_by_category:
         component: Lumen/sql
         origin: t8013de70
@@ -134,7 +134,7 @@ turns:
                 field: total_amount
                 type: quantitative
                 title: Total amount
-        position: [760.0, 11.0]
+        position: [760.0, 22.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source

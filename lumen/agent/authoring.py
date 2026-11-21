@@ -25,7 +25,8 @@ from ..flowdash.deckgl import (
     fit_view_state, layer_type, map_summary, position_columns,
 )
 from ..flowdash.metrics import MetricError, prepare
-from ..flowdash.nodes import metric_query
+from ..flowdash.nodes import default_table, metric_query
+from ..flowdash.results import expand
 from ..pipeline import Pipeline
 from . import _graph
 from ._graph import (
@@ -56,23 +57,25 @@ def _marks(spec: dict[str, Any]) -> list[str]:
     return marks
 
 
-async def _test_run(src, sql: str, limit: int) -> tuple[str, str, Any]:
+async def _test_run(src, sql: str, limit: int) -> tuple[str, Any, str, Any]:
     """
     Clean, check and run ``sql`` as a SQL node with ``limit`` rows would,
-    returning the cleaned query, the statement run and its result; any
+    returning the cleaned query, the source and statement run (on a result
+    source, the root and the expanded statement) and its result; any
     problem is raised as ``ModelRetry`` with the engine's error.
     """
     try:
         sql = clean_sql(str(sql).strip(), src.dialect, prettify=True)
         check_query(sql, src)
-        statement = result_sql(src, sql, limit)
+        root, statement = expand(sql, src)
+        statement = result_sql(root, statement, limit)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
         raise ModelRetry(format_error(exc)) from exc
     try:
-        frame = await src.execute_with_timeout(statement, QUERY_TIMEOUT)
+        frame = await root.execute_with_timeout(statement, QUERY_TIMEOUT)
     except Exception as exc:
         raise ModelRetry(format_error(exc)) from exc
-    return sql, statement, frame
+    return sql, root, statement, frame
 
 
 async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
@@ -379,6 +382,19 @@ def _source_tables(deps: FlowDashDeps, source: str) -> list[str]:
         return []
 
 
+def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[str, Any]) -> None:
+    """Refuse a change to the table name of a SQL node whose result other SQL nodes query by that name."""
+    def table(cfg):
+        return cfg.get("table") or default_table(cfg.get("sql") or "")
+
+    if table({**before, **config}) == table(before) or not (followers := _graph.reading(ops, f"{name}.result")):
+        return
+    raise ModelRetry(
+        f"{', '.join(repr(f) for f in followers)} query {name!r}'s result as table {table(before)!r}; "
+        f"keep `table` as {table(before)!r}."
+    )
+
+
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
     """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map and add_text."""
     return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
@@ -416,15 +432,21 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
                 except ValueError as exc:
                     raise ModelRetry(str(exc)) from exc
             return await handler({**args, "config": config})
-        if component != SQL_ID or "sql" not in config or (upstream := _graph.upstream(ops, name)) is None:
+        if component != SQL_ID:
             return await handler(args)
-        _, src = resolve_source(ctx.deps, upstream)
         before = _graph.config_of(ops, name)
+        _keep_followers_table(ops, name, before, config)
+        if "sql" not in config or (upstream := _graph.feeding(ops, f"{name}.source")) is None:
+            return await handler(args)
+        try:
+            src = _graph.output(ops, *upstream.rsplit(".", 1))
+        except OperationError as exc:
+            raise ModelRetry(str(exc)) from exc
         rows = config.get("limit", before.get("limit"))
         limit = effective_limit(ops.editor, int(rows) if isinstance(rows, int) else None)
-        sql, statement, frame = await _test_run(src, config["sql"], limit)
+        sql, root, statement, frame = await _test_run(src, config["sql"], limit)
         config = {**config, "sql": sql}
-        with primed_result(src, statement, frame):
+        with primed_result(root, statement, frame):
             result = await handler({**args, "config": config})
         try:
             frame = _graph.output(ops, name, "data")

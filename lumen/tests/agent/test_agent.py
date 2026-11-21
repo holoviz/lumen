@@ -1157,3 +1157,48 @@ async def test_add_sql_in_explore_passes_on_a_refused_source_node_with_a_hint(em
     with pytest.raises(PermissionError, match="Query a source node already on the dashboard"):
         await add_sql(SimpleNamespace(deps=FlowDashDeps(explored)), "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
     assert explored.nodes() == [] and empty.ops.nodes() == []
+
+
+def _follower(session):
+    ops = session.ops
+    ops.add_node("Lumen/sql", {"sql": BY_REGION, "table": "paid_by_region"}, name="paid_by_region")
+    ops.connect("data.source", "paid_by_region.source")
+    ops.add_node("Lumen/sql", {"sql": "SELECT * FROM paid_by_region", "table": "top_region"}, name="top_region")
+    ops.connect("paid_by_region.result", "top_region.source")
+
+
+async def test_set_config_tests_a_followers_sql_against_its_upstreams_result():
+    top = "SELECT region FROM paid_by_region ORDER BY total DESC LIMIT 1"
+    model, requests = script(
+        [ToolCallPart("set_config", {"name": "top_region", "config": {"sql": top}}, tool_call_id="s1")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        _follower(session)
+        await session.ask("Only the top region")
+        frame = _graph.output(session.ops, "top_region", "data")
+    finally:
+        session.close()
+
+    (part,) = requests[1].parts
+    assert isinstance(part, ToolReturnPart) and "Result: 1 rows" in part.model_response_str()
+    assert frame.values.tolist() == [["east"]]
+
+
+async def test_set_config_keeps_the_table_name_of_a_node_with_followers():
+    model, requests = script(
+        [ToolCallPart("set_config", {"name": "paid_by_region", "config": {"table": "totals"}}, tool_call_id="s1")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        _follower(session)
+        await session.ask("Rename the table")
+        config = _graph.config_of(session.ops, "paid_by_region")
+    finally:
+        session.close()
+
+    (part,) = requests[1].parts
+    assert part.outcome == "retried" and "'top_region' query 'paid_by_region'" in str(part.content)
+    assert config["table"] == "paid_by_region"

@@ -47,10 +47,23 @@ def inputs_of(ops: DashboardOps, name: str) -> dict[str, Any]:
     return dict(node.get("inputs") or {})
 
 
+def _edges(ops: DashboardOps) -> list[dict[str, str]]:
+    return yaml.safe_load(ops.get_dashboard()).get("edges") or []
+
+
 def upstream(ops: DashboardOps, name: str) -> str | None:
     """The node feeding ``name``'s first connected input."""
-    edges = yaml.safe_load(ops.get_dashboard()).get("edges") or []
-    return next((edge["from"].split(".")[0] for edge in edges if edge["to"].split(".")[0] == name), None)
+    return next((edge["from"].split(".")[0] for edge in _edges(ops) if edge["to"].split(".")[0] == name), None)
+
+
+def feeding(ops: DashboardOps, target: str) -> str | None:
+    """The output port, as ``node.port``, connected to the input port ``target`` (``node.port``)."""
+    return next((edge["from"] for edge in _edges(ops) if edge["to"] == target), None)
+
+
+def reading(ops: DashboardOps, output: str) -> list[str]:
+    """The nodes whose inputs read the output port ``output`` (``node.port``)."""
+    return list(dict.fromkeys(edge["to"].split(".")[0] for edge in _edges(ops) if edge["from"] == output))
 
 
 # The output port that carries a Lumen pipeline, by component.
