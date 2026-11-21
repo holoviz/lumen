@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 
 from pathlib import Path
 from unittest.mock import patch
@@ -171,6 +172,10 @@ def served(tmp_path, monkeypatch):
     return tmp_path
 
 
+def slug(text):
+    return re.sub(r"\W+", "_", text).lower()
+
+
 def refs(*data):
     return source_refs(resolve_sources(list(data)), file_stems(data))
 
@@ -195,15 +200,44 @@ def test_source_refs_do_not_depend_on_the_path_spelling(served):
 
 def test_data_file_tables_are_named_by_file_name(served):
     (served / "x").mkdir()
-    (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
     (served / "x" / "turbines.csv").write_text("turbine,mw\nb,2\n")
     assert refs("x/turbines.csv")["turbines"].get_tables() == ["turbines_csv"]
     assert refs(str(served / "x" / "turbines.csv"))["turbines"].get_tables() == ["turbines_csv"]
-    # Files of one name get _2 in the order of their resolved paths, however they are listed.
-    for data in (["plants.csv", "x/plants.csv"], ["x/plants.csv", "plants.csv"]):
+    assert refs("plants.csv", "./plants.csv", str(served / "plants.csv"))["plants"].get_tables() == ["plants_csv"]
+
+
+def test_files_of_one_name_are_named_by_their_directories(served):
+    for year in ("2025", "2026"):
+        (served / year).mkdir()
+        (served / year / "sales.csv").write_text(f"year\n{year}\n")
+    for data in (["2025/sales.csv", "2026/sales.csv"], ["2026/sales.csv", "2025/sales.csv"]):
         source = refs(*data)["files"]
-        assert sorted(source.get_tables()) == ["plants_2_csv", "plants_csv"]
-        assert source.execute("SELECT plant FROM plants_2_csv")["plant"].tolist() == ["q"]
+        assert sorted(source.get_tables()) == ["2025_sales_csv", "2026_sales_csv"]
+        assert source.execute('SELECT * FROM "2026_sales_csv"')["year"].tolist() == [2026]
+
+
+def test_a_saved_table_of_a_clashing_file_name_fails_instead_of_reading_another_file(served):
+    (served / "x").mkdir()
+    (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
+    editor = build_routes(["plants.csv", "x/plants.csv"], db_path=served / "dash.db")["/"]()._editor
+    source = bound_sources(editor)["files"]
+    assert sorted(source.get_tables()) == [f"{slug(served.name)}_plants_csv", "x_plants_csv"]
+    ops = DashboardOps(editor)
+    ops.add_node(SOURCE_ID, {"ref": "files"}, name="files")
+    ops.add_node("Lumen/sql", {"sql": "SELECT COUNT(*) AS n FROM plants_csv", "table": "n"}, name="n")
+    ops.connect("files.source", "n.source")
+    result = output(ops, "n", "data")
+    assert not hasattr(result, "columns")
+    assert "plants_csv" in str(getattr(result, "exception", result))
+
+
+def test_qualified_names_never_take_another_files_name(served):
+    (served / "x").mkdir()
+    (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
+    (served / "x_plants.csv").write_text("plant,mw\nr,7\n")
+    tables = refs("plants.csv", "x/plants.csv", "x_plants.csv")["files"].get_tables()
+    parent, here = slug(served.parent.name), slug(served.name)
+    assert sorted(tables) == sorted([f"{parent}_{here}_plants_csv", f"{here}_x_plants_csv", "x_plants_csv"])
 
 
 def test_saved_query_keeps_its_table_when_served_from_another_directory(served):
