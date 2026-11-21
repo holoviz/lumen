@@ -324,6 +324,27 @@ extra required:
 source = STACSource(url='https://earth-search.aws.element84.com/v1')
 ```
 
+Collections of images, such as Sentinel-2 or Landsat Cloud Optimized GeoTIFFs,
+are read through odc-stac for an area: give `bbox=(west, south, east, north)`
+in longitude and latitude, and `datetime` for a time range. Each band becomes a
+table on a `longitude`/`latitude` grid with a `time` per day of scenes, about
+500 pixels across the bbox unless `resolution` (in degrees) says otherwise:
+
+``` py
+source = STACSource(
+    url='https://earth-search.aws.element84.com/v1', collections=['sentinel-2-l2a'],
+    bbox=(-122.30, 37.75, -122.25, 37.80), datetime='2024-06-01/2024-06-30', bands=['red', 'nir'],
+)
+source.execute(
+    "SELECT time, AVG((nir - red) / (nir + red)) AS ndvi "
+    "FROM red JOIN nir USING (time, latitude, longitude) GROUP BY time ORDER BY time"
+)
+```
+
+Without a `bbox`, querying such a collection says it needs one. Some image
+collections, such as NAIP on Earth Search, sit in requester-pays buckets and
+also need cloud credentials.
+
 **Browse STAC from chat:** the `STACCatalogControls` class plugs a STAC API
 into `SourceAgent` so users can search across collections in natural language:
 
