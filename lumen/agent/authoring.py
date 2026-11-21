@@ -1,4 +1,4 @@
-"""Tools that validate a query or chart before placing it on the dashboard as a node."""
+"""Tools that validate a query, chart or map before placing it on the dashboard as a node."""
 from __future__ import annotations
 
 import dataclasses
@@ -15,9 +15,11 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query, effective_limit,
-    pipeline_columns, primed_result, result_sql, selection_warnings,
+    DECKGL_ID, QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_query, effective_limit,
+    fetch, pipeline_columns, primed_result, result_sql, row_ceiling,
+    selection_warnings,
 )
+from ..flowdash.deckgl import fit_view_state, map_summary, position_columns
 from ..pipeline import Pipeline
 from . import _graph
 from .data import lint, resolve_source
@@ -87,6 +89,31 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 
+def place_view(ctx: RunContext[FlowDashDeps], component: str, data: str, name: str,
+               config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Place the Lumen view node ``component`` on the pipeline of node ``data``
+    with ``config``, its spec checked by the view's ``check_spec`` against
+    the pipeline's columns first, and return the config placed. A problem
+    comes back as ``ModelRetry`` for the model to fix.
+    """
+    ops = ctx.deps.ops
+    port = _upstream_port(ops, data)
+    try:
+        pipeline = _graph.output(ops, data, port)
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    if not isinstance(pipeline, Pipeline):
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to show; pass the name of a SQL, table or filter node.")
+    view = _graph.view_class(component)
+    try:
+        config = {**config, "spec": view.check_spec(config.get("spec") or {}, pipeline_columns(pipeline))}
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+    _place(ops, component, name, config, f"{data}.{port}", f"{name}.pipeline")
+    return config
+
+
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
     """Place a Vega-Lite chart of a SQL, table or filter node's rows.
 
@@ -97,22 +124,47 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
             width and height so the chart fills its tile and follows resizes; set
             them only when the user asks for a fixed size.
     """
-    ops = ctx.deps.ops
-    port = _upstream_port(ops, data)
-    try:
-        pipeline = _graph.output(ops, data, port)
-    except OperationError as exc:
-        raise ModelRetry(str(exc)) from exc
-    if not isinstance(pipeline, Pipeline):
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, table or filter node.")
-    try:
-        spec = check_chart(spec, pipeline_columns(pipeline))
-    except ValueError as exc:
-        raise ModelRetry(str(exc)) from exc
-    _place(ops, VIEW_ID, name, {"spec": spec}, f"{data}.{port}", f"{name}.pipeline")
+    spec = place_view(ctx, VIEW_ID, data, name, {"spec": spec})["spec"]
     placed = f"Placed chart {name!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
     notes = selection_warnings(spec)
     return placed + "".join(f"\nNote: {note}" for note in notes)
+
+
+def add_map(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
+    """Place a deck.gl map of a SQL, table or filter node's rows with longitude and latitude columns.
+
+    Args:
+        data: SQL, table or filter node to map.
+        name: Descriptive snake_case node name.
+        spec: deck.gl JSON spec without data: each layer draws the node's rows, has an
+            "@@type" and reads columns in "@@=" expressions with arithmetic, comparisons
+            and ?: only, no function calls, URLs or "@@function". Pick ScatterplotLayer
+            for points (sized or coloured by a value), HexagonLayer or GridLayer to bin
+            many points ("extruded": true for 3D), ColumnLayer for 3D bars at points,
+            HeatmapLayer for density, ArcLayer for origin-destination pairs. Leave out
+            mapStyle, initialViewState and colours to follow the page's theme, fit the
+            rows and take the dashboard's colours. A fixed colour is an RGBA list. E.g.
+            {"layers": [{"@@type": "ScatterplotLayer", "getPosition": "@@=[lon, lat]",
+            "getRadius": "@@=capacity * 1000", "radiusMinPixels": 2, "pickable": true}],
+            "tooltip": {"text": "{name}: {capacity}"}} or {"layers": [{"@@type":
+            "HexagonLayer", "getPosition": "@@=[lon, lat]", "radius": 20000,
+            "extruded": true, "elevationScale": 50, "pickable": true}]}.
+    """
+    spec = place_view(ctx, DECKGL_ID, data, name, {"spec": spec})["spec"]
+    ops = ctx.deps.ops
+    try:
+        rows = fetch(_graph.output(ops, data, _graph.pipeline_port(ops, data)), row_ceiling(ops.editor))
+    except Exception:
+        rows = None
+    placed = f"Placed map {name!r} of {data!r}: {map_summary(spec, rows)}."
+    if "initialViewState" in spec or rows is None:
+        return placed
+    if (view := fit_view_state(spec, rows)) is not None:
+        return f"{placed} Fitted to the rows at longitude {view['longitude']}, latitude {view['latitude']}, zoom {view['zoom']}."
+    if len(rows) and (lon_lat := position_columns(spec)) is not None:
+        return (f"{placed}\nNote: no row has a longitude in -180..180 and a latitude in -90..90 "
+                f"in [{', '.join(lon_lat)}], so the map shows the whole world; getPosition takes [longitude, latitude].")
+    return placed
 
 
 def _upstream_port(ops, data: str) -> str:
@@ -120,21 +172,22 @@ def _upstream_port(ops, data: str) -> str:
         raise ModelRetry(f"No node {data!r}.")
     port = _graph.pipeline_port(ops, data)
     if port is None:
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, table or filter node.")
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to show; pass the name of a SQL, table or filter node.")
     return port
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql and add_chart."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_chart], max_retries=3)
+    """The authoring tools: add_sql, add_chart and add_map."""
+    return FunctionToolset[FlowDashDeps]([add_sql, add_chart, add_map], max_retries=3)
 
 
 class CheckedConfig(AbstractCapability[FlowDashDeps]):
     """
-    Checks what ``set_config`` gives a Lumen SQL or chart node as add_sql and
+    Checks what ``set_config`` gives a Lumen SQL or view node as add_sql and
     add_chart check it, before the node changes: SQL is cleaned, checked and
-    run, and a chart spec is checked against its data's columns. A problem
-    comes back for the model to fix, and a changed query reports its result.
+    run, and a view's spec is checked by its ``check_spec`` against its
+    data's columns. A problem comes back for the model to fix, and a changed
+    query reports its result.
     """
 
     async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
@@ -143,7 +196,7 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             return await handler(args)
         ops, name = ctx.deps.ops, args.get("name")
         component = next((node["component"] for node in ops.nodes() if node["name"] == name), None)
-        if component == VIEW_ID and "spec" in config:
+        if (view := _graph.view_class(component)) is not None and "spec" in config:
             data = _graph.upstream(ops, name)
             port = _graph.pipeline_port(ops, data) if data else None
             try:
@@ -152,7 +205,7 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
                 pipeline = None
             if isinstance(pipeline, Pipeline):
                 try:
-                    config = {**config, "spec": check_chart(config["spec"], pipeline_columns(pipeline))}
+                    config = {**config, "spec": view.check_spec(config["spec"], pipeline_columns(pipeline))}
                 except ValueError as exc:
                     raise ModelRetry(str(exc)) from exc
             return await handler({**args, "config": config})

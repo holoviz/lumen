@@ -384,7 +384,7 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     return copy.deepcopy(spec)
 
 
-def _positions(spec: dict[str, Any]) -> tuple[str, str] | None:
+def position_columns(spec: dict[str, Any]) -> tuple[str, str] | None:
     """The longitude and latitude columns of the first layer positioned by two columns."""
     for layer in spec.get("layers") or []:
         value = layer.get("getPosition") if isinstance(layer, dict) else None
@@ -470,7 +470,7 @@ def fit_view_state(spec: dict[str, Any], data: Any) -> dict[str, Any] | None:
     layer positioned by longitude and latitude columns, leaving out the
     outer 1% at each side; None without such a layer or valid positions.
     """
-    columns = _positions(spec)
+    columns = position_columns(spec)
     if columns is None or data is None or not all(c in getattr(data, "columns", ()) for c in columns):
         return None
     lon, lat = (data[c] for c in columns)
@@ -492,7 +492,7 @@ def fit_view_state(spec: dict[str, Any], data: Any) -> dict[str, Any] | None:
     }
 
 
-def _summary(spec: dict[str, Any], data: Any) -> str:
+def map_summary(spec: dict[str, Any], data: Any) -> str:
     """A line saying what a map shows, e.g. ``Map of 2 layers (Hexagon, Scatterplot) of xlong and ylat, 4 rows``."""
     layers = [layer for layer in spec.get("layers") or [] if isinstance(layer, dict)]
     kinds = list(dict.fromkeys(
@@ -504,7 +504,7 @@ def _summary(spec: dict[str, Any], data: Any) -> str:
         text = f"Map of {len(layers)} layers ({', '.join(kinds)})"
     else:
         text = "Map"
-    position = _positions(spec)
+    position = position_columns(spec)
     fields = list(position) if position else sorted(deckgl_fields(spec))[:3]
     if fields:
         text += f" of {' and '.join(fields)}"
@@ -629,4 +629,4 @@ class DeckGLNode(LumenViewNode):
         return frame
 
     def _summary(self, spec: dict[str, Any], data: Any) -> str:
-        return _summary(spec, data)
+        return map_summary(spec, data)

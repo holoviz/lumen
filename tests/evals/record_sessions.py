@@ -26,6 +26,7 @@ QUESTIONS = {
     "sales_chart": ("sales", ["What is the total amount by category?", "Show that as a bar chart."]),
     "paid_by_region": ("commerce", ["What is the total paid order amount per region?", "Only keep the west region."]),
     "top_customer": ("commerce", ["Which customer has the most paid orders? Show only that customer and the count."]),
+    "turbines_map": ("turbines", ["Map the turbines, sized by capacity."]),
 }
 
 

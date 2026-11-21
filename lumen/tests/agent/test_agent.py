@@ -13,13 +13,15 @@ from pydantic_ai.models.function import FunctionModel
 
 from lumen.agent import AgentSession, _graph
 from lumen.agent.assistant import INSTRUCTIONS, create_agent
-from lumen.agent.authoring import add_chart, add_sql
+from lumen.agent.authoring import add_chart, add_map, add_sql
 from lumen.agent.data import (
     check_data, data_toolset, describe_table, distinct_values, list_tables,
     run_sql,
 )
 from lumen.agent.headless import source_node_name
-from lumen.flowdash import FILTER_ID, TABLE_ID, check_chart
+from lumen.flowdash import (
+    DECKGL_ID, FILTER_ID, TABLE_ID, check_chart,
+)
 from lumen.sources.duckdb import DuckDBSource
 
 TABLES = {
@@ -190,7 +192,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
+    assert tools == ["add_chart", "add_map", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
 def evil_source_calls(session):
@@ -580,3 +582,110 @@ async def test_set_config_checks_a_chart_fed_by_a_filter_node():
     (part,) = requests[1].parts
     assert "revenue" in str(part.content) and part.outcome == "retried"
     assert spec == REGION_COUNT
+
+
+TURBINES = {
+    "turbines": (
+        "SELECT * FROM (VALUES ('IA', -93.5, 42.0, 2.0), ('TX', -100.0, 32.0, 3.0), "
+        "('CA', -118.0, 35.0, 1.5)) AS t(state, xlong, ylat, capacity)"
+    ),
+}
+POINTS = {
+    "layers": [{"@@type": "ScatterplotLayer", "getPosition": "@@=[xlong, ylat]", "getRadius": "@@=capacity * 1000"}],
+    "tooltip": {"text": "{state}: {capacity}"},
+}
+
+
+@pytest.fixture
+def turbines():
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TURBINES), FunctionModel(lambda m, i: ModelResponse([TextPart("")])))
+    yield session
+    session.close()
+
+
+async def test_add_map_places_a_checked_map_and_previews_it(turbines):
+    ctx = SimpleNamespace(deps=turbines.deps)
+    await add_sql(ctx, "data", "all_turbines", "SELECT * FROM turbines")
+
+    placed = add_map(ctx, "all_turbines", "turbine_map", POINTS)
+    assert placed == (
+        "Placed map 'turbine_map' of 'all_turbines': Scatterplot map of xlong and ylat, 3 rows. "
+        "Fitted to the rows at longitude -105.635, latitude 36.96, zoom 4.1."
+    )
+    assert _graph.component_of(turbines.ops, "turbine_map") == DECKGL_ID
+    assert _graph.config_of(turbines.ops, "turbine_map")["spec"] == POINTS
+    assert "from: all_turbines.pipeline\n    to: turbine_map.pipeline" in turbines.graph()
+    hexagons = {"layers": [{"@@type": "HexagonLayer", "getPosition": "@@=[xlong, ylat]", "radius": 20000, "extruded": True}],
+                "initialViewState": {"longitude": -100, "latitude": 38, "zoom": 3}}
+    assert add_map(ctx, "all_turbines", "hexagons", hexagons) == (
+        "Placed map 'hexagons' of 'all_turbines': Hexagon map of xlong and ylat, 3 rows.")
+    assert await list_tables(ctx, node="hexagons") == (
+        "- hexagons (deckgl view of all_turbines; spec "
+        '{"layers":[{"@@type":"HexagonLayer","getPosition":"@@=[xlong, ylat]","radius":20000,"extruded":true}],'
+        '"initialViewState":{"longitude":-100,"latitude":38,"zoom":3}})'
+    )
+
+
+def _layer(**props):
+    return {"layers": [{"@@type": "ScatterplotLayer", "getPosition": "@@=[xlong, ylat]", **props}]}
+
+
+@pytest.mark.parametrize("spec, error", [
+    ({**POINTS, "mapStyle": "https://example.com/style.json"}, "`mapStyle` must be one of CARTO's basemaps"),
+    (_layer(iconAtlas="https://example.com/atlas.png"), "never loads URLs or files"),
+    (_layer(getRadius="@@='https://example.com'"), "may not name URLs or paths"),
+    (_layer(getRadius={"@@function": "fetch"}), "calls a function with `@@function`"),
+    (_layer(getRadius="@@=Math.max(capacity, 1)"), "take no function calls"),
+    (_layer(data="https://example.com/rows.json"), "remove its `data`"),
+    (_layer(getRadius="@@=power"), "reads power, which the data does not have"),
+], ids=["map-style-url", "prop-url", "expression-url", "function", "call", "data", "column"])
+async def test_add_map_refuses_what_a_map_spec_may_not_load_or_read(turbines, spec, error):
+    ctx = SimpleNamespace(deps=turbines.deps)
+    await add_sql(ctx, "data", "all_turbines", "SELECT * FROM turbines")
+
+    with pytest.raises(ModelRetry, match=error.replace("(", "\\(").replace(".", "\\.")):
+        add_map(ctx, "all_turbines", "turbine_map", spec)
+    assert "turbine_map" not in _graph.nodes(turbines.ops)
+
+
+async def test_add_map_notes_positions_off_the_globe(turbines):
+    ctx = SimpleNamespace(deps=turbines.deps)
+    await add_sql(ctx, "data", "all_turbines", "SELECT * FROM turbines")
+
+    placed = add_map(ctx, "all_turbines", "swapped", {"layers": [{"@@type": "ScatterplotLayer", "getPosition": "@@=[ylat, xlong]"}]})
+    assert placed == (
+        "Placed map 'swapped' of 'all_turbines': Scatterplot map of ylat and xlong, 3 rows.\n"
+        "Note: no row has a longitude in -180..180 and a latitude in -90..90 in [ylat, xlong], "
+        "so the map shows the whole world; getPosition takes [longitude, latitude]."
+    )
+    with pytest.raises(ModelRetry, match="No node 'nothing'"):
+        add_map(ctx, "nothing", "other", POINTS)
+    with pytest.raises(ModelRetry, match="no Lumen pipeline output to show"):
+        add_map(ctx, "data", "other", POINTS)
+
+
+async def test_set_config_checks_a_map_spec_against_the_allowlist():
+    url = {"layers": [{**POINTS["layers"][0], "getRadius": {"@@function": "fetch"}}], "mapStyle": "https://example.com/s.json"}
+    function = {"layers": [{**POINTS["layers"][0], "getRadius": {"@@function": "fetch"}}]}
+    bigger = {"layers": [{**POINTS["layers"][0], "getRadius": "@@=capacity * 5000"}]}
+    model, requests = script(
+        [ToolCallPart("set_config", {"name": "turbine_map", "config": {"spec": url}}, tool_call_id="s1")],
+        [ToolCallPart("set_config", {"name": "turbine_map", "config": {"spec": function}}, tool_call_id="s2")],
+        [ToolCallPart("set_config", {"name": "turbine_map", "config": {"spec": bigger}}, tool_call_id="s3")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TURBINES), model)
+    try:
+        ctx = SimpleNamespace(deps=session.deps)
+        await add_sql(ctx, "data", "all_turbines", "SELECT * FROM turbines")
+        add_map(ctx, "all_turbines", "turbine_map", POINTS)
+        await session.ask("Make the points bigger")
+        spec = _graph.config_of(session.ops, "turbine_map")["spec"]
+    finally:
+        session.close()
+
+    retried = [requests[index].parts[0] for index in (1, 2)]
+    assert "mapStyle" in str(retried[0].content) and "@@function" in str(retried[1].content)
+    assert all(part.outcome == "retried" for part in retried)
+    assert isinstance(requests[3].parts[0], ToolReturnPart)
+    assert spec == bigger
