@@ -136,6 +136,17 @@ def test_pipeline_reset_select_filter(make_filesource, mixed_df):
     assert_df_equal(pipeline.data, mixed_df)
     assert sfilter.widget.value == ' '
 
+def test_pipeline_reset_keeps_mutable_initial_value(make_filesource):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    cfilter = ConstantFilter(field='C', value=['foo1'])
+    pipeline = Pipeline(source=source, filters=[cfilter], table='test')
+
+    cfilter.value.append('foo2')
+    pipeline.reset_filters()
+
+    assert cfilter.value == ['foo1']
+
 def test_pipeline_manual_with_filter(make_filesource, mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = make_filesource(str(root))

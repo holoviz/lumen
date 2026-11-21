@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 import sys
 
@@ -209,9 +210,11 @@ class Pipeline(Viewer, Component):
         if filt in self._initial_filter_values:
             return
         if isinstance(filt, BaseWidgetFilter) and filt.widget is not None:
-            self._initial_filter_values[filt] = filt.widget.value
+            value = filt.widget.value
         else:
-            self._initial_filter_values[filt] = filt.value
+            value = filt.value
+        # Copy mutable values so later in-place changes cannot alter the record
+        self._initial_filter_values[filt] = copy.deepcopy(value) if isinstance(value, (dict, list, set)) else value
 
     def _record_new_filters(self, event: param.parameterized.Event) -> None:
         for filt in event.new:
