@@ -14,6 +14,7 @@ Tests cover:
 import warnings
 
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -142,6 +143,24 @@ class TestConstruction:
         source = XArraySQLSource(_dataset=bounds_dataset)
         assert "climatology_bounds" in source.get_tables()
         assert "air" in source.get_tables()
+
+    def test_heterogeneous_dimensionality_variables(self):
+        """Variables with different dimensions (e.g. a (time,) series and a
+        (time,lat,lon) grid) must each register with only their own dims;
+        the global chunk spec must be filtered per variable."""
+        times = pd.date_range("2020-01-01", periods=6, freq="D")
+        lats = np.array([1.0, 2.0, 3.0])
+        lons = np.array([10.0, 20.0])
+        ds = xr.Dataset(
+            {
+                "grid": (["time", "lat", "lon"], np.ones((6, 3, 2))),
+                "series": (["time"], np.arange(6.0)),
+            },
+            coords={"time": times, "lat": lats, "lon": lons},
+        ).chunk({"time": 2, "lat": 3, "lon": 2})
+        source = XArraySQLSource(_dataset=ds)
+        assert sorted(source.get_tables()) == ["grid", "series"]
+        assert len(source.execute("SELECT * FROM series")) == 6
 
     def test_from_netcdf(self, nc_file):
         source = XArraySQLSource(uri=nc_file)
