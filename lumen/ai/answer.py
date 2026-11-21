@@ -1006,6 +1006,105 @@ def chat(data: DataT | Pipeline, *, llm: Llm | None = None, agents: list | None 
     return Chat(data, llm=llm, agents=agents)
 
 
+def _own_agents(agents: list | None, **overrides) -> list | None:
+    """
+    A copy of each agent instance, so questions running at once never share
+    one: a task sets its LLM and interface on the agent while it runs.
+    Classes are kept, since each Planner makes its own instance of them.
+    """
+    if agents is None:
+        return None
+    return [agent if isinstance(agent, type) else _clone(agent, **overrides) for agent in agents]
+
+
+async def _gather(data: Source | Pipeline, jobs: list[tuple[str, Llm, list | None]], returns: Any, concurrency: int) -> Answers:
+    """
+    Ask each (question, llm, agents) job, at most concurrency at a time,
+    and return the Answers in job order. Each job is its own task, so it
+    keeps its own usage and the step it reports.
+    """
+    if concurrency < 1:
+        raise ValueError(f"concurrency must be at least 1, not {concurrency}.")
+    limit = asyncio.Semaphore(concurrency)
+    outer = step_title_callback.get()
+    seconds = [0.0] * len(jobs)
+    answered = 0
+
+    async def one(i: int, question: str, llm: Llm, agents: list | None) -> Answer:
+        nonlocal answered
+        async with limit:
+            if outer is not None:
+                step_title_callback.set(lambda title: outer(f"{answered} of {len(jobs)} answered · {title}"))
+            start = time.monotonic()
+            messages = [{"role": "user", "content": question}]
+            try:
+                answer = await _aask_messages(data, question, messages, llm, agents, returns=returns)
+            except Exception as e:
+                # ask raises when the LLM itself fails, e.g. the provider is down;
+                # in a batch that question fails alone and the others go on
+                answer = Answer(
+                    agents=agents, data=data, error=format_error(e), llm=llm, question=question,
+                    source=_resolve(data)[0], status="error", value=f"Lumen could not answer {question!r}.",
+                )
+            seconds[i] = time.monotonic() - start
+            answered += 1
+            if outer is not None:
+                # The count moves on as each answer arrives, not with the next step
+                outer(f"{answered} of {len(jobs)} answered")
+            return answer
+
+    answers = await asyncio.gather(*(one(i, *job) for i, job in enumerate(jobs)))
+    return Answers(answers, seconds=seconds)
+
+
+async def aask_many(
+    data: DataT | Pipeline, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+    returns: Any = None, concurrency: int = 4,
+) -> Answers:
+    """
+    Ask several independent questions of the same data at once.
+
+    Takes the same arguments as aask, plus concurrency, the most questions
+    in flight at a time. Returns Answers in the order of questions; a
+    question asked twice is asked once. Like aask, a question that fails
+    gives an Answer with status "error" rather than raising, so one failure
+    leaves the others as they are.
+    """
+    return await _on_loop(_ask_many(data, questions, llm, agents, returns, concurrency))
+
+
+async def _ask_many(
+    data: DataT | Pipeline, questions: list[str], llm: Llm | None, agents: list | None,
+    returns: Any, concurrency: int,
+) -> Answers:
+    if isinstance(questions, str):
+        # A string is iterable, so it would be asked one character at a time
+        raise TypeError("ask_many takes a list of questions; use ask for one question.")
+    if not questions:
+        return Answers()
+    # Read once, so every question shares one Source and its Planner cache
+    data = data if isinstance(data, Source | Pipeline) else read(data)
+    # Resolved before any question starts, so a missing provider raises once
+    llm = llm or _default_llm()
+    agents = _settings["agents"] if agents is None else agents
+    distinct = list(dict.fromkeys(questions))
+    asked = await _gather(data, [(q, llm, _own_agents(agents)) for q in distinct], returns, concurrency)
+    by_question = dict(zip(distinct, zip(asked, asked.seconds, strict=True), strict=True))
+    return Answers([by_question[q][0] for q in questions], seconds=[by_question[q][1] for q in questions])
+
+
+def ask_many(
+    data: DataT | Pipeline, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+    returns: Any = None, concurrency: int = 4,
+) -> Answers:
+    """
+    Ask several independent questions of the same data at once and return
+    their Answers in order. Takes the same arguments as aask_many. A status
+    line counts the questions answered; an interrupt cancels them all.
+    """
+    return _run(_ask_many(data, questions, llm, agents, returns, concurrency), f"Asking {len(questions)} questions")
+
+
 @dataclass(frozen=True)
 class Step:
     """One step of an answer's plan, as it ran."""
@@ -1200,6 +1299,62 @@ class Chat(param.Parameterized):
     def ask(self, question: str, *, confirm: bool = False, returns: Any = None) -> Answer:
         """Ask the next question and return the Answer."""
         return _run(self._aask(question, confirm, returns))
+
+
+class Answers(list):
+    """
+    The Answers to several questions, in order: a list that shows as each
+    question over its answer's card, and turns into a table with to_frame.
+    """
+
+    def __init__(self, answers=(), *, seconds: list[float] | None = None):
+        super().__init__(answers)
+        #: How long each answer took, in the same order
+        self.seconds = list(seconds) if seconds is not None else [0.0] * len(self)
+
+    def __repr__(self) -> str:
+        counts = pd.Series([answer.status for answer in self]).value_counts()
+        return f"Answers({', '.join(f'{status}={n}' for status, n in counts.items())})"
+
+    def _heading(self, i: int) -> str:
+        return self[i].question
+
+    def to_frame(self) -> pd.DataFrame:
+        """One row per answer: the question, how it ended, the answer, its SQL, time and LLM usage."""
+        rows = [
+            {
+                "question": answer.question, "status": answer.status, "value": answer.value,
+                "sql": answer.sql, "seconds": round(seconds, 2),
+                "input_tokens": answer.usage.input_tokens, "output_tokens": answer.usage.output_tokens,
+                "cost_usd": answer.usage.cost_usd,
+                **({"result": answer.result} if answer._returns is not None else {}),
+            }
+            for answer, seconds in zip(self, self.seconds, strict=True)
+        ]
+        return pd.DataFrame(rows)
+
+    def __panel__(self) -> Column:
+        return Column(*(
+            part for i, answer in enumerate(self)
+            for part in (Markdown(f"### {html.escape(self._heading(i))}"), answer.__panel__())
+        ), sizing_mode="stretch_width")
+
+    def _html(self) -> str:
+        return "\n".join(
+            f"<h3>{html.escape(self._heading(i))}</h3>\n{answer._static_bundle(answer._chart_bundle())['text/html']}"
+            for i, answer in enumerate(self)
+        )
+
+    def _repr_mimebundle_(self, include=None, exclude=None):
+        if not _in_kernel():
+            return {"text/plain": repr(self), "text/html": self._html()}
+        _load_extensions()
+        try:
+            bundle = self.__panel__()._repr_mimebundle_(include, exclude)
+        except ImportError:
+            # VS Code renders Panel through jupyter_bokeh, which may be missing
+            bundle = None
+        return bundle or {"text/plain": repr(self), "text/html": self._html()}
 
 
 class Answer(param.Parameterized):
