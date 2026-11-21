@@ -126,9 +126,14 @@ class LumenAIServe(Serve):
         )
         flowdash.add_argument(
             "--agent-model",
+            action="append",
+            metavar="MODEL[=LABEL]",
             help="""
             With --flowdash, a pydantic-ai model for Lumen's FlowDash agent, e.g.
-            'openai:gpt-6-luna'. Without it the app has no agent.
+            'openai:gpt-6-luna'. Repeat it, or separate models with commas, to let
+            people pick the model in the chat; the first is the default and
+            'openai:gpt-6-luna=Luna' names one 'Luna' in the picker. Without it the
+            app has no agent.
             """,
         )
 
