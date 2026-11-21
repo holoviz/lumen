@@ -24,7 +24,7 @@ from panel.viewable import Viewer
 from panel.widgets import Tabulator, Widget
 
 from .base import Component
-from .filters.base import Filter, ParamFilter, WidgetFilter
+from .filters.base import BaseWidgetFilter, Filter, ParamFilter, WidgetFilter
 from .sources.base import Source
 from .state import state
 from .transforms.base import Columns, Filter as FilterTransform, Transform
@@ -199,7 +199,20 @@ class Pipeline(Viewer, Component):
         self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
         self._update_widget = Param(self.param['update'], widgets={'update': {'color': 'success'}})[0]
+        for filt in self.filters:
+            self._record_filter_initial(filt)
         self._init_callbacks()
+
+    @staticmethod
+    def _record_filter_initial(filt: Filter) -> None:
+        # The value a filter was created with, so it can be reset later.
+        # Shared filters keep the value their first pipeline saw.
+        if hasattr(filt, '_initial_value'):
+            return
+        if isinstance(filt, BaseWidgetFilter) and filt.widget is not None:
+            filt._initial_value = filt.widget.value
+        else:
+            filt._initial_value = filt.value
 
     def _update_stale(self, event):
         if event.new:
@@ -259,6 +272,20 @@ class Pipeline(Viewer, Component):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import aask
         return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def reset_filters(self) -> None:
+        """
+        Reset every filter to the value it was created with.
+
+        Widget filters reset their widget, which updates the filter value,
+        so the pipeline re-queries its data.
+        """
+        for filt in self.filters:
+            initial = getattr(filt, '_initial_value', filt.value)
+            if isinstance(filt, BaseWidgetFilter) and filt.widget is not None:
+                filt.widget.value = initial
+            else:
+                filt.value = initial
 
     def __panel__(self) -> Row:
         controls = self.control_panel
@@ -686,6 +713,7 @@ class Pipeline(Viewer, Component):
                 {self.table: self.schema}
             )
         self.filters.append(filt)
+        self._record_filter_initial(filt)
         filt.param.watch(self._update_data, ['value'])
         self._stale = True
 
