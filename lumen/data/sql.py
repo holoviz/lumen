@@ -82,13 +82,23 @@ def _table_refs(tree: sqlglot.exp.Expression) -> list[tuple[sqlglot.exp.Table, s
     ]
 
 
-def _rename_ref(table: sqlglot.exp.Table, name: str) -> None:
-    if table.name == name:
+def _rename_ref(table: sqlglot.exp.Table, name: sqlglot.exp.Identifier) -> None:
+    if table.name == name.name and bool(table.this.quoted) == bool(name.quoted):
         return
     if not table.alias:
         # Columns qualified with the old name keep resolving.
         table.set("alias", sqlglot.exp.TableAlias(this=table.this.copy()))
-    table.set("this", sqlglot.exp.to_identifier(name))
+    table.set("this", name.copy())
+
+
+def _drop_unbounded_order(query: sqlglot.exp.Expression) -> None:
+    """
+    Drop the ORDER BY of a query that will be a CTE, unless a LIMIT, TOP,
+    OFFSET or FETCH depends on it: a CTE does not keep its rows' order, and
+    SQL Server refuses ORDER BY there otherwise.
+    """
+    if not any(query.args.get(key) for key in ("limit", "offset", "fetch")):
+        query.set("order", None)
 
 
 def _unique(name: str, taken: set[str]) -> str:
@@ -111,7 +121,11 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
     Names that would collide, with the query's own CTEs, another
     definition's CTEs or a table the statement reads, are renamed, and a
     renamed table keeps its old name as its alias. A name bound to a CTE
-    of the query, or qualified with a schema, is never inlined.
+    of the query, or qualified with a schema, is never inlined, and a
+    definition that reads its own name reads the table of that name. A
+    CTE's alias is quoted when any reference to it is. A CTE drops its
+    ORDER BY unless a LIMIT or OFFSET depends on it, since a CTE keeps no
+    order and SQL Server refuses one; order the query itself instead.
 
     Returns ``sql`` unchanged when it reads none of ``tables``; raises
     ``ValueError`` when the definitions read each other in a cycle.
@@ -126,8 +140,11 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
             tree = sqlglot.select("*").from_(tree.subquery())
         return tree
 
+    # References in a definition to its own name, which read the table of that name.
+    base_refs: set[int] = set()
+
     def inlined(table, cte) -> bool:
-        return cte is None and table.name.lower() in definitions
+        return cte is None and table.name.lower() in definitions and id(table) not in base_refs
 
     query = parse(sql)
     query_refs = _table_refs(query)
@@ -148,6 +165,7 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
         active.append(key)
         trees[key] = parse(definitions[key][1])
         refs[key] = _table_refs(trees[key])
+        base_refs.update(id(table) for table, cte in refs[key] if cte is None and table.name.lower() == key)
         for table, cte in refs[key]:
             if inlined(table, cte):
                 visit(table.name.lower())
@@ -163,9 +181,17 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
     taken |= {
         table.name.lower()
         for found in [query_refs, *refs.values()] for table, cte in found
-        if cte is None and table.name.lower() not in definitions
+        if cte is None and not inlined(table, cte)
     }
-    names = {key: _unique(definitions[key][0], taken) for key in order}
+    quoted = {
+        table.name.lower()
+        for found in [query_refs, *refs.values()] for table, cte in found
+        if inlined(table, cte) and table.this.quoted
+    }
+    names = {
+        key: sqlglot.exp.to_identifier(_unique(definitions[key][0], taken), quoted=key in quoted or None)
+        for key in order
+    }
 
     ctes, recursive = [], bool(own and own.args.get("recursive"))
     for key in order:
@@ -174,7 +200,10 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
         if with_ is not None:
             recursive = recursive or bool(with_.args.get("recursive"))
             for cte in with_.expressions:
-                hoisted[id(cte)] = _unique(cte.alias_or_name, taken)
+                original = cte.args["alias"].this
+                hoisted[id(cte)] = sqlglot.exp.to_identifier(
+                    _unique(cte.alias_or_name, taken), quoted=original.quoted or None
+                )
         for table, cte in refs[key]:
             if inlined(table, cte):
                 _rename_ref(table, names[table.name.lower()])
@@ -182,10 +211,12 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
                 _rename_ref(table, hoisted[id(cte)])
         if with_ is not None:
             for cte in list(with_.expressions):
-                cte.args["alias"].set("this", sqlglot.exp.to_identifier(hoisted[id(cte)]))
+                cte.args["alias"].set("this", hoisted[id(cte)].copy())
+                _drop_unbounded_order(cte.this)
                 ctes.append(cte.pop())
             with_.pop()
-        alias = sqlglot.exp.TableAlias(this=sqlglot.exp.to_identifier(names[key]))
+        _drop_unbounded_order(tree)
+        alias = sqlglot.exp.TableAlias(this=names[key].copy())
         ctes.append(sqlglot.exp.CTE(this=tree, alias=alias))
 
     for table, cte in query_refs:

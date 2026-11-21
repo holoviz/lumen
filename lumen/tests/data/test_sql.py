@@ -192,3 +192,48 @@ def test_inline_tables_writes_one_with_clause_in_other_dialects(dialect):
     parsed = sqlglot.parse_one(sql, read=dialect)
     assert len(list(parsed.find_all(sqlglot.exp.With))) == 1
     assert [cte.alias for cte in parsed.find_all(sqlglot.exp.CTE)] == ["paid", "by_region", "ranked", "top"]
+
+
+def test_inline_tables_drops_an_order_by_no_limit_depends_on():
+    tables = {
+        "ordered": "SELECT region, amount FROM orders ORDER BY amount",
+        "top2": "SELECT region, amount FROM orders ORDER BY amount DESC LIMIT 2",
+    }
+    sql = inline_tables("SELECT * FROM ordered, top2", tables, "duckdb")
+    ordered, top2 = (cte.this for cte in sqlglot.parse_one(sql, read="duckdb").find_all(sqlglot.exp.CTE))
+    assert ordered.args.get("order") is None
+    assert top2.args.get("order") is not None
+
+
+def test_inline_tables_writes_ctes_sql_server_accepts():
+    tables = {
+        "by_region": "SELECT region, SUM(amount) AS total FROM orders GROUP BY region ORDER BY total DESC",
+        "top": "SELECT TOP 1 region FROM by_region ORDER BY total DESC",
+    }
+    sql = inline_tables("SELECT region FROM top", tables, "tsql")
+    by_region, top = (cte.this for cte in sqlglot.parse_one(sql, read="tsql").find_all(sqlglot.exp.CTE))
+    assert by_region.args.get("order") is None
+    assert "TOP 1" in top.sql(dialect="tsql") and top.args.get("order") is not None
+
+
+def test_inline_tables_quotes_an_alias_referenced_quoted():
+    sql = inline_tables(
+        'SELECT "Paid".customer FROM "Paid" JOIN paid AS p ON TRUE',
+        {"Paid": "SELECT customer FROM orders WHERE status = 'paid'"}, "postgres",
+    )
+    assert 'WITH "Paid" AS' in sql
+    assert 'FROM "Paid" JOIN "Paid" AS p' in sql
+
+
+def test_inline_tables_quotes_mixed_case_names_so_they_run(engine):
+    dialect, run = engine
+    sql = inline_tables('SELECT COUNT(*) FROM "Paid"', {"Paid": RESULTS["paid"]}, dialect)
+    assert run(sql) == [(3,)]
+
+
+def test_inline_tables_reads_the_table_a_definition_is_named_after(engine):
+    dialect, run = engine
+    tables = {"orders": "SELECT * FROM orders WHERE status = 'paid'"}
+    sql = inline_tables("SELECT COUNT(*) FROM orders", tables, dialect)
+    assert "orders_1 AS" in sql
+    assert run(sql) == [(3,)]
