@@ -76,9 +76,9 @@ from .checks import (
     check_table_config, check_view_config, forget_probes, pipeline_columns,
 )
 from .choices import (
-    filter_choices, metric_choices, metric_presets, palette_presets,
-    parameter_choices, pipeline_column_types, source_choices, source_presets,
-    table_choices, table_presets,
+    filter_choices, forget_distinct, metric_choices, metric_presets,
+    palette_presets, parameter_choices, pipeline_column_types, source_choices,
+    source_presets, table_choices, table_presets,
 )
 from .contracts import (
     DATA_ID, FILTER_ID, METRIC_ID, PARAMETER_ID, SOURCE_ID, SQL_ID, TABLE_ID,
@@ -878,6 +878,7 @@ def forget(pipeline: Any) -> None:
     if isinstance(pipeline, Pipeline):
         _FETCHED.pop(pipeline, None)
         _PREVIEW_FAILED.pop(pipeline, None)
+        forget_distinct(pipeline)
 
 
 def _compute(pipeline: Pipeline, timeout: float) -> Any:
