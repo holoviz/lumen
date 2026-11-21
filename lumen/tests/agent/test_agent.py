@@ -1,3 +1,5 @@
+import json
+
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +14,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 
 from lumen.agent import AgentSession, _graph, assistant
-from lumen.agent.assistant import INSTRUCTIONS, create_agent
+from lumen.agent.assistant import (
+    INSTRUCTIONS, MODEL_SETTINGS, OTHER_MODEL_SETTINGS, create_agent,
+    model_settings_for,
+)
 from lumen.agent.authoring import (
     add_chart, add_sql, add_text, check_text,
 )
@@ -312,21 +317,92 @@ async def test_failed_run_keeps_usage_of_its_responses():
     assert turn.messages == []
 
 
-async def test_requests_turn_reasoning_off_unless_the_host_overrides_it():
+class OpenAIFunctionModel(FunctionModel):
+    @property
+    def system(self) -> str:
+        return "openai"
+
+
+def test_openai_models_keep_openai_settings_and_others_get_neutral_ones():
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    openai = OpenAIProvider(api_key="x")
+    assert model_settings_for(OpenAIResponsesModel("gpt-6-luna", provider=openai)) == MODEL_SETTINGS
+    assert model_settings_for(OpenAIChatModel("gpt-6-luna", provider=openai)) == MODEL_SETTINGS
+    haiku = OpenRouterModel("anthropic/claude-haiku-5.5", provider=OpenRouterProvider(api_key="x"))
+    assert model_settings_for(haiku) == OTHER_MODEL_SETTINGS == {"thinking": False, "max_tokens": 1000, "cache": True}
+
+
+async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_and_cache_the_prompt():
+    import httpx
+
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    bodies = []
+
+    def respond(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "provider": "Anthropic",
+            "model": "anthropic/claude-haiku-5.5", "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+        })
+
+    client = AsyncOpenAI(api_key="x", base_url="https://openrouter.test/api/v1",
+                         http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    model = OpenRouterModel("anthropic/claude-haiku-5.5", provider=OpenRouterProvider(openai_client=client))
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        await session.ask("Hi")
+    finally:
+        session.close()
+
+    body = bodies[0]
+    assert body["reasoning"] == {"effort": "none"} and "reasoning_effort" not in body
+    assert body["max_tokens"] == 1000
+    breakpoints = {"type": "ephemeral", "ttl": "5m"}
+    assert body["messages"][0]["content"][-1]["cache_control"] == breakpoints
+    assert body["messages"][-1]["content"][-1]["cache_control"] == breakpoints
+    assert body["tools"][-1]["cache_control"] == breakpoints
+
+
+async def test_a_model_picked_for_a_run_gets_its_own_settings_under_the_hosts():
     seen = []
 
     def respond(messages, info):
         seen.append(info.model_settings)
         return ModelResponse(parts=[TextPart("ok")])
 
-    for settings, expected in [(None, "none"), ({"openai_reasoning_effort": "low"}, "low")]:
-        session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond), model_settings=settings)
-        try:
-            await session.ask("Hi")
-        finally:
-            session.close()
-        assert seen[-1]["openai_reasoning_effort"] == expected
-    assert seen[0]["max_tokens"] == 1000
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    try:
+        await session.agent.run("Hi", deps=session.deps)
+        await session.agent.run("Hi", deps=session.deps, model=OpenAIFunctionModel(respond), model_settings={"temperature": 0})
+    finally:
+        session.close()
+
+    assert seen[0] == {"max_tokens": 1000}
+    assert seen[1] == {**MODEL_SETTINGS, "temperature": 0}
+
+
+async def test_host_model_settings_replace_the_defaults():
+    seen = []
+
+    def respond(messages, info):
+        seen.append(info.model_settings)
+        return ModelResponse(parts=[TextPart("ok")])
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), OpenAIFunctionModel(respond),
+                           model_settings={"openai_reasoning_effort": "low"})
+    try:
+        await session.ask("Hi")
+    finally:
+        session.close()
+    assert seen == [{"openai_reasoning_effort": "low"}]
 
 
 async def test_data_agent_leaves_out_flowdash_instructions_and_catalogue():

@@ -33,7 +33,7 @@ from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import MetricAggregate
 from ..util import as_pandas
 from . import _graph
-from .assistant import MODEL_SETTINGS
+from .assistant import MODEL_SETTINGS, OTHER_MODEL_SETTINGS
 from .headless import AgentSession, TurnResult
 
 # Name of the SQL node a case's pre-seeded query is placed as.
@@ -43,10 +43,20 @@ TRACES_ENV = "LUMEN_AGENT_TRACES"
 
 
 def build_model(model: str, *, provider: str = "openai", api_key: str | None = None, api: str | None = None) -> Any:
-    """A pydantic-ai model for the harness's model options: OpenAI, or OpenRouter's OpenAI-compatible endpoint."""
+    """
+    A pydantic-ai model for the harness's model options: OpenAI, or
+    OpenRouter's OpenAI-compatible endpoint. An Anthropic model on OpenRouter
+    is an ``OpenRouterModel``, as ``openrouter:anthropic/...`` picked in the
+    app is, so the agent's ``cache`` setting places its cache breakpoints.
+    """
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
+    if provider == "openrouter" and model.startswith("anthropic/") and (api or "chat_completions") == "chat_completions":
+        from pydantic_ai.models.openrouter import OpenRouterModel
+        from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+        return OpenRouterModel(model, provider=OpenRouterProvider(api_key=api_key))
     if provider == "openrouter":
         provider_ = OpenAIProvider(base_url=OPENROUTER_ENDPOINT, api_key=api_key)
         api = api or "chat_completions"
@@ -247,7 +257,7 @@ class FlowDashSubject:
 
     Pass ``model``, e.g. a ``FunctionModel``, or ``cassette``, the path of a
     recorded model trace, to run offline. ``model_settings`` replaces the
-    agent's default model settings, ``MODEL_SETTINGS``. ``traces`` is a directory each case's
+    agent's default model settings, ``model_settings_for`` each model. ``traces`` is a directory each case's
     model trace is written to, by default ``$LUMEN_AGENT_TRACES`` if set, so
     the CLI and its BIRD workers can record them too. The suite instructions
     given to ``build_model`` are appended to the agent's. ``fingerprint`` is
@@ -265,7 +275,7 @@ class FlowDashSubject:
                  metrics: Callable[[Inputs], Any] | None = None):
         self.model = model
         self.metrics = metrics
-        self.model_settings = dict(MODEL_SETTINGS if model_settings is None else model_settings)
+        self.model_settings = None if model_settings is None else dict(model_settings)
         self.cassette = cassette
         traces = traces if traces is not None else os.environ.get(TRACES_ENV)
         self.traces = Path(traces) if traces else None
@@ -281,6 +291,8 @@ class FlowDashSubject:
     @property
     def settings(self) -> dict[str, Any]:
         """The model settings of every request, recorded with the run settings."""
+        if self.model_settings is None:
+            return {"model_settings": {"openai": MODEL_SETTINGS, "other": OTHER_MODEL_SETTINGS}}
         return {"model_settings": self.model_settings}
 
     @property

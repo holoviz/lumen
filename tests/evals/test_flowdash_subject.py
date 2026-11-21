@@ -49,6 +49,17 @@ def test_flowdash_subject_is_registered_and_offline_with_a_model():
     assert resolve_subject("flowdash").requires_api_key is True
 
 
+def test_anthropic_models_on_openrouter_are_built_as_the_app_builds_them():
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    subject = FlowDashSubject()
+    haiku = subject.build_model("anthropic/claude-haiku-5.5", provider="openrouter", api_key="x")
+    granite = subject.build_model("ibm-granite/granite-4.2-8b", provider="openrouter", api_key="x")
+    assert isinstance(haiku, OpenRouterModel)
+    assert type(granite) is OpenAIChatModel
+
+
 def test_fingerprint_hashes_agent_surface_without_a_run():
     subject = FlowDashSubject()
     assert subject.fingerprint() == agent_fingerprint()
@@ -86,7 +97,10 @@ async def test_subject_scored_end_to_end_on_outcomes(tmp_path):
     assert saved["run"]["subject"] == "flowdash"
     assert saved["run"]["scoring"] == "outcome"
     assert saved["run"]["subject_fingerprint"] == agent_fingerprint()
-    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
+    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {
+        "openai": {"openai_reasoning_effort": "none", "max_tokens": 1000},
+        "other": {"thinking": False, "max_tokens": 1000, "cache": True},
+    }}
     turn = next(case for case in saved["cases"] if case["name"] == "sales_chart")["turns"][0]
     assert turn["chart_marks"] == ["bar"]
     assert turn["chart_encodings"] == [{"x": {"field": "category", "type": "nominal"},
