@@ -112,6 +112,7 @@ geoviews = "*"
 shapely = "*"
 
 [feature.stac.dependencies]
+odc-stac = "*"
 pystac-client = "*"
 
 [feature.stac.pypi-dependencies]
