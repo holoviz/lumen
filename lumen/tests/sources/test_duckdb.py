@@ -2033,7 +2033,7 @@ def _h3_source(**kwargs):
     import lumen
     try:
         return lumen.read({"q": pd.DataFrame({"lat": [52.5, 48.9], "lon": [13.4, 2.3]})}, extensions=["h3"], **kwargs)
-    except duckdb.Error as e:
+    except RuntimeError as e:
         pytest.skip(f"the h3 extension could not be installed: {e}")
 
 
@@ -2058,3 +2058,15 @@ def test_extensions_need_a_duckdb_source():
     import lumen
     with pytest.raises(ValueError, match="extensions load into DuckDB"):
         lumen.read(xr.Dataset({"t": ("x", [1.0])}), extensions=["h3"])
+
+
+def test_an_extension_that_cannot_download_says_why(monkeypatch):
+    source = DuckDBSource(uri=":memory:")
+
+    def offline(init):
+        raise duckdb.IOException("Failed to download extension \"h3\" at URL \"http://community-extensions.duckdb.org\"")
+
+    monkeypatch.setattr(source, "_run_initializer", offline)
+    with pytest.raises(RuntimeError, match="(?s)Could not load the DuckDB extension 'h3'.*needs internet access"):
+        source.load_extension("h3")
+    assert source.initializers == []

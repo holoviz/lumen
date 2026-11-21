@@ -333,7 +333,13 @@ class DuckDBSource(BaseSQLSource):
             known = dict(cursor.execute("SELECT extension_name, installed_from FROM duckdb_extensions()").fetchall())
         repository = " FROM community" if name not in known or known[name] == "community" else ""
         for init in (f"INSTALL {name}{repository};", f"LOAD {name};"):
-            self._run_initializer(init)
+            try:
+                self._run_initializer(init)
+            except duckdb.Error as e:
+                raise RuntimeError(
+                    f"Could not load the DuckDB extension {name!r}: {e}\nAn extension downloads the first time it is "
+                    "used, which needs internet access; DuckDB then loads its cached copy from ~/.duckdb/extensions."
+                ) from e
             if init not in self.initializers:
                 self.initializers = [*self.initializers, init]
         return self
