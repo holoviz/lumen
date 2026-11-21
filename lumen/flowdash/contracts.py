@@ -7,10 +7,12 @@ rerun on other data and refuse data it cannot use before any query runs.
 The columns of each ``Lumen/sql`` node come from ``lumen.data.contracts``;
 the fields of filter, view and transform nodes on a ``Lumen/table`` node, or
 on a SQL node that selects ``*``, are columns of that table, traced back
-through the transform nodes between them. A node is covered fully
-when every column it reads is known, partly when it reads a table with
-``*``, and not at all when its SQL does not parse or its columns cannot be
-resolved.
+through the transform nodes between them. A SQL node reading another's
+``result`` reads the base columns its query reaches through the earlier
+queries, which are inlined as CTEs, so a contract names it too. A node is
+covered fully when every column it reads is known, partly when it reads a
+table with ``*``, and not at all when its SQL does not parse or its columns
+cannot be resolved.
 """
 from __future__ import annotations
 
@@ -18,10 +20,13 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+import sqlglot
+
 from ..data.contracts import (
     FULL, NONE, PARTIAL, query_columns, schema_problems, source_dialect,
     source_schema,
 )
+from ..data.sql import inline_tables
 from ..sources.base import Source
 from .defaults import field_column
 
@@ -205,46 +210,85 @@ def _table_usages(doc: Mapping[str, Any], node: str, table: str, column_name) ->
     return found
 
 
+def _result_table(config: Mapping[str, Any], taken: set[str]) -> str:
+    """
+    The table a SQL node adds to its ``result``, renamed as ``compile_sql``
+    does, ignoring case, so it shadows no table of its source.
+    """
+    from .nodes import default_table
+
+    table = config.get("table") or default_table(config.get("sql") or "")
+    while table.lower() in taken:
+        table = f"{table}_result"
+    return table
+
+
+def _expanded(sql: str, definitions: Mapping[str, str], dialect: str | None) -> str:
+    try:
+        return inline_tables(sql, definitions, dialect)
+    except (ValueError, sqlglot.errors.SqlglotError):
+        return sql
+
+
 def usages(doc: Mapping[str, Any], source_node: str, schema: Mapping[str, Mapping[str, Any]],
            dialect: str | None = None) -> list[NodeUsage]:
     """
-    What each node reading ``source_node`` directly reads of its tables, and the
-    nodes that read those nodes' output where it passes table columns through:
-    filters, views and transforms on a table node, or on a SQL node that
-    selects ``*``. For a table node that names its source by ref,
-    ``source_node`` itself is the node reading the table.
+    What each node reading ``source_node`` reads of its tables: the nodes
+    reading it directly, the SQL and table nodes reading a SQL node's
+    ``result``, transitively, and the nodes that read those nodes' output
+    where it passes table columns through: filters, views and transforms on
+    a table node, or on a SQL node that selects ``*``. A query on a result
+    reads the base columns its upstream queries read. For a table node that
+    names its source by ref, ``source_node`` itself is the node reading the
+    table.
     """
     nodes = doc.get("nodes") or {}
+    edges = _edges(doc)
     table_name, column_name = _resolver(schema)
     own = nodes.get(source_node) or {}
     if own.get("component") == TABLE_ID:
         table = table_name((own.get("config") or {}).get("table") or "")
         return _table_usages(doc, source_node, table, column_name) if table else []
     found = []
-    for source, _, target, _ in _edges(doc):
-        if source != source_node:
-            continue
-        node = nodes.get(target) or {}
-        component, config = node.get("component"), node.get("config") or {}
-        if component == SQL_ID:
-            usage = sql_usage(target, config.get("sql") or "", schema, dialect)
-            found.append(usage)
-            if usage.coverage != PARTIAL:
+    # (node, the port its readers read, the result tables they may query by name)
+    queue: list[tuple[str, str | None, dict[str, str]]] = [(source_node, None, {})]
+    visited = set()
+    while queue:
+        upstream, port, definitions = queue.pop(0)
+        for source, source_port, target, _ in edges:
+            if source != upstream or (port is not None and source_port != port) or target in visited:
                 continue
-            starred = list(usage.tables)
-            for reader, fields in _reader_fields(doc, target).items():
-                reader_usage = NodeUsage(reader, nodes[reader]["component"], PARTIAL,
-                                         reason=f"It reads {target}, which selects *.")
-                for name in fields:
-                    for table in starred:
-                        if name.lower() in {c.lower() for c in schema.get(table) or {}}:
-                            reader_usage.add(table, column_name(table, name))
-                if reader_usage.tables:
-                    found.append(reader_usage)
-        elif component == TABLE_ID:
-            table = table_name(config.get("table") or "")
-            if table:
-                found += _table_usages(doc, target, table, column_name)
+            node = nodes.get(target) or {}
+            component, config = node.get("component"), node.get("config") or {}
+            if component == SQL_ID:
+                visited.add(target)
+                sql = config.get("sql") or ""
+                usage = sql_usage(target, _expanded(sql, definitions, dialect), schema, dialect)
+                found.append(usage)
+                taken = {t.lower() for t in schema} | {t.lower() for t in definitions}
+                queue.append((target, "result", {**definitions, _result_table(config, taken): sql}))
+                if usage.coverage != PARTIAL:
+                    continue
+                starred = list(usage.tables)
+                for reader, fields in _reader_fields(doc, target).items():
+                    reader_usage = NodeUsage(reader, nodes[reader]["component"], PARTIAL,
+                                             reason=f"It reads {target}, which selects *.")
+                    for name in fields:
+                        for table in starred:
+                            if name.lower() in {c.lower() for c in schema.get(table) or {}}:
+                                reader_usage.add(table, column_name(table, name))
+                    if reader_usage.tables:
+                        found.append(reader_usage)
+            elif component == TABLE_ID:
+                table = config.get("table") or ""
+                if not table:
+                    continue
+                if table.lower() in {t.lower() for t in definitions}:
+                    star = sqlglot.select("*").from_(sqlglot.exp.Table(this=sqlglot.exp.to_identifier(table)))
+                    read = sql_usage(target, _expanded(star.sql(dialect=dialect), definitions, dialect), schema, dialect)
+                    found.append(NodeUsage(target, TABLE_ID, read.coverage, read.tables, read.reason, read.unresolved))
+                    continue
+                found += _table_usages(doc, target, table_name(table), column_name)
     return found
 
 
