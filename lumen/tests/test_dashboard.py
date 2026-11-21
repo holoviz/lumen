@@ -1,3 +1,4 @@
+import logging
 import pathlib
 
 import pandas as pd
@@ -238,3 +239,47 @@ def test_dashboard_with_template_params(set_root, document):
     assert dashboard._template.collapsed_sidebar
 
     assert dashboard.to_spec()['config']['template'] == {'type': 'vanilla', 'collapsed_sidebar': True}
+
+
+def test_shared_source_clash_warns_and_keeps_first(set_root, caplog):
+    set_root(str(pathlib.Path(__file__).parent))
+    spec_a = {
+        'sources': {
+            'data': {'type': 'file', 'shared': True, 'tables': {'test': './sources/test.csv'}}
+        },
+    }
+    spec_b = {
+        'sources': {
+            'data': {'type': 'file', 'shared': True, 'tables': {'test': './sources/test2.csv'}}
+        },
+    }
+    state.spec = spec_a
+    state.load_global_sources()
+    first = state.global_sources['data']
+    assert_df_equal(first.get('test'), pd.read_csv(pathlib.Path(__file__).parent / 'sources' / 'test.csv'))
+
+    with caplog.at_level(logging.WARNING, logger='lumen.state'):
+        state.spec = spec_b
+        state.load_global_sources()
+
+    assert state.global_sources['data'] is first
+    assert_df_equal(first.get('test'), pd.read_csv(pathlib.Path(__file__).parent / 'sources' / 'test.csv'))
+    assert "Shared source 'data' was already defined with a different definition" in caplog.text
+
+
+def test_shared_source_identical_definition_reloads_without_warning(set_root, caplog):
+    set_root(str(pathlib.Path(__file__).parent))
+    spec = {
+        'sources': {
+            'data': {'type': 'file', 'shared': True, 'tables': {'test': './sources/test.csv'}}
+        },
+    }
+    state.spec = spec
+    state.load_global_sources()
+    first = state.global_sources['data']
+
+    with caplog.at_level(logging.WARNING, logger='lumen.state'):
+        state.load_global_sources()
+
+    assert "already defined with a different definition" not in caplog.text
+    assert state.global_sources['data'] is not first

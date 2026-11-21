@@ -49,6 +49,7 @@ def make_filesource():
     for source in state.global_sources.values():
         source.clear_cache()
     state.global_sources.clear()
+    state._global_source_hashes.clear()
 
 @pytest.fixture
 def make_variable_filesource():
@@ -68,6 +69,7 @@ def make_variable_filesource():
     for source in state.global_sources.values():
         source.clear_cache()
     state.global_sources.clear()
+    state._global_source_hashes.clear()
     state._variable = None
 
 @pytest.fixture
@@ -126,6 +128,7 @@ def clear_state():
     "Clear the state after the execution of each test"
     yield
     state.global_sources.clear()
+    state._global_source_hashes.clear()
     state.global_filters.clear()
     state._configs.clear()
     state._config = None
