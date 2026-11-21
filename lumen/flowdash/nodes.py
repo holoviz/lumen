@@ -63,6 +63,7 @@ from .checks import (
     check_sql_config, check_table_config, check_view_config, forget_probes,
     pipeline_columns,
 )
+from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
@@ -80,7 +81,10 @@ def _register_port_type(name: str, **options: Any) -> str:
 
 
 SOURCE_TYPE = _register_port_type("lumen.Source", color=SOURCE_COLOR)
-PIPELINE_TYPE = _register_port_type("lumen.Pipeline", color=PIPELINE_COLOR)
+# Its columns come from the schema, so the inspector offers them without fetching rows.
+PIPELINE_TYPE = _register_port_type(
+    "lumen.Pipeline", color=PIPELINE_COLOR, columns=pipeline_columns
+)
 
 SOURCE_ID = "Lumen/source"
 TABLE_ID = "Lumen/table"
@@ -1043,11 +1047,29 @@ class ViewNode(LumenNode):
 
     spec = param.Dict(default={}, doc="""
         The Vega-Lite spec, without data. A width or height it leaves out
-        follows the tile's.""")
+        follows the tile's, and colours it leaves out the dashboard's
+        ``color_scheme`` setting, if it has one.""",
+        metadata={"flowdash": {"widget": "spec", "settings": VEGA_LITE_SETTINGS}})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        settings = getattr(self.editor, "settings", None)
+        if settings is not None and "color_scheme" in settings.param:
+            node = weakref.ref(self)
+
+            def follow(*_events):
+                if (view := node()) is not None:
+                    view._refresh()
+
+            settings.param.watch(follow, "color_scheme")
 
     @param.depends("pipeline", "spec", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
+
+    def _color_scheme(self) -> str | None:
+        scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
+        return scheme if isinstance(scheme, str) and scheme else None
 
     def _resolve(self):
         if self.pipeline is None or not self.spec:
@@ -1059,7 +1081,8 @@ class ViewNode(LumenNode):
         spec = check_chart(self.spec, pipeline_columns(self.pipeline))
         # The rows come through fetch, so the chart shares one query with the pipeline's other readers.
         rows = fetch(self.pipeline, row_ceiling(self.editor))
-        return VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=responsive_spec(spec))
+        spec = themed_spec(responsive_spec(spec), self._color_scheme())
+        return VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=spec)
 
     def _body(self):
         view = self._object
