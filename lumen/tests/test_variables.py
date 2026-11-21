@@ -6,6 +6,7 @@ from panel.widgets import IntSlider, TextInput
 
 from lumen.base import Component
 from lumen.state import state
+from lumen.util import is_ref
 from lumen.variables import (
     Parameter, Variable, Variables, Widget,
 )
@@ -18,6 +19,22 @@ class CustomComponent(Component):
     number = param.Number()
 
     dictionary = param.Dict()
+
+
+def test_is_ref():
+    assert is_ref('$variables.var')
+    assert is_ref('$source.table.field')
+    assert is_ref('value > $variables.threshold')
+    assert not is_ref('$')
+    assert not is_ref('$1')
+    assert not is_ref('price is $5')
+
+
+def test_component_keeps_literal_dollar_values():
+    component = CustomComponent(string='$', dictionary={'a': '$1'})
+
+    assert component.string == '$'
+    assert component.dictionary == {'a': '$1'}
 
 
 def test_variables():

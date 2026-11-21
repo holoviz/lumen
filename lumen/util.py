@@ -38,6 +38,7 @@ param2 = Version(param.__version__) > Version("2.0rc1")
 disallow_refs = {'allow_refs': False} if param2 else {}
 
 VARIABLE_RE = re.compile(r'\$variables\.([a-zA-Z_]\w*)')
+REF_RE = re.compile(r'\$[a-zA-Z_]\w*')
 
 
 class NumpyDumper(yaml.SafeDumper):
@@ -564,10 +565,15 @@ def resolve_module_reference(reference, component_type=None):
 def is_ref(value):
     """
     Whether the value is a reference.
+
+    A reference is either a standalone source reference, e.g. ``$source``
+    or ``$source.table.field``, or any string containing a variable
+    reference, e.g. ``$variables.name``. A lone ``$`` or a literal such as
+    ``$1`` is not a reference.
     """
     if not isinstance(value, str):
         return False
-    return bool(VARIABLE_RE.findall(value)) or value.startswith('$')
+    return bool(VARIABLE_RE.findall(value)) or bool(REF_RE.match(value))
 
 def extract_refs(spec, ref_type=None):
     refs = []
