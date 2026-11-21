@@ -270,6 +270,11 @@ def extract_sql_error_location(
         caret_end = len(carets)
         rel_start = caret_start - prefix_len
         rel_end = caret_end - prefix_len
+        if rel_end - rel_start == 1 and 0 <= rel_start < len(snippet):
+            # DuckDB before 2.0 puts a single caret under the first character of the token.
+            word = re.match(r'"[^"]*"|\w+', snippet[rel_start:])
+            if word:
+                rel_end = rel_start + len(word.group())
         token = snippet[rel_start:rel_end] if 0 <= rel_start <= len(snippet) else ""
 
         if sql is None or probe is None or probe == sql:

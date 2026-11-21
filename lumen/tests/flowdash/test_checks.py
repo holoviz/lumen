@@ -189,3 +189,20 @@ def test_extract_sql_error_location_handles_comments_duplicates_and_truncation()
     assert (direct.line, direct.column, direct.end_column) == (2, 8, 16)
     assert direct.suggestion == "p_year"
     assert "LINE 2:" not in direct
+
+
+def test_extract_sql_error_location_widens_a_single_caret_to_its_token():
+    # DuckDB 1.x marks only the first character of the offending token.
+    sql = "SELECT\n  p_year,\n  amount\nFROM sales\nWHERE p_yaer IS NOT NULL"
+    raw = (
+        'Binder Error: Referenced column "p_yaer" not found in FROM clause!\n'
+        'Candidate bindings: "p_year"\n\n'
+        "LINE 5: WHERE p_yaer IS NOT NULL\n"
+        "              ^"
+    )
+
+    probed = extract_sql_error_location(raw, sql=sql, probe=f"{sql}\nLIMIT 0", dialect="duckdb")
+    direct = extract_sql_error_location(raw)
+
+    assert (probed.line, probed.column, probed.end_column) == (5, 7, 13)
+    assert (direct.line, direct.column, direct.end_column) == (5, 7, 13)
