@@ -1,3 +1,4 @@
+import BrightnessAutoIcon from '@mui/icons-material/BrightnessAutoOutlined'
 import DarkModeIcon from '@mui/icons-material/DarkModeOutlined'
 import GitHubIcon from '@mui/icons-material/GitHub'
 import LightModeIcon from '@mui/icons-material/LightModeOutlined'
@@ -11,7 +12,7 @@ import IconButton from '@mui/material/IconButton'
 import Link from '@mui/material/Link'
 import {useColorScheme} from '@mui/material/styles'
 import Typography from '@mui/material/Typography'
-import {useState} from 'react'
+import {useEffect, useState} from 'react'
 
 import {Logo} from '../components/Logo'
 import {getStarted, GITHUB, nav} from '../content/site'
@@ -120,13 +121,40 @@ export function Header() {
 }
 
 /**
- * The icon is chosen in CSS rather than from `mode`, because `mode` is unknown while the
- * page is prerendered and reading it here would make the first paint disagree with the
- * markup for anyone whose stored preference is dark.
+ * The toggle cycles light -> dark -> system -> light, so a visitor can always
+ * get back to following the operating system. The icon shows the mode the
+ * button switches *to*, as before.
+ *
+ * The icon is chosen in CSS rather than from `mode` while the page is
+ * prerendered, because `mode` is unknown then and reading it here would make
+ * the first paint disagree with the markup for anyone whose stored preference
+ * is dark. Once the page hydrates, the icon follows `mode` instead: the
+ * resolved scheme alone cannot tell "system resolving to dark" from "dark",
+ * so the system state needs its own icon.
  */
+const NEXT_MODE = {light: 'dark', dark: 'system', system: 'light'} as const
+
 function SchemeToggle() {
   const {mode, setMode} = useColorScheme()
-  const next = mode === 'dark' ? 'light' : 'dark'
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+  const next = NEXT_MODE[mode ?? 'system']
+
+  if (mounted) {
+    const Icon = next === 'dark' ? DarkModeIcon : next === 'system' ? BrightnessAutoIcon : LightModeIcon
+    return (
+      <IconButton
+        onClick={() => setMode(next)}
+        aria-label={`Switch to ${next} mode`}
+        size="small"
+        sx={{color: 'text.secondary'}}
+      >
+        <Icon fontSize="small" />
+      </IconButton>
+    )
+  }
 
   return (
     <IconButton
