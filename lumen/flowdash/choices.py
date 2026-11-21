@@ -35,11 +35,22 @@ def pipeline_column_types(pipeline: Any) -> dict[str, str | None] | None:
 
 
 def source_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, list[str]]:
-    """Offer the refs of the sources the host provides for a ``Lumen/source`` node."""
-    from .nodes import host_sources
+    """
+    Offer the refs of the sources the host provides for a ``Lumen/source``
+    node, and the alias it names one by, if it does.
+    """
+    from panel_flowdash import dashboard_context
+
+    from .nodes import SOURCE_ALIASES_KEY, host_sources
 
     sources = host_sources()
-    return {"ref": sorted(sources)} if sources else {}
+    if not sources:
+        return {}
+    ref = config.get("ref")
+    target = (dashboard_context().get(SOURCE_ALIASES_KEY) or {}).get(ref)
+    if ref and ref not in sources and target in sources:
+        return {"ref": {**{r: r for r in sorted(sources)}, f"{ref} (old name of {target})": ref}}
+    return {"ref": sorted(sources)}
 
 
 def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, list[str]]:

@@ -30,7 +30,9 @@ Lumen YAML dashboards are served without `--flowdash`, as before. The Lumen AI o
 
 ## Sources
 
-A dashboard cannot open connections of its own. The app hands the editor the data you served, and a **Lumen Source** node names it by `ref`: the first source is `data`, further ones `data_2`, `data_3` and so on. All CSV, Parquet and JSON files go into one DuckDB source, so `lumen serve a.csv b.parquet --flowdash` gives one source `data` with two tables.
+A dashboard cannot open connections of its own. The app hands the editor the data you served, and a **Lumen Source** node names it by `ref`. A ref comes from the data's name, so it stays the same when you add, remove or reorder what you serve: a database file or connection is named by its file or database name (`shop.db` gives `shop`), and all CSV, Parquet and JSON files go into one DuckDB source named by the file's stem (`lumen serve turbines.csv --flowdash` gives `turbines`) or, with several files, `files` (`lumen serve a.csv b.parquet --flowdash` gives one source `files` with two tables). Refs that would clash get `_2`, `_3` and so on.
+
+Dashboards saved before refs were named this way keep working: a ref that names no source falls back to the old positional names, `data` for the first source and `data_2`, `data_3` and so on for the next ones, in the order `lumen serve` reads them (database files and connections first, then the CSV, Parquet and JSON files). `files` and each file's stem also name the source holding the files. When a source's own ref equals one of these names, the ref wins.
 
 ## Nodes
 
