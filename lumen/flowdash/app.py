@@ -57,30 +57,46 @@ def file_stems(data: Sequence[str | os.PathLike | Source]) -> list[str]:
 def _file_names(data: Sequence[str | os.PathLike | Source]) -> dict[str, str]:
     """
     The table names of the data files in ``data`` by their path: the file
-    name, so a table is named the same from any directory, with ``_2``,
-    ``_3`` and so on for files of one name, in the order of their resolved
-    paths.
+    name, so a table is named the same from any directory. A file listed
+    twice, under any spelling, is read once. When files of one name come
+    from different directories none keeps the bare name: each is prefixed
+    with as many of its parent directories as tell them apart (``x_a.csv``
+    and ``y_a.csv`` for ``x/a.csv`` and ``y/a.csv``), never taking another
+    file's name, so a query saved against one of them fails instead of
+    reading the other.
     """
-    found: dict[str, tuple[str, str]] = {}
+    found: dict[str, tuple[str, tuple[str, ...], str]] = {}
     for item in data:
         if isinstance(item, Source):
             continue
         text = str(item)
         remote = "://" in text
-        path = PurePosixPath(urlsplit(text).path) if remote else Path(text)
+        path = PurePosixPath(urlsplit(text).path) if remote else Path(text).resolve()
         if path.name.lower().endswith(_DATA_FILES):
-            found[text] = (path.name, text if remote else str(Path(text).resolve()))
+            key = text if remote else str(path)
+            found[text] = (path.name, tuple(part for part in path.parent.parts if _slug(part)), key)
+    files: dict[str, tuple[str, tuple[str, ...]]] = {key: (name, parents) for name, parents, key in found.values()}
+    groups: dict[str, list[str]] = {}
+    for key, (name, _) in sorted(files.items()):
+        groups.setdefault(name.lower(), []).append(key)
+    taken = set(groups)
     names: dict[str, str] = {}
-    taken: set[str] = set()
-    for text, (name, _) in sorted(found.items(), key=lambda item: (item[1][0].lower(), item[1][1])):
-        stem, _, suffix = name.rpartition(".")
-        candidate, n = name, 1
-        while candidate.lower() in taken:
-            n += 1
-            candidate = f"{stem}_{n}.{suffix}"
-        names[text] = candidate
-        taken.add(candidate.lower())
-    return {text: names[text] for text in found}
+    for keys in groups.values():
+        if len(keys) == 1:
+            names[keys[0]] = files[keys[0]][0]
+            continue
+        for depth in range(1, max(len(files[key][1]) for key in keys) + 2):
+            qualified = {
+                key: "_".join([*files[key][1][-depth:], files[key][0]]) if depth <= len(files[key][1])
+                else "_".join([*files[key][1], str(i), files[key][0]])
+                for i, key in enumerate(keys)
+            }
+            lowered = [name.lower() for name in qualified.values()]
+            if len(set(lowered)) == len(lowered) and not taken & set(lowered):
+                break
+        names.update(qualified)
+        taken.update(name.lower() for name in qualified.values())
+    return {text: names[key] for text, (_, _, key) in found.items()}
 
 
 def _names(source: Source, stems: Sequence[str]) -> tuple[str, str, list[str]]:
