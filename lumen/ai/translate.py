@@ -134,9 +134,10 @@ def _takes_list(annotation: Any) -> bool:
 class UnwrappedValues(BaseModel):
     """
     A response model that takes a field's value however some models wrap
-    it: a one-item list where one value is expected, or a content block
-    such as {"type": "text", "text": value}. Without this the same wrapped
-    reply fails validation on every retry.
+    it: a one-item list where one value is expected, a content block such
+    as {"type": "text", "text": value}, or {value: value}. A list of several
+    values, or none, where one is expected fails with a message asking for
+    one. Without this the same wrapped reply fails validation on every retry.
     """
 
     @model_validator(mode="before")
@@ -149,7 +150,13 @@ class UnwrappedValues(BaseModel):
             field = cls.model_fields.get(key)
             if isinstance(value, dict) and len(value) == 2 and "type" in value and ({"value", "text"} & set(value)):
                 value = value.get("value", value.get("text"))
-            if field is not None and isinstance(value, list) and len(value) == 1 and not _takes_list(field.annotation):
+            elif isinstance(value, dict) and len(value) == 1 and next(iter(value.items()))[0] == next(iter(value.values())):
+                # {"polygons": "polygons"}
+                value = next(iter(value))
+            if field is not None and isinstance(value, list) and not _takes_list(field.annotation):
+                if len(value) != 1:
+                    # Often every allowed option at once; say so, or the retry repeats it
+                    raise ValueError(f"{key!r} takes one value, not a list of {len(value)}; choose the one that fits.")
                 value = value[0]
             unwrapped[key] = value
         return unwrapped

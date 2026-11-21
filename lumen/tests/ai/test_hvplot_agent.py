@@ -10,7 +10,7 @@ import panel as pn
 import param
 import pytest
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.translate import param_to_pydantic
@@ -342,6 +342,7 @@ def spec_model():
 @pytest.mark.parametrize("kind, z", [
     (["polygons"], ["v"]),
     ({"type": "text", "text": "polygons"}, {"type": "enum", "value": "v"}),
+    ({"polygons": "polygons"}, {"v": "v"}),
 ])
 def test_a_wrapped_field_value_is_unwrapped(spec_model, kind, z):
     spec = spec_model.model_validate({"chain_of_thought": "", "by": [], "groupby": [], "kind": kind, "z": z})
@@ -351,3 +352,9 @@ def test_a_wrapped_field_value_is_unwrapped(spec_model, kind, z):
 def test_a_list_field_keeps_its_list(spec_model):
     spec = spec_model.model_validate({"chain_of_thought": "", "by": ["state"], "groupby": [], "kind": "bar"})
     assert spec.by == ["state"]
+
+
+@pytest.mark.parametrize("kind", [["bar", "line", "scatter"], []])
+def test_several_values_or_none_ask_for_one(spec_model, kind):
+    with pytest.raises(ValidationError, match=f"'kind' takes one value, not a list of {len(kind)}"):
+        spec_model.model_validate({"chain_of_thought": "", "by": [], "groupby": [], "kind": kind})
