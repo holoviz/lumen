@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t47a4d175
+      - id: t478e4713
         actor: user
-        at: '2026-11-21T18:38:05Z'
+        at: '2026-11-21T19:06:03Z'
         summary: Added data.
-      - id: te3c3a895
+      - id: t8944ac0a
         actor: agent
-        at: '2026-11-21T18:38:09Z'
-        run: run-03f28f37e08c
+        at: '2026-11-21T19:06:04Z'
+        run: run-2e2ac2dbb8b0
         summary: Added customer_with_most_paid_orders. Connected data to customer_with_most_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: t47a4d175
+        origin: t478e4713
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       customer_with_most_paid_orders:
         component: Lumen/sql
-        origin: te3c3a895
+        origin: t8944ac0a
         config:
           sql: |-
             SELECT

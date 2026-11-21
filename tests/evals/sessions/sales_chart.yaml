@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tcf720981
+      - id: td5e0ac8f
         actor: user
-        at: '2026-11-21T18:56:24Z'
+        at: '2026-11-21T19:06:03Z'
         summary: Added data.
-      - id: tbde8350f
+      - id: t2a7b5b4e
         actor: agent
-        at: '2026-11-21T18:56:27Z'
-        run: run-bd08da4f3a2c
+        at: '2026-11-21T19:06:03Z'
+        run: run-6a0fa8ca2b31
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
-        origin: tcf720981
+        origin: td5e0ac8f
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: tbde8350f
+        origin: t2a7b5b4e
         config:
           sql: |-
             SELECT
@@ -73,30 +73,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tcf720981
+      - id: td5e0ac8f
         actor: user
-        at: '2026-11-21T18:56:24Z'
+        at: '2026-11-21T19:06:03Z'
         summary: Added data.
-      - id: tbde8350f
+      - id: t2a7b5b4e
         actor: agent
-        at: '2026-11-21T18:56:27Z'
-        run: run-bd08da4f3a2c
+        at: '2026-11-21T19:06:03Z'
+        run: run-6a0fa8ca2b31
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: td93ba959
+      - id: t5c5e59b8
         actor: agent
-        at: '2026-11-21T18:56:30Z'
-        run: run-8e2387e0e653
+        at: '2026-11-21T19:06:03Z'
+        run: run-609d57f6d592
         summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: tcf720981
+        origin: td5e0ac8f
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: tbde8350f
+        origin: t2a7b5b4e
         config:
           sql: |-
             SELECT
@@ -111,7 +111,7 @@ turns:
         position: [380.0, 0.0]
       total_amount_by_category_chart:
         component: Lumen/view
-        origin: td93ba959
+        origin: t5c5e59b8
         config:
           spec:
             mark: bar
@@ -124,7 +124,7 @@ turns:
                 field: total_amount
                 type: quantitative
                 title: Total amount
-        position: [760.0, 11.0]
+        position: [760.0, 22.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
