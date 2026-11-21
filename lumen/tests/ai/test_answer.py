@@ -1208,7 +1208,7 @@ def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
     source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
     answer = Answer(source=source, pipeline=Pipeline(source=source, table="climate"))
     with pytest.raises(ValueError, match="joins xarray data"):
-        answer.code
+        _ = answer.code
 
 
 async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
@@ -1226,7 +1226,7 @@ async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
     follow_up = await conversation.aask("Only the warm ones")
     assert follow_up.source is not source
     with pytest.raises(ValueError, match="joins xarray data"):
-        follow_up.code
+        _ = follow_up.code
 
 
 class FollowUpLLM(MockLLM):
@@ -1875,7 +1875,7 @@ def test_a_redefined_class_is_another_cache_key():
 
     first = Total
 
-    class Total(BaseModel):  # noqa: F811
+    class Total(BaseModel):
         total: float
         note: str = ""
 
@@ -2092,7 +2092,7 @@ async def test_a_question_typed_into_the_chat_widget_joins_the_chat(llm, frame_s
     await async_wait_until(lambda: widget.objects[-1].object is answer.__panel__(), timeout=10000)
 
     assert answer.value == "The total value is 38."
-    assert [message.object for message in widget.objects][0] == "Total value?"
+    assert next(message.object for message in widget.objects) == "Total value?"
     assert conversation._messages[-1] == {"role": "assistant", "content": "The total value is 38."}
 
 
@@ -2608,3 +2608,52 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
+
+def _named_chat_llm_setup(actor_names):
+    PlanModel = make_plan_model(list(actor_names), [])
+    (Step,) = get_args(PlanModel.__annotations__["steps"])
+    plan = PlanModel(
+        chain_of_thought="x",
+        title="t",
+        steps=[Step(actor=actor_names[0], instruction="Explain", title="Explain")],
+    )
+
+    class Named(MockLLM):
+        def __init__(self, name, **params):
+            super().__init__(**params)
+            self.who = name
+
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if response_model is not None and "Plan" in response_model.__name__:
+                return plan
+            return f"answered by {self.who}"
+
+    return Named
+
+
+async def test_aask_reuses_agents_across_questions_with_per_question_llm(frame_source):
+    """The same agent instances can answer with different LLMs per question."""
+    Named = _named_chat_llm_setup(["ChatAgent", "SQLAgent"])
+    agents = [ChatAgent(), SQLAgent()]
+    assert (await aask(frame_source, "How many rows?", llm=Named("A"), agents=agents)).value == "answered by A"
+    assert (await aask(frame_source, "How many rows?", llm=Named("B"), agents=agents)).value == "answered by B"
+
+
+async def test_aask_reuses_agents_concurrently_with_per_question_llm(frame_source):
+    """Concurrent questions using the same agent instances keep their own LLMs."""
+    Named = _named_chat_llm_setup(["ChatAgent", "SQLAgent"])
+    agents = [ChatAgent(), SQLAgent()]
+    answers = await asyncio.gather(
+        aask(frame_source, "How many rows?", llm=Named("A"), agents=agents),
+        aask(frame_source, "How many rows?", llm=Named("B"), agents=agents),
+    )
+    assert {answer.value for answer in answers} == {"answered by A", "answered by B"}
+
+
+async def test_aask_respects_agent_explicit_llm(frame_source):
+    """An agent given an LLM on purpose keeps it across questions."""
+    Named = _named_chat_llm_setup(["ChatAgent"])
+    pinned = Named("pinned")
+    agents = [ChatAgent(llm=pinned)]
+    assert (await aask(frame_source, "How many rows?", llm=Named("A"), agents=agents)).value == "answered by pinned"
+    assert (await aask(frame_source, "How many rows?", llm=Named("B"), agents=agents)).value == "answered by pinned"

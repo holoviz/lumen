@@ -1516,11 +1516,13 @@ class UI(Viewer):
             self._error_alert.visible = False
 
         # Update the coordinator's LLM reference
+        old_llm = self._coordinator.llm
         self._coordinator.llm = new_llm
 
-        # Update all agent LLMs
+        # Update coordinator-managed agent LLMs (preserve explicitly pinned ones)
         for agent in self._coordinator.agents:
-            agent.llm = new_llm
+            if agent.llm is old_llm or agent.llm is None:
+                agent.llm = new_llm
 
         # Initialize the new LLM asynchronously
         param.parameterized.async_executor(self._initialize_new_llm)
