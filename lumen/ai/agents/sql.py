@@ -42,7 +42,7 @@ from ..sql_review import TableFacts, geographic_crs, review_sql
 from ..table_stats import get_stats_store
 from ..tool_trace import ModelCall, ToolCall
 from ..tools import FunctionTool
-from ..tools.geocode import geocode_tools
+from ..tools.geocode import geocode_places, geocode_tools
 from ..tools.gridded import gridded_sql_tools
 from ..utils import (
     PROFILE_SAMPLE_ROWS, clean_sql, describe_data, format_error, get_frame,
@@ -1390,6 +1390,8 @@ class SQLAgent(BaseLumenAgent):
             metaset = context.get("metaset")
             tool_list = self._sql_tools(sources, metaset)
             checked: dict[str, t.Any] = {}
+            # An LLM that cannot call the geocode tool gets the places looked up first
+            geocoded = await geocode_places(self.llm, messages) if sharing.geocode and not self.llm._supports_tools else ""
             with self.llm.trace() as events:
                 try:
                     output = await self._invoke_prompt(
@@ -1400,7 +1402,8 @@ class SQLAgent(BaseLumenAgent):
                         dialect=dialect,
                         has_geometry=has_geometry(metaset, sources),
                         gridded=is_gridded(sources),
-                        geocode=sharing.geocode,
+                        geocode=sharing.geocode and self.llm._supports_tools,
+                        geocoded_places=geocoded,
                         step_number=1,
                         is_final_step=True,
                         current_step="",

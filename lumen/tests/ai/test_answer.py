@@ -2670,3 +2670,15 @@ async def test_an_answer_names_the_places_it_geocoded(nominatim, frame_source):
     answer = await aask(frame_source, "Where is Delhi?", llm=Geocoding(), agents=[ChatAgent()])
     assert answer.geocoded == ["Delhi"]
     assert "Geocoded 'Delhi' with OpenStreetMap Nominatim, © OpenStreetMap contributors" in answer._usage_note
+
+
+async def test_places_named_in_a_question_are_looked_up_for_an_llm_without_tools(nominatim):
+    from lumen.ai.tools.geocode import PlaceNames, geocode_places
+
+    class Picks(MockLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            assert response_model is PlaceNames and "within 50 km of Delhi" in messages[-1]["content"]
+            return PlaceNames(places=["Delhi"])
+
+    found = await geocode_places(Picks(), [{"role": "user", "content": "How many are within 50 km of Delhi?"}])
+    assert "lon 77.209000, lat 28.613900" in found and nominatim == ["Delhi"]

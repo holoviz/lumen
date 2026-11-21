@@ -92,6 +92,12 @@ Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as co
 ## Place names
 Call the **geocode** tool for the coordinates or bounding box of any named place (a city, region or landmark) the question mentions, and use what it returns; do not write coordinates from memory.
 {%- endif %}
+{%- if geocoded_places is defined and geocoded_places %}
+
+## Place names
+The places the question names, looked up for you; use these coordinates, not ones from memory:
+{{ geocoded_places }}
+{%- endif %}
 {%- endblock -%}
 
 {%- block context -%}

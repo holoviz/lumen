@@ -5,13 +5,20 @@ unless lumen.ai.configure(geocode=True) or LUMEN_AI_GEOCODE=1.
 """
 from __future__ import annotations
 
+import asyncio
+
 from contextvars import ContextVar
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 from ... import __version__
 from ..sharing import sharing
 from .base import FunctionTool
+
+if TYPE_CHECKING:
+    from ..llm import Llm, Message
 
 #: The place names a question looked up, so its answer can say what was sent
 GEOCODED: ContextVar[list[str] | None] = ContextVar("geocoded", default=None)
@@ -60,3 +67,23 @@ def geocode(place: str) -> str:
 def geocode_tools(context: dict[str, Any]) -> list[FunctionTool] | None:
     """An ``llm_tools`` entry: the geocoding tool, once the user has turned geocoding on."""
     return [FunctionTool(geocode)] if sharing.geocode else None
+
+
+class PlaceNames(BaseModel):
+
+    places: list[str] = Field(description="Each named place in the question (city, region, landmark), as written; empty when it names none.")
+
+
+async def geocode_places(llm: Llm, messages: list[Message]) -> str:
+    """
+    For an LLM that cannot call the geocode tool: the places the latest
+    question names, picked out by the LLM and looked up before it writes
+    SQL. Empty when the question names none.
+    """
+    question = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    found = await llm.invoke(
+        messages=[{"role": "user", "content": f"Which named places does this question mention?\n\n{question}"}],
+        response_model=PlaceNames,
+    )
+    # Nominatim calls block and wait out the rate limit, so off the event loop
+    return "\n".join([await asyncio.to_thread(geocode, place) for place in found.places])
