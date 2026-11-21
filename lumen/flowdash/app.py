@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from panel_flowdash.agent.models import parse_models
 from panel_flowdash.app import FlowDashApp
 from panel_flowdash.dashboard_store import DashboardStore
 
@@ -38,7 +39,7 @@ def build_routes(
     data: Sequence[str | os.PathLike | Source] = (),
     *,
     db_path: str | os.PathLike | None = None,
-    agent_model: str | None = None,
+    agent_model: str | Sequence[str] | None = None,
     title: str = "Lumen",
     **params: Any,
 ) -> dict[str, Any]:
@@ -56,17 +57,24 @@ def build_routes(
         the working directory by default.
     agent_model
         A pydantic-ai model, e.g. ``"openai:gpt-6-luna"``, for Lumen's
-        FlowDash agent. Without it the app has no agent.
+        FlowDash agent, or several the person using the agent may pick
+        from, each written as ``id`` or ``id=label``. The first is the
+        default. Without it the app has no agent.
     title
         The app's title.
     **params
         Further ``FlowDashApp`` parameters.
     """
     sources = source_refs(resolve_sources(data))
-    if agent_model:
+    models = parse_models(agent_model, source="agent_model")
+    if models:
         from ..agent import create_agent
 
-        agent: Any = create_agent(agent_model)
+        default = models[0]["id"]
+        # With a choice every request names its model, so an unusable default must not fail here.
+        agent: Any = create_agent(default, **({"defer_model_check": True} if len(models) > 1 else {}))
+        params.setdefault("agent_model", default)
+        params.setdefault("agent_models", models if len(models) > 1 else [])
     else:
         agent = False
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
