@@ -641,7 +641,7 @@ def test_pipeline_dataframe_backend_rejects_unknown():
 
 def test_describe_data_accepts_any_backend(constructor):
     """describe_data converts internally so callers do not have to."""
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import describe_data_sync
     summary = describe_data_sync(constructor({"i": [0, 1, 2], "s": ["a", "b", "c"]}))
     assert "data_shape" in summary
@@ -685,7 +685,7 @@ def test_pipeline_collects_a_lazy_frame_for_its_own_backend():
 def test_describe_data_samples_before_converting():
     """The summary reads 5000 rows, so only 5000 rows may reach pandas."""
     pl = pytest.importorskip("polars")
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
 
     converted = []
@@ -705,7 +705,7 @@ def test_describe_data_samples_before_converting():
 
 def test_describe_data_reports_true_shape_when_sampled(constructor):
     """Sampling must not shrink the row count the summary reports."""
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
 
     rows = PROFILE_SAMPLE_ROWS + 1000
@@ -719,7 +719,7 @@ def test_describe_data_reports_true_shape_when_sampled(constructor):
 
 def test_describe_data_matches_pandas_across_backends(constructor):
     """Below the sampling threshold every backend describes the same frame."""
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import describe_data_sync
 
     data = {
@@ -736,7 +736,7 @@ def test_describe_data_matches_pandas_across_backends(constructor):
 
 async def test_get_frame_skips_the_pandas_conversion(constructor):
     """The summary callers take the source's own frame; everyone else pandas."""
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import get_data, get_frame
 
     frame = constructor({"i": [0, 1, 2]})
@@ -812,7 +812,7 @@ async def test_sql_summary_reads_the_source_frame_unconverted(backend):
     """
     pytest.importorskip("duckdb")
     pytest.importorskip(backend)
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import describe_data_sync, get_frame
     from lumen.sources.duckdb import DuckDBSource
 
@@ -841,7 +841,7 @@ async def test_empty_result_is_detectable_on_any_backend(backend):
     pytest.importorskip("duckdb")
     if backend is not None:
         pytest.importorskip(backend)
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import get_frame
     from lumen.sources.duckdb import DuckDBSource
 
@@ -863,7 +863,7 @@ def test_describe_data_keeps_decimal_and_date_numeric():
     """
     pl = pytest.importorskip("polars")
     pa = pytest.importorskip("pyarrow")
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import describe_data_sync
 
     rows = 200
@@ -916,7 +916,7 @@ def test_describe_data_keeps_decimal_and_date_numeric():
 def test_describe_data_summarises_a_dask_frame():
     """A dask frame answers shape with a Delayed, so it must be computed."""
     dd = pytest.importorskip("dask.dataframe")
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
+    pytest.importorskip("lumen.ai.utils", reason="lumen.ai needs its AI and SQL dependencies")
     from lumen.ai.utils import PROFILE_SAMPLE_ROWS, describe_data_sync
 
     rows = PROFILE_SAMPLE_ROWS + 1000

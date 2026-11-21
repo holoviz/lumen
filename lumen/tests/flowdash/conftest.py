@@ -1,4 +1,11 @@
+from importlib.util import find_spec
+from pathlib import Path
+
 import pytest
+
+if find_spec("panel_flowdash") is None:
+    # panel-flowdash needs Python 3.12; test_import checks Lumen's metadata without it.
+    collect_ignore = [p.name for p in Path(__file__).parent.glob("test_*.py") if p.name != "test_import.py"]
 
 TABLES = {"sales": "SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)"}
 

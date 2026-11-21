@@ -27,8 +27,9 @@ requirements:
     {% endfor %}
   run:
     - python {{ project['requires-python'] }}
-    # conda has no pip extras, so `sqlglot[c] >=26` becomes `sqlglot >=26`
+    # conda has no pip extras or markers, so `sqlglot[c] >=26` becomes `sqlglot >=26`
     {% for dep in project.get('dependencies', []) %}
+    {% set dep = dep.split(';')[0].strip() %}
     - {{ dep.split('[')[0] ~ dep.split(']')[-1] if '[' in dep else dep }}
     {% endfor %}
 

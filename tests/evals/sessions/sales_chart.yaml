@@ -16,32 +16,47 @@ turns:
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
+    turns:
+      - id: tdeb06f46
+        actor: user
+        at: '2026-11-21T18:35:30Z'
+        summary: Added data.
+      - id: td632f3dc
+        actor: agent
+        at: '2026-11-21T18:35:33Z'
+        run: run-b30961a449dc
+        summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
+        origin: tdeb06f46
         config:
           ref: data
-        position: [0, 0]
+        position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
+        origin: td632f3dc
         config:
           sql: |-
             SELECT
               "category",
               SUM("amount") AS "total_amount"
-            FROM "sales"
+            FROM sales
             WHERE
-              NOT "category" IS NULL
-              AND TRIM("category") <> ''
-              AND NOT "amount" IS NULL
-              AND "amount" <> -9999
+              NOT "category" IS NULL AND TRIM("category") <> '' AND NOT "amount" IS NULL
             GROUP BY
               "category"
           table: total_amount_by_category
-        position: [350, 0]
+        position: [380.0, 0.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
+    layout:
+      tiles:
+        - node: data
+          visible: false
+        - node: total_amount_by_category
+          visible: false
 - question: Show that as a bar chart.
   nodes:
   - total_amount_by_category_chart
@@ -57,31 +72,46 @@ turns:
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
+    turns:
+      - id: tdeb06f46
+        actor: user
+        at: '2026-11-21T18:35:30Z'
+        summary: Added data.
+      - id: td632f3dc
+        actor: agent
+        at: '2026-11-21T18:35:33Z'
+        run: run-b30961a449dc
+        summary: Added total_amount_by_category. Connected data to total_amount_by_category.
+      - id: t9ec79d80
+        actor: agent
+        at: '2026-11-21T18:35:35Z'
+        run: run-70bcc0a8c556
+        summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
+        origin: tdeb06f46
         config:
           ref: data
-        position: [0, 0]
+        position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
+        origin: td632f3dc
         config:
           sql: |-
             SELECT
               "category",
               SUM("amount") AS "total_amount"
-            FROM "sales"
+            FROM sales
             WHERE
-              NOT "category" IS NULL
-              AND TRIM("category") <> ''
-              AND NOT "amount" IS NULL
-              AND "amount" <> -9999
+              NOT "category" IS NULL AND TRIM("category") <> '' AND NOT "amount" IS NULL
             GROUP BY
               "category"
           table: total_amount_by_category
-        position: [350, 0]
+        position: [380.0, 0.0]
       total_amount_by_category_chart:
         component: Lumen/view
+        origin: t9ec79d80
         config:
           spec:
             mark: bar
@@ -94,9 +124,17 @@ turns:
                 field: total_amount
                 type: quantitative
                 title: Total amount
-        position: [700, 0]
+        position: [760.0, 22.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
       - from: total_amount_by_category.pipeline
         to: total_amount_by_category_chart.pipeline
+    layout:
+      tiles:
+        - node: total_amount_by_category_chart
+          width: 100.0
+        - node: data
+          visible: false
+        - node: total_amount_by_category
+          visible: false
