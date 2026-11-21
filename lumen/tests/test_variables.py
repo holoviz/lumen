@@ -20,6 +20,22 @@ class CustomComponent(Component):
     dictionary = param.Dict()
 
 
+def test_is_ref():
+    from lumen.util import is_ref
+
+    assert is_ref('$variables.var')
+    assert is_ref('$source.table.field')
+    assert not is_ref('$')
+    assert not is_ref('$1')
+
+
+def test_component_keeps_literal_dollar_values():
+    component = CustomComponent(string='$', dictionary={'a': '$1'})
+
+    assert component.string == '$'
+    assert component.dictionary == {'a': '$1'}
+
+
 def test_variables():
     vars = Variables.from_spec({
         'str'  : 'a',
