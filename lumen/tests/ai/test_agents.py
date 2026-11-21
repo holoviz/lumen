@@ -220,6 +220,29 @@ async def test_sql_agent(llm, duckdb_source, test_messages):
     assert set(out_context) == {"data", "pipeline", "sql", "table", "source"}
 
 
+async def test_sql_agent_sees_table_uploaded_after_plan_started(llm, test_messages):
+    """A table uploaded after the plan started is in context sources but
+    missing from the metaset catalog built earlier in the plan; the agent
+    must still be able to query it (lumen #1286)."""
+    source = DuckDBSource(tables={
+        "original": "SELECT 1 AS a",
+        "uploaded": "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(id, label)",
+    })
+    # Metaset built when the plan started, before the upload.
+    metaset = await get_metaset([source], ["original"])
+    assert list(metaset.catalog) == [f"{source.name}{SOURCE_TABLE_SEPARATOR}original"]
+    context = {"source": source, "sources": [source], "metaset": metaset}
+    model = make_sql_model([(source.name, "original"), (source.name, "uploaded")])
+    llm.set_responses([
+        model(query="SELECT id FROM uploaded", table_slug="uploaded_result", tables=["uploaded"]),
+    ])
+    out, _ = await SQLAgent(llm=llm).respond(test_messages, context)
+
+    assert len(out) == 1
+    assert isinstance(out[0], SQLEditor)
+    assert out[0].component.data["id"].tolist() == [1, 2]
+
+
 def test_sql_agent_same_source_selection_keeps_all_join_tables():
     source = DuckDBSource(tables={"customers": "SELECT 1", "orders": "SELECT 2"})
     agent = SQLAgent()
