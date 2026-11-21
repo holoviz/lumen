@@ -13,7 +13,7 @@ resolved.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -99,6 +99,21 @@ def _spec_fields(spec: Any) -> set[str]:
     return fields
 
 
+def spec_fields(spec: Any) -> set[str]:
+    """The columns a view spec reads: every string under a ``field`` key, at any depth."""
+    return _spec_fields(spec)
+
+
+def _view_fields(component: Any) -> Callable[[Any], set[str]] | None:
+    """How the view node of ``component`` reads columns from its spec, or None if it is no view node."""
+    from .nodes import COMPONENTS, LumenViewNode
+
+    cls = COMPONENTS.get(component) if isinstance(component, str) else None
+    if isinstance(cls, type) and issubclass(cls, LumenViewNode):
+        return cls.spec_fields
+    return None
+
+
 def _pipeline_readers(doc: Mapping[str, Any], node: str) -> list[str]:
     """The filter, data and view nodes fed by ``node``'s pipeline, through filter nodes."""
     nodes = doc.get("nodes") or {}
@@ -110,7 +125,7 @@ def _pipeline_readers(doc: Mapping[str, Any], node: str) -> list[str]:
             if source != current or target in found:
                 continue
             component = (nodes.get(target) or {}).get("component")
-            if component in (FILTER_ID, DATA_ID, VIEW_ID):
+            if component in (FILTER_ID, DATA_ID) or _view_fields(component) is not None:
                 found.append(target)
                 if component == FILTER_ID:
                     queue.append(target)
@@ -125,8 +140,8 @@ def _reader_fields(doc: Mapping[str, Any], node: str) -> dict[str, set[str]]:
         component = nodes[reader].get("component")
         if component == FILTER_ID and config.get("field"):
             fields[reader] = {config["field"]}
-        elif component == VIEW_ID:
-            fields[reader] = _spec_fields(config.get("spec") or {})
+        elif (read := _view_fields(component)) is not None:
+            fields[reader] = read(config.get("spec") or {})
     return fields
 
 
