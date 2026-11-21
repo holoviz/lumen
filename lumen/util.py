@@ -565,6 +565,11 @@ def resolve_module_reference(reference, component_type=None):
 def is_ref(value):
     """
     Whether the value is a reference.
+
+    A reference is either a standalone source reference, e.g. ``$source``
+    or ``$source.table.field``, or any string containing a variable
+    reference, e.g. ``$variables.name``. A lone ``$`` or a literal such as
+    ``$1`` is not a reference.
     """
     if not isinstance(value, str):
         return False
