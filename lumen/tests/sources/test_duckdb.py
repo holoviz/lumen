@@ -2018,3 +2018,16 @@ def test_describe_survives_a_round_trip_through_the_spec(described_source):
         metadata = restored.get_metadata("orders")
     assert metadata["description"] == "Mine"
     assert metadata["columns"]["amount"]["description"] == "Order value in EUR"
+
+
+@pytest.mark.skipif(gpd is None, reason="geopandas is not installed")
+def test_an_ephemeral_source_keeps_its_shapes_in_a_csv_spec():
+    import yaml
+
+    from lumen.config import config
+    from lumen.sources.base import Source
+    regions = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Polygon([(10, 40), (12, 40), (12, 42)])], crs="EPSG:4326")
+    with config.param.update(serializer="csv"):
+        spec = DuckDBSource.from_df({"regions": regions}).to_spec()
+    back = Source.from_spec(yaml.safe_load(yaml.dump(spec))).get("regions")
+    assert str(back.crs) == "EPSG:4326" and back.geometry.iloc[0].equals(regions.geometry.iloc[0])
