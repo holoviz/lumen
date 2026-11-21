@@ -17,38 +17,36 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taecfc1a3
+      - id: t4869e67d
         actor: user
-        at: '2026-11-21T18:37:57Z'
+        at: '2026-11-21T22:58:05Z'
         summary: Added data.
-      - id: tbb52bd53
+      - id: t071a5cc2
         actor: agent
-        at: '2026-11-21T18:38:01Z'
-        run: run-68ca143acd5b
+        at: '2026-11-21T22:58:10Z'
+        run: run-214c01cf2a94
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taecfc1a3
+        origin: t4869e67d
         config:
           ref: data
         position: [0.0, 22.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tbb52bd53
+        origin: t071a5cc2
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
+              SUM(o."amount") AS total_paid_order_amount
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid'
+              o."status" = 'paid' AND TRIM(c."region") <> ''
             GROUP BY
-              c."region"
-            ORDER BY
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
@@ -77,43 +75,41 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taecfc1a3
+      - id: t4869e67d
         actor: user
-        at: '2026-11-21T18:37:57Z'
+        at: '2026-11-21T22:58:05Z'
         summary: Added data.
-      - id: tbb52bd53
+      - id: t071a5cc2
         actor: agent
-        at: '2026-11-21T18:38:01Z'
-        run: run-68ca143acd5b
+        at: '2026-11-21T22:58:10Z'
+        run: run-214c01cf2a94
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: t06b04409
+      - id: t08c8c486
         actor: agent
-        at: '2026-11-21T18:38:04Z'
-        run: run-4411b8f08905
+        at: '2026-11-21T22:58:12Z'
+        run: run-610dc2db84db
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taecfc1a3
+        origin: t4869e67d
         config:
           ref: data
         position: [0.0, 22.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tbb52bd53
+        origin: t071a5cc2
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
+              SUM(o."amount") AS total_paid_order_amount
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND c."region" = 'west'
+              o."status" = 'paid' AND TRIM(c."region") <> '' AND c."region" = 'west'
             GROUP BY
-              c."region"
-            ORDER BY
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]

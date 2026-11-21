@@ -3,7 +3,7 @@ fixture: commerce
 turns:
 - question: Which customer has the most paid orders? Show only that customer and the count.
   nodes:
-  - customer_with_most_paid_orders
+  - top_customer_paid_orders
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t47a4d175
+      - id: tf0966e58
         actor: user
-        at: '2026-11-21T18:38:05Z'
+        at: '2026-11-21T22:56:34Z'
         summary: Added data.
-      - id: te3c3a895
+      - id: t723e0d02
         actor: agent
-        at: '2026-11-21T18:38:09Z'
-        run: run-03f28f37e08c
-        summary: Added customer_with_most_paid_orders. Connected data to customer_with_most_paid_orders.
+        at: '2026-11-21T22:56:36Z'
+        run: run-b4d59c0b35bb
+        summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: t47a4d175
+        origin: tf0966e58
         config:
           ref: data
         position: [0.0, 22.0]
-      customer_with_most_paid_orders:
+      top_customer_paid_orders:
         component: Lumen/sql
-        origin: te3c3a895
+        origin: t723e0d02
         config:
           sql: |-
             SELECT
@@ -51,14 +51,14 @@ turns:
             ORDER BY
               paid_order_count DESC
             LIMIT 1
-          table: customer_with_most_paid_orders
+          table: top_customer_paid_orders
         position: [380.0, 0.0]
     edges:
       - from: data.source
-        to: customer_with_most_paid_orders.source
+        to: top_customer_paid_orders.source
     layout:
       tiles:
         - node: data
           visible: false
-        - node: customer_with_most_paid_orders
+        - node: top_customer_paid_orders
           visible: false
