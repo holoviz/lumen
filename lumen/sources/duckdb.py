@@ -338,7 +338,8 @@ class DuckDBSource(BaseSQLSource):
             except duckdb.Error as e:
                 raise RuntimeError(
                     f"Could not load the DuckDB extension {name!r}: {e}\nAn extension downloads the first time it is "
-                    "used, which needs internet access; DuckDB then loads its cached copy from ~/.duckdb/extensions."
+                    f"used, which needs internet access and a build of it for this DuckDB version ({duckdb.__version__}); "
+                    "DuckDB then loads its cached copy from ~/.duckdb/extensions."
                 ) from e
             if init not in self.initializers:
                 self.initializers = [*self.initializers, init]

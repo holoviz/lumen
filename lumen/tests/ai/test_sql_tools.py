@@ -575,5 +575,7 @@ def test_loads_h3_reads_the_source_initializers():
     from lumen.ai.agents.sql import loads_h3
     plain = DuckDBSource(uri=":memory:")
     assert not loads_h3({(plain.name, "t"): plain})
-    with_h3 = DuckDBSource(uri=":memory:", initializers=["INSTALL h3 FROM community;", "LOAD h3;"])
+    with_h3 = DuckDBSource(uri=":memory:")
+    # Set afterwards, so the test does not download the extension
+    with_h3.initializers = ["INSTALL h3 FROM community;", "LOAD h3;"]
     assert loads_h3({(with_h3.name, "t"): with_h3})

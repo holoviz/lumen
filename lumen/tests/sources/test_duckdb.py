@@ -2067,6 +2067,6 @@ def test_an_extension_that_cannot_download_says_why(monkeypatch):
         raise duckdb.IOException("Failed to download extension \"h3\" at URL \"http://community-extensions.duckdb.org\"")
 
     monkeypatch.setattr(source, "_run_initializer", offline)
-    with pytest.raises(RuntimeError, match="(?s)Could not load the DuckDB extension 'h3'.*needs internet access"):
+    with pytest.raises(RuntimeError, match="(?s)Could not load the DuckDB extension 'h3'.*needs internet access and a build of it for this DuckDB version"):
         source.load_extension("h3")
     assert source.initializers == []
