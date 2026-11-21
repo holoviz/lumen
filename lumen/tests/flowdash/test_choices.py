@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import time
 
 import pandas as pd
@@ -233,3 +234,15 @@ async def test_inspector_offers_the_filter_values_as_a_dropdown(orders):
         if list(w.options.values())[-2:] == ["A", "B"]
     ]
     assert selects
+
+
+async def test_filter_value_choices_sort_text_naturally():
+    frame = pd.DataFrame({"category": ["region_10", "Region_2", "region_1"], "amount": [1, 2, 3]})
+    ops = filter_dashboard(InMemorySource(tables={"orders": frame}))
+    assert await value_choices(ops) == ["region_1", "Region_2", "region_10"]
+
+
+async def test_filter_offers_no_values_for_an_object_column_of_dates():
+    frame = pd.DataFrame({"category": [dt.date(2020, 1, 2), dt.date(2020, 1, 1)], "amount": [1, 2]}, dtype=object)
+    ops = filter_dashboard(InMemorySource(tables={"orders": frame}))
+    assert await value_choices(ops) is None
