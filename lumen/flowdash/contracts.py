@@ -136,7 +136,10 @@ def _reader_fields(doc: Mapping[str, Any], node: str) -> dict[str, set[str]]:
 
 
 def _result_table(config: Mapping[str, Any], taken: set[str]) -> str:
-    """The table a SQL node adds to its ``result``, renamed as the node does so it shadows no table it reads."""
+    """
+    The table a SQL node adds to its ``result``, renamed as ``compile_sql``
+    does, ignoring case, so it shadows no table of its source.
+    """
     from .nodes import default_table
 
     table = config.get("table") or default_table(config.get("sql") or "")
