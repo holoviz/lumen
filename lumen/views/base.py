@@ -1460,6 +1460,9 @@ class hvPlotView(hvPlotBaseView):
                 kind = None
             if 'z' in processed:
                 processed['c'] = processed.pop('z')
+            if processed.get('geo') and df.crs is not None and not df.crs.is_geographic:
+                # hvPlot reads every frame as longitude and latitude, whatever its CRS
+                plot_source = df.to_crs(4326)
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
         elif kind in BAR_KINDS and x is not None:

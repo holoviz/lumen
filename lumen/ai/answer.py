@@ -30,11 +30,13 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import holoviews as hv
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
 import pandas as pd
 import panel as pn
 import param
+import shapely
 import sqlglot
 import yaml
 
@@ -77,7 +79,9 @@ from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
 from .report import ActorTask, Report, TaskGroup
-from .selection import about, ask_box, watch_clicks
+from .selection import (
+    DRAW_HINT, about, about_region, ask_box, split_by_region, watch_clicks,
+)
 from .sharing import mask_frame, sharing
 from .tools import MetadataLookup
 from .ui import ExplorerUI
@@ -1235,6 +1239,10 @@ class Answer(param.Parameterized):
     value = param.String(default="", doc="""
         The written answer.""")
 
+    region = param.Parameter(default=None, doc="""
+        The area drawn on the answer's map, as a shapely Polygon in
+        longitude and latitude, or None. Its rows are the selection.""")
+
     selection = param.DataFrame(default=None, allow_None=True, doc="""
         The rows clicked or box-selected on the chart or map, which
         ask_about asks about; None when nothing is selected.""")
@@ -1564,17 +1572,24 @@ class Answer(param.Parameterized):
             ))
         return steps
 
-    async def aask_about(self, question: str, rows: Any = None) -> Answer:
+    async def aask_about(self, question: str, rows: Any = None, region: Any = None) -> Answer:
         """
         Ask a follow-up about some rows of this answer's data: the
         selection, clicked or box-selected on the chart, unless rows says
         which (a DataFrame, a dict or list of dicts, or row positions). The
         LLM answers from the rows when they hold what is asked, and
-        otherwise queries the data filtered on their values. In a chat, the
+        otherwise queries the data filtered on their values. An area drawn
+        on the map, or region (a shapely Polygon or (lon, lat) pairs), asks
+        about the rows inside it compared with the rest. In a chat, the
         question joins the conversation. Returns the new Answer.
         """
-        rows = self._selected(rows)
-        content = about(question, rows)
+        area = shapely.Polygon(region) if region is not None and not isinstance(region, shapely.Polygon) else region
+        if area is None and rows is None:
+            area = self.region
+        if area is not None:
+            content = about_region(question, area, *split_by_region(self._data_frame(), area))
+        else:
+            content = about(question, self._selected(rows))
         if self._conversation is not None:
             return await self._conversation._aask(question, content=content)
         outcome = self.value + (f"\n\nThe SQL was:\n{self.sql}" if self.sql else "")
@@ -1585,9 +1600,17 @@ class Answer(param.Parameterized):
         data = self.source if self._data is None else self._data
         return await _aask_messages(data, question, messages, self._llm, self._agents)
 
-    def ask_about(self, question: str, rows: Any = None) -> Answer:
-        """Ask a follow-up about the selected rows and return the Answer. See aask_about."""
-        return _run(self.aask_about(question, rows))
+    def ask_about(self, question: str, rows: Any = None, region: Any = None) -> Answer:
+        """Ask a follow-up about the selected rows or a drawn area and return the Answer. See aask_about."""
+        return _run(self.aask_about(question, rows, region))
+
+    def _data_frame(self) -> pd.DataFrame:
+        """The answer's data as its map draws it: a GeoDataFrame keeps its geometry."""
+        data = self.pipeline.data
+        return data if is_geodataframe(data) else as_pandas(data)
+
+    def _on_region(self, area: Any) -> None:
+        self.param.update(region=area, selection=None if area is None else split_by_region(self._data_frame(), area)[0])
 
     def _selected(self, rows: Any) -> pd.DataFrame:
         """The rows a question is about, as a DataFrame."""
@@ -2001,12 +2024,21 @@ class Answer(param.Parameterized):
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
                 severity="error", sizing_mode="stretch_width",
             )
-        self._streams += watch_clicks(view, lambda rows: setattr(self, "selection", rows))
+        streams = watch_clicks(view, lambda rows: setattr(self, "selection", rows), on_region=self._on_region)
+        self._streams += streams
         if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
             # A responsive plot stretches to its container, and a notebook
             # output has no height to give it, so it would collapse
-            return Column(view, min_height=400, sizing_mode="stretch_both")
-        return view
+            chart = Column(view, min_height=400, sizing_mode="stretch_both")
+        else:
+            chart = view
+        if not any(isinstance(stream, hv.streams.PolyDraw) for stream in streams):
+            return chart
+        # The gesture is Bokeh's own and nothing on the map says it
+        hint = Markdown(
+            DRAW_HINT, sizing_mode="stretch_width", margin=(0, 10), styles={"font-size": "0.8em", "opacity": "0.7"},
+        )
+        return Column(chart, hint, sizing_mode="stretch_width")
 
     def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
         """

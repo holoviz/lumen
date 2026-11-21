@@ -124,6 +124,8 @@ The LLM gets the question, the rows (up to 20, with personal-looking columns wit
 
 A map of a grid with several time steps, such as `air_temperature`'s 20, gets a slider over time instead of drawing every step on top of the others; the card notes the slider, which a saved notebook or PNG cannot show. A grid is rasterized by the cells of one step, not all of them.
 
+On an hvPlot map the toolbar also has a polygon tool, and a line under the map says how to use it. Pick it, press and hold where the area starts, click to add corners, and press and hold again to close it; the box under the map then asks about it, e.g. "Are the earthquakes deeper inside this area than outside?". The LLM gets the area, the rows inside it and a summary of the numeric columns inside and outside, and queries the data with the area as a filter when those do not hold the answer. From code, `answer.ask_about("...", region=[(lon, lat), ...])` does the same, and `answer.region` holds the drawn area. A GeoDataFrame in a projected CRS is mapped and compared in longitude and latitude. lonboard's `answer.map()` has no draw tool yet.
+
 ## Large results
 
 A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.

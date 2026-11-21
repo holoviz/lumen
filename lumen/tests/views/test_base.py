@@ -10,7 +10,7 @@ import panel as pn
 import pytest
 
 from bokeh.core.serialization import Serializer
-from holoviews import Dataset
+from holoviews import Dataset, Overlay, Polygons as HvPolygons
 
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
@@ -1075,3 +1075,16 @@ def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
     plot = view.get_plot(view.get_data())
     assert type(plot).__name__ == "Points"
     assert "needs geoviews" in caplog.text
+
+
+@requires_geopandas
+@requires_geoviews
+def test_hvplot_view_maps_a_projected_frame_in_longitude_and_latitude():
+    gdf = gpd.GeoDataFrame(
+        {'pop': [1]}, geometry=[Polygon([(10, 40), (12, 40), (12, 42)])], crs='EPSG:4326',
+    ).to_crs(3857)
+    view = hvPlotView(pipeline=Pipeline(source=InMemorySource(tables={'geo': gdf}), table='geo'), geo=True, tiles=False)
+    plot = view.get_plot(view.get_data())
+    polygons = next(el for el in plot if isinstance(el, HvPolygons)) if isinstance(plot, Overlay) else plot
+    xmin, ymin, xmax, ymax = gpd.GeoSeries(polygons.data.geometry).total_bounds
+    assert (round(xmin), round(ymin), round(xmax), round(ymax)) == (10, 40, 12, 42)
