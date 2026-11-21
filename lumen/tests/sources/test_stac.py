@@ -542,6 +542,8 @@ class TestImageCollections:
         assert items == found and kwargs["bbox"] == bbox and kwargs["bands"] == ["red"]
         # On longitude and latitude, about 500 pixels across the bbox
         assert kwargs["crs"] == "EPSG:4326" and kwargs["resolution"] == pytest.approx(0.05 / 500)
+        # Unsigned bands would wrap around in band arithmetic
+        assert kwargs["dtype"] == "float32"
 
     def test_an_image_collection_needs_a_bbox(self):
         client, _ = _images()

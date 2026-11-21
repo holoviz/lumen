@@ -301,8 +301,10 @@ class STACSource(BaseSQLSource):
         if not len(items):
             raise ValueError(f"STAC collection {collection_id!r} has no items in bbox={self.bbox} and datetime={self.datetime!r}.")
         west, _, east, _ = self.bbox
+        # Floats: band arithmetic on unsigned integers wraps around (red > nir
+        # gives an NDVI of 30, not -0.1), and nodata becomes NaN, which averages skip
         return odc_stac.load(
-            items, bands=self.bands, bbox=self.bbox, crs="EPSG:4326",
+            items, bands=self.bands, bbox=self.bbox, crs="EPSG:4326", dtype="float32",
             resolution=self.resolution or (east - west) / 500, chunks={}, groupby="solar_day",
             patch_url=self.patch_url or self._object_signer(),
         )
