@@ -193,6 +193,30 @@ def test_source_refs_do_not_depend_on_the_path_spelling(served):
     assert file_stems(["https://example.com/data/plants.csv?raw=1", "shop.db"]) == ["plants"]
 
 
+def test_data_file_tables_are_named_by_file_name(served):
+    (served / "x").mkdir()
+    (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
+    (served / "x" / "turbines.csv").write_text("turbine,mw\nb,2\n")
+    assert refs("x/turbines.csv")["turbines"].get_tables() == ["turbines_csv"]
+    assert refs(str(served / "x" / "turbines.csv"))["turbines"].get_tables() == ["turbines_csv"]
+    # Files of one name get _2 in the order of their resolved paths, however they are listed.
+    for data in (["plants.csv", "x/plants.csv"], ["x/plants.csv", "plants.csv"]):
+        source = refs(*data)["files"]
+        assert sorted(source.get_tables()) == ["plants_2_csv", "plants_csv"]
+        assert source.execute("SELECT plant FROM plants_2_csv")["plant"].tolist() == ["q"]
+
+
+def test_saved_query_keeps_its_table_when_served_from_another_directory(served):
+    (served / "x").mkdir()
+    (served / "plants.csv").rename(served / "x" / "plants.csv")
+    editor = build_routes(["x/plants.csv"], db_path=served / "dash.db")["/"]()._editor
+    ops = DashboardOps(editor)
+    ops.add_node(SOURCE_ID, {"ref": "plants"}, name="plants")
+    ops.add_node("Lumen/sql", {"sql": "SELECT COUNT(*) AS n FROM plants_csv", "table": "n"}, name="n")
+    ops.connect("plants.source", "n.source")
+    assert output(ops, "n", "data")["n"].tolist() == [3]
+
+
 def test_source_refs_do_not_depend_on_the_order_of_the_data(served):
     first = refs("shop.db", "plants.csv", "turbines.csv")
     second = refs("turbines.csv", "plants.csv", "shop.db")
