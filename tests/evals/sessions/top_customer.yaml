@@ -1,0 +1,44 @@
+lumen_session: 1
+fixture: commerce
+turns:
+- question: Which customer has the most paid orders? Show only that customer and the count.
+  nodes:
+  - top_customer_paid_orders
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    nodes:
+      data:
+        component: Lumen/source
+        config:
+          ref: data
+        position: [0, 0]
+      top_customer_paid_orders:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              customers.customer,
+              COUNT(orders.order_id) AS paid_order_count
+            FROM orders
+            JOIN customers
+              ON orders.customer_id = customers.customer_id
+            WHERE
+              orders.status = 'paid'
+            GROUP BY
+              customers.customer
+            QUALIFY
+              ROW_NUMBER() OVER (ORDER BY COUNT(orders.order_id) DESC) = 1
+          table: top_customer_paid_orders
+        position: [350, 0]
+    edges:
+      - from: data.source
+        to: top_customer_paid_orders.source

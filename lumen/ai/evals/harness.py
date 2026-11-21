@@ -289,6 +289,9 @@ class Subject(Protocol):
 
 SUBJECTS: dict[str, type] = {}
 
+# Subjects with optional dependencies, imported (and so registered) when first named.
+OPTIONAL_SUBJECTS = {"flowdash": "lumen.agent.evals:FlowDashSubject"}
+
 
 def register_subject(name: str):
     """Class decorator registering a subject under ``name`` for ``--subject``."""
@@ -311,9 +314,14 @@ def resolve_subject(name: str | None = None, **params) -> Subject:
     """
     Instantiate a registered subject, or one given as ``package.module:Class``,
     which is imported (registering it as a side effect). An instance of a
-    class without a ``name`` takes the spec as its name.
+    class without a ``name`` takes the spec as its name. Names in
+    ``OPTIONAL_SUBJECTS`` import their module first, which fails if its
+    dependencies are not installed.
     """
     name = name or DEFAULT_SUBJECT
+    if name not in SUBJECTS and name in OPTIONAL_SUBJECTS:
+        module, _ = OPTIONAL_SUBJECTS[name].split(":", 1)
+        import_module(module)
     if name in SUBJECTS:
         cls = SUBJECTS[name]
     elif ":" in name:
