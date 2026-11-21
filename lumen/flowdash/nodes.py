@@ -1417,6 +1417,7 @@ class SQLNode(GlobalFilterTarget, LumenNode):
 
     sql = param.String(
         default="",
+        label="SQL",
         doc="One read-only SELECT or WITH query.",
         metadata={"flowdash": {"widget": "code", "language": "sql"}},
     )
