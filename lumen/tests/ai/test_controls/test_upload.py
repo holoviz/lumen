@@ -280,6 +280,39 @@ class TestUploadControlsUnsupportedFiles:
         assert upload_controls._error_placeholder.visible is True
         assert "script.py" in upload_controls._error_placeholder.object
         assert "unsupported format" in upload_controls._error_placeholder.object
+        assert ".csv" in upload_controls._error_placeholder.object
+
+    async def test_xarray_file_without_xarray_suggests_install(self, upload_controls):
+        card = UploadedFileRow(
+            file_obj=io.BytesIO(b"not netcdf"),
+            filename="air",
+            extension="nc",
+            file_type="data"
+        )
+        upload_controls._file_cards = [card]
+
+        upload_controls._process_files()
+
+        assert "pip install xarray-sql" in upload_controls._error_placeholder.object
+
+
+    async def test_missing_optional_package_suggests_install(self, upload_controls, monkeypatch):
+        def fail(*args, **kwargs):
+            raise ModuleNotFoundError("No module named 'geopandas'", name="geopandas")
+
+        monkeypatch.setattr("lumen.ai.controls.ingest.file.read_file_to_dataframes", fail)
+        card = UploadedFileRow(
+            file_obj=io.BytesIO(b"{}"),
+            filename="shapes",
+            extension="geojson",
+            file_type="data"
+        )
+        upload_controls._file_cards = [card]
+
+        upload_controls._process_files()
+
+        assert "pip install geopandas" in upload_controls._error_placeholder.object
+
 
 class TestUploadControlsSourceDeduplication:
     """Tests for source de-duplication when uploading multiple files."""
