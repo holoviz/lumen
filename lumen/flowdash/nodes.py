@@ -25,14 +25,17 @@ The host also sets how many rows a query of these nodes may return
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
 import hashlib
+import inspect
 import math
+import threading
 import weakref
 
 from collections.abc import Iterator, Mapping
 from concurrent.futures import (
-    ThreadPoolExecutor, TimeoutError as FutureTimeout,
+    Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
 from contextlib import contextmanager
 from typing import Any, ClassVar
@@ -61,8 +64,23 @@ from .checks import (
     pipeline_columns,
 )
 
-SOURCE_TYPE = register_port_type("lumen.Source")
-PIPELINE_TYPE = register_port_type("lumen.Pipeline")
+SOURCE_COLOR = "#6D4C41"
+PIPELINE_COLOR = "#0072B5"
+
+
+def _register_port_type(name: str, **options: Any) -> str:
+    """
+    Register a port type with the ``options`` (``color``, ``columns``) the
+    installed panel-flowdash accepts, dropping the ones it does not know yet.
+    """
+    params = inspect.signature(register_port_type).parameters
+    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        options = {key: value for key, value in options.items() if key in params}
+    return register_port_type(name, **options)
+
+
+SOURCE_TYPE = _register_port_type("lumen.Source", color=SOURCE_COLOR)
+PIPELINE_TYPE = _register_port_type("lumen.Pipeline", color=PIPELINE_COLOR)
 
 SOURCE_ID = "Lumen/source"
 TABLE_ID = "Lumen/table"
@@ -365,7 +383,8 @@ def fetch(pipeline: Pipeline, limit: int = RESULT_LIMIT, timeout: float = NODE_T
     off; that setting only affects the pipeline's own ``filters``.
     """
     fetched = _FETCHED.setdefault(pipeline, {})
-    for fetched_limit, data in fetched.items():
+    # A copy, since a worker fetching a card's preview may add to it meanwhile.
+    for fetched_limit, data in list(fetched.items()):
         if fetched_limit >= limit:
             return data if len(data) <= limit else data.head(limit)
     sql = pipeline_sql(pipeline)
@@ -405,6 +424,7 @@ def forget(pipeline: Any) -> None:
     """Drop the rows ``fetch`` holds for ``pipeline``, so the next fetch runs its query again."""
     if isinstance(pipeline, Pipeline):
         _FETCHED.pop(pipeline, None)
+        _PREVIEW_FAILED.pop(pipeline, None)
 
 
 def _compute(pipeline: Pipeline, timeout: float) -> Any:
@@ -423,13 +443,249 @@ def default_table(sql: str) -> str:
     return f"query_{hashlib.sha1(sql.encode()).hexdigest()[:8]}"
 
 
+def _source_summary(source: Source) -> pd.DataFrame:
+    """Compact table summary for a SourceNode preview without triggering queries."""
+    tables = source.get_tables()
+    cached = source._get_schema_cache() or {}
+    in_memory = source.tables if isinstance(getattr(source, "tables", None), Mapping) else {}
+    entries: list[tuple[str, int | None, int | None]] = []
+    for table in tables:
+        rows: int | None = None
+        cols: int | None = None
+        schema = cached.get(table)
+        if isinstance(schema, dict):
+            cols = sum(1 for key in schema if key != "__len__")
+            length = schema.get("__len__")
+            if isinstance(length, int) and not isinstance(length, bool):
+                rows = length
+        elif (frame := in_memory.get(table)) is not None:
+            shape = getattr(frame, "shape", None)
+            if isinstance(shape, tuple) and len(shape) == 2 and hasattr(frame, "columns"):
+                if isinstance(shape[0], int) and not isinstance(shape[0], bool):
+                    rows = shape[0]
+                if isinstance(shape[1], int) and not isinstance(shape[1], bool):
+                    cols = shape[1]
+        entries.append((table, rows, cols))
+    data: dict[str, list[Any]] = {"table": [table for table, _, _ in entries]}
+    if any(rows is not None for _, rows, _ in entries):
+        data["rows"] = [rows if rows is not None else "" for _, rows, _ in entries]
+    if any(cols is not None for _, _, cols in entries):
+        data["cols"] = [cols if cols is not None else "" for _, _, cols in entries]
+    return pd.DataFrame(data)
+
+
+# The key naming the kind of a ``__flowdash_preview__`` dict, e.g. a chart.
+PREVIEW_KIND_KEY = "__flowdash_preview_kind__"
+# A card preview fetches one row more than it shows, to tell whether the pipeline has more.
+_PREVIEW_FETCH = PREVIEW_ROWS + 1
+
+_PREVIEW_LOCK = threading.RLock()
+_PREVIEW_POOL: list[ThreadPoolExecutor] = []
+# Why a pipeline's preview could not be fetched, so a failing query is not run on every refresh.
+_PREVIEW_FAILED: weakref.WeakKeyDictionary[Pipeline, str] = weakref.WeakKeyDictionary()
+# The preview fetches queued or running, and the nodes to refresh once each is done.
+_PREVIEW_PENDING: dict[Pipeline, tuple[Future, weakref.WeakSet]] = {}
+
+
+class _AtLeast(int):
+    """A row count only known to be at least this many, written like ``50+``."""
+
+    def __format__(self, spec: str) -> str:
+        return f"{int(self):{spec}}+"
+
+
+class _PreviewFrame(pd.DataFrame):
+    """
+    The first rows of a pipeline whose ``shape`` gives the pipeline's row
+    count, so the caption of a card's table says how many rows it has
+    rather than how many were fetched. Anything derived from it is a plain
+    DataFrame.
+    """
+
+    _metadata = ["_row_count"]
+
+    @property
+    def _constructor(self):
+        return pd.DataFrame
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (self._row_count, len(self.columns))
+
+
+def _preview_frame(frame: pd.DataFrame, count: int) -> pd.DataFrame:
+    if not isinstance(count, _AtLeast) and count == len(frame):
+        return frame
+    preview = _PreviewFrame(frame)
+    preview._row_count = count
+    return preview
+
+
+def _fetched_preview(pipeline: Pipeline) -> pd.DataFrame | None:
+    """The first rows of ``pipeline`` and its row count, from the rows fetched the most of."""
+    fetched = list(_FETCHED.get(pipeline, {}).items())
+    if not fetched:
+        return None
+    limit, data = max(fetched, key=lambda item: item[0])
+    if len(data) < limit:
+        count = len(data)
+    else:
+        count = _AtLeast(PREVIEW_ROWS if limit == _PREVIEW_FETCH else len(data))
+    return _preview_frame(data.head(PREVIEW_ROWS), count)
+
+
+def _blocks_event_loop() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        doc = pn.state.curdoc
+        return doc is not None and doc.session_context is not None
+    return True
+
+
+def _preview_pool() -> ThreadPoolExecutor:
+    with _PREVIEW_LOCK:
+        if not _PREVIEW_POOL:
+            _PREVIEW_POOL.append(ThreadPoolExecutor(2, thread_name_prefix="lumen-preview"))
+        return _PREVIEW_POOL[0]
+
+
+def _fetch_preview(pipeline: Pipeline) -> None:
+    try:
+        fetch(pipeline, _PREVIEW_FETCH)
+    except Exception as exc:
+        message = str(exc).strip().splitlines()
+        _PREVIEW_FAILED[pipeline] = message[0] if message else type(exc).__name__
+
+
+def _schedule(callback: Any, doc: Any, loop: asyncio.AbstractEventLoop | None) -> None:
+    """Run ``callback`` on the event loop that asked for the preview, if it is still there."""
+    if doc is not None:
+        try:
+            doc.add_next_tick_callback(callback)
+            return
+        except Exception:
+            pass
+    if loop is not None and not loop.is_closed():
+        try:
+            loop.call_soon_threadsafe(callback)
+            return
+        except RuntimeError:
+            pass
+    callback()
+
+
+def _preview_future(pipeline: Pipeline) -> Future | None:
+    """The background fetch of ``pipeline``'s preview rows, if one is queued or running."""
+    with _PREVIEW_LOCK:
+        pending = _PREVIEW_PENDING.get(pipeline)
+    return pending[0] if pending is not None else None
+
+
+def _pipeline_preview(node: LumenNode, pipeline: Pipeline) -> Any:
+    """
+    The rows a card previews for ``pipeline``, without querying on the
+    event loop. Rows already fetched are shown as they are. Otherwise, on
+    the event loop, a worker fetches them while the card says so, and the
+    node's card refreshes once they are there; elsewhere they are fetched
+    straight away. A failure is kept, so the query is not run again until
+    the pipeline changes or is forgotten.
+    """
+    if (rows := _fetched_preview(pipeline)) is not None:
+        return rows
+    if (failed := _PREVIEW_FAILED.get(pipeline)) is not None:
+        return f"No preview: {failed}"
+    if not _blocks_event_loop():
+        _fetch_preview(pipeline)
+        if (failed := _PREVIEW_FAILED.get(pipeline)) is not None:
+            return f"No preview: {failed}"
+        return _fetched_preview(pipeline)
+    with _PREVIEW_LOCK:
+        previous = node._preview_of() if node._preview_of is not None else None
+        if previous is not None and previous is not pipeline and previous in _PREVIEW_PENDING:
+            future, waiters = _PREVIEW_PENDING[previous]
+            waiters.discard(node)
+            # A slider dragged over a filter builds a pipeline per value; only the last one is wanted.
+            if not waiters:
+                future.cancel()
+        node._preview_of = weakref.ref(pipeline)
+        if pipeline in _PREVIEW_PENDING:
+            _PREVIEW_PENDING[pipeline][1].add(node)
+            return "Fetching rows..."
+        waiters = weakref.WeakSet([node])
+        pool = _preview_pool()
+        doc = pn.state.curdoc if getattr(pn.state.curdoc, "session_context", None) else None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        def refresh():
+            for waiter in list(waiters):
+                if waiter._object is pipeline:
+                    waiter._preview_rev += 1
+
+        def done(future: Future) -> None:
+            with _PREVIEW_LOCK:
+                _PREVIEW_PENDING.pop(pipeline, None)
+            if not future.cancelled():
+                _schedule(refresh, doc, loop)
+
+        future = pool.submit(_fetch_preview, pipeline)
+        _PREVIEW_PENDING[pipeline] = (future, waiters)
+    future.add_done_callback(done)
+    return "Fetching rows..."
+
+
+def _preview_kinds() -> set[str]:
+    """The preview kinds the installed panel-flowdash draws from a ``__flowdash_preview__`` dict."""
+    try:
+        from panel_flowdash.ui import node_preview
+    except ImportError:
+        return set()
+    if getattr(node_preview, "PREVIEW_KIND_KEY", None) != PREVIEW_KIND_KEY:
+        return set()
+    return set(getattr(node_preview, "HEIGHTS", {}))
+
+
+def _sample_rows(data: Any, limit: int) -> Any:
+    """At most ``limit`` evenly spaced rows of ``data``, keeping the first and the last."""
+    if data is None or not hasattr(data, "iloc") or len(data) <= limit:
+        return data
+    step = (len(data) - 1) / (limit - 1)
+    return data.iloc[[round(i * step) for i in range(limit)]]
+
+
+def _chart_summary(spec: dict[str, Any], data: Any) -> str:
+    """A line saying what a chart shows, e.g. ``Bar chart of category and total, 4 rows``."""
+    mark = spec.get("mark")
+    mark = mark.get("type") if isinstance(mark, dict) else mark
+    title = f"{str(mark).capitalize()} chart" if isinstance(mark, str) and mark else "Chart"
+    encoding = spec.get("encoding") if isinstance(spec.get("encoding"), dict) else {}
+    fields = []
+    for channel in ("x", "y", "color", "theta"):
+        field = encoding.get(channel)
+        field = field.get("field") if isinstance(field, dict) else None
+        if isinstance(field, str) and field not in fields:
+            fields.append(field)
+    text = f"{title} of {' and '.join(fields)}" if fields else title
+    if data is not None and hasattr(data, "__len__"):
+        text += f", {len(data):,} row{'' if len(data) == 1 else 's'}"
+    return text
+
+
 class LumenNode(Viewer):
 
     _object = param.Parameter(default=None, precedence=-1)
 
     _error = param.String(default=None, allow_None=True, precedence=-1)
 
+    # Bumped when the rows a card previews arrive, so the card refreshes.
+    _preview_rev = param.Integer(default=0, precedence=-1)
+
     __abstract = True
+
+    _preview_of: weakref.ref | None = None
 
     def __init__(self, **params):
         editor = current_dashboard()
@@ -486,6 +742,13 @@ class LumenNode(Viewer):
     def _body(self):
         return pn.pane.Str(str(self._object))
 
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is not None or self._object is None:
+            return None
+        if isinstance(self._object, Pipeline):
+            return _pipeline_preview(self, self._object)
+        return self._object
+
     def __panel__(self):
         return pn.panel(self._render)
 
@@ -529,6 +792,11 @@ class SourceNode(LumenNode):
             return pn.pane.Markdown("No source")
         return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(source.get_tables())}")
 
+    def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | None:
+        if self._error is not None or self._object is None:
+            return None
+        return _source_summary(self._object)
+
 
 @register(
     component=True, page=False, title="Lumen SQL", icon="code",
@@ -547,7 +815,11 @@ class SQLNode(LumenNode):
 
     source = param.Parameter(doc="The upstream source.")
 
-    sql = param.String(default="", doc="One read-only SELECT or WITH query.")
+    sql = param.String(
+        default="",
+        doc="One read-only SELECT or WITH query.",
+        metadata={"flowdash": {"widget": "code", "language": "sql"}},
+    )
 
     table = param.String(default="", doc="Name of the result table; derived from the SQL if empty.")
 
@@ -581,6 +853,12 @@ class SQLNode(LumenNode):
         if pipeline is None:
             return pn.pane.Markdown("Waiting for a source and a query")
         return pn.widgets.Tabulator(pipeline.data, disabled=True, sizing_mode="stretch_both")
+
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is not None or self._object is None:
+            return None
+        data = self._object.data
+        return data if data is not None else _pipeline_preview(self, self._object)
 
 
 class PipelineNode(LumenNode):
@@ -751,6 +1029,21 @@ class ViewNode(LumenNode):
     def _body(self):
         view = self._object
         return pn.pane.Markdown("Waiting for a pipeline") if view is None else view.panel
+
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is not None or self._object is None:
+            return None
+        spec = self._object.spec
+        data = getattr(getattr(self._object, "pipeline", None), "data", None)
+        # A host that does not draw charts would list the dict's keys, so it gets a line of text.
+        if "chart" not in _preview_kinds():
+            return _chart_summary(spec, data)
+        return {
+            PREVIEW_KIND_KEY: "chart",
+            "format": "vega-lite",
+            "spec": copy.deepcopy(spec),
+            "data": _sample_rows(data, PREVIEW_ROWS),
+        }
 
 
 COMPONENTS = {
