@@ -65,7 +65,7 @@ class ParametricSourceControls(BaseSourceControls):
         self._cached_tools: list[tuple[str, Callable]] | None = None
         self._action_models: dict[str, param.Parameterized] = {}
         self._action_selector = Select(
-            name="Action", options=[], sizing_mode="stretch_width",
+            label="Action", options=[], sizing_mode="stretch_width",
             visible=False,
         )
         self._action_selector.param.watch(self._on_action_change, "value")

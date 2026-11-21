@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+import logging
 import pathlib
 import re
 import traceback
@@ -11,6 +13,7 @@ from io import BytesIO, StringIO
 from typing import TYPE_CHECKING, Any
 
 import param
+import vl_convert as vlc
 
 from panel.config import config
 from panel.layout import Column, Row
@@ -23,26 +26,77 @@ from panel.widgets import CodeEditor
 from panel_gwalker import GraphicWalker
 from panel_material_ui import (
     Alert, Button, Checkbox, CircularProgress, FileDownload, FlexBox,
-    FloatInput, MenuButton, Tabs,
+    FloatInput, MenuButton, MenuToggle, Paper, Tabs,
 )
 from PIL import Image
 
 from ..base import Component
 from ..config import dump_yaml, load_yaml
+from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
-from ..views.base import Panel, Table, View
+from ..util import as_pandas
+from ..views.base import (
+    Panel, Table, View, _force_light_theme,
+)
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_data
+from .utils import column_tooltips, describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
+
+
+# vl-convert logs Vega-Lite's spec warnings, e.g. on charts rendered to an
+# image for the LLM. Without any logging set up Python prints them, so in a
+# notebook they land in the cell; a configured logger still receives them.
+logging.getLogger("vl_convert").addHandler(logging.NullHandler())
+
+_PAGINATED_TABLE_STYLES = """
+.tabulator-footer {
+  display: flex;
+  text-align: left;
+  padding: 0px;
+}
+/* Tabulator drops its page-number group when the footer overflows
+   horizontally, so let the paginator wrap to keep the pages reachable.
+   The Panel theme stylesheet loads later and would otherwise win. */
+.tabulator .tabulator-footer .tabulator-paginator {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  justify-content: flex-end !important;
+}
+.tabulator .tabulator-footer .tabulator-pages {
+  display: inline-flex !important;
+  flex-wrap: wrap !important;
+}
+/* Header tooltips (column provenance) otherwise render light text on a
+   white box under dark themes; match the MUI tooltip instead. */
+.tabulator-tooltip {
+  background: var(--mui-palette-Tooltip-bg, #616161) !important;
+  color: var(--mui-palette-common-white, #fff) !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  max-width: 420px !important;
+  white-space: normal !important;
+}
+"""
+
+# Ace defaults to 12px, which looks undersized next to the chat text and the
+# tables. Use MUI's ``body2`` size so code reads at a size matching the rest of
+# the app.
+_CODE_EDITOR_STYLES = """
+.ace_editor {
+  font-size: 0.875rem !important;
+}
+"""
 
 
 class LumenEditor(Viewer):
@@ -56,6 +110,11 @@ class LumenEditor(Viewer):
     spec = param.String(allow_None=True)
 
     title = param.String(allow_None=True)
+
+    _context_updated = param.Event(doc="""
+        Triggered when the output's context changes after render (e.g. an
+        interactive selection) so watchers can refresh the out-context without
+        going through the spec/deserialize path.""")
 
     export_formats = ("yaml",)
 
@@ -78,12 +137,14 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # Set before the view, which renders at once when no event loop runs
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
-    def _render_editor(self):
-        self._editor = CodeEditor(
+    def _code_editor(self) -> CodeEditor:
+        """A CodeEditor two-way bound to this editor's spec."""
+        editor = CodeEditor(
             value=self.param.spec.rx.or_(f'{self.title} output could not be serialized and may therefore not be edited.'),
             language=self.language,
             theme="github_dark" if config.theme == "dark" else "github_light_default",
@@ -93,9 +154,14 @@ class LumenEditor(Viewer):
             indent=2,
             margin=(0, 10),
             disabled=self.param.spec.rx.is_(None),
-            styles={"border": "1px solid var(--border-color)"}
+            styles={"border": "1px solid var(--border-color)"},
+            stylesheets=[_CODE_EDITOR_STYLES],
         )
-        self._editor.link(self, bidirectional=True, value='spec')
+        editor.link(self, bidirectional=True, value='spec')
+        return editor
+
+    def _render_editor(self):
+        self._editor = self._code_editor()
         self._icons = Row(
             *self.footer,
             margin=(0, 0, 5, 10)
@@ -181,6 +247,10 @@ class LumenEditor(Viewer):
 
     @param.depends("spec", watch=True)
     def _update_component(self):
+        # spec is None for outputs that couldn't be serialized (e.g. an
+        # interactive analysis view); there is nothing to deserialize.
+        if self.spec is None:
+            return
         if self.spec in self._last_output and self.component is None:
             return
         pipeline = getattr(self.component, 'pipeline', None)
@@ -188,39 +258,38 @@ class LumenEditor(Viewer):
             self.component, self.spec, self._spec_dict, pipeline=pipeline
         )
 
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        return {}
+
     async def _render_pipeline(self, pipeline):
         table = Table(
-            pipeline=pipeline, pagination='remote',
-            min_height=200, sizing_mode="stretch_both", stylesheets=[
-            """
-            .tabulator-footer {
-            display: flex;
-            text-align: left;
-            padding: 0px;
-            }
-            """
-            ]
+            pipeline=pipeline, pagination='remote', min_height=200,
+            sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
+            **self._pipeline_table_kwargs(pipeline),
         )
-        controls = Row(
-            styles={'position': 'absolute', 'right': '40px', 'top': '-35px'}
-        )
+        layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
             if isinstance(sql_limit, SQLLimit):
                 break
         else:
-            sql_limit = None
-        if sql_limit:
-            data = pipeline.data
-            limited = len(data) == sql_limit.limit
-            if limited:
-                def unlimit(e):
-                    sql_limit.limit = None if e.new else 1_000_000
-                full_data = Checkbox(
-                    name='Full data', width=100, visible=limited
-                )
-                full_data.param.watch(unlimit, 'value')
-                controls.insert(0, full_data)
-        return Column(controls, table)
+            return layout
+        if len(pipeline.data) != sql_limit.limit:
+            return layout
+
+        # Restore the limit this query actually ran with, so unchecking cannot
+        # silently widen a query that was limited more tightly than the default.
+        limit = sql_limit.limit
+
+        def unlimit(e):
+            sql_limit.limit = None if e.new else limit
+
+        full_data = Checkbox(label='Full data', height=36, margin=0)
+        full_data.param.watch(unlimit, 'value')
+        layout.append(Row(
+            full_data, height=36, sizing_mode='stretch_width',
+            styles={'justify-content': 'flex-end', 'align-items': 'center'},
+        ))
+        return layout
 
     async def render_context(self):
         view = self.component
@@ -228,7 +297,7 @@ class LumenEditor(Viewer):
             # If output is a view we provide the full View specification
             return {"view": self._spec_dict}
         elif isinstance(view, Pipeline):
-            data = await get_data(view)
+            data = await get_frame(view)
             return {
                 "pipeline": view,
                 "table": view.table,
@@ -306,7 +375,7 @@ class VegaLiteEditor(LumenEditor):
             spec["width"] = 800
         if spec.get("height") == "container" or "height" not in spec:
             spec["height"] = 400
-        with self.param.update(spec=dump_yaml(spec)):
+        with self.param.update(spec=dump_yaml(spec)), _force_light_theme():
             out = self.component.get_panel().export(render_fmt, **kwargs)
 
         if fmt in self._pillow_formats:
@@ -337,18 +406,59 @@ class VegaLiteEditor(LumenEditor):
             spec_dict.pop('pipeline')
         return type(component).from_spec(spec_dict, pipeline=pipeline)
 
+    @staticmethod
+    def _supplies_geometry(data: dict) -> bool:
+        """Whether a data definition yields features a geoshape can draw."""
+        fmt = data.get("format") or {}
+        return fmt.get("type") in ("topojson", "geojson") or fmt.get("property") == "features"
+
+    @classmethod
+    def _check_geoshape_data(cls, node: Any, inherited: dict | None = None) -> None:
+        """Raise if any geoshape mark resolves to data that carries no geometry.
+
+        Such a spec compiles cleanly and then draws nothing at all, so the only
+        symptom is an empty canvas; raising turns that silence into an error the
+        agent can retry against. Layers inherit their parent's ``data`` when they
+        declare none, so the check follows the same scoping rather than looking
+        only at the top level. A spec with no ``data`` anywhere is the valid case
+        where the table's own geometry is injected at render time.
+        """
+        if isinstance(node, list):
+            for item in node:
+                cls._check_geoshape_data(item, inherited)
+            return
+        if not isinstance(node, dict):
+            return
+
+        data = node.get("data", inherited)
+        mark = node.get("mark")
+        mark_type = mark.get("type") if isinstance(mark, dict) else mark
+        if mark_type == "geoshape" and isinstance(data, dict) and not cls._supplies_geometry(data):
+            raise RuntimeError(
+                "A geoshape mark draws the geometry found in `data`, but `data` here is the "
+                "table, which carries no geometry, so the map renders empty. Either set `data` "
+                "to the boundary topojson/geojson and pull the table's columns in with a "
+                "`transform.lookup` whose `from.data` names the table, or omit `data` entirely "
+                "when the table has its own geometry column."
+            )
+
+        for key, value in node.items():
+            if key != "data":
+                cls._check_geoshape_data(value, data)
+
     @classmethod
     def validate_spec(cls, spec):
         if "spec" in spec:
             spec = spec["spec"]
         try:
-            import vl_convert as vlc
             vlc.vegalite_to_vega(spec)
         except ValueError as e:
             msg = str(e)
             if '\n    at Nc.' in msg:
                 msg = msg[:msg.index('\n    at Nc.')]
             raise RuntimeError(msg) from e
+
+        cls._check_geoshape_data(spec)
         return super().validate_spec(spec)
 
     def __str__(self):
@@ -465,6 +575,14 @@ class AnalysisOutput(LumenEditor):
         if 'title' not in params or params['title'] is None:
             params['title'] = type(params['analysis']).__name__
         super().__init__(**params)
+        if self.analysis is not None:
+            self.analysis.param.watch(self._on_dynamic_provides, '_dynamic_provides')
+
+    def _on_dynamic_provides(self, event):
+        # The analysis published context after rendering (e.g. an interactive
+        # selection). Signal watchers to re-run render_context and merge it into
+        # out_context, without touching spec (which would try to re-deserialize).
+        self.param.trigger('_context_updated')
 
     def _render_editor(self):
         controls = self.analysis.controls(self.context)
@@ -477,17 +595,19 @@ class AnalysisOutput(LumenEditor):
         else:
             self.analysis._run_button = run_button = Button(
                 icon='play_circle_outline', label='Run', on_click=self._rerun,
-                button_type='success', margin=(10, 0, 0, 10)
+                color='success', margin=(10, 0, 0, 10)
             )
         return FlexBox(*controls, run_button) if controls else run_button
 
     async def render_context(self):
         out_context = await super().render_context()
         out_context["analysis"] = self.analysis
+        if self.analysis is not None and self.analysis._dynamic_provides:
+            out_context.update(self.analysis._dynamic_provides)
         return out_context
 
     async def _rerun(self, event):
-        if asyncio.iscoroutinefunction(self.analysis.__call__):
+        if inspect.iscoroutinefunction(self.analysis.__call__):
             view = await self.analysis(self.pipeline, self.context)
         else:
             view = await asyncio.to_thread(self.analysis, self.pipeline, self.context)
@@ -510,9 +630,158 @@ class SQLEditor(LumenEditor):
     export_formats = ("sql", "csv", "xlsx", "json", "markdown")
     _label = "Table"
 
+    # Icon shown in the "Add Filter" menu for each schema type.
+    _filter_icons = {
+        "number": "calculate",
+        "integer": "numbers",
+        "boolean": "toggle_on",
+    }
+
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        # Derived from the current spec so tooltips follow SQL edits.
+        columns = tuple(str(col) for col in pipeline.data.columns)
+        try:
+            header_tooltips = column_tooltips(self.spec, pipeline.source.dialect, columns)
+        except Exception:
+            # Tooltips are a nicety; never let lineage break the table.
+            header_tooltips = {}
+        return {"header_tooltips": dict(header_tooltips)} if header_tooltips else {}
+
+    def _render_editor(self):
+        editor = super()._render_editor()
+        # Add top/bottom margin so the SQL code editor isn't clipped by the
+        # surrounding split pane / filter Paper (base sets margin=(0, 10)).
+        self._editor.margin = (15, 10, 0, 10)
+        self._filters: dict[str, WidgetFilter] = {}
+        self._filter_area = FlexBox(
+            sizing_mode="stretch_both", min_height=60, justify_content="space-evenly",
+            styles={"gap": "6px", "align-content": "flex-start"},
+        )
+        # The filter widgets live in a Paper that the exploration view places
+        # above the editor/table split (see ExplorerUI._render_view), so adding
+        # filters pushes both the SQL editor and the results table down. Only
+        # shown once at least one filter has been added. The Paper fills its
+        # split pane and scrolls internally (padding for margins) so tall
+        # multi-select filters stay contained instead of overlapping the editor.
+        self._filter_paper = Paper(
+            self._filter_area, elevation=0, margin=(8, 10),
+            sizing_mode="stretch_both", min_height=75,
+            styles={"overflow-y": "auto"},
+            visible=False,
+        )
+        return editor
+
+    def _filter_icon(self, col_schema: dict[str, Any]) -> str:
+        if col_schema.get("dimension"):
+            # Coordinate axis of an xarray source (time/lat/lon/level, ...).
+            if col_schema.get("format") == "datetime":
+                return "schedule"
+            return "straighten"
+        col_type = col_schema.get("type")
+        if col_type == "string":
+            if "enum" in col_schema:
+                return "format_list_bulleted"
+            elif col_schema.get("format") == "datetime":
+                return "calendar_month"
+            return "text_fields"
+        return self._filter_icons.get(col_type, "help")
+
+    def _filter_tooltip(self, col_schema: dict[str, Any]) -> str:
+        # Hover hint showing the column's filterable range (min .. max) or, for
+        # categorical columns, its options. Empty when neither is available.
+        lo, hi = col_schema.get("inclusiveMinimum"), col_schema.get("inclusiveMaximum")
+        if lo is not None and hi is not None:
+            if col_schema.get("type") in ("number", "integer"):
+                return f"{lo:g} .. {hi:g}"
+            return f"{lo} .. {hi}"
+        enum = col_schema.get("enum")
+        if enum:
+            return ", ".join(map(str, enum[:6])) + (", ..." if len(enum) > 6 else "")
+        return ""
+
+    def _filter_items(self) -> list[dict[str, Any]]:
+        # Coordinate dimensions (if any) are listed first, then data variables /
+        # tabular columns. Tabular sources carry no "dimension" flag, so their
+        # ordering is unchanged. Columns with an active filter show a filled
+        # check (review: make the active state visible in the menu).
+        active = {filt.field for filt in self.component.filters}
+        dimensions, variables = [], []
+        for col, col_schema in self.component.schema.items():
+            if col == "__len__":
+                continue
+            item = {
+                "label": col,
+                "icon": self._filter_icon(col_schema),
+                "active_icon": "check_circle",
+                "active_color": "primary",
+                "toggled": col in active,
+            }
+            tooltip = self._filter_tooltip(col_schema)
+            if tooltip:
+                item["tooltip"] = tooltip
+            (dimensions if col_schema.get("dimension") else variables).append(item)
+        return dimensions + variables
+
+    def _add_filter(self, item):
+        field = item["label"]
+        if item["toggled"]:
+            filt = self._filters.get(field)
+            if filt is None:
+                filter_kwargs: dict[str, Any] = {"field": field, "schema": self.component.schema}
+                enum = self.component.schema[field].get("enum")
+                if enum is not None and len(enum) > WidgetFilter.param.max_options.default:
+                    filter_kwargs["max_options"] = len(enum)
+                filt = WidgetFilter(**filter_kwargs)
+                # Cap each filter's width so two fit per row; the FlexBox's
+                # space-evenly justification gives equal gaps. Use the compact
+                # size, hide the always-on value, and surface the range as a
+                # hover tooltip (description).
+                widget_opts = {
+                    "min_width": 180, "max_width": 240, "height": 45, "margin": (8, 5),
+                    "sizing_mode": "stretch_width", "description": self._filter_tooltip(self.component.schema[field]),
+                }
+                params = filt.widget.param
+                # `size` is a small/medium/large Selector on sliders but a
+                # visible-rows Integer on MultiChoice/TextInput, so only set it
+                # where "small" is a valid choice. show_value is slider-only.
+                if "size" in params and "small" in (getattr(params["size"], "objects", None) or []):
+                    widget_opts["size"] = "small"
+                if "searchable" in params:
+                    widget_opts["searchable"] = True
+                    widget_opts["dropdown_height"] = 75
+                if "show_value" in params:
+                    widget_opts["show_value"] = False
+                filt.widget.param.update(**widget_opts)
+                self._filters[field] = filt
+            self._filter_area.append(filt.widget)
+            self.component.add_filter(filt)
+            self._filter_paper.visible = True
+            return
+        removed = [filt for filt in self.component.filters if filt.field == field]
+        removed_widgets = [filt.widget for filt in removed]
+        self._filter_area[:] = [w for w in self._filter_area if w not in removed_widgets]
+        self.component.filters = [
+            filt for filt in self.component.filters if filt not in removed
+        ]
+        self._filter_paper.visible = bool(len(self._filter_area))
+
+    def render_controls(self, task: Task, interface: ChatFeed):
+        controls = super().render_controls(task, interface)
+        filter_controls = MenuToggle(
+            items=self._filter_items(),
+            label="Add Filter",
+            icon="filter_list",
+            margin=0,
+            variant="text",
+            on_click=self._add_filter,
+        )
+        controls.insert(-1, filter_controls)
+        return controls
+
     def export(self, fmt: str) -> StringIO | BytesIO:
         super().export(fmt)
-        data = self.component.data
+        # to_csv, to_json and to_markdown are all pandas only.
+        data = as_pandas(self.component.data)
         if fmt == 'sql':
             return StringIO(self.spec)
         sio = StringIO()
@@ -534,12 +803,17 @@ class SQLEditor(LumenEditor):
         )
 
     async def render_context(self):
+        row_limit = next(
+            (t.limit for t in self.component.sql_transforms
+             if isinstance(t, SQLLimit) and t.limit),
+            None
+        )
         return {
             "sql": self.spec,
             "pipeline": self.component,
             "table": self.component.table,
             "source": self.component.source,
-            "data": await describe_data(self.component.data)
+            "data": await describe_data(self.component.data, row_limit=row_limit)
         }
 
     @classmethod
@@ -561,6 +835,118 @@ class SQLEditor(LumenEditor):
 
     def __str__(self):
         return f"{self.__class__.__name__}:\n```sql\n{self.spec}\n```"
+
+
+class MultiChartEditor(LumenEditor):
+    """
+    Editor for a composite of several charts, e.g. an "All" tab that stacks
+    every plot as an overview.
+
+    The composite has no single spec, so instead of one code editor it shows a
+    sub-tab per chart, each bound to that chart's own spec; edits made here and
+    on the chart's own tab are therefore the same edit.
+    """
+
+    chart_editors = param.List(default=[], item_type=LumenEditor, doc="""
+        The editors of the individual charts, whose specs are exposed as
+        sub-tabs.""")
+
+    # The "All" tab is only ever built from VegaLiteEditors, so it offers the
+    # same formats; referencing the tuple keeps the two in sync.
+    export_formats = VegaLiteEditor.export_formats
+
+    _raster_formats = ("png", "jpeg", "webp", "tiff", "eps")
+
+    _label = "Charts"
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # A scrollbar only appears on a height-constrained container, and the
+        # base view is stretch_width, so stacking every plot just grows it past
+        # its pane and the overflow spills. Wrapping it the way
+        # ExplorerUI._render_view wraps the editor puts the scroll container
+        # directly in the split pane, which is what gives it a fixed height.
+        self.view = Column(self.view, sizing_mode="stretch_both", scroll="y-auto")
+
+    def _render_editor(self):
+        # No margin of its own: each sub-tab's CodeEditor already carries the
+        # (0, 10) inset, so a margin here would double the left gap.
+        return Tabs(
+            *((editor.title, editor._code_editor()) for editor in self.chart_editors),
+            dynamic=True, sizing_mode="stretch_both", margin=0
+        )
+
+    def export(self, fmt: str) -> StringIO | BytesIO:
+        if fmt not in self.export_formats:
+            raise ValueError(f"Unknown export format {fmt!r} for {self.__class__.__name__}")
+        # A chart that could not be serialized has no spec; skip it rather than
+        # failing the export of the ones that did.
+        editors = [editor for editor in self.chart_editors if editor.spec]
+        if fmt == "yaml":
+            return StringIO("---\n".join(editor.spec for editor in editors))
+        if fmt == "html":
+            # Rebuilt rather than saved live: the live stack caches panes
+            # rendered in the dashboard theme.
+            buf = StringIO()
+            with _force_light_theme():
+                stacked = Column(
+                    *(editor.component.get_panel() for editor in editors
+                      if editor.component is not None),
+                    sizing_mode="stretch_width",
+                )
+                stacked.save(buf)
+            buf.seek(0)
+            return buf
+        if not editors:
+            return StringIO("")
+        if fmt == "svg":
+            return self._combine_svg([editor.export("svg").getvalue() for editor in editors])
+        # The remaining formats combine the individual chart renders. Each chart
+        # is rendered to PNG first (reusing VegaLiteEditor.export, so scale and
+        # the default sizing come for free), then stacked or paginated with Pillow.
+        images = [Image.open(editor.export("png")) for editor in editors]
+        if fmt == "pdf":
+            pages = [img.convert("RGB") for img in images]
+            buf = BytesIO()
+            pages[0].save(buf, "PDF", save_all=True, append_images=pages[1:])
+            buf.seek(0)
+            return buf
+        return self._stack_images(images, fmt)
+
+    def _combine_svg(self, svgs: list[str]) -> StringIO:
+        """Stack child SVGs vertically inside one outer SVG via nested tags."""
+        parts, offset, max_width = [], 0.0, 0.0
+        for svg in svgs:
+            svg = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", svg)
+            width_match = re.search(r'<svg\b[^>]*\bwidth="([\d.]+)"', svg)
+            height_match = re.search(r'<svg\b[^>]*\bheight="([\d.]+)"', svg)
+            width = float(width_match.group(1)) if width_match else 800.0
+            height = float(height_match.group(1)) if height_match else 400.0
+            # Nest each child as a positioned inner <svg> by injecting a y offset.
+            parts.append(re.sub(r"<svg\b", f'<svg y="{offset:g}"', svg, count=1))
+            offset += height
+            max_width = max(max_width, width)
+        inner = "\n".join(parts)
+        return StringIO(
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'width="{max_width:g}" height="{offset:g}">\n{inner}\n</svg>'
+        )
+
+    def _stack_images(self, images: list, fmt: str) -> BytesIO:
+        """Vertically stack the chart images into a single image saved as fmt."""
+        mode = "RGB" if fmt in ("jpeg", "eps") else "RGBA"
+        background = (255, 255, 255) if mode == "RGB" else (255, 255, 255, 0)
+        width = max(img.width for img in images)
+        height = sum(img.height for img in images)
+        canvas = Image.new(mode, (width, height), background)
+        offset = 0
+        for img in images:
+            canvas.paste(img.convert(mode), (0, offset))
+            offset += img.height
+        buf = BytesIO()
+        canvas.save(buf, format=fmt.upper())
+        buf.seek(0)
+        return buf
 
 
 class DocumentEditor(LumenEditor):

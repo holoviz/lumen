@@ -2,7 +2,7 @@ from panel.layout import Column
 from panel.pane import Markdown
 from panel.widgets import Checkbox
 
-from lumen.views.base import Panel, View
+from lumen.views.base import Panel
 
 
 def test_panel_view_roundtrip():
@@ -45,7 +45,7 @@ def test_panel_layout_roundtrip():
     }
 
 def test_panel_cross_reference_param():
-    a = Checkbox(name="A")
+    a = Checkbox(label="A")
     b = Markdown("B", visible=a)
     column = Column(a, b)
 
@@ -57,7 +57,7 @@ def test_panel_cross_reference_param():
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'{a.name}'
+                    'label': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',
@@ -65,7 +65,7 @@ def test_panel_cross_reference_param():
                     'name': f'{b.name}',
                     'visible': {
                         'name': 'value',
-                        'owner': 'A',
+                        'owner': f'{a.name}',
                         'type': 'param'
                     }
                 }
@@ -75,10 +75,12 @@ def test_panel_cross_reference_param():
     }
 
 def test_panel_cross_reference_rx():
-    a = Checkbox(name="A")
+    a = Checkbox(label="A")
     b = Markdown("B", visible=a.rx().rx.not_())
     column = Column(a, b)
     spec = Panel(object=column).to_spec()
+    operation = spec['object']['objects'][1]['visible']['operation']
+    assert operation.pop('process_failures', False) is False
     assert spec == {
         'type': 'panel',
         'object': {
@@ -86,7 +88,7 @@ def test_panel_cross_reference_rx():
             'objects': [
                 {
                     'type': 'panel.widgets.input.Checkbox',
-                    'name': f'{a.name}'
+                    'label': f'{a.name}'
                 },
                 {
                     'type': 'panel.pane.markup.Markdown',
@@ -110,7 +112,7 @@ def test_panel_cross_reference_rx():
                             'operation': None,
                             'prev': {
                                 'name': 'value',
-                                'owner': 'A',
+                                'owner': f'{a.name}',
                                 'type': 'param'
                             }
                         },

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import re
-import traceback
+import time
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from functools import partial
 from textwrap import dedent, indent
 from types import FunctionType
@@ -21,14 +22,14 @@ from panel.pane import HTML, Image
 from panel.viewable import Viewer
 from panel.widgets import Tabulator
 from panel_material_ui import (
-    Card, ChatInterface, ChatStep, Column, Typography,
+    Card, ChatInterface, ChatStep, Column, Tabs, Typography,
 )
 
 from ..actor import Actor
 from ..agents import (
-    Agent, AnalysisAgent, ChatAgent, SourceAgent,
+    Agent, AnalysisAgent, ChatAgent, SourceAgent, ValidationAgent,
 )
-from ..config import PROMPTS_DIR, MissingContextError
+from ..config import PROMPTS_DIR, ROADMAP_TAG, MissingContextError
 from ..context import TContext
 from ..llm import LlamaCpp, Llm, Message
 from ..models import ThinkingYesNo
@@ -38,9 +39,12 @@ from ..tools import (
 )
 from ..tools.document_llm_tools import make_document_vector_llm_tools
 from ..tools.metaset_docs_llm_tools import make_load_metaset_relevant_docs_tool
+from ..tools.monty import make_monty_llm_tool
+from ..usage import capture_usage
 from ..utils import (
     describe_data_sync, fuse_messages, get_root_exception, log_debug,
-    mutate_user_message, normalized_name, wrap_logfire,
+    mutate_user_message, normalized_name, print_task_exception,
+    truncate_to_tokens, wrap_logfire,
 )
 from ..vector_store import NumpyVectorStore
 
@@ -69,12 +73,63 @@ class Plan(Section):
 
     is_followup = param.Boolean(default=False)
 
+    follow_up_type = param.Selector(default="new", objects=["new", "direct", "derived"])
+
+    planner_actors = param.List(item_type=str, default=[])
+
+    unanswerable = param.String(default=None, allow_None=True, doc="""
+        Why the data cannot answer the question, when the planner found
+        that it cannot; the plan then has no steps.""")
+
+    reasoning = param.String(default="", doc="""
+        The planner's account of the question, which led to these steps.""")
+
     _tasks = param.List(item_type=ActorTask)
+
+    # For each step run: (seconds, LLM calls), by the step's index
+    _runs = param.Dict(default={})
+
+    def merge(self, other):
+        super().merge(other)
+        self.follow_up_type = other.follow_up_type
+        self.planner_actors = list(other.planner_actors)
+        return self
+
+    def _edges(self) -> list[tuple[int, int, str]]:
+        """graph's edges by step index, which stay apart when titles repeat."""
+        edges = []
+        tasks = list(self)
+        for j, task in enumerate(tasks):
+            for key in sorted(task.input_schema.__required_keys__ | task.input_schema.__optional_keys__):
+                provider = next((
+                    i for i in reversed(range(j))
+                    if key in tasks[i].output_schema.__required_keys__ | tasks[i].output_schema.__optional_keys__
+                ), None)
+                if provider is not None:
+                    edges.append((provider, j, key))
+        return edges
+
+    def graph(self) -> list[tuple[str, str, str]]:
+        """
+        How the steps feed each other, as (from step, to step, key) edges:
+        a step that needs or can use a key gets it from the latest step
+        before it that provides it.
+        """
+        tasks = list(self)
+        return [(tasks[i].title, tasks[j].title, key) for i, j, key in self._edges()]
+
+    def to_mermaid(self) -> str:
+        """The steps and how they feed each other, as a Mermaid flowchart."""
+        # Inside a quoted label only a quote or a line break ends it early
+        labels = [" ".join(task.title.split()).replace('"', "#quot;") for task in self]
+        lines = ["graph TD"] + [f'    s{i}["{label}"]' for i, label in enumerate(labels)]
+        lines += [f"    s{i} -->|{key}| s{j}" for i, j, key in self._edges()]
+        return "\n".join(lines)
 
     def render_task_history(self, i: int | None = None, failed: bool = False) -> tuple[list[Message], str]:
         i = self._current if i is None else i
-        user_query = None
 
+        user_query = None
         for msg in reversed(self.history):
             if msg.get("role") == "user":
                 user_query = msg
@@ -91,46 +146,48 @@ class Plan(Section):
                 status = "🟡"
             else:
                 status = "⚪"
-            todos_list.append(f"- {status} {instruction}")
-
+            todos_list.append(format_todo(status, instruction))
         todos = "\n".join(todos_list)
 
+        roadmap_system = (
+            f"{ROADMAP_TAG}\n{indent(todos, '  ')}\n</roadmap>\n"
+            "Tasks marked 🟢 are completed, ⚪ are pending, 🟡 is current."
+        )
         if user_query is None:
             rendered_history = list(self.history)
-
-            roadmap_system = (
-                f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
-                f"Tasks marked ⚪ are scheduled for others later. "
-                f"Your exclusive goal is the 🟡 task."
-            )
-
             rendered_history.append(
                 {"role": "system", "content": roadmap_system}
             )
-
-            return rendered_history, todos
-
-        rendered_history = []
-        for msg in self.history:
-            rendered_history.append(msg)
-            if msg is user_query:
-                roadmap_system = (
-                    f"<roadmap>\n{indent(todos, '  ')}\n</roadmap>\n"
-                    f"Tasks marked ⚪ are scheduled for others later. "
-                    f"Your exclusive goal is the 🟡 task."
-                )
-                rendered_history.append(
-                    {"role": "system", "content": roadmap_system}
-                )
-
+        else:
+            rendered_history = []
+            for msg in self.history:
+                rendered_history.append(msg)
+                if msg is user_query:
+                    rendered_history.append(
+                        {"role": "system", "content": roadmap_system}
+                    )
         return rendered_history, todos
 
     async def _run_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
         if task.status == "success":
+            # A rerun, e.g. from explore, skips the step, so its timing stands
+            return await self._run_actor_task(i, task, context, **kwargs)
+        start = time.monotonic()
+        # The agent's own LLM is the one it calls, set by the coordinator
+        llm = task.actor.llm or task.llm or self.llm
+        with capture_usage(llm) if llm is not None else nullcontext() as usage:
+            try:
+                return await self._run_actor_task(i, task, context, **kwargs)
+            finally:
+                calls = None if usage is None else len(usage.records)
+                self._runs = {**self._runs, i: (time.monotonic() - start, calls)}
+
+    async def _run_actor_task(self, i: int, task: Self | Actor, context: TContext, **kwargs):
+        if task.status == "success":
             return task.views, task.out_context
 
         outputs = []
-        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout) as step:
+        with self._add_step(title=f"{task.title}...", user="Runner", layout_params={"title": "🏗️ Running "}, steps_layout=self.steps_layout, context_exception="raise") as step:
             history, todos = self.render_task_history(i)
             subcontext = self._get_context(i, context, task)
             if self.steps_layout is not None:
@@ -194,11 +251,11 @@ class Plan(Section):
                 task.out_context["__error__"] = error_msg
                 return [], {"__error__": error_msg}  # Return with error message in context
         elif isinstance(e, asyncio.CancelledError):
-            traceback.print_exception(e)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task was cancelled"
             raise e
         else:
-            traceback.print_exception(e)
+            print_task_exception(e)
             step.failed_title = f"{task.title!r} task failed due to an internal error"
             raise e
 
@@ -248,10 +305,7 @@ class Plan(Section):
 
                 # Update todos to show retry
                 if self.steps_layout is not None:
-                    todos = "\n".join(
-                        f"- [{'x' if tidx < idx else '🔄' if tidx == idx else ' '}] {'<u>' + t.instruction + '</u>' if tidx == idx else t.instruction}"
-                        for tidx, t in enumerate(self)
-                    )
+                    _, todos = self.render_task_history(idx)
                     self.steps_layout.header[1].object = todos
 
                 # Run with mutated history
@@ -263,23 +317,90 @@ class Plan(Section):
                 retry_step.success_title = f"✅ {task.title} successfully completed on retry"
         return outputs, out_context
 
-    async def execute(self, context: TContext = None, **kwargs) -> list[Any]:
+    async def execute(self, context: TContext = None, **kwargs) -> tuple[list[Any], TContext]:
         context = context or self.context
         if "__error__" in context:
             del context["__error__"]
+        context.pop("__exception__", None)
         context["plan"] = self
         outputs, out_context = await super().execute(context, **kwargs)
         _, todos = self.render_task_history(failed=self.status == "error")
         if self.steps_layout is not None:
             steps_title, todo_list = self.steps_layout.header
             todo_list.object = todos
-            if self.status == "success":
+            if self.unanswerable:
+                # \u2139 is the information emoji, escaped since it looks like an i
+                steps_title.object = f"\u2139\ufe0f The data cannot answer {self.title!r}"
+            elif self.status == "success":
                 steps_title.object = f"✅ Successfully completed {self.title!r}"
             else:
                 steps_title.object = f"❌ Failed to execute {self.title!r}"
             self.steps_layout.collapsed = True
         log_debug("\033[92mCompleted: Plan\033[0m", show_sep="below")
         return outputs, out_context
+
+
+_TODO_STATUS = {"🟢": "done", "🟡": "current", "⚪": "pending", "🔴": "failed"}
+
+# Anchored at column 0: format_todo indents continuation lines, so text inside
+# an instruction can never be mistaken for a status line.
+_TODO_PATTERN = re.compile(rf"^- ({'|'.join(_TODO_STATUS)}) ", re.MULTILINE)
+
+
+def format_todo(status: str, instruction: str) -> str:
+    """
+    Formats a checklist line in the form `Checklist` parses.
+    """
+    first, *rest = instruction.split("\n")
+    return "\n".join([f"- {status} {first}", *(f"  {line}" if line.strip() else line for line in rest)])
+
+
+_TODO_SX = {
+    "& ul": {"listStyle": "none", "pl": 0, "my": 0.5},
+    "& li": {"display": "flex", "alignItems": "flex-start", "gap": "10px", "py": "2px"},
+    "& li:has(> .todo-done)": {"color": "text.secondary"},
+    "& .todo-status": {
+        "flex": "0 0 auto", "position": "relative", "boxSizing": "border-box",
+        "width": "14px", "height": "14px", "mt": "calc((1lh - 14px) / 2)", "borderRadius": "50%",
+    },
+    "& .todo-pending": {"border": "1.5px solid", "borderColor": "text.disabled"},
+    "& .todo-current": {
+        "border": "2px solid", "borderColor": "primary.main", "borderTopColor": "transparent",
+        "animation": "lumen-todo-spin 0.9s linear infinite",
+        "@media (prefers-reduced-motion: reduce)": {"animation": "none"},
+    },
+    "@keyframes lumen-todo-spin": {"to": {"transform": "rotate(360deg)"}},
+    "& .todo-done": {"bgcolor": "success.main"},
+    "& .todo-done::after": {
+        "content": '""', "position": "absolute", "left": "5.5px", "top": "3.5px", "width": "3px", "height": "6px",
+        "border": "solid white", "borderWidth": "0 1.5px 1.5px 0", "transform": "rotate(45deg)",
+    },
+    "& .todo-failed": {"bgcolor": "error.main"},
+    "& .todo-failed::after": {
+        "content": '"\\00d7"', "position": "absolute", "inset": 0, "display": "flex", "alignItems": "center",
+        "justifyContent": "center", "color": "white", "fontSize": "12px", "lineHeight": 1,
+    },
+}
+
+
+class Checklist(Typography):
+    """
+    Renders the status emoji of a checklist, as produced by
+    `Plan.render_task_history`, as themed status indicators.
+
+    The object stays the plain markdown checklist the LLM sees in its roadmap.
+    """
+
+    def __init__(self, object=None, **params):
+        params.setdefault("sx", _TODO_SX)
+        super().__init__(object, **params)
+
+    def _transform_object(self, obj):
+        if isinstance(obj, str):
+            obj = _TODO_PATTERN.sub(
+                lambda m: f'- <span class="todo-status todo-{_TODO_STATUS[m.group(1)]}"></span>', obj
+            )
+        return super()._transform_object(obj)
 
 
 class Coordinator(Viewer, VectorLookupToolUser):
@@ -305,7 +426,7 @@ class Coordinator(Viewer, VectorLookupToolUser):
     )
 
     llm_tools = param.List(
-        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools],
+        default=[make_load_metaset_relevant_docs_tool, make_document_vector_llm_tools, make_monty_llm_tool],
         doc="""
         List of tools for the Planner to make available to the LLM. The tools are also
         made available to the agents.""",
@@ -313,9 +434,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
 
     prompts = param.Dict(
         default={
-            "main": {
-                "template": PROMPTS_DIR / "Coordinator" / "main.jinja2",
-            },
+            # No template here: the base Coordinator never renders "main" — each
+            # subclass supplies its own, and _lookup_prompt_key walks the MRO to
+            # find it. The key exists so _process_prompts can attach tools to it.
+            "main": {},
             "tool_relevance": {
                 "template": PROMPTS_DIR / "Coordinator" / "tool_relevance.jinja2",
                 "response_model": ThinkingYesNo,
@@ -328,6 +450,16 @@ class Coordinator(Viewer, VectorLookupToolUser):
         allow_refs=True,
         doc="""
         Whether to show verbose output.""",
+    )
+
+    headless = param.Boolean(
+        default=False,
+        constant=True,
+        doc="""
+        Whether to run without a ChatInterface, e.g. from a notebook or a
+        script. Step titles are then logged to the ``lumen`` logger instead
+        of being rendered: start and success at INFO, failure at WARNING.
+        ``interface`` cannot be given at the same time.""",
     )
 
     within_ui = param.Boolean(
@@ -363,7 +495,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if llm_tools is None:
             llm_tools = []
 
-        if interface is None:
+        headless = params.get("headless", self.param.headless.default)
+        if headless and interface is not None:
+            raise ValueError("A headless Coordinator takes no interface; pass one or the other.")
+        if interface is None and not headless:
             interface = ChatInterface(
                 callback=self._chat_invoke, callback_exception="raise", load_buffer=5, show_button_tooltips=True, show_button_name=False, sizing_mode="stretch_both"
             )
@@ -509,6 +644,12 @@ class Coordinator(Viewer, VectorLookupToolUser):
         if isinstance(obj, str):
             return obj
 
+        if isinstance(obj, Tabs):
+            return "\n".join(
+                f"## {name}\n{self._serialize(content, exclude_passwords=exclude_passwords)}"
+                for name, content in zip(obj._names, obj, strict=False)
+            )
+
         if isinstance(obj, (ListLike, NamedListLike)):
             return self._serialize(list(obj), exclude_passwords=exclude_passwords)
 
@@ -534,6 +675,10 @@ class Coordinator(Viewer, VectorLookupToolUser):
         # Handle Tabulator widgets - serialize using describe_data_sync for rich summary
         if isinstance(obj, Tabulator):
             df = obj.value
+            if len(df.columns) == 1:
+                # Do not waste tokens with a summary if just one column
+                col_name = df.columns[0]
+                return f"{col_name}(s): {truncate_to_tokens('`, `'.join(df[col_name].tolist()), max_tokens=1500)}"
             if df is not None and not df.empty:
                 return describe_data_sync(df)
             return "[Empty table]"
@@ -551,32 +696,56 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return obj
 
     async def respond(self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]) -> Plan | None:
+        """
+        Plan a response to the conversation.
+
+        With an interface the history comes from it. Headless, the planner
+        only sees ``messages``, so a follow-up needs the earlier turns in
+        ``messages`` and the earlier plan as ``context["prev_plan"]``.
+        """
         context = {"agent_tool_contexts": [], **context}
-        with self.interface.param.update(loading=True):
+        headless = self.interface is None
+        with nullcontext() if headless else self.interface.param.update(loading=True):
             if isinstance(self.llm, LlamaCpp):
-                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Assistant") as step:
+                with self._add_step(success_title="Using the cached LlamaCpp model", title="Loading LlamaCpp model...", user="Lumen") as step:
                     default_kwargs = self.llm.model_kwargs["default"]
-                    if "repo" in default_kwargs and "model_file" in default_kwargs:
-                        step.stream(f"Model: `{default_kwargs['repo']}/{default_kwargs['model_file']}`")
+                    if "repo_id" in default_kwargs and "filename" in default_kwargs:
+                        step.stream(f"Model: `{default_kwargs['repo_id']}/{default_kwargs['filename']}`")
                     elif "model_path" in default_kwargs:
                         step.stream(f"Model: `{default_kwargs['model_path']}`")
                     await self.llm.get_client("default")  # caches the model for future use
-            messages = fuse_messages(self.interface.serialize(custom_serializer=self._serialize, limit=10) or messages, max_user_messages=self.history)
+            # Validation verdicts are about a previous plan, not part of the
+            # conversation, and read as instructions if left in the history.
+            exclude_users = ["help"] + [a.user for a in self.agents if isinstance(a, ValidationAgent)]
+            serialized = None if headless else self.interface.serialize(
+                exclude_users=exclude_users, custom_serializer=self._serialize, limit=10
+            )
+            messages = fuse_messages(serialized or messages, max_user_messages=self.history)
 
             # the master dict of agents / tools to be used downstream
             # change this for filling models' literals
             agents = {normalized_name(agent): agent for agent in self.agents}
             tools = {normalized_name(tool): tool for tool in self._tools["main"]}
 
+            # Planner reports planning failures on the title, headless or not
             self._todos_title = Typography("📋 Building checklist...", css_classes=["todos-title"], margin=0, styles={"font-weight": "normal", "font-size": "1.1em"})
-            todos = Typography(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
-            todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
-            self.steps_layout = Card(header=todos_layout, collapsed=not self.verbose, elevation=2)
-            self.interface.stream(self.steps_layout, user="Planner")
+            if not headless:
+                todos = Checklist(css_classes=["todos"], margin=0, styles={"font-weight": "normal"})
+                todos_layout = Column(self._todos_title, todos, stylesheets=[".markdown { padding-inline: unset; }"])
+                self.steps_layout = Card(
+                    header=todos_layout, collapsed=not self.verbose, variant="outlined",
+                    sx={"bgcolor": "transparent"},
+                )
+                self.interface.stream(self.steps_layout, user="Planner")
             agents, tools, pre_plan_output = await self._pre_plan(messages, context, agents, tools)
             plan = await self._compute_plan(messages, context, agents, tools, pre_plan_output)
-        if plan is not None:
-            self.steps_layout.header[0].object = "🧾 Checklist ready..."
+        if plan is not None and plan.unanswerable and not headless:
+            self.interface.stream(plan.unanswerable, user="Planner")
+        if plan is not None and self.steps_layout is not None:
+            # \u2139 is the information emoji, escaped since it looks like an i
+            self.steps_layout.header[0].object = (
+                f"\u2139\ufe0f The data cannot answer {plan.title!r}" if plan.unanswerable else "🧾 Checklist ready..."
+            )
             _, todos = plan.render_task_history(-1)
             self.steps_layout.header[1].object = todos
         return plan
@@ -597,6 +766,8 @@ class Coordinator(Viewer, VectorLookupToolUser):
         return result.yes
 
     def __panel__(self):
+        if self.interface is None:
+            raise RuntimeError("A headless Coordinator has no interface to display.")
         return self.interface
 
     async def sync(self, context: TContext | None):

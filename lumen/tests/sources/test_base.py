@@ -9,16 +9,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from hvplot.tests.util import makeMixedDataFrame
-
 from lumen.sources.base import Source, cached
 from lumen.state import state
+from lumen.tests.utils import makeMixedDataFrame
 from lumen.transforms.sql import SQLLimit
 
-try:
-    import fastparquet
-except ImportError:
-    fastparquet = None
 
 def assert_df_equal(df1, df2):
     pd.testing.assert_frame_equal(df1, df2, check_dtype=False)
@@ -154,7 +149,6 @@ def test_file_source_clear_cache(source, column_value_type, dask):
     assert len(source._cache) == 0
 
 
-@pytest.mark.skipif(fastparquet is None, reason='fastparquet not installed')
 def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
     root = os.path.dirname(__file__)
     source = make_filesource(root, cache_dir=cachedir)
@@ -162,10 +156,7 @@ def test_file_source_get_query_cache_to_file(make_filesource, cachedir):
 
     cache_key = source._get_key('test', A=(1, 2))
     cache_path = Path(cachedir) / f'{cache_key}_test.parq'
-    df = pd.read_parquet(cache_path, engine='fastparquet')
-
-    # Patch index names due to https://github.com/dask/fastparquet/issues/732
-    df.index.names = [None]
+    df = pd.read_parquet(cache_path)
     assert_df_equal(
         df,
         makeMixedDataFrame().iloc[1:3]
@@ -368,6 +359,37 @@ async def test_base_sql_source_get_async():
     result_async_filtered = await mock_source.get_async('test_table', category='A')
     # The base implementation should build and execute a filtered query
     assert len(result_async_filtered) <= len(expected)  # Should be filtered
+
+
+def test_fetch_default_delegates_to_execute():
+    """A subclass that only implements execute keeps working through fetch.
+
+    The signature here is the one an out-of-tree subclass is likely to have:
+    no params argument at all. fetch has to pass params in a way that such a
+    subclass swallows rather than rejects.
+    """
+    from lumen.sources.base import BaseSQLSource
+
+    class MockSQLSource(BaseSQLSource):
+
+        def __init__(self, **params):
+            super().__init__(**params)
+            self.tables = {'test_table': 'test_table'}
+
+        def execute(self, sql_query, *args, **kwargs):
+            return pd.DataFrame({'id': [1, 2, 3]})
+
+        def get_tables(self):
+            return list(self.tables)
+
+        def get_sql_expr(self, table):
+            return f"SELECT * FROM {table}"
+
+    source = MockSQLSource()
+    assert source.dataframe_backend is None
+    fetched = source.fetch("SELECT * FROM test_table")
+    assert isinstance(fetched, pd.DataFrame)
+    assert_df_equal(fetched, source.execute("SELECT * FROM test_table"))
 
 
 def test_set_schema_cache_respects_cache_schema_flag(make_filesource):

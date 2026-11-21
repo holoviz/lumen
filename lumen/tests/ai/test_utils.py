@@ -16,24 +16,107 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from lumen.ai.config import PROMPTS_DIR
-from lumen.ai.models import DeleteLine, InsertLine, ReplaceLine
+from lumen.ai.config import PROMPTS_DIR, EmptyResultError
+from lumen.ai.models import (
+    DeleteLine, InsertLine, ReplaceLine, RetrySpec, revision_lines,
+)
 from lumen.ai.utils import (
-    IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS, apply_changes, clean_sql,
-    content_to_text, describe_data, find_slug_by_table_name,
-    format_msg_content, fuse_messages, get_schema, mutate_user_message,
-    parse_huggingface_url, render_template, report_error, retry_llm_output,
-    serialize_image_content, set_content_text, slug_to_table_name,
+    FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
+    apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
+    content_to_text, count_tokens, describe_data, errors_in_result,
+    find_slug_by_table_name, format_msg_content, format_tool_error,
+    fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
+    parse_huggingface_url, print_task_exception, render_template, report_error,
+    retry_llm_output, sanitize_column_names, serialize_image_content,
+    set_content_text, slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
+
+
+def test_collapse_indexed_columns_collapses_large_series():
+    """A dense numbered series (e.g. an embedding matrix) collapses to one entry."""
+    names = ["obs_id"] + [f"X_pca_{i}" for i in range(100)]
+    assert collapse_indexed_columns(names) == ["obs_id", "X_pca_0..X_pca_99 (100 cols)"]
+
+
+def test_collapse_indexed_columns_leaves_unique_names():
+    """Genuinely distinct columns are never collapsed."""
+    names = ["gender", "age", "smoking_status", "tissue_site"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_short_series_untouched():
+    """Runs below the threshold stay expanded (e.g. tSNE/UMAP 2-D embeddings)."""
+    names = ["X_tsne_0", "X_tsne_1", "obs_id"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_preserves_position_and_interleaving():
+    """Each series collapses at its first occurrence, even when interleaved."""
+    names = []
+    for i in range(10):
+        names.extend([f"a_{i}", f"b_{i}"])
+    result = collapse_indexed_columns(names)
+    assert result == ["a_0..a_9 (10 cols)", "b_0..b_9 (10 cols)"]
+
+
+def test_collapse_indexed_columns_near_complete_gap_named():
+    """A near-complete run collapses and names its missing index."""
+    names = [f"X_pca_{i}" for i in range(100) if i != 50]
+    assert collapse_indexed_columns(names) == ["X_pca_0..X_pca_99 (99 cols, missing 50)"]
+
+
+def test_collapse_indexed_columns_multiple_gaps_listed():
+    """Several holes (within budget) are all named, in order."""
+    names = [f"x_{i}" for i in range(100) if i not in (50, 73)]
+    assert collapse_indexed_columns(names) == ["x_0..x_99 (98 cols, missing 50, 73)"]
+
+
+def test_collapse_indexed_columns_too_many_gaps_expanded():
+    """More holes than max_gaps: left expanded, since the gaps likely matter."""
+    drop = {1, 3, 5, 7, 9, 11}  # 6 gaps > default max_gaps of 5
+    names = [f"x_{i}" for i in range(20) if i not in drop]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_step_series_expanded():
+    """A step-2 series is too gappy to be a run and stays expanded."""
+    names = [f"x_{2 * i}" for i in range(10)]  # span 19, 9 holes
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_nonzero_start():
+    """Contiguous runs that don't start at zero collapse honestly."""
+    names = [f"p_{i}" for i in range(5, 21)]  # p_5..p_20, 16 members
+    assert collapse_indexed_columns(names) == ["p_5..p_20 (16 cols)"]
+
+
+def test_collapse_indexed_columns_non_numeric_suffix_ignored():
+    """Names whose suffix isn't a bare integer don't match the series pattern."""
+    names = ["total_counts", "total_counts_mt", "n_genes_by_counts"]
+    assert collapse_indexed_columns(names) == names
+
+
+def test_collapse_indexed_columns_no_separator():
+    """The classic PCA convention (no separator, e.g. PC1..PC50) collapses too."""
+    names = [f"PC{i}" for i in range(1, 51)]
+    assert collapse_indexed_columns(names) == ["PC1..PC50 (50 cols)"]
+
+
+def test_collapse_indexed_columns_alternate_separators():
+    """Hyphen- and dot-separated series are recognised, not just underscores."""
+    hyphen = [f"dim-{i}" for i in range(8)]
+    dot = [f"emb.{i}" for i in range(8)]
+    assert collapse_indexed_columns(hyphen) == ["dim-0..dim-7 (8 cols)"]
+    assert collapse_indexed_columns(dot) == ["emb.0..emb.7 (8 cols)"]
 
 
 def test_render_template_with_valid_template():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        "What topic of data?\n\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"tools": ""}, current_datetime=now).strip()
@@ -44,10 +127,10 @@ def test_render_template_with_valid_template():
 def test_render_template_with_override():
     now = dt.datetime.now()
     expected = (
-        "Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).\n"
-        f"The current date time is {now.strftime('%b %d, %Y %I:%M %p')}\n"
-        "What is the topic of the data?\n"
-        "Its Lumen"
+        "Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).\n"
+        "What topic of data?\n"
+        "Its Lumen\n\n"
+        f"Current date: {now.strftime('%b %d, %Y')}"
     )
     assert (
         render_template(PROMPTS_DIR / "_Testing" / "topic.jinja2", {"context": "Its Lumen", "tools": ""}, current_datetime=now).strip()
@@ -131,6 +214,46 @@ class TestRetryLLMOutput:
         with pytest.raises(unrecoverable_error, match="Failed"):
             await mock_func(errors=["Failed"])
         assert mock_sleep.call_count == 0
+
+    @patch("asyncio.sleep", return_value=None)
+    async def test_async_retry_kwargs_and_ansi_codes(self, mock_sleep):
+        calls = []
+
+        @retry_llm_output(retries=3)
+        async def mock_func(raise_if_empty=True, errors=None):
+            calls.append((raise_if_empty, errors and list(errors)))
+            if raise_if_empty:
+                raise EmptyResultError("no \x1b[4mrows\x1b[0m")
+            return "Accepted"
+
+        assert await mock_func() == "Accepted"
+        assert calls == [(True, None), (False, ["no rows"])]
+
+
+class TestInlineSchemaDefs:
+
+    def test_nested_refs_are_inlined(self):
+        schema = {
+            "properties": {"steps": {"items": {"$ref": "#/$defs/Step"}, "type": "array"}},
+            "$defs": {
+                "Step": {"properties": {"actor": {"$ref": "#/$defs/Actor", "description": "Who"}}},
+                "Actor": {"enum": ["SQLAgent"], "type": "string"},
+            },
+        }
+        assert inline_schema_defs(schema) == {
+            "properties": {"steps": {"items": {"properties": {"actor": {
+                "enum": ["SQLAgent"], "type": "string", "description": "Who",
+            }}}, "type": "array"}},
+        }
+
+    def test_recursive_refs_stay_referenced(self):
+        schema = {
+            "properties": {"root": {"$ref": "#/$defs/Node"}},
+            "$defs": {"Node": {"properties": {"children": {"items": {"$ref": "#/$defs/Node"}, "type": "array"}}}},
+        }
+        inlined = inline_schema_defs(schema)
+        assert inlined["properties"]["root"]["properties"]["children"]["items"] == {"$ref": "#/$defs/Node"}
+        assert inlined["$defs"] == schema["$defs"]
 
 
 
@@ -284,6 +407,56 @@ class TestDescribeData:
         assert "col1: 1" in result
         assert "col2: 3" in result
 
+    async def test_describe_selects_relevant_columns(self):
+        # Wide frame: many numerics, one low-cardinality categorical placed
+        # last, and one near-unique id column. Relevance selection should
+        # keep the categorical (despite its position) and drop the id.
+        n = 200
+        data = {f"num_{i}": np.arange(n) + i for i in range(15)}
+        data["uid"] = [f"id_{i}" for i in range(n)]
+        data["category"] = (["a", "b", "c"] * n)[:n]
+        df = pd.DataFrame(data)
+        result = yaml.load(await describe_data(df), yaml.SafeLoader)
+        assert result["summary"]["sampled_cols"] is True
+        assert result["summary"]["columns_shown"] == 16
+        # Low-cardinality categorical kept even though it is the last column.
+        assert "category" in result["stats"]
+        # Near-unique id column dropped in favour of more informative columns.
+        assert "uid" not in result["stats"]
+
+    async def test_describe_priority_columns_forced_in(self):
+        n = 200
+        data = {f"num_{i}": np.arange(n) + i for i in range(15)}
+        data["uid"] = [f"id_{i}" for i in range(n)]
+        df = pd.DataFrame(data)
+        result = yaml.load(
+            await describe_data(df, priority_columns=["uid"]), yaml.SafeLoader
+        )
+        # Explicitly requested column is included despite low relevance.
+        assert "uid" in result["stats"]
+
+    async def test_describe_narrow_data_not_sampled(self):
+        df = pd.DataFrame({f"col_{i}": np.arange(0, 200) for i in range(5)})
+        result = yaml.load(await describe_data(df), yaml.SafeLoader)
+        assert result["summary"]["sampled_cols"] is False
+        assert "columns_shown" not in result["summary"]
+
+    async def test_describe_categorical_dtype_emits_enum(self):
+        # Sources that return low-cardinality columns as
+        # pandas `category` must still surface their enum values.
+        n = 300
+        df = pd.DataFrame({
+            "smoking": pd.Categorical((["Former", "Current", "Never"] * n)[:n]),
+            "flag": pd.array(([True, False] * n)[:n], dtype="boolean"),
+            "value": np.random.rand(n),
+        })
+        result = yaml.load(await describe_data(df), yaml.SafeLoader)
+        assert set(result["stats"]["smoking"]["enum"]) <= {
+            "Former", "Current", "Never", "...",
+        }
+        assert result["stats"]["smoking"]["nunique"] == 3
+        assert "enum" in result["stats"]["flag"]
+
 
 def test_clean_sql_removes_backticks():
     sql_expr = "```sql SELECT * FROM `table`; ```"
@@ -295,6 +468,16 @@ def test_clean_sql_strips_whitespace_and_semicolons():
     sql_expr = "SELECT * FROM table;    "
     cleaned_sql = clean_sql(sql_expr)
     assert cleaned_sql == "SELECT * FROM table"
+
+
+def test_clean_sql_prettify_with_legacy_any_dialect():
+    """BaseSQLSource.dialect defaults to 'any', a legacy value that sqlglot
+    no longer recognises (28.x raises 'Unknown dialect any'). clean_sql
+    must normalise it to the dialect-agnostic mode so calling code on a
+    fresh BaseSQLSource (e.g. STACSource) does not break the SQLAgent
+    chat path."""
+    cleaned = clean_sql("SELECT 1", dialect="any", prettify=True)
+    assert "SELECT" in cleaned and "1" in cleaned
 
 
 def test_report_error():
@@ -631,6 +814,7 @@ class TestFuseMessagesMultimodal:
         assert len(result) == 2
         assert result[0]["role"] == "system"
         assert "first" in result[0]["content"]
+        assert result[0]["content"].endswith("\n</Chat History>")
         assert result[1] == msgs[-1]
 
     def test_multimodal_user_content_in_history(self):
@@ -726,3 +910,253 @@ class TestMutateUserMessageMultimodal:
         assert original[0]["content"] == ["query", img]
         # Result should have the mutation
         assert img in result[0]["content"]
+
+
+# -------------------------------------------------------------------
+# count_tokens / truncate_to_tokens
+# -------------------------------------------------------------------
+
+class TestCountTokens:
+
+    def test_empty_string(self):
+        assert count_tokens("") == 0
+
+    def test_counts_tokens(self):
+        # Exact counts are tokenizer-specific; assert the shape of the answer
+        # rather than a magic number, so a vocab change doesn't break the suite.
+        assert count_tokens("hello world") >= 2
+        assert count_tokens("hello world " * 100) > count_tokens("hello world")
+
+    def test_falls_back_when_encoder_unavailable(self):
+        """A missing tokenizer must degrade to a char estimate, not raise."""
+        text = "a" * 300
+        with patch("lumen.data.utils._get_token_encoder", return_value=None):
+            assert count_tokens(text) == pytest.approx(300 / FALLBACK_CHARS_PER_TOKEN, abs=1)
+
+    def test_encoder_is_cached(self):
+        from lumen.ai.utils import _get_token_encoder
+        assert _get_token_encoder() is _get_token_encoder()
+
+    def test_encoder_failure_is_soft(self):
+        """A tokenizer that fails to load yields None rather than propagating."""
+        from lumen.ai import utils
+        with patch.dict(utils._TOKEN_ENCODER_CACHE, clear=True):
+            with patch.dict("sys.modules", {"tiktoken": None}):
+                # `import tiktoken` raises ImportError when the module is None.
+                assert utils._get_token_encoder() is None
+                assert utils.count_tokens("some text") > 0
+
+
+class TestTruncateToTokens:
+
+    def test_under_budget_is_unchanged(self):
+        text = "line one\nline two"
+        assert truncate_to_tokens(text, 1000) == text
+
+    def test_over_budget_respects_cap(self):
+        text = "\n".join(f"row {i} has a value of {i * 3.14159}" for i in range(300))
+        result = truncate_to_tokens(text, 100)
+        assert count_tokens(result) <= 100
+        assert len(result) < len(text)
+
+    def test_reports_what_was_dropped(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        result = truncate_to_tokens(text, 60)
+        assert "truncated, showing" in result
+        assert "tokens)" in result
+
+    def test_cuts_on_a_line_boundary(self):
+        """The last retained line must be whole, so YAML/tables stay parseable."""
+        lines = [f"key_{i}: value_{i}" for i in range(300)]
+        result = truncate_to_tokens("\n".join(lines), 100)
+        body = result.split("\n")[:-1]  # drop the appended note
+        assert body
+        assert all(line in lines for line in body)
+
+    def test_single_oversized_line(self):
+        """One line longer than the whole budget still respects the cap."""
+        result = truncate_to_tokens("x" * 5000, 50)
+        assert count_tokens(result) <= 50
+
+    def test_custom_marker(self):
+        text = "\n".join(f"row {i}" for i in range(500))
+        assert "elided, showing" in truncate_to_tokens(text, 60, marker="elided")
+
+
+@pytest.mark.parametrize("columns, expected", [
+    (["a b", "c!d"], ["a_b", "cd"]),
+    (["ok", "fine_2"], ["ok", "fine_2"]),
+    (["total ($)", "50% off"], ["total_", "50_off"]),
+    # Two names that sanitize to one keep both columns, as they always have.
+    (["a b", "a_b"], ["a_b", "a_b"]),
+])
+def test_sanitize_column_names(columns, expected):
+    df = pd.DataFrame([list(range(len(columns)))], columns=columns)
+    sanitized = sanitize_column_names(df)
+    assert list(sanitized.columns) == expected
+    assert sanitized.values.tolist() == df.values.tolist()
+
+
+def test_sanitize_column_names_leaves_the_caller_alone():
+    """The DeckGL agent renames a frame it does not own, so writing to the
+    result must not reach back into the pipeline's cached data."""
+    df = pd.DataFrame({"a b": [1, 2]})
+    sanitized = sanitize_column_names(df)
+    sanitized.iloc[0, 0] = 99
+    assert list(df.columns) == ["a b"]
+    assert df.iloc[0, 0] == 1
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("GET https://api.x/v1?key=SECRET failed", "GET https://api.x/v1?<redacted> failed"),
+    ("postgresql://user:pw@host/db?sslkey=k down", "postgresql://<redacted>@host/db?<redacted> down"),
+    ('Binder Error: column "a?b" not found', 'Binder Error: column "a?b" not found'),
+])
+def test_format_tool_error_redacts_url_secrets(text, expected):
+    assert format_tool_error(text) == expected
+
+
+def test_format_tool_error_truncates():
+    assert len(format_tool_error(ValueError("x" * 5000), max_length=200)) <= 200
+
+
+@pytest.mark.parametrize(
+    "sql, columns, expected",
+    [
+        pytest.param("SELECT name, age FROM users", ("name", "age"), {}, id="pass-through"),
+        pytest.param("SELECT region, price AS cost FROM t", ("region", "cost"), {}, id="rename"),
+        pytest.param(
+            "SELECT region, SUM(population) AS total_pop, AVG(price) AS avg_price FROM t GROUP BY region",
+            ("region", "total_pop", "avg_price"),
+            {"total_pop": "SUM(t.population), grouped by region", "avg_price": "AVG(t.price), grouped by region"},
+            id="group-by",
+        ),
+        pytest.param(
+            "SELECT region, SUM(population) AS total FROM t GROUP BY 1",
+            ("region", "total"),
+            {"total": "SUM(t.population), grouped by region"},
+            id="group-by-ordinal",
+        ),
+        pytest.param(
+            "SELECT region, COUNT(*) AS n, CAST(price AS INT) AS price FROM t GROUP BY region",
+            ("region", "n", "price"),
+            {"n": "COUNT(*), grouped by region", "price": "CAST(t.price AS INT), grouped by region"},
+            id="count-star-and-same-name-cast",
+        ),
+        pytest.param(
+            "SELECT u.name, o.amount * 1.1 AS total FROM users AS u JOIN orders AS o ON u.id = o.user_id",
+            ("name", "total"),
+            {"total": "orders.amount * 1.1"},
+            id="join-uses-table-not-alias",
+        ),
+        pytest.param(
+            "WITH s AS (SELECT dept, AVG(salary) AS avg_sal FROM employees GROUP BY dept) "
+            "SELECT dept, avg_sal * 1.1 AS projected FROM s",
+            ("dept", "projected"),
+            {"projected": "AVG(employees.salary) * 1.1, grouped by dept"},
+            id="cte-inlined",
+        ),
+        pytest.param(
+            "SELECT region, s FROM (SELECT region, SUM(population) AS s FROM t GROUP BY region) AS sub",
+            ("region", "s"),
+            {"s": "SUM(t.population), grouped by region"},
+            id="subquery-column-is-derived",
+        ),
+        pytest.param(
+            "SELECT region, RANK() OVER (ORDER BY price) AS r FROM t",
+            ("region", "r"),
+            {"r": "RANK() OVER (ORDER BY t.price)"},
+            id="window",
+        ),
+        pytest.param("SELECT SUM(population) FROM t", ("sum(population)",), {"sum(population)": "SUM(t.population)"}, id="unaliased-duckdb"),
+        pytest.param("SELECT SUM(population) FROM t", ("sum",), {"sum": "SUM(t.population)"}, id="unaliased-postgres"),
+        pytest.param("SELECT *, price * 2 AS p2 FROM t", ("region", "price", "p2"), {"p2": "t.price * 2"}, id="star"),
+        pytest.param("SELECT price * 2 AS p FROM t UNION ALL SELECT price FROM u", ("p",), {}, id="union"),
+        pytest.param(
+            "WITH u AS (SELECT price FROM a UNION ALL SELECT price FROM b) SELECT SUM(price) AS total FROM u",
+            ("total",),
+            {},
+            id="union-in-cte",
+        ),
+        pytest.param(
+            'SELECT "Symbol", AVG("Close") AS avg_close FROM stocks GROUP BY "Symbol"',
+            ("Symbol", "avg_close"),
+            {"avg_close": 'AVG(stocks."Close"), grouped by "Symbol"'},
+            id="quoted-mixed-case",
+        ),
+        pytest.param(
+            "WITH s AS (SELECT SUM(x) AS Total FROM t) SELECT total * 2 AS d FROM s",
+            ("d",),
+            {"d": "SUM(t.x) * 2"},
+            id="cte-alias-case-mismatch",
+        ),
+        pytest.param(
+            "WITH a AS (SELECT x + 1 AS y FROM t) SELECT y * 3 AS z FROM a",
+            ("z",),
+            {"z": "(t.x + 1) * 3"},
+            id="inlined-keeps-precedence",
+        ),
+        pytest.param(
+            "SELECT SUM(p) AS s FROM read_parquet('x.parquet')",
+            ("s",),
+            {"s": "SUM(p)"},
+            id="table-function",
+        ),
+        pytest.param("SELEC nonsense", ("x",), {}, id="unparseable"),
+    ],
+)
+def test_column_tooltips(sql, columns, expected):
+    assert column_tooltips(sql, "duckdb", columns) == expected
+
+
+
+SPEC_LINES = ["encoding:", "  x:", "    field: species", "  y:", "    field: mass", "mark: bar"]
+
+
+def _revision(edits, lines=SPEC_LINES, is_yaml=True):
+    token = revision_lines.set((lines, is_yaml))
+    try:
+        return RetrySpec.model_validate({"chain_of_thought": "Change it", "edits": edits})
+    finally:
+        revision_lines.reset(token)
+
+
+def test_edit_without_op_on_the_same_key_is_a_replace():
+    # Seen from free models: the right edit, with "op" left out every retry
+    spec = _revision([{"line_no": 6, "line": "mark: line"}])
+    assert isinstance(spec.edits[0], ReplaceLine)
+
+
+def test_edit_without_op_on_another_key_is_an_insert():
+    # "Color the bars" adds color: where x: is; replacing would drop x
+    spec = _revision([{"line_no": 2, "line": "  color:"}, {"line_no": 2, "line": "    field: species"}])
+    assert [type(e) for e in spec.edits] == [InsertLine, InsertLine]
+    assert apply_changes(SPEC_LINES, spec.edits).splitlines()[1:3] == ["  color:", "    field: species"]
+
+
+def test_edit_without_op_past_the_end_is_an_insert_and_without_line_a_delete():
+    spec = _revision([{"line_no": 7, "line": "width: 400"}, {"line_no": 3}])
+    assert [type(e) for e in spec.edits] == [InsertLine, DeleteLine]
+
+
+def test_sql_edit_without_op_is_a_replace_unless_past_the_end():
+    lines = ["SELECT a::INT AS a", "FROM t"]
+    spec = _revision([{"line_no": 1, "line": "SELECT b::INT AS a"}, {"line_no": 3, "line": "LIMIT 10"}], lines, is_yaml=False)
+    assert [type(e) for e in spec.edits] == [ReplaceLine, InsertLine]
+    assert apply_changes(lines, spec.edits).splitlines() == ["SELECT b::INT AS a", "FROM t", "LIMIT 10"]
+
+
+def test_edit_with_op_is_left_alone():
+    spec = _revision([{"op": "replace", "line_no": 2, "line": "  color:"}])
+    assert isinstance(spec.edits[0], ReplaceLine)
+
+
+def test_task_tracebacks_are_hidden_only_while_errors_go_into_the_result(capsys):
+    print_task_exception(ValueError("shown"))
+    token = errors_in_result.set(True)
+    try:
+        print_task_exception(ValueError("hidden"))
+    finally:
+        errors_in_result.reset(token)
+    err = capsys.readouterr().err
+    assert "shown" in err and "hidden" not in err

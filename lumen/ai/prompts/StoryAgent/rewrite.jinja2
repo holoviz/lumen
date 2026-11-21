@@ -1,0 +1,22 @@
+{% extends 'Actor/main.jinja2' %}
+
+{%- block instructions -%}
+Rewrite one paragraph of a data story so it follows the user's instruction.
+
+- Return only the rewritten paragraph, in Markdown.
+- Keep it about the same length unless the instruction asks otherwise.
+- Ground every claim ONLY in the data summaries below; do not invent numbers.
+- Keep any facts from the original paragraph that are still accurate.
+{%- endblock -%}
+
+{%- block context -%}
+Instruction: {{ instruction }}
+
+Paragraph to rewrite:
+{{ prose }}
+{%- if catalog %}
+
+The charts and tables the story covers:
+{{ catalog }}
+{%- endif %}
+{%- endblock -%}

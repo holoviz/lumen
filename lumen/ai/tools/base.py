@@ -1,3 +1,4 @@
+import asyncio
 
 from types import FunctionType
 from typing import Any, TypedDict
@@ -17,7 +18,10 @@ from ..translate import function_to_model
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
 
 
-def define_tool(_func=None, *, requires=None, provides=None, purpose=None, render_output=None):
+def define_tool(
+    _func=None, *, requires=None, provides=None, purpose=None, render_output=None,
+    run_in_thread=None
+):
     """
     Annotate a function so FunctionTool can read tool metadata.
     """
@@ -31,6 +35,8 @@ def define_tool(_func=None, *, requires=None, provides=None, purpose=None, rende
             annotations["purpose"] = purpose
         if render_output is not None:
             annotations["render_output"] = render_output
+        if run_in_thread is not None:
+            annotations["run_in_thread"] = run_in_thread
         setattr(function, _TOOL_ANNOTATIONS_ATTR, annotations)
         return function
     if _func is not None and callable(_func):
@@ -105,6 +111,17 @@ class FunctionTool(Tool):
     render_output = param.Boolean(default=False, doc="""
         Whether to render the tool output directly, even if it is not already a Lumen View or Panel Viewable.""")
 
+    read_only = param.Boolean(default=False, doc="""
+        Whether calling the tool leaves all state unchanged. Identical calls
+        to a read-only tool within one LLM request reuse the earlier result
+        instead of running again.""")
+
+    run_in_thread = param.Boolean(default=False, doc="""
+        Whether to run a synchronous function in a worker thread so that it
+        does not block the event loop. Leave disabled for functions that
+        interact with Panel objects, which may rely on running on the
+        event loop thread.""")
+
     prompts = param.Dict(
         default={
             "main": {
@@ -114,15 +131,7 @@ class FunctionTool(Tool):
     )
 
     def __init__(self, function, **params):
-        annotations = getattr(function, _TOOL_ANNOTATIONS_ATTR, {})
-        if "requires" not in params and "requires" in annotations:
-            params["requires"] = annotations["requires"]
-        if "provides" not in params and "provides" in annotations:
-            params["provides"] = annotations["provides"]
-        if "purpose" not in params and "purpose" in annotations:
-            params["purpose"] = annotations["purpose"]
-        if "render_output" not in params and "render_output" in annotations:
-            params["render_output"] = annotations["render_output"]
+        params = {**getattr(function, _TOOL_ANNOTATIONS_ATTR, {}), **params}
         requires = list(params.get("requires", []))
         model = function_to_model(function, skipped=requires)
         if "purpose" not in params:
@@ -141,12 +150,18 @@ class FunctionTool(Tool):
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
     ) -> tuple[list[Any], ContextModel]:
+        # step_title is passed to every actor in a plan; only forward it
+        # if the wrapped function actually accepts it
+        if "step_title" not in self._model.model_fields:
+            kwargs.pop("step_title", None)
         model_kwargs = {}
         if any(field not in self.requires and field not in kwargs for field in self._model.model_fields):
             model_kwargs = await self._invoke_prompt("main", messages, context, response_model=self._model, max_retries=3)
         arguments = dict(model_kwargs, **{k: context[k] for k in self.requires}, **kwargs)
         if param.parameterized.iscoroutinefunction(self.function):
             result = await self.function(**arguments)
+        elif self.run_in_thread:
+            result = await asyncio.to_thread(self.function, **arguments)
         else:
             result = self.function(**arguments)
         if isinstance(result, (View, Viewable)):
@@ -161,7 +176,7 @@ class FunctionTool(Tool):
             if len(self.provides) == 1 and not isinstance(result, dict):
                 out_model[self.provides[0]] = result
             else:
-                out_model.update({result[key] for key in self.provides})
+                out_model.update({key: result[key] for key in self.provides})
         return [self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),

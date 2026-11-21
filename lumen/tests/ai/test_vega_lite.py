@@ -1,0 +1,450 @@
+import pytest
+
+try:
+    import lumen.ai  # noqa
+except ModuleNotFoundError:
+    pytest.skip(
+        "lumen.ai could not be imported, skipping tests.",
+        allow_module_level=True,
+    )
+
+import vl_convert
+
+from lumen.ai.agents.vega_lite import VegaLiteAgent
+from lumen.ai.config import PROMPTS_DIR
+from lumen.ai.editors import VegaLiteEditor
+from lumen.ai.utils import (
+    category_palette, is_compound_vegalite, normalize_vegalite_spec,
+)
+from lumen.config import dump_yaml
+
+
+def test_normalize_vegalite_spec_adds_schema_and_container_sizing():
+    """A bare spec gains $schema and container sizing and stays valid."""
+    raw = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "quantitative"},
+            "y": {"field": "B", "type": "quantitative"},
+        },
+    }
+
+    result = normalize_vegalite_spec(raw)
+
+    spec = result["spec"]
+    assert spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
+    assert spec["width"] == "container"
+    assert spec["height"] == "container"
+    assert result["sizing_mode"] == "stretch_both"
+    assert result["min_height"] == 200
+    # Normalized spec must pass the editor's own validation.
+    VegaLiteEditor.validate_spec(spec)
+
+
+def test_normalize_vegalite_spec_strips_sizing_for_compound_charts():
+    """Compound charts drop top-level width/height (sub-charts size themselves)."""
+    raw = {
+        "hconcat": [
+            {
+                "data": {"values": [{"A": 1, "B": 2}]},
+                "mark": "bar",
+                "encoding": {
+                    "x": {"field": "A", "type": "quantitative"},
+                    "y": {"field": "B", "type": "quantitative"},
+                },
+            }
+        ],
+        "width": 400,
+        "height": 300,
+    }
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+
+    assert "width" not in spec
+    assert "height" not in spec
+    assert spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
+
+
+BAR = {
+    "mark": "bar",
+    "encoding": {
+        "x": {"field": "A", "type": "nominal"},
+        "y": {"field": "B", "type": "quantitative"},
+    },
+}
+
+
+@pytest.mark.parametrize("channel", ["row", "column", "facet"])
+def test_normalize_vegalite_spec_strips_sizing_for_charts_faceted_by_encoding(channel):
+    """A container size would apply to each cell of a chart faceted by an encoding channel."""
+    raw = {**BAR, "encoding": {**BAR["encoding"], channel: {"field": "C", "type": "nominal"}}, "width": 400}
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+
+    assert "width" not in spec
+    assert "height" not in spec
+
+
+@pytest.mark.parametrize("spec, compound", [
+    (BAR, False),
+    ({"layer": [BAR, BAR]}, False),
+    ({"hconcat": [BAR, BAR]}, True),
+    ({"facet": {"field": "C"}, "spec": BAR}, True),
+    ({"repeat": ["B"], "spec": BAR}, True),
+    ({**BAR, "encoding": {**BAR["encoding"], "column": {"field": "C"}}}, True),
+    ({"layer": [{**BAR, "encoding": {**BAR["encoding"], "row": {"field": "C"}}}]}, True),
+])
+def test_is_compound_vegalite(spec, compound):
+    assert is_compound_vegalite(spec) is compound
+
+
+def test_normalize_vegalite_spec_thins_band_labels_on_heatmaps():
+    """Ordinal rect axes drop overlapping labels instead of printing one per band."""
+    raw = {
+        "layer": [{
+            "mark": {"type": "rect"},
+            "encoding": {
+                "x": {"field": "lon", "type": "ordinal"},
+                "y": {"field": "lat", "type": "ordinal", "axis": {"labelOverlap": False}},
+                "color": {"field": "air", "type": "quantitative"},
+            },
+        }],
+    }
+
+    encoding = normalize_vegalite_spec(raw)["spec"]["layer"][0]["encoding"]
+
+    assert encoding["x"]["axis"] == {"labelOverlap": "parity", "labelAngle": 0}
+    assert encoding["y"]["axis"] == {"labelOverlap": False}
+    assert "axis" not in encoding["color"]
+
+
+def test_normalize_vegalite_spec_keeps_bar_labels():
+    """Every category label stays on a bar chart, where each one names a bar."""
+    raw = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "island", "type": "nominal"},
+            "y": {"field": "count", "type": "quantitative"},
+        },
+    }
+
+    encoding = normalize_vegalite_spec(raw)["spec"]["encoding"]
+
+    assert "axis" not in encoding["x"]
+
+
+def test_normalize_vegalite_spec_adds_geographic_interactivity():
+    """Specs with lat/long encodings gain a projection, zoom params and map layer."""
+    raw = {
+        "mark": "circle",
+        "encoding": {
+            "latitude": {"field": "lat", "type": "quantitative"},
+            "longitude": {"field": "lon", "type": "quantitative"},
+        },
+    }
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+
+    assert spec["projection"]["type"] == "mercator"
+    assert "scale" in {p.get("name") for p in spec["params"]}
+    assert "layer" in spec
+
+
+def test_main_prompt_guards_ungrouped_multi_series_lines():
+    """A categorical column left un-aggregated and un-split joins its rows into
+    one zigzagging line, so the split-or-aggregate guidance must survive as a
+    pair rather than collapse to neither escape hatch."""
+    text = (PROMPTS_DIR / "VegaLiteAgent" / "main.jinja2").read_text()
+    assert "zigzag" in text
+    assert "aggregate" in text.lower()
+
+
+def test_vegalite_prompts_leave_theme_owned_colors_unset():
+    """Colors written into the spec beat the render-time theme, so the prompts
+    must not teach the model to set text, grid, background or border colors."""
+    prompt_dir = PROMPTS_DIR / "VegaLiteAgent"
+    theme_tokens = (
+        "subtitleColor",
+        "color: black",
+        "#eeeeee",
+        "#cccccc",
+        "#333333",
+        "#666666",
+        "#888888",
+        "#ffcccc",
+        "#cc0000",
+        "#e74c3c",
+        '"white"',
+    )
+    for name in ("main.jinja2", "main_altair.jinja2", "revise_output.jinja2", "annotate_plot.jinja2"):
+        text = (prompt_dir / name).read_text()
+        for token in theme_tokens:
+            assert token not in text, f"{token!r} leaked into {name}"
+
+
+CATEGORICAL_SPEC = {
+    "mark": "bar",
+    "encoding": {
+        "x": {"field": "c", "type": "nominal"},
+        "y": {"field": "v", "type": "quantitative"},
+        "color": {"field": "c", "type": "nominal"},
+    },
+}
+
+
+async def test_palette_supplied_as_a_default_the_model_can_override(llm):
+    """Charts share a palette so a report does not shift colors between views,
+    but a chart that chose its own colors keeps them."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(dict(CATEGORICAL_SPEC))}))["spec"]
+    assert spec["config"]["range"]["category"] == category_palette()
+
+    chosen = dict(CATEGORICAL_SPEC, config={"range": {"category": ["#111111"]}, "view": {"stroke": None}})
+    spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(chosen)}))["spec"]
+    assert spec["config"]["range"]["category"] == ["#111111"]
+    assert spec["config"]["view"] == {"stroke": None}
+
+
+async def test_palette_only_added_where_it_can_be_used(llm):
+    """A palette is only meaningful for categorical color, so charts that do not
+    use it are left alone rather than carrying twenty unused colors."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+    axes = {"x": {"field": "c", "type": "nominal"}, "y": {"field": "v", "type": "quantitative"}}
+
+    for encoding in (axes, dict(axes, color={"field": "v", "type": "quantitative"})):
+        chart = {"mark": "bar", "encoding": encoding}
+        spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(chart)}))["spec"]
+        assert "range" not in spec.get("config", {})
+
+    layered = {"layer": [{"mark": "bar", "encoding": CATEGORICAL_SPEC["encoding"]}]}
+    spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(layered)}))["spec"]
+    assert spec["config"]["range"]["category"] == category_palette()
+
+
+async def test_palette_not_reapplied_once_the_chart_exists(llm):
+    """Annotating or polishing a chart must not restore a palette the user
+    removed, so the defaults are only supplied on the way in."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+
+    spec = (await agent._extract_spec(
+        {}, {"yaml_spec": dump_yaml(dict(CATEGORICAL_SPEC))}, apply_defaults=False
+    ))["spec"]
+
+    assert "range" not in spec.get("config", {})
+
+
+async def test_default_number_format_avoids_scientific_notation(llm):
+    """Axis labels read 4,000 rather than 4e+3, and decimals survive."""
+    agent = VegaLiteAgent(llm=llm, code_execution="disabled")
+    chart = {
+        "data": {"values": [{"c": "a", "v": 4000}, {"c": "b", "v": 6000.5}]},
+        "mark": "bar",
+        "encoding": {"x": {"field": "c", "type": "nominal"}, "y": {"field": "v", "type": "quantitative"}},
+    }
+
+    spec = (await agent._extract_spec({}, {"yaml_spec": dump_yaml(chart)}))["spec"]
+    svg = vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))
+
+    assert ">4,000<" in svg
+    assert "e+" not in svg
+
+
+def test_palette_reaches_the_compiled_vega_scale():
+    """The palette is only useful if Vega resolves it, which it does through the
+    named 'category' range rather than by inlining the colors in the scale."""
+    spec = {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "data": {"values": [{"c": "a", "v": 1}, {"c": "b", "v": 2}]},
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "c", "type": "nominal"},
+            "y": {"field": "v", "type": "quantitative"},
+            "color": {"field": "c", "type": "nominal"},
+        },
+        "config": {"range": {"category": category_palette()}},
+    }
+
+    compiled = vl_convert.vegalite_to_vega(spec)
+
+    assert compiled["config"]["range"]["category"] == category_palette()
+
+
+class TestGeoshapeGeometryValidation:
+    """A geoshape over a table with no geometry compiles cleanly and draws nothing,
+    so validation has to reject it or the only symptom is an empty canvas."""
+
+    BOUNDARIES = "https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"
+
+    def test_rejects_geoshape_bound_to_the_table(self):
+        spec = {
+            "data": {"name": "avg_pm25_by_state"},
+            "projection": {"type": "albersUsa"},
+            "layer": [{
+                "mark": {"type": "geoshape", "stroke": "white"},
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+            "transform": [{
+                "lookup": "properties.name",
+                "from": {
+                    "data": {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}},
+                    "key": "properties.name",
+                    "fields": ["state"],
+                },
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_boundaries_as_primary_data(self):
+        spec = {
+            "data": {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}},
+            "transform": [{
+                "lookup": "properties.name",
+                "from": {"data": {"name": "t"}, "key": "state", "fields": ["avg_pm25"]},
+            }],
+            "mark": "geoshape",
+            "projection": {"type": "albersUsa"},
+            "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_omitted_data_for_own_geometry(self):
+        """The table's own geometry is injected at render time, so the spec has no data."""
+        spec = {
+            "mark": "geoshape",
+            "projection": {"type": "naturalEarth1"},
+            "encoding": {"color": {"field": "properties.avg_pm25", "type": "quantitative"}},
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_accepts_the_two_layer_base_plus_join_pattern(self):
+        """The base layer keeps regions the table does not cover on the map."""
+        boundaries = {"url": self.BOUNDARIES, "format": {"type": "topojson", "feature": "states"}}
+        spec = {
+            "projection": {"type": "albersUsa"},
+            "layer": [
+                {"data": boundaries, "mark": {"type": "geoshape", "fill": "#eeeeee"}},
+                {
+                    "data": boundaries,
+                    "transform": [{
+                        "lookup": "properties.name",
+                        "from": {"data": {"name": "t"}, "key": "state", "fields": ["avg_pm25"]},
+                    }],
+                    "mark": "geoshape",
+                    "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+                },
+            ],
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+    def test_rejects_a_layer_bound_to_the_table(self):
+        spec = {
+            "projection": {"type": "albersUsa"},
+            "layer": [{
+                "data": {"name": "t"},
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_rejects_a_layer_inheriting_table_bound_data(self):
+        """A layer with no data of its own uses its parent's, so the check follows it."""
+        spec = {
+            "data": {"name": "t"},
+            "layer": [{
+                "mark": "geoshape",
+                "encoding": {"color": {"field": "avg_pm25", "type": "quantitative"}},
+            }],
+        }
+        with pytest.raises(RuntimeError, match="carries no geometry"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_leaves_non_geographic_charts_alone(self):
+        spec = {
+            "data": {"name": "t"},
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "state", "type": "nominal"},
+                "y": {"field": "avg_pm25", "type": "quantitative"},
+            },
+        }
+        VegaLiteEditor.validate_spec(spec)
+
+
+def test_normalize_vegalite_spec_rewrites_the_comma_number_format():
+    """A bare ',' format makes Vega print 6000 as 6e+3, however deep in the spec the model wrote it."""
+    raw = {
+        "config": {"numberFormat": ","},
+        "data": {"values": [{"c": "a", "v": 4000}, {"c": "b", "v": 6000}], "format": {"type": "json"}},
+        "layer": [{
+            "mark": "bar",
+            "encoding": {
+                "x": {"field": "c", "type": "nominal"},
+                "y": {"field": "v", "type": "quantitative", "axis": {"format": ","}},
+                "tooltip": [{"field": "v", "type": "quantitative", "format": ","}],
+                "color": {"field": "c", "type": "nominal", "legend": {"format": "%Y"}},
+            },
+        }],
+    }
+
+    spec = normalize_vegalite_spec(raw)["spec"]
+    layer = spec["layer"][0]["encoding"]
+
+    assert spec["config"]["numberFormat"] == ",~r"
+    assert layer["y"]["axis"]["format"] == ",~r"
+    assert layer["tooltip"][0]["format"] == ",~r"
+    # Other formats, and a data format that is not a number format, are left alone.
+    assert layer["color"]["legend"]["format"] == "%Y"
+    assert spec["data"]["format"] == {"type": "json"}
+    assert "e+" not in vl_convert.vegalite_to_svg(dict(spec, width=200, height=150))
+
+
+HEATMAP_XY = {
+    "x": {"field": "decade", "type": "ordinal"},
+    "y": {"field": "continent", "type": "nominal"},
+}
+
+
+def test_merging_layers_keeps_the_shared_encoding():
+    # A heatmap's x and y sit at the top, shared by its rect and text layers;
+    # dropping them when a label layer is merged in piles every cell onto one
+    base = {"encoding": HEATMAP_XY, "layer": [{"mark": "rect", "encoding": {"color": {"field": "v"}}}]}
+    labels = {"layer": [{"mark": "text", "encoding": {"text": {"field": "v"}}}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
+    assert merged["encoding"] == HEATMAP_XY
+    assert [layer["mark"] for layer in merged["layer"]] == ["rect", {"type": "text"}]
+
+
+def test_turning_a_single_view_into_layers_drops_only_its_mark():
+    base = {"mark": "rect", "encoding": {**HEATMAP_XY, "color": {"field": "v"}}}
+    labels = {"layer": [{"mark": "rect"}, {"mark": "text", "encoding": {"text": {"field": "v"}}}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
+    assert "mark" not in merged
+    assert merged["encoding"]["x"] == HEATMAP_XY["x"] and merged["encoding"]["y"] == HEATMAP_XY["y"]
+    rect, text = merged["layer"]
+    assert rect["encoding"]["color"] == {"field": "v"}
+    assert "color" not in text["encoding"] and "color" not in merged["encoding"]
+
+
+def test_a_rule_layer_does_not_inherit_the_chart_color_or_tooltip():
+    base = {"layer": [{"mark": "bar"}], "encoding": {**HEATMAP_XY, "color": {"field": "c"}, "tooltip": [{"field": "v"}]}}
+    threshold = {"layer": [{"mark": "rule", "encoding": {"y": {"datum": 5}}}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, threshold)
+    bar, rule = merged["layer"]
+    assert merged["encoding"] == HEATMAP_XY
+    assert bar["encoding"] == {"color": {"field": "c"}, "tooltip": [{"field": "v"}]}
+    assert rule["encoding"] == {"y": {"datum": 5}}
+
+
+def test_a_shared_text_channel_stays_with_the_label_layer():
+    # The usual heatmap: x, y and text shared, the rect adds color
+    base = {"mark": "rect", "encoding": {**HEATMAP_XY, "text": {"field": "v"}, "color": {"field": "v"}}}
+    labels = {"layer": [{"mark": "rect"}, {"mark": "text"}]}
+    merged = VegaLiteAgent()._deep_merge_dicts(base, labels)
+    assert merged["encoding"] == {**HEATMAP_XY, "text": {"field": "v"}}
+    rect, text = merged["layer"]
+    assert rect["encoding"] == {"color": {"field": "v"}}
+    assert "encoding" not in text or "color" not in text["encoding"]

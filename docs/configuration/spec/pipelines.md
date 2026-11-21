@@ -254,6 +254,30 @@ transforms:
     query: "price > 100 and category == 'Electronics'"
 ```
 
+### Filter conditions
+
+The `filter` transform, and `sql_filter` on SQL sources, keep rows by a list of `[column, value]` conditions:
+
+| Value | Keeps rows where the column |
+|-------|-----------------------------|
+| A scalar | equals it |
+| A list | is one of its items |
+| `[start, end]` tuple (Python) | lies between the bounds, both included; a date end covers the whole day |
+| A range, `{start, end, closed}` | lies between the bounds, with `closed` one of `both`, `left`, `right` or `neither` |
+| A list of ranges or tuples | lies in any of them |
+
+A range with `closed: left` keeps `start <= value < end`, so consecutive ranges such as months share a bound without overlapping. Either bound may be `null` to leave that side open. Date and datetime bounds carry `type: date` or `type: datetime`, and a date bound stands for its whole day:
+
+```yaml
+transforms:
+  - type: filter
+    conditions:
+      - [price, {start: 10, end: 20, closed: left}]
+      - [date, {start: "2025-02-01", end: "2025-05-01", closed: left, type: date}]
+```
+
+In Python the range is `lumen.transforms.Range(start, end, closed="left")`. A naive datetime bound compared with a timezone-aware column is read in the column's timezone when the rows are filtered in Python; a SQL engine reads it in its session's timezone.
+
 ### Transform types reference
 
 | Type | Purpose | Example |
@@ -262,7 +286,7 @@ transforms:
 | `aggregate` | Group and compute stats | Average sales by region |
 | `sort` | Order rows | Sort by date |
 | `query` | SQL-like filtering | `price > 100` |
-| `astype` | Change column data types | Convert to datetime |
+| `as_type` | Change column data types | Convert to datetime |
 | `project` | Create derived columns | `total = price * quantity` |
 
 ## Building pipelines declaratively

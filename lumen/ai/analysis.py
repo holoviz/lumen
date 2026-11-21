@@ -40,6 +40,14 @@ class Analysis(param.ParameterizedFunction):
 
     _run_button = param.Parameter(default=None)
 
+    _dynamic_provides = param.Dict(default={}, instantiate=True, doc="""
+        Context values the analysis publishes reactively after it has rendered,
+        e.g. following an interactive selection. AnalysisOutput watches this and
+        merges it into its render_context, so updates reach the out-context
+        without mutating the (snapshot) input context. Unlike Tool.provides (a
+        static list of context key names), this is a live map of values that can
+        change on each interaction.""")
+
      # Whether to allow the analysis to be called multiple times in a row
     _consecutive_calls = False
 
@@ -59,7 +67,11 @@ class Analysis(param.ParameterizedFunction):
         return applies
 
     def controls(self, context: TContext) -> Param | None:
-        config_options = [p for p in self.param if p not in Analysis.param and self.param[p].precedence > 0]
+        config_options = [
+            p for p in self.param
+            if p not in Analysis.param
+            and (self.param[p].precedence is None or self.param[p].precedence >= 0)
+        ]
         if not config_options:
             return None
         return Param(self.param, parameters=config_options, margin=0, show_name=False)

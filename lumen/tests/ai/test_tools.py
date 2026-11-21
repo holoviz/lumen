@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 
@@ -89,6 +90,68 @@ async def test_function_tool_define_tool_render_output():
     assert tool.render_output is True
     assert out_context == {}
     assert isinstance(views[0], Viewable)
+
+
+async def test_function_tool_run_in_thread_keeps_event_loop_responsive():
+    loop_ran = threading.Event()
+
+    def wait_for_loop() -> bool:
+        # Times out unless the event loop keeps running while this blocks
+        return loop_ran.wait(timeout=1)
+
+    async def set_from_loop():
+        loop_ran.set()
+
+    tool = FunctionTool(wait_for_loop, provides=["loop_ran"], run_in_thread=True)
+    (_, out_context), _ = await asyncio.gather(tool.respond([], {}), set_from_loop())
+    assert out_context["loop_ran"] is True
+
+
+async def test_function_tool_run_in_thread_propagates_exceptions():
+    def failing_fn():
+        raise ValueError("Error in thread")
+
+    tool = FunctionTool(failing_fn, run_in_thread=True)
+    with pytest.raises(ValueError, match="Error in thread"):
+        await tool.respond([], {})
+
+
+async def test_function_tool_define_tool_run_in_thread():
+    @define_tool(provides=["thread_id"], run_in_thread=True)
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    tool = FunctionTool(thread_id)
+    _, out_context = await tool.respond([], {})
+    assert tool.run_in_thread is True
+    assert out_context["thread_id"] != threading.get_ident()
+
+
+async def test_function_tool_runs_sync_function_on_loop_thread_by_default():
+    def thread_id() -> int:
+        return threading.get_ident()
+
+    tool = FunctionTool(thread_id, provides=["thread_id"])
+    _, out_context = await tool.respond([], {})
+    assert tool.run_in_thread is False
+    assert out_context["thread_id"] == threading.get_ident()
+
+
+async def test_function_tool_ignores_step_title():
+    tool = FunctionTool(add, requires=["a", "b"])
+    context = {"a": 1, "b": 3}
+    views, _ = await tool.respond([], context, step_title="Add numbers")
+    assert views[0] == "add(a=1, b=3) returned: 4"
+
+
+async def test_function_tool_forwards_step_title_when_accepted():
+    def titled(step_title: str) -> str:
+        """Echo the step title."""
+        return step_title
+
+    tool = FunctionTool(titled)
+    views, _ = await tool.respond([], {}, step_title="My step")
+    assert views[0] == "titled(step_title='My step') returned: My step"
 
 
 async def test_function_tool_provides():
@@ -293,3 +356,120 @@ async def test_clarification_tool_requires_confirm_click_for_text():
     result = await asyncio.wait_for(task, timeout=1)
     assert result == "User provided following clarification: concise answers"
     assert "clarification" not in context
+
+
+# ---- apply_filter tool (SQLAgent) ----
+
+from lumen.ai.agents.sql import (
+    _coerce_filter_value, make_apply_filter_llm_tool, make_apply_filter_tool,
+)
+from lumen.pipeline import Pipeline
+
+
+@pytest.fixture
+def tiny_filter_pipeline():
+    src = DuckDBSource(tables={
+        't': "SELECT * FROM (VALUES (1,'A',10.5),(2,'B',20.0),(3,'A',7.5)) AS t(id, cat, val)"
+    })
+    return Pipeline(source=src, table='t')
+
+
+def test_coerce_filter_value_ranges_and_passthrough():
+    assert _coerce_filter_value({"type": "number"}, [10, 20]) == (10, 20)
+    assert _coerce_filter_value({"type": "integer"}, [1, 3]) == (1, 3)
+    assert _coerce_filter_value({"type": "number"}, 5) == 5
+    assert _coerce_filter_value({"type": "string"}, ["A", "B"]) == ["A", "B"]
+    lo, hi = _coerce_filter_value(
+        {"type": "string", "format": "datetime"}, ["2020-01-02", "2020-01-05"]
+    )
+    assert (str(lo), str(hi)) == ("2020-01-02 00:00:00", "2020-01-05 00:00:00")
+
+
+async def test_apply_filter_tool_unknown_field_is_graceful(tiny_filter_pipeline):
+    tool = make_apply_filter_tool(tiny_filter_pipeline)
+    msg = await tool.function(field="nope", value=1)
+    assert "Cannot filter" in msg
+    assert len(tiny_filter_pipeline.data) == 3  # unchanged
+
+
+async def test_apply_filter_tool_numeric_range(tiny_filter_pipeline):
+    tool = make_apply_filter_tool(tiny_filter_pipeline)
+    await tool.function(field="val", value=[8, 15])
+    assert list(tiny_filter_pipeline.data["val"]) == [10.5]
+
+
+async def test_apply_filter_tool_replaces_existing_filter(tiny_filter_pipeline):
+    tool = make_apply_filter_tool(tiny_filter_pipeline)
+    await tool.function(field="cat", value=["A"])
+    await tool.function(field="cat", value=["B"])
+    assert set(tiny_filter_pipeline.data["cat"]) == {"B"}
+    assert len([f for f in tiny_filter_pipeline.filters if f.field == "cat"]) == 1
+
+
+def test_apply_filter_llm_tool_is_context_gated(tiny_filter_pipeline):
+    assert make_apply_filter_llm_tool({}) == []
+    assert make_apply_filter_llm_tool({"pipeline": None}) == []
+    tool = make_apply_filter_llm_tool({"pipeline": tiny_filter_pipeline})
+    assert isinstance(tool, FunctionTool)
+    # pipeline is closed over; the LLM only supplies field + value.
+    assert set(tool._model.model_fields) == {"field", "value"}
+
+
+def test_apply_filter_tool_subsets_xarray_like_sel():
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+
+    from lumen.sources.xarray_sql import XArraySQLSource
+
+    ds = xr.Dataset(
+        {"temperature": (["lat", "lon"], np.arange(6.0).reshape(3, 2))},
+        coords={"lat": ("lat", np.array([10.0, 20.0, 30.0])),
+                "lon": ("lon", np.array([100.0, 110.0]))},
+    )
+    pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="temperature")
+    tool = make_apply_filter_tool(pipeline)
+    asyncio.run(tool.function(field="lat", value=[20.0, 30.0]))
+    expected = ds.sel(lat=slice(20.0, 30.0)).to_dataframe().reset_index().shape[0]
+    assert len(pipeline.data) == expected
+    assert set(pipeline.data["lat"].unique()) == {20.0, 30.0}
+
+
+async def test_invoke_prompt_forwards_max_retries(llm, monkeypatch):
+    """``max_retries`` reaches the LLM instead of the Jinja context.
+
+    ``tools/base.py`` and ``tools/mcp.py`` both pass ``max_retries=3``, but
+    ``_invoke_prompt`` had no such parameter, so it fell into ``**prompt_kwargs``
+    and was rendered as template context. Those call sites silently ran with the
+    single attempt from ``Llm.create_kwargs``.
+    """
+    from lumen.ai.actor import Actor
+
+    seen = {}
+
+    async def fake_invoke(**kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(llm, "invoke", fake_invoke)
+    actor = Actor(llm=llm)
+    await actor._invoke_prompt("main", [{"role": "user", "content": "hi"}], {}, max_retries=3)
+
+    assert seen["max_retries"] == 3
+
+
+async def test_metadata_lookup_does_not_consume_shared_column_descriptions():
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 as id"})
+    tool = MetadataLookup(vector_store=NumpyVectorStore())
+    context = {"sources": [source], "provenance_chain": ["global"], "tables_metadata": {}}
+    await tool.sync(context)
+    slug = f"{source.name}{SOURCE_TABLE_SEPARATOR}orders"
+    context["tables_metadata"][slug] = {"columns": {"id": {"description": "Order id", "data_type": "INTEGER"}}}
+
+    messages = [{"role": "user", "content": "Show orders"}]
+    for _ in range(2):
+        _, outputs = await tool.respond(messages, context)
+        (column,) = outputs["metaset"].catalog[slug].columns
+        assert column.description == "Order id"
+        assert column.metadata == {"data_type": "INTEGER"}
+    assert context["tables_metadata"][slug]["columns"]["id"]["description"] == "Order id"

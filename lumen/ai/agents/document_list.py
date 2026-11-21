@@ -29,6 +29,8 @@ class DocumentListAgent(BaseListAgent):
     purpose = param.String(default="""
         Displays a list of all available documents.""")
 
+    user = param.String(default="Documents")
+
     input_schema = DocumentListInputs
 
     _column_name = "Documents"

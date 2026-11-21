@@ -15,6 +15,7 @@ from panel.viewable import Viewable
 
 from ..config import config
 from ..pipeline import Pipeline
+from ..util import as_pandas
 from ..views import View
 from .editors import LumenEditor
 
@@ -76,7 +77,13 @@ def serialize_avatar(avatar: str | bytes | BytesIO | ImageBase, size: int = 45) 
 def format_markdown(md: Markdown):
     return [nbformat.v4.new_markdown_cell(source=md.object)]
 
-def format_output(output: Any):
+def format_output(output: Any, spec: dict | None = None, load_spec: str = "yaml.safe_load(yaml_spec)"):
+    """
+    A notebook cell that rebuilds an output's Pipeline or View from its spec.
+
+    ``spec`` replaces the component's own spec, and ``load_spec`` is the
+    expression the cell uses to turn ``yaml_spec`` back into a dict.
+    """
     ext = None
     code = []
 
@@ -85,14 +92,18 @@ def format_output(output: Any):
     elif hasattr(output, 'to_spec'):
         component = output
     else:
-        return nbformat.v4.new_code_cell(source=f'# Cannot export output of type {type(output).__name__}'), None
+        return None, None
 
     with config.param.update(serializer='csv'):
-        # replace |2- |3- |4-... etc with | for a cleaner look
-        spec = re.sub(r'(\|[-\d]*)', '|', yaml.dump(component.to_spec(), sort_keys=False))
+        try:
+            spec = yaml.dump(component.to_spec() if spec is None else spec, sort_keys=False)
+        except (TypeError, yaml.YAMLError):
+            return None, None
     read_code = [
-        f'yaml_spec = """\n{spec}"""',
-        'spec = yaml.safe_load(yaml_spec)',
+        # A repr, not a triple-quoted string, so no value in the data or SQL
+        # can end the string and run as code
+        f'yaml_spec = {spec!r}',
+        f'spec = {load_spec}',
     ]
     if isinstance(component, Pipeline):
         code.extend([
@@ -116,7 +127,8 @@ def render_cells(outputs: list[Viewable]) -> tuple[Any, list[str]]:
             cells += format_markdown(out)
         elif isinstance(out, LumenEditor):
             cell, ext = format_output(out)
-            cells.append(cell)
+            if cell is not None:
+                cells.append(cell)
             if ext and ext not in extensions:
                 extensions.append(ext)
     return cells, extensions
@@ -129,3 +141,59 @@ def export_notebook(outputs: list[Viewable], preamble: str = ""):
     cells, extensions = render_cells(outputs)
     cells = make_preamble(preamble, extensions=extensions) + cells
     return write_notebook(cells)
+
+
+def _docx_add_runs(paragraph, text: str):
+    """Add text to a paragraph, rendering ``**bold**`` spans as bold runs."""
+    for i, part in enumerate(re.split(r'\*\*(.+?)\*\*', text)):
+        if not part:
+            continue
+        run = paragraph.add_run(part)
+        if i % 2 == 1:
+            run.bold = True
+
+
+def docx_add_markdown(doc, text: str):
+    """Render basic markdown (headings, bullets, bold) into a docx document."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith('#'):
+            level = len(stripped) - len(stripped.lstrip('#'))
+            doc.add_heading(stripped.lstrip('# ').strip(), level=min(level, 4))
+        elif stripped.startswith(('- ', '* ')):
+            _docx_add_runs(doc.add_paragraph(style='List Bullet'), stripped[2:])
+        else:
+            _docx_add_runs(doc.add_paragraph(), stripped)
+
+
+def docx_add_table(doc, df, max_rows: int = 50):
+    """Render a DataFrame as a native Word table (header + capped rows)."""
+    df = as_pandas(df)  # iterrows is pandas only
+    table = doc.add_table(rows=1, cols=len(df.columns))
+    table.style = 'Table Grid'
+    for cell, col in zip(table.rows[0].cells, df.columns, strict=False):
+        cell.text = str(col)
+    for _, record in df.head(max_rows).iterrows():
+        cells = table.add_row().cells
+        for cell, value in zip(cells, record, strict=False):
+            cell.text = '' if value is None else str(value)
+    if len(df) > max_rows:
+        doc.add_paragraph(f'... {len(df) - max_rows} more rows')
+
+
+def docx_add_chart(doc, editor) -> bool:
+    """Embed a chart editor as a PNG image; return True if one was added."""
+    from docx.shared import Inches
+
+    if 'png' not in editor.export_formats:
+        return False
+    try:
+        png = editor.export('png')
+    except Exception:
+        # Best-effort: a chart we cannot render should not abort the document.
+        return False
+    png.seek(0)
+    doc.add_picture(png, width=Inches(6))
+    return True

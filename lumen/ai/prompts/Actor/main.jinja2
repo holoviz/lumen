@@ -1,39 +1,40 @@
+{#- Blocks run from most to least stable so providers can cache the longest
+    possible prompt prefix: static instructions, then data context, then
+    per-request tool output, errors and the date. -#}
 {%- block global %}
-Do not excessively reason in responses; there are chain_of_thought fields for that, but those should also be concise (1-2 sentences).
-{%- endblock %}
-
-{%- block datetime %}
-The current date time is {{ current_datetime.strftime('%b %d, %Y %I:%M %p') }}
+Do not excessively reason in responses; chain_of_thought fields for that, but should also be concise (1-2 sentences).
 {%- endblock %}
 
 {%- block instructions -%}
 {%- endblock -%}
 
-{%- block examples -%}
+{%- block docs -%}
 {%- endblock -%}
 
-{% block tools -%}
-{%- if 'agent_tool_contexts' in memory and actor_name in memory["agent_tool_contexts"] %}
-{#- Agent-specific tool contexts -#}
-{% for key, value in memory["agent_tool_contexts"][actor_name].items() %}
-`{{ key }}`: {{ value }}
-{% endfor %}
-{% else %}
-{% endif -%}
+{%- block examples -%}
 {%- endblock -%}
 
 {%- block context -%}
 {%- endblock %}
 
+{%- block tools -%}
+{%- if 'agent_tool_contexts' in memory and actor_name in memory["agent_tool_contexts"] %}
+{#- Agent-specific tool contexts -#}
+{% for key, value in memory["agent_tool_contexts"][actor_name].items() %}
+`{{ key }}`: {{ value }}
+{% endfor %}
+{%- endif -%}
+{%- endblock -%}
+
 {%- block errors -%}
 {%- if last_output is defined and last_output %}
-Note, your last output did not work as intended:
+Note, last output did not work as intended:
 ```
 {{ last_output }}
 ```
 {% endif %}
 {%- if errors is defined and errors %}
-Your task is to expertly address these errors so they do not occur again:
+Task expertly address errors so they do not occur again:
 {% for error in errors %}
 - {{ error }}
 {% endfor %}
@@ -42,3 +43,8 @@ Your task is to expertly address these errors so they do not occur again:
 
 {% block footer -%}
 {%- endblock -%}
+
+{%- block datetime %}
+
+Current date: {{ current_datetime.strftime('%b %d, %Y') }}
+{%- endblock %}

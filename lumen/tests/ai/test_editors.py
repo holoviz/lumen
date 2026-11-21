@@ -1,9 +1,12 @@
 """Tests for lumen.ai.editors module."""
 import json
+import subprocess
+import sys
 
 from io import BytesIO
 
 import pandas as pd
+import panel as pn
 import param
 import pytest
 
@@ -11,8 +14,13 @@ from PIL import Image
 
 import lumen.ai.editors as editors_module
 
-from lumen.ai.editors import LumenEditor, SQLEditor, VegaLiteEditor
+from lumen.ai.editors import (
+    LumenEditor, MultiChartEditor, SQLEditor, VegaLiteEditor,
+)
 from lumen.base import Component
+from lumen.pipeline import Pipeline
+from lumen.sources.duckdb import DuckDBSource
+from lumen.transforms.sql import SQLLimit
 
 
 class MockComponent(Component):
@@ -58,8 +66,11 @@ def mock_panel():
     class FakePanel:
         def __init__(self):
             self.calls = []
+            self.light = None
 
         def export(self, fmt, **kwargs):
+            from lumen.views.base import _FORCE_LIGHT_THEME
+            self.light = _FORCE_LIGHT_THEME.get()
             self.calls.append((fmt, kwargs))
             return _make_png_bytes()
 
@@ -111,9 +122,18 @@ def test_sqleditor_export_markdown(sql_editor):
     assert 'Alice' in content
 
 
+def test_code_editor_matches_body_font_size(sql_editor):
+    stylesheet = "\n".join(sql_editor._editor.stylesheets)
+    assert "font-size: 0.875rem" in stylesheet
+
 
 def test_vegalite_export_formats_includes_pillow_formats():
     assert {"webp", "tiff", "eps"} <= set(VegaLiteEditor.export_formats)
+
+
+def test_vegalite_export_renders_light(vegalite_editor, mock_panel):
+    vegalite_editor.export('png')
+    assert mock_panel.light is True
 
 
 @pytest.mark.parametrize("fmt,validate", [
@@ -128,6 +148,182 @@ def test_vegalite_pillow_export(vegalite_editor, mock_panel, fmt, validate):
     assert mock_panel.calls[-1] == ("png", {"scale": 2})
 
 
+@pytest.fixture
+def sql_pipeline_editor(monkeypatch):
+    """Return a SQLEditor wrapping a real Pipeline over an in-memory DuckDB source."""
+    source = DuckDBSource(tables={
+        'tiny': """
+            SELECT * FROM (
+              VALUES (1,'A',10.5),
+                     (2,'B',20.0),
+                     (3,'A', 7.5)
+            ) AS t(id, category, value)
+        """
+    })
+    pipeline = Pipeline(source=source, table='tiny')
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    return SQLEditor(component=pipeline, spec="SELECT * FROM tiny")
+
+
+def test_filter_menu_items_skip_len_and_pick_icons(sql_pipeline_editor):
+    items = sql_pipeline_editor._filter_items()
+    by_label = {it["label"]: it["icon"] for it in items}
+    assert "__len__" not in by_label
+    assert by_label["id"] == "numbers"            # integer
+    assert by_label["category"] == "format_list_bulleted"  # enum string
+    assert by_label["value"] == "calculate"       # number
+
+
+def test_add_filter_creates_labeled_widget(sql_pipeline_editor):
+    editor = sql_pipeline_editor
+    editor._add_filter({"label": "value", "toggled": True})
+    filt = editor._filters["value"]
+    # Label falls back to the field name when no explicit label is given.
+    assert filt.widget.label == "value"
+    assert filt in editor.component.filters
+    assert filt.widget in list(editor._filter_area)
+
+
+def test_add_filter_creates_string_widget(sql_pipeline_editor):
+    # A string/categorical column yields a MultiChoice whose `size` param is an
+    # integer, not the slider's small/medium/large selector; adding it must not
+    # crash on the compact-size styling (regression: it raised ValueError, so the
+    # string filter never rendered).
+    editor = sql_pipeline_editor
+    editor._add_filter({"label": "category", "toggled": True})
+    filt = editor._filters["category"]
+    assert filt in editor.component.filters
+    assert filt.widget in list(editor._filter_area)
+
+
+def test_filter_subsets_and_restores_data(sql_pipeline_editor):
+    editor = sql_pipeline_editor
+    pipeline = editor.component
+    assert len(pipeline.data) == 3
+
+    editor._add_filter({"label": "value", "toggled": True})
+    editor._filters["value"].widget.value = (15.0, 25.0)
+    assert list(pipeline.data["value"]) == [20.0]
+
+    editor._add_filter({"label": "value", "toggled": False})
+    assert all(f.field != "value" for f in pipeline.filters)
+    assert editor._filters["value"].widget not in list(editor._filter_area)
+    assert len(pipeline.data) == 3
+
+
+def test_render_controls_inserts_add_filter_menu(sql_pipeline_editor):
+    controls = sql_pipeline_editor.render_controls(task=None, interface=None)
+    labels = [getattr(c, "label", None) for c in controls]
+    assert "Add Filter" in labels
+
+
+@pytest.fixture
+def limited_sql_pipeline_editor(monkeypatch):
+    """Return an editor whose source data exceeds its SQL limit."""
+    source = DuckDBSource(tables={
+        'tiny': """
+            SELECT * FROM (
+              VALUES (1,'A'),
+                     (2,'B'),
+                     (3,'C'),
+                     (4,'D')
+            ) AS t(id, category)
+        """
+    })
+    pipeline = Pipeline(
+        source=source, table='tiny', sql_transforms=[SQLLimit(limit=3)]
+    )
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    return SQLEditor(component=pipeline, spec="SELECT * FROM tiny")
+
+
+@pytest.mark.asyncio
+async def test_render_pipeline_places_full_data_control_below_table(limited_sql_pipeline_editor):
+    editor = limited_sql_pipeline_editor
+    assert len(editor.component.data) == 3
+
+    layout = await editor._render_pipeline(editor.component)
+    table, controls = layout.objects
+
+    assert table._pane.stylesheets == [editors_module._PAGINATED_TABLE_STYLES]
+    assert controls.sizing_mode == 'stretch_width'
+    assert controls.styles == {
+        'justify-content': 'flex-end',
+        'align-items': 'center',
+    }
+    full_data = controls.objects[0]
+    assert full_data.label == "Full data"
+
+    full_data.value = True
+    assert editor.component.sql_transforms[0].limit is None
+    assert len(editor.component.data) == 4
+
+    # Unchecking restores this query's own limit, not a hardcoded default.
+    full_data.value = False
+    assert editor.component.sql_transforms[0].limit == 3
+    assert len(editor.component.data) == 3
+
+
+@pytest.mark.asyncio
+async def test_render_pipeline_omits_empty_full_data_row(sql_pipeline_editor):
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+
+    assert len(layout.objects) == 1
+
+
+@pytest.fixture
+def xarray_pipeline_editor(monkeypatch):
+    """SQLEditor over an xarray source so coordinate dimensions are exercised."""
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+
+    from lumen.sources.xarray_sql import XArraySQLSource
+
+    times = pd.date_range("2020-01-01", periods=6, freq="D")
+    ds = xr.Dataset(
+        {"temperature": (["time", "lat", "lon"], np.random.default_rng(0).random((6, 3, 2)))},
+        coords={"time": times,
+                "lat": ("lat", np.array([10.0, 20.0, 30.0])),
+                "lon": ("lon", np.array([100.0, 110.0]))},
+    )
+    pipeline = Pipeline(source=XArraySQLSource(_dataset=ds), table="temperature")
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    return SQLEditor(component=pipeline, spec="SELECT * FROM temperature")
+
+
+def test_coordinate_dimensions_listed_first(xarray_pipeline_editor):
+    items = xarray_pipeline_editor._filter_items()
+    labels = [it["label"] for it in items]
+    # The data variable comes after all coordinate dimensions.
+    assert set(labels[:3]) == {"time", "lat", "lon"}
+    assert labels[-1] == "temperature"
+    icons = {it["label"]: it["icon"] for it in items}
+    assert icons["time"] == "schedule"        # datetime axis
+    assert icons["lat"] == "straighten"       # numeric axis
+    assert icons["temperature"] == "calculate"  # data variable
+
+
+def test_datetime_axis_widget_supports_label(xarray_pipeline_editor):
+    # Regression: the datetime range widget must accept a label (PMUI, not
+    # plain panel) or constructing the time filter raises TypeError.
+    xarray_pipeline_editor._add_filter({"label": "time", "toggled": True})
+    widget = xarray_pipeline_editor._filters["time"].widget
+    assert "label" in widget.param
+    assert widget.label == "time"
+
+
+def test_coordinate_range_filter_subsets_like_sel(xarray_pipeline_editor):
+    editor = xarray_pipeline_editor
+    pipeline = editor.component
+    editor._add_filter({"label": "lat", "toggled": True})
+    editor._filters["lat"].widget.value = (20.0, 30.0)
+    ds = pipeline.source.dataset
+    expected = ds.sel(lat=slice(20.0, 30.0)).to_dataframe().reset_index().shape[0]
+    assert len(pipeline.data) == expected
+    assert set(pipeline.data["lat"].unique()) == {20.0, 30.0}
+
+
 def test_class_name_to_filename():
     """Test CamelCase to snake_case conversion for base class."""
     assert LumenEditor._class_name_to_download_filename("yaml") == "lumen_editor.yaml"
@@ -138,7 +334,7 @@ def test_class_name_with_acronyms():
     """Test handling of acronyms in class names."""
     class SQLEditor(LumenEditor):
         pass
-    
+
     assert SQLEditor._class_name_to_download_filename("yaml") == "sql_editor.yaml"
 
 
@@ -146,5 +342,239 @@ def test_class_name_with_numbers():
     """Test handling of numbers in class names."""
     class Editor2D(LumenEditor):
         pass
-    
+
     assert Editor2D._class_name_to_download_filename("png") == "editor2_d.png"
+
+
+@pytest.fixture
+def make_multi_chart_editor(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+
+    def factory(n_charts, spec_lines=9, unserializable=()):
+        charts = [
+            LumenEditor(
+                component=MockComponent(),
+                spec=None if c in unserializable else "\n".join(
+                    f"line{i}" for i in range(spec_lines)
+                ),
+                title=f"Chart {c}",
+            )
+            for c in range(n_charts)
+        ]
+        return MultiChartEditor(
+            component=MockComponent(), title="All", chart_editors=charts
+        )
+
+    return factory
+
+
+@pytest.mark.parametrize("n_charts", [2, 3, 5, 9])
+def test_multichart_shows_one_editor_sub_tab_per_chart(make_multi_chart_editor, n_charts):
+    """Every chart's spec is reachable, however many charts there are, and only
+    the active one is mounted."""
+    editor = make_multi_chart_editor(n_charts).editor
+    assert editor._names == [f"Chart {c}" for c in range(n_charts)]
+    assert editor.dynamic
+
+
+def test_multichart_scrolls_its_stacked_plots(make_multi_chart_editor):
+    """The overview stacks every plot, so its view has to scroll rather than
+    grow past the pane and spill."""
+    assert make_multi_chart_editor(5).view.scroll == "y-auto"
+
+
+def test_multichart_survives_an_unserializable_spec(make_multi_chart_editor):
+    """spec is None when a component could not be serialized; the sub-tab still
+    renders and export skips it rather than failing outright."""
+    multi = make_multi_chart_editor(3, unserializable=(0,))
+    assert len(multi.editor) == 3
+    assert multi.export("yaml").getvalue().count("line0") == 2
+
+
+@pytest.fixture
+def make_multi_vegalite_editor(monkeypatch):
+    """Build an "All" tab whose children are real VegaLiteEditors with a fake
+    Vega pane, so the combined image/pdf/svg/html exports can be exercised."""
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
+
+    class FakePanel(pn.pane.Markdown):
+        def export(self, fmt, **kwargs):
+            if fmt == "svg":
+                return '<svg width="20" height="30"><rect/></svg>'
+            return _make_png_bytes()
+
+    def factory(n_charts, unserializable=()):
+        charts = [
+            VegaLiteEditor(
+                component=MockVegaComponent(_mock_panel=FakePanel(f"Chart {c}")),
+                spec=None if c in unserializable else _MINIMAL_VEGALITE_SPEC,
+                title=f"Chart {c}",
+            )
+            for c in range(n_charts)
+        ]
+        # The composite's own component supplies the live stacked view; the
+        # html export rebuilds it from the charts above instead.
+        composite = MockVegaComponent(_mock_panel=pn.Column(*(
+            pn.pane.Markdown(f"Chart {c}") for c in range(n_charts)
+        )))
+        return MultiChartEditor(
+            component=composite, title="All", chart_editors=charts
+        )
+
+    return factory
+
+
+def test_multichart_export_png_stacks_every_chart(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(3).export("png")
+    assert isinstance(result, BytesIO)
+    img = Image.open(result)
+    assert img.format == "PNG"
+    # Three 10x10 child renders stacked vertically -> one 10x30 image.
+    assert img.size == (10, 30)
+
+
+@pytest.mark.parametrize("fmt,pil_format", [
+    ("jpeg", "JPEG"), ("webp", "WEBP"), ("tiff", "TIFF"),
+])
+def test_multichart_export_raster_formats(make_multi_vegalite_editor, fmt, pil_format):
+    result = make_multi_vegalite_editor(2).export(fmt)
+    img = Image.open(result)
+    assert img.format == pil_format
+    assert img.size == (10, 20)
+
+
+def test_multichart_export_eps(make_multi_vegalite_editor):
+    result = make_multi_vegalite_editor(2).export("eps")
+    assert result.read().startswith(b"%!PS")
+
+
+def test_multichart_export_pdf_is_one_page_per_chart(make_multi_vegalite_editor):
+    data = make_multi_vegalite_editor(3).export("pdf").getvalue()
+    assert data.startswith(b"%PDF")
+    # Pillow writes one "/Type /Page" per page plus a single "/Type /Pages" tree
+    # node, so page count is the difference.
+    assert data.count(b"/Type /Page") - data.count(b"/Type /Pages") == 3
+
+
+def test_multichart_export_skips_unserializable_for_images(make_multi_vegalite_editor):
+    # Chart 0 has spec=None; it is skipped, leaving two 10x10 renders -> 10x20.
+    result = make_multi_vegalite_editor(3, unserializable=(0,)).export("png")
+    assert Image.open(result).size == (10, 20)
+
+
+def test_multichart_export_svg_stacks_children(make_multi_vegalite_editor):
+    content = make_multi_vegalite_editor(3).export("svg").getvalue()
+    # One outer <svg> wrapping three nested child <svg> blocks.
+    assert content.count("<svg") == 4
+    # Child mock is 30 tall; three stacked -> outer height 90.
+    assert 'height="90"' in content
+    # Second and third children carry a non-zero y offset.
+    assert 'y="30"' in content and 'y="60"' in content
+
+
+def test_multichart_export_html_is_one_offline_page(make_multi_vegalite_editor):
+    content = make_multi_vegalite_editor(2).export("html").getvalue()
+    assert content.lstrip().startswith("<!DOCTYPE html>")
+    assert "Chart 0" in content and "Chart 1" in content
+
+
+def test_multichart_export_html_renders_light(monkeypatch):
+    """The saved page must not inherit a dark dashboard theme, and must be
+    rebuilt rather than reusing panes cached with the dashboard's theme."""
+    from lumen.views.base import _FORCE_LIGHT_THEME
+
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    monkeypatch.setattr(VegaLiteEditor, '_update_component', lambda self, *a, **kw: None)
+    seen = []
+
+    class RecordingComponent(MockVegaComponent):
+        def get_panel(self):
+            seen.append(_FORCE_LIGHT_THEME.get())
+            return pn.pane.Markdown("Chart")
+
+    chart = VegaLiteEditor(
+        component=RecordingComponent(), spec=_MINIMAL_VEGALITE_SPEC
+    )
+    multi = MultiChartEditor(
+        component=MockVegaComponent(_mock_panel=pn.pane.Markdown("All")),
+        title="All", chart_editors=[chart]
+    )
+
+    multi.export("html")
+
+    assert seen == [True]
+
+
+def test_multichart_export_concatenates_every_chart_spec(make_multi_chart_editor):
+    """The overview has no spec of its own; exporting yaml yields all of them,
+    and a format it does not support still raises."""
+    multi = make_multi_chart_editor(3, spec_lines=2)
+    assert multi.export("yaml").getvalue().count("line0") == 3
+    with pytest.raises(ValueError, match="Unknown export format"):
+        multi.export("csv")
+
+
+
+
+@pytest.mark.asyncio
+async def test_sql_editor_render_pipeline_header_tooltips(sql_pipeline_editor):
+    layout = await sql_pipeline_editor._render_pipeline(sql_pipeline_editor.component)
+    assert not layout[0]._pane.header_tooltips
+
+
+def test_sql_editor_header_tooltips_match_unaliased_columns(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = "SELECT category, SUM(amount) FROM (VALUES ('A', 1.0), ('B', 2.0)) AS t(category, amount) GROUP BY category"
+    pipeline = Pipeline(source=DuckDBSource(tables={"q": sql}), table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"sum(amount)": "SUM(t.amount), grouped by t.category"}}
+
+
+def test_sql_editor_header_tooltips_name_cte_roots(monkeypatch):
+    monkeypatch.setattr(editors_module, 'ParamMethod', lambda *args, **kwargs: None)
+    sql = (
+        "WITH s AS (SELECT category, SUM(amount) AS total FROM orders GROUP BY category) "
+        "SELECT category, total * 2 AS doubled FROM s"
+    )
+    source = DuckDBSource(
+        initializers=["CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 1.0)) AS t(category, amount)"],
+        tables={"q": sql},
+    )
+    pipeline = Pipeline(source=source, table="q")
+    editor = SQLEditor(component=pipeline, spec=sql)
+    kwargs = editor._pipeline_table_kwargs(pipeline)
+    assert kwargs == {"header_tooltips": {"doubled": "SUM(orders.amount) * 2, grouped by category"}}
+
+
+def test_sql_editor_header_tooltips_survive_lineage_errors(sql_pipeline_editor, monkeypatch):
+    def boom(*args):
+        raise IndexError
+    monkeypatch.setattr(editors_module, "column_tooltips", boom)
+    assert sql_pipeline_editor._pipeline_table_kwargs(sql_pipeline_editor.component) == {}
+
+
+def test_editor_builds_outside_an_event_loop():
+    # The fixtures stub ParamMethod, which hid that the view renders at
+    # once without a running loop, before the editor had its state
+    component = MockComponent(data=pd.DataFrame({'name': ['Alice']}))
+    editor = SQLEditor(component=component, spec="SELECT * FROM test")
+    assert editor.view is not None
+
+
+
+def test_vl_convert_warnings_do_not_reach_stderr():
+    # Lumen renders charts to images for the LLM; with no logging set up, as
+    # in a notebook, Vega-Lite's spec warnings would print into the cell. A
+    # subprocess, since pytest's own log handlers would hide the problem.
+    code = """
+import lumen.ai.editors as editors
+spec = {"data": {"values": [{"a": "x", "b": 1}]}, "layer": [
+    {"mark": "bar", "encoding": {"x": {"field": "a", "type": "nominal", "sort": "-y"}, "y": {"field": "b", "type": "quantitative"}}},
+    {"mark": "text", "encoding": {"x": {"field": "a", "type": "nominal", "sort": {"field": "b"}}, "y": {"field": "b", "type": "quantitative"}, "text": {"field": "b"}}},
+]}
+editors.vlc.vegalite_to_png(spec)
+"""
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert "conflicting sort" not in run.stderr

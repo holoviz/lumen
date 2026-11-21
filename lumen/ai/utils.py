@@ -8,21 +8,21 @@ import hashlib
 import html
 import inspect
 import json
-import math
 import re
 import textwrap
 import time
 import traceback
 
 from collections.abc import Callable, Generator, Iterator
+from contextvars import ContextVar
 from functools import reduce, wraps
 from operator import getitem
 from pathlib import Path
-from shutil import get_terminal_size
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs
 
+import numpy as np
 import pandas as pd
 import param
 import sqlglot
@@ -35,21 +35,40 @@ from jinja2 import (
 )
 from jinja2.visitor import NodeVisitor
 from jsonschema import ValidationError
-from markupsafe import escape
 from panel_material_ui import Details
+from sqlglot import exp
+from sqlglot.lineage import lineage
 
+from ..config import dump_yaml
+from ..data.sharing import mask_frame, shares_values, sharing
+from ..data.utils import (  # noqa: F401
+    _OBJECT_DTYPE_CASTS, _TOKEN_ENCODER_CACHE, ANSI_ESCAPE,
+    FALLBACK_CHARS_PER_TOKEN, INDEXED_COLUMN_RE, PROFILE_SAMPLE_ROWS,
+    TOKEN_ENCODING, URL_CREDENTIALS, URL_QUERY, _get_token_encoder, clean_sql,
+    closest_names, collapse_indexed_columns, count_tokens,
+    find_slug_by_table_name, format_error, format_float, format_msg_content,
+    format_tool_error, format_unknown_name, get_schema, log_debug,
+    normalize_object_dtypes, parse_table_slug, process_enums,
+    slug_to_table_name, truncate_string, truncate_to_tokens,
+)
+from ..filters.base import ConstantFilter
 from ..pipeline import Pipeline
 from ..sources.base import Source
-from ..transforms import SQLRemoveSourceSeparator
-from ..util import log
-from .config import (
-    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS,
-    MissingContextError, RetriesExceededError,
+from ..sources.xarray_sql import XArraySQLSource
+from ..util import (
+    as_narwhals, as_pandas, is_lazyframe, is_narwhals, log, try_import,
+    try_import_xarray,
+)
+from .config import (  # noqa: F401
+    PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, UNRECOVERABLE_ERRORS, VEGA_MAP_LAYER,
+    VEGA_ZOOMABLE_MAP_ITEMS, MissingContextError, RetriesExceededError,
 )
 
 if TYPE_CHECKING:
+    from narwhals.stable.v2.typing import Frame, IntoFrame
     from panel.chat.step import ChatStep
 
+    from .editors import VegaLiteEditor
     from .models import (
         DeleteLine, InsertLine, LineEdit, ReplaceLine,
     )
@@ -66,38 +85,18 @@ IMAGE_MIME_TYPES = {
 }
 
 
+# Column-selection tuning for describe_data_sync.
+DEFAULT_MAX_SUMMARY_COLS = 16
+# Columns with at most this many distinct values are treated as
+# human-meaningful "enum"/categorical columns and prioritised.
+LOW_CARDINALITY_MAX = 10
+
+
 def deterministic_hash(text: str) -> int:
     """Stable hash using MD5, consistent across Python sessions."""
     return int.from_bytes(
         hashlib.md5(text.encode("utf-8")).digest()[:4], byteorder="big"
     )
-
-
-def format_float(num):
-    """
-    Process a float value, returning numeric types instead of strings.
-    For very large/small numbers, returns a float that will display in scientific notation.
-    """
-    if not isinstance(num, (int, float)):
-        return num
-    if pd.isna(num) or math.isinf(num):
-        return num
-
-    # For integers, return as int
-    if num == int(num):
-        # But if it's a very large integer, keep as float for potential sci notation
-        if abs(num) >= 1e5:
-            return f"{num:.1e}"  # Format as scientific notation
-        return int(num)
-
-    # For normal range numbers, round but keep as float
-    elif 0.01 <= abs(num) < 1e6:
-        return round(num, 1)
-
-    # For very small or very large numbers, return as-is
-    # These will naturally display in scientific notation when converted to string
-    else:
-        return f"{num:.1e}"  # Format as scientific notation
 
 
 def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict]:
@@ -136,7 +135,7 @@ def fuse_messages(messages: list[dict], max_user_messages: int = 2) -> list[dict
     )
     system_prompt = {
         "role": "system",
-        "content": f"<Chat History>\n{formatted_history}\n<\\Chat History>"
+        "content": f"<Chat History>\n{formatted_history}\n</Chat History>"
     }
     return [system_prompt] if last_user_index == -1 else [system_prompt, last_user_message]
 
@@ -197,6 +196,8 @@ def json_to_yaml(data):
 def render_template(template_path: Path | str, overrides: dict | None = None, relative_to: Path = PROMPTS_DIR, **context):
     fs_loader, template_name = get_template_loader(template_path, relative_to)
     if overrides:
+        from markupsafe import escape
+
         # Dynamically create block definitions based on dictionary keys with proper escaping
         block_definitions = "\n".join(
             f"{{% block {escape(key)} %}}{escape(value)}{{% endblock %}}"
@@ -218,6 +219,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
 
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
+    env.filters["table_name"] = slug_to_table_name
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -239,7 +241,7 @@ _BLOCK_RE = re.compile(
 
 def get_block_names(template_path: Path | str, relative_to: Path = PROMPTS_DIR):
     env = Environment()
-    parsed = env.parse(Path(template_path).read_text())
+    parsed = env.parse(Path(template_path).read_text(encoding='utf-8'))
     collector = BlockNameCollector()
     collector.visit(parsed)
     return list(collector.blocks)
@@ -333,7 +335,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -341,7 +344,7 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             await asyncio.sleep(sleep)
 
@@ -369,7 +372,8 @@ def retry_llm_output(retries=3, sleep=1):
                             raise e
                         if i == retries - 1:
                             raise RetriesExceededError("Maximum number of retries exceeded.") from e
-                        error_str = str(e)
+                        kwargs.update(getattr(e, "retry_kwargs", {}))
+                        error_str = ANSI_ESCAPE.sub("", str(e))
                         if error_str not in errors:
                             errors.append(error_str)
                         else:
@@ -377,205 +381,13 @@ def retry_llm_output(retries=3, sleep=1):
                                 f"{error_str}\n"
                                 "(Same error repeated — try a fundamentally different approach)."
                             )
-                        traceback.print_exc()
+                        print_task_exception(e)
                         if sleep:
                             time.sleep(sleep)
 
             return sync_wrapper
 
     return decorator
-
-
-def process_enums(spec, num_cols, limit=None, include_enum=True, reduce_enums=True, include_empty_fields=False):
-    """
-    Process enum values in a schema field specification.
-
-    Parameters
-    ----------
-    spec : dict
-        The specification dictionary for this field
-    num_cols : int
-        The total number of columns in the schema (used for enum reduction calculation)
-    limit : int, optional
-        The limit used in schema generation
-    include_enum : bool, default True
-        Whether to include enum values
-    reduce_enums : bool, default True
-        Whether to reduce the number of enum values for readability
-    include_empty_fields : bool, default False
-        Whether to include fields that are empty
-
-    Returns
-    -------
-    tuple[dict, bool]
-        The updated spec dictionary and a boolean indicating if this field is empty
-    """
-    is_empty = False
-
-    if "enum" not in spec:
-        return spec, is_empty
-
-    # Scale max_enums based on average enum length (inverse relationship)
-    # Short enums (categories) = show more, long enums (text) = show fewer
-    if reduce_enums:
-        enum_values = spec["enum"]
-        # Calculate average length, excluding None values
-        non_none_values = [v for v in enum_values if v is not None]
-        if non_none_values:
-            avg_length = sum(len(str(v)) for v in non_none_values) / len(non_none_values)
-        else:
-            avg_length = 0
-
-        # Exponential decay: short enums get more slots, long enums get fewer
-        # Formula: base_max = max(2, 10 * e^(-0.025 * avg_length))
-        # 20: Maximum base enums (for very short values)
-        # 0.025: Decay rate (higher = faster drop-off)
-        # max(2, ...): Minimum floor (always show at least 2)
-        base_max_enums = max(2, int(10 * math.exp(-0.04 * avg_length)))
-
-        # Still consider number of columns but with less weight
-        max_enums = max(2, int(base_max_enums * math.exp(-0.05 * max(0, num_cols - 10))))
-    else:
-        max_enums = 2
-    truncate_limit = min(limit or 2, max_enums)
-
-    if not include_enum or len(spec["enum"]) == 0:
-        spec.pop("enum")
-    elif len(spec["enum"]) > max_enums:
-        # if there are only 10 enums, fine; let's keep them all
-        # else, that assumes this column is like glasbey 100+ categories vs category10
-        # so truncate to 5 and add "..."
-        spec["enum"] = spec["enum"][:truncate_limit] + ["..."]
-    elif limit and len(spec["enum"]) == 1 and spec["enum"][0] is None:
-        spec["enum"] = [f"(unknown; truncated to {limit} rows)"]
-    elif not include_empty_fields and len(spec["enum"]) == 1 and (
-        spec["enum"][0] is None or (isinstance(spec["enum"][0], str) and spec["enum"][0].strip() == "")
-    ):
-        is_empty = True
-
-    # truncate each enum to 100 characters if they exist
-    if "enum" in spec:
-        spec["enum"] = [
-            enum if enum is None or not isinstance(enum, str) or len(enum) < 100 else f"{enum[:100]} ..."
-            for enum in spec["enum"]
-        ]
-
-    return spec, is_empty
-
-
-async def get_schema(
-    source: Source | Pipeline,
-    table: str | None = None,
-    include_type: bool = True,
-    include_min_max: bool = True,
-    include_enum: bool = True,
-    include_count: bool = False,
-    include_empty_fields: bool = False,
-    include_nans: bool = False,
-    reduce_enums: bool = True,
-    shuffle: bool = True,
-    **get_kwargs
-):
-    if isinstance(source, Pipeline):
-        schema = await asyncio.to_thread(source.get_schema)
-    else:
-        if "limit" not in get_kwargs:
-            get_kwargs["limit"] = 100
-        schema = await asyncio.to_thread(source.get_schema, table, shuffle=shuffle, **get_kwargs)
-    schema = dict(schema)
-
-    # first pop regardless to prevent
-    # argument of type 'numpy.int64' is not iterable
-    count = schema.pop("__len__", None)
-
-    if not include_type:
-        for spec in schema.values():
-            if "type" in spec:
-                spec.pop("type")
-
-    empty_fields = []
-    if include_min_max:
-        for field, spec in schema.items():
-            min_val = 0
-            max_val = 0
-            if "inclusiveMinimum" in spec:
-                min_val = spec.pop("inclusiveMinimum")
-                if isinstance(min_val, (int, float)):
-                    min_val = format_float(min_val)
-                if include_nans or not pd.isna(min_val):
-                    spec["min"] = min_val
-            if "inclusiveMaximum" in spec:
-                max_val = spec.pop("inclusiveMaximum")
-                if isinstance(max_val, (int, float)):
-                    max_val = format_float(max_val)
-                if include_nans or not pd.isna(max_val):
-                    spec["max"] = max_val
-            if not include_empty_fields and pd.isna(min_val) and pd.isna(max_val):
-                empty_fields.append(field)
-                continue
-    else:
-        for field, spec in schema.items():
-            min_val = 0
-            max_val = 0
-            if "inclusiveMinimum" in spec:
-                min_val = spec.pop("inclusiveMinimum")
-            if "inclusiveMaximum" in spec:
-                max_val = spec.pop("inclusiveMaximum")
-            if "min" in spec:
-                min_val = spec.pop("min")
-            if "max" in spec:
-                max_val = spec.pop("max")
-            if not include_empty_fields and pd.isna(min_val) and pd.isna(max_val):
-                empty_fields.append(field)
-                continue
-
-    num_cols = len(schema)
-    for field, spec in schema.items():
-        if "type" in spec:
-            if not include_empty_fields and spec["type"] is None:
-                spec.pop("type")
-                continue
-            if spec["type"] == "string":
-                spec["type"] = "str"
-            elif spec["type"] == "integer":
-                spec["type"] = "int"
-            elif spec["type"] == "number":
-                spec["type"] = "num"
-            elif spec["type"] == "boolean":
-                spec["type"] = "bool"
-
-            # If it's obvious that this is a numeric range, remove type
-            # Yes `{'min': 2017, 'max': 2020}`  # implicitly infer
-            # Not `{'type': 'num', 'min': '2.0e+06', 'max': '6.2e+06'}`  # explicitly show type
-            if isinstance(spec.get("min"), (int, float)) and isinstance(spec.get("max"), (int, float)):
-                spec.pop("type")
-
-        # Process enums using the extracted function
-        if "enum" in spec:
-            spec, is_empty = process_enums(
-                spec, num_cols,
-                limit=get_kwargs.get("limit"),
-                include_enum=include_enum,
-                reduce_enums=reduce_enums,
-                include_empty_fields=include_empty_fields
-            )
-            if is_empty:
-                empty_fields.append(field)
-                continue
-
-    # Format any other numeric values in the schema
-    for spec in schema.values():
-        for key, value in spec.items():
-            if isinstance(value, (int, float)) and key not in ['type']:
-                spec[key] = format_float(value)
-
-    # remove any fields that are empty
-    for field in empty_fields:
-        schema[field] = "<null>"
-
-    if count is not None and include_count:
-        schema["__len__"] = count
-    return schema
 
 
 async def get_pipeline(**kwargs):
@@ -588,36 +400,233 @@ async def get_pipeline(**kwargs):
     return await asyncio.to_thread(get_pipeline_sync)
 
 
+async def get_frame(pipeline):
+    """
+    Return pipeline.data off the main thread, in whichever dataframe
+    library the source produced it.
+
+    For consumers that accept any of them; everything written against pandas
+    calls get_data instead.
+    """
+    def get_frame_sync():
+        return pipeline.data
+    return await asyncio.to_thread(get_frame_sync)
+
+
 async def get_data(pipeline):
     """
-    A wrapper be able to use asyncio.to_thread and not
-    block the main thread when calling pipeline.data
+    Return pipeline.data as pandas, off the main thread.
+
+    result_to_dataframe, the LLM code sandbox and the plotting agents are
+    all written against pandas.
     """
-    def get_data_sync():
-        return pipeline.data
-    return await asyncio.to_thread(get_data_sync)
+    return as_pandas(await get_frame(pipeline))
 
 
-def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+def _score_column_relevance(series: pd.Series, n_rows: int) -> float:
+    """
+    Cheap, dataset-agnostic relevance score used to pick which columns
+    to include in a summary. Higher is more informative.
+
+    The ordering favours low-cardinality categoricals (the columns a
+    model most often filters/groups on) and numerics with actual spread,
+    while penalising constant columns and near-unique id/free-text
+    columns. It deliberately relies only on dtype and cardinality so it
+    generalises across datasets rather than matching specific names.
+
+    Parameters
+    ----------
+    series : pd.Series
+        The (already row-sampled) column to score.
+    n_rows : int
+        Number of rows in the sample, used for the cardinality ratio.
+
+    Returns
+    -------
+    float
+        Relevance score; larger values are kept first.
+    """
+    try:
+        nunique = int(series.nunique(dropna=True))
+    except TypeError:
+        # Unhashable values (e.g. lists/dicts) — treat as uninformative.
+        return 0.5
+
+    if nunique <= 1:
+        # Constant (or all-null) column carries no signal.
+        return 0.0
+
+    ratio = nunique / n_rows if n_rows else 0.0
+
+    # Low-cardinality categorical/enum (incl. bool and small int codes):
+    # cheap to summarise and usually the most query-relevant. nunique is
+    # already capped, so no additional ratio gate is needed here — on small
+    # frames a low-card column can have a high ratio (e.g. 8/12) and should
+    # still be surfaced.
+    if nunique <= LOW_CARDINALITY_MAX:
+        return 3.0
+
+    # Continuous numerics: informative ranges/distributions.
+    if pd.api.types.is_numeric_dtype(series):
+        return 2.0
+
+    # Near-unique non-numeric column: likely an id or free text.
+    if ratio > 0.9:
+        return 0.5
+
+    # Moderate-cardinality text.
+    return 1.5
+
+
+def _select_relevant_columns(
+    df: pd.DataFrame,
+    max_cols: int,
+    priority_columns: list[str] | None = None,
+) -> tuple[list[str], bool]:
+    """
+    Choose up to *max_cols* columns to summarise, ordered by relevance.
+
+    Any caller-supplied *priority_columns* (e.g. columns referenced in
+    the query or in active exploration filters) are always kept and
+    placed first; the remaining budget is filled by intrinsic relevance
+    score. Columns are returned relevance-first so that if the rendered
+    summary is later truncated to a character/token budget, the most
+    useful columns survive.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The (already row-sampled) frame to select columns from.
+    max_cols : int
+        Soft cap on the number of columns to keep. Priority columns are
+        always kept even if they exceed this.
+    priority_columns : list[str] | None
+        Columns to force-include, in order of importance.
+
+    Returns
+    -------
+    tuple[list[str], bool]
+        The selected column names and whether any columns were dropped.
+    """
+    columns = list(df.columns)
+    if len(columns) <= max_cols and not priority_columns:
+        return columns, False
+
+    priority = [c for c in (priority_columns or []) if c in df.columns]
+    priority_set = set(priority)
+
+    n_rows = len(df)
+    scored = [
+        (_score_column_relevance(df[col], n_rows), idx, col)
+        for idx, col in enumerate(columns)
+        if col not in priority_set
+    ]
+    # Highest score first; ties fall back to original column order.
+    scored.sort(key=lambda t: (-t[0], t[1]))
+
+    remaining = max(0, max_cols - len(priority))
+    selected = priority + [col for _, _, col in scored[:remaining]]
+    return selected, len(selected) < len(columns)
+
+
+def _sample_for_summary(df: IntoFrame | Frame) -> tuple[pd.DataFrame, tuple[int, int], bool]:
+    """
+    Return df as pandas, row-sampled for profiling, along with its true shape.
+
+    Sampling before the pandas conversion is the point of this function. The
+    summary reads PROFILE_SAMPLE_ROWS rows at most, and converting first pays
+    for the whole frame to get them: on a 2M x 15 polars frame the conversion
+    alone costs 0.38s and allocates ~700MB.
+
+    The shape returned is the frame's own rather than the sample's, so the
+    summary still reports the real row count.
+
+    Parameters
+    ----------
+    df : IntoFrame | Frame
+        The frame to profile, in pandas, dask or any library narwhals
+        supports.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, tuple[int, int], bool]
+        The (possibly sampled) pandas frame, the original frame's shape, and
+        whether the frame was sampled.
+    """
+    dd = try_import('dask.dataframe', load=False)
+    if dd is not None and isinstance(df, dd.DataFrame):
+        # A dask frame reports its shape as a Delayed, which none of the
+        # branches below can act on. Sampling partitions would have to compute
+        # the row count anyway, so compute the frame and profile the result.
+        df = df.compute()
+
+    narwhals_df = df if isinstance(df, pd.DataFrame) else as_narwhals(df)
+    if is_lazyframe(narwhals_df):
+        # Collect in the frame's own library rather than through pandas; the
+        # sample below is what keeps the conversion small.
+        narwhals_df = narwhals_df.collect()
+    if is_narwhals(narwhals_df):
+        shape = narwhals_df.shape
+        sampled = shape[0] > PROFILE_SAMPLE_ROWS
+        if sampled:
+            narwhals_df = narwhals_df.sample(n=PROFILE_SAMPLE_ROWS)
+        # as_pandas rather than to_pandas: it keeps an integer column holding a
+        # null an integer, instead of widening an id to 3.0 in the sample rows.
+        return normalize_object_dtypes(as_pandas(narwhals_df)), shape, sampled
+
+    shape = df.shape
+    sampled = shape[0] > PROFILE_SAMPLE_ROWS
+    if sampled:
+        df = df.sample(PROFILE_SAMPLE_ROWS)
+    return normalize_object_dtypes(df), shape, sampled
+
+
+def describe_data_sync(
+    df: IntoFrame | Frame,
+    enum_limit: int = 3,
+    reduce_enums: bool = True,
+    row_limit: int | None = None,
+    max_cols: int = DEFAULT_MAX_SUMMARY_COLS,
+    priority_columns: list[str] | None = None,
+) -> str:
     """
     Synchronous version of describe_data that generates a YAML summary of a DataFrame.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
         Whether to reduce enum values for readability
+    row_limit : int | None
+        The row cap applied to the result (e.g. by SQLLimit). When the
+        returned frame reaches this many rows the result was truncated, so
+        the summary flags it instead of presenting the capped count as the
+        table's true size.
+    max_cols : int
+        Soft cap on how many columns to include. When the frame is wider,
+        columns are selected by relevance (see _select_relevant_columns)
+        rather than by position, so informative fields aren't dropped just
+        for appearing late in the table.
+    priority_columns : list[str] | None
+        Columns to always include (e.g. columns referenced in the query
+        or active filters), placed first.
 
     Returns
     -------
     str
         YAML-formatted summary of the DataFrame
     """
-    size = df.size
-    shape = df.shape
+    df, shape, is_sampled = _sample_for_summary(df)
+    if not shares_values():
+        # The structure without a single value, as the sharing level asks
+        columns = list(df.columns) if sharing.share == "none" else {col: str(df[col].dtype) for col in df.columns}
+        summary = {"data_shape": [int(shape[0]), int(shape[1])], "columns": columns}
+        return yaml.dump(summary, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    df = mask_frame(df)
+    size = shape[0] * shape[1]
     shape_header = {"data_shape": [int(shape[0]), int(shape[1])], "is_sampled": False}
     if shape[0] == 1 or size < 10 or (shape[1] > 8 and size < 100):
         records = df.to_dict(orient='records')
@@ -627,28 +636,27 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         header = yaml.dump(shape_header, default_flow_style=False, allow_unicode=True, sort_keys=False)
         return header + df.to_markdown(index=False)
 
-    is_sampled = False
-    if shape[0] > 5000:
-        is_sampled = True
-        df = df.sample(5000)
-
     df = df.sort_index()
+
+    # Select the most informative columns before the (more expensive)
+    # per-column stats below, so wide tables don't crowd out or truncate
+    # the columns a model actually needs.
+    selected_columns, sampled_columns = _select_relevant_columns(
+        df, max_cols=max_cols, priority_columns=priority_columns
+    )
+    if sampled_columns:
+        df = df[selected_columns]
 
     for col in df.columns:
         if isinstance(df[col].iloc[0], pd.Timestamp):
             df[col] = pd.to_datetime(df[col])
-
-    sampled_columns = False
-    if len(df.columns) > 10:
-        df = df[df.columns[:10]]
-        sampled_columns = True
 
     describe_df = df.describe(percentiles=[])
     columns_to_drop = ["min", "max", "count", "top", "freq"] # present if any numeric or object
     columns_to_drop = [col for col in columns_to_drop if col in describe_df.columns]
     df_describe_dict = describe_df.drop(columns=columns_to_drop).to_dict()
 
-    for col in df.select_dtypes(include=["object", "string"]).columns:
+    for col in df.select_dtypes(include=["object", "string", "category", "boolean", "bool"]).columns:
         if col not in df_describe_dict:
             df_describe_dict[col] = {}
         try:
@@ -702,11 +710,12 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
         if nulls > 0:
             df_describe_dict[col]["nulls"] = nulls
 
-    # select datetime64 columns
-    for col in df.select_dtypes(include=["datetime64"]).columns:
-        for key in df_describe_dict[col]:
-            df_describe_dict[col][key] = str(df_describe_dict[col][key])
-        df[col] = df[col].astype(str)  # shorten output
+    # select datetime64 columns (including tz-aware)
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            for key in df_describe_dict[col]:
+                df_describe_dict[col][key] = str(df_describe_dict[col][key])
+            df[col] = df[col].astype(str)  # shorten output
 
     # select all numeric columns and round
     for col in df.select_dtypes(include=["int64", "float64"]).columns:
@@ -721,19 +730,43 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     for col in df.select_dtypes(include=["float64"]).columns:
         df[col] = df[col].apply(format_float)
 
+    # Emit stats in the (relevance-first) column order so that if the
+    # rendered summary is later truncated to a character/token budget by
+    # a caller, the most informative columns are the ones that survive.
+    ordered_describe = {c: df_describe_dict[c] for c in df.columns if c in df_describe_dict}
+    for key, value in df_describe_dict.items():
+        if key not in ordered_describe:
+            ordered_describe[key] = value
+    df_describe_dict = ordered_describe
+
     n_rows, n_cols = shape
 
     # Add head and tail samples (2 rows each); deduplicate if identical
     head_sample = df.head(2).to_dict('records')
     tail_sample = df.tail(2).to_dict('records')
 
+    summary = {
+        "n_cells": size,
+        "data_shape": [n_rows, n_cols],
+        "sampled_cols": sampled_columns,
+        "is_sampled": is_sampled,
+    }
+    notes = []
+    if row_limit is not None and n_rows >= row_limit:
+        summary["rows_capped_at_limit"] = row_limit
+        notes.append(
+            f"Result capped at the {row_limit}-row display limit; "
+            "the full table may contain more rows."
+        )
+    if sampled_columns:
+        summary["columns_shown"] = len(selected_columns)
+        notes.append(
+            f"Showing {len(selected_columns)} of {n_cols} columns, chosen by "
+            "relevance (query/filter columns and low-cardinality fields first).")
+    if notes:
+        summary["note"] = " ".join(notes)
     result = {
-        "summary": {
-            "n_cells": size,
-            "data_shape": [n_rows, n_cols],
-            "sampled_cols": sampled_columns,
-            "is_sampled": is_sampled,
-        },
+        "summary": summary,
         "stats": df_describe_dict,
     }
     if head_sample == tail_sample:
@@ -745,45 +778,44 @@ def describe_data_sync(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool
     return yaml.dump(result, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 
-async def describe_data(df: pd.DataFrame, enum_limit: int = 3, reduce_enums: bool = True) -> str:
+async def describe_data(
+    df: IntoFrame | Frame,
+    enum_limit: int = 3,
+    reduce_enums: bool = True,
+    row_limit: int | None = None,
+    max_cols: int = DEFAULT_MAX_SUMMARY_COLS,
+    priority_columns: list[str] | None = None,
+) -> str:
     """
     Async wrapper for describe_data_sync that generates a YAML summary of a DataFrame.
 
     Parameters
     ----------
-    df : pd.DataFrame
-        The DataFrame to describe
+    df : IntoFrame | Frame
+        The DataFrame to describe, in pandas or any library narwhals supports
     enum_limit : int
         Maximum number of enum values to show per column
     reduce_enums : bool
         Whether to reduce enum values for readability
+    row_limit : int | None
+        The row cap applied to the result; used to flag truncation.
+    max_cols : int
+        Soft cap on how many columns to include in the summary. When the
+        frame is wider, columns are chosen by relevance rather than
+        position.
+    priority_columns : list[str] | None
+        Columns to always include (e.g. columns referenced in the query
+        or active filters), placed first.
 
     Returns
     -------
     str
         YAML-formatted summary of the DataFrame
     """
-    return await asyncio.to_thread(describe_data_sync, df, enum_limit, reduce_enums)
-
-
-
-def clean_sql(sql_expr: str, dialect: str | None = None, prettify: bool = False) -> str:
-    """
-    Cleans up a SQL expression generated by an LLM by removing
-    backticks, fencing and extraneous space and semi-colons.
-    """
-    sql_expr = SQLRemoveSourceSeparator.apply_to(sql_expr)
-    cleaned_sql = sql_expr.replace("```sql", "").replace("```", "")
-    if dialect != 'bigquery':
-        cleaned_sql = cleaned_sql.replace('`', '"')
-    clean_sql = cleaned_sql.strip().rstrip(";")
-    if prettify:
-        clean_sql = sqlglot.transpile(
-            sql_expr,
-            read=dialect,
-            pretty=True
-        )[0]
-    return clean_sql
+    return await asyncio.to_thread(
+        describe_data_sync, df, enum_limit, reduce_enums, row_limit,
+        max_cols, priority_columns,
+    )
 
 
 def report_error(exc: Exception, step: ChatStep, language: str = "python", context: str = "", status: str = "failed"):
@@ -854,62 +886,21 @@ def stream_details(content: Any, step: Any, title: str = "Expand for details", a
     return content
 
 
-def format_msg_content(content: Any) -> str:
+#: Set while lumen.ai.ask answers a question: it hands errors back in the
+#: Answer, so their tracebacks are only logged at debug level
+errors_in_result: ContextVar[bool] = ContextVar("errors_in_result", default=False)
+
+
+def print_task_exception(e: BaseException) -> None:
     """
-    Format a message content field for logging.
-
-    Handles plain strings, multimodal lists (text + images), and
-    arbitrary objects.  Non-string items are represented as compact
-    ``Type[id]`` placeholders so that base64 blobs never flood logs.
-
-    Parameters
-    ----------
-    content : Any
-        The message content — a string, a list of mixed items, or any object.
-
-    Returns
-    -------
-    str
-        A human-readable, log-safe representation of the content.
+    Print a failed task's traceback to the console, or log it at debug
+    level while the caller gets the error back, e.g. as an Answer with
+    status "error".
     """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            else:
-                parts.append(f"<{type(item).__name__}[{id(item)}]>")
-        return " + ".join(parts)
-    return f"<{type(content).__name__}[{id(content)}]>"
-
-
-def log_debug(msg: Any, offset: int = 24, prefix: str = "", suffix: str = "", show_sep: Literal["above", "below"] | None = None, show_length: bool = False):
-    """
-    Log a debug message with a separator line above and below.
-    """
-    terminal_cols, _ = get_terminal_size()
-    terminal_cols -= offset  # Account for the timestamp and log level
-    delimiter = "_" * terminal_cols
-    if show_sep == "above":
-        log.debug(f"\033[90m{delimiter}\033[0m")
-    if prefix:
-        log.debug(prefix)
-
-    if not isinstance(msg, (str, list)):
-        log_debug(format_msg_content(msg))
-    elif isinstance(msg, list):
-        for m in msg:
-            log.debug(m if isinstance(m, str) else format_msg_content(m))
+    if errors_in_result.get():
+        log.debug("Task failed", exc_info=e)
     else:
-        log.debug(msg)
-    if show_length:
-        log.debug(f"Characters: \033[94m{len(msg)}\033[0m")
-    if suffix:
-        log.debug(suffix)
-    if show_sep == "below":
-        log.debug(f"\033[90m{delimiter}\033[0m")
+        traceback.print_exception(e)
 
 
 def mutate_user_message(content: str, messages: list[dict[str, str]], suffix: bool = True, wrap: bool | str = False, inplace: bool = True) -> list[dict[str, str]]:
@@ -978,13 +969,13 @@ def cast_value(value):
 
 
 def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
-    """Parse a HuggingFace URL to extract repo, model file, and model_kwargs.
+    """Parse a HuggingFace URL to extract repo_id, filename, and model_kwargs.
 
     Args:
         url: HuggingFace URL in format https://huggingface.co/org/repo/blob/main/file.gguf?param1=value1&param2=value2
 
     Returns:
-        tuple: (repo, model_file, model_kwargs)
+        tuple: (repo_id, filename, model_kwargs)
 
     Raises:
         ValueError: If URL format is invalid
@@ -993,16 +984,16 @@ def parse_huggingface_url(url: str) -> tuple[str, str, dict]:
     hf_index = parts.index('huggingface.co')
     if len(parts) < hf_index + 4:  # Need at least org/repo after huggingface.co
         raise ValueError
-    repo = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
-    model_file = parts[-1]  # Last component is the filename
+    repo_id = f"{parts[hf_index+1]}/{parts[hf_index+2]}"
+    filename = parts[-1]
 
     # Parse query parameters
     model_kwargs = {}
-    if "?" in model_file:
-        model_file, query_params = model_file.split('?')
+    if "?" in filename:
+        filename, query_params = filename.split('?')
         for key, value in parse_qs(query_params).items():
             model_kwargs[key] = cast_value(value)
-    return repo, model_file, model_kwargs
+    return repo_id, filename, model_kwargs
 
 
 def load_json(json_spec: str) -> dict:
@@ -1010,39 +1001,6 @@ def load_json(json_spec: str) -> dict:
     Load a JSON string, handling unicode escape sequences.
     """
     return json.loads(json_spec.encode().decode('unicode_escape'))
-
-
-def slug_to_table_name(slug: str) -> str:
-    """Extract just the table name from a source-qualified slug."""
-    return slug.split(SOURCE_TABLE_SEPARATOR, 1)[-1]
-
-
-def find_slug_by_table_name(table_name: str, candidates: dict | list) -> str | None:
-    """Find a slug in *candidates* whose table-name suffix matches *table_name*."""
-    keys = candidates if isinstance(candidates, (list, set, frozenset)) else candidates.keys()
-    return next(
-        (k for k in keys if slug_to_table_name(k) == table_name),
-        None,
-    )
-
-
-def parse_table_slug(table: str, sources: list[Source], normalize: bool = True) -> tuple[Source | None, str]:
-    if SOURCE_TABLE_SEPARATOR in table:
-        a_source_name, a_table = table.split(SOURCE_TABLE_SEPARATOR, maxsplit=1)
-        a_source_obj = next((s for s in sources if s.name == a_source_name), None)
-    else:
-        a_source_obj = sources[0] if sources else None
-        a_table = table
-    if normalize:
-        a_table = a_source_obj.normalize_table(a_table)
-    return a_source_obj, a_table
-
-
-def truncate_string(s, max_length=30, ellipsis="..."):
-    if len(s) <= max_length:
-        return s
-    part_length = (max_length - len(ellipsis)) // 2
-    return f"{s[:part_length]}{ellipsis}{s[-part_length:]}"
 
 
 def truncate_iterable(iterable, max_length=150) -> tuple[list, list, bool]:
@@ -1086,6 +1044,39 @@ async def with_timeout(coro, timeout_seconds=10, default_value=None, error_messa
         if error_message:
             log_debug(error_message)
         return default_value
+
+
+def inline_schema_defs(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Replace local ``$ref`` pointers in a JSON schema with their ``$defs`` definitions.
+
+    Instructor already inlines them for the native Gemini client, but OpenAI
+    compatible endpoints such as OpenRouter forward them unchanged.
+    Recursive definitions stay referenced.
+    """
+    defs = schema.get("$defs", {})
+    unresolved = False
+
+    def resolve(node: Any, seen: frozenset[str]) -> Any:
+        nonlocal unresolved
+        if isinstance(node, list):
+            return [resolve(item, seen) for item in node]
+        if not isinstance(node, dict):
+            return node
+        name = node.get("$ref", "").removeprefix("#/$defs/")
+        if name in defs:
+            if name in seen:
+                unresolved = True
+                return node
+            siblings = {k: v for k, v in node.items() if k != "$ref"}
+            return resolve({**defs[name], **siblings}, seen | {name})
+        return {k: resolve(v, seen) for k, v in node.items() if k != "$defs"}
+
+    inlined = resolve(schema, frozenset())
+    if unresolved:
+        inlined["$defs"] = defs
+    return inlined
+
 
 def generate_diff(old_text: str, new_text: str, filename: str = "spec") -> str:
     """
@@ -1379,14 +1370,9 @@ def sanitize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        A copy of the DataFrame with sanitized column names
+        The DataFrame with sanitized column names, leaving the caller's alone
     """
-    df = df.copy()
-    df.columns = [
-        re.sub(r'[^\w]', '', col.replace(' ', '_'))
-        for col in df.columns
-    ]
-    return df
+    return df.rename(columns=lambda col: re.sub(r'[^\w]', '', col.replace(' ', '_')))
 
 
 def result_to_dataframe(result) -> pd.DataFrame | None:
@@ -1402,7 +1388,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
     if isinstance(result, Source):
         return None
 
-    # SourceResult from controls — extract the DataFrame from the first source
+    # SourceResult from controls — extract the DataFrame from the first source.
+    # Deferred: the controls package reaches .editors, which imports this module.
     from .controls.ingest.result import SourceResult
     if isinstance(result, SourceResult):
         if not result.sources or not result.table:
@@ -1410,7 +1397,8 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
         src = result.sources[0]
         table = result.table
         try:
-            return src.get(table)
+            # Declared pd.DataFrame, and callers concat it and read .empty.
+            return as_pandas(src.get(table))
         except Exception:
             return None
 
@@ -1456,3 +1444,462 @@ def result_to_dataframe(result) -> pd.DataFrame | None:
             return None
 
     return None
+
+
+def get_gridded_metadata(pipeline: Pipeline) -> dict[str, Any] | None:
+    """Return gridded metadata for an xarray-backed pipeline, else None.
+
+    Returns a dict with keys ``source_type``, ``dims``, ``coords``,
+    ``data_vars``, and ``regular`` (True iff every coordinate dimension is
+    uniformly spaced). It deliberately does not label which dims are spatial:
+    a grid can be plotted many ways (a lon/lat map, a lon/time Hovmoller, a
+    lat/level section), so the view spec picks the axes and the leftover dims
+    are collapsed afterwards. Coord arrays are 1-D and held in memory by
+    xarray even for large lazy datasets, so the regularity check is cheap; do
+    not call on a hot path.
+    """
+    if not isinstance(pipeline.source, XArraySQLSource) or try_import_xarray() is None:
+        return None
+
+    ds = pipeline.source.dataset
+
+    def _is_regular(values) -> bool:
+        arr = np.asarray(values)
+        if arr.ndim != 1 or arr.size < 2:
+            return False
+        diffs = np.diff(arr)
+        # Real-number steps compare with a tolerance; datetime/timedelta/object
+        # steps (e.g. cftime) can't, since allclose adds a float atol to them.
+        if diffs.dtype.kind in 'fiu':
+            return bool(np.allclose(diffs, diffs[0], rtol=1e-6))
+        return bool((diffs == diffs[0]).all())
+
+    regular = all(
+        _is_regular(ds.coords[d].values) for d in ds.dims if d in ds.coords
+    )
+
+    return {
+        'source_type': 'xarray',
+        'dims': list(ds.dims),
+        'coords': {k: list(ds.coords[k].shape) for k in ds.coords},
+        'data_vars': list(ds.data_vars),
+        'regular': regular,
+    }
+
+
+def _spec_field_references(
+    spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> set[str]:
+    """Column names a generated view ``spec`` references, so the gridded subset
+    can keep the dims a spec actually plots (an axis, color, ...) and collapse
+    the rest. The two grammars reference columns differently, so the caller
+    states which it is: a Vega-Lite spec names columns in encoding ``field``
+    values, a deck.gl spec in ``@@=`` accessor expressions.
+    """
+    refs: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, val in node.items():
+                if kind == 'vega-lite' and key == 'field' and isinstance(val, str):
+                    refs.add(val)
+                elif kind == 'deckgl' and isinstance(val, str) and val.startswith('@@='):
+                    refs.update(re.findall(r'[A-Za-z_]\w*', val))
+                else:
+                    walk(val)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(spec)
+    return refs
+
+
+def _spec_has_aggregate(spec: Any) -> bool:
+    """True if a Vega-Lite spec aggregates anywhere -- an encoding ``aggregate``
+    (``{"field": "x", "aggregate": "mean"}``) or an ``aggregate`` transform.
+    Such a spec reduces over the dims it does not plot, so those dims must not
+    be pinned to a single slice.
+    """
+    if isinstance(spec, dict):
+        return 'aggregate' in spec or any(_spec_has_aggregate(v) for v in spec.values())
+    if isinstance(spec, list):
+        return any(_spec_has_aggregate(item) for item in spec)
+    return False
+
+
+def _pin_value(grid: Any, dim: str) -> Any:
+    """
+    Return the first coord value of ``dim`` encoded like its SQL column.
+
+    xarray-sql >= 0.6 restores cftime coords on the dataset, while the SQL
+    column holds them encoded: microseconds counted in the calendar for
+    Gregorian-like calendars, int64 offsets for 360_day and julian. The pin
+    must use the same encoding or the filter never matches.
+    """
+    from xarray_sql import cftime as xsql_cftime
+
+    value = grid[dim].values[:1]
+    if not xsql_cftime.is_cftime(value):
+        return value[0]
+    units, calendar = xsql_cftime.encoding(grid, dim)
+    if xsql_cftime.is_gregorian_like(calendar):
+        return xsql_cftime.to_microseconds(value).astype('datetime64[us]')[0]
+    return xsql_cftime.to_offsets(value, units, calendar)[0]
+
+
+def subset_gridded_to_2d(
+    pipeline: Pipeline, spec: Any, kind: Literal['vega-lite', 'deckgl']
+) -> Pipeline:
+    """Pin every gridded dimension the view ``spec`` does not reference to its
+    first value, so a view that cannot page a dimension (VegaLite, DeckGL)
+    renders a single 2D slice instead of the full grid. ``kind`` selects the
+    spec grammar (see :func:`_spec_field_references`).
+
+    Runs after the spec is generated, so the dims the model chose for x/y/color
+    are kept -- a lon/time Hovmoller works -- and only the leftover dims (e.g.
+    time on a lon/lat map) collapse. Returns the pipeline unchanged when it is
+    not gridded or the spec already references every dimension.
+    """
+    # The compact gridded dataset (lazy, coords only -- never the long-form
+    # frame) carries just this variable's dims and its coords, so both the dims
+    # to collapse and the pin values come from it; _pin_value encodes cftime
+    # coords the way xarray-sql stores them in the SQL column.
+    # A Vega-Lite spec that aggregates (e.g. mean per latitude, or a heatmap of
+    # a temporal mean) reduces over every dim it does not plot. Pinning those
+    # dims to one slice would make the aggregate run on a single slice and
+    # report wrong values, so leave the grid whole and let Vega-Lite aggregate.
+    # ponytail: sends the full grid to the browser; push the aggregate into SQL
+    # if that row volume becomes a problem.
+    if kind == 'vega-lite' and _spec_has_aggregate(spec):
+        return pipeline
+    grid = pipeline.get_dataset()
+    if grid is None:
+        return pipeline
+    referenced = _spec_field_references(spec, kind)
+    collapse = [dim for dim in grid.dims if dim not in referenced]
+    if not collapse:
+        return pipeline
+    filters = [
+        ConstantFilter(field=dim, value=_pin_value(grid, dim)) for dim in collapse
+    ]
+    return pipeline.chain(filters=filters)
+
+
+def category_palette(ncolors: int = 20) -> list[str]:
+    """
+    Colors used for categorical encodings a plot did not color itself.
+
+    Glasbey seeded on category10, so the first ten entries are visually the same
+    as Vega's own default (largest total RGB difference is 3 out of 765). Charts
+    with ten categories or fewer are unchanged; only the ones that used to
+    recycle colors differ. hvPlot reaches for the same palette when it picks a
+    colormap itself, so the two agree. The b_ prefix is the hex form, since
+    colorcet.glasbey_category10 gives float RGB tuples that cannot be
+    serialized into a spec.
+    """
+    import colorcet as cc
+
+    return cc.b_glasbey_category10[:ncolors]
+
+
+def has_categorical_color(spec: Any) -> bool:
+    """
+    Whether anything in the Vega-Lite spec maps a field to color by category.
+
+    Only those charts can use the palette, so only they are worth adding it to.
+    Layered, concatenated and faceted specs nest their encodings, hence the
+    walk rather than a single lookup.
+    """
+    if isinstance(spec, dict):
+        color = spec.get("encoding", {}).get("color")
+        if isinstance(color, dict) and "field" in color and color.get("type") in ("nominal", "ordinal"):
+            return True
+        return any(has_categorical_color(value) for value in spec.values())
+    if isinstance(spec, list):
+        return any(has_categorical_color(item) for item in spec)
+    return False
+
+
+VIEW_COMPOSITION_KEYS = ("concat", "hconcat", "vconcat", "facet", "repeat")
+
+FACET_CHANNELS = ("row", "column", "facet")
+
+
+def is_compound_vegalite(spec: dict[str, Any]) -> bool:
+    """
+    Whether a Vega-Lite spec lays out several views, by view composition or
+    by a row, column or facet encoding channel (on the spec or one of its
+    layers). Vega-Lite cannot size such a chart to its container: a
+    ``"container"`` width or height applies to each cell.
+    """
+    if any(key in spec for key in VIEW_COMPOSITION_KEYS):
+        return True
+    views = [spec, *(layer for layer in spec.get("layer") or [] if isinstance(layer, dict))]
+    return any(
+        isinstance(view.get("encoding"), dict) and any(channel in view["encoding"] for channel in FACET_CHANNELS)
+        for view in views
+    )
+
+
+def normalize_vegalite_spec(
+    vega_spec: dict[str, Any], *, editor_type: type[VegaLiteEditor] | None = None
+) -> dict[str, Any]:
+    """Normalize and validate a parsed Vega-Lite spec without an agent instance.
+
+    Injects ``$schema``, defaults ``width``/``height`` to ``"container"``
+    (skipping compound charts such as ``hconcat``/``vconcat``/``concat``/
+    ``facet``/``repeat`` and charts faceted by a ``row``, ``column`` or
+    ``facet`` channel), validates the spec via ``editor_type.validate_spec``
+    and adds geographic pan/zoom interactivity for maps. The spec dict is
+    mutated in place and returned wrapped in the view metadata Lumen expects.
+
+    Pure helper: no LLM, no UI and no agent instance are required. ``editor_type``
+    defaults to ``VegaLiteEditor`` when not provided.
+    """
+    if editor_type is None:
+        # Imported lazily to avoid an editors -> utils import cycle.
+        from .editors import VegaLiteEditor
+        editor_type = VegaLiteEditor
+
+    # Remove wrapper properties that aren't part of Vega-Lite spec
+    for key in ['sizing_mode', 'min_height', 'type']:
+        vega_spec.pop(key, None)
+
+    if "$schema" not in vega_spec:
+        vega_spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
+
+    if is_compound_vegalite(vega_spec):
+        # A top-level width/height is invalid on a composition and sizes each
+        # cell of a faceted chart, which the pane's stretch_both would turn
+        # into "container"; config.view.continuousWidth/Height sizes the cells.
+        vega_spec.pop('width', None)
+        vega_spec.pop('height', None)
+    else:
+        if "width" not in vega_spec:
+            vega_spec["width"] = "container"
+        if "height" not in vega_spec:
+            vega_spec["height"] = "container"
+
+    editor_type.validate_spec(vega_spec)
+    _thin_band_labels(vega_spec)
+    _fix_comma_number_formats(vega_spec)
+
+    # using string comparison because these keys could be in different nested levels
+    vega_spec_str = dump_yaml(vega_spec)
+    # Handle different types of interactive controls based on chart type
+    if "latitude:" in vega_spec_str or "longitude:" in vega_spec_str:
+        vega_spec = _add_geographic_items(vega_spec, vega_spec_str)
+    # elif ("point: true" not in vega_spec_str or "params" not in vega_spec) and vega_spec_str.count("encoding:") == 1:
+    #     # add pan/zoom controls to all plots except geographic ones and points overlaid on line plots
+    #     # because those result in an blank plot without error
+    #     vega_spec["params"] = [{"bind": "scales", "name": "grid", "select": "interval"}]
+    return {"spec": vega_spec, "sizing_mode": "stretch_both", "min_height": 200}
+
+
+def _fix_comma_number_formats(spec: Any) -> None:
+    """Rewrite a bare ``,`` number format to ``,~r`` wherever the spec has one.
+
+    Vega pairs ``,`` with a precision of its own and prints 6000 as 6e+3, while
+    ``,~r`` rounds to significant digits and trims zeros. The model writes the
+    bare form on axes, legends, tooltips and config however deep they sit, so
+    every nesting is walked. Only the exact string is touched, so time formats
+    and a ``data.format`` object are left alone.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _fix_comma_number_formats(item)
+    elif isinstance(spec, dict):
+        for key, value in spec.items():
+            if key in ("format", "numberFormat") and value == ",":
+                spec[key] = ",~r"
+            else:
+                _fix_comma_number_formats(value)
+
+
+def _thin_band_labels(spec: Any) -> None:
+    """Let heatmap axes drop overlapping labels.
+
+    Vega-Lite prints one label per band on discrete axes, so a rect heatmap of
+    a gridded dataset with 50 longitudes gets 50 labels rotated into an
+    unreadable strip. Parity thinning drops every other label until they fit.
+    Only rect marks are touched: on a bar chart each label names a bar.
+    """
+    if isinstance(spec, list):
+        for item in spec:
+            _thin_band_labels(item)
+        return
+    if not isinstance(spec, dict):
+        return
+    mark = spec.get("mark")
+    if (mark.get("type") if isinstance(mark, dict) else mark) == "rect":
+        _thin_rect_axes(spec.get("encoding", {}))
+    for value in spec.values():
+        _thin_band_labels(value)
+
+
+def _thin_rect_axes(encodings: dict) -> None:
+    """Set parity label thinning on the discrete x/y axes of a rect mark."""
+    for channel in ("x", "y"):
+        encoding = encodings.get(channel)
+        if not isinstance(encoding, dict) or encoding.get("type") not in ("ordinal", "nominal"):
+            continue
+        if "axis" in encoding and not isinstance(encoding["axis"], dict):
+            continue  # axis: null hides the axis entirely
+        axis = encoding.setdefault("axis", {})
+        axis.setdefault("labelOverlap", "parity")
+        if channel == "x":
+            axis.setdefault("labelAngle", 0)
+
+
+def _add_zoom_params(vega_spec: dict) -> None:
+    """Add zoom parameters to vega spec."""
+    if "params" not in vega_spec:
+        vega_spec["params"] = []
+
+    existing_param_names = {
+        p.get("name") for p in vega_spec["params"]
+        if isinstance(p, dict) and "name" in p
+    }
+
+    for p in VEGA_ZOOMABLE_MAP_ITEMS["params"]:
+        if p.get("name") not in existing_param_names:
+            vega_spec["params"].append(p)
+
+
+def _setup_projection(vega_spec: dict) -> None:
+    """Setup map projection settings."""
+    if "projection" not in vega_spec:
+        vega_spec["projection"] = {"type": "mercator"}
+    vega_spec["projection"].update(VEGA_ZOOMABLE_MAP_ITEMS["projection"])
+
+
+def _handle_map_compatibility(vega_spec: dict, vega_spec_str: str) -> None:
+    """Handle map projection compatibility and add geographic outlines."""
+    has_world_map = "world-110m.json" in vega_spec_str
+    uses_albers_usa = vega_spec["projection"]["type"] == "albersUsa"
+
+    if has_world_map and uses_albers_usa:
+        # albersUsa incompatible with world map
+        vega_spec["projection"] = "mercator"
+    elif not has_world_map and not uses_albers_usa:
+        # Add world map outlines if needed
+        if "layer" not in vega_spec:
+            vega_spec["layer"] = [{
+                "mark": vega_spec.pop("mark", {})
+            }]
+        vega_spec["layer"].insert(0, VEGA_MAP_LAYER["world"])
+
+
+def _add_geographic_items(vega_spec: dict, vega_spec_str: str) -> dict:
+    """Add geographic visualization items to vega spec."""
+    _add_zoom_params(vega_spec)
+    _setup_projection(vega_spec)
+
+    # Remove projection from individual layers to prevent conflicts
+    # All layers must inherit the top-level projection for zoom/pan to work correctly
+    if "layer" in vega_spec:
+        for layer in vega_spec["layer"]:
+            if isinstance(layer, dict) and "projection" in layer:
+                del layer["projection"]
+
+    _handle_map_compatibility(vega_spec, vega_spec_str)
+    return vega_spec
+
+
+def _root_expression(node) -> exp.Expression | None:
+    """
+    Rebuild a lineage node's expression in terms of base table columns,
+    inlining CTE and subquery aliases along the way.
+    """
+    if isinstance(node.source, exp.SetOperation):
+        return None
+    expression = node.expression.unalias().copy()
+    children = {child.name: child for child in node.downstream}
+    columns = list(expression.find_all(exp.Column))
+    # Unmatched children are set-operation branches (named "0", "1", ...).
+    if set(children) - {column.sql() for column in columns}:
+        return None
+    for column in columns:
+        child = children.get(column.sql())
+        if child is None:
+            continue
+        if isinstance(child.source, exp.Table):
+            # Table functions like read_parquet(...) have no name to qualify with.
+            replacement = exp.column(column.this.copy(), table=child.source.name or None)
+        elif isinstance(child.source, exp.Select | exp.SetOperation):
+            replacement = _root_expression(child)
+            if replacement is None:
+                return None
+            if not isinstance(replacement, exp.Column | exp.Func | exp.Literal | exp.Paren):
+                replacement = exp.paren(replacement)
+        else:
+            # VALUES, table functions etc. are base relations already.
+            continue
+        if column is expression:
+            return replacement
+        column.replace(replacement)
+    return expression
+
+
+def _group_by(node) -> list[exp.Expression]:
+    """Return the first GROUP BY found along a lineage chain."""
+    for n in node.walk():
+        if isinstance(n.source, exp.Select) and (group := n.source.args.get("group")):
+            return [e.copy() for e in group.expressions]
+    return []
+
+
+@functools.lru_cache(maxsize=128)
+def column_tooltips(sql_query: str, dialect: str | None, columns: tuple[str, ...]) -> dict[str, str]:
+    """
+    Map each derived result column to a one-line description of how it is
+    computed from base table columns, e.g. ``SUM(orders.price), grouped by region``.
+
+    Plain or renamed columns get no entry. Set operations (UNION etc.) are
+    skipped since each branch computes the column differently.
+    """
+    try:
+        select = sqlglot.parse_one(sql_query, read=dialect)
+    except sqlglot.errors.ParseError:
+        return {}
+    if not isinstance(select, exp.Select):
+        return {}
+    # Lineage lowercases identifiers; restore them as the user wrote them.
+    spelling = {ident.name.lower(): ident.name for ident in select.find_all(exp.Identifier)}
+
+    projections = select.expressions
+    # Unaliased names differ per dialect (DuckDB `sum(x)`, Postgres `sum`), so
+    # match by position when every projection maps to exactly one column.
+    positional = len(projections) == len(columns) and not any(
+        isinstance(p.unalias(), exp.Star) or (isinstance(p, exp.Column) and isinstance(p.this, exp.Star))
+        for p in projections
+    )
+    by_name = {col.lower(): col for col in columns}
+
+    tooltips = {}
+    for i, projection in enumerate(projections):
+        name = projection.alias_or_name
+        column = columns[i] if positional else by_name.get(name.lower())
+        if column is None or isinstance(projection.unalias(), exp.Star):
+            continue
+        traced = select
+        if not projection.alias and not isinstance(projection, exp.Column):
+            name = f"_col_{i}"
+            traced = select.copy()
+            traced.expressions[i] = projection.as_(name)
+        try:
+            node = lineage(name, traced, schema=None, dialect=dialect)
+        except sqlglot.errors.SqlglotError:
+            continue
+        root = _root_expression(node)
+        if root is None or isinstance(root, exp.Column) or root.find(exp.Select):
+            continue
+        parts = [root, *_group_by(node)]
+        for identifier in (i for part in parts for i in part.find_all(exp.Identifier)):
+            identifier.set("this", spelling.get(identifier.name.lower(), identifier.name))
+        tooltip = root.sql(dialect=dialect)
+        if len(parts) > 1:
+            tooltip += ", grouped by " + ", ".join(e.sql(dialect=dialect) for e in parts[1:])
+        tooltips[column] = tooltip
+    return tooltips

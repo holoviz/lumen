@@ -12,7 +12,6 @@ from functools import partial
 from typing import Any, ClassVar, Literal
 
 import pandas as pd
-import panel as pn
 import param  # type: ignore
 
 from panel.io.cache import _container_hash, _hash_funcs, is_equal
@@ -80,12 +79,13 @@ class Component(Parameterized):
                     self._update_ref(p, ref)
 
     def _extract_refs(self, params: dict[str, Any], refs: dict[str, Any]):
+        # Deferred: .variables subclasses MultiTypeComponent from this module.
         from .variables import Variable
         processed = {}
         for pname, pval in params.items():
             if is_ref(pval):
                 refs[pname] = pval
-            elif isinstance(pval, (pn.widgets.Widget | param.Parameter | Variable)):
+            elif isinstance(pval, (WidgetBase, param.Parameter, Variable)):
                 var = state.variables.add_variable(pval)
                 processed[pname] = var.value
                 refs[pname] = f'$variables.{var.name}'
@@ -302,6 +302,9 @@ class Component(Parameterized):
             else:
                 value = pobj.serialize(value)
             params[p] = value
+
+        if isinstance(obj, WidgetBase) and 'name' in params:
+            del params['name']
 
         if depth != 0:
             return {'type': type_spec, **params}

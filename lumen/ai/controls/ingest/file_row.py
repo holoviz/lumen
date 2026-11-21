@@ -93,7 +93,7 @@ class UploadedFileRow(Viewer):
 
         self._sheet_select = Select.from_param(
             self.param.sheet,
-            name="Sheet",
+            label="Sheet",
             size="small",
             visible=False,
             margin=(5, 10),

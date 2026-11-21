@@ -2,7 +2,7 @@
 
 Interactive dashboard exploring Palmer Station penguin measurements with linked selections.
 
-![Penguins Dashboard](https://raw.githubusercontent.com/holoviz/lumen/main/doc/_static/penguins.png)
+![Penguins Dashboard](../../assets/gallery/penguins.png)
 
 ## Features
 

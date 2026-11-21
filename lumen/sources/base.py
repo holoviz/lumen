@@ -20,6 +20,7 @@ from typing import (
 )
 from urllib.parse import quote, urlparse
 
+import narwhals.stable.v2 as nw
 import numpy as np
 import pandas as pd
 import panel as pn
@@ -34,19 +35,29 @@ except ImportError:
 from panel.io.cache import _generate_hash
 
 from ..base import MultiTypeComponent
+from ..config import config
 from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    SQLCount, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLSample,
-    SQLSelectFrom, SQLTransform,
+    ARRAY_AGG_DISTINCT_DIALECTS, NO_BOOLEAN_LITERALS, SQLCount, SQLDistinct,
+    SQLFilter, SQLLimit, SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom,
+    SQLTransform,
 )
-from ..util import get_dataframe_schema, is_ref, merge_schemas
+from ..util import (
+    DATAFRAME_BACKENDS, as_narwhals, collect_lazy, get_dataframe_schema,
+    is_lazyframe, is_narwhals, is_ref, merge_schemas, to_backend,
+)
 from ..validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
+
+    from ..ai.answer import Answer, Chat
+    from ..ai.checks import CheckResult
+    from ..ai.llm import Llm
+    from ..ai.overview import Overview
 
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
@@ -59,6 +70,44 @@ if TYPE_CHECKING:
         dd = None  # type: ignore
         DataFrameTypes = (pd.DataFrame,)
 
+
+def _to_enum_list(values: Any, has_nulls: bool) -> list:
+    """
+    Normalizes an array aggregate result into a list of distinct values.
+
+    Arguments
+    ---------
+    values: Any
+        The aggregate as the driver returned it: a list, an array, a JSON
+        string (snowflake) or NULL if the table was empty.
+    has_nulls: bool
+        Whether the column contained NULL. Dialects disagree on whether an
+        array aggregate retains NULLs, so it is reinstated here rather than
+        relied on, to match what SELECT DISTINCT would have returned.
+    """
+    if values is None:
+        values = []
+    elif isinstance(values, np.ndarray):
+        values = values.tolist()
+    elif isinstance(values, str):
+        # snowflake returns ARRAY columns as JSON strings
+        values = json.loads(values)
+    elif isinstance(values, (list, tuple, set)):
+        values = list(values)
+    elif pd.isna(values):
+        # an aggregate over zero rows yields NULL rather than an array
+        values = []
+    else:
+        values = list(values)
+
+    if has_nulls and not any(
+        value is None or (
+            not isinstance(value, (str, bytes, list, dict, tuple, np.ndarray))
+            and pd.isna(value)
+        ) for value in values
+    ):
+        values.append(None)
+    return values
 
 
 def cached(method, locks=None):
@@ -102,6 +151,11 @@ def cached(method, locks=None):
             filtered = FilterTransform.apply_to(
                 df, conditions=list(query.items())
             )
+        collected = collect_lazy(filtered)
+        if collected is not filtered:
+            # A lazy frame answers to collect, not compute, so it would
+            # otherwise sail past the dask branch below and fail much later.
+            return collected
         if getattr(self, 'dask', False) or not hasattr(filtered, 'compute'):
             return filtered
         return filtered.compute()
@@ -142,6 +196,62 @@ def cached_schema(method, locks=None):
                 self._set_schema_cache(schema)
         return schema if table is None else schema[table]
     return wrapped
+
+
+def _is_empty_metadata(value) -> bool:
+    return value is None or (isinstance(value, str) and not value)
+
+
+def _as_column_metadata(value) -> dict:
+    """
+    Normalizes a column entry, treating a plain string as its description.
+    """
+    if isinstance(value, str):
+        return {'description': value} if value else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _merge_column_metadata(generated, user: dict) -> dict:
+    """
+    Fills missing or empty keys of the generated column entries from the
+    user column entries. User columns that are not among the generated
+    columns are skipped, unless no columns were generated at all.
+    """
+    columns = dict(generated) if isinstance(generated, dict) else {}
+    known = set(columns)
+    for column, value in user.items():
+        if known and column not in known:
+            continue
+        merged = _as_column_metadata(columns.get(column))
+        for key, user_value in _as_column_metadata(value).items():
+            if _is_empty_metadata(merged.get(key)):
+                merged[key] = user_value
+        columns[column] = merged
+    return columns
+
+
+def _apply_descriptions(generated: dict, described: dict) -> None:
+    """
+    Writes what describe() set over the generated metadata, so a user's
+    words replace a description the database already had.
+    """
+    if "description" in described:
+        generated["description"] = described["description"]
+    columns = generated.setdefault("columns", {})
+    for column, entry in described.get("columns", {}).items():
+        columns[column] = {**_as_column_metadata(columns.get(column)), **entry}
+
+
+def _merge_user_metadata(generated: dict, user: dict) -> None:
+    """
+    Merges user supplied table metadata into the generated metadata,
+    filling keys that are missing or empty, including per-column entries.
+    """
+    for key, value in user.items():
+        if key == 'columns' and isinstance(value, dict):
+            generated[key] = _merge_column_metadata(generated.get(key), value)
+        elif _is_empty_metadata(generated.get(key)):
+            generated[key] = value
 
 
 def cached_metadata(method, locks=None):
@@ -228,9 +338,19 @@ class Source(MultiTypeComponent):
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
 
+    descriptions = param.Dict(default={}, doc="""
+        Table and column descriptions set with describe(), in the same
+        format as metadata. Unlike metadata, they replace a description
+        the database already has rather than filling in a missing one.""")
+
     metadata = param.Dict(default={}, doc="""
         Optional metadata about the source tables. Should follow the format:
-        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}""")
+        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}
+
+        A column entry may be a description string or a dict of column
+        metadata. These values only fill metadata that is missing or empty
+        in the generated metadata (from metadata_func or the Source itself);
+        non-empty generated values take precedence.""")
 
     source_type: ClassVar[str | None] = None
 
@@ -334,13 +454,14 @@ class Source(MultiTypeComponent):
         return source_type(refs=refs, **resolved_spec)
 
     def __init__(self, **params):
-        from ..config import config
         params['root'] = Path(params.get('root', config.root))
         super().__init__(**params)
         self.param.watch(self.clear_cache, self._reload_params)
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
+        # Bumped when describe() changes the metadata, so caches of it refresh
+        self._metadata_revision = 0
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -458,6 +579,23 @@ class Source(MultiTypeComponent):
                 filename = f'{table}.parq'
             path = self.root / self.cache_dir / filename
             if path.is_file():
+                # A sidecar records which dataframe library wrote the file, so
+                # a warm cache hands back the same kind of frame the cold path
+                # produced rather than silently switching everything to pandas.
+                backend = path.with_suffix('.backend')
+                if backend.is_file():
+                    try:
+                        return (
+                            nw.read_parquet(
+                                str(path), backend=backend.read_text()
+                            ).to_native(),
+                            not bool(query)
+                        )
+                    except Exception:
+                        # The library that wrote this cache is no longer
+                        # installed. Parquet is portable, so read it as pandas
+                        # rather than treating the cache as a miss.
+                        pass
                 return pd.read_parquet(path), not bool(query)
             if dd and path.is_dir():
                 return dd.read_parquet(path), not bool(query)
@@ -493,12 +631,29 @@ class Source(MultiTypeComponent):
                 if isinstance(data, dd.DataFrame):
                     filepath = filepath.with_suffix('')
             try:
-                data.to_parquet(filepath)
+                narwhals_data = as_narwhals(data)
+                if is_narwhals(narwhals_data) and not isinstance(data, pd.DataFrame):
+                    # polars and pyarrow spell this write_parquet, and only an
+                    # eager frame has it. The sidecar written below is what
+                    # lets the read hand back this same kind of frame.
+                    if is_lazyframe(narwhals_data):
+                        narwhals_data = narwhals_data.collect()
+                    narwhals_data.write_parquet(str(filepath))
+                    filepath.with_suffix('.backend').write_text(
+                        str(narwhals_data.implementation)
+                    )
+                else:
+                    data.to_parquet(filepath)
+                    # A sidecar from an earlier non-pandas write would make the
+                    # next read hand back the wrong kind of frame.
+                    filepath.with_suffix('.backend').unlink(missing_ok=True)
             except Exception as e:
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    shutil.rmtree(path)
+                # Remove the file this write was aiming at, not the whole cache
+                # directory it lives in.
+                if filepath.is_file():
+                    filepath.unlink()
+                elif filepath.is_dir():
+                    shutil.rmtree(filepath)
                 self.param.warning(
                     f"Could not cache '{table}' to parquet file. "
                     f"Error during saving process: {e}"
@@ -529,6 +684,107 @@ class Source(MultiTypeComponent):
         about the Source or controls how the Source queries data.
         """
         return None
+
+    def ask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
+    ) -> Answer:
+        """
+        Ask this source a question with Lumen AI and return the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask
+        return ask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    async def aask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
+    ) -> Answer:
+        """
+        Ask this source a question with Lumen AI and await the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask
+        return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
+        """
+        Describe a table and its columns in your own words, for the LLM to
+        read when it plans and writes SQL. Your text replaces any description
+        the database has for the same table or column.
+
+        Parameters
+        ----------
+        table: str
+            The table to describe.
+        description: str | None
+            What the table holds, e.g. "One row per order since 2020".
+        columns: dict | None
+            Column descriptions by name, e.g. {"amount": "Order value in EUR"}.
+
+        Returns
+        -------
+        The source, so calls can be chained.
+        """
+        if table not in self.get_tables():
+            raise ValueError(f"No table {table!r}; the tables are {self.get_tables()}.")
+        known = set(self.get_metadata(table).get("columns", {}))
+        if unknown := set(columns or {}) - known:
+            raise ValueError(f"No column {sorted(unknown)} in {table!r}; it has {sorted(known)}.")
+        described = dict(self.descriptions.get(table, {}))
+        if description is not None:
+            described["description"] = description
+        if columns:
+            described["columns"] = {
+                **described.get("columns", {}),
+                **{column: _as_column_metadata(value) for column, value in columns.items()},
+            }
+        # A parameter, so specs and answer.code carry it. Without events: a
+        # parameter change otherwise clears the data cache, on disk too, for
+        # what is only a change of words.
+        with param.parameterized.discard_events(self):
+            self.descriptions = {**self.descriptions, table: described}
+        self._metadata_cache = {}
+        self._metadata_revision += 1
+        return self
+
+    def chat(self, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
+        """
+        Start a conversation with this source, where each question can follow
+        up on the answers before it. See :func:`lumen.ai.answer.chat`.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import chat
+        return chat(self, llm=llm, agents=agents)
+
+    def overview(self, *, questions: bool = True, llm: Llm | None = None) -> Overview:
+        """
+        A first look at this source: each table's columns with their
+        types, nulls and ranges, what looks wrong in the data, and five
+        questions to ask it, as buttons in a notebook. questions=False
+        skips the one LLM call that writes them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.overview import overview
+        return overview(self, questions=questions, llm=llm)
+
+    def check(self, rule: str, table: str | None = None, *, llm: Llm | None = None) -> CheckResult:
+        """
+        Check a rule the data should keep and return the rows that break
+        it. rule is a SELECT returning those rows, or a rule in plain
+        language that one LLM call turns into one. The result is falsy when
+        rows break the rule, so ``assert source.check(...)`` works in pytest
+        and its message shows them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.checks import check
+        return check(self, rule, table, llm=llm)
 
     def get_tables(self) -> list[str]:
         """
@@ -635,9 +891,8 @@ class Source(MultiTypeComponent):
 
         # Merge source.metadata with metadata_func output
         for table_name in tables:
-            for key, value in self.metadata.get(table_name, {}).items():
-                if key not in metadata[table_name]:
-                    metadata[table_name][key] = value
+            _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
+            _apply_descriptions(metadata[table_name], self.descriptions.get(table_name, {}))
 
         return metadata
 
@@ -759,6 +1014,7 @@ class InMemorySource(Source):
         dask = query.pop('__dask', False)
         table = self.tables.get(table)
         df = FilterTransform.apply_to(table, conditions=list(query.items()))
+        df = collect_lazy(df)
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
     def add_table(self, name, table):
@@ -935,13 +1191,23 @@ class FileSource(Source):
         return df if dask or not hasattr(df, 'compute') else df.compute()
 
 
+class QueryTimeoutError(TimeoutError):
+    """Raised when a query does not finish within the allotted time."""
+
+
 class BaseSQLSource(Source):
     """
     The BaseSQLSource implements the additional API required by
     a SQL based data source.
     """
 
-    dialect = 'any'
+    dialect = None
+
+    dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
+        The dataframe library table data is returned as. Leave unset to get
+        pandas, which is what every source has always produced. Only the data
+        `fetch` reads is affected; the schema and metadata queries stay on
+        pandas whatever this is set to.""")
 
     excluded_tables = param.List(default=[], doc="""
         List of table names that should be excluded from the results. Supports:
@@ -1105,6 +1371,90 @@ class BaseSQLSource(Source):
         """
         return await asyncio.to_thread(self.execute, sql_query, params, *args, **kwargs)
 
+    async def execute_with_timeout(
+        self, sql_query: str, timeout: float | None, fetch: bool = False
+    ) -> DataFrame:
+        """
+        Executes a SQL query, giving up after `timeout` seconds.
+
+        The default stops waiting but leaves the statement running in its
+        worker thread; sources whose engine can cancel a statement override
+        this or cancel in `execute_async`.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        timeout : float | None
+            Seconds to wait for the result, or None to wait indefinitely.
+        fetch : bool
+            Whether to return the result in `dataframe_backend` like `fetch`
+            rather than as pandas like `execute`.
+
+        Returns
+        -------
+        DataFrame
+            The result of the query.
+
+        Raises
+        ------
+        QueryTimeoutError
+            If the query does not finish within `timeout` seconds.
+        """
+        query = asyncio.to_thread(self.fetch, sql_query) if fetch else self.execute_async(sql_query)
+        try:
+            return await asyncio.wait_for(query, timeout)
+        except TimeoutError as e:
+            raise QueryTimeoutError(f"The query did not finish within {timeout} seconds.") from e
+
+    def missing_table(self, error: Exception) -> str | None:
+        """
+        Returns the table a query error reports as missing.
+
+        Sources override this to parse their engine's error message and
+        to normalize the name the way the engine resolves identifiers.
+
+        Arguments
+        ---------
+        error : Exception
+            The error raised while executing a query.
+
+        Returns
+        -------
+        str | None
+            The missing table, or None if the error is not a missing table.
+        """
+        return None
+
+    def fetch(self, sql_query: str, params: list | dict | None = None) -> DataFrame:
+        """
+        Executes a SQL query and returns the result in `dataframe_backend`.
+
+        The data path, as against `execute`, which is the pandas path the
+        schema and metadata queries read with `.iloc` and pandas dtypes. This
+        is where a whole table or an ad hoc result comes back, so it is where
+        a large frame is worth building in the engine's own library rather
+        than converting one.
+
+        Sources whose engine can build the requested frame directly override
+        this. The default converts, which costs a copy but is correct for
+        every source, and is free at the default because `to_backend` returns
+        the frame untouched when no backend is asked for.
+
+        Arguments
+        ---------
+        sql_query : str
+            The SQL Query to execute
+        params : list | dict | None
+            Parameters to use in the SQL query
+
+        Returns
+        -------
+        DataFrame
+            The result, in whichever library `dataframe_backend` names.
+        """
+        return to_backend(self.execute(sql_query, params), self.dataframe_backend)
+
     async def get_async(self, table: str, **query) -> DataFrame:
         """
         Return a table asynchronously; optionally filtered by the given query.
@@ -1125,10 +1475,13 @@ class BaseSQLSource(Source):
 
         conditions = list(query.items())
         if conditions:
-            sql_filter = SQLFilter(conditions=conditions)
+            sql_filter = SQLFilter(conditions=conditions, boolean_literals=self.dialect not in NO_BOOLEAN_LITERALS)
             sql_expr = sql_filter.apply(sql_expr)
 
-        return await self.execute_async(sql_expr)
+        # Through execute_async rather than fetch, because a source with a
+        # genuinely async driver overrides that one and threading fetch
+        # instead would step around it.
+        return to_backend(await self.execute_async(sql_expr), self.dataframe_backend)
 
     @cached_schema
     def get_schema(
@@ -1146,20 +1499,16 @@ class BaseSQLSource(Source):
                 schemas[entry] = {}
                 continue
             sql_expr = self.get_sql_expr(entry)
+            params = self.table_params.get(entry, [])
             data_sql_expr = sql_expr
             for sql_transform in sql_transforms:
                 data_sql_expr = sql_transform.apply(data_sql_expr)
-            data = self.execute(data_sql_expr, self.table_params.get(entry, []))
+            data = self.execute(data_sql_expr, params)
             schemas[entry] = schema = get_dataframe_schema(data)['items']['properties']
 
-            count_expr = SQLCount(read=self.dialect).apply(sql_expr)
-            count_expr = ' '.join(count_expr.splitlines())
-            count_data = self.execute(count_expr, self.table_params.get(entry, []))
-            count_col = 'count' if 'count' in count_data else 'COUNT'
-            count = int(count_data[count_col].iloc[0])
             if limit:
                 # the min/max and enums will be computed on the limited dataset
-                schema['__len__'] = count
+                schema['__len__'] = self._get_count(sql_expr, params)
                 continue
 
             # patch the min/max and enums from the full dataset
@@ -1169,19 +1518,14 @@ class BaseSQLSource(Source):
                     enums.append(name)
                 elif 'inclusiveMinimum' in col_schema:
                     min_maxes.append(name)
-            for col in enums:
-                distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
-                distinct_expr = ' '.join(distinct_expr.splitlines())
-                distinct = self.execute(distinct_expr, self.table_params.get(entry, []))
-                schema[col]['enum'] = distinct[col].tolist()
+
+            count, enum_values, minmax_values = self._get_schema_stats(
+                sql_expr, params, enums, min_maxes
+            )
+            for col, values in enum_values.items():
+                schema[col]['enum'] = values
 
             schema['__len__'] = count
-            if not min_maxes:
-                continue
-
-            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
-            minmax_expr = ' '.join(minmax_expr.splitlines())
-            minmax_data = self.execute(minmax_expr, self.table_params.get(entry, []))
             for col in min_maxes:
                 kind = data[col].dtype.kind
                 if kind in 'iu':
@@ -1193,16 +1537,110 @@ class BaseSQLSource(Source):
                 else:
                     cast = lambda v: v
 
-                # some dialects, like snowflake output column names to UPPERCASE regardless of input case
-                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
-                min_data = minmax_data[min_col].iloc[0]
-                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
-                max_data = minmax_data[max_col].iloc[0]
+                min_data, max_data = minmax_values[col]
                 schema[col]['inclusiveMinimum'] = min_data if pd.isna(min_data) else cast(min_data)
                 schema[col]['inclusiveMaximum'] = max_data if pd.isna(max_data) else cast(max_data)
 
         return schemas if table is None else schemas[table]
 
+    def _get_count(self, sql_expr: str, params: list | dict | None = None) -> int:
+        """
+        Returns the number of rows the given SQL expression yields.
+        """
+        count_expr = SQLCount(read=self.dialect).apply(sql_expr)
+        count_expr = ' '.join(count_expr.splitlines())
+        count_data = self.execute(count_expr, params)
+        # some dialects, like snowflake, output column names in UPPERCASE
+        count_col = 'count' if 'count' in count_data else 'COUNT'
+        return int(count_data[count_col].iloc[0])
+
+    def _get_schema_stats(
+        self, sql_expr: str, params: list | dict | None, enums: list[str],
+        min_maxes: list[str], batch: bool | None = None
+    ) -> tuple[int, dict[str, list], dict[str, tuple[Any, Any]]]:
+        """
+        Computes the row count, distinct values and min/max of a table.
+
+        Uses a single aggregate query where the dialect supports an array
+        aggregate, otherwise one query per statistic.
+
+        Arguments
+        ---------
+        batch: bool | None
+            Force the batched or per-statistic path; by default the dialect
+            decides. Mostly useful for testing that the two agree.
+
+        Returns
+        -------
+        count: int
+            The total number of rows.
+        enum_values: dict[str, list]
+            The distinct values of each column in `enums`.
+        minmax_values: dict[str, tuple]
+            The (min, max) of each column in `min_maxes`.
+        """
+        if batch is None:
+            batch = self.dialect in ARRAY_AGG_DISTINCT_DIALECTS
+        if batch:
+            try:
+                stats_expr = SQLSchemaStats(
+                    enum_columns=enums, minmax_columns=min_maxes, read=self.dialect
+                ).apply(sql_expr)
+                stats_expr = ' '.join(stats_expr.splitlines())
+                stats_data = self.execute(stats_expr, params)
+
+                # Indexed per column rather than via a row-wise .iloc[0] so that
+                # each value keeps its own dtype; some dialects, like snowflake,
+                # also output column names in UPPERCASE.
+                row = {
+                    str(col).lower(): stats_data[col].iloc[0]
+                    for col in stats_data.columns
+                }
+                count = int(row[SQLSchemaStats.count_alias])
+                return (
+                    count,
+                    {
+                        col: _to_enum_list(
+                            row[SQLSchemaStats.enum_alias(i)],
+                            int(row[SQLSchemaStats.nonnull_alias(i)]) < count
+                        )
+                        for i, col in enumerate(enums)
+                    },
+                    {
+                        col: (
+                            row[SQLSchemaStats.min_alias(i)],
+                            row[SQLSchemaStats.max_alias(i)]
+                        )
+                        for i, col in enumerate(min_maxes)
+                    },
+                )
+            except Exception as e:
+                self.param.warning(
+                    f"Batched schema query failed for dialect {self.dialect!r}, "
+                    f"falling back to one query per column: {e}"
+                )
+
+        count = self._get_count(sql_expr, params)
+        enum_values = {}
+        for col in enums:
+            distinct_expr = SQLDistinct(columns=[col], read=self.dialect).apply(sql_expr)
+            distinct_expr = ' '.join(distinct_expr.splitlines())
+            distinct = self.execute(distinct_expr, params)
+            enum_values[col] = distinct[col].tolist()
+
+        minmax_values = {}
+        if min_maxes:
+            minmax_expr = SQLMinMax(columns=min_maxes, read=self.dialect).apply(sql_expr)
+            minmax_expr = ' '.join(minmax_expr.splitlines())
+            minmax_data = self.execute(minmax_expr, params)
+            for col in min_maxes:
+                # some dialects, like snowflake output column names to UPPERCASE regardless of input case
+                min_col = f'{col}_min' if f'{col}_min' in minmax_data else f'{col}_MIN'
+                max_col = f'{col}_max' if f'{col}_max' in minmax_data else f'{col}_MAX'
+                minmax_values[col] = (
+                    minmax_data[min_col].iloc[0], minmax_data[max_col].iloc[0]
+                )
+        return count, enum_values, minmax_values
 
 
 class JSONSource(FileSource):
@@ -1486,8 +1924,10 @@ class JoinedSource(Source):
                 if not schema:
                     schema.update(table_schema)
                 else:
+                    schema.pop('__len__', None)
                     for column, col_schema in table_schema.items():
-                        schema[column] = merge_schemas(col_schema, schema.get(column))
+                        if column != '__len__':
+                            schema[column] = merge_schemas(col_schema, schema.get(column))
         return schemas if table is None else schemas[table]
 
     @cached
@@ -1623,8 +2063,8 @@ class DerivedSource(Source):
             transforms = list(self.transforms)
         transforms.append(FilterTransform(conditions=list(query.items())))
         for transform in transforms:
-            df = transform.apply(df)
-        return df
+            df = transform.apply(transform._coerce(df))
+        return collect_lazy(df)
 
     get.__doc__ = Source.get.__doc__
 

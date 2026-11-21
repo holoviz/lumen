@@ -13,25 +13,45 @@ Most users never customize agents. The eight default agents handle typical data 
 - [See which agents exist](#default-agents) - What each agent does
 - [Add custom agents](#add-a-custom-agent) - Extend Lumen with new capabilities  
 - [Remove agents](#use-specific-agents-only) - Use only some agents
+- [Data cleaning mode](#data-cleaning-mode) - Profile results and clean up dirty queries
 - [Configure agent models](#use-different-models-per-agent) - Control which LLM each agent uses
 - [Customize agent instructions](#customizing-agent-instructions) - Override agent prompts and behavior
 
 ## Default agents
 
-Lumen includes eight agents automatically. You don't need to configure anything.
+Lumen includes nine agents automatically. You don't need to configure anything.
 
 | Agent | What it does |
 |-------|-------------|
 | **SQLAgent** | Writes and runs SQL queries |
-| **VegaLiteAgent** | Creates charts and visualizations |
+| **VegaLiteAgent** | Creates one or more charts from a single request (each in its own editable tab, with an "All" overview) |
 | **DeckGLAgent** | Creates 3D map visualizations for geographic data |
 | **ChatAgent** | Answers questions and provides guidance |
 | **SourceAgent** | Fetches data from configured source controls |
 | **TableListAgent** | Lists available tables and columns |
-| **DocumentListAgent** | Manages uploaded documents |
+| **DocumentListAgent** | Lists uploaded documents |
+| **DocumentSummarizerAgent** | Answers questions from uploaded documentation and metadata files |
 | **ValidationAgent** | Checks if results answer the question |
 
 These agents work together automatically. The coordinator picks which agents to use for each question.
+
+## Optional agents
+
+These agents ship with Lumen but are not on by default. Add them with `agents=`, which extends the defaults:
+
+| Agent | What it does |
+|-------|-------------|
+| **hvPlotAgent** | Interactive hvPlot charts for exploration, including choropleths of geometry columns without a basemap |
+| **AnalysisAgent** | Runs your own deterministic [analyses](analyses.md) |
+| **DbtslAgent** | Answers metric questions through a dbt Semantic Layer |
+
+``` py title="Add optional agents"
+import lumen.ai as lmai
+from lumen.ai.agents import hvPlotAgent
+
+ui = lmai.ExplorerUI(data='penguins.csv', agents=[hvPlotAgent])
+ui.servable()
+```
 
 ## Use specific agents only
 
@@ -55,6 +75,57 @@ ui.servable()
 - Simpler behavior (predictable agent selection)
 
 Most users should keep all default agents. Only customize if you have specific needs.
+
+## Data cleaning mode
+
+SQLAgent profiles every result it produces and reports what is wrong with it. The findings
+appear in the query step whether or not anything is done about them:
+
+| Finding | Rewritten? |
+|---------|------------|
+| Missing values above 1% of a column | Yes |
+| Exact duplicate rows | Yes |
+| Placeholder numbers (`-9999`, `-999`, `9999`) | Yes |
+| Untrimmed or empty text | Yes |
+| Numbers stored as text | Yes |
+| Constant columns | **No, reported only** |
+| Extreme outliers | **No, reported only** |
+
+The last two are never rewritten. A constant column is the normal shape of a result you
+filtered to a single value, so dropping it would delete something you asked for, and an
+outlier is data, so removing it would change the answer rather than clean it.
+
+When a rewritable finding turns up, SQLAgent spends one extra LLM call rewriting the query,
+then shows the new SQL and the row count before and after. If the rewrite fails, returns no
+rows, or cannot be parsed, the original query is kept.
+
+Profiling is ordinary pandas work on the result the query already produced, so it needs no
+extra database round trip, and a clean result costs no extra LLM call at all.
+
+Aggregating queries are the exception. `SELECT region, SUM(revenue) ... GROUP BY region`
+returns a handful of rows that no longer show anything about the thousands they came from,
+so a `-9999` placeholder is already inside the total and invisible. For those queries
+SQLAgent samples the source tables directly (one extra query per table, up to three) and
+tells the rewrite to clean the values before they are aggregated. This matters most for
+charts, which are usually built on exactly this kind of query.
+
+Turn the rewriting off to always take the query exactly as first written:
+
+``` py title="Disable the cleaning rewrite"
+import lumen.ai as lmai
+from lumen.ai.agents import SQLAgent
+
+ui = lmai.ExplorerUI(
+    data='penguins.csv',
+    agents=[SQLAgent(clean_data=False)]  # (1)!
+)
+ui.servable()
+```
+
+1. Passing a configured *instance* replaces the default SQLAgent rather than adding a second
+   one, because Lumen skips any default agent whose type you have already supplied.
+
+Findings are still reported with `clean_data=False`; only the rewriting stops.
 
 ## Add a custom agent
 
@@ -96,15 +167,12 @@ See [Creating custom agents](#creating-custom-agents) below for complete example
 
 Configure which LLM model each agent uses:
 
-``` py title="Different models per agent" hl_lines="4-7"
+``` py title="Different models per agent" hl_lines="4-5"
 import lumen.ai as lmai
 
 model_config = {
-    "default": {"model": "gpt-4o-mini"},  # Cheap model for most agents
-    "sql": {"model": "gpt-4o"},           # Powerful model for SQL
-    "vega_lite": {"model": "gpt-4o"},     # Powerful model for charts
-    "deck_gl": {"model": "gpt-4o"},       # Powerful model for 3D maps
-    "chat": {"model": "gpt-4o"},          # Powerful model for analysis
+    "default": {"model": "gpt-6-luna"},   # Lumen's default and its cheapest OpenAI model
+    "sql": {"model": "gpt-5.6-luna"},     # A different model just for SQLAgent
 }
 
 llm = lmai.llm.OpenAI(model_kwargs=model_config)
@@ -117,10 +185,11 @@ ui.servable()
 
 - SQLAgent uses the `"sql"` model
 - VegaLiteAgent uses the `"vega_lite"` model
-- DeckGLAgent uses the `"deck_gl"` model
+- DeckGLAgent uses the `"deckgl"` model
+- TableListAgent uses the `"table_list"` model
 - ChatAgent uses the `"chat"` model (falls back to `"default"` if not specified)
 
-Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deck_gl"`).
+Agent class names are converted to model keys automatically (e.g., `SQLAgent` → `"sql"`, `VegaLiteAgent` → `"vega_lite"`, `DeckGLAgent` → `"deckgl"`, `hvPlotAgent` → `"hv_plot"`).
 
 See [LLM Providers](llm_providers.md) for complete details.
 

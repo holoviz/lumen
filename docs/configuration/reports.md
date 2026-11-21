@@ -305,6 +305,16 @@ with open("report.ipynb", "w") as f:
     f.write(report.to_notebook())
 ```
 
+**Export to HTML or Word:**
+
+```python
+await report.execute()
+with open("report.html", "w") as f:
+    f.write(report.to_html())
+with open("report.docx", "wb") as f:
+    f.write(report.to_docx())  # needs pip install python-docx
+```
+
 **Validate before running:**
 
 ```python

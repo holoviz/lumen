@@ -19,7 +19,7 @@ variables:
 packages:
   - python >=3.13
   - lumen
-  - panel >=1.7
+  - panel >=1.9.0
   - hvplot >=0.12.1
   - datashader >=0.18.2
   - fastparquet >=2024.11.0

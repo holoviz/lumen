@@ -35,7 +35,9 @@ class TableListAgent(BaseListAgent):
     purpose = param.String(default="""
         Displays a list of all available data & datasets. Not useful for identifying which dataset to use for analysis.""")
 
-    _column_name = "Data"
+    user = param.String(default="Tables")
+
+    _column_name = "Table"
 
     _message_format = "Show the data: {item}"
 
@@ -86,7 +88,16 @@ class TableListAgent(BaseListAgent):
 
     @classmethod
     async def applies(cls, context: TContext) -> bool:
-        return len(context.get('visible_slugs', set())) > 1
+        visible_slugs = context.get("visible_slugs")
+        if visible_slugs and len(visible_slugs) > 1:
+            return True
+
+        source = context.get("source")
+        if source is not None:
+            return len(source.get_tables()) > 1
+
+        sources = context.get("sources", [])
+        return sum(len(source.get_tables()) for source in sources) > 1
 
     def _get_items(self, context: TContext) -> dict[str, list[str]]:
         if "closest_tables" in context:

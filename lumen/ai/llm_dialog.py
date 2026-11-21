@@ -16,7 +16,7 @@ from panel_material_ui import (
 )
 
 from .agents import Agent
-from .llm import Llm
+from .llm import SPEC_DESCRIPTIONS, Llm
 from .utils import class_name_to_llm_spec_key
 
 LLM_CONFIG_HELP = """
@@ -37,6 +37,9 @@ Configure the language models used for different tasks.
 
 # Export for use in ui.py
 AI_CONFIGURATION_HELP = LLM_CONFIG_HELP
+
+# Shown by the slider, which cannot display None, and used by "Reset to Defaults".
+DEFAULT_TEMPERATURE = 0.7
 
 
 class LLMModelCard(Viewer):
@@ -77,7 +80,7 @@ class LLMModelCard(Viewer):
 
         # Create model selector
         self.model_select = Select(
-            name=f"{self.model_type.title()} Model",
+            label=f"{self.model_type.title()} Model",
             value=default_value,
             options=self.llm_choices,
             sizing_mode="stretch_width",
@@ -89,15 +92,12 @@ class LLMModelCard(Viewer):
         self.model_select.param.watch(self._on_model_change, "value")
 
     def _get_default_models(self):
-        """Get models for the select dropdown from the LLM class."""
-        llm_type = type(self.llm)
+        """Get models for the select dropdown from the LLM.
 
-        # Check if the LLM class has a select_models attribute (now a param)
-        if hasattr(llm_type, 'select_models'):
-            available = list(llm_type.select_models)
-        else:
-            # Fallback to empty list
-            available = []
+        Read from the instance, not the class, so a ``select_models`` list
+        passed at construction is what the dropdown offers.
+        """
+        available = list(self.llm.select_models)
 
         # Get current model to ensure it's included
         current_config = self.llm.model_kwargs.get(self.model_type, {})
@@ -146,8 +146,8 @@ class LLMConfigDialog(Viewer):
     def __init__(self, **params):
         super().__init__(**params)
 
-        # Store original values for cancellation
-        self._original_temp = getattr(self.llm, "temperature", 0.7)
+        # Store original values for cancellation; None means the LLM omits temperature.
+        self._original_temp = getattr(self.llm, "temperature", DEFAULT_TEMPERATURE)
         self._original_models = dict(self.llm.model_kwargs)
         self._original_provider = type(self.llm).__name__
 
@@ -158,7 +158,7 @@ class LLMConfigDialog(Viewer):
         # Provider selection
         current_provider_class = type(self.llm)
         self._provider_select = Select(
-            name="LLM Provider",
+            label="LLM Provider",
             value=current_provider_class,
             options=self.provider_choices,
             sizing_mode="stretch_width",
@@ -168,7 +168,8 @@ class LLMConfigDialog(Viewer):
 
         # Temperature slider
         self._temperature_slider = FloatSlider(
-            label="Temperature", value=self._original_temp, start=0.0, end=2.0, step=0.1, sizing_mode="stretch_width", margin=(5, 0)
+            label="Temperature", value=self._slider_temperature(self._original_temp),
+            start=0.0, end=2.0, step=0.1, sizing_mode="stretch_width", margin=(5, 0)
         )
 
         # Model type cards
@@ -239,6 +240,11 @@ class LLMConfigDialog(Viewer):
         # Initialize model cards
         self._refresh_model_cards()
 
+        # Expose agent descriptions to the LLM so the routing prompt can use
+        # them even when model_kwargs entries lack a 'description' key.
+        # Descriptions set on the LLM win, so explicit config is not clobbered.
+        self.llm.spec_descriptions = {**self._get_all_agent_types(), **self.llm.spec_descriptions}
+
         # Flag to prevent update loops during provider changes
         self._updating_provider = False
 
@@ -278,7 +284,7 @@ class LLMConfigDialog(Viewer):
                 self._updating_provider = True
 
                 # Preserve current temperature if possible
-                current_temp = getattr(self.llm, 'temperature', 0.7)
+                current_temp = getattr(self.llm, 'temperature', DEFAULT_TEMPERATURE)
 
                 # Create new LLM instance - it will use its default model_kwargs
                 new_llm = new_provider_class(temperature=current_temp)
@@ -287,7 +293,9 @@ class LLMConfigDialog(Viewer):
                 self.llm = new_llm
 
                 # Update temperature slider to match new provider's default
-                self._temperature_slider.value = getattr(new_llm, 'temperature', 0.7)
+                self._temperature_slider.value = self._slider_temperature(
+                    getattr(new_llm, 'temperature', DEFAULT_TEMPERATURE)
+                )
 
                 # Refresh model cards for new provider
                 self._refresh_model_cards()
@@ -309,15 +317,9 @@ class LLMConfigDialog(Viewer):
         Get all possible agent types by using param.concrete_descendents to find all Agent classes.
         Returns a dict mapping llm_spec_key to description.
         """
-        agent_types = {}
-
-        # Add common predefined types first (only non-duplicate ones)
-        predefined_types = {
-            "default": "General purpose model for most tasks",
-            "edit": "Advanced model for retry & edit tasks",
-            "ui": "Lightweight model for UI interactions"
-        }
-        agent_types.update(predefined_types)
+        # The universal spec keys are described alongside the routing prompt
+        # that also consumes them, so the two cannot drift apart.
+        agent_types = dict(SPEC_DESCRIPTIONS)
 
         # Get all concrete descendant classes of Agent
         agent_classes = []
@@ -377,7 +379,7 @@ class LLMConfigDialog(Viewer):
             if model_type not in self.llm.model_kwargs:
                 # Use the default model from model_kwargs if available, otherwise use first select_models
                 default_model_config = self.llm.model_kwargs.get("default", {}).copy()
-                if not default_model_config and hasattr(self.llm, 'select_models') and self.llm.select_models:
+                if not default_model_config and self.llm.select_models:
                     default_model_config = {"model": self.llm.select_models[0]}
                 self.llm.model_kwargs[model_type] = default_model_config
 
@@ -425,14 +427,33 @@ class LLMConfigDialog(Viewer):
 
         self._model_cards.objects = cards
 
+    @staticmethod
+    def _slider_temperature(temperature):
+        return DEFAULT_TEMPERATURE if temperature is None else temperature
+
+    def _set_temperature(self, temperature):
+        if not hasattr(self.llm, "temperature") or self.llm.temperature == temperature:
+            return
+        with param.edit_constant(self.llm):
+            self.llm.temperature = temperature
+
+    def _apply_slider_temperature(self):
+        """
+        Write the slider to the LLM, except that an LLM omitting temperature
+        keeps omitting it while the slider still shows the placeholder, since
+        some models reject any temperature.
+        """
+        value = self._temperature_slider.value
+        if getattr(self.llm, "temperature", None) is None and value == DEFAULT_TEMPERATURE:
+            return
+        self._set_temperature(value)
+
     def _apply_changes(self, event):
         """Apply the configuration changes."""
-        # Update temperature if the LLM supports it
-        if hasattr(self.llm, "temperature"):
-            self.llm.temperature = self._temperature_slider.value
+        self._apply_slider_temperature()
 
         # Store new original values
-        self._original_temp = self._temperature_slider.value
+        self._original_temp = getattr(self.llm, "temperature", DEFAULT_TEMPERATURE)
         self._original_models = dict(self.llm.model_kwargs)
         self._original_provider = type(self.llm).__name__
 
@@ -446,8 +467,7 @@ class LLMConfigDialog(Viewer):
     def _reset_to_defaults(self, event):
         """Reset all settings to default values."""
         # Reset temperature to default
-        default_temp = 0.7
-        self._temperature_slider.value = default_temp
+        self._temperature_slider.value = DEFAULT_TEMPERATURE
 
         # Reset to original LLM class defaults
         llm_class = type(self.llm)
@@ -456,8 +476,7 @@ class LLMConfigDialog(Viewer):
         self.llm.model_kwargs.clear()
         self.llm.model_kwargs.update(default_models)
 
-        if hasattr(self.llm, "temperature"):
-            self.llm.temperature = default_temp
+        self._apply_slider_temperature()
 
         # Refresh model cards
         self._refresh_model_cards()
@@ -480,9 +499,8 @@ class LLMConfigDialog(Viewer):
             self._provider_select.value = original_provider_class
 
         # Reset temperature slider
-        self._temperature_slider.value = self._original_temp
-        if hasattr(self.llm, "temperature"):
-            self.llm.temperature = self._original_temp
+        self._temperature_slider.value = self._slider_temperature(self._original_temp)
+        self._set_temperature(self._original_temp)
 
         # Reset model configurations
         self.llm.model_kwargs.clear()

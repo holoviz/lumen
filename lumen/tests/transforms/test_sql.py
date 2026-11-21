@@ -1,17 +1,23 @@
 import datetime as dt
+import json
 
 from textwrap import dedent
 
+import numpy as np
 import pandas as pd
 import pytest
 import sqlglot
+import yaml
 
 import lumen as lm
 
+from lumen.pipeline import Pipeline
+from lumen.sources.base import InMemorySource
+from lumen.transforms.base import Range
 from lumen.transforms.sql import (
     SQLColumns, SQLCount, SQLDistinct, SQLFilter, SQLFormat, SQLGroupBy,
     SQLLimit, SQLMinMax, SQLOverride, SQLPreFilter, SQLRemoveSourceSeparator,
-    SQLSample, SQLSelectFrom, SQLTransform,
+    SQLSample, SQLSchemaStats, SQLSelectFrom, SQLSort, SQLTransform,
 )
 
 try:
@@ -92,10 +98,15 @@ def test_sql_parse_hyphen():
 
 def test_sql_optimize():
     result = SQLTransform(optimize=True).apply(
-        "SELECT * FROM (SELECT col1, col2 FROM table) WHERE col1 > 10"
+        'SELECT * FROM (SELECT "table".col1, "table".col2 FROM "table") WHERE col1 > 10'
     )
     expected = """SELECT "table"."col1" AS "col1", "table"."col2" AS "col2" FROM "table" AS "table" WHERE "table"."col1" > 10"""
     assert result == expected
+
+
+def test_sql_optimize_unqualified_columns():
+    result = SQLTransform(optimize=True).apply("SELECT col1 FROM table WHERE col1 > 10")
+    assert result.startswith('SELECT "')
 
 
 def test_sql_pretty():
@@ -161,7 +172,7 @@ def test_sql_group_by_single_column():
     result = SQLGroupBy.apply_to(
         "SELECT * FROM TABLE", by=["A"], aggregates={"AVG": "B"}
     )
-    expected = "SELECT A, AVG(B) AS B FROM (SELECT * FROM TABLE) GROUP BY A"
+    expected = "SELECT A, AVG(B) AS B FROM (SELECT * FROM TABLE) AS subquery GROUP BY A"
     assert result == expected
 
 
@@ -170,20 +181,32 @@ def test_sql_group_by_multi_columns():
         "SELECT * FROM TABLE", by=["A"], aggregates={"AVG": ["B", "C"]}
     )
     expected = (
-        "SELECT A, AVG(B) AS B, AVG(C) AS C FROM (SELECT * FROM TABLE) GROUP BY A"
+        "SELECT A, AVG(B) AS B, AVG(C) AS C FROM (SELECT * FROM TABLE) AS subquery GROUP BY A"
     )
     assert result == expected
 
 
 def test_sql_limit():
     result = SQLLimit.apply_to("SELECT * FROM TABLE", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE) LIMIT 10"
+    expected = "SELECT * FROM TABLE LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_keeps_order_and_offset():
+    result = SQLLimit.apply_to("SELECT A FROM TABLE ORDER BY A OFFSET 5", limit=10)
+    expected = "SELECT A FROM TABLE ORDER BY A LIMIT 10 OFFSET 5"
+    assert result == expected
+
+
+def test_sql_limit_wraps_set_operation():
+    result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=10)
+    expected = "SELECT * FROM (SELECT A FROM X UNION SELECT A FROM Y) AS subquery LIMIT 10"
     assert result == expected
 
 
 def test_sql_limit_lower_than_original():
     result = SQLLimit.apply_to("SELECT * FROM TABLE LIMIT 15", limit=10)
-    expected = "SELECT * FROM (SELECT * FROM TABLE LIMIT 15) LIMIT 10"
+    expected = "SELECT * FROM TABLE LIMIT 10"
     assert result == expected
 
 
@@ -193,21 +216,89 @@ def test_sql_limit_higher_than_original():
     assert result == expected
 
 
+def test_sql_limit_wraps_duckdb_pivot_statement():
+    result = SQLLimit.apply_to("PIVOT t ON k USING SUM(v)", limit=10, read="duckdb", write="duckdb")
+    expected = "SELECT * FROM (PIVOT t ON k USING SUM(v)) AS subquery LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_ignores_comment_after_final_semicolon():
+    result = SQLLimit.apply_to("SELECT * FROM TABLE; -- note", limit=10)
+    expected = "SELECT * FROM TABLE LIMIT 10"
+    assert result == expected
+
+
+def test_sql_limit_mssql_aliases_derived_table():
+    """SQL Server rejects a derived table in FROM unless it carries an alias."""
+    result = SQLLimit.apply_to("SELECT A FROM X UNION SELECT A FROM Y", limit=1, write="mssql")
+    expected = "SELECT TOP 1 * FROM (SELECT A FROM X UNION SELECT A FROM Y) AS subquery"
+    assert result == expected
+
+
 def test_sql_columns():
     result = SQLColumns.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = "SELECT A, B FROM (SELECT * FROM TABLE)"
+    expected = "SELECT A, B FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
+
+
+def test_sql_sort():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"])
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A ASC"
+    assert result == expected
+
+
+def test_sql_sort_descending():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"], ascending=False)
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A DESC"
+    assert result == expected
+
+
+def test_sql_sort_per_column_direction():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A", "B"], ascending=[True, False])
+    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY A ASC, B DESC"
+    assert result == expected
+
+
+def test_sql_sort_nonalphanum_characters():
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A_B-123"])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY "A_B-123" ASC'
+    assert result == expected
+
+
+def test_sql_sort_without_columns_is_a_noop():
+    assert SQLSort.apply_to("SELECT * FROM TABLE", by=[]) == "SELECT * FROM TABLE"
+
+
+@pytest.mark.parametrize("dialect", ["duckdb", "postgres", "mysql", "snowflake", "bigquery", "sqlite"])
+def test_sql_sort_renders_for_dialect(dialect):
+    """Every dialect gets an ORDER BY, whatever it does with null placement."""
+    result = SQLSort.apply_to("SELECT * FROM TABLE", by=["A"], ascending=False, write=dialect)
+    assert "ORDER BY" in result and "DESC" in result
+
+
+def test_sql_sort_before_limit_is_a_top_n_query():
+    """The pairing SQLSort exists for: ordering inside, limit outside."""
+    if DuckDBSource is None:
+        pytest.skip("duckdb is not installed")
+    source = DuckDBSource(tables={"t": "SELECT * FROM t"}, uri=":memory:")
+    source._connection.execute(
+        "CREATE TABLE t AS SELECT * FROM (VALUES (3), (1), (2)) v(n)"
+    )
+    sql = SQLLimit.apply_to(
+        SQLSort.apply_to("SELECT * FROM t", by=["n"], ascending=False), limit=2
+    )
+    assert source._connection.execute(sql).fetchall() == [(3,), (2,)]
 
 
 def test_sql_distinct():
     result = SQLDistinct.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = 'SELECT DISTINCT "A", "B" FROM (SELECT * FROM TABLE)'
+    expected = 'SELECT DISTINCT "A", "B" FROM (SELECT * FROM TABLE) AS subquery'
     assert result == expected
 
 
 def test_sql_min_max():
     result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A", "B"])
-    expected = "SELECT MIN(A) AS A_min, MAX(A) AS A_max, MIN(B) AS B_min, MAX(B) AS B_max FROM (SELECT * FROM TABLE)"
+    expected = "SELECT MIN(A) AS A_min, MAX(A) AS A_max, MIN(B) AS B_min, MAX(B) AS B_max FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
 
 
@@ -217,28 +308,186 @@ def test_sql_min_max_nonalphanum_characters():
         'SELECT MIN("A_B-123") AS "A_B-123_min", MAX("A_B-123") AS "A_B-123_max", '
         'MIN("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_min", '
         'MAX("Period life expectancy at birth - Sex: total - Age: 0") AS "Period life expectancy at birth - Sex: total - Age: 0_max" '
-        'FROM (SELECT * FROM TABLE)'
+        'FROM (SELECT * FROM TABLE) AS subquery'
     )
+    assert result == expected
+
+
+def test_sql_schema_stats():
+    result = SQLSchemaStats.apply_to(
+        "SELECT * FROM TABLE", enum_columns=["A"], minmax_columns=["B"]
+    )
+    assert result.endswith("FROM (SELECT * FROM TABLE) AS subquery")
+    assert 'COUNT(*) AS "__count"' in result
+    assert 'ARRAY_AGG(DISTINCT "A") AS "__enum_0"' in result
+    # the non-null count is what lets NULL be reinstated afterwards
+    assert 'COUNT("A") AS "__nonnull_0"' in result
+    assert 'MIN("B") AS "__min_0"' in result
+    assert 'MAX("B") AS "__max_0"' in result
+
+
+def test_sql_schema_stats_aliases_are_positional():
+    """Aliases must not be derived from column names, which may be long or
+    contain characters a dialect would mangle."""
+    long_col = "Period life expectancy at birth - Sex: total - Age: 0"
+    result = SQLSchemaStats.apply_to(
+        "SELECT * FROM TABLE", enum_columns=["A"], minmax_columns=[long_col]
+    )
+    assert f'MIN("{long_col}") AS "__min_0"' in result
+    assert f'{long_col}_min' not in result
+
+
+def test_sql_schema_stats_no_columns():
+    result = SQLSchemaStats.apply_to("SELECT * FROM TABLE")
+    expected = 'SELECT COUNT(*) AS "__count" FROM (SELECT * FROM TABLE) AS subquery'
     assert result == expected
 
 
 def test_sql_filter_none():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", None)])
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A IS NULL"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" IS NULL'
     assert result == expected
 
 
 def test_sql_filter_scalar():
     result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", 1)])
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A = 1"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = 1'
     assert result == expected
+
+
+def test_sql_filter_numpy_scalar():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.int64(1))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = 1'
+    assert result == expected
+
+
+def test_sql_filter_numpy_datetime():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", np.datetime64("2017-04-14T00:00:00"))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = \'2017-04-14 00:00:00\''
+    assert result == expected
+
+
+def test_sql_filter_numpy_nat():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.datetime64("NaT", "ns"))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = NULL'
+    assert result == expected
+
+
+NS_STAMP = np.datetime64("2017-04-15T00:00:00.000000000")
+
+
+@pytest.mark.parametrize("value, where", [
+    (NS_STAMP, '"A" = \'2017-04-15 00:00:00\''),
+    ((NS_STAMP, None), '"A" >= \'2017-04-15 00:00:00\''),
+    ((np.datetime64("2017-04-14T00:00:00.000000000"), NS_STAMP), '"A" BETWEEN \'2017-04-14 00:00:00\' AND \'2017-04-15 00:00:00\''),
+    ([NS_STAMP], '"A" IN (\'2017-04-15 00:00:00\')'),
+    ((np.int64(1), np.int64(3)), '"A" BETWEEN \'1\' AND \'3\''),
+])
+def test_sql_filter_nanosecond_datetimes_and_numpy_values_in_ranges_and_lists(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+@pytest.mark.parametrize("value, where", [
+    ([np.bool_(True)], '"A" IN (TRUE)'),
+    ([np.bool_(True), np.bool_(False)], '"A" IN (TRUE, FALSE)'),
+])
+def test_sql_filter_numpy_booleans_in_lists_filter_as_booleans(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_does_not_compare_a_timedelta_as_an_integer():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", np.timedelta64(5_000_000_000, "ns"))])
+    assert result == "SELECT * FROM TABLE"
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("value", [(NS_STAMP, None), [NS_STAMP], (np.datetime64("2017-04-14T12:00:00.000000000"), NS_STAMP)])
+def test_sql_filter_nanosecond_datetimes_match_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2], "C": pd.date_range("2017-04-14", periods=3)})
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("C", value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("C", value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
+@pytest.mark.parametrize("value, where", [
+    (True, '"A" = TRUE'),
+    (np.bool_(True), '"A" = TRUE'),
+    (False, '"A" = FALSE'),
+    ([True, False], '"A" IN (TRUE, FALSE)'),
+    ([np.bool_(False)], '"A" IN (FALSE)'),
+])
+def test_sql_filter_bool(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+@pytest.mark.parametrize("value, where", [(True, '"A" = 1'), (False, '"A" = 0'), ([True, False], '"A" IN (1, 0)')])
+def test_sql_filter_bool_without_boolean_literals(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)], boolean_literals=False)
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_skips_booleans_mixed_with_other_values():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", [True, "x"])])
+    assert result == "SELECT * FROM TABLE"
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_boolean_widget_filter_matches_on_sql_and_pandas_sources():
+    table = "SELECT * FROM (VALUES ('A', TRUE), ('B', FALSE), ('C', TRUE)) AS t(s, b)"
+    duckdb = DuckDBSource(uri=":memory:", tables={"t": table})
+    memory = InMemorySource(tables={"t": duckdb.execute(table)})
+    results = []
+    for source in (duckdb, memory):
+        pipeline = Pipeline.from_spec({"source": source, "table": "t", "filters": [{"type": "widget", "field": "b"}]})
+        pipeline.filters[0].value = False
+        results.append(pipeline.data.values.tolist())
+    assert results == [[["B", False]], [["B", False]]]
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize(
+    "column,value",
+    [
+        ("A", np.int64(2)),
+        ("A", np.int32(3)),
+        ("B", np.float32(0.5)),
+        ("C", np.datetime64("2017-04-15")),
+    ],
+)
+def test_sql_filter_numpy_scalar_matches_pandas_filter(column, value):
+    df = pd.DataFrame({
+        "A": [0, 1, 2, 3, 4],
+        "B": [0.0, 0.5, 1.0, 1.5, 2.0],
+        "C": pd.date_range("2017-04-14", periods=5),
+    })
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[(column, value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
+    assert len(expected) == 1
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_filter_numpy_nat_matches_pandas_filter():
+    df = pd.DataFrame({"A": [0, 1], "C": [pd.Timestamp("2017-04-14"), pd.NaT]})
+    source = DuckDBSource.from_df({"df": df})
+    conditions = [("C", np.datetime64("NaT", "ns"))]
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=conditions))
+    expected = lm.transforms.Filter.apply_to(df, conditions=conditions)
+    assert len(result) == len(expected) == 0
 
 
 def test_sql_filter_isin():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", ["A", "B", "C"])]
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A IN ('A', 'B', 'C')"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" IN (\'A\', \'B\', \'C\')'
     assert result == expected
 
 
@@ -246,7 +495,7 @@ def test_sql_filter_datetime():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", dt.datetime(2017, 4, 14))]
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A = '2017-04-14 00:00:00'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = \'2017-04-14 00:00:00\''
     assert result == expected
 
 
@@ -254,7 +503,7 @@ def test_sql_filter_date():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", dt.date(2017, 4, 14))]
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-04-14 00:00:00' AND '2017-04-14 23:59:59'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-04-14 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
 
 
@@ -263,7 +512,7 @@ def test_sql_filter_date_range():
         "SELECT * FROM TABLE",
         conditions=[("A", (dt.date(2017, 2, 22), dt.date(2017, 4, 14)))],
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
 
 
@@ -272,15 +521,66 @@ def test_sql_filter_datetime_range():
         "SELECT * FROM TABLE",
         conditions=[("A", (dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))],
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 00:00:00\''
     assert result == expected
+
+
+def test_sql_filter_range_open_start():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (None, 3))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'3\''
+    assert result == expected
+
+
+def test_sql_filter_range_open_end():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (1, None))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'1\''
+    assert result == expected
+
+
+def test_sql_filter_date_range_open_end():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", (dt.date(2017, 2, 22), None))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'2017-02-22 00:00:00\''
+    assert result == expected
+
+
+def test_sql_filter_range_unbounded():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", (None, None))])
+    assert result == "SELECT * FROM TABLE"
+
+
+def test_sql_filter_range_list_open_ends():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", [(None, 0), (None, None), (4, None)])]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'0\' OR "A" >= \'4\''
+    assert result == expected
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize(
+    "value",
+    [
+        (None, 2), (2, None), [(None, 0), (4, None)], [(None, 0), (None, None), (4, None)],
+        slice(None, 2), slice(2, None), slice(1, 3),
+    ],
+)
+def test_sql_filter_open_range_matches_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4]})
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("A", value)]))
+    if isinstance(value, slice):
+        value = (value.start, value.stop)
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("A", value)])
+    assert result["A"].tolist() == expected["A"].tolist()
 
 
 def test_sql_filter_slice_numeric():
     result = SQLFilter.apply_to(
         "SELECT * FROM TABLE", conditions=[("A", slice(20.0, 40.0))]
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '20.0' AND '40.0'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'20.0\' AND \'40.0\''
     assert result == expected
 
 
@@ -289,8 +589,33 @@ def test_sql_filter_slice_date():
         "SELECT * FROM TABLE",
         conditions=[("A", slice(dt.date(2017, 2, 22), dt.date(2017, 4, 14)))],
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 23:59:59'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 23:59:59\''
     assert result == expected
+
+
+def test_sql_filter_slice_open_start():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(None, 5))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'5\''
+    assert result == expected
+
+
+def test_sql_filter_slice_open_end():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(2, None))])
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" >= \'2\''
+    assert result == expected
+
+
+def test_sql_filter_slice_date_open_start():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", slice(None, dt.date(2017, 4, 14)))]
+    )
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" <= \'2017-04-14 23:59:59\''
+    assert result == expected
+
+
+def test_sql_filter_slice_unbounded():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", slice(None, None))])
+    assert result == "SELECT * FROM TABLE"
 
 
 def test_sql_filter_slice_datetime():
@@ -298,7 +623,7 @@ def test_sql_filter_slice_datetime():
         "SELECT * FROM TABLE",
         conditions=[("A", slice(dt.datetime(2017, 2, 22), dt.datetime(2017, 4, 14)))],
     )
-    expected = "SELECT * FROM (SELECT * FROM TABLE) WHERE A BETWEEN '2017-02-22 00:00:00' AND '2017-04-14 00:00:00'"
+    expected = 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" BETWEEN \'2017-02-22 00:00:00\' AND \'2017-04-14 00:00:00\''
     assert result == expected
 
 
@@ -308,7 +633,7 @@ def test_sql_prefilter_basic():
         "SELECT n_genes FROM obs",
         conditions=[("obs", [("obs_id", ["cell1", "cell2"])])]
     )
-    expected = 'SELECT n_genes FROM (SELECT * FROM "obs" WHERE obs_id IN (\'cell1\', \'cell2\')) AS obs'
+    expected = 'SELECT n_genes FROM (SELECT * FROM "obs" WHERE "obs_id" IN (\'cell1\', \'cell2\')) AS obs'
     assert result == expected
 
 
@@ -318,7 +643,7 @@ def test_sql_prefilter_multiple_conditions():
         "SELECT n_genes FROM obs",
         conditions=[("obs", [("obs_id", ["cell1", "cell2"]), ("cell_type", "T-cell")])]
     )
-    expected = 'SELECT n_genes FROM (SELECT * FROM "obs" WHERE obs_id IN (\'cell1\', \'cell2\') AND cell_type = \'T-cell\') AS obs'
+    expected = 'SELECT n_genes FROM (SELECT * FROM "obs" WHERE "obs_id" IN (\'cell1\', \'cell2\') AND "cell_type" = \'T-cell\') AS obs'
     assert result == expected
 
 
@@ -332,8 +657,8 @@ def test_sql_prefilter_multiple_tables():
         ]
     )
     # Note: The exact formatting may vary, but should contain both filtered subqueries
-    assert 'obs_id IN (\'cell1\', \'cell2\')' in result
-    assert 'var_id IN (\'gene1\', \'gene2\')' in result
+    assert '"obs_id" IN (\'cell1\', \'cell2\')' in result
+    assert '"var_id" IN (\'gene1\', \'gene2\')' in result
     assert 'SELECT * FROM "obs"' in result
     assert 'SELECT * FROM "var"' in result
 
@@ -363,7 +688,7 @@ def test_sql_prefilter_numeric_conditions():
         "SELECT * FROM data",
         conditions=[("data", [("score", 85), ("count", [100, 200, 300])])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE score = 85 AND count IN (\'100\', \'200\', \'300\')) AS data'
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE "score" = 85 AND "count" IN (\'100\', \'200\', \'300\')) AS data'
     assert result == expected
 
 
@@ -373,7 +698,7 @@ def test_sql_prefilter_none_conditions():
         "SELECT * FROM data",
         conditions=[("data", [("nullable_col", None)])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE nullable_col IS NULL) AS data'
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE "nullable_col" IS NULL) AS data'
     assert result == expected
 
 
@@ -383,7 +708,7 @@ def test_sql_prefilter_mixed_none_conditions():
         "SELECT * FROM data",
         conditions=[("data", [("status", ["active", None, "pending"])])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE status IS NULL OR status IN (\'active\', \'pending\')) AS data'
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE "status" IS NULL OR "status" IN (\'active\', \'pending\')) AS data'
     assert result == expected
 
 
@@ -393,7 +718,7 @@ def test_sql_prefilter_date_conditions():
         "SELECT * FROM events",
         conditions=[("events", [("event_date", dt.date(2023, 1, 15))])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE event_date BETWEEN \'2023-01-15 00:00:00\' AND \'2023-01-15 23:59:59\') AS events'
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE "event_date" BETWEEN \'2023-01-15 00:00:00\' AND \'2023-01-15 23:59:59\') AS events'
     assert result == expected
 
 
@@ -403,7 +728,7 @@ def test_sql_prefilter_datetime_conditions():
         "SELECT * FROM events",
         conditions=[("events", [("created_at", dt.datetime(2023, 1, 15, 10, 30, 0))])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE created_at = \'2023-01-15 10:30:00\') AS events'
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE "created_at" = \'2023-01-15 10:30:00\') AS events'
     assert result == expected
 
 
@@ -413,7 +738,7 @@ def test_sql_prefilter_date_range_conditions():
         "SELECT * FROM events",
         conditions=[("events", [("event_date", (dt.date(2023, 1, 1), dt.date(2023, 1, 31)))])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE event_date BETWEEN \'2023-01-01 00:00:00\' AND \'2023-01-31 23:59:59\') AS events'
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE "event_date" BETWEEN \'2023-01-01 00:00:00\' AND \'2023-01-31 23:59:59\') AS events'
     assert result == expected
 
 
@@ -423,7 +748,7 @@ def test_sql_prefilter_datetime_range_conditions():
         "SELECT * FROM events",
         conditions=[("events", [("created_at", (dt.datetime(2023, 1, 1, 9, 0), dt.datetime(2023, 1, 1, 17, 0)))])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE created_at BETWEEN \'2023-01-01 09:00:00\' AND \'2023-01-01 17:00:00\') AS events'
+    expected = 'SELECT * FROM (SELECT * FROM "events" WHERE "created_at" BETWEEN \'2023-01-01 09:00:00\' AND \'2023-01-01 17:00:00\') AS events'
     assert result == expected
 
 
@@ -434,8 +759,8 @@ def test_sql_prefilter_multiple_date_ranges():
         conditions=[("events", [("event_date", [(dt.date(2023, 1, 1), dt.date(2023, 1, 31)), (dt.date(2023, 6, 1), dt.date(2023, 6, 30))])])]
     )
     # Should use OR to combine multiple ranges
-    assert 'event_date BETWEEN \'2023-01-01 00:00:00\' AND \'2023-01-31 23:59:59\'' in result
-    assert 'event_date BETWEEN \'2023-06-01 00:00:00\' AND \'2023-06-30 23:59:59\'' in result
+    assert '"event_date" BETWEEN \'2023-01-01 00:00:00\' AND \'2023-01-31 23:59:59\'' in result
+    assert '"event_date" BETWEEN \'2023-06-01 00:00:00\' AND \'2023-06-30 23:59:59\'' in result
     assert ' OR ' in result
 
 
@@ -446,7 +771,7 @@ def test_sql_prefilter_complex_query():
         conditions=[("obs", [("obs_id", ["cell1", "cell2", "cell3"])])]
     )
     # Should preserve the structure but filter the obs table
-    assert 'obs_id IN (\'cell1\', \'cell2\', \'cell3\')' in result
+    assert '"obs_id" IN (\'cell1\', \'cell2\', \'cell3\')' in result
     assert 'GROUP BY cell_type' in result
     assert 'ORDER BY avg_genes DESC' in result
 
@@ -458,7 +783,7 @@ def test_sql_prefilter_subquery():
         conditions=[("obs", [("obs_id", ["cell1", "cell2"])])]
     )
     # Should filter the obs table within the existing subquery structure
-    assert 'obs_id IN (\'cell1\', \'cell2\')' in result
+    assert '"obs_id" IN (\'cell1\', \'cell2\')' in result
     assert 'n_genes > 100' in result
 
 
@@ -469,7 +794,7 @@ def test_sql_prefilter_with_aliases():
         conditions=[("obs", [("obs_id", ["cell1", "cell2"])])]
     )
     # Should preserve the alias 'o' for the filtered obs table
-    assert 'obs_id IN (\'cell1\', \'cell2\')' in result
+    assert '"obs_id" IN (\'cell1\', \'cell2\')' in result
     assert result.endswith(' AS o')  # Alias should be preserved
 
 
@@ -479,8 +804,8 @@ def test_sql_prefilter_float_conditions():
         "SELECT * FROM measurements",
         conditions=[("measurements", [("temperature", 98.6), ("pressure", [1013.25, 1020.0])])]
     )
-    assert 'temperature = 98.6' in result
-    assert "pressure IN ('1013.25', '1020.0')" in result
+    assert '"temperature" = 98.6' in result
+    assert '"pressure" IN (\'1013.25\', \'1020.0\')' in result
 
 
 def test_sql_prefilter_string_conditions():
@@ -489,8 +814,8 @@ def test_sql_prefilter_string_conditions():
         "SELECT * FROM users",
         conditions=[("users", [("status", "active"), ("role", ["admin", "user", "guest"])])]
     )
-    assert "status = 'active'" in result
-    assert "role IN ('admin', 'user', 'guest')" in result
+    assert '"status" = \'active\'' in result
+    assert '"role" IN (\'admin\', \'user\', \'guest\')' in result
 
 
 def test_sql_prefilter_all_none_list():
@@ -499,7 +824,7 @@ def test_sql_prefilter_all_none_list():
         "SELECT * FROM data",
         conditions=[("data", [("nullable_field", [None, None])])]
     )
-    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE nullable_field IS NULL) AS data'
+    expected = 'SELECT * FROM (SELECT * FROM "data" WHERE "nullable_field" IS NULL) AS data'
     assert result == expected
 
 
@@ -512,8 +837,8 @@ def test_sql_prefilter_join_with_conditions():
             ("posts", [("published", 1)])  # Use 1 instead of True
         ]
     )
-    assert "status = 'active'" in result
-    assert "published = 1" in result
+    assert '"status" = \'active\'' in result
+    assert '"published" = 1' in result
     assert "INNER JOIN" in result
 
 
@@ -523,8 +848,8 @@ def test_sql_prefilter_boolean_conditions():
         "SELECT * FROM articles",
         conditions=[("articles", [("published", 1), ("featured", 0)])]  # Use 1/0 instead of True/False
     )
-    assert "published = 1" in result
-    assert "featured = 0" in result
+    assert '"published" = 1' in result
+    assert '"featured" = 0' in result
 
 
 def test_sql_prefilter_unsupported_condition_type():
@@ -536,22 +861,18 @@ def test_sql_prefilter_unsupported_condition_type():
         conditions=[("data", [("metadata", complex_obj), ("valid_col", "valid_value")])]
     )
     # Should process the valid condition but skip the invalid one
-    assert "valid_col = 'valid_value'" in result
+    assert '"valid_col" = \'valid_value\'' in result
     # Should not crash or include the complex object
-    assert "metadata" not in result or "WHERE valid_col = 'valid_value'" in result
+    assert "metadata" not in result or 'WHERE "valid_col" = \'valid_value\'' in result
 
 
-def test_sql_prefilter_boolean_values_unsupported():
-    """Test that boolean True/False values are not supported and get skipped."""
+def test_sql_prefilter_boolean_values():
     result = SQLPreFilter.apply_to(
         "SELECT * FROM data",
         conditions=[("data", [("bool_col", True), ("valid_col", "valid_value")])]
     )
-    # Boolean values are not supported and should be skipped with a warning
-    # Only the valid condition should be processed
-    assert "valid_col = 'valid_value'" in result
-    # The boolean condition should not appear in the result
-    assert "bool_col" not in result or "bool_col = True" not in result
+    assert '"bool_col" = TRUE' in result
+    assert '"valid_col" = \'valid_value\'' in result
 
 
 def test_sql_prefilter_empty_condition_value():
@@ -586,8 +907,8 @@ def test_sql_prefilter_multiple_tables_same_conditions():
         ]
     )
     # Both tables should be filtered, each with their own WHERE clause
-    assert result.count("status = 'active'") == 1
-    assert result.count("status = 'published'") == 1
+    assert result.count('"status" = \'active\'') == 1
+    assert result.count('"status" = \'published\'') == 1
 
 
 def test_sql_prefilter_left_join_preservation():
@@ -597,7 +918,7 @@ def test_sql_prefilter_left_join_preservation():
         conditions=[("users", [("active", 1)])]
     )
     assert "LEFT JOIN" in result
-    assert "active = 1" in result
+    assert '"active" = 1' in result
 
 
 def test_sql_prefilter_quoted_table_names():
@@ -609,7 +930,7 @@ def test_sql_prefilter_quoted_table_names():
         conditions=[('my-table', [('new_condition', 'value')])]
     )
     # Since quotes are stripped during parsing, this should work
-    assert "new_condition = 'value'" in result
+    assert '"new_condition" = \'value\'' in result
 
 
 def test_sql_prefilter_nested_subqueries():
@@ -619,7 +940,7 @@ def test_sql_prefilter_nested_subqueries():
         conditions=[("users", [("role", "admin")])]
     )
     # Should filter the innermost users table
-    assert "role = 'admin'" in result
+    assert '"role" = \'admin\'' in result
     assert "active = 1" in result
 
 
@@ -633,8 +954,8 @@ def test_sql_prefilter_union_queries():
         ]
     )
     # Both tables in the UNION should be filtered
-    assert "role = 'user'" in result
-    assert "role = 'admin'" in result
+    assert '"role" = \'user\'' in result
+    assert '"role" = \'admin\'' in result
     assert "UNION" in result
 
 
@@ -645,7 +966,7 @@ def test_sql_prefilter_cte_common_table_expressions():
         conditions=[("users", [("role", "admin")])]
     )
     # Should filter the users table within the CTE
-    assert "role = 'admin'" in result
+    assert '"role" = \'admin\'' in result
     assert "status = 'active'" in result
     assert "WITH" in result
 
@@ -722,7 +1043,7 @@ def test_sql_prefilter_wrapped_subquery():
         "SELECT * FROM (SELECT cell_type, COUNT(*) AS count FROM obs GROUP BY cell_type) AS count_by_type",
         conditions=[("obs", [("obs_id", ["cell_0", "cell_2"])])]
     )
-    assert "obs_id IN ('cell_0', 'cell_2')" in result
+    assert '"obs_id" IN (\'cell_0\', \'cell_2\')' in result
     assert "GROUP BY cell_type" in result
     assert "count_by_type" in result
 
@@ -738,12 +1059,12 @@ def test_sql_prefilter_does_not_double_wrap():
         conditions=[("obs", [("obs_id", ["cell_0"])])]
     )
     # Should have exactly one IN clause, not nested
-    assert result.count("obs_id IN") == 1
+    assert result.count('"obs_id" IN') == 1
 
 
 def test_sql_count():
     result = SQLCount.apply_to("SELECT * FROM TABLE")
-    expected = "SELECT COUNT(*) AS count FROM (SELECT * FROM TABLE)"
+    expected = "SELECT COUNT(*) AS count FROM (SELECT * FROM TABLE) AS subquery"
     assert result == expected
 
 
@@ -791,6 +1112,19 @@ def test_sql_select_from_path():
 def test_sql_select_from_duckdb_path():
     result = SQLSelectFrom.apply_to("read_csv('data/life_expectancy.csv')", sql_expr="SELECT id, name FROM {table}")
     expected = "SELECT id, name FROM READ_CSV('data/life_expectancy.csv')"
+    assert result == expected
+
+
+@pytest.mark.parametrize("args", ["nullstr='NA'", "header=true, delim=';'"])
+def test_sql_select_from_duckdb_path_with_keyword_arguments(args):
+    result = SQLSelectFrom.apply_to(f"read_csv('data/life_expectancy.csv', {args})")
+    assert result.startswith("SELECT * FROM READ_CSV('data/life_expectancy.csv', ")
+    assert '"read_csv' not in result
+
+
+def test_sql_select_from_table_starting_with_digit():
+    result = SQLSelectFrom.apply_to("2014_world_gdp_with_codes")
+    expected = 'SELECT * FROM "2014_world_gdp_with_codes"'
     assert result == expected
 
 
@@ -951,12 +1285,31 @@ class TestSQLFormat:
 class TestSQLSelectFrom:
     def test_replace_multiple_tables_with_list(self):
         """Test replacing multiple table names with a list of new table names."""
-        sql_in = "SELECT * FROM table1 JOIN table2"
+        sql_in = "SELECT * FROM table1, table2"
         result = SQLSelectFrom.apply_to(
             sql_in, tables=["new_table1", "new_table2"], identify=True
         )
-        expected = 'SELECT * FROM "new_table1" AS "", "new_table2" AS ""'
+        expected = 'SELECT * FROM "new_table1", "new_table2"'
         assert result == expected
+
+    def test_replace_tables_in_bare_join_has_no_empty_alias(self):
+        result = SQLSelectFrom.apply_to(
+            "SELECT * FROM table1 JOIN table2", tables=["new_table1", "new_table2"], identify=True
+        )
+        assert '"new_table1"' in result and '"new_table2"' in result
+        assert 'AS ""' not in result
+
+    def test_replace_tables_keeps_aliases(self):
+        sql_in = "SELECT * FROM table1 AS a JOIN table2 AS b ON a.id = b.id"
+        result = SQLSelectFrom.apply_to(
+            sql_in, tables=["new_table1", "new_table2"], identify=True
+        )
+        expected = 'SELECT * FROM "new_table1" AS "a" JOIN "new_table2" AS "b" ON "a"."id" = "b"."id"'
+        assert result == expected
+
+    def test_replace_table_from_dict_without_alias(self):
+        result = SQLSelectFrom.apply_to("SELECT * FROM a", tables={"a": "b"}, identify=True)
+        assert result == 'SELECT * FROM "b"'
 
     def test_dialect_specifics(self):
         """Test dialect-specific behavior."""
@@ -1021,7 +1374,7 @@ class TestSQLSelectFrom:
         )
         # Quoted identifiers should be preserved
         assert '"Smoking Status"' in result
-        # Should NOT have double-quoted identifiers  
+        # Should NOT have double-quoted identifiers
         assert '""Smoking Status""' not in result
         # Should preserve the OR condition
         assert "'Current'" in result
@@ -1038,7 +1391,7 @@ class TestSQLSelectFrom:
         )
         # All quoted identifiers should be preserved correctly
         assert '"Pack Years"' in result
-        assert '"Stage at Dx"' in result  
+        assert '"Stage at Dx"' in result
         assert '"Tissue Type"' in result
         # No double-quoting
         assert '""Pack Years""' not in result
@@ -1143,12 +1496,12 @@ class TestSQLRemoveSourceSeparator:
 
 class TestSQLFilterBase:
     """Test the shared base class functionality."""
-    
+
     def test_build_filter_conditions_comprehensive(self):
         """Test the shared _build_filter_conditions method comprehensively."""
         # Create a simple SQLFilter instance to test the base class method
         filter_instance = SQLFilter()
-        
+
         # Test all supported condition types
         conditions = [
             ("col1", None),
@@ -1162,46 +1515,46 @@ class TestSQLFilterBase:
             ("col9", [None, "value"]),
             ("col10", [(dt.date(2023, 1, 1), dt.date(2023, 1, 31)), (dt.date(2023, 6, 1), dt.date(2023, 6, 30))])
         ]
-        
+
         filters = filter_instance._build_filter_conditions(conditions)
-        
+
         # Should return a list of sqlglot expressions
         assert isinstance(filters, list)
         assert len(filters) == 10  # All conditions should be processed
-        
+
         # Convert to SQL strings to verify content
         filter_sqls = [f.sql() for f in filters]
-        
+
         # Verify each condition type
-        assert any("col1 IS NULL" in sql for sql in filter_sqls)
-        assert any("col2 = 42" in sql for sql in filter_sqls)
-        assert any("col3 = 3.14" in sql for sql in filter_sqls)
-        assert any("col4 = 'string_value'" in sql for sql in filter_sqls)
+        assert any('"col1" IS NULL' in sql for sql in filter_sqls)
+        assert any('"col2" = 42' in sql for sql in filter_sqls)
+        assert any('"col3" = 3.14' in sql for sql in filter_sqls)
+        assert any('"col4" = \'string_value\'' in sql for sql in filter_sqls)
         assert any("BETWEEN '2023-01-15 00:00:00' AND '2023-01-15 23:59:59'" in sql for sql in filter_sqls)
-        assert any("col6 = '2023-01-15 10:30:00'" in sql for sql in filter_sqls)
+        assert any('"col6" = \'2023-01-15 10:30:00\'' in sql for sql in filter_sqls)
         assert any("BETWEEN '1' AND '10'" in sql for sql in filter_sqls)
         assert any("IN ('a', 'b', 'c')" in sql for sql in filter_sqls)
         assert any("IS NULL OR" in sql and "IN ('value')" in sql for sql in filter_sqls)
-        
+
     def test_unsupported_condition_handling(self):
         """Test that unsupported condition types are handled gracefully."""
         filter_instance = SQLFilter()
-        
+
         # Mix valid and invalid conditions
         conditions = [
             ("valid_col", "valid_value"),
             ("invalid_col", {"complex": "object"}),  # Unsupported type
             ("another_valid", 123)
         ]
-        
+
         filters = filter_instance._build_filter_conditions(conditions)
-        
+
         # Should only process the valid conditions
         assert len(filters) == 2
-        
+
         filter_sqls = [f.sql() for f in filters]
-        assert any("valid_col = 'valid_value'" in sql for sql in filter_sqls)
-        assert any("another_valid = 123" in sql for sql in filter_sqls)
+        assert any('"valid_col" = \'valid_value\'' in sql for sql in filter_sqls)
+        assert any('"another_valid" = 123' in sql for sql in filter_sqls)
         # Invalid condition should be skipped
 
     def test_debug_complex_table_names(self):
@@ -1260,3 +1613,149 @@ def test_sql_filter_empty_list_conditions():
 
     result = pipeline.data
     assert len(result) == len(df)
+
+
+@pytest.mark.parametrize("value, where", [
+    (Range(1, 3), '"A" BETWEEN \'1\' AND \'3\''),
+    (Range(1, 3, closed="left"), '"A" >= \'1\' AND "A" < \'3\''),
+    (Range(None, 3, closed="left"), '"A" < \'3\''),
+    (Range(1, None, closed="left"), '"A" >= \'1\''),
+    (Range(np.int64(1), np.float64(2.5), closed="left"), '"A" >= \'1\' AND "A" < \'2.5\''),
+    (
+        Range(dt.date(2017, 2, 1), dt.date(2017, 3, 1), closed="left"),
+        '"A" >= \'2017-02-01 00:00:00\' AND "A" < \'2017-03-01 00:00:00\'',
+    ),
+    (
+        Range(dt.date(2017, 2, 1), dt.date(2017, 3, 1)),
+        '"A" >= \'2017-02-01 00:00:00\' AND "A" < \'2017-03-02 00:00:00\'',
+    ),
+])
+def test_sql_filter_range_value(value, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", value)])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_unbounded_range_value_filters_nothing():
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", Range(None, None, closed="left"))])
+    assert result == "SELECT * FROM TABLE"
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("value", [
+    Range(1, 3, closed="left"),
+    Range(1, 3),
+    Range(None, 2, closed="left"),
+    Range(pd.Timestamp("2017-04-15").to_pydatetime(), pd.Timestamp("2017-04-16").to_pydatetime(), closed="left"),
+    Range(dt.date(2017, 4, 14), dt.date(2017, 4, 16), closed="left"),
+])
+def test_sql_filter_range_value_matches_pandas_filter(value):
+    df = pd.DataFrame({"A": [0, 1, 2, 3], "C": pd.date_range("2017-04-14", periods=4)})
+    column = "C" if isinstance(value.end, dt.date) else "A"
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[(column, value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+    assert len(expected) not in (0, len(df))
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_source_query_with_a_range_value():
+    df = pd.DataFrame({"A": [0, 1, 2, 3]})
+    source = DuckDBSource.from_df({"df": df})
+    assert source.get("df", A=Range(1, 3, closed="left"))["A"].tolist() == [1, 2]
+    assert source.get("df", A=Range(1, 3))["A"].tolist() == [1, 2, 3]
+
+
+def test_sql_prefilter_range_value():
+    result = SQLPreFilter.apply_to(
+        "SELECT n FROM obs", conditions=[("obs", [("A", Range(1, 3, closed="left"))])]
+    )
+    assert "\"A\" >= '1' AND \"A\" < '3'" in result
+
+
+@pytest.mark.parametrize("closed, where", [
+    ("both", '"A" BETWEEN \'1\' AND \'3\''),
+    ("left", '"A" >= \'1\' AND "A" < \'3\''),
+    ("right", '"A" > \'1\' AND "A" <= \'3\''),
+    ("neither", '"A" > \'1\' AND "A" < \'3\''),
+])
+def test_sql_filter_range_value_closed(closed, where):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", Range(1, 3, closed=closed))])
+    assert result == f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {where}"
+
+
+def test_sql_filter_list_of_range_values_keeps_rows_in_any():
+    result = SQLFilter.apply_to(
+        "SELECT * FROM TABLE", conditions=[("A", [Range(1, 3, closed="left"), (5, 6)])]
+    )
+    assert result == (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "
+        "(\"A\" >= '1' AND \"A\" < '3') OR \"A\" BETWEEN '5' AND '6'"
+    )
+
+
+@pytest.mark.parametrize("bound", [np.datetime64("NaT", "ns"), pd.NaT])
+def test_sql_filter_nat_range_bound_matches_nothing(bound):
+    result = SQLFilter.apply_to("SELECT * FROM TABLE", conditions=[("A", Range(bound, None))])
+    assert result == 'SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE "A" = NULL'
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+@pytest.mark.parametrize("closed", ["both", "left", "right", "neither"])
+@pytest.mark.parametrize("bounds", [
+    (1, 3),
+    (dt.date(2017, 4, 15), dt.date(2017, 4, 16)),
+    (dt.datetime(2017, 4, 15), dt.datetime(2017, 4, 16)),
+    (np.datetime64("NaT", "ns"), None),
+])
+def test_sql_filter_range_value_closed_matches_pandas_filter(bounds, closed):
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4], "C": pd.date_range("2017-04-14", periods=5)})
+    column = "A" if isinstance(bounds[0], int) else "C"
+    value = Range(*bounds, closed=closed)
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[(column, value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[(column, value)])
+    assert result["A"].tolist() == expected["A"].tolist()
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_filter_list_of_range_values_matches_pandas_filter():
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4, 5]})
+    value = [Range(0, 2, closed="left"), Range(3, 5, closed="right")]
+    source = DuckDBSource.from_df({"df": df})
+    result = source.execute(SQLFilter.apply_to("SELECT * FROM df", conditions=[("A", value)]))
+    expected = lm.transforms.Filter.apply_to(df, conditions=[("A", value)])
+    assert result["A"].tolist() == expected["A"].tolist() == [0, 1, 4, 5]
+
+
+@pytest.mark.parametrize("transform, conditions", [
+    (SQLFilter, [("A", Range(1, 3, closed="left")), ("B", [Range(dt.date(2017, 1, 1), None), Range(4, 5)])]),
+    (SQLPreFilter, [("obs", [("A", Range(dt.datetime(2017, 1, 1, 12), None, closed="neither"))])]),
+])
+def test_sql_filter_range_values_round_trip_through_a_spec(transform, conditions):
+    spec = transform(conditions=conditions).to_spec()
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        loaded = yaml.safe_load(text)
+        restored = transform.from_spec(loaded)
+        assert [tuple(c) for c in restored.conditions] == conditions
+        assert restored.apply("SELECT * FROM obs") == transform(conditions=conditions).apply("SELECT * FROM obs")
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_sql_filter_list_mixing_a_range_and_a_tuple_round_trips_through_a_spec():
+    df = pd.DataFrame({"A": [0, 1, 2, 3, 4, 5]})
+    source = DuckDBSource.from_df({"df": df})
+    conditions = [("A", [Range(0, 2, closed="left"), (3, 4)])]
+    spec = SQLFilter(conditions=conditions).to_spec()
+    for text in (yaml.safe_dump(spec), json.dumps(spec)):
+        restored = SQLFilter.from_spec(yaml.safe_load(text))
+        assert all(isinstance(v, Range) for v in restored.conditions[0][1])
+        result = source.execute(restored.apply("SELECT * FROM df"))
+        assert result["A"].tolist() == [0, 1, 3, 4]
+
+
+def test_sql_filter_never_renders_a_range_as_a_value():
+    transform = SQLFilter(conditions=[("A", [Range(0, 2), [3, 4]])])
+    result = transform.apply("SELECT * FROM TABLE")
+    assert "Range" not in result
+    assert result == "SELECT * FROM TABLE"

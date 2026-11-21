@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import io
-import traceback as tb
 
 from abc import abstractmethod
 from collections.abc import Iterable, Iterator
-from contextlib import nullcontext
 from functools import partial
 from types import FunctionType
 from typing import Any, Self, final
@@ -23,10 +21,11 @@ from panel.pane import Markdown
 from panel.viewable import Viewable, Viewer
 from panel_material_ui import (
     Accordion, BreakpointSwitcher, Button, Card, ChatFeed, ChatMessage,
-    Container, Dialog, Divider, FileDownload, IconButton, MenuButton, Progress,
-    Select, SpeedDial, TextAreaInput, TextInput, Typography,
+    Checkbox, Container, Dialog, Divider, FileDownload, IconButton, MenuButton,
+    Progress, Select, SpeedDial, TextAreaInput, TextInput, Typography,
 )
 
+from ..util import try_import
 from ..views.base import Panel, View
 from .actor import (
     Actor, ContextProvider, NullStep, TContext,
@@ -39,14 +38,47 @@ from .context import (
 )
 from .editors import LumenEditor
 from .export import (
-    format_output, make_md_cell, make_preamble, write_notebook,
+    docx_add_chart, docx_add_markdown, docx_add_table, format_output,
+    make_md_cell, make_preamble, write_notebook,
 )
 from .llm import Llm, Message
 from .tools import FunctionTool, Tool
 from .utils import (
-    content_to_text, extract_block_source, get_block_names, set_content_text,
-    wrap_logfire_on_method,
+    content_to_text, extract_block_source, get_block_names,
+    print_task_exception, set_content_text, wrap_logfire_on_method,
 )
+
+
+def _export_checkbox(task, status_source, align="center"):
+    """
+    Checkbox controlling whether a task's outputs are kept when the report is
+    exported. ``status_source`` supplies the status it tracks, so it only
+    appears once that has something to export.
+    """
+    return Checkbox.from_param(
+        task.param.include_in_export,
+        label="",
+        align=align,
+        margin=(0, 4, 0, 0),
+        # No description: it would render an info icon; the report explains the
+        # checkboxes at the top instead.
+        description="",
+        visible=param.bind(
+            lambda status, views: (
+                status in ("success", "error", "cancelled") or bool(views)
+            ),
+            status_source.param.status, status_source.param.views,
+        ),
+    )
+
+
+def _export_header(section, status_source, variant="h3"):
+    """Heading for a section, with the checkbox that keeps or discards it."""
+    title = Typography(section.param.title, variant=variant, margin=0)
+    return Row(
+        _export_checkbox(section, status_source), title,
+        align="center", sizing_mode="stretch_width",
+    )
 
 
 class Task(Viewer):
@@ -62,6 +94,9 @@ class Task(Viewer):
 
     history = param.List(doc="""
         Conversation history to include as context for the task.""")
+
+    include_in_export = param.Boolean(default=True, doc="""
+        Whether this task's outputs are included when the report is exported.""")
 
     instruction = param.String(default="", doc="""
         The instruction to give to the task.""")
@@ -129,12 +164,13 @@ class Task(Viewer):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     def _populate_view(self):
         self._view[:] = self._header
@@ -368,7 +404,7 @@ class TaskGroup(Task):
                 if p not in out_context
             ]
             if unprovided:
-                raise RuntimeError(f"{task.__class.__name__} failed to provide declared context.")
+                raise RuntimeError(f"{task.__class__.__name__} failed to provide declared context.")
         return outputs, out_context
 
     def _render_tasks(self) -> list[tuple[str, Viewable]]:
@@ -426,9 +462,9 @@ class TaskGroup(Task):
                 # Re-raise MissingContextError to allow retry logic at Plan level
                 raise
             except Exception as e:
-                tb.print_exception(e)
+                print_task_exception(e)
                 self.status = "error"
-                new_context = {"__error__": str(e), "__error_type__": type(e)}
+                new_context = {"__error__": str(e), "__error_type__": type(e), "__exception__": e}
                 task.out_context = new_context
                 if self.abort_on_error:
                     if self.parent is not None:
@@ -625,45 +661,6 @@ class TaskGroup(Task):
                     task.reset()
             self._populate_view()
 
-    def to_notebook(self):
-        """
-        Returns the notebook representation of the tasks.
-        """
-        if len(self) and not self.status == "success":
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to_notebook."
-            )
-        cells, extensions = [], ['tabulator']
-        for out in self.views:
-            ext = None
-            if isinstance(out, Typography):
-                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
-                prefix = f"{'#'*level} " if level else ''
-                cell = make_md_cell(f"{prefix}{out.object}")
-            elif isinstance(out, Markdown):
-                cell = make_md_cell(out.object)
-            elif isinstance(out, LumenEditor):
-                cell, ext = format_output(out)
-            elif isinstance(out, Viewable):
-                cell, ext = format_output(Panel(object=out))
-            cells.append(cell)
-            if ext and ext not in extensions:
-                extensions.append(ext)
-        cells = make_preamble("", extensions=extensions) + cells
-        return write_notebook(cells)
-
-    def to_html(self):
-        """
-        Returns the HTML representation of the report.
-        """
-        if len(self) and self.status != "success":
-            raise RuntimeError(
-                "Report has not been executed, run report before exporting to html."
-            )
-        buf = io.StringIO()
-        self._view.save(buf, title=self.title or "Report")
-        return buf.getvalue()
-
     def validate(
         self,
         context: TContext | None = None,
@@ -807,7 +804,40 @@ class Section(TaskGroup):
         placeholders = [self._placeholder]
         if self._task_previews is not None:
             placeholders.append(self._task_previews)
-        self._view[:] = self._header + placeholders + list(self._tasks)
+        self._view[:] = self._header + placeholders + [self._task_view(task) for task in self._tasks]
+
+    def _task_view(self, task):
+        """
+        Give every task its own export checkbox, so a single chart can be
+        dropped without discarding the whole section it came from. The report
+        only draws headers for its top level sections, so without this nothing
+        inside one could be selected.
+
+        A nested section gets a heading too, unless it is untitled or takes its
+        parent's title (a section wrapping a single plan does), which would
+        repeat the heading the report already shows.
+
+        A task whose outputs are not viewable renders nothing, so its row is
+        hidden rather than left as a lone checkbox floating in empty space.
+        """
+        if isinstance(task, Section):
+            if not task.title or task.title == self.title:
+                return task
+            return Column(
+                _export_header(task, task, variant="h4"),
+                task,
+                sizing_mode="stretch_width",
+                styles={'min-height': 'unset'},
+                height_policy='fit',
+            )
+        return Row(
+            _export_checkbox(task, task, align="start"),
+            task,
+            sizing_mode="stretch_width",
+            styles={'min-height': 'unset'},
+            height_policy='fit',
+            visible=task._view.param['objects'].rx().rx.bool(),
+        )
 
     async def _run_task(self, i: int, task: Task | Actor, context: TContext | None, **kwargs) -> list[Any]:
         if context is not None:
@@ -872,7 +902,33 @@ class Report(TaskGroup):
         if self.auto_execute:
             pn.state.execute(self.execute)
 
+    @classmethod
+    def from_views(cls, views: list, title: str | None = None) -> Report:
+        """Assemble an exportable Report from prebuilt views without executing tasks.
+
+        Builds a task-less report whose export state is populated directly from
+        already-rendered views, so `to_html` and `to_notebook` can produce a
+        downloadable report without running an agent. The execute path is
+        untouched; only `views`, the `_view` accordion and `status` are set, and
+        the empty task list keeps the export guards satisfied.
+
+        Parameters
+        ----------
+        views : list
+            The prebuilt viewable outputs to include, in order.
+        title : str, optional
+            The report title, used for the exported document.
+        """
+        report = cls(title=title or "")
+        report._view[:] = [
+            (view.title if "title" in view.param else "", view) for view in views
+        ]
+        report.views = list(views)
+        report.status = "success"
+        return report
+
     def _init_view(self):
+        self._section_headers = {}
         self._header_title = Typography(
             self.param.title, variant="h1", margin=(0, 0, 0, 10)
         )
@@ -915,6 +971,7 @@ class Report(TaskGroup):
             items=[
                 {"label": "Notebook (.ipynb)", "format": "ipynb", "icon": "description"},
                 {"label": "HTML (.html)", "format": "html", "icon": "language"},
+                {"label": "Word (.docx)", "format": "docx", "icon": "article"},
             ],
             on_click=lambda _: self._download._transfer(),
             icon_size="36px",
@@ -959,6 +1016,7 @@ class Report(TaskGroup):
                 {"label": "Clear Report", "icon": "clear"},
                 {"label": "Export as Notebook", "icon": "description", "format": "ipynb"},
                 {"label": "Export as HTML", "icon": "language", "format": "html"},
+                {"label": "Export as Word", "icon": "article", "format": "docx"},
                 {"label": "Configure Report", "icon": "settings"}
             ],
             color="default",
@@ -980,7 +1038,14 @@ class Report(TaskGroup):
             large=self._menu,
             sizing_mode="stretch_width"
         )
+        self._export_hint = Typography(
+            "Untick a chart, table or note to leave it out of the exported report.",
+            variant="body2", margin=(0, 10, 10, 10),
+            sx={"color": "text.secondary"},
+            visible=self.param.status.rx().rx.in_(("success", "error", "cancelled")),
+        )
         self._container = Column(
+            self._export_hint,
             self._view,
             self._dialog,
             margin=(0, 0, 0, 5),
@@ -1001,7 +1066,7 @@ class Report(TaskGroup):
             self._handle_cancel()
         elif icon == "clear":
             self.reset()
-        elif icon in ("description", "language"):
+        elif icon in ("description", "language", "article"):
             fmt = item.get("format", "ipynb")
             self._export.value = {"format": fmt}
             self._download._transfer()
@@ -1053,15 +1118,187 @@ class Report(TaskGroup):
         if self._active_task is not None and not self._active_task.done():
             self._active_task.cancel()
 
+    @property
+    def _export_views(self):
+        # Task-less reports (e.g. Report.from_views) populate ``views`` directly.
+        if not len(self):
+            return self.views
+        views = list(self._header)
+        for section in self:
+            self._append_section_views(views, section)
+        return views
+
+    def _append_section_views(self, views, section):
+        if not section.include_in_export:
+            return
+        views += self._selected_views(section)
+
+    def _selected_views(self, group, include_header=True):
+        """
+        The views of a task group, skipping sections discarded from the export.
+        Walks the tasks rather than reading ``group.views`` so that a nested
+        section's selection is honoured, not just a top level one's.
+        """
+        views = list(group._header) if include_header else []
+        for task in group:
+            if not task.include_in_export:
+                continue
+            views += self._selected_views(task) if isinstance(task, TaskGroup) else list(task.views)
+        return views
+
+    def _export_view(self):
+        # Task-less reports (e.g. Report.from_views) populate ``_view`` directly.
+        if not len(self):
+            return self._view
+        # Build each card from the section's selected views rather than the
+        # section itself, so a discarded nested section is left out of the HTML
+        # too. The card header already shows the title, hence no heading.
+        cards = [
+            (
+                section.title,
+                Column(*self._selected_views(section, include_header=False), sizing_mode="stretch_width"),
+            )
+            for section in self if section.include_in_export
+        ]
+        return Accordion(
+            *cards,
+            active=list(range(len(cards))),
+            sizing_mode="stretch_width",
+            min_height=0,
+            margin=(0, 5, 15, 5),
+            sx=self._view.sx,
+        )
+
+    def to_notebook(self):
+        """
+        Returns the notebook representation of the report.
+        """
+        if len(self) and not self.status == "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to_notebook."
+            )
+        cells, extensions = [], ['tabulator']
+        pending_headers = []
+        for out in self._export_views:
+            cell = ext = None
+            if isinstance(out, Typography):
+                # Buffer headers; only emit them if followed by exportable content
+                level = int(out.variant[1:]) if out.variant and out.variant.startswith('h') else 0
+                prefix = f"{'#'*level} " if level else ''
+                pending_headers.append(make_md_cell(f"{prefix}{out.object}"))
+                continue
+            elif isinstance(out, Markdown):
+                cell = make_md_cell(out.object)
+            elif isinstance(out, LumenEditor):
+                cell, ext = format_output(out)
+            elif isinstance(out, str):
+                cell = make_md_cell(out)
+            elif isinstance(out, ChatMessage):
+                obj = out.object
+                if isinstance(obj, str):
+                    cell = make_md_cell(obj)
+                elif isinstance(obj, Markdown):
+                    cell = make_md_cell(obj.object)
+            # Skip non-LumenEditor Viewables (not meaningfully exportable)
+
+            if cell is None:
+                continue
+            # Flush buffered headers before the content cell
+            cells.extend(pending_headers)
+            pending_headers.clear()
+            cells.append(cell)
+            if ext and ext not in extensions:
+                extensions.append(ext)
+        cells = make_preamble("", extensions=extensions) + cells
+        return write_notebook(cells)
+
+    def to_html(self):
+        """
+        Returns the HTML representation of the report.
+        """
+        if len(self) and self.status != "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to html."
+            )
+        buf = io.StringIO()
+        self._export_view().save(buf, title=self.title or "Report")
+        return buf.getvalue()
+
+    def to_docx(self) -> bytes:
+        """
+        Returns the Word (.docx) representation of the report as bytes.
+        """
+        if len(self) and self.status != "success":
+            raise RuntimeError(
+                "Report has not been executed, run report before exporting to docx."
+            )
+        if try_import("docx") is None:
+            raise ImportError(
+                "Exporting a report to Word requires python-docx; install it with "
+                "`pip install python-docx`."
+            )
+        from docx import Document
+
+        doc = Document()
+        pending: list[tuple[int, str]] = []
+
+        def flush_headers():
+            for level, heading in pending:
+                doc.add_heading(heading, level=level or 1)
+            pending.clear()
+
+        for out in self._export_views:
+            if isinstance(out, Typography):
+                obj = out.object or ""
+                if out.variant and out.variant.startswith('h'):
+                    level, heading = int(out.variant[1:]), obj
+                elif obj.startswith('#'):
+                    level = len(obj) - len(obj.lstrip('#'))
+                    heading = obj.lstrip('# ').strip()
+                else:
+                    level, heading = 1, obj
+                pending.append((min(level, 4), heading))
+                continue
+            if isinstance(out, LumenEditor):
+                has_chart = 'png' in out.export_formats
+                data = getattr(out.component, 'data', None)
+                if not has_chart and data is None:
+                    continue
+                flush_headers()
+                # Prefer the chart as an image; fall back to a data table when
+                # there is no renderable chart.
+                if not (has_chart and docx_add_chart(doc, out)) and data is not None:
+                    docx_add_table(doc, data)
+                continue
+            if isinstance(out, Markdown):
+                text = out.object
+            elif isinstance(out, str):
+                text = out
+            elif isinstance(out, ChatMessage):
+                inner = out.object
+                text = inner.object if isinstance(inner, Markdown) else (inner if isinstance(inner, str) else None)
+            else:
+                text = None
+            if text is None:
+                continue
+            flush_headers()
+            docx_add_markdown(doc, text)
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+
     async def _export_report(self, item=None):
         if len(self) and self.status not in ("success", "cancelled", "error"):
             await self.execute()
         fmt = item.get("format", "ipynb") if isinstance(item, dict) else "ipynb"
         title = self.title or "Report"
-        ext = "html" if fmt == "html" else "ipynb"
+        ext = {"html": "html", "docx": "docx"}.get(fmt, "ipynb")
         self._download.filename = f"{title}.{ext}"
         if fmt == "html":
             return io.StringIO(self.to_html())
+        if fmt == "docx":
+            return io.BytesIO(self.to_docx())
         return io.StringIO(self.to_notebook())
 
     def _expand_all(self, event=None):
@@ -1075,8 +1312,19 @@ class Report(TaskGroup):
     def _open_settings(self, event=None):
         self._dialog.open = True
 
+    def _section_header(self, section):
+        """Card header with a checkbox to keep/discard the section on export."""
+        return _export_header(section, self)
+
     def _populate_view(self):
-        self._view[:] = objects = [(task.title, task) for task in self]
+        headers = {}
+        objects = []
+        for section in self:
+            header = self._section_headers.get(section) or self._section_header(section)
+            headers[section] = header
+            objects.append((header, section))
+        self._section_headers = headers
+        self._view[:] = objects
         has_outputs = self.status in ("success", "error", "cancelled") or bool(self.views)
         if has_outputs:
             self._view.active = list(range(len(objects)))
@@ -1089,16 +1337,18 @@ class Report(TaskGroup):
         return outputs
 
     def __panel__(self):
+        # Fill the available height and scroll the content within it: the inner
+        # div is bounded to the full height and scrolls, so a tall report or
+        # story slides inside the pane and a short one leaves no gap. (The
+        # surrounding layout must stretch this rather than centre it.)
         return Container(
             self._switcher,
             self._container,
-            align="center",
             sizing_mode="stretch_both",
-            stylesheets=[":host > div { overflow-y: auto; }"],
+            stylesheets=[":host > div { height: 100%; overflow-y: auto; }"],
             sx={
                 "minWidth": "320px",
                 "width": "100%",
-                "height": "auto",
                 ".mui-light &": { "background-color": "var(--mui-palette-grey-100)"},
                 ".mui-dark &": { "background-color": "var(--mui-palette-grey-900)"}
             }
@@ -1236,8 +1486,11 @@ class ActorTask(ExecutableTask):
     def output_schema(self):
         return self.actor.output_schema
 
-    async def _update_spec(self, event: param.parameterized.Event):
-        self.out_context = dict(self.out_context, **(await event.obj.render_context()))
+    async def _update_spec(self, *events: param.parameterized.Event):
+        # Watches both `spec` and `_context_updated`; a batched update can
+        # deliver several events, all from the same editor.
+        editor = events[0].obj
+        self.out_context = dict(self.out_context, **(await editor.render_context()))
 
     def _add_outputs(self, views: list, context: TContext):
         # Handle Tool specific behaviors
@@ -1263,7 +1516,7 @@ class ActorTask(ExecutableTask):
         for view in views:
             if not isinstance(view, LumenEditor):
                 continue
-            view.param.watch(self._update_spec, "spec")
+            view.param.watch(self._update_spec, ["spec", "_context_updated"])
 
         self.views = self._header + views
         rendered = []

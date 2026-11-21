@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import hvplot.pandas  # type: ignore  # noqa: F401
 import panel as pn
 import param  # type: ignore
 
+from hvplot.ui import hvDataFrameExplorer  # type: ignore
 from panel.reactive import ReactiveHTML
 
 from lumen.state import state as lm_state
@@ -234,7 +236,7 @@ class ViewGallery(WizardItem, Gallery):
         super().__init__(**params)
         self._items = self.items
         self._editor = ViewsEditor(spec=self.spec, margin=10)
-        self._save_button = pn.widgets.Button(name='Save view')
+        self._save_button = pn.widgets.Button(label='Save view')
         self._save_button.on_click(self._save_view)
         self._watchers = {}
         state.pipelines.param.watch(self._update_items, 'items')
@@ -361,12 +363,7 @@ class hvPlotViewEditor(ViewEditor):
 
     view_type = param.String(default='hvplot')
 
-    def __init__(self, **params):
-        import hvplot.pandas  # type: ignore # noqa
-        super().__init__(**params)
-
     def render(self):
-        from hvplot.ui import hvDataFrameExplorer  # type: ignore
         kwargs = dict(self.spec)
         del kwargs['type']
         pipeline = lm_state.pipelines[kwargs.pop('pipeline', self.pipeline)]

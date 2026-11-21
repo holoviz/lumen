@@ -18,6 +18,9 @@ Here are some ideas to spark your exploration:
 - "Show me a scatter plot of 'flipper_length_mm' vs 'body_mass_g'."
 - "Create a histogram of 'bill_length_mm'."
 - "Show me a bar chart of average values by species."
+- "Create separate charts of average body mass by species and average flipper length by species."
+
+When a request calls for more than one chart, each chart opens in its own tab that you can edit, alongside an "All" tab that shows every chart together.
 
 **Complex queries:**
 
@@ -70,7 +73,21 @@ Use the [navigation menu](navigating_the_ui.md#understanding-explorations) to mo
 - **Review everything** — Scroll through all analyses in one place
 - **Edit prompts** — Click any task to modify its instructions and rerun
 - **Customize agents** — Edit underlying agent prompts to change behavior
-- **Export all** — Download everything as a single Jupyter notebook
+- **Choose what to export** — Untick any chart, table, or note to leave it out of the export
+- **Annotate as a story** — Turn the report into a readable, editable narrative.
+- **Export all** — Download everything as a Jupyter notebook, an HTML page or a Word document
+
+### Annotate a report as a story
+
+Charts and tables answer questions, but a report you can share reads like a story. Click **Annotate** (the book icon) in the report toolbar to write one.
+
+- **Generate** — Pick a tone preset or type your own guidance, then generate. Lumen writes prose interleaved with the charts and tables it discusses and opens it in a new **Story** tab beside the **Report** tab.
+- **Edit the prose** — Click any paragraph to edit it like a document. Select some text to bring up a formatting menu for bold, italic, headings, lists, quotes and links. Or use the wand icon next to the paragraph to have the AI rewrite just that one from an instruction.
+- **Regenerate** — Ask for a fresh take with different guidance. Each generation is kept as a version, so a story you edited by hand is never thrown away; switch between versions from the picker.
+- **Export** follows whichever tab is showing: from the **Story** tab you save the narrative, from the **Report** tab you save the sections.
+
+!!! example "Try it"
+    Ask for a couple of charts, for example a bar chart of streams by genre and a table of the top artists. Switch to **Report** mode and click **Annotate**. Give it a tone such as *"an executive summary that leads with the single most important number"* and generate. Click a paragraph to tweak the wording, bold the number that matters, then export the Story tab as a notebook.
 
 !!! tip "Planned Feature: Report Templates"
     We're working on the ability to export your report structure as a reusable YAML configuration file. This will let you:
@@ -90,7 +107,7 @@ Export your session as a Jupyter notebook so you can reproduce, share, or build 
 Use **Export Notebook** in the navigation menu to download a notebook containing the current exploration's questions, queries, and visualizations.
 
 **Export all explorations:**
-Switch to **Report** mode (via the left sidebar), then use **Export Notebook** to download everything as a single notebook.
+Switch to **Report** mode (via the left sidebar), then use **Export** to download everything as a single notebook, HTML page or Word document. Word export needs `pip install python-docx`.
 
 The notebook includes:
 
@@ -100,6 +117,6 @@ The notebook includes:
 
 ## Next steps
 
-- [**Building Lumen Apps**](building_lumen_ai_apps.md) — Configure models, add source controls, and customize behavior
+- [**Building Lumen Apps**](building_lumen_apps.md) — Configure models, add source controls, and customize behavior
 - [**Agents**](../configuration/agents.md) — Learn about the different agent types
 - [**Reports**](../configuration/reports.md) — Build structured, reproducible analytical workflows

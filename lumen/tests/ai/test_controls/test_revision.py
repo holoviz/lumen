@@ -176,7 +176,7 @@ class TestRevisionControls:
         )
         
         # Set input value
-        controls._text_input.value_input = "Make the chart bigger"
+        controls._text_input._process_events({'value_input': "Make the chart bigger"})
         
         # Trigger enter
         controls._enter_reason(None)
@@ -204,7 +204,7 @@ class TestRevisionControls:
         
         # Verify message was streamed
         assert len(interface.messages) == 1
-        assert interface.messages[0]["user"] == "Assistant"
+        assert interface.messages[0]["user"] == "Lumen"
         
     def test_report_status_empty_output(self):
         """Test _report_status with empty output does nothing."""

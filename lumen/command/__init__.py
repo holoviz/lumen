@@ -24,6 +24,8 @@ from .builder import Builder
 from .precache import Precache
 from .validate import Validate
 
+YAML_SUFFIXES = ('.yml', '.yaml')
+
 
 class YamlHandler(CodeHandler):
     ''' Modify Bokeh documents by creating Dashboard from Lumen yaml spec.
@@ -63,7 +65,7 @@ class YamlHandler(CodeHandler):
 
 
 def build_single_handler_application(path, argv):
-    if not os.path.isfile(path) or not path.endswith(('.yml', '.yaml')):
+    if not os.path.isfile(path) or not path.lower().endswith(YAML_SUFFIXES):
         return _build_application(path, argv)
 
     handler = YamlHandler(filename=path)

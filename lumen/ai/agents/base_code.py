@@ -128,7 +128,10 @@ class BaseCodeAgent(BaseViewAgent):
             True if user approved, False if rejected.
         """
         if self.interface is None:
-            return True
+            raise RuntimeError(
+                "code_execution='prompt' asks before running generated code, which needs an "
+                "interface; without one use 'llm', 'allow' or 'disabled'."
+            )
 
         approval_event = asyncio.Event()
 
@@ -163,7 +166,7 @@ class BaseCodeAgent(BaseViewAgent):
             stylesheets=[".message { margin-left: 0; padding-inline: 0}"],
             sizing_mode="stretch_width",
         )
-        self.interface.send(prompt_content, respond=False, user="Assistant")
+        self.interface.send(prompt_content, respond=False, user="Lumen")
         await approval_event.wait()
         accepted = accept.clicks > 0
         prompt_content.header = f"### Code Execution {'Accepted' if accepted else 'Rejected'}"

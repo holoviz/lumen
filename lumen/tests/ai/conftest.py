@@ -11,7 +11,17 @@ except ModuleNotFoundError:
 from pydantic import BaseModel
 
 from lumen.ai.llm import Llm, Message
+from lumen.ai.table_stats import TableStatsStore, set_stats_store
 from lumen.sources.duckdb import DuckDBSource
+
+
+@pytest.fixture(autouse=True)
+def table_stats_store():
+    """A fresh statistics store per test that never touches the user cache."""
+    store = TableStatsStore(cache_dir=None)
+    set_stats_store(store)
+    yield store
+    set_stats_store(None)
 
 
 def pytest_collection_modifyitems(config, items):

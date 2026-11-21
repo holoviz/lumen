@@ -49,7 +49,7 @@ class ExplainControls(RevisionControls):
                         chunk,
                         replace=True,
                         message=message,
-                        user="Assistant",
+                        user="Lumen",
                     )
             except Exception as e:
                 self._report_status(

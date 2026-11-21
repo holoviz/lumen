@@ -31,7 +31,7 @@ When a Python SDK already exists for your API, wrapping it with `CodeSourceContr
 - **Typed parameters** - SDK type hints become appropriate widgets
 - **Docstrings as context** - The LLM reads method docstrings to understand when to call each action
 
-Compare this with [`RESTAPISourceControls`](../../configuration/controls.md#restapi-source-controls) (manual endpoint dicts) or [`OpenAPISourceControls`](weather_openapi_explorer.md) (auto-discovery from a spec). `CodeSourceControls` is best when you already have a Python client.
+Compare this with [`RESTAPISourceControls`](../../configuration/controls.md#restapisourcecontrols) (manual endpoint dicts) or [`OpenAPISourceControls`](weather_openapi_explorer.md) (auto-discovery from a spec). `CodeSourceControls` is best when you already have a Python client.
 
 ## Prerequisites
 

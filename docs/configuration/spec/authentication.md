@@ -2,8 +2,8 @@
 
 Restrict dashboard access to authorized users.
 
-!!! note "Documentation in progress"
-    Detailed authentication documentation is coming soon. For now, see the Panel authentication guide.
+!!! note "Built on Panel authentication"
+    Lumen dashboards use Panel's authentication. This page covers the common setups; the [Panel authentication guide](https://panel.holoviz.org/how_to/authentication/index.html) lists every OAuth provider and option.
 
 ## Quick start
 
@@ -46,8 +46,8 @@ config:
 
 For complete authentication documentation, see:
 
-- [Panel Authentication Guide](https://panel.holoviz.org/user_guide/Authentication.html)
-- [OAuth Setup Guide](https://panel.holoviz.org/user_guide/Authentication.html#oauth)
+- [Panel Authentication Guide](https://panel.holoviz.org/how_to/authentication/index.html)
+- [OAuth Setup Guide](https://panel.holoviz.org/how_to/authentication/index.html)
 
 ## Common patterns
 
@@ -90,6 +90,6 @@ layouts:
 
 ## Next steps
 
-- **[Panel Authentication Guide](https://panel.holoviz.org/user_guide/Authentication.html)** - Complete authentication documentation
+- **[Panel Authentication Guide](https://panel.holoviz.org/how_to/authentication/index.html)** - Complete authentication documentation
 - **[Deployment guide](deployment.md)** - Deploy secured dashboards
 - **[Variables guide](variables.md)** - Use environment variables for secrets

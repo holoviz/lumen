@@ -37,7 +37,7 @@ class Agent(Viewer, ToolUser, ContextProvider):
     llm = param.ClassSelector(class_=Llm, doc="""
         The LLM implementation to query.""")
 
-    user = param.String(default="Agent", doc="""
+    user = param.String(default="Lumen", doc="""
         The name of the user that will be respond to the user query.""")
 
     # Panel extensions this agent requires to be loaded

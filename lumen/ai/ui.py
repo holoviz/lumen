@@ -4,13 +4,14 @@ import asyncio
 import atexit
 import os
 import tempfile
+import traceback
 
 from contextlib import contextmanager
 from functools import partial
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import param
 
@@ -26,26 +27,24 @@ from panel.viewable import (
 )
 from panel_material_ui import (
     Alert, Breadcrumbs, Button, ChatFeed, ChatInterface, ChatMessage,
-    Column as MuiColumn, Dialog, Divider, FileDownload, IconButton, MenuList,
-    Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
+    Column as MuiColumn, Dialog, Divider, Drawer, FileDownload, IconButton,
+    MenuList, Page, Paper, Popup, Row, Select, Switch, Tabs, Typography,
 )
 from panel_splitjs import HSplit, MultiSplit, VSplit
 
 from lumen.ai.agents.deck_gl import DeckGLAgent
 
-from ..pipeline import Pipeline
-from ..sources import Source
-from ..sources.duckdb import DuckDBSource
+from ..sources.data import resolve_data
 from ..sources.xarray_sql import XArraySQLSource
-from ..util import check_xarray_available, log
+from ..util import log, try_import_xarray
+from ..views import View
 from .agents import (
     AnalysisAgent, BaseCodeAgent, ChatAgent, DocumentListAgent,
     DocumentSummarizerAgent, SourceAgent, SQLAgent, TableListAgent,
     ValidationAgent, VegaLiteAgent,
 )
 from .config import (
-    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, PROVIDED_SOURCE_NAME,
-    SOURCE_TABLE_SEPARATOR, SPLITJS_STYLESHEETS,
+    DEMO_MESSAGES, GETTING_STARTED_SUGGESTIONS, SOURCE_TABLE_SEPARATOR,
 )
 from .context import TContext
 from .controls import (
@@ -56,18 +55,25 @@ from .controls.ingest.constants import XARRAY_EXTENSIONS
 from .coordinator import Coordinator, Plan, Planner
 from .editors import AnalysisOutput, LumenEditor, SQLEditor
 from .export import export_notebook
-from .llm import Llm, OpenAI, get_available_llm
+from .llm import (
+    Llm, OpenAI, get_available_llm, signed_in_cli_hint,
+)
 from .llm_dialog import LLMConfigDialog
 from .logs import ChatLogs
 from .models import ErrorDescription
-from .report import ActorTask, Report, Section
+from .report import ActorTask, Section
+from .selection import (
+    Selected, about, ask_box, watch_clicks,
+)
+from .story import StoryReport
 from .utils import (
     IMAGE_MIME_TYPES, content_to_text, format_msg_content, log_debug,
     wrap_logfire,
 )
 from .vector_store import VectorStore
 
-DataT = str | Path | Source | Pipeline
+if TYPE_CHECKING:
+    from ..sources.data import DataT
 
 PAGE_SX = {
     ".sidebar": {"transition": "width 0.2s ease-in-out"},
@@ -373,13 +379,13 @@ LLM-generated code may be unpredictable. While validation layers reduce accident
 """
 
 
-def _get_default_llm():
-    """
-    Get the default LLM instance, trying to find an available one first,
-    falling back to OpenAI if none are available.
-    """
-    result = get_available_llm()
-    return result() if result is not None else OpenAI()
+def _keyless_options_message() -> str:
+    """Tell a user with no provider configured what works without an API key on this machine."""
+    return (
+        "No LLM provider found, so chat is disabled. Open Settings > Configure AI Models and choose "
+        f"Kilo for free models without an account{signed_in_cli_hint()}. Or set an API key such as "
+        "OPENAI_API_KEY and restart, or pass llm=lmai.llm.Kilo() to the UI."
+    )
 
 
 class UI(Viewer):
@@ -420,8 +426,9 @@ class UI(Viewer):
     interface = param.ClassSelector(class_=ChatFeed, doc="""
         The interface for the Coordinator to interact with.""")
 
-    llm = param.ClassSelector(class_=Llm, default=_get_default_llm(), doc="""
-        The LLM provider to be used by default""")
+    llm = param.ClassSelector(class_=Llm, default=None, doc="""
+        The LLM provider to use. Detected from the environment when the UI
+        is created if not provided.""")
 
     llm_tools = param.List(default=[], doc="""
         Extra tools for the coordinator's :attr:`~lumen.ai.actor.LLMUser.llm_tools`
@@ -454,7 +461,7 @@ class UI(Viewer):
     source_controls = param.List(default=[UploadSourceControls, DownloadSourceControls], doc="""
         List of SourceControls types to manage datasets.""")
 
-    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadControls.
+    filedropper_kwargs = param.Dict(default={}, doc="""Keyword arguments to pass to FileDropper in UploadSourceControls.
         Common options include 'accepted_filetypes' and 'max_file_size'.
         See https://panel.holoviz.org/reference/widgets/FileDropper.html for all available options.""")
 
@@ -489,6 +496,9 @@ class UI(Viewer):
 
     _cta = None  # Initialized in _render_main
     _error_alert = None  # Initialized in _render_main
+
+    # Set when no provider was found, until the user picks one in the LLM dialog.
+    _no_llm_message: str | None = None
     _success_alert = None  # Initialized in _render_main
 
     __abstract = True
@@ -501,7 +511,17 @@ class UI(Viewer):
     ):
         params["log_level"] = params.get("log_level", self.param["log_level"].default).upper()
         super().__init__(**params)
+        if self.llm is None:
+            llm_cls = get_available_llm()
+            if llm_cls is None:
+                self._no_llm_message = _keyless_options_message()
+                self.param.warning(self._no_llm_message)
+            # Without a provider, OpenAI only stands in so the agents can be built;
+            # chat stays disabled until the user picks a provider.
+            self.llm = OpenAI() if llm_cls is None else llm_cls()
         self._current_mode = "Exploration"
+        self._report = None
+        self._report_plans = None
         if self.logfire_tags is not None:
             if self.llm._supports_logfire:
                 self.llm.logfire_tags = self.logfire_tags
@@ -536,130 +556,12 @@ class UI(Viewer):
             _temp_files.append(tmp.name)
             return XArraySQLSource(uri=tmp.name, name=alias)
 
-        if not check_xarray_available():
+        if try_import_xarray() is None:
             return {}
 
         _temp_files: list[str] = []
         atexit.register(_cleanup_temp_files)
         return {ext: _handle_xarray_upload for ext in XARRAY_EXTENSIONS}
-
-    @classmethod
-    def _resolve_data(
-        cls, data: DataT | list[DataT] | dict[DataT] | None
-    ) -> list[Source]:
-        """
-        Resolve the data into a list of sources.
-
-        Parameters
-        ----------
-        data: DataT | list[DataT] | dict[DataT] | None
-            The data to resolve.
-
-        Returns
-        -------
-        list[Source]
-            List of sources.
-        """
-        if data is None:
-            return []
-        elif isinstance(data, dict):
-            data = data.items()
-        elif not isinstance(data, list):
-            data = [data]
-
-        sources = []
-        remote = False
-        mirrors, tables = {}, {}
-
-        for src in data:
-            if isinstance(src, Source):
-                sources.append(src)
-            elif isinstance(src, Pipeline):
-                mirrors[src.name] = src
-            elif isinstance(src, (str, Path, tuple)):
-                if isinstance(src, tuple):
-                    name, src = src
-                    src = str(src)
-                else:
-                    name = src = str(src)
-
-                # Handle "no_data" as a special case for starting without data
-                if src == 'no_data':
-                    continue
-
-                # Handle explicit database connection strings first (before checking file extensions)
-                if src.startswith('duckdb://'):
-                    db_path = src.replace('duckdb:///', '')
-                    db_path = str(Path(db_path).absolute())
-                    source = DuckDBSource(uri=db_path)
-                    sources.append(source)
-                    continue
-                elif src.startswith(('sqlite://', 'postgresql://', 'mysql://', 'mssql://', 'oracle://')):
-                    try:
-                        from ..sources.sqlalchemy import SQLAlchemySource
-                    except ImportError as e:
-                        raise ImportError(
-                            "SQLAlchemy is required for database connection strings. "
-                            "Install it with: pip install sqlalchemy"
-                        ) from e
-                    source = SQLAlchemySource(url=src)
-                    sources.append(source)
-                    continue
-
-                # Handle .db files - need to detect if SQLite or DuckDB
-                if src.endswith('.db'):
-                    db_path = Path(src).absolute()
-                    if not db_path.exists():
-                        raise FileNotFoundError(f"Database file not found: {src}")
-
-                    with open(db_path, 'rb') as f:
-                        header = f.read(16)
-
-                    # DuckDB files start with specific magic bytes
-                    # The header contains "DUCK" in the first 16 bytes
-                    if b'DUCK' in header:
-                        source = DuckDBSource(uri=str(db_path))
-                        sources.append(source)
-                    else:
-                        try:
-                            from ..sources.sqlalchemy import SQLAlchemySource
-                        except ImportError as e:
-                            raise ImportError(
-                                "SQLAlchemy is required to read .db files. "
-                                "Install it with: pip install sqlalchemy"
-                            ) from e
-                        source = SQLAlchemySource(url=f'sqlite:///{db_path}')
-                        sources.append(source)
-                    continue
-
-                # Handle xarray files (NetCDF, Zarr, HDF5, GRIB)
-                if Path(src).suffix.lstrip('.').lower() in XARRAY_EXTENSIONS:
-                    source = XArraySQLSource(uri=str(Path(src).absolute()))
-                    sources.append(source)
-                    continue
-
-                if src.startswith('http'):
-                    remote = True
-                if src.endswith(('.parq', '.parquet', '.csv', '.json', '.tsv', '.jsonl', '.ndjson')):
-                    table = src
-                else:
-                    raise ValueError(
-                        f"Could not determine how to load {src} file."
-                    )
-                tables[name] = table
-
-        if tables or mirrors:
-            initializers = ["INSTALL httpfs;", "LOAD httpfs;"] if remote else []
-            source = DuckDBSource(
-                initializers=initializers,
-                mirrors=mirrors,
-                name=PROVIDED_SOURCE_NAME,
-                tables=tables,
-                uri=':memory:'
-            )
-            sources.append(source)
-
-        return sources
 
     @wrap_logfire(span_name="Chat Invoke")
     async def _chat_invoke(
@@ -680,13 +582,22 @@ class UI(Viewer):
             The data to resolve.
         """
         self.context["provenance_chain"] = ["global"]
-        self.context["sources"] = sources = self._resolve_data(data)
+        self.context["sources"] = sources = resolve_data(data)
         if sources:
             self.context["source"] = sources[-1]
 
     @wrap_logfire(span_name="Initialize LLM")
     async def _initialize_new_llm(self):
         """Initialize the new LLM after provider change."""
+        if self._no_llm_message:
+            self._llm_status = 'missing'
+            if self._cta is not None:
+                self._cta.object = self._get_status_text()
+            if self._error_alert is not None:
+                self._error_alert.object = self._no_llm_message
+                self._error_alert.visible = True
+            self._chat_input.disabled = True
+            return
         self._llm_status = 'verifying'
         if self._cta is not None:
             self._cta.object = self._get_status_text()
@@ -698,11 +609,13 @@ class UI(Viewer):
             self._chat_input.disabled = False
             self.interface.disabled = False
         except Exception as e:
-            import traceback
             traceback.print_exc()
             self._llm_status = str(e)
             if self._error_alert is not None:
-                self._error_alert.object = "LLM connection failed; try another LLM under Preferences or check logs for more details."
+                self._error_alert.object = (
+                    "Could not connect to the LLM. Open Settings > Configure AI Models to pick another "
+                    "provider, such as Kilo for free models without an account, or check the logs for details."
+                )
                 self._error_alert.visible = True
                 self._chat_input.disabled = True
         finally:
@@ -768,10 +681,6 @@ class UI(Viewer):
         """Check if there are any explorations beyond home."""
         return len(self._explorations.items) > 1
 
-    def _should_show_navigation(self) -> bool:
-        """Determine if navigation pane should be visible."""
-        return self._has_explorations()
-
     def _get_current_exploration(self) -> Exploration:
         """Get the currently active exploration."""
         return self._explorations.value['view']
@@ -779,6 +688,21 @@ class UI(Viewer):
     def _exploration_has_outputs(self, exploration: Exploration) -> bool:
         """Whether an exploration should be shown in split view."""
         return exploration is not self._home
+
+    def _exploration_plans(self, item) -> list[Plan]:
+        """The item's plan followed by every followup plan below it, in reading
+        order. Followups nest arbitrarily deep, so descending a single level
+        would drop the newest explorations from the report."""
+        plans = [item["view"].plan]
+        for child in item["items"]:
+            plans += self._exploration_plans(child)
+        return plans
+
+    def _select_exploration(self, item):
+        """Picking an exploration in the navigation leaves report mode and
+        returns to the chat showing that exploration."""
+        if self._is_report_mode():
+            self._handle_sidebar_event(self._sidebar_menu.items[0])
 
     @hold()
     def _update_main_view(self, force_report_mode: bool | None = None):
@@ -808,15 +732,26 @@ class UI(Viewer):
                 back_button = Button(
                     label="Back to Exploration",
                     icon="insights",
-                    button_type="primary",
                     on_click=lambda e: self._handle_sidebar_event(self._sidebar_menu.items[0]),
                 )
                 main_content = Column(no_explorations_msg, back_button, styles={"margin": "auto"})
             else:
-                main_content = Report(
-                    *(Section(item["view"].plan, *(it["view"].plan for it in item["items"]), title=item["view"].plan.title)
-                      for item in self._explorations.items[1:])
-                )
+                sections = [
+                    (item["view"].plan.title, self._exploration_plans(item))
+                    for item in self._explorations.items[1:]
+                ]
+                plans = tuple(plan for _, section_plans in sections for plan in section_plans)
+                # Reuse the report unless the explorations changed, so a story
+                # written on it survives a trip back to the chat. Building the
+                # sections is what reparents the plans, so it has to stay
+                # inside this branch.
+                if plans != self._report_plans:
+                    self._report = StoryReport(
+                        *(Section(*section_plans, title=title) for title, section_plans in sections),
+                        llm=self.llm,
+                    )
+                    self._report_plans = plans
+                main_content = self._report
             self._current_mode = "Report"
             self._navigation_caption.object = REPORT_CAPTION
         else:
@@ -836,13 +771,8 @@ class UI(Viewer):
             self._current_mode = "Exploration"
             self._navigation_caption.object = EXPLORATION_CAPTION
 
-        show_nav = self._should_show_navigation()
-        if not self._sidebar_menu.items[6]["active"] and show_nav:
-            self._toggle_navigation(True)
-        if not show_nav:
-            self._toggle_navigation(False)
         self._chat_input.margin = (10, 0) if main_content is self._splash else 10
-        self._main[:] = [self._navigation, main_content]
+        self._compose_main(main_content)
 
     def _configure_interface(self, interface):
         def on_undo(instance, _):
@@ -999,6 +929,7 @@ class UI(Viewer):
                 callback_exception="raise",
                 edit_callback=on_edit,
                 load_buffer=5,
+                message_params={"show_avatar": True},
                 on_submit=on_submit,
                 show_button_tooltips=True,
                 show_button_name=False,
@@ -1026,6 +957,14 @@ class UI(Viewer):
             **existing_actions,
         }
         self._configure_logs(interface)
+        # Strip the ChatInterface's outer card border/shadow so it blends into
+        # the page (only the root/direct-child frame, not the message bubbles).
+        interface.sx = {
+            "border": "none",
+            "boxShadow": "none",
+            "backgroundColor": "transparent",
+            "& > .MuiPaper-root": {"border": "none", "boxShadow": "none"},
+        }
         self.interface = interface
 
     def _handle_upload_successful(self, event):
@@ -1151,18 +1090,45 @@ class UI(Viewer):
         if self.document_vector_store is None:
             self.document_vector_store = self._coordinator.document_vector_store
 
+    def _format_llm_provider_label(self) -> str:
+        """Markdown label naming the LLM provider for the status line.
+
+        When the *generic* OpenAI wrapper points at a custom endpoint (e.g. a
+        self-hosted or third-party service) naming the provider alone is
+        misleading, so flag it as a custom compatible endpoint. Dedicated
+        providers (AI Navigator, AI Catalyst, Ollama, Groq, ...) carry a
+        meaningful ``display_name`` and their own default endpoint, so they are
+        always named directly. The exact host and model are deliberately left
+        out to keep the splash approachable for non-technical users; those
+        details live in the LLM settings dialog.
+        """
+        name = self.llm.display_name or type(self.llm).__name__
+        # Only the base OpenAI wrapper is generic enough that a non-default
+        # endpoint changes what it actually connects to; subclasses set their
+        # own endpoint (sometimes in __init__), so comparing against the param
+        # default would spuriously flag their default config as "custom".
+        # NB: exact type check, not isinstance — the OpenAI subclasses
+        # (AINavigator, AICatalyst, Ollama, Groq, OpenRouter) are exactly the
+        # dedicated providers we want named directly, and all carry a truthy
+        # endpoint, so isinstance would reintroduce the false "custom" label.
+        if type(self.llm) is OpenAI and self.llm.endpoint:
+            return f"a **custom {name}-compatible endpoint**"
+        return f"**{name}**"
+
     def _get_status_text(self) -> str:
         """Generate the status text showing sources and LLM provider."""
         num_sources = len(self.context.get("sources", []))
-        llm_name = type(self.llm).__name__
+        llm_label = self._format_llm_provider_label()
 
         # Build LLM status text
         if self._llm_status == 'verifying':
-            llm_text = f"verifying **{llm_name}** connection"
+            llm_text = f"verifying {llm_label} connection"
         elif self._llm_status == 'connected':
-            llm_text = f"using **{llm_name}** as the LLM provider"
+            llm_text = f"using {llm_label} as the LLM provider"
+        elif self._llm_status == 'missing':
+            llm_text = "no LLM provider is configured"
         else:
-            llm_text = f"connecting to **{llm_name}** failed"
+            llm_text = f"connecting to {llm_label} failed"
 
         if num_sources == 0:
             status = f"Drag & drop your dataset here to begin; {llm_text}."
@@ -1177,7 +1143,7 @@ class UI(Viewer):
 
     def _render_main(self) -> list[Viewable]:
         self._cta = Typography(self._get_status_text(), margin=(0, 0, 5, 0))
-        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10))
+        self._chat_splash = Column(self._cta, self._chat_input, margin=(0, 0, 0, -10), sizing_mode="stretch_width")
         self._error_alert = Alert(
             object="",
             severity="error",
@@ -1211,10 +1177,11 @@ class UI(Viewer):
                 self._success_alert,
                 max_width=850,
                 styles={'margin': 'auto'},
-                sx={'p': '0 20px 20px 20px'}
+                sx={'p': '0 20px 20px 20px'},
+                sizing_mode="stretch_width"
             ),
             sx={'display': 'flex', 'align-items': 'center'},
-            height_policy='max'
+            height_policy="max"
         )
 
         self._main = Row(self._splash, sizing_mode='stretch_both', align="center")
@@ -1249,7 +1216,7 @@ class UI(Viewer):
         )
 
         self._next_help_button = Button(
-            name="Next",
+            label="Next",
             variant="outlined",
             sizing_mode="stretch_width",
             align="end",
@@ -1372,7 +1339,7 @@ class UI(Viewer):
 
         self._explorations = MenuList(
             items=[self._exploration], value=self.param._exploration, show_children=True,
-            dense=True, margin=0, sizing_mode='stretch_width',
+            dense=True, margin=0, on_click=self._select_exploration, sizing_mode='stretch_width',
             sx={".mui-light .MuiBox-root": {"backgroundColor": "var(--mui-palette-grey-100)"}},
         )
         self._explorations.param.watch(self._cleanup_explorations, 'items')
@@ -1517,7 +1484,7 @@ class UI(Viewer):
         if hasattr(self, '_source_catalog'):
             self._source_catalog.sync(self.context)
 
-        if hasattr(self, '_cta'):
+        if self._cta is not None:
             self._cta.object = self._get_status_text()
 
         if hasattr(self, '_input_tabs'):
@@ -1539,6 +1506,7 @@ class UI(Viewer):
         """Handle LLM provider change from the dialog."""
         # Update the UI's LLM reference
         self.llm = new_llm
+        self._no_llm_message = None
 
         # Reset status to verifying when provider changes
         self._llm_status = 'verifying'
@@ -1576,6 +1544,24 @@ class UI(Viewer):
         if hasattr(self, '_coordinator'):
             await self._coordinator.sync(self.context)
 
+    def _ensure_model_label(self, message) -> None:
+        """Embed the resolved model name into *message.timestamp_format*.
+
+        Reads the resolved model name from ``self.llm._resolved_model``
+        (set by ``Llm.invoke()`` after routing).  The model name is
+        appended to the existing timestamp format string so the rendered
+        footer reads e.g. ``09:23 AM (used gpt-5.6-luna)``.
+        """
+        if not getattr(self, "llm", None):
+            return
+        model_name = getattr(self.llm, "_resolved_model", None)
+        if not model_name:
+            return
+        fmt = message.timestamp_format or "%H:%M"
+        if f"(used {model_name})" in fmt:
+            return
+        message.timestamp_format = f"{fmt} (used {model_name})"
+
     def _add_suggestions_to_footer(
         self,
         suggestions: list[str],
@@ -1605,6 +1591,8 @@ class UI(Viewer):
                     if event.new > 1:  # prevent double clicks
                         return
                 self._update_main_view()
+                if hasattr(self, "_coordinator") and self.context.get("sources"):
+                    await self._sync_sources(global_context=self.context)
 
                 if not analysis:
                     # Set the input value and trigger submit
@@ -1665,9 +1653,8 @@ class UI(Viewer):
 
         if append_demo and self.demo_inputs:
             suggestion_buttons.append(Button(
-                name="Show a demo",
+                label="Show a demo",
                 icon="play_arrow",
-                button_type="primary",
                 variant="outlined",
                 on_click=run_demo,
                 margin=5,
@@ -1679,8 +1666,9 @@ class UI(Viewer):
 
         if len(self.interface):
             message = self.interface.objects[-1]
+            self._ensure_model_label(message)
             if inplace:
-                footer_objects = message.footer_objects or []
+                footer_objects = list(message.footer_objects or [])
                 prev_suggestions = [obj for obj in footer_objects if obj.name == "Suggestions"]
                 if prev_suggestions:
                     prev_suggestions[0][:] = list(suggestion_buttons)
@@ -1721,7 +1709,7 @@ class UI(Viewer):
     def _create_view(self, server: bool = False):
         if server:
             panel_extension(
-                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+                *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor", "texteditor"},
                 css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
             )
             return self._page
@@ -1729,7 +1717,7 @@ class UI(Viewer):
 
     def _repr_mimebundle_(self, include=None, exclude=None):
         panel_extension(
-            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper"},
+            *{ext for agent in self._coordinator.agents for ext in agent._extensions} | {"filedropper", "jsoneditor", "texteditor"},
             notifications=True,
             css_files=["https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"]
         )
@@ -1849,12 +1837,16 @@ class ExplorerUI(UI):
             self._settings_popup.open = True
         elif item["id"] == "help":
             self._open_info_dialog()
-        elif item["id"] == "nav":
-            self._toggle_navigation(not item["active"])
 
-    def _toggle_navigation(self, active: bool):
-        self._navigation.visible = active
-        self._sidebar_menu.update_item(self._sidebar_menu.items[6], active=active, icon="layers" if active else "layers_outlined")
+    def _compose_main(self, main_content: Viewable):
+        """
+        Show ``main_content`` in the content pane beside the always-mounted
+        navigation drawer. The navigation drawer is opened/closed by the user
+        via the docked drawer's edge toggle tab, so there is no separate sidebar
+        toggle.
+        """
+        self._nav_content[:] = [main_content]
+        self._main[:] = [self._nav_split]
 
     def _exploration_has_outputs(self, exploration: Exploration) -> bool:
         """
@@ -1876,7 +1868,13 @@ class ExplorerUI(UI):
         if not hasattr(self, '_page'):
             return
         exploration, report = self._sidebar_menu.items[:2]
-        self._sidebar_menu.update_item(exploration, active=True, icon="timeline" if report["active"] else "insert_chart")
+        # Report mode owns the active state while it is on, so the Explore item
+        # keeps the outlined icon it gets when switching to the report.
+        in_report = report["active"]
+        self._sidebar_menu.update_item(
+            exploration, active=not in_report,
+            icon="insert_chart_outlined" if in_report else "insert_chart",
+        )
         self._update_main_view()
 
     def _handle_llm_dialog(self, event):
@@ -1953,7 +1951,6 @@ class ExplorerUI(UI):
             *switches,
             anchor_origin={"horizontal": "right", "vertical": "center"},
             transform_origin={"horizontal": "left", "vertical": "top"},
-            styles={"z-index": '1300'},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-50)"}}}, "dark": {}}
         )
         self._sidebar_menu = menu = MenuList(
@@ -1963,8 +1960,6 @@ class ExplorerUI(UI):
                 None,
                 {"label": "Sources", "icon": "create_new_folder_outlined", "id": "data"},
                 {"label": "Settings", "icon": "tune_outlined", "id": "preferences"},
-                None,
-                {"label": "Navigate", "icon": "layers_outlined", "id": "nav", "active": False},
                 None,
                 {"label": "Help", "icon": "help_outline", "id": "help"}
             ],
@@ -2015,7 +2010,7 @@ class ExplorerUI(UI):
             disabled=[] if num_sources else [1],
             min_height=125,
             margin=(0, 10),
-            sizing_mode="stretch_height",
+            sizing_mode="stretch_width",
             stylesheets=[".MuiTabsPanel > .MuiBox-root { overflow: visible}"]
         )
 
@@ -2050,9 +2045,9 @@ class ExplorerUI(UI):
             self._output,
             collapsed=None,
             expanded_sizes=(40, 60),
+            collapse_threshold=15,
             show_buttons=True,
             sizing_mode='stretch_both',
-            stylesheets=SPLITJS_STYLESHEETS
         )
         self._navigation_title = Typography(
             "Navigation", variant="h6", margin=(10, 10, 0, 10)
@@ -2064,25 +2059,63 @@ class ExplorerUI(UI):
             margin=(10, 10, 5, 10),
             sizing_mode="stretch_width"
         )
-        self._navigation_footer = Typography(
-            'Toggle <span class="material-icons" style="vertical-align: middle;">layers</span>**Navigate** to close',
-            variant="body2",
-            color="text.secondary",
-            margin=20,
-            styles={"margin": "auto auto 20px auto"}
-        )
         self._navigation = Paper(
             self._navigation_title,
             self._navigation_caption,
             self._explorations,
-            self._navigation_footer,
+            # Fill the drawer vertically so the panel spans its full height.
             height_policy="max",
-            sx={"borderRadius": 0},
+            width_policy="max",
+            sizing_mode="stretch_both",
+            # Square corners and no border/shadow: the docked Drawer already
+            # supplies the sidebar edge, so any border here would double it.
+            elevation=0,
+            sx={"borderRadius": 0, "border": "none", "boxShadow": "none"},
             theme_config={"light": {"palette": {"background": {"paper": "var(--mui-palette-grey-100)"}}}, "dark": {}},
-            visible=False,
-            width=250
         )
-        self._main[:] = [self._navigation, self._splash]
+        # Navigation lives in an always-mounted inline docked Drawer. The docked
+        # variant renders a small toggle tab on the anchored edge, so the user
+        # opens/closes it without a separate sidebar toggle button. inline=True
+        # keeps the drawer in normal flow inside the Row so it pushes/shrinks the
+        # content pane rather than overlaying it. It starts closed (open=False)
+        # so the first-run splash stays clean; it is revealed the first time an
+        # exploration is created (see _cleanup_explorations).
+        self._nav_drawer = Drawer(
+            self._navigation,
+            size=280,
+            variant="docked",
+            anchor="left",
+            dock_position="middle",
+            inline=True,
+            open=False,
+            sizing_mode="stretch_height",
+            # Hug the drawer's own width (tab when closed, ``size`` when open)
+            # instead of flex-growing to eat half the Row.
+            styles={"flex": "0 0 auto"},
+            # A closed inline drawer collapses to zero width and its 24px toggle
+            # tab floats over the content, covering the chat avatars. Reserve the
+            # tab's gutter, as the open drawer does, so the content starts beside it.
+            min_width=24,
+            # The sidebar Settings popup is ``attached`` to the sidebar MenuList,
+            # so it portals into a container nested inside the Page's left sidebar
+            # Drawer paper, which sits at MUI's ``theme.zIndex.drawer`` (1200) and
+            # forms a stacking context. This nav drawer's paper defaults to that
+            # same 1200 and, appearing later in the DOM, paints over the popup
+            # (raising the popup's own z-index can't escape the sidebar's 1200
+            # context). Drop the nav drawer below 1200 so the popup wins; it is
+            # inline/docked and only overlays main content (z-auto), so it stays
+            # above everything it needs to.
+            sx={"zIndex": 1199},
+        )
+        # Content lives in a growing wrapper beside the drawer so it fills the
+        # width the drawer leaves free. _compose_main swaps the wrapper's child.
+        self._nav_content = Row(self._splash, sizing_mode="stretch_both")
+        self._nav_split = Row(
+            self._nav_drawer,
+            self._nav_content,
+            sizing_mode="stretch_both",
+        )
+        self._compose_main(self._splash)
 
         # Create code execution warning dialog if code execution is not hidden
         if self.code_execution != "hidden":
@@ -2119,7 +2152,6 @@ class ExplorerUI(UI):
                     ),
                     Button(
                         label="Disable exec",
-                        button_type="primary",
                         on_click=cancel_code_execution,
                     ),
                     align="end",
@@ -2146,20 +2178,37 @@ class ExplorerUI(UI):
         # Flush UI
         await asyncio.sleep(0.01)
 
-        prev = self._explorations.value
         sql_agent = next(agent for agent in self._coordinator.agents if isinstance(agent, SQLAgent))
         sql_out = self._explorer.create_sql_output()
         out_context = dict(self.context, **(await sql_out.render_context()))
         sql_task = ActorTask(sql_agent, title=f"Load {table}", views=[sql_out], out_context=out_context, status="success")
         plan = Plan(sql_task, title=f"Explore {table}", context=self.context, out_context=out_context, status="success")
+        await self.add_plan_exploration(plan)
 
+    async def add_plan_exploration(self, plan: Plan, views: list | None = None):
+        """
+        Show an executed Plan as a new exploration, with its views and its
+        output context, so follow-up questions continue from it.
+
+        Parameters
+        ----------
+        plan: Plan
+            A Plan that has already been executed, e.g. ``answer.plan``
+            from ``source.ask(...)``.
+        views: list | None
+            The views to show instead of the plan's own, e.g. with a
+            refined chart in place of the one the plan made.
+        """
+        prev = self._explorations.value
         with hold(), self._busy():
             exploration = await self._add_exploration(plan, self._home)
-            self._add_views(exploration, items=plan.views)
+            self._add_views(exploration, items=plan.views if views is None else views)
             await self._postprocess_exploration(plan, exploration, prev, is_new=True)
 
     def _propagate_sources_to_exploration(self, global_context: TContext):
         """Propagate source keys into the active exploration's context."""
+        if self._exploration is None:
+            return
         exploration = self._exploration.get('view')
         if exploration is None or exploration is self._home:
             return
@@ -2301,6 +2350,10 @@ class ExplorerUI(UI):
     async def _cleanup_explorations(self, event):
         if len(event.new) <= len(event.old):
             return
+        # Reveal the navigation drawer the first time an exploration is created
+        # so the newly populated tree is visible; afterwards leave it to the user.
+        if len(event.old) <= 1 < len(event.new) and not self._nav_drawer.open:
+            self._nav_drawer.open = True
         for i, (old, new) in enumerate(zip(event.old, event.new, strict=False)):
             if old is new:
                 continue
@@ -2445,9 +2498,17 @@ class ExplorerUI(UI):
                     icon="vertical_split"
                 )
 
+        def _pop_button_visible(objects):
+            # Popped out (_tab_index is None): always show, to allow closing the split.
+            # Otherwise only show when there's more than one tab.
+            if _tab_index() is None:
+                return True
+            return len(objects) > 1
+
         pop_button = IconButton(
             description="Open this tab in a split view", icon="vertical_split", icon_size="1.1em", size="small",
-            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"}
+            margin=(5, 0, 0, 0), on_click=pop_out, styles={"margin-left": "auto"},
+            visible=tabs.param['objects'].rx.pipe(_pop_button_visible), color="primary"
         )
         return pop_button
 
@@ -2459,8 +2520,10 @@ class ExplorerUI(UI):
         task = next(task for task in exploration.plan if view in task.views)
         controls = view.render_controls(task, self.interface)
         editor = view.editor
+        # Last in the tab, so the pop-out lookups still find the body at index 1
+        box = [self._ask_box(view)] if isinstance(view.component, View) else []
         if editor is None:
-            view = Column(controls, view)
+            view = Column(controls, view, *box)
             controls.append(self._render_pop_out(exploration, view, title))
             return (title, view)
 
@@ -2471,25 +2534,66 @@ class ExplorerUI(UI):
             sizes=(20, 80),
             sizing_mode="stretch_both",
             styles={"overflow": "auto"},
-            stylesheets=SPLITJS_STYLESHEETS
         )
-        view = Column(controls, vsplit)
+        # When filters are present, show them in a Paper above the editor/table
+        # split with a draggable divider just above the SQL editor (so the user
+        # can resize the filter area); with no filters the body stays the bare
+        # editor/table split, so no extra divider appears. The split is kept as
+        # the Column's body (a watcher swaps it in and out) rather than wrapped
+        # in a reactive pane, so the pop-out helpers still find it as a VSplit.
+        filter_paper = getattr(view, "_filter_paper", None)
+        view = Column(controls, vsplit, *box)
+        if filter_paper is not None:
+            def _toggle_filter_pane(event):
+                if event.new:
+                    view[1] = VSplit(
+                        filter_paper, vsplit,
+                        expanded_sizes=(15, 85), sizes=(15, 85),
+                        sizing_mode="stretch_both", styles={"overflow": "auto"},
+                    )
+                else:
+                    view[1] = vsplit
+            filter_paper.param.watch(_toggle_filter_pane, "visible")
         controls.append(self._render_pop_out(exploration, view, title))
         return (title, view)
+
+    def _ask_box(self, view: LumenEditor) -> Column:
+        """
+        A box for asking about a point clicked or selected on the view's
+        chart; the question and the point's rows go to the chat as the next
+        message, so the follow-up runs in this exploration.
+        """
+        selected = Selected()
+        # Kept on the editor so the streams live as long as the chart
+        view._click_streams = watch_clicks(view.component, lambda rows: setattr(selected, "selection", rows))
+
+        async def ask(question: str):
+            self.interface.send(about(question, selected.selection), respond=True)
+
+        return ask_box(selected, ask)
+
+    def _vsplit_has_view(self, content, view) -> bool:
+        # The body is the editor/table VSplit, or - when filters are active - a
+        # filter VSplit wrapping it one level deeper. Search both so pop-out can
+        # locate the table view regardless of whether the filter pane is shown.
+        if not isinstance(content, VSplit):
+            return False
+        if view in content:
+            return True
+        return any(self._vsplit_has_view(child, view) for child in content)
 
     def _find_view_in_tabs(self, exploration: Exploration, out: LumenEditor):
         tabs = exploration.view[0]
         for i, tab in enumerate(tabs[1:], start=1):
             content = tab[1][1] if isinstance(tab, tuple) and len(tab) > 1 else tab[1]
-            if isinstance(content, VSplit) and out.view in content:
+            if self._vsplit_has_view(content, out.view):
                 return i
         return None
 
     def _find_view_in_popped_out(self, exploration: Exploration, out: LumenEditor):
         for i, standalone in enumerate(exploration.view[1:], start=1):
             if isinstance(standalone, Column) and len(standalone) > 1:
-                vsplit = standalone[1][1]
-                if isinstance(vsplit, VSplit) and out.view in vsplit:
+                if self._vsplit_has_view(standalone[1][1], out.view):
                     return i
         return None
 
@@ -2538,16 +2642,31 @@ class ExplorerUI(UI):
         for popped_idx in sorted(popped_out_to_remove, reverse=True):
             exploration.view.pop(popped_idx)
 
+        active_idx = None
         for view in current:
             if view in old:
-                tab_idx = self._find_view_in_tabs(exploration, view)
-                if tab_idx is not None:
-                    idx = tab_idx
                 continue
             title, vsplit = self._render_view(exploration, view)
-            content.insert((idx or 0)+1, (title, vsplit))
+            if idx is not None:
+                # Replacing a removed view (e.g. a rerun): drop the new tab
+                # into the slot the old one vacated.
+                insert_at = idx
+                idx += 1
+            else:
+                # A genuinely new view: append it after all existing tabs so
+                # tabs stay in chronological order. Anchoring off a prior view
+                # would mis-place it, e.g. ahead of a failed-analysis tab that
+                # _find_view_in_tabs can't locate.
+                insert_at = len(content)
+            content.insert(insert_at, (title, vsplit))
+            active_idx = insert_at
         tabs[:] = content
-        tabs.active = max(len(tabs)-1, 0)
+        # Activate the newly inserted view rather than blindly the last tab,
+        # which may be a trailing error tab left over from a failed plan.
+        if active_idx is not None:
+            tabs.active = min(active_idx, len(tabs)-1)
+        else:
+            tabs.active = max(len(tabs)-1, 0)
         if self._exploration['view'] is exploration:
             self._update_main_view()
         if self._split.collapsed:
@@ -2631,13 +2750,17 @@ class ExplorerUI(UI):
     async def _postprocess_exploration(
         self, plan: Plan, exploration: Exploration, prev: dict, is_new: bool = False, partial_plan: Plan | None = None
     ):
-        self._exploration['view'].conversation = self.interface.objects
+        exploration.conversation = self.interface.objects
         if "__error__" not in plan.out_context and plan.status != "error":
             # Propagate sources produced by the plan (out_context) into
             # the global UI context so the source catalog and CTA update.
             await self._sync_sources(SimpleNamespace(new=plan.out_context), global_context=self.context)
             if "pipeline" in plan.out_context:
                 await self._add_analysis_suggestions(plan)
+
+            if self.interface.objects:
+                last_message = self.interface.objects[-1]
+                self._ensure_model_label(last_message)
 
             if is_new:
                 plan.param.watch(partial(self._update_views, exploration), "views")
@@ -2646,7 +2769,7 @@ class ExplorerUI(UI):
         # On error we have to sync the conversation, unwatch the plan,
         # and remove the exploration if it was newly create
         last_message = self.interface.objects[-1]
-        footer_objects = last_message.footer_objects or []
+        self._ensure_model_label(last_message)
         buttons = []
         if is_new:
             replan_button = Button(
@@ -2658,17 +2781,18 @@ class ExplorerUI(UI):
                 description="Rerun with the same plan and context"
             )
             buttons = [rerun_button, replan_button]
-        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in footer_objects):
+        elif not any(isinstance(fo, Button) and fo.label == "Retry" for fo in last_message.footer_objects or []):
             retry_button = Button(
                 label="Retry", icon="replay", on_click=lambda _: state.execute(partial(self._execute_plan, plan, rerun=True)),
                 description="Try re-running failed steps"
             )
             buttons = [retry_button]
-        last_message.footer_objects = footer_objects + buttons
+        last_message.footer_objects = list(last_message.footer_objects or []) + buttons
         if exploration.parent:
             exploration.parent.conversation = exploration.conversation
 
         error_type = plan.out_context.pop("__error_type__", Exception)
+        plan.out_context.pop("__exception__", None)
         error = plan.out_context.pop("__error__", "Unknown error")
         _, todos = plan.render_task_history(failed=True)
 
@@ -2711,5 +2835,6 @@ class ExplorerUI(UI):
             if not is_home:
                 context['prev_plan'] = exploration.plan
             plan = await self._coordinator.respond(messages, context)
-            if plan is not None:
+            # An unanswerable plan has no steps, and respond has told the user why
+            if plan is not None and not plan.unanswerable:
                 await self._execute_plan(plan)

@@ -57,6 +57,26 @@ vector_store = DuckDBVectorStore(uri='embeddings.db')
 - ✅ Fast similarity search
 - Best for: Production, large datasets
 
+### ChromaDBVectorStore
+
+Storage backed by [ChromaDB](https://www.trychroma.com/), in memory or persisted to a directory.
+
+``` bash
+pip install 'lumen[chromadb]'
+```
+
+``` py
+from lumen.ai.vector_store import ChromaDBVectorStore
+
+vector_store = ChromaDBVectorStore()                         # in memory
+vector_store = ChromaDBVectorStore(uri='chroma_db')          # persisted to a directory
+vector_store = ChromaDBVectorStore(uri='chroma_db', collection_name='docs')
+```
+
+- ✅ Persists on disk when given a `uri`
+- ✅ Reuses an existing ChromaDB collection
+- Best for: Projects that already use ChromaDB
+
 ## Adding documents
 
 ### Add files
@@ -179,6 +199,24 @@ Requires an LLM to generate context - see [LLM Providers](llm_providers.md) for 
 
 ## Integration with Lumen AI
 
+### Table discovery
+
+Lumen embeds the metadata of every table in your sources, then searches those embeddings to pick the tables relevant to a question. This runs by default through the `MetadataLookup` tool, which returns the 20 closest matches, so a session with hundreds of tables only sends those to the agents.
+
+``` py title="Reuse a store for table metadata"
+import lumen.ai as lmai
+
+vector_store = DuckDBVectorStore(uri='tables.db')
+
+ui = lmai.ExplorerUI(
+    data=['penguins.csv', 'earthquakes.parquet'],
+    vector_store=vector_store
+)
+ui.servable()
+```
+
+See [Tools - Built-in tools](tools.md#built-in-tools) for the tools that use these embeddings.
+
 ### Document search
 
 ``` py title="Enable document search"
@@ -194,7 +232,7 @@ ui = lmai.ExplorerUI(
 ui.servable()
 ```
 
-Users can now ask questions about uploaded documents. See [Tools - DocumentLookup](tools.md#built-in-tools) for how this works.
+Users can now ask questions about uploaded documents. See [Tools - Built-in tools](tools.md#built-in-tools) for how this works.
 
 ## Configuration
 

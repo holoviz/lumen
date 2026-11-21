@@ -1,4 +1,4 @@
-# :material-hand-heart: Contributing to Lumen
+# 🫶🏻 Contributing to Lumen
 
 We welcome contributions from the community! Here's how to help.
 
@@ -168,7 +168,7 @@ When contributing to `lumen.ai.controls` source loaders, keep these output invar
 ## Code of Conduct
 
 We're committed to providing a welcoming and inclusive environment.
-By participating, you agree to uphold the [HoloViz Code of Conduct](https://holoviz.org/code_of_conduct.html).
+By participating, you agree to uphold the [HoloViz Code of Conduct](https://holoviz.org/about/governance/org-docs/CODE-OF-CONDUCT.html).
 
 ---
 

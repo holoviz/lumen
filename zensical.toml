@@ -2,15 +2,14 @@
 site_name = "Lumen"
 site_description = "Open-source agent framework for chatting with data and building dashboards"
 site_author = "HoloViz Developers"
-site_url = "https://lumen.holoviz.org"
+site_url = "https://lumen.holoviz.org/en/docs/latest/"
 site_dir = "builtdocs"
 repo_url = "https://github.com/holoviz/lumen"
 repo_name = "holoviz/lumen"
 edit_uri = "edit/main/docs/"
 extra_css = ["assets/extra.css"]
-extra_javascript = ["assets/extra.js"]
 nav = [
-  {"Home" = "index.md"},
+  {"Overview" = "index.md"},
   {"Quick Start" = "quick_start.md"},
   {"Installation" = "installation.md"},
   {"FAQ" = "faq.md"},
@@ -18,6 +17,7 @@ nav = [
     {"Launching Lumen" = "getting_started/launching_lumen.md"},
     {"Navigating the UI" = "getting_started/navigating_the_ui.md"},
     {"Using Lumen AI" = "getting_started/using_lumen_ai.md"},
+    {"Lumen in Notebooks" = "getting_started/lumen_in_notebooks.md"},
     {"Building Lumen Apps" = "getting_started/building_lumen_apps.md"}
   ]},
   {"Examples" = [
@@ -26,7 +26,10 @@ nav = [
       {"Weather Data AI Explorer" = "examples/tutorials/weather_data_ai_explorer.md"},
       {"SaaS Company Report Dashboard" = "examples/tutorials/saas_company_report_dashboard.md"},
       {"Census Data AI Explorer" = "examples/tutorials/census_data_ai_explorer.md"},
-      {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"}
+      {"Mesonet Weather Explorer" = "examples/tutorials/mesonet_weather_explorer.md"},
+      {"Weather API Explorer" = "examples/tutorials/weather_openapi_explorer.md"},
+      {"Massive Stock Explorer" = "examples/tutorials/massive_stock_explorer.md"},
+      {"Build Dashboard with Spec" = "examples/tutorials/penguins_dashboard_spec.md"}
     ]},
     {"Gallery" = [
       {"Overview" = "examples/gallery/index.md"},
@@ -71,19 +74,28 @@ nav = [
   {"Extending Lumen" = "extending.md"},
   {"Reference" = [
     {"API" = [
+      "reference/api.md",
       {"AI" = [
+        "reference/api/ai.md",
+        {"User Interface" = "reference/api/ai/ui.md"},
         {"Agents" = "reference/api/ai/agents.md"},
         {"Coordinator" = "reference/api/ai/coordinator.md"},
         {"Models" = "reference/api/ai/models.md"},
         {"Tools" = "reference/api/ai/tools.md"},
+        {"Analyses" = "reference/api/ai/analyses.md"},
+        {"Reports" = "reference/api/ai/reports.md"},
         {"Core" = "reference/api/ai/core.md"}
       ]},
+      {"Data" = "reference/api/data.md"},
       {"Pipeline" = "reference/api/pipeline.md"},
+      {"Filters" = "reference/api/filters.md"},
+      {"Variables" = "reference/api/variables.md"},
       {"Sources" = "reference/api/sources.md"},
       {"Transforms" = "reference/api/transforms.md"},
       {"Views" = "reference/api/views.md"}
     ]},
   ]},
+  {"Releases" = "releases.md"},
   {"Contributing" = "contributing.md"}
 ]
 
@@ -114,6 +126,14 @@ features = [
 ]
 
 # Color palette
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme)"
+
+[project.theme.palette.toggle]
+icon = "material/brightness-auto"
+name = "Switch to light mode"
+
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
@@ -132,7 +152,7 @@ accent = "black"
 
 [project.theme.palette.toggle]
 icon = "material/brightness-4"
-name = "Switch to light mode"
+name = "Switch to system preference"
 
 # Markdown extensions
 [project.markdown_extensions.toc]
@@ -175,7 +195,6 @@ emoji_generator = "zensical.extensions.emoji.to_svg"
 [project.plugins]
 search = {}
 typeset = {}
-literate_nav = {}
 
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["."]

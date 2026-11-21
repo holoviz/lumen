@@ -1,6 +1,10 @@
+import argparse
 import asyncio
+import inspect
 import io
+import logging
 import sqlite3
+import subprocess
 import sys
 import tempfile
 
@@ -8,9 +12,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import bokeh.command.subcommands.serve as bokeh_serve
 import duckdb
 import numpy as np
+import pandas as pd
 import pytest
+import requests
 
 try:
     import lumen.ai  # noqa
@@ -25,23 +32,33 @@ try:
 except ImportError:
     HAS_XARRAY = False
 
+from panel.command import Serve
 from panel.layout import Column, Row
 from panel.tests.util import async_wait_until
 from panel.util import edit_readonly
 from panel_material_ui import Container
 from panel_splitjs import VSplit
 
+from lumen import __version__
 from lumen.ai.agents.chat import ChatAgent
 from lumen.ai.agents.sql import SQLAgent, make_sql_model
+from lumen.ai.agents.vega_lite import (
+    ChartSpec, VegaLiteAgent, VegaLiteSpec, VegaLiteSpecUpdate,
+)
 from lumen.ai.config import PROVIDED_SOURCE_NAME
 from lumen.ai.coordinator import Plan
-from lumen.ai.editors import SQLEditor
+from lumen.ai.editors import MultiChartEditor, SQLEditor
+from lumen.ai.llm import (
+    PROVIDER_ENV_VARS, ClaudeCode, CopilotCli, Groq, Kilo, LlamaCpp, OpenAI,
+)
 from lumen.ai.models import ErrorDescription
 from lumen.ai.report import ActorTask
 from lumen.ai.schemas import get_metaset
 from lumen.ai.ui import UI, Exploration, ExplorerUI
-from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.command.ai import LumenAIServe, main
+from lumen.config import SOURCE_TABLE_SEPARATOR, dump_yaml, load_yaml
 from lumen.pipeline import Pipeline
+from lumen.sources.data import read, resolve_data
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
 
@@ -133,6 +150,14 @@ async def explorer_ui_with_error(explorer_ui):
 
     yield explorer_ui
 
+async def test_unanswerable_plan_is_not_executed_in_the_chat_ui(explorer_ui):
+    plan = Plan(title="Elevation", unanswerable="No table holds elevation.", context=explorer_ui.context)
+    explorer_ui._coordinator.respond = AsyncMock(return_value=plan)
+    explorer_ui._execute_plan = AsyncMock()
+    await explorer_ui._chat_invoke("How high?", "User", explorer_ui.interface)
+    explorer_ui._execute_plan.assert_not_awaited()
+
+
 async def test_explorer_ui_initialization(explorer_ui):
     """Test that ExplorerUI initializes correctly."""
     assert explorer_ui is not None
@@ -140,6 +165,16 @@ async def test_explorer_ui_initialization(explorer_ui):
     assert explorer_ui._home.title == 'Home'
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.items[0]['label'] == 'New Exploration'
+
+
+async def test_explorer_ui_shows_avatar_for_single_agent(explorer_ui):
+    """The first Planner message should render its avatar before other agents respond."""
+    explorer_ui.interface.send("Question", user="User", respond=False)
+    message = explorer_ui.interface.stream("Planning...", user="Planner")
+
+    assert message.show_avatar is True
+    assert message._internal_state.multi_user is False
+
 
 async def test_exploration_ui_error(explorer_ui_with_error):
     ui = explorer_ui_with_error
@@ -162,6 +197,47 @@ async def test_exploration_ui_error(explorer_ui_with_error):
     # Check Interface contents
     assert len(ui.interface) == 2
     assert len(ui.interface[1].footer_objects) == 2 # Rerun buttons
+
+async def test_llm_failure_alert_points_to_ai_model_settings(explorer_ui):
+    explorer_ui.llm.initialize = AsyncMock(side_effect=RuntimeError("no API key"))
+    await explorer_ui._initialize_new_llm()
+    message = explorer_ui._error_alert.object
+    assert "Settings > Configure AI Models" in message
+    assert "Kilo" in message
+
+
+async def test_ui_without_provider_explains_options_instead_of_failing(monkeypatch):
+    for env_var in PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setattr("lumen.ai.llm.requests.get", MagicMock(side_effect=requests.ConnectionError))
+    monkeypatch.setattr("lumen.ai.llm.local_cli_providers", lambda: {ClaudeCode: True})
+    ui = ExplorerUI()
+    ui.llm.initialize = AsyncMock()
+    await ui._initialize_new_llm()
+
+    ui.llm.initialize.assert_not_called()
+    assert ui._chat_input.disabled
+    message = ui._error_alert.object
+    assert "No LLM provider found" in message
+    assert "Kilo" in message and "Claude Code CLI" in message
+    assert "no LLM provider is configured" in ui._get_status_text()
+
+    ui._on_llm_change(Kilo())
+    assert ui._no_llm_message is None
+
+
+async def test_sync_sources_survives_partial_init(explorer_ui):
+    """_sync_sources can run before _render_page has set up _exploration/_cta,
+    e.g. when __init__ aborted partway through _configure_context (#1780)."""
+    ui = explorer_ui
+    ui._exploration = None
+    ui._cta = None
+
+    await ui._sync_sources(global_context=ui.context)
+
+    assert ui._exploration is None
+    assert ui._cta is None
+
 
 async def test_sync_sources_keeps_source_and_sources_in_sync(explorer_ui):
     ui = explorer_ui
@@ -240,6 +316,48 @@ async def test_exploration_ui_error_replan(explorer_ui_with_error):
 
     tabs = exploration.view[0]
     assert len(tabs) == 2
+
+async def test_switching_exploration_mid_run_keeps_conversations(explorer_ui):
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    async def ask(text, title, slug):
+        ui.interface.send(text, user="User", respond=False)
+        ui.interface.send(f"Planning {title}", user="Planner", respond=False)
+        ui.llm.set_responses([
+            SQLQueryWithTables(query="SELECT * FROM test_table", table_slug=slug, tables=["test_table"]),
+            f"Answer {title}",
+        ])
+        exploration = ui._exploration["view"]
+        plan = Plan(
+            ActorTask(SQLAgent(llm=ui.llm)),
+            ActorTask(ChatAgent(llm=ui.llm)),
+            history=[{"content": text, "role": "user"}],
+            title=title,
+            context=ui.context if exploration is ui._home else dict(exploration.context),
+        )
+        with ui._busy():
+            await ui._execute_plan(plan)
+
+    await ask("read this", "Read CSV", "first")
+
+    invoke = ui.llm.invoke
+
+    async def slow_invoke(*args, **kwargs):
+        await asyncio.sleep(0.2)
+        return await invoke(*args, **kwargs)
+
+    ui.llm.invoke = slow_invoke
+    task = asyncio.ensure_future(ask("plot me", "SST Anomaly", "second"))
+    await async_wait_until(lambda: ui._explorations.value["label"] == "SST Anomaly")
+    ui._explorations.active = (1,)
+    await task
+
+    first, second = (item["view"] for item in ui._explorations.items[1:])
+    assert first.conversation[0].object == "read this"
+    assert second.conversation[0].object == "plot me"
+
 
 async def test_add_exploration_from_explorer(explorer_ui):
     """Test creating an exploration from the table explorer."""
@@ -392,6 +510,89 @@ async def test_find_view_in_tabs(explorer_ui):
         assert tab_idx >= 0
 
 
+async def test_multichart_all_tab_last_and_editable(explorer_ui):
+    """A multi-chart response renders one editable tab per chart plus an 'All'
+    overview that is placed last, opened by default, and exposes every chart's
+    spec as an editor sub-tab."""
+    ui = explorer_ui
+    test_source = ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+
+    spec_bar = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "category", "type": "nominal"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    spec_line = {
+        "mark": "line",
+        "encoding": {
+            "x": {"field": "value", "type": "quantitative"},
+            "y": {"field": "value", "type": "quantitative"},
+        },
+    }
+    ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT category, value FROM test_table",
+            table_slug="cat_vals",
+            tables=["test_table"],
+        ),
+        VegaLiteSpec(
+            chain_of_thought="two charts",
+            charts=[
+                ChartSpec(title="By category", yaml_spec=dump_yaml(spec_bar)),
+                ChartSpec(title="Value line", yaml_spec=dump_yaml(spec_line)),
+            ],
+            insufficient_context=False,
+            insufficient_context_reason="none",
+        ),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+        VegaLiteSpecUpdate(chain_of_thought="ok", yaml_update=""),
+    ])
+
+    plan = Plan(
+        ActorTask(SQLAgent(llm=ui.llm)),
+        ActorTask(VegaLiteAgent(llm=ui.llm, code_execution="disabled")),
+        history=[{"content": "two charts of value", "role": "user"}],
+        title="Two charts",
+        context=ui.context,
+    )
+    await ui._execute_plan(plan)
+
+    exploration = ui._exploration["view"]
+    # The multi-chart output includes the "All" overview.
+    overview = next(v for v in exploration.plan.views if isinstance(v, MultiChartEditor))
+
+    tabs = exploration.view[0]
+    # "All" is the last tab and is opened by default.
+    assert tabs._names[-1] == "All"
+    assert tabs.active == len(tabs) - 1
+
+    # The "All" tab lays out exactly like a chart tab: same editor/plot split,
+    # same proportions, and nothing pinning a pane open (which would stop the
+    # divider being dragged).
+    overview_split = next(child for child in tabs[-1] if isinstance(child, VSplit))
+    chart_split = next(child for child in tabs[-2] if isinstance(child, VSplit))
+    assert overview_split.sizes == chart_split.sizes
+    assert overview_split.min_size == chart_split.min_size
+
+    # The overview's editor pane is one sub-tab per chart, and editing a sub-tab
+    # writes through to that chart's own spec.
+    sub_tabs = overview.editor
+    assert sub_tabs._names == ["By category", "Value line"]
+    edited = dump_yaml({**load_yaml(overview.chart_editors[1].spec), "mark": "point"})
+    sub_tabs[1].value = edited
+    assert overview.chart_editors[1].spec == edited
+    assert overview.chart_editors[1].component.spec["mark"] == "point"
+    # The chart's own tab shows the same edit, not a stale copy.
+    assert overview.chart_editors[1]._editor.value == edited
+
+    # The overview wraps its view to scroll the stacked plots; pop-out and rerun
+    # must still locate it through that wrapper.
+    assert ui._find_view_in_tabs(exploration, overview) == len(tabs) - 1
+
+
 async def test_find_view_in_popped_out(explorer_ui):
     """Test finding a view in popped out views."""
     # Create an exploration
@@ -426,6 +627,18 @@ async def test_find_view_in_popped_out(explorer_ui):
     # Should find it
     assert popped_idx is not None
     assert popped_idx >= 1  # Index 0 is tabs
+
+
+async def test_vsplit_has_view_finds_view_under_filter_split(explorer_ui):
+    """Pop-out helpers locate the table view whether or not a filter pane wraps
+    the editor/table split one level deeper."""
+    table = Column()
+    editor_table = VSplit(Column(), table)
+    with_filters = VSplit(Column(), editor_table)
+
+    assert explorer_ui._vsplit_has_view(editor_table, table)   # no filters
+    assert explorer_ui._vsplit_has_view(with_filters, table)   # filters active
+    assert not explorer_ui._vsplit_has_view(VSplit(Column(), Column()), table)
 
 
 async def test_exploration_context_isolation(explorer_ui):
@@ -538,29 +751,38 @@ async def test_chat_upload_flow_processes_files_directly(explorer_ui, monkeypatc
     assert "uploaded" in new_sources[0].get_tables()
 
     # The query should be sent to the interface
-    assert ui._main[1] is ui.interface
-    assert ui._main[1][0].object == "Show me the uploaded data"
+    assert ui._nav_content[0] is ui.interface
+    assert ui._nav_content[0][0].object == "Show me the uploaded data"
 
 
 # Tests for view transition states
 
 async def test_initial_state_shows_splash(explorer_ui):
     """Test 1: On start the user sees just the self._splash in main."""
-    # Initially, _main should contain only _splash
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._splash
-    assert explorer_ui._navigation.visible == False
+    # _main holds the always-mounted navigation drawer; the splash is its content pane
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
+    # Navigation drawer starts closed
+    assert explorer_ui._nav_drawer.open is False
 
     # Should be on home
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
     assert len(explorer_ui._explorations.items) == 1  # Only home
 
 
+async def test_closed_nav_drawer_reserves_toggle_gutter(explorer_ui):
+    """The closed drawer's 24px toggle tab must not float over the content."""
+    assert explorer_ui._nav_drawer.open is False
+    assert explorer_ui._nav_drawer.min_width == 24
+
+
 async def test_exploration_launch_transitions_to_split(explorer_ui):
     """Test 2: When an exploration is launched we switch from splash to split view."""
     # Initially showing splash
-    assert explorer_ui._main[1] is explorer_ui._splash
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
 
     # Create an exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
@@ -569,19 +791,18 @@ async def test_exploration_launch_transitions_to_split(explorer_ui):
     # Wait for exploration to be created
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
-    # After exploration is created, should transition to split view
-    # The view should update when views are added (which happens in _add_exploration_from_explorer)
-    await async_wait_until(lambda: explorer_ui._split in explorer_ui._main or explorer_ui._navigation in explorer_ui._main)
+    # After exploration is created, the content pane should transition to the split
+    await async_wait_until(lambda: explorer_ui._nav_content[0] is explorer_ui._split)
 
-    # Should now show split view (with navigation if there are explorations)
-    assert explorer_ui._navigation.visible == explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._split
-    assert explorer_ui._navigation.visible
+    # Content pane now shows the interface/output split
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Should not be showing splash anymore
-    assert explorer_ui._splash not in explorer_ui._main
+    assert explorer_ui._splash not in explorer_ui._nav_content
 
 
 async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
@@ -598,8 +819,8 @@ async def test_new_exploration_without_outputs_keeps_chat_view(explorer_ui):
     await explorer_ui._execute_plan(plan)
 
     assert len(explorer_ui._explorations.items) > 1
-    assert explorer_ui._main[1] is explorer_ui.interface
-    assert explorer_ui._split not in explorer_ui._main
+    assert explorer_ui._nav_content[0] is explorer_ui.interface
+    assert explorer_ui._split not in explorer_ui._nav_content
 
 
 async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
@@ -614,11 +835,12 @@ async def test_exploration_with_pipeline_data_shows_split(explorer_ui):
     # Wait for views to be added (pipeline data)
     await async_wait_until(lambda: len(exploration.plan.views) > 0, timeout=5.0)
 
-    # Should show split view with navigation (since we have explorations)
-    assert explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._split
+    # Should show split view; navigation is the split's left pane
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Output should contain the exploration
     assert len(explorer_ui._output) > 1
@@ -641,9 +863,10 @@ async def test_delete_exploration_switches_to_home(explorer_ui):
     # Should switch back to home (splash view)
     assert len(explorer_ui._explorations.items) == 1
     assert explorer_ui._explorations.value['view'] is explorer_ui._home
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._splash
-    assert not explorer_ui._navigation.visible
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_content[0] is explorer_ui._splash
 
 
 async def test_delete_exploration_switches_to_parent(explorer_ui):
@@ -699,8 +922,8 @@ async def test_switch_to_report_mode_with_no_explorations(explorer_ui):
     explorer_ui._toggle_report_mode(True)
 
     # Should show placeholder message
-    assert len(explorer_ui._main) == 2
-    main_content = explorer_ui._main[1]
+    assert len(explorer_ui._main) == 1
+    main_content = explorer_ui._nav_content[0]
     assert isinstance(main_content, Column)
     # Should contain the "No Explorations Yet" message
     assert len(main_content) >= 1
@@ -723,15 +946,15 @@ async def test_switch_to_report_mode_with_explorations(explorer_ui):
     # Switch to report mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
 
-    # Should show Report component with navigation
-    assert explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._navigation.visible
+    # Should show Report component; navigation is the split's left pane
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
 
     # Main content should be a Report instance
-    assert isinstance(explorer_ui._main[1], Container)
-    assert len(explorer_ui._main[1]) == 2
+    assert isinstance(explorer_ui._nav_content[0], Container)
+    assert len(explorer_ui._nav_content[0]) == 2
 
     # Navigation should show "Report"
     assert explorer_ui._current_mode == "Report"
@@ -752,15 +975,15 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
 
     # Switch to report mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
-    assert isinstance(explorer_ui._main[1], Container)
+    assert isinstance(explorer_ui._nav_content[0], Container)
 
     # Switch back to exploration mode
     explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
 
     # Should show split view with the selected exploration
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._main[1] is explorer_ui._split
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_content[0] is explorer_ui._split
 
     # Output should contain the exploration
     assert explorer_ui._output[1] is exploration.view
@@ -769,47 +992,150 @@ async def test_switch_back_from_report_to_exploration(explorer_ui):
     assert explorer_ui._current_mode == "Exploration"
 
 
-async def test_navigation_visibility_with_explorations(explorer_ui):
-    """Test that navigation pane is shown/hidden correctly based on explorations."""
-    # Initially no explorations (only home) - no navigation
-    assert not explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert not explorer_ui._navigation.visible
+async def _add_followup(explorer_ui, title):
+    """Add a followup exploration below whichever one is currently selected."""
+    test_source = explorer_ui.context["source"]
+    SQLQueryWithTables = make_sql_model([(test_source.name, "test_table")])
+    explorer_ui.llm.set_responses([
+        SQLQueryWithTables(
+            query="SELECT * FROM test_table LIMIT 5",
+            table_slug=f"test_{title}",
+            tables=["test_table"]
+        )
+    ])
+    parent = explorer_ui._explorations.value["view"]
+    plan = Plan(
+        ActorTask(SQLAgent(llm=explorer_ui.llm)),
+        history=[{"content": title, "role": "user"}],
+        title=title,
+        context=parent.context,
+        is_followup=True,
+    )
+    await explorer_ui._add_exploration(plan, parent)
+    await asyncio.sleep(0.1)
+    return plan
 
-    # Create an exploration
+
+async def _add_root_exploration(explorer_ui):
+    """Add a top level exploration and wait for it to render its views."""
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    item = explorer_ui._explorations.items[1]
+    await async_wait_until(lambda: len(item['view'].plan.views) > 0, timeout=5.0)
+    return item
+
+
+async def test_report_includes_deeply_nested_followups(explorer_ui):
+    """Followups nest arbitrarily deep, so the report must walk the whole tree."""
+    root = await _add_root_exploration(explorer_ui)
+    child = await _add_followup(explorer_ui, "child")
+    grandchild = await _add_followup(explorer_ui, "grandchild")
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    assert len(explorer_ui._report) == 1
+    assert list(explorer_ui._report[0]) == [root['view'].plan, child, grandchild]
+
+
+async def test_report_survives_a_trip_back_to_the_chat(explorer_ui):
+    """The report, and any story written on it, is kept when leaving report mode."""
+    await _add_root_exploration(explorer_ui)
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+    report = explorer_ui._report
+    report._story.title = "Story"
+    report._story.blocks = [("prose", "Some prose")]
+    report._render_story()
+    assert len(report._tabs) == 2
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    assert explorer_ui._report is report
+    assert len(report._tabs) == 2
+
+
+async def test_new_exploration_rebuilds_the_report(explorer_ui):
+    """A report built before a new exploration exists is out of date."""
+    await _add_root_exploration(explorer_ui)
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+    report = explorer_ui._report
+
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[0])
+    await _add_followup(explorer_ui, "child")
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    assert explorer_ui._report is not report
+    assert len(explorer_ui._report[0]) == 2
+
+
+async def test_explore_menu_item_keeps_its_icon_in_report_mode(explorer_ui):
+    """Report mode owns the active state, so Explore stays inactive and outlined."""
+    await _add_root_exploration(explorer_ui)
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+
+    explorer_ui._update_home()
+
+    explore, report = explorer_ui._sidebar_menu.items[:2]
+    assert report["active"] is True
+    assert explore["active"] is False
+    assert explore["icon"] == "insert_chart_outlined"
+
+
+async def test_selecting_an_exploration_leaves_report_mode(explorer_ui):
+    """Picking an exploration in the navigation returns to the chat."""
+    item = await _add_root_exploration(explorer_ui)
+    explorer_ui._handle_sidebar_event(explorer_ui._sidebar_menu.items[1])
+    assert explorer_ui._current_mode == "Report"
+
+    explorer_ui._select_exploration(item)
+
+    assert explorer_ui._current_mode == "Exploration"
+    assert explorer_ui._nav_content[0] is explorer_ui._split
+
+
+async def test_navigation_pane_always_mounted(explorer_ui):
+    """Navigation lives in the always-mounted drawer. It starts closed and is
+    auto-opened once, when the first exploration is created."""
+    # Always mounted as the left item of the row, drawer closed by default
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
+    assert explorer_ui._nav_drawer.open is False
+
+    # Create the first exploration
     explorer_ui._explorer.param.update(table_slug="test_table")
     await explorer_ui._add_exploration_from_explorer()
     await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
 
-    # Now should show navigation
-    assert explorer_ui._should_show_navigation()
-    # View should update to include navigation
+    # Creating the first exploration reveals (opens) the navigation drawer
+    await async_wait_until(lambda: explorer_ui._nav_drawer.open is True)
     explorer_ui._update_main_view()
-    assert len(explorer_ui._main) == 2
-    assert explorer_ui._main[0] is explorer_ui._navigation
-    assert explorer_ui._navigation.visible
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
+    assert explorer_ui._nav_split[0] is explorer_ui._nav_drawer
+    assert explorer_ui._nav_drawer[0] is explorer_ui._navigation
 
-    # Delete exploration
+    # Delete exploration — structure still intact
     exploration_item = explorer_ui._explorations.items[1]
     await explorer_ui._delete_exploration(exploration_item)
-
-    # Navigation should be hidden again
-    assert not explorer_ui._should_show_navigation()
-    assert len(explorer_ui._main) == 2
-    assert not explorer_ui._navigation.visible
+    assert len(explorer_ui._main) == 1
+    assert explorer_ui._main[0] is explorer_ui._nav_split
 
 
 class TestResolveData:
-    """Tests for UI._resolve_data method."""
 
     def test_resolve_data_none(self):
         """Test that None returns an empty list."""
-        result = UI._resolve_data(None)
+        result = resolve_data(None)
         assert result == []
 
     def test_resolve_data_single_source(self, test_source):
         """Test resolving a single Source instance."""
-        result = UI._resolve_data(test_source)
+        result = resolve_data(test_source)
         assert len(result) == 1
         assert result[0] is test_source
 
@@ -819,14 +1145,41 @@ class TestResolveData:
             uri=':memory:',
             tables={'other_table': 'SELECT 1 as id'}
         )
-        result = UI._resolve_data([test_source, source2])
+        result = resolve_data([test_source, source2])
         assert len(result) == 2
         assert result[0] is test_source
         assert result[1] is source2
 
+    def test_resolve_data_dataframe(self):
+        """A DataFrame becomes a queryable table instead of being dropped."""
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = resolve_data(df)
+        assert len(result) == 1
+        assert result[0].get_tables() == ['data']
+        pd.testing.assert_frame_equal(result[0].get('data'), df)
+
+    def test_resolve_data_named_dataframes(self):
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = resolve_data({'penguins': df, 'birds': df})
+        assert len(result) == 1
+        assert result[0].get_tables() == ['penguins', 'birds']
+        pd.testing.assert_frame_equal(result[0].get('birds'), df)
+
+    def test_resolve_data_unnamed_dataframes(self):
+        df = pd.DataFrame({'a': [1, 2, 3]})
+        result = resolve_data([df, df])
+        assert result[0].get_tables() == ['data_0', 'data_1']
+
+    def test_resolve_data_named_source(self, test_source):
+        assert resolve_data({'sales': test_source}) == [test_source]
+
+    def test_resolve_data_unsupported_type_raises(self):
+        with pytest.raises(TypeError, match="Cannot load data of type object"):
+            resolve_data(object())
+
     def test_resolve_data_csv_file_string(self):
         """Test resolving a CSV file path string."""
-        result = UI._resolve_data('data.csv')
+        result = resolve_data('data.csv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -838,7 +1191,7 @@ class TestResolveData:
 
     def test_resolve_data_parquet_file_string(self):
         """Test resolving a Parquet file path string."""
-        result = UI._resolve_data('test_data.parquet')
+        result = resolve_data('test_data.parquet')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -848,7 +1201,7 @@ class TestResolveData:
 
     def test_resolve_data_json_file_string(self):
         """Test resolving a JSON file path string."""
-        result = UI._resolve_data('data.json')
+        result = resolve_data('data.json')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -857,7 +1210,7 @@ class TestResolveData:
 
     def test_resolve_data_jsonl_file_string(self):
         """Test resolving a JSONL (newline-delimited JSON) file path string."""
-        result = UI._resolve_data('data.jsonl')
+        result = resolve_data('data.jsonl')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -866,7 +1219,7 @@ class TestResolveData:
 
     def test_resolve_data_ndjson_file_string(self):
         """Test resolving a NDJSON file path string."""
-        result = UI._resolve_data('data.ndjson')
+        result = resolve_data('data.ndjson')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -875,7 +1228,7 @@ class TestResolveData:
 
     def test_resolve_data_tsv_file_string(self):
         """Test resolving a TSV file path string."""
-        result = UI._resolve_data('data.tsv')
+        result = resolve_data('data.tsv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -884,7 +1237,7 @@ class TestResolveData:
 
     def test_resolve_data_parq_file_string(self):
         """Test resolving a .parq file path string."""
-        result = UI._resolve_data('data.parq')
+        result = resolve_data('data.parq')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -892,7 +1245,7 @@ class TestResolveData:
 
     def test_resolve_data_tuple_with_alias(self):
         """Test resolving a tuple of (alias, path)."""
-        result = UI._resolve_data([('my_data', 'path/to/data.csv')])
+        result = resolve_data([('my_data', 'path/to/data.csv')])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -903,7 +1256,7 @@ class TestResolveData:
 
     def test_resolve_data_remote_http_url(self):
         """Test resolving a remote HTTP URL (enables httpfs)."""
-        result = UI._resolve_data('http://example.com/data.csv')
+        result = resolve_data('http://example.com/data.csv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -913,7 +1266,7 @@ class TestResolveData:
 
     def test_resolve_data_remote_https_url(self):
         """Test resolving a remote HTTPS URL (enables httpfs)."""
-        result = UI._resolve_data('https://example.com/data.parquet')
+        result = resolve_data('https://example.com/data.parquet')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -922,12 +1275,12 @@ class TestResolveData:
 
     def test_resolve_data_no_data_special_case(self):
         """Test that 'no_data' special case is handled correctly."""
-        result = UI._resolve_data('no_data')
+        result = resolve_data('no_data')
         assert result == []
 
     def test_resolve_data_no_data_in_list(self):
         """Test that 'no_data' in a list is skipped but other items are processed."""
-        result = UI._resolve_data(['no_data', 'data.csv'])
+        result = resolve_data(['no_data', 'data.csv'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -935,7 +1288,7 @@ class TestResolveData:
 
     def test_resolve_data_multiple_file_types(self):
         """Test resolving multiple file types creates single DuckDBSource."""
-        result = UI._resolve_data(['data1.csv', 'data2.parquet', 'data3.json'])
+        result = resolve_data(['data1.csv', 'data2.parquet', 'data3.json'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -946,7 +1299,7 @@ class TestResolveData:
 
     def test_resolve_data_mixed_sources_and_files(self, test_source):
         """Test resolving a mix of Source instances and file paths."""
-        result = UI._resolve_data([test_source, 'data.csv'])
+        result = resolve_data([test_source, 'data.csv'])
         assert len(result) == 2
         assert result[0] is test_source
         assert isinstance(result[1], DuckDBSource)
@@ -961,7 +1314,7 @@ class TestResolveData:
         )
         pipeline = Pipeline(source=source, table='pipe_table')
 
-        result = UI._resolve_data(pipeline)
+        result = resolve_data(pipeline)
         assert len(result) == 1
         resolved_source = result[0]
         assert isinstance(resolved_source, DuckDBSource)
@@ -971,7 +1324,7 @@ class TestResolveData:
     def test_resolve_data_path_object(self):
         """Test resolving a Path object."""
         path = Path('data/test.csv')
-        result = UI._resolve_data(path)
+        result = resolve_data(path)
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -981,13 +1334,13 @@ class TestResolveData:
     def test_resolve_data_duckdb_connection_string(self):
         """Test resolving a DuckDB connection string."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.duckdb'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
             conn.close()
 
-            result = UI._resolve_data(f'duckdb:///{db_path}')
+            result = resolve_data(f'duckdb:///{db_path}')
             assert len(result) == 1
             source = result[0]
             assert isinstance(source, DuckDBSource)
@@ -998,13 +1351,13 @@ class TestResolveData:
     def test_resolve_data_db_file_duckdb(self):
         """Test resolving a .db file that is actually DuckDB."""
         # Create a proper DuckDB file
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / 'test.db'
             conn = duckdb.connect(str(db_path))
             conn.execute('CREATE TABLE test (id INTEGER)')
             conn.close()
 
-            result = UI._resolve_data(str(db_path))
+            result = resolve_data(str(db_path))
             assert len(result) == 1
             source = result[0]
             assert isinstance(source, DuckDBSource)
@@ -1015,16 +1368,16 @@ class TestResolveData:
     def test_resolve_data_db_file_not_found(self):
         """Test that resolving a non-existent .db file raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="Database file not found"):
-            UI._resolve_data('/nonexistent/path/to/database.db')
+            resolve_data('/nonexistent/path/to/database.db')
 
     def test_resolve_data_unsupported_file_type(self):
         """Test that resolving an unsupported file type raises ValueError."""
         with pytest.raises(ValueError, match="Could not determine how to load"):
-            UI._resolve_data('data.xyz')
+            resolve_data('data.xyz')
 
     def test_resolve_data_dict_with_file_paths(self):
         """Test that dict with file paths uses keys as aliases."""
-        result = UI._resolve_data({'alias1': 'data1.csv', 'alias2': 'data2.parquet'})
+        result = resolve_data({'alias1': 'data1.csv', 'alias2': 'data2.parquet'})
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1037,7 +1390,7 @@ class TestResolveData:
 
     def test_resolve_data_local_files_no_httpfs(self):
         """Test that local files don't enable httpfs."""
-        result = UI._resolve_data(['data.csv', 'data.parquet'])
+        result = resolve_data(['data.csv', 'data.parquet'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1046,11 +1399,7 @@ class TestResolveData:
 
     def test_resolve_data_mixed_local_and_remote(self):
         """Test resolving a mix of local and remote files."""
-        if sys.platform == 'win32':
-            # Skip on Windows due to httpfs extension file locking issues in CI
-            pytest.skip("httpfs extension has file locking issues on Windows CI")
-
-        result = UI._resolve_data(['local.csv', 'https://example.com/remote.csv'])
+        result = resolve_data(['local.csv', 'https://example.com/remote.csv'])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1063,31 +1412,31 @@ class TestResolveData:
 
     def test_resolve_data_db_file_sqlite(self, sqlite_db_path):
         """Test resolving a .db file that is actually SQLite."""
-        result = UI._resolve_data(str(sqlite_db_path))
+        result = resolve_data(str(sqlite_db_path))
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, SQLAlchemySource)
 
     def test_resolve_data_sqlite_connection_string(self, sqlite_db_path):
         """Test resolving a SQLite connection string."""
-        result = UI._resolve_data(f'sqlite:///{sqlite_db_path}')
+        result = resolve_data(f'sqlite:///{sqlite_db_path}')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, SQLAlchemySource)
 
     def test_resolve_data_empty_list(self):
         """Test that an empty list returns an empty list."""
-        result = UI._resolve_data([])
+        result = resolve_data([])
         assert result == []
 
     def test_resolve_data_empty_dict(self):
         """Test that an empty dict returns an empty list."""
-        result = UI._resolve_data({})
+        result = resolve_data({})
         assert result == []
 
     def test_resolve_data_source_memory_uri(self):
         """Test that the created DuckDBSource uses memory URI."""
-        result = UI._resolve_data('data.csv')
+        result = resolve_data('data.csv')
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1095,7 +1444,7 @@ class TestResolveData:
 
     def test_resolve_data_provided_source_name(self):
         """Test that created DuckDBSource has the PROVIDED_SOURCE_NAME."""
-        result = UI._resolve_data('data.csv')
+        result = resolve_data('data.csv')
         assert len(result) == 1
         source = result[0]
         assert source.name == PROVIDED_SOURCE_NAME
@@ -1113,7 +1462,7 @@ class TestResolveData:
         pipeline1 = Pipeline(source=source1, table='table1')
         pipeline2 = Pipeline(source=source2, table='table2')
 
-        result = UI._resolve_data([pipeline1, pipeline2])
+        result = resolve_data([pipeline1, pipeline2])
         assert len(result) == 1
         source = result[0]
         assert isinstance(source, DuckDBSource)
@@ -1128,7 +1477,7 @@ class TestResolveData:
         )
         pipeline = Pipeline(source=source, table='pipe_table')
 
-        result = UI._resolve_data([pipeline, 'data.csv'])
+        result = resolve_data([pipeline, 'data.csv'])
         assert len(result) == 1
         duckdb_source = result[0]
         assert isinstance(duckdb_source, DuckDBSource)
@@ -1139,40 +1488,224 @@ class TestResolveData:
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_netcdf_file(self):
         """Test resolving a NetCDF file creates XArraySQLSource."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temperature': (('lat', 'lon'), np.random.rand(3, 4))})
             try:
                 ds.to_netcdf(nc_path)
             except Exception:
                 pytest.skip("NetCDF write backend unavailable")
-            result = UI._resolve_data(str(nc_path))
+            result = resolve_data(str(nc_path))
             assert len(result) == 1
             assert isinstance(result[0], XArraySQLSource)
             assert 'temperature' in result[0].get_tables()
 
     def test_resolve_data_xarray_import_error(self):
         """Test graceful error when xarray-sql not installed."""
-        with patch('lumen.sources.xarray_sql.check_xarray_available', return_value=False):
+        with patch('lumen.sources.xarray_sql.try_import_xarray', return_value=None):
             with pytest.raises(ImportError, match="xarray"):
-                UI._resolve_data('data.nc')
+                resolve_data('data.nc')
 
     @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
     def test_resolve_data_mixed_xarray_and_csv(self):
         """Test that .nc creates separate source while .csv goes to DuckDB."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             nc_path = Path(tmpdir) / 'test.nc'
             ds = xr.Dataset({'temp': (('x',), np.array([1.0, 2.0]))})
             try:
                 ds.to_netcdf(nc_path)
             except Exception:
                 pytest.skip("NetCDF write backend unavailable")
-            result = UI._resolve_data([str(nc_path), 'data.csv'])
+            result = resolve_data([str(nc_path), 'data.csv'])
             assert len(result) == 2
             xarray_sources = [s for s in result if isinstance(s, XArraySQLSource)]
             duckdb_sources = [s for s in result if isinstance(s, DuckDBSource)]
             assert len(xarray_sources) == 1
             assert len(duckdb_sources) == 1
+
+
+def _frames():
+    data = {'a': [1, 2, 3]}
+    yield 'pandas', lambda: pd.DataFrame(data)
+    yield 'polars', lambda: pytest.importorskip('polars').DataFrame(data)
+    yield 'pyarrow', lambda: pytest.importorskip('pyarrow').table(data)
+    yield 'relation', lambda: duckdb.sql('SELECT * FROM range(1, 4) t(a)')
+
+
+@pytest.mark.parametrize('make', [m for _, m in _frames()], ids=[n for n, _ in _frames()])
+def test_read_frame(make):
+    source = read(make())
+    assert source.get_tables() == ['data']
+    assert list(source.get('data')['a']) == [1, 2, 3]
+
+
+def test_read_mixed_dict_is_one_source(tmp_path):
+    pl = pytest.importorskip('polars')
+    csv = tmp_path / 'orders.csv'
+    pd.DataFrame({'amount': [10, 20]}).to_csv(csv, index=False)
+    source = read({'people': pd.DataFrame({'name': ['a', 'b']}), 'scores': pl.DataFrame({'s': [1.5]}), 'orders': str(csv)})
+    assert sorted(source.get_tables()) == ['orders', 'people', 'scores']
+    totals = source.execute('SELECT (SELECT COUNT(*) FROM people) AS p, (SELECT SUM(amount) FROM orders) AS o')
+    assert totals.to_dict('records') == [{'p': 2, 'o': 30.0}]
+
+
+def test_read_mixed_dict_joins_a_frame_a_grid_and_a_connection(tmp_path):
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    conn = duckdb.connect(str(tmp_path / 'user.duckdb'))
+    conn.execute("CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 10), ('B', 20)) t(species, amount)")
+    grid = xr.Dataset({'temp': (('species', 'day'), [[9.0, 11.0], [19.0, 21.0]])}, coords={'species': ['A', 'B'], 'day': [1, 2]})
+    source = read({'people': pd.DataFrame({'species': ['A', 'B'], 'mass': [3700, 5000]}), 'climate': grid, 'shop': conn})
+
+    assert sorted(source.get_tables()) == ['climate', 'orders', 'people']
+    joined = source.execute(
+        'SELECT p.species, o.amount, AVG(c.temp) AS temp FROM people p '
+        'JOIN orders o USING (species) JOIN climate c USING (species) GROUP BY ALL ORDER BY 1'
+    )
+    assert joined.values.tolist() == [['A', 10, 10.0], ['B', 20, 20.0]]
+    # The user's database only ever had its own table
+    assert conn.execute('SELECT table_name FROM information_schema.tables').fetchall() == [('orders',)]
+
+
+def test_read_mixed_connection_table_clashing_with_a_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE people AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'people' has the same name"):
+        read({'people': pd.DataFrame({'a': [2]}), 'shop': conn})
+
+
+def test_read_mixed_connection_table_clashing_with_an_unnamed_frame_raises():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE data AS SELECT 1 AS a')
+    with pytest.raises(ValueError, match="'data' has the same name"):
+        read([pd.DataFrame({'a': [2]}), conn])
+
+
+def test_read_two_grids_share_one_source():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    a = xr.Dataset({'t': ('x', [1.0, 2.0])}, coords={'x': [0, 1]})
+    b = xr.Dataset({'u': ('x', [3.0, 4.0])}, coords={'x': [0, 1]})
+    source = read({'a': a, 'b': b})
+    assert source.execute('SELECT SUM(t + u) AS s FROM a JOIN b USING (x)').iloc[0, 0] == 10.0
+
+
+def _view_sql(source, name):
+    """The SQL of a DuckDB view; a table copied into DuckDB has none."""
+    rows = source._connection.execute('SELECT sql FROM duckdb_views() WHERE view_name = ?', [name]).fetchall()
+    return rows[0][0] if rows else ''
+
+
+def test_read_glob_stays_a_scan_over_the_files(tmp_path):
+    for i in range(2):
+        pd.DataFrame({'a': range(i * 5, i * 5 + 5)}).to_parquet(tmp_path / f'part{i}.parquet')
+    source = read({'parts': str(tmp_path / '*.parquet')})
+    # A view reading the files on each query, not a table copied into DuckDB
+    assert 'parquet' in _view_sql(source, 'parts').lower()
+    assert source.execute('SELECT COUNT(*) AS n, MAX(a) AS m FROM parts').values.tolist() == [[10, 9]]
+
+
+def test_read_url_is_queried_over_http(tmp_path):
+    import functools
+    import http.server
+    import threading
+    try:
+        duckdb.connect().execute('LOAD httpfs')
+    except duckdb.Error:
+        pytest.skip('DuckDB httpfs extension is not available')
+    pd.DataFrame({'a': [1, 2, 3]}).to_parquet(tmp_path / 'remote.parquet')
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(tmp_path))
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f'http://127.0.0.1:{server.server_port}/remote.parquet'
+        source = read({'remote': url})
+        assert url in _view_sql(source, 'remote')
+        assert source.execute('SELECT SUM(a) AS s FROM remote').iloc[0, 0] == 6
+    finally:
+        server.shutdown()
+
+
+def test_read_keeps_a_chunked_dataset_lazy():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    pytest.importorskip('dask')
+    ds = xr.Dataset({'t': (('x', 'y'), np.arange(400.0).reshape(20, 20))}).chunk({'x': 5})
+    source = read(ds)
+    assert source.execute('SELECT COUNT(*) AS n FROM t WHERE x < 5').iloc[0, 0] == 100
+    # Still dask-backed after the query, so nothing was loaded whole
+    assert source._dataset.t.chunks is not None
+
+
+def test_read_geojson_names_its_crs_on_the_column_type(tmp_path):
+    gpd = pytest.importorskip('geopandas')
+    from shapely.geometry import Point
+    gpd.GeoDataFrame({'n': ['a']}, geometry=[Point(13.4, 52.5)], crs='EPSG:4326').to_file(tmp_path / 'p.geojson')
+    source = read(str(tmp_path / 'p.geojson'))
+    table = source.get_tables()[0]
+    types = dict((row[0], row[1]) for row in source._connection.execute(f'DESCRIBE "{table}"').fetchall())
+    assert types['geometry'] == "GEOMETRY('EPSG:4326')"
+
+
+def test_read_duckdb_connection():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE t AS SELECT * FROM range(3) r(a)')
+    source = read(conn)
+    assert source.get_tables() == ['t']
+    assert len(source.get('t')) == 3
+
+
+@pytest.mark.parametrize('as_array', [False, True], ids=['dataset', 'dataarray'])
+def test_read_xarray(as_array):
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    da = xr.DataArray(np.arange(3.0), dims='x', coords={'x': [0, 1, 2]}, name='temp')
+    source = read(da if as_array else da.to_dataset())
+    assert isinstance(source, XArraySQLSource)
+    assert source.get_tables() == ['temp']
+    assert list(source.get('temp').sort_values('x')['temp']) == [0.0, 1.0, 2.0]
+
+
+def test_read_names_a_dataarray_from_its_key():
+    xr = pytest.importorskip('xarray')
+    pytest.importorskip('xarray_sql')
+    da = xr.DataArray(np.arange(3.0), dims='x', coords={'x': [0, 1, 2]})
+    assert read({'temp': da}).get_tables() == ['temp']
+
+
+def test_read_several_sources_raises():
+    # Ready-made Sources stay as they are, so two of them cannot be one source
+    first, second = DuckDBSource(uri=':memory:', tables={}), DuckDBSource(uri=':memory:', tables={})
+    with pytest.raises(ValueError, match='resolved to 2 sources'):
+        read([first, second])
+
+
+def test_read_duckdb_connection_leaves_it_open():
+    conn = duckdb.connect()
+    conn.execute('CREATE TABLE t AS SELECT 1 AS a')
+    read(conn).close()
+    assert conn.execute('SELECT a FROM t').fetchone() == (1,)
+
+
+def test_read_pipeline_lists_its_table():
+    pipeline = Pipeline(source=DuckDBSource.from_df({'t': pd.DataFrame({'a': [1, 2]})}), table='t')
+    source = read({'t': pipeline})
+    assert source.get_tables() == ['t']
+    assert list(source.get('t')['a']) == [1, 2]
+    assert len(read(pipeline).get(pipeline.name)) == 2
+
+
+def test_lumen_read_does_not_import_lumen_ai():
+    code = (
+        "import sys, lumen, pandas as pd; lumen.read(pd.DataFrame({'a': [1]})); "
+        "assert 'lumen.ai' not in sys.modules"
+    )
+    subprocess.run([sys.executable, '-c', code], check=True)
+
+
+def test_lumen_read_is_exposed():
+    import lumen
+    assert lumen.read(pd.DataFrame({'a': [1]})).get_tables() == ['data']
 
 
 class TestCLIPathValidation:
@@ -1198,6 +1731,202 @@ class TestCLIPathValidation:
             # Should be rejected: is a directory but not .zarr
             assert path.is_dir()
             assert not str(dir_path).endswith('.zarr')
+
+
+class TestLumenAIServeYamlRouting:
+    """A YAML dashboard spec (`lumen serve app.yaml`) needs no LLM provider
+    and must be handled by the base Serve command, not routed into the
+    AIHandler machinery that only understands data files (#1780)."""
+
+    def _build_args(self, *files):
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        LumenAIServe(sub.add_parser("serve"))
+        return parser.parse_args(["serve", *files])
+
+    def test_yaml_files_skip_aihandler_routing(self):
+        args = self._build_args("app.yaml")
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True) as base_invoke:
+                result = LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            assert result is True
+            assert base_invoke.called
+            # The AIHandler route must never have been installed for a pure
+            # yaml spec, since it is what feeds the path into
+            # resolve_data() and raises "Could not determine how to load".
+            assert bokeh_serve.build_single_handler_applications is original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_data_files_still_use_aihandler_routing(self):
+        args = self._build_args("data.csv")
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.command.ai.get_available_llm", return_value=OpenAI):
+                    LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            # A real data file must still go through the AIHandler-backed
+            # build_single_handler_applications override.
+            assert bokeh_serve.build_single_handler_applications is not original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_uppercase_yaml_suffix_skips_aihandler_routing(self):
+        """A case-differing suffix (Windows/macOS default filesystems are
+        case-insensitive) must route the same as a lowercase one, not fall
+        through to the AIHandler branch (#1780)."""
+        args = self._build_args("app.YAML")
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True) as base_invoke:
+                result = LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            assert result is True
+            assert base_invoke.called
+            assert bokeh_serve.build_single_handler_applications is original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_llm_model_url_configures_llamacpp(self):
+        url = "https://huggingface.co/org/repo-GGUF/blob/main/model.gguf?chat_format=chatml"
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        LumenAIServe(sub.add_parser("serve"))
+        args = parser.parse_args(["serve", "data.csv", "--llm-model-url", url])
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.ai.llm.LlamaCpp.warmup") as warmup:
+                    LumenAIServe(argparse.ArgumentParser()).invoke(args)
+            warmup.assert_called_once_with({
+                "default": {"repo_id": "org/repo-GGUF", "filename": "model.gguf", "chat_format": "chatml"}
+            })
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+    def test_yaml_route_resets_stale_aihandler_override(self):
+        """A prior in-process invoke() call for a data file leaves the
+        AIHandler-backed closure installed; a later yaml-only invoke() call
+        must restore the original before delegating, not reuse it (#1780)."""
+        original = bokeh_serve.build_single_handler_applications
+        try:
+            data_args = self._build_args("data.csv")
+            with patch.object(Serve, "invoke", return_value=True):
+                with patch("lumen.command.ai.get_available_llm", return_value=OpenAI):
+                    LumenAIServe(argparse.ArgumentParser()).invoke(data_args)
+            stale_closure = bokeh_serve.build_single_handler_applications
+            assert stale_closure is not original
+
+            yaml_args = self._build_args("app.yaml")
+            with patch.object(Serve, "invoke", return_value=True):
+                LumenAIServe(argparse.ArgumentParser()).invoke(yaml_args)
+            assert bokeh_serve.build_single_handler_applications is original
+        finally:
+            bokeh_serve.build_single_handler_applications = original
+
+
+def _invoke_serve(*argv, data="data.csv", build=False):
+    """Run ``lumen-ai serve`` without starting a server, optionally building the app."""
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser.add_subparsers().add_parser("serve"))
+    args = parser.parse_args(["serve", data, *argv])
+    original = bokeh_serve.build_single_handler_applications
+    try:
+        with patch.object(Serve, "invoke", return_value=True):
+            LumenAIServe(argparse.ArgumentParser()).invoke(args)
+        if build:
+            bokeh_serve.build_single_handler_applications([data])
+    finally:
+        bokeh_serve.build_single_handler_applications = original
+
+
+def test_ui_detects_llm_when_created_not_when_imported(monkeypatch):
+    """A key set after ``import lumen.ai`` is still picked up, as in a notebook."""
+    for env_var in PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    assert isinstance(ExplorerUI().llm, Groq)
+
+
+def test_serve_passes_detected_provider_to_app(capsys, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    data = str(Path(__file__).parents[1] / "sources" / "test.csv")
+    with patch("lumen.command.ai.get_available_llm", return_value=Groq):
+        _invoke_serve(data=data, build=True)
+    out = capsys.readouterr().out
+    assert "Using Groq because GROQ_API_KEY is set" in out
+    assert "llm = lmai.llm.Groq()" in out
+
+
+def test_serve_llm_model_url_uses_llama_cpp():
+    with patch.object(LlamaCpp, "warmup") as warmup:
+        _invoke_serve("--llm-model-url", "https://huggingface.co/org/repo/blob/main/model.gguf")
+    assert warmup.call_args.args[0]["default"]["filename"] == "model.gguf"
+
+
+@pytest.mark.parametrize("argv, quiet", [([], True), (["--log-level", "debug"], False)])
+def test_serve_quiets_instructor_retry_log(monkeypatch, argv, quiet):
+    """Lumen sends one attempt and handles the error itself, so instructor's
+    per-attempt error log only duplicates it, except when debugging."""
+    logger = logging.getLogger("instructor.v2.retry")
+    monkeypatch.setattr(logger, "level", logging.NOTSET)
+    _invoke_serve("--provider", "openai", *argv)
+    assert (logger.level == logging.CRITICAL) is quiet
+
+
+def test_serve_cli_provider_missing_from_path_exits(capsys):
+    with patch("lumen.command.ai.shutil.which", return_value=None), pytest.raises(SystemExit):
+        _invoke_serve("--provider", "claude-code")
+    assert "`claude` was not found on your PATH" in capsys.readouterr().err
+
+
+def test_serve_cli_provider_signed_out_exits(capsys):
+    with (
+        patch("lumen.command.ai.shutil.which", return_value="/usr/bin/claude"),
+        patch.object(ClaudeCode, "signed_in", return_value=False),
+        pytest.raises(SystemExit),
+    ):
+        _invoke_serve("--provider", "claude-code")
+    assert "Claude Code CLI reports no signed-in user" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("pulled, argv, warning", [
+    (None, [], "Could not reach Ollama at http://localhost:11434"),
+    (None, ["--provider-endpoint", "http://gpu:11434/v1"], "Could not reach Ollama at http://gpu:11434/v1"),
+    (["qwen3.5:9b"], ["--model", "gemma4:26b"], "`ollama pull gemma4:26b`, or use --model qwen3.5:9b"),
+    (["qwen3.5:latest"], ["--model", "qwen3.5"], None),
+    (["qwen3.5:9b"], ["--model", "qwen3.5:9b"], None),
+])
+def test_serve_ollama_preflight_warns(capsys, pulled, argv, warning):
+    with patch("lumen.command.ai.ollama_models", return_value=pulled) as models:
+        _invoke_serve("--provider", "ollama", *argv)
+    out = capsys.readouterr().out
+    if warning:
+        assert warning in out
+    else:
+        assert "Warning" not in out
+    assert models.call_args.args[0] == (argv[1] if argv[:1] == ["--provider-endpoint"] else None)
+
+
+@pytest.mark.parametrize("pulled, ollama_hint", [
+    (None, "install Ollama, then `ollama pull"),
+    ([], "Ollama is running with no models: `ollama pull"),
+    (["qwen3.5:9b"], "--provider ollama --model qwen3.5:9b"),
+])
+def test_serve_without_provider_lists_keyless_options(capsys, pulled, ollama_hint):
+    with (
+        patch("lumen.command.ai.get_available_llm", return_value=None),
+        patch("lumen.command.ai.ollama_models", return_value=pulled),
+        patch("lumen.command.ai.local_cli_providers", return_value={ClaudeCode: True, CopilotCli: None}),
+        pytest.raises(SystemExit),
+    ):
+        _invoke_serve()
+    message = capsys.readouterr().err
+    assert "--provider kilo" in message
+    assert "signed in to: --provider claude-code" in message
+    assert "Sign in to one of these coding CLIs first: --provider copilot-cli" in message
+    assert ollama_hint in message
+    assert "OPENAI_API_KEY" in message
 
 
 @pytest.mark.skipif(not HAS_XARRAY, reason="xarray not installed")
@@ -1232,7 +1961,7 @@ class TestXarrayUploadHandler:
 
     def test_upload_handler_returns_empty_without_xarray(self):
         """Upload handlers should be empty if xarray-sql not installed."""
-        with patch('lumen.ai.ui.check_xarray_available', return_value=False):
+        with patch('lumen.ai.ui.try_import_xarray', return_value=None):
             handlers = UI._get_xarray_upload_handlers()
             assert handlers == {}
 
@@ -1392,7 +2121,7 @@ async def test_edit_callback_is_set_on_interface(explorer_ui):
     """Test that edit_callback is properly wired to the ChatInterface."""
     ui = explorer_ui
     assert ui.interface.edit_callback is not None
-    assert asyncio.iscoroutinefunction(ui.interface.edit_callback)
+    assert inspect.iscoroutinefunction(ui.interface.edit_callback)
 
 
 # --- Tests for on_edit exploration lifecycle ---
@@ -1719,3 +2448,173 @@ async def test_edit_on_child_exploration_switches_to_parent(explorer_ui):
     # Parent and Home still intact
     assert len(ui._explorations.items) == 2
     assert parent_exploration.plan is not None
+
+
+def test_resolve_data_geojson_startup(tmp_path):
+    """A .geojson path at startup loads via read_geo_file instead of raising (gh-1900)."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    gdf = gpd.GeoDataFrame(
+        {"county": ["A", "B"], "population": [10, 20]},
+        geometry=[
+            Polygon([(0, 0), (1, 0), (1, 1)]),
+            Polygon([(1, 1), (2, 1), (2, 2)]),
+        ],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "counties.geojson"
+    gdf.to_file(path, driver="GeoJSON")
+
+    sources = resolve_data([str(path)])
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert "counties" in source.get_tables()
+    # geometry is registered as a real GEOMETRY column; ST_AsText returns text so
+    # this verifies loading without needing the GEOMETRY fetch fix from #1903
+    wkt = source.execute("SELECT ST_AsText(geometry) AS wkt FROM counties LIMIT 1")
+    assert wkt["wkt"].iloc[0].startswith("POLYGON")
+
+
+def test_resolve_data_geojson_startup_keeps_crs(tmp_path):
+    """The CRS read_geo_file captures must reach the source, so the fetched
+    geometry comes back geographic instead of CRS-less."""
+    gpd = pytest.importorskip("geopandas")
+    from shapely.geometry import Polygon
+
+    gdf = gpd.GeoDataFrame(
+        {"county": ["A"]},
+        geometry=[Polygon([(0, 0), (1, 0), (1, 1)])],
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "counties.geojson"
+    gdf.to_file(path, driver="GeoJSON")
+
+    (source,) = resolve_data([str(path)])
+
+    assert source.geometry_crs == "EPSG:4326"
+    result = source.get("counties")
+    assert result.crs is not None
+    assert result.crs.to_epsg() == 4326
+
+
+# ---------------------------------------------------------------------------
+# Resolved model footer label (issue #2043)
+# ---------------------------------------------------------------------------
+
+def test_ensure_model_label_adds_label(explorer_ui):
+    """_ensure_model_label appends model name to timestamp_format when
+    the LLM has a resolved model name."""
+    ui = explorer_ui
+    ui.llm._resolved_model = "gpt-test"
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    assert "(used gpt-test)" in message.timestamp_format
+    assert message.timestamp_format.startswith('%H:%M')
+
+
+def test_ensure_model_label_no_duplicate(explorer_ui):
+    """_ensure_model_label does not add a second label if one already exists."""
+    ui = explorer_ui
+    ui.llm._resolved_model = "gpt-test"
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    ui._ensure_model_label(message)
+    assert message.timestamp_format.count("(used gpt-test)") == 1
+
+
+def test_ensure_model_label_skips_when_no_model(explorer_ui):
+    """_ensure_model_label is a no-op when _resolved_model is None."""
+    ui = explorer_ui
+    ui.llm._resolved_model = None
+    message = type('Message', (), {'timestamp_format': '%H:%M'})()
+    ui._ensure_model_label(message)
+    assert message.timestamp_format == '%H:%M'
+
+
+def test_cli_code_execution_choices_match_explorer_ui():
+    """Every --code-execution value the CLI accepts has to be one ExplorerUI accepts."""
+    parser = argparse.ArgumentParser()
+    LumenAIServe(parser)
+    choices = next(a.choices for a in parser._actions if a.dest == "code_execution")
+
+    assert choices == ExplorerUI.param.code_execution.objects
+    assert parser.parse_args(["--code-execution", "allow"]).code_execution == "allow"
+
+
+def test_cli_version_reports_the_installed_version(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["lumen-ai", "--version"])
+    with pytest.raises(SystemExit):
+        main()
+
+    assert capsys.readouterr().out.strip() == f"Lumen AI {__version__}"
+
+
+def _bar_editor(source):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    table = source.get_tables()[0]
+    data = source.get(table)
+    column = next(c for c in data.columns if not pd.api.types.is_numeric_dtype(data[c]))
+    view = VegaLiteView(
+        pipeline=Pipeline(source=source, table=table),
+        spec={"mark": "bar", "encoding": {"x": {"field": column, "type": "nominal"}}},
+    )
+    return VegaLiteEditor(component=view), column, data
+
+
+async def test_a_click_in_an_exploration_chart_asks_the_chat_about_it(explorer_ui, monkeypatch):
+    from lumen.ai.selection import CLICK
+    editor, column, data = _bar_editor(explorer_ui.context["source"])
+    sent = []
+    monkeypatch.setattr(explorer_ui.interface, "send", lambda message, **kwargs: sent.append((message, kwargs)))
+    box = explorer_ui._ask_box(editor)
+    assert not box.visible and "params" not in editor.component.spec
+
+    value = data[column].iloc[0]
+    editor.component._panel.selection.param.update(**{CLICK: [{column: value}]})
+    assert box.visible
+    _selected, (question, ask), _answers = box
+    question.value_input = "What is this?"
+    ask.clicks += 1
+    await async_wait_until(lambda: len(sent) == 1)
+    message, kwargs = sent[0]
+    assert kwargs == {"respond": True}
+    assert message.startswith("What is this?\n\nThis is about") and str(value) in message
+
+
+async def test_an_exploration_chart_tab_ends_with_the_ask_box(explorer_ui, monkeypatch):
+    editor, _column, _data = _bar_editor(explorer_ui.context["source"])
+    exploration = SimpleNamespace(plan=[SimpleNamespace(views=[editor])])
+    monkeypatch.setattr(explorer_ui, "_render_pop_out", lambda *args: Row())
+    _title, tab = explorer_ui._render_view(exploration, editor)
+    assert isinstance(tab[1], VSplit) and not tab[-1].visible and len(tab) == 3
+
+
+async def test_an_exploration_table_tab_has_no_ask_box(explorer_ui):
+    explorer_ui._explorer.param.update(table_slug="test_table")
+    await explorer_ui._add_exploration_from_explorer()
+    await async_wait_until(lambda: len(explorer_ui._explorations.items) > 1)
+    exploration = explorer_ui._explorations.items[1]['view']
+    await async_wait_until(lambda: len(exploration.plan.views) > 0)
+    sql_output = next(v for v in exploration.plan.views if isinstance(v, SQLEditor))
+    _title, tab = explorer_ui._render_view(exploration, sql_output)
+    assert len(tab) == 2
+
+
+async def test_a_click_on_a_point_in_an_exploration_finds_its_row_by_number(explorer_ui):
+    from lumen.ai.editors import VegaLiteEditor
+    from lumen.ai.selection import CLICK, Selected, watch_clicks
+    from lumen.pipeline import Pipeline
+    from lumen.views.base import VegaLiteView
+    source = read({"birds": pd.DataFrame({"bill": [58.0, 46.5], "flipper": [181.0, 207.0], "species": ["A", "B"]})})
+    view = VegaLiteView(pipeline=Pipeline(source=source, table="birds"), spec={"mark": "point", "encoding": {
+        "x": {"field": "flipper", "type": "quantitative"}, "y": {"field": "bill", "type": "quantitative"},
+        "color": {"field": "species", "type": "nominal"}}})
+    editor = VegaLiteEditor(component=view)
+    box = explorer_ui._ask_box(editor)
+    # Vega-Lite sends whole floats as JSON integers
+    editor.component._panel.selection.param.update(**{CLICK: [{"bill": 58}, {"flipper": 181}, {"species": "A"}]})
+    assert box.visible and box[0].object == "**Selected:** bill: 58, flipper: 181, species: A"

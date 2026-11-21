@@ -23,13 +23,46 @@ ui = lmai.ExplorerUI(data=['penguins.csv', 'earthquakes.parquet'])
 ui.servable()
 ```
 
+### In-memory data
+
+`ExplorerUI` and `lumen.read` also take data you already have in Python. A dict key names the table.
+
+``` py title="DataFrames and datasets"
+import hvsampledata
+import lumen
+import lumen.ai as lmai
+
+df = hvsampledata.penguins("pandas")
+source = lumen.read({"penguins": df})  # (1)!
+source.get("penguins")
+
+ui = lmai.ExplorerUI(data=[
+    lumen.read({
+        "penguins": df,
+        "states": hvsampledata.us_states("geopandas"),  # a GeoDataFrame
+    }),
+    hvsampledata.air_temperature("xarray"),  # an xarray Dataset, kept apart as a grid (2)
+])
+```
+
+1. `lumen.read` returns one Source. It accepts pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets and DataArrays, DuckDB connections and relations, plus the paths and URLs above.
+2. Xarray data in the same dict as other tables is joined into DuckDB, which loses the gridded source that `answer.ds` and the gridded tools rely on. Passing it as its own list item keeps it a gridded source.
+
+### Ask from a notebook
+
+A Source or Pipeline can answer questions directly with `source.ask(...)`, without the chat UI. See [Lumen in notebooks](../getting_started/lumen_in_notebooks.md).
+
+A dict passed to `lumen.read` can mix DataFrames, files, Pipelines, xarray data and a DuckDB connection; they become named tables of one source, so a question can join them. xarray data is read lazily (joined this way it loses its gridded source, see note 2 above), and a connection's tables are copied in so your database is never written to.
+
 ## Supported sources
 
 | Source | Use for |
 |--------|---------|
-| Files | CSV, Parquet, JSON (local or URL) |
+| Files | CSV, TSV, Parquet, JSON, JSONL and NDJSON (local or URL); Excel and HTML tables when uploaded in the UI |
+| In-memory data | pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray objects, DuckDB connections |
 | DuckDB | Local SQL queries on files |
-| xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5) |
+| xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5, GRIB) |
+| Geospatial files | GeoJSON, WKT and zipped shapefiles |
 | STAC | SpatioTemporal Asset Catalogs (e.g. Planetary Computer) |
 | Snowflake | Cloud data warehouse |
 | BigQuery | Google's data warehouse |
@@ -177,10 +210,16 @@ source = DuckDBSource(
 
 ### xarray for scientific data
 
-Query N-dimensional scientific datasets (NetCDF, Zarr, HDF5) with SQL via Apache DataFusion:
+Query N-dimensional scientific datasets (NetCDF, Zarr, HDF5, GRIB) with SQL via Apache DataFusion:
 
 ``` bash title="Install dependencies"
-pip install lumen[xarray]
+pip install 'lumen[xarray]'
+pip install 'lumen[xarray-grib]'  # GRIB files too
+```
+
+``` bash title="From the command line"
+lumen-ai serve air_temperature.nc
+lumen-ai serve forecast.zarr
 ```
 
 ``` py title="Query a NetCDF file"
@@ -193,10 +232,13 @@ ui = lmai.ExplorerUI(data=source)
 ui.servable()
 ```
 
-Each data variable in the dataset becomes a separate SQL table with coordinate columns:
+Each data variable in the dataset becomes a separate SQL table with coordinate columns. To try it without a file, read the sample air temperature grid:
 
 ``` py title="Direct SQL queries"
-source = XArraySQLSource(uri='air_temperature.nc')
+import hvsampledata
+import lumen
+
+source = lumen.read({"air": hvsampledata.air_temperature("xarray")})
 source.get_tables()  # ['air']
 
 df = source.execute(
@@ -213,6 +255,21 @@ source = XArraySQLSource(
     variables=['temperature', 'pressure']
 )
 ```
+
+### Geospatial files
+
+Load GeoJSON, WKT and zipped shapefiles. Their geometry column is kept, along with its coordinate reference system, and charts of it render as maps with Vega-Lite or Deck.gl.
+
+``` bash title="Install dependencies"
+pip install 'lumen[geo]'
+```
+
+``` bash title="From the command line"
+lumen-ai serve countries.geojson
+lumen-ai serve parcels.zip  # a zipped shapefile
+```
+
+You can also upload these files in the UI. From the command line they have to be local paths.
 
 ### STAC catalogs
 
@@ -301,6 +358,36 @@ source = DuckDBSource(
 ```
 
 1. Use 'customers' instead of 'customer_data.csv' in queries
+
+## Table statistics
+
+Lumen AI describes each table to the model with SQL types, keys, value ranges, null shares and frequent values. It computes these per table, starting in the background when a source is first indexed, using the cheapest accurate method the engine offers:
+
+- Engine metadata where it is free: Postgres `pg_stats`, Parquet footers, Snowflake metadata-served aggregates, Postgres and SQLite row estimates.
+- One exact aggregate pass for tables up to 1M rows.
+- A seeded engine-side sample of 10,000 rows above that.
+
+The prompt says which method was used, for example `(1056320 rows; stats from a 10000-row sample)`, or `stats from the first 10000 rows` where the engine cannot sample randomly. On BigQuery, where `LIMIT` does not reduce the bytes billed, tables defined by a SQL expression are not sampled at all, and each statistics query is capped at 10 GB billed.
+
+Each database may spend 300 seconds per hour on statistics, and a single query may run for 30 seconds before it is cancelled. Tables profiled after the budget is spent show names and types only and are retried later. `SQLAgent` waits up to `stats_wait` seconds (default 10) for statistics before answering, and the schema block is capped at `schema_max_tokens` (default 4000) across at most `schema_tables_shown` tables (default 25):
+
+``` py title="Tune statistics in the SQL prompt"
+from lumen.ai.agents import SQLAgent
+
+agent = SQLAgent(stats_wait=30, schema_max_tokens=6000, schema_tables_shown=40)
+```
+
+### Statistics cache
+
+Statistics are cached in memory and, for databases with a stable identity (database files, SQLAlchemy URLs, Snowflake and BigQuery accounts), on disk under the user cache directory, for example `~/Library/Caches/lumen/table_stats` on macOS. A cached entry is discarded when the table's columns change or its modification token changes (the modification time of the file or database and its write-ahead log, BigQuery `modified`, the DuckDB catalog entry), and after seven days on engines that expose no such token. An `UPDATE` to a table in an in-memory DuckDB database is not detected; the entry is dropped with the connection.
+
+!!! warning "The cache contains data values"
+
+    Cached entries include value ranges, frequent values and example strings from your tables. On Linux and macOS the files are created readable by the current user only; on Windows the default location is inside the user profile, which only that user can read. Snowflake entries are keyed by user and role so stats computed under one role are not served to another. To keep statistics in memory only, set `LUMEN_TABLE_STATS_CACHE` to an empty string; set it to a path to move the cache.
+
+``` bash title="Disable the on-disk cache"
+export LUMEN_TABLE_STATS_CACHE=""
+```
 
 ## Troubleshooting
 

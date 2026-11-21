@@ -7,24 +7,47 @@ import re
 from copy import deepcopy
 from typing import ClassVar
 
+import numpy as np
+import pandas as pd
 import param  # type: ignore
 import sqlglot
 
 from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
-    LT, Alias, Column, Expression, Identifier, Literal as SQLLiteral, Max, Min,
-    Null, ReadCSV, Select, Star, Table, TableSample, and_, func, or_,
-    replace_placeholders, replace_tables, select,
+    LT, Alias, ArrayAgg, Boolean, Column, Count, Distinct, Expression, Func,
+    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV,
+    Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_,
+    func, or_, replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..util import detect_file_encoding
-from .base import Transform
+from .base import (
+    Range, Transform, _is_range, parse_conditions, spec_conditions,
+)
 
 Dialect.classes['postgresql'] = Dialect.get('postgres')
 Dialect.classes['mssql'] = Dialect.get('tsql')
+
+#: Dialects known to support aggregating distinct values into an array, i.e.
+#: `ARRAY_AGG(DISTINCT col)`, which `SQLSchemaStats` depends on.
+#:
+#: Deliberately an allowlist rather than a try/except: sqlglot's default
+#: `unsupported_level` only warns, so an unsupported dialect may emit SQL that
+#: is silently wrong rather than raising. MySQL and SQLite have no array
+#: aggregate at all (only `GROUP_CONCAT`); Redshift has only `LISTAGG` but
+#: sqlglot emits `ARRAY_AGG` for it regardless; and BigQuery's `ARRAY_AGG`
+#: raises at runtime on NULL input unless `IGNORE NULLS` is given.
+ARRAY_AGG_DISTINCT_DIALECTS = frozenset({
+    'duckdb',
+    'postgres',
+    'postgresql',
+    'presto',
+    'snowflake',
+    'trino',
+})
 
 
 class SQLTransform(Transform):
@@ -140,6 +163,8 @@ class SQLTransform(Transform):
                 error_level=self.error_level,
             )
 
+        # A comment after the final ";" parses as an empty Semicolon statement.
+        expressions = [expr for expr in expressions if not isinstance(expr, Semicolon)]
         if len(expressions) > 1:
             raise ValueError(
                 "Multiple SQL statements found. Please provide only a single SQL statement."
@@ -171,7 +196,7 @@ class SQLTransform(Transform):
 
         return expr
 
-    def _to_subquery(self, expression: Expression, alias: str | None = None) -> Expression:
+    def _to_subquery(self, expression: Expression, alias: str = "subquery") -> Expression:
         """
         Convert an expression to a subquery, handling Alias expressions that don't have .subquery().
 
@@ -180,7 +205,8 @@ class SQLTransform(Transform):
         expression : Expression
             The expression to convert to a subquery
         alias : str, optional
-            Alias for the subquery
+            Alias for the subquery. Always aliased by default because SQL Server
+            rejects a derived table in FROM that carries no alias.
 
         Returns
         -------
@@ -190,6 +216,9 @@ class SQLTransform(Transform):
         if isinstance(expression, Alias):
             # Alias expressions are already suitable for use as subqueries
             return expression
+        if isinstance(expression, Pivot):
+            # DuckDB's top-level PIVOT/UNPIVOT statement is not a Query and has no .subquery().
+            return Subquery(this=expression, alias=TableAlias(this=to_identifier(alias)))
         return expression.subquery(alias)
 
     def to_sql(self, expression: Expression) -> str:
@@ -207,7 +236,11 @@ class SQLTransform(Transform):
             SQL string representation
         """
         if self.optimize:
-            expression = optimize(expression, dialect=self.read)
+            # No schema is available here, and sqlglot >= 30.22 raises on any
+            # column it cannot resolve without one.
+            expression = optimize(
+                expression, dialect=self.read, validate_qualify_columns=False
+            )
 
         expression = self._add_encoding_to_read_csv(expression=expression)
 
@@ -264,6 +297,11 @@ class SQLFormat(SQLTransform):
         return self.to_sql(replaced_expression,)
 
 
+def _alias(name: str) -> Identifier | None:
+    # An empty Identifier renders as AS "" under identify=True, which is invalid SQL
+    return Identifier(this=name) if name else None
+
+
 class SQLSelectFrom(SQLFormat):
 
     sql_expr = param.String(
@@ -291,8 +329,16 @@ class SQLSelectFrom(SQLFormat):
             # e.g. read_parquet("/path/to/file.parquet"); so we need to quote
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
-        # if 'data/life-expectancy.csv' becomes 'data / life-expectancy.csv'
-        if not list(expression.find_all(Select)) and " / " in expression.sql():
+        # A bare table name that does not round-trip was mis-parsed as an
+        # expression, e.g. 'data/life-expectancy.csv' becomes
+        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'.
+        # A table function is exempt because keyword arguments are reprinted
+        # with spaces, e.g. nullstr='NA' becomes nullstr = 'NA'.
+        if (
+            not list(expression.find_all(Select))
+            and not isinstance(expression, Func)
+            and expression.sql().strip().lower() != sql_in.strip().lower()
+        ):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
 
         tables = {}
@@ -308,7 +354,7 @@ class SQLSelectFrom(SQLFormat):
                 else:
                     tables[existing_table] = Table(
                         this=Identifier(this=renamed_table),
-                        alias=Identifier(this=existing_table.alias),
+                        alias=_alias(existing_table.alias),
                     )
 
         else:
@@ -318,12 +364,12 @@ class SQLSelectFrom(SQLFormat):
                 elif isinstance(renamed_key, Table):
                     tables[renamed_key] = Table(
                         Identifier(this=renamed_value),
-                        alias=Identifier(this=renamed_key.alias),
+                        alias=_alias(renamed_key.alias),
                     )
                 elif isinstance(renamed_value, Table):
                     tables[
                         Table(
-                            this=renamed_key, alias=Identifier(this=renamed_value.alias)
+                            this=renamed_key, alias=_alias(renamed_value.alias)
                         )
                     ] = renamed_value
                 else:
@@ -337,7 +383,7 @@ class SQLSelectFrom(SQLFormat):
                     )
                     key_table = Table(
                         this=Identifier(this=renamed_key),
-                        alias=Identifier(this=alias),
+                        alias=_alias(alias),
                     )
                     # Try to parse renamed_value as SQL if it looks like a SQL expression
                     value_expr = None
@@ -353,7 +399,7 @@ class SQLSelectFrom(SQLFormat):
                     if value_expr is None:
                         value_expr = Table(
                             this=Identifier(this=renamed_value),
-                            alias=Identifier(this=alias),
+                            alias=_alias(alias),
                         )
                     tables[key_table] = value_expr
 
@@ -362,7 +408,10 @@ class SQLSelectFrom(SQLFormat):
             if not tables:
                 return sql_in
             # if Select is found, replace tables
-            replaced_expression = replace_tables(expression, tables, dialect=self.read)
+            name_mapping = {key.name: value for key, value in tables.items()}
+            replaced_expression = expression.transform(
+                lambda node: name_mapping[node.name] if isinstance(node, Table) and node.name in name_mapping else node
+            )
             return self.to_sql(replaced_expression)
 
         # if Select is NOT found, use the default sql_expr
@@ -426,6 +475,11 @@ class SQLLimit(SQLTransform):
                 # do not modify the original query
                 return sql_in
 
+        # Limiting in place keeps the query engines quote in error messages
+        # identical to the one that was written.
+        if isinstance(parsed_expression, Select) and (existing_limit is None or isinstance(existing_limit, Limit)):
+            return self.to_sql(parsed_expression.limit(self.limit))
+
         subquery = self._to_subquery(parsed_expression)
         expression = select("*").from_(subquery).limit(self.limit)
         return self.to_sql(expression)
@@ -479,6 +533,81 @@ class SQLMinMax(SQLTransform):
         return self.to_sql(expression)
 
 
+class SQLSchemaStats(SQLTransform):
+    """
+    Computes every statistic required to describe a table in one query.
+
+    `BaseSQLSource.get_schema` otherwise issues one `SELECT DISTINCT` per
+    categorical column plus separate count and min/max queries, so a wide
+    table costs one round trip per column. Folding them into a single
+    aggregate SELECT reduces that to one round trip and one scan, which
+    matters most for remote backends where each query is network latency
+    (and, on metered warehouses, billed separately).
+
+    Aliases are positional (`__enum_0`, `__min_0`, ...) rather than derived
+    from column names, so they can neither collide with a real column nor
+    exceed a dialect's identifier length limit.
+
+    Requires a dialect that supports aggregating distinct values into an
+    array; see `ARRAY_AGG_DISTINCT_DIALECTS`.
+    """
+
+    enum_columns = param.List(default=[], doc="""
+        Columns to collect the distinct values of.""")
+
+    minmax_columns = param.List(default=[], doc="""
+        Columns to compute the minimum and maximum of.""")
+
+    transform_type: ClassVar[str] = 'sql_schema_stats'
+
+    count_alias: ClassVar[str] = '__count'
+
+    def apply(self, sql_in: str) -> str:
+        subquery = self._to_subquery(self.parse_sql(sql_in))
+        aggregates: list[Expression] = [
+            Count(this=Star()).as_(Identifier(this=self.count_alias, quoted=True))
+        ]
+        for i, col in enumerate(self.enum_columns):
+            column = Column(this=Identifier(this=col, quoted=True))
+            aggregates.append(
+                ArrayAgg(this=Distinct(expressions=[column])).as_(
+                    Identifier(this=self.enum_alias(i), quoted=True)
+                )
+            )
+            # Dialects disagree on whether an array aggregate retains NULLs
+            # (and BigQuery rejects them outright), so count the non-null
+            # values instead and reinstate NULL from the row count.
+            aggregates.append(
+                Count(this=column).as_(
+                    Identifier(this=self.nonnull_alias(i), quoted=True)
+                )
+            )
+        for i, col in enumerate(self.minmax_columns):
+            column = Column(this=Identifier(this=col, quoted=True))
+            for agg_func, alias in ((Min, self.min_alias(i)), (Max, self.max_alias(i))):
+                aggregates.append(
+                    agg_func(this=column).as_(Identifier(this=alias, quoted=True))
+                )
+        expression = select(*aggregates).from_(subquery)
+        return self.to_sql(expression)
+
+    @classmethod
+    def enum_alias(cls, index: int) -> str:
+        return f'__enum_{index}'
+
+    @classmethod
+    def nonnull_alias(cls, index: int) -> str:
+        return f'__nonnull_{index}'
+
+    @classmethod
+    def min_alias(cls, index: int) -> str:
+        return f'__min_{index}'
+
+    @classmethod
+    def max_alias(cls, index: int) -> str:
+        return f'__max_{index}'
+
+
 class SQLColumns(SQLTransform):
 
     columns = param.List(default=[], doc="Columns to return.")
@@ -494,10 +623,129 @@ class SQLColumns(SQLTransform):
         return self.to_sql(expression)
 
 
+class SQLSort(SQLTransform):
+    """
+    Performs an ORDER BY on the query.
+
+    Null and NaN placement follows the database engine, which does not always
+    agree with `lumen.transforms.base.Sort`: pandas puts both last whichever
+    way the sort runs, while DuckDB orders NaN above every value on a
+    descending sort. Reach for this to have the engine do the ordering, e.g.
+    ahead of an `SQLLimit` to get a real top-N query, rather than as a
+    drop-in for the pandas transform.
+    """
+
+    by = param.List(default=[], doc="Columns to sort by.")
+
+    ascending = param.ClassSelector(default=True, class_=(bool, list), doc="""
+        Sort ascending vs. descending. Specify a list to give each column in
+        `by` its own direction.""")
+
+    transform_type: ClassVar[str] = 'sql_sort'
+
+    def apply(self, sql_in: str) -> str:
+        if not self.by:
+            return sql_in
+
+        ascending = (
+            self.ascending if isinstance(self.ascending, list)
+            else [self.ascending] * len(self.by)
+        )
+        subquery = self._to_subquery(self.parse_sql(sql_in))
+        order = []
+        for col, asc in zip(self.by, ascending, strict=True):
+            quoted = self.identify or bool(re.search(r'\W', col))
+            column = Column(this=Identifier(this=col, quoted=quoted)).sql(dialect=self.write)
+            order.append(f'{column} {"ASC" if asc else "DESC"}')
+        expression = select("*").from_(subquery).order_by(*order)
+        return self.to_sql(expression)
+
+
+# Dialects, by their SQLAlchemy or sqlglot names, without TRUE and FALSE literals.
+NO_BOOLEAN_LITERALS = frozenset({"mssql", "tsql", "oracle"})
+
+
+def _python_value(value):
+    """
+    A numpy scalar as the equivalent Python value. datetime64 and
+    timedelta64 go through pandas, since ``.item()`` turns nanosecond
+    precision into an integer; NaT becomes None.
+    """
+    if isinstance(value, (np.datetime64, np.timedelta64)):
+        if np.isnat(value):
+            return None
+        if isinstance(value, np.datetime64):
+            return pd.Timestamp(value).to_pydatetime(warn=False)
+        return pd.Timedelta(value).to_pytimedelta()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 class SQLFilterBase(SQLTransform):
     """
     Base class for SQL filtering transforms that provides common filtering logic.
     """
+
+    boolean_literals = param.Boolean(default=True, doc="""
+        Whether the engine has TRUE and FALSE literals; without them (SQL
+        Server, Oracle before 23ai) boolean conditions compare with 1 and 0.""")
+
+    def __init__(self, **params):
+        if "conditions" in params:
+            params["conditions"] = self._parse_conditions(params["conditions"])
+        super().__init__(**params)
+
+    @staticmethod
+    def _parse_conditions(conditions: list) -> list:
+        return parse_conditions(conditions)
+
+    @staticmethod
+    def _spec_conditions(conditions: list) -> list:
+        return spec_conditions(conditions)
+
+    def to_spec(self, context: dict | None = None) -> dict:
+        spec = super().to_spec(context=context)
+        if "conditions" in spec:
+            spec["conditions"] = self._spec_conditions(spec["conditions"])
+        return spec
+
+    @staticmethod
+    def _range_value_condition(column_expr: Column, value: Range) -> Expression | None:
+        """Build the condition of a ``Range``; a date bound stands for its whole day."""
+        if value.matches_nothing:
+            return column_expr.eq(Null())
+        start, start_in, end, end_in = value.bounds(temporal=True)
+        lower = upper = None
+        if start is not None:
+            literal = SQLLiteral.string(str(start))
+            lower = column_expr >= literal if start_in else column_expr > literal
+        if end is not None:
+            literal = SQLLiteral.string(str(end))
+            upper = column_expr <= literal if end_in else column_expr < literal
+        if lower is not None and upper is not None:
+            if start_in and end_in:
+                return column_expr.between(SQLLiteral.string(str(start)), SQLLiteral.string(str(end)))
+            return and_(lower, upper)
+        return lower if lower is not None else upper
+
+    def _boolean(self, value: bool) -> Expression:
+        return Boolean(this=value) if self.boolean_literals else SQLLiteral.number(int(value))
+
+    @staticmethod
+    def _range_condition(column_expr: Column, start, end) -> Expression | None:
+        """Build a range condition where a None bound leaves that side open."""
+        if start is None and end is None:
+            return None
+        if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+            start = f"{start} 00:00:00"
+        if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
+            end = f"{end} 23:59:59"
+        if start is None:
+            return column_expr <= SQLLiteral.string(str(end))
+        if end is None:
+            return column_expr >= SQLLiteral.string(str(start))
+        return column_expr.between(SQLLiteral.string(str(start)), SQLLiteral.string(str(end)))
 
     def _build_filter_conditions(self, conditions: list) -> list:
         """
@@ -516,12 +764,20 @@ class SQLFilterBase(SQLTransform):
         filters = []
 
         for col, val in conditions:
-            column_expr = Column(this=col)
+            column_expr = Column(this=Identifier(this=col, quoted=True))
 
-            # Skip boolean values - they are not supported
-            if isinstance(val, bool):
-                self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
+            # NumPy scalars are filtered like the equivalent Python values
+            if isinstance(val, np.datetime64) and np.isnat(val):
+                # NaT never compares equal, so it matches no rows (like Filter)
+                filters.append(column_expr.eq(Null()))
                 continue
+            val = _python_value(val)
+            if isinstance(val, (tuple, list)):
+                # numpy booleans are left to the boolean list handling below
+                val = type(val)(v if isinstance(v, np.bool_) else _python_value(v) for v in val)
+
+            if isinstance(val, bool):
+                filters.append(column_expr.eq(self._boolean(val)))
             elif val is None:
                 filters.append(column_expr.is_(Null()))
             elif isinstance(val, (int, float)):
@@ -535,38 +791,35 @@ class SQLFilterBase(SQLTransform):
                 end = SQLLiteral.string(f"{val} 23:59:59")
                 filters.append(column_expr.between(start, end))
             elif isinstance(val, tuple) and len(val) == 2:
-                start, end = val
-                if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
-                    start_str = f"{start} 00:00:00"
-                else:
-                    start_str = str(start)
-
-                if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-                    end_str = f"{end} 23:59:59"
-                else:
-                    end_str = str(end)
-
-                filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
+                range_filter = self._range_condition(column_expr, *val)
+                if range_filter is not None:
+                    filters.append(range_filter)
+            elif isinstance(val, Range):
+                range_filter = self._range_value_condition(column_expr, val)
+                if range_filter is not None:
+                    filters.append(range_filter)
+            elif isinstance(val, list) and val and all(isinstance(v, (bool, np.bool_)) for v in val):
+                filters.append(column_expr.isin(*[self._boolean(bool(v)) for v in val]))
             elif isinstance(val, list):
-                # Check for boolean values in list and skip them
+                # Booleans mixed with other values have no single SQL type, so skip them
                 if any(isinstance(v, bool) for v in val):
                     self.param.warning(f"Boolean values in list condition on {col!r} column not supported. Filter query will not be applied.")
                     continue
 
-                if all(isinstance(v, tuple) and len(v) == 2 for v in val):
-                    range_filters = []
-                    for v1, v2 in val:
-                        if isinstance(v1, dt.date) and not isinstance(v1, dt.datetime):
-                            v1_str = f"{v1} 00:00:00"
-                        else:
-                            v1_str = str(v1)
-
-                        if isinstance(v2, dt.date) and not isinstance(v2, dt.datetime):
-                            v2_str = f"{v2} 23:59:59"
-                        else:
-                            v2_str = str(v2)
-
-                        range_filters.append(column_expr.between(SQLLiteral.string(v1_str), SQLLiteral.string(v2_str)))
+                if any(isinstance(v, Range) for v in val) and not all(_is_range(v) for v in val):
+                    self.param.warning(
+                        f"Condition {val!r} on {col!r} column mixes ranges with other values. "
+                        "Filter query will not be applied."
+                    )
+                    continue
+                if all(_is_range(v) for v in val):
+                    range_filters = [
+                        f for f in (
+                            self._range_value_condition(column_expr, v) if isinstance(v, Range)
+                            else self._range_condition(column_expr, *v) for v in val
+                        )
+                        if f is not None
+                    ]
                     if range_filters:
                         filters.append(or_(*range_filters))
                 else:
@@ -585,19 +838,10 @@ class SQLFilterBase(SQLTransform):
                     else:
                         # No None values
                         filters.append(column_expr.isin(*[SQLLiteral.string(str(v)) for v in val]))
-            elif isinstance(val, slice) and val.start is not None and val.stop is not None:
-                start, end = val.start, val.stop
-                if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
-                    start_str = f"{start} 00:00:00"
-                else:
-                    start_str = str(start)
-
-                if isinstance(end, dt.date) and not isinstance(end, dt.datetime):
-                    end_str = f"{end} 23:59:59"
-                else:
-                    end_str = str(end)
-
-                filters.append(column_expr.between(SQLLiteral.string(start_str), SQLLiteral.string(end_str)))
+            elif isinstance(val, slice):
+                range_filter = self._range_condition(column_expr, val.start, val.stop)
+                if range_filter is not None:
+                    filters.append(range_filter)
             else:
                 self.param.warning(f"Condition {val!r} on {col!r} column not understood. Filter query will not be applied.")
                 continue
@@ -654,6 +898,22 @@ class SQLPreFilter(SQLFilterBase):
 
     transform_type: ClassVar[str] = 'sql_prefilter'
 
+    @staticmethod
+    def _parse_conditions(conditions: list) -> list:
+        return [
+            (c[0], parse_conditions(c[1])) if isinstance(c, (list, tuple)) and len(c) == 2
+            and isinstance(c[1], list) else c
+            for c in conditions
+        ]
+
+    @staticmethod
+    def _spec_conditions(conditions: list) -> list:
+        return [
+            [c[0], spec_conditions(c[1])] if isinstance(c, (list, tuple)) and len(c) == 2
+            and isinstance(c[1], list) else c
+            for c in conditions
+        ]
+
     def apply(self, sql_in: str) -> str:
         if not self.conditions:
             return sql_in
@@ -708,7 +968,6 @@ class SQLPreFilter(SQLFilterBase):
         Table
             Subquery expression that can replace the original table
         """
-        from sqlglot.expressions import Identifier
 
         # Start with SELECT * FROM table_name
         base_table = Table(this=Identifier(this=table_name, quoted=True))

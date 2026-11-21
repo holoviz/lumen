@@ -68,7 +68,7 @@ class Builder(param.Parameterized):
             self.pipelines, self.views, self.layouts, self.launcher
         ], sizing_mode='stretch_both')
 
-        preview = pn.widgets.Button(name='Preview', width=100)
+        preview = pn.widgets.Button(label='Preview', width=100)
         preview.on_click(self._open_dialog)
 
         state.template.header.append(preview)

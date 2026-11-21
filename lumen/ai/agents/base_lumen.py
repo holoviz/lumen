@@ -1,11 +1,14 @@
 import param
 
 from ...config import dump_yaml, load_yaml
+from ...pipeline import Pipeline
+from ...views import View
 from ..config import PROMPTS_DIR
 from ..context import TContext
 from ..editors import LumenEditor
 from ..llm import Message
-from ..models import RetrySpec
+from ..models import RetrySpec, revision_lines
+from ..schemas import slug_to_table_name
 from ..utils import apply_changes, retry_llm_output
 from .base import Agent
 
@@ -31,6 +34,40 @@ class BaseLumenAgent(Agent):
     _max_width = None
     _editor_type = LumenEditor
 
+    def _resolve_revise_table(self, context: TContext, view: LumenEditor | None) -> str | None:
+        """Slug of the table the output being revised uses, so the revise
+        prompt can scope its schema context to just that table. Returns None
+        when it cannot be determined (e.g. SQL generation before a pipeline
+        exists), in which case the prompt falls back to the broader context.
+        """
+        metaset = context.get("metaset")
+        if metaset is None:
+            return None
+        # Prefer the component being revised, since it is unambiguous. A
+        # Pipeline names its own table; a View reaches one through the pipeline
+        # it renders. A chained Pipeline also has a .pipeline, but that is its
+        # parent and not the table being revised, hence Pipeline first.
+        component = view.component if view else None
+        if isinstance(component, Pipeline):
+            candidate = component.table
+        elif isinstance(component, View) and component.pipeline:
+            candidate = component.pipeline.table
+        else:
+            candidate = None
+        if candidate is None:
+            pipeline = context.get("pipeline")
+            candidate = (pipeline.table if pipeline else None) or context.get("table")
+        slug = metaset._resolve_table_slug(candidate)
+        if slug is None:
+            return None
+        # Prefer the active (newest) generation so _generate_context's
+        # active-slug filter does not empty the scoped context.
+        active = set(metaset._deduplicated_slugs())
+        if slug not in active:
+            name = slug_to_table_name(slug)
+            slug = next((s for s in active if slug_to_table_name(s) == name), slug)
+        return slug
+
     @retry_llm_output()
     async def revise(
         self,
@@ -53,18 +90,29 @@ class BaseLumenAgent(Agent):
             raise ValueError("Must provide previous spec to revise.")
         lines = spec.splitlines()
         numbered_text = "\n".join(f"{i:2d}: {line}" for i, line in enumerate(lines, 1))
-        result = await self._invoke_prompt(
-            "revise_output",
-            messages,
-            context,
-            model_spec="edit",
-            numbered_text=numbered_text,
-            language=language,
-            feedback=instruction,
-            errors=errors,
-            **kwargs
-        )
+        revise_table = kwargs.pop("revise_table", None) or self._resolve_revise_table(context, view)
+        token = revision_lines.set((lines, language == "yaml"))
+        try:
+            result = await self._invoke_prompt(
+                "revise_output",
+                messages,
+                context,
+                model_spec="edit",
+                numbered_text=numbered_text,
+                language=language,
+                feedback=instruction,
+                errors=errors,
+                revise_table=revise_table,
+                **kwargs
+            )
+        finally:
+            revision_lines.reset(token)
         new_spec_raw = apply_changes(lines, result.edits)
+        # SQL is not YAML: a round trip truncates at '#' (e.g. '80651 Route #271').
+        if language and language.startswith("sql"):
+            if view is not None:
+                view.validate_spec(new_spec_raw)
+            return new_spec_raw
         spec = load_yaml(new_spec_raw)
         if view is not None:
             view.validate_spec(spec)

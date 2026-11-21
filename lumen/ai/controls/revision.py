@@ -82,7 +82,7 @@ class RevisionControls(Viewer):
             stylesheets=[".codehilite { margin-top: 0; margin-bottom: 0; display: inline-block; } .codehilite pre { margin-top: -1.5em; }"],
             sizing_mode="stretch_width"
         )
-        self.interface.stream(Card(md, title=title), user="Assistant")
+        self.interface.stream(Card(md, title=title), user="Lumen")
 
     def __panel__(self):
         return self._row

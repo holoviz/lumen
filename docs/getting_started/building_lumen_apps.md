@@ -42,8 +42,8 @@ def fetch_sales(region: str = "US", year: int = 2024):
 # LLM with per-agent model overrides
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        "default": {"model": "gpt-4.1-mini", "temperature": 0.2},
-        "sql": {"model": "gpt-4.1", "temperature": 0.1},
+        "default": {"model": "gpt-6-luna", "temperature": 0.2},
+        "sql": {"model": "gpt-6-luna", "temperature": 0.1},
     }
 )
 
@@ -116,9 +116,8 @@ Set different models per agent type:
 ```py
 llm = lmai.llm.OpenAI(
     model_kwargs={
-        "default": {"model": "gpt-4.1-mini", "temperature": 0.2},
-        "sql": {"model": "gpt-4.1", "temperature": 0.1},
-        "vega_lite": {"model": "gpt-4.1"},
+        "default": {"model": "gpt-6-luna", "temperature": 0.2},
+        "sql": {"model": "gpt-6-luna", "temperature": 0.1},
     }
 )
 ```
@@ -127,9 +126,9 @@ Use OpenRouter to route different agents to models from different providers:
 ```py
 llm = lmai.llm.OpenRouter(
     model_kwargs={
-        "default": {"model": "openai/gpt-4o-mini", "temperature": 0.2},
-        "sql": {"model": "anthropic/claude-3.5-sonnet", "temperature": 0.1},
-        "vega_lite": {"model": "google/gemini-2.5-flash"},
+        "default": {"model": "openai/gpt-6-luna", "temperature": 0.2},
+        "sql": {"model": "deepseek/deepseek-v4-pro-0813", "temperature": 0.1},
+        "vega_lite": {"model": "z-ai/glm-5.3-flash"},
     }
 )
 
@@ -287,8 +286,8 @@ ui = lmai.ExplorerUI(
 ```bash
 lumen-ai serve data.csv                           # Basic
 lumen-ai serve data.csv --provider anthropic      # Change provider
-lumen-ai serve data.csv --model gpt-4.1           # Change model
-lumen-ai serve data.csv --provider openrouter --model openai/gpt-4o-mini
+lumen-ai serve data.csv --model gpt-5.6-luna      # Change model
+lumen-ai serve data.csv --provider openrouter --model openai/gpt-6-luna
 lumen-ai serve data.csv --agents sql vega_lite    # Limit agents
 lumen-ai serve data.csv --code-execution prompt   # Enable code execution
 lumen-ai serve data.csv --temperature 0.1         # Set temperature

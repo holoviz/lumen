@@ -2,18 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
+import inspect
 import json
+import logging
 import os
+import re
+import shutil
+import subprocess
+import tempfile
+import time
 import traceback
 
-from collections.abc import Callable
-from functools import partial
+from collections.abc import Awaitable, Callable
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import (
     TYPE_CHECKING, Any, Literal, NotRequired, TypedDict,
 )
+from urllib.parse import urlsplit
 
 import instructor
+import openai
 import panel as pn
 import param
 import requests
@@ -22,15 +34,23 @@ from instructor import Mode, patch
 from instructor.dsl.partial import Partial
 from instructor.processing.multimodal import Image
 from openai import OpenAI as OpenAIClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, create_model
 
+from .config import UNRECOVERABLE_ERRORS
 from .interceptor import Interceptor
 from .services import (
     PROVIDER_ENV_VARS, AnthropicMixin, AzureMistralAIMixin, AzureOpenAIMixin,
     BedrockMixin, GenAIMixin, LlamaCppMixin, MistralAIMixin, OpenAIMixin,
 )
+from .tool_trace import (
+    ModelCall, ToolCall, capture_trace, is_tracing, record_trace,
+)
+from .usage import (
+    UsageCollector, capture_usage, meter_method, parse_usage, record_usage,
+)
 from .utils import (
-    format_exception, format_msg_content, log_debug, truncate_string,
+    format_exception, format_msg_content, format_tool_error,
+    format_unknown_name, log_debug, truncate_string,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +71,100 @@ class ImageResponse(BaseModel):
     output: str
 
 
+# Agents that benefit from a tighter budget, like SQLAgent, pass their own.
+DEFAULT_MAX_TOOL_ROUNDS = 16
+
+DUPLICATE_TOOL_CALL_NOTE = (
+    "[Identical call already made in this request; returning the earlier result. "
+    "Use it rather than repeating the call.]\n"
+)
+
+
+@dataclass
+class SubmitTool:
+    """
+    A tool through which the model delivers its structured answer inside the tool loop.
+
+    Offering the response model as a tool lets a request that needs no other
+    tool finish in one call, and keeps the tool transcript in the prompt that
+    produces the answer instead of re-sending it for a separate structured call.
+
+    ``validate`` receives the parsed response model and raises to reject it;
+    the exception message is returned to the model as the tool result so it
+    can correct the answer with the context it already has.
+    """
+
+    name: str
+    description: str
+    validate: Callable[[BaseModel], Awaitable[None] | None] | None = None
+    model: type[BaseModel] | None = None
+
+
+@dataclass
+class ToolLoopState:
+    """Per-request bookkeeping shared by every round of one tool loop."""
+
+    max_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
+    submit: SubmitTool | None = None
+    rounds: int = 0
+    results: dict[str, str] = field(default_factory=dict)
+    answer: BaseModel | None = None
+    # Set once a round past the budget has been answered; the next one stops the loop.
+    closed: bool = False
+
+    @property
+    def exhausted(self) -> bool:
+        return self.rounds >= self.max_rounds
+
+    def _final_instruction(self) -> str:
+        return f"call `{self.submit.name}`" if self.submit else "give your final answer"
+
+    def budget_note(self) -> str:
+        remaining = self.max_rounds - self.rounds
+        if remaining > 0:
+            return f"\n\n[Tool round {self.rounds} of {self.max_rounds}; {remaining} remaining.]"
+        return (
+            f"\n\n[Tool budget exhausted after {self.max_rounds} rounds; further tool "
+            f"calls will not run. Now {self._final_instruction()}.]"
+        )
+
+    def not_run_note(self) -> str:
+        return (
+            f"Not run: the tool budget of {self.max_rounds} rounds is exhausted. "
+            f"Now {self._final_instruction()}."
+        )
+
+
+def inline_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve local ``$ref``s so providers that reject ``$defs`` (e.g. Gemini) accept the schema."""
+    defs = schema.get("$defs", {})
+
+    def resolve(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                target = resolve(defs[ref.rsplit("/", 1)[-1]])
+                return {**target, **{k: resolve(v) for k, v in node.items() if k != "$ref"}}
+            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    return resolve(schema)
+
+
+def format_validation_error(error: ValidationError, skip: tuple[str, ...] | list[str] = ()) -> str:
+    """One line per pydantic error, dropping errors on fields in ``skip``."""
+    parts = []
+    for err in error.errors():
+        loc = err.get("loc") or ()
+        if loc and loc[0] in skip:
+            continue
+        where = ".".join(str(part) for part in loc) or "arguments"
+        parts.append(f"{where}: {err.get('msg')}")
+    return "; ".join(parts)
+
+
 BASE_MODES = list(Mode)
 
 # LLM Provider Configuration
@@ -69,31 +183,190 @@ LLM_PROVIDERS = {
     "ai-catalyst": "AICatalyst",
     'ollama': 'Ollama',
     'llama-cpp': 'LlamaCpp',
+    'mlx': 'MLX',
     'litellm': 'LiteLLM',
-    'openrouter': 'OpenRouter'
+    'openrouter': 'OpenRouter',
+    'kilo': 'Kilo',
+    'codex-cli': 'CodexCli',
+    'claude-code': 'ClaudeCode',
+    'copilot-cli': 'CopilotCli',
+    'antigravity-cli': 'AntigravityCli',
 }
+
+# Request parameters an OpenAI-compatible model may reject, and the value to
+# retry with; None omits the parameter entirely. Applied only after the API
+# names the parameter in a 400, so new models need no entry here.
+ADAPTIVE_KWARGS = {
+    "temperature": None,
+    "reasoning_effort": "none",
+}
+
+# Fields in which reasoning models return their reasoning. Some require it to be
+# sent back on each assistant tool-call message, under the name they used.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details")
+
+# Every content shape a message may carry an image in, before and after
+# _check_for_image normalises it.
+IMAGE_TYPES = (bytes, Image, pn.pane.image.ImageBase)
+
+# How OpenAI-compatible APIs and gateways say a model cannot read images at all.
+IMAGE_CAPABILITY_ERROR = re.compile(
+    r"(not|n't|endpoints found that) support images?\b|image_url is only supported|supports text(?: input)? only",
+    re.IGNORECASE,
+)
+
+# How Kilo's routed models refuse a forced tool call or structured output:
+# a generic upstream error, or naming the tool choice it cannot honour
+KILO_STRUCTURED_REJECTION = re.compile(r"upstream_error|tool[ _]choice", re.IGNORECASE)
+
+# model_kwargs entries that configure routing rather than the provider client,
+# and so must never reach an SDK constructor.
+ROUTING_KEYS = ("routing", "description")
+
+# The spec keys every provider shares, described for the routing prompt. Agent
+# specs are added on top by the UI layer, which can reach agent metadata.
+SPEC_DESCRIPTIONS = {
+    "default": "General purpose model for most tasks",
+    "edit": "Advanced model for retry & edit tasks",
+    "ui": "Lightweight model for UI interactions",
+}
+
+
+@lru_cache
+def build_route_spec_model(spec_keys: tuple[str, ...]) -> type[BaseModel]:
+    """Build the pydantic model constraining the routing model's output.
+
+    The ``model_spec`` field is constrained via a ``Literal`` to the keys
+    present in ``model_kwargs``, so a hallucinated key cannot silently fall
+    back to ``'default'`` unnoticed. Cached on the keys because instructor
+    re-derives the JSON schema per class, and routing runs on every call.
+    """
+    return create_model("RouteSpec", model_spec=(Literal[*spec_keys], ...))
+
+
+def strip_images(messages: list[Message]) -> list[Message]:
+    """Copy of messages with every image shape removed, keeping all text."""
+    stripped = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            content = [
+                item for item in content
+                if not isinstance(item, IMAGE_TYPES)
+                and not (isinstance(item, dict) and item.get("type") == "image_url")
+            ]
+        elif isinstance(content, IMAGE_TYPES):
+            content = ""
+        stripped.append({**message, "content": content})
+    return stripped
+
+
+def is_image_rejection(error: BaseException | None) -> bool:
+    """Whether a text-only model rejected image content somewhere on the cause chain.
+
+    Only capability errors count; a vision model rejecting one bad image
+    (too large, wrong format) keeps vision enabled.
+    """
+    while error is not None:
+        if isinstance(error, (openai.BadRequestError, openai.NotFoundError)) and IMAGE_CAPABILITY_ERROR.search(str(error)):
+            return True
+        error = error.__cause__
+    return False
+
+
+def find_bad_request(error: BaseException | None) -> openai.BadRequestError | None:
+    """Find a provider 400 on an exception's cause chain, if there is one."""
+    while error is not None:
+        if isinstance(error, openai.BadRequestError):
+            return error
+        error = error.__cause__
+    return None
+
+
+def ollama_models(endpoint: str | None = None, timeout: float = 0.5) -> list[str] | None:
+    """The models pulled on an Ollama server, or None if it is not reachable."""
+    base_url = (endpoint or Ollama.param.endpoint.default).rstrip("/").removesuffix("/v1")
+    try:
+        tags = requests.get(f"{base_url}/api/tags", timeout=timeout).json()
+    except requests.RequestException:
+        return None
+    return [model["name"] for model in tags.get("models", [])]
+
+
+def provider_name(llm_cls: type[Llm]) -> str:
+    """The ``LLM_PROVIDERS`` key, e.g. the ``--provider`` value, for an LLM class."""
+    return next(name for name, class_name in LLM_PROVIDERS.items() if class_name == llm_cls.__name__)
+
+
+def local_cli_providers() -> dict[type[LlmCli], bool | None]:
+    """Coding CLI providers installed on PATH, mapped to whether they report a signed-in user."""
+    return {
+        cls: cls.signed_in()
+        for class_name in LLM_PROVIDERS.values()
+        if issubclass(cls := globals()[class_name], LlmCli) and shutil.which(cls.param.executable.default)
+    }
+
+
+def quiet_retry_log():
+    """
+    Silence instructor's per-attempt error log.
+
+    Lumen sends a single attempt and reports or recovers from the error
+    itself, so that log only duplicates it.
+    """
+    logging.getLogger("instructor.v2.retry").setLevel(logging.CRITICAL)
+
+
+_quiet_retries = contextvars.ContextVar("quiet_retries", default=False)
+logging.getLogger("instructor.v2.retry").addFilter(lambda record: not _quiet_retries.get())
+
+
+@contextmanager
+def quiet_retries():
+    """
+    Silence instructor's per-attempt error log for the code run inside,
+    including the tasks it starts, without changing the logger for the rest
+    of the process.
+    """
+    token = _quiet_retries.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retries.reset(token)
+
+
+def signed_in_cli_hint() -> str:
+    """Name the keyless coding CLIs the user is signed in to, as a clause to append."""
+    clis = [cls.display_name for cls, signed_in in local_cli_providers().items() if signed_in]
+    return f", or {' / '.join(clis)}, which you are signed in to" if clis else ""
+
+
+def llm_class(provider: str) -> type[Llm]:
+    """The LLM class for a provider name, e.g. the ``--provider`` value."""
+    if provider not in LLM_PROVIDERS:
+        raise ValueError(
+            f"Could not find LLM Provider {provider!r}, valid providers include: {list(LLM_PROVIDERS)}."
+        )
+    return globals()[LLM_PROVIDERS[provider]]
 
 
 def get_available_llm() -> type[Llm] | None:
     """
-    Detect and instantiate an available LLM provider by checking environment variables
-    and attempting to instantiate each provider in order.
+    Detect an available LLM provider: the first one whose API key environment
+    variable is set.
+
+    Providers that need no key, such as Ollama and the coding CLIs, are only
+    used when requested explicitly.
 
     Returns
     -------
     type[Llm] | None
-        The LLM class if successful, or None if no provider is available.
+        The LLM class, or None if no provider is available.
     """
     for provider, class_name in LLM_PROVIDERS.items():
         env_var = PROVIDER_ENV_VARS.get(provider)
-        if env_var and not os.environ.get(env_var):
-            continue
-
-        try:
-            provider_cls = globals()[class_name]
-            return provider_cls
-        except KeyError:
-            continue
+        if env_var and os.environ.get(env_var):
+            return globals()[class_name]
     return None
 
 
@@ -121,7 +394,29 @@ class Llm(param.Parameterized):
     model_kwargs = param.Dict(default={}, doc="""
         LLM model definitions indexed by type. Supported types include
         'default', 'reasoning' and 'sql'. Agents may pick which model to
-        invoke for different reasons.""")
+        invoke for different reasons.
+
+        An entry may declare an optional 'description' (shown to the routing
+        model so it can reason about what each option is for) and an optional
+        'routing' key to opt in to model routing for that type: the routing
+        model is invoked first to pick which entry to actually use for each
+        call, e.g.
+        {"default": {"model": "gpt-5.4-mini"},
+         "edit": {"model": "gpt-5.2",
+                  "description": "Best for editing tables and visualizations",
+                  "routing": {"model": "nemotron-switchyard"}}}""")
+
+    usage_pricing = param.Dict(default={}, doc="""USD per million tokens by model:
+        {"model-name": {"input": 1.0, "cached": 0.1, "cache_write": 1.25,
+                        "output": 4.0}}.
+        Unknown models retain token counts but have no estimated cost.""")
+
+    spec_descriptions = param.Dict(default=SPEC_DESCRIPTIONS, doc="""
+        Mapping of spec key to human-readable description, used as a
+        fallback in the routing prompt when ``model_kwargs`` entries
+        do not declare their own ``description``. Seeded with the spec
+        keys every provider shares and enriched by the UI layer from
+        agent class metadata.""")
 
     tools = param.List(default=[], doc="""
         Default tools that are always available to this LLM instance.
@@ -139,8 +434,9 @@ class Llm(param.Parameterized):
 
     select_models = param.List(default=[], constant=True, doc="Available models for selection dropdowns")
 
-    temperature = param.Number(default=0.7, bounds=(0, None), constant=True, doc="""
-        The temperature to use for sampling.""")
+    temperature = param.Number(default=0.7, bounds=(0, None), allow_None=True, constant=True, doc="""
+        The temperature to use for sampling. Set to None to omit the
+        temperature from requests entirely, e.g. for models that reject it.""")
 
     timeout = param.Number(default=120, bounds=(1, None), constant=True, doc="""
         The timeout in seconds for API calls.""")
@@ -187,6 +483,12 @@ class Llm(param.Parameterized):
         # Instance-level client caches
         self._base_client = None
         self._instructor_clients: dict[Mode, Any] = {}
+        self.usage = UsageCollector()
+
+        # Resolved model name from the last invoke()/stream() call.
+        # Set after _resolve_routing() so callers can read which model
+        # actually handled the request (issue #2043).
+        self._resolved_model: str | None = None
 
         if self.logfire_tags is not None and not self._supports_logfire:
             raise ValueError(
@@ -198,6 +500,13 @@ class Llm(param.Parameterized):
                 f"Please specify a 'default' model in the model_kwargs "
                 f"parameter for {self.__class__.__name__}."
             )
+        for spec_name, config in self.model_kwargs.items():
+            routing = config.get("routing") if isinstance(config, dict) else None
+            if routing is not None and not isinstance(routing, dict):
+                raise ValueError(
+                    f"Invalid 'routing' entry for model spec {spec_name!r} in "
+                    f"model_kwargs: expected a dict, got {type(routing).__name__}."
+                )
 
     @param.depends("logfire_tags", watch=True)
     def _update_logfire_tags(self):
@@ -212,12 +521,19 @@ class Llm(param.Parameterized):
         """
         Can specify model kwargs as a dict or as a string that is a key in the model_kwargs
         or as a string that is a model type; else the actual name of the model.
+
+        The ``routing`` and ``description`` keys are routing-only directives and are
+        stripped here so they can never reach a provider's ``get_client`` and from
+        there the SDK constructor. ``_get_model_kwargs`` is the single place every
+        provider resolves its model config, so stripping here protects them all.
         """
         if isinstance(model_spec, dict):
-            return model_spec
-
-        model_kwargs = self.model_kwargs.get(model_spec) or self.model_kwargs["default"]
-        return dict(model_kwargs)
+            model_kwargs = dict(model_spec)
+        else:
+            model_kwargs = dict(self.model_kwargs.get(model_spec) or self.model_kwargs["default"])
+        for key in ROUTING_KEYS:
+            model_kwargs.pop(key, None)
+        return model_kwargs
 
     def _get_create_kwargs(self, response_model: type[BaseModel] | None) -> dict[str, Any]:
         kwargs = dict(self.create_kwargs)
@@ -228,11 +544,53 @@ class Llm(param.Parameterized):
 
     @property
     def _client_kwargs(self) -> dict[str, Any]:
-        return {}
+        if self.temperature is None:
+            return {}
+        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create the underlying SDK client (e.g., AsyncOpenAI, AsyncAnthropic)."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _create_base_client()")
+
+    def capture_usage(self):
+        """Capture provider usage for this LLM in the current async context."""
+        return capture_usage(self)
+
+    def trace(self):
+        """Capture model round trips and tool calls in the current async context."""
+        return capture_trace(self)
+
+    async def _traced_run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        if not is_tracing(self):
+            return await self.run_client(model_spec, messages, **kwargs)
+        started = time.perf_counter()
+        model = model_spec.get("model", "unknown") if isinstance(model_spec, dict) else self.model_kwargs.get(model_spec, {}).get("model", str(model_spec))
+        try:
+            with self.capture_usage() as usage:
+                result = await self.run_client(model_spec, messages, **kwargs)
+        except Exception as exc:
+            record_trace(self, ModelCall(model, messages, None, time.perf_counter() - started, repr(exc), usage.records))
+            raise
+        if not kwargs.get("stream") or not hasattr(result, "__aiter__"):
+            record_trace(self, ModelCall(model, messages, result, time.perf_counter() - started, usage=usage.records))
+            return result
+
+        async def traced_stream():
+            last = None
+            error = None
+            with self.capture_usage() as stream_usage:
+                try:
+                    async for chunk in result:
+                        last = chunk
+                        yield chunk
+                except Exception as exc:
+                    error = repr(exc)
+                    raise
+                finally:
+                    records = usage.records if usage.records else stream_usage.records
+                    record_trace(self, ModelCall(model, messages, last, time.perf_counter() - started, error, records))
+
+        return traced_stream()
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         """Wrap the base client with instructor. Override for non-standard wrapping."""
@@ -269,6 +627,30 @@ class Llm(param.Parameterized):
         system: str,
         input_kwargs: dict[str, Any]
     ) -> tuple[list[Message], dict[str, Any]]:
+        # Collect all system content: the rendered prompt + any system messages in the history
+        system_parts = []
+        if system:
+            system_parts.append(system)
+        non_system_messages = []
+        for msg in messages:
+            # Responses API items such as function_call_output have no role.
+            if msg.get("role") == "system":
+                content = msg.get("content", "")
+                if content:
+                    system_parts.append(content if isinstance(content, str) else str(content))
+            else:
+                non_system_messages.append(msg)
+        merged_system = "\n\n".join(system_parts) if system_parts else ""
+        return self._apply_system(non_system_messages, merged_system, input_kwargs)
+
+    def _apply_system(
+        self,
+        messages: list[Message],
+        system: str,
+        input_kwargs: dict[str, Any]
+    ) -> tuple[list[Message], dict[str, Any]]:
+        """Place the consolidated system prompt. Override for providers that
+        take system as a separate parameter (e.g. Anthropic, Bedrock)."""
         if system:
             messages = [Message(role="system", content=system)] + messages
         return messages, input_kwargs
@@ -347,6 +729,121 @@ class Llm(param.Parameterized):
         files.
         """
 
+    def _route_spec_model(self) -> type[BaseModel]:
+        """The routing response model for the current ``model_kwargs`` keys."""
+        return build_route_spec_model(tuple(self.model_kwargs))
+
+    def _spec_description(self, model_spec: str) -> str | None:
+        """How *model_spec* describes itself to the routing model, if at all.
+
+        An explicit ``description`` on the ``model_kwargs`` entry wins over
+        ``spec_descriptions``, so per-provider config beats the generic
+        agent metadata the UI layer supplies.
+        """
+        config = self.model_kwargs.get(model_spec)
+        if isinstance(config, dict) and "description" in config:
+            return config["description"]
+        return self.spec_descriptions.get(model_spec)
+
+    def _routing_system_prompt(self, model_spec: str) -> str:
+        """Build the dedicated system prompt for the routing call.
+
+        The router is told which task was requested and is given each
+        ``model_kwargs`` entry's description, so it chooses between documented
+        options for a named task rather than guessing from bare key names.
+
+        See ``_spec_description`` for how each option describes itself.
+        """
+        options = "\n".join(
+            f"- {key}: {self._spec_description(key) or 'No description provided.'}"
+            for key, config in self.model_kwargs.items()
+            if isinstance(config, dict)
+        )
+        described = self._spec_description(model_spec)
+        task = f"{model_spec!r} ({described})" if described else repr(model_spec)
+        return (
+            "You are a routing model. Choose the configured model type best "
+            f"suited to handle the request below, which was made for the {task} "
+            "task. Weigh how much capability the request actually needs, so "
+            "simple requests go to cheaper models.\n"
+            "Available model types:\n"
+            f"{options}\n"
+            "Reply with exactly one of the option names above."
+        )
+
+    def _strip_for_routing(self, messages: list[Message]) -> list[Message]:
+        """Prepare messages for the routing call: last user message only, images removed.
+
+        Routing models are chosen for being small and cheap and are typically
+        text-only, so every image shape ``_check_for_image`` can produce has to
+        be dropped here, not just the OpenAI-native content-part dicts.
+        """
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        return strip_images(user_msgs[-1:])
+
+    def _routing_config(self, model_spec: str) -> dict | None:
+        """The ``routing`` config governing *model_spec*, or None if it is not routed.
+
+        Resolution mirrors ``_get_model_kwargs``: a spec that names no entry
+        falls back to ``'default'``. Actors derive their spec from their class
+        name (``sql``, ``chat``, ``vega_lite``, ...) and providers enumerate
+        only a handful of entries, so without the fallback routing would never
+        fire for the calls Lumen actually makes.
+        """
+        return (self.model_kwargs.get(model_spec) or self.model_kwargs["default"]).get("routing")
+
+    async def _resolve_routing(
+        self,
+        model_spec: str | dict,
+        messages: list[Message],
+    ) -> str | dict:
+        """
+        Pick which ``model_kwargs`` entry to use via a routing model when the
+        entry named by ``model_spec`` declares a ``routing`` config.
+
+        Only string ``model_spec`` values are routed, and only when the entry
+        they resolve to declares ``routing`` (see ``_routing_config``). Dict
+        specs bypass the ``model_kwargs`` lookup entirely, so they are never
+        routed.
+
+        The routing call itself uses a dict spec and ``tools=[]``, so it can
+        never trigger routing for itself nor run the real tool loop. Both
+        the success and fallback paths return a dict config: dict specs
+        bypass ``_resolve_routing`` downstream, so a resolved spec threads
+        through the tool loop and ``stream()`` recursion without being
+        re-resolved (and without paying another routing call per round).
+        """
+        if isinstance(model_spec, dict):
+            return model_spec
+
+        routing_spec = self._routing_config(model_spec)
+        if not routing_spec:
+            return model_spec
+
+        routing_spec = dict(routing_spec)
+        routing_prompt = self._routing_system_prompt(model_spec)
+        routing_messages = self._strip_for_routing(messages)
+        try:
+            route = await self.invoke(
+                messages=routing_messages,
+                system=routing_prompt,
+                model_spec=routing_spec,
+                response_model=self._route_spec_model(),
+                tools=[],
+            )
+        except Exception:
+            log_debug(
+                [
+                    f"Routing for {model_spec!r} failed; falling back to {model_spec!r}",
+                    traceback.format_exc(),
+                ],
+                prefix="[LLM routing]",
+                show_sep="above",
+            )
+            return self._get_model_kwargs(model_spec)
+        log_debug(f"Routing {model_spec!r} -> {route.model_spec!r}", prefix="[LLM routing]")
+        return self._get_model_kwargs(route.model_spec)
+
     async def invoke(
         self,
         messages: list[Message],
@@ -355,6 +852,7 @@ class Llm(param.Parameterized):
         allow_partial: bool = False,
         model_spec: str | dict = "default",
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None = None,
+        submit_tool: SubmitTool | None = None,
         **input_kwargs,
     ) -> BaseModel | str:
         """
@@ -375,6 +873,11 @@ class Llm(param.Parameterized):
             Tool definitions, FunctionTool, or MCPTool instances to pass through.
             When ``response_model`` is also given, the client runs tool calls in a loop
             until none are requested, then requests the structured response (tools may be unused).
+            Tool errors, unknown tools and invalid arguments are returned to the model as
+            tool results; ``max_tool_rounds`` (default 16) caps the rounds.
+        submit_tool: SubmitTool | None
+            Offer ``response_model`` as a tool so the model can answer inside the tool
+            loop. Requires ``response_model``.
         model: Literal['default' | 'reasoning' | 'sql']
             The model as listed in the model_kwargs parameter
             to invoke to answer the query.
@@ -383,18 +886,34 @@ class Llm(param.Parameterized):
         -------
         The completed response_model.
         """
-        system = system.strip().replace("\n\n", "\n")
+        # Only runs of blank lines left by empty template blocks are squeezed;
+        # single blank lines separate sections the model should see as such.
+        system = re.sub(r"\n{3,}", "\n\n", system.strip())
         messages, input_kwargs = self._add_system_message(messages, system, input_kwargs)
-        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", 16))
+        messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
+
+        # Capture the resolved model name so callers can read it via
+        # ``llm._resolved_model`` after invoke() completes (issue #2043).
+        if isinstance(model_spec, dict):
+            self._resolved_model = model_spec.get("model", "unknown")
+        else:
+            config = self.model_kwargs.get(model_spec) or self.model_kwargs.get("default", {})
+            self._resolved_model = config.get("model", str(model_spec))
+
+        max_tool_rounds = int(input_kwargs.pop("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))
 
         kwargs = dict(self._client_kwargs)
         kwargs.update(input_kwargs)
         combined_tools = self._combine_tools(tools)
         tool_specs, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
+        submit = None
+        if submit_tool is not None and response_model is not None and not contains_image:
+            submit = SubmitTool(submit_tool.name, submit_tool.description, submit_tool.validate, response_model)
+            tool_specs = [*(tool_specs or []), self._submit_tool_spec(submit)]
         if tool_specs is not None:
             kwargs["tools"] = tool_specs
 
-        messages, contains_image = self._check_for_image(messages)
         if contains_image:
             # Currently instructor does not support streaming with multimodal
             # https://github.com/567-labs/instructor/issues/1872
@@ -416,6 +935,7 @@ class Llm(param.Parameterized):
             tool_contexts,
             model_spec=model_spec,
             max_tool_rounds=max_tool_rounds,
+            submit=submit,
             **kwargs
         )
         if output is None or output == "":
@@ -429,7 +949,8 @@ class Llm(param.Parameterized):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs
     ) -> BaseModel | str:
         # ``max_retries`` is consumed by the instructor wrapper; on bare-client
@@ -442,45 +963,129 @@ class Llm(param.Parameterized):
             # Return the provider stream and let stream() inspect chunks for tool calls.
             kwargs.pop("response_model", None)
             messages = self._normalize_multimodal_messages(messages)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
+        uses_tools = bool(tool_instances) or submit is not None
         stream = False
-        if structured_model is not None and not tool_instances:
+        if structured_model is not None and not uses_tools:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
         else:
-            if tool_instances:
+            if uses_tools:
                 stream = kwargs.pop("stream", False)
             kwargs.pop("response_model", None)
             # Without response_model the raw client is used, which
             # cannot handle instructor Image objects in list content.
             messages = self._normalize_multimodal_messages(messages)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances:
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
+        if not uses_tools:
             return output
 
+        state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
         messages_curr = list(messages)
-        for _ in range(max_tool_rounds):
+        while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_calls_message = self._tool_calls_message(tool_calls)
-            tool_messages = await self._run_tool_calls(
-                tool_instances, tool_calls, tool_contexts, messages_curr
+            tool_messages, stop = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages_curr, state
             )
-            if not tool_messages:
-                break
+            if state.answer is not None:
+                return state.answer
+            tool_calls_message = self._tool_calls_message(tool_calls, self._extract_reasoning(output))
             messages_curr = messages_curr + [tool_calls_message] + tool_messages
-            output = await self.run_client(model_spec, messages_curr, **kwargs)
+            if stop:
+                break
+            output = await self._traced_run_client(model_spec, messages_curr, **kwargs)
 
         if structured_model:
+            if submit is not None:
+                messages_curr = messages_curr + self._submit_nudge(output, submit)
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
-            output = await self.run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._traced_run_client(model_spec, messages_curr, stream=stream, **kwargs)
+            output = await self._check_fallback_answer(state, output)
         return output
+
+    async def _check_fallback_answer(self, state: ToolLoopState, output: Any) -> Any:
+        """
+        Hold an answer from the structured fallback call to the submit tool's checks.
+
+        Without this, an answer the submit tool would reject, or one the model
+        never got to correct after the budget ran out, is returned as if accepted.
+        """
+        if state.submit is None or not isinstance(output, state.submit.model):
+            return output
+        if (rejection := await self._accept_submission(state, output)) is not None:
+            raise ValueError(rejection)
+        return state.answer
+
+    def _submit_nudge(self, output: Any, submit: SubmitTool) -> list[Message]:
+        """
+        Messages that carry a text-only reply into the structured fallback call.
+
+        Without them the model's final reasoning, often the query itself, is
+        discarded and the structured call has to reconstruct it.
+        """
+        nudge: list[Message] = []
+        try:
+            text = self._get_content(output) if output is not None else None
+        except Exception:
+            text = None
+        if isinstance(text, str) and text.strip():
+            nudge.append(Message(role="assistant", content=text))
+        nudge.append(Message(
+            role="user",
+            content=f"Return your final answer now in the `{submit.name}` format.",
+        ))
+        return nudge
+
+    @classmethod
+    def _submit_tool_spec(cls, submit: SubmitTool) -> dict[str, Any]:
+        schema = inline_schema_refs(submit.model.model_json_schema())
+        schema.pop("title", None)
+        return {
+            "type": "function",
+            "function": {
+                "name": submit.name,
+                "description": submit.description,
+                "parameters": schema,
+            },
+        }
+
+    async def _run_tool_round(
+        self,
+        tool_instances: dict[str, FunctionTool | MCPTool],
+        tool_calls: list[Any],
+        tool_contexts: dict[str, Any],
+        messages: list[Message],
+        state: ToolLoopState,
+    ) -> tuple[list[Message], bool]:
+        """
+        Answer one round of tool calls and report whether the loop must stop.
+
+        Every call id is answered even when the loop stops, since the provider
+        rejects a follow-up request that leaves a call pending. Past the budget,
+        calls other than a submission are answered as not run and the model
+        gets one more turn; the round after that stops the loop.
+        """
+        exhausted = state.exhausted
+        tool_messages = await self._run_tool_calls(
+            tool_instances, tool_calls, tool_contexts, messages, state=state
+        )
+        if state.answer is not None or not tool_messages:
+            return tool_messages, True
+        if exhausted:
+            stop, state.closed = state.closed, True
+            return tool_messages, stop
+        state.rounds += 1
+        last = dict(tool_messages[-1])
+        last["content"] = f"{last.get('content', '')}{state.budget_note()}"
+        tool_messages[-1] = last  # type: ignore[assignment]
+        return tool_messages, False
 
     @classmethod
     def _get_delta(cls, chunk) -> str:
@@ -501,12 +1106,19 @@ class Llm(param.Parameterized):
         self,
         tools: list[dict[str, Any] | FunctionTool | MCPTool] | None,
     ) -> list[dict[str, Any] | FunctionTool | MCPTool] | None:
-        """Combine instance-level ``self.tools`` with per-call *tools*."""
-        if self.tools and tools:
+        """Combine instance-level ``self.tools`` with per-call *tools*.
+
+        ``tools=None`` means "use instance tools"; an explicit empty list opts
+        out of instance tools entirely (used by the routing call so the routing
+        model never runs the real tool loop).
+        """
+        if tools is None:
+            return list(self.tools) if self.tools else None
+        if not tools:
+            return []
+        if self.tools:
             return list(self.tools) + list(tools)
-        elif self.tools:
-            return list(self.tools)
-        return tools
+        return list(tools)
 
     @classmethod
     def _normalize_tools(
@@ -515,7 +1127,7 @@ class Llm(param.Parameterized):
     ) -> tuple[list[dict[str, Any]] | None, dict[str, FunctionTool | MCPTool], dict[str, Any]]:
         tool_instances: dict[str, FunctionTool | MCPTool] = {}
         tool_contexts: dict[str, Any] = {}
-        if tools is None:
+        if not tools:
             return None, tool_instances, tool_contexts
         tool_specs: list[dict[str, Any]] = []
         for tool in tools:
@@ -525,6 +1137,7 @@ class Llm(param.Parameterized):
             else:
                 tool_context = None
             if callable(tool) and hasattr(tool, "__lumen_tool_annotations__"):
+                # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
                 from .tools import FunctionTool
                 tool = FunctionTool(tool)
             if hasattr(tool, "_model"):
@@ -659,12 +1272,30 @@ class Llm(param.Parameterized):
         }
 
     @classmethod
-    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]]) -> Message:
+    def _tool_calls_message(cls, tool_calls: list[dict[str, Any]], reasoning: dict[str, Any] | None = None) -> Message:
         return Message(
             role="assistant",
             content="",
             tool_calls=[cls._normalize_tool_call_for_message(call) for call in tool_calls],
+            **(reasoning or {}),
         )
+
+    @classmethod
+    def _extract_reasoning(cls, response: Any) -> dict[str, Any]:
+        if not getattr(response, "choices", None):
+            return {}
+        message = getattr(response.choices[0], "message", None)
+        return {key: value for key in REASONING_FIELDS if (value := getattr(message, key, None))}
+
+    @classmethod
+    def _accumulate_reasoning(cls, reasoning: dict[str, str], chunk: Any) -> None:
+        """Join streamed reasoning text; structured reasoning_details deltas are not merged."""
+        if not getattr(chunk, "choices", None):
+            return
+        delta = getattr(chunk.choices[0], "delta", None)
+        for key in REASONING_FIELDS:
+            if isinstance(piece := getattr(delta, key, None), str):
+                reasoning[key] = reasoning.get(key, "") + piece
 
     @classmethod
     def _format_tool_result(cls, result: Any) -> str:
@@ -677,6 +1308,12 @@ class Llm(param.Parameterized):
 
     @classmethod
     def _parse_tool_call(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None]:
+        name, args, call_id, _ = cls._parse_tool_call_strict(call)
+        return name, args, call_id
+
+    @classmethod
+    def _parse_tool_call_strict(cls, call: Any) -> tuple[str | None, dict[str, Any], str | None, str | None]:
+        """Parse a tool call, also returning a description of malformed arguments."""
         if isinstance(call, dict):
             function = call.get("function") or {}
             name = function.get("name") or call.get("name")
@@ -687,12 +1324,92 @@ class Llm(param.Parameterized):
             name = getattr(function, "name", None) if function else None
             args = getattr(function, "arguments", None) if function else {}
             call_id = getattr(call, "id", None)
-        if isinstance(args, str):
+        error = None
+        # Some models double-encode the arguments as a JSON string.
+        for _ in range(2):
+            if not isinstance(args, str):
+                break
+            if not args.strip():
+                args = {}
+                break
             try:
                 args = json.loads(args)
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                error = f"Arguments are not valid JSON ({e.msg} at position {e.pos}): {truncate_string(args, 300)}"
                 args = {}
-        return name, args or {}, call_id
+        if not isinstance(args, dict):
+            error = f"Arguments must be a JSON object, got {type(args).__name__}."
+            args = {}
+        return name, args or {}, call_id, error
+
+    @staticmethod
+    def _describe_tool_parameters(tool: FunctionTool | MCPTool) -> str:
+        schema = tool._model.model_json_schema()
+        required = set(schema.get("required", []))
+        params = [
+            f"{name} ({'required' if name in required else 'optional'})"
+            for name in schema.get("properties", {})
+        ]
+        return ", ".join(params) or "none"
+
+    @classmethod
+    def _validate_tool_arguments(cls, tool: FunctionTool | MCPTool, arguments: dict[str, Any]) -> str | None:
+        """Check model-supplied arguments against the tool's pydantic model before running it."""
+        model = getattr(tool, "_model", None)
+        if model is None:
+            return None
+        unexpected = [key for key in arguments if key not in model.model_fields]
+        if unexpected:
+            return (
+                f"Unexpected argument(s) {', '.join(map(repr, unexpected))} for {tool.name!r}. "
+                f"Parameters: {cls._describe_tool_parameters(tool)}."
+            )
+        try:
+            model.model_validate(arguments)
+        except ValidationError as e:
+            # Context-injected requirements are not the model's to supply.
+            details = format_validation_error(e, skip=tool.requires)
+            if details:
+                return (
+                    f"Invalid arguments for {tool.name!r}: {details}. "
+                    f"Parameters: {cls._describe_tool_parameters(tool)}."
+                )
+        return None
+
+    async def _check_submission(self, state: ToolLoopState, arguments: dict[str, Any]) -> str | None:
+        """Accept a submission into ``state.answer`` or return why it was rejected."""
+        name = state.submit.name
+        try:
+            answer = state.submit.model.model_validate(arguments)
+        except ValidationError as e:
+            return f"Invalid {name} arguments: {format_validation_error(e)}. Fix them and call {name} again."
+        return await self._accept_submission(state, answer)
+
+    async def _accept_submission(self, state: ToolLoopState, answer: BaseModel) -> str | None:
+        submit = state.submit
+        if submit.validate is not None:
+            try:
+                result = submit.validate(answer)
+                if inspect.isawaitable(result):
+                    await result
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as e:
+                name = submit.name
+                return f"{name} rejected: {format_tool_error(e)}\nFix the problem and call {name} again."
+        state.answer = answer
+        return None
+
+    async def _execute_tool(self, tool: FunctionTool | MCPTool, arguments: dict[str, Any]) -> Any:
+        # Deferred: .tools -> .tools.base -> .actor -> .llm is a cycle.
+        from .tools import FunctionTool, MCPTool
+        if isinstance(tool, MCPTool):
+            return await tool.execute(**arguments)
+        if isinstance(tool, FunctionTool):
+            if inspect.iscoroutinefunction(tool.function):
+                return await tool.function(**arguments)
+            return await asyncio.to_thread(tool.function, **arguments)
+        raise TypeError(f"Unsupported tool type for {tool.name!r}: {type(tool)!r}")
 
     async def _run_tool_calls(
         self,
@@ -700,81 +1417,129 @@ class Llm(param.Parameterized):
         tool_calls: list[Any],
         tool_contexts: dict[str, Any],
         messages: list[Message],
+        state: ToolLoopState | None = None,
     ) -> list[Message]:
-        from .tools import FunctionTool, MCPTool
+        """
+        Run one round of tool calls and answer every call id.
 
-        async def run_single_tool_call(call: Any) -> Message | None:
-            name, arguments, call_id = self._parse_tool_call(call)
-            if not name:
-                log_debug(
-                    f"LLM tool call skipped: missing tool name (call_id={call_id!r})",
-                    prefix="[LLM tools]",
-                )
-                return None
-            if name not in tool_instances:
-                log_debug(
-                    "LLM tool call skipped: unknown tool "
-                    f"{name!r} (call_id={call_id!r}); registered: {sorted(tool_instances)}",
-                    prefix="[LLM tools]",
-                )
-                return None
+        Unanswered call ids make most providers reject the next request, and a
+        raised exception throws away the whole attempt, so malformed calls,
+        unknown tools, invalid arguments and tool exceptions all come back to
+        the model as tool results it can act on. Identical calls to read-only
+        tools are answered from ``state.results`` instead of being re-executed.
+
+        A submission is checked after the round's other calls have run, so
+        side effects the model requested alongside it are not dropped.
+        """
+        state = state if state is not None else ToolLoopState()
+        parsed = [self._parse_tool_call_strict(call) for call in tool_calls]
+        exhausted = state.exhausted
+
+        contents: list[str | None] = [None] * len(parsed)
+        submission: int | None = None
+        if state.submit is not None:
+            for i, (name, _, _, error) in enumerate(parsed):
+                if name != state.submit.name:
+                    continue
+                if error:
+                    contents[i] = f"{error} Fix the arguments and call {name} again."
+                elif submission is not None:
+                    contents[i] = "Only the first submission in a round is checked."
+                else:
+                    submission = i
+
+        async def run(name: str, arguments: dict[str, Any], call_id: str | None) -> tuple[str, bool]:
             tool = tool_instances[name]
             context = tool_contexts.get(name, {})
             for requirement in tool.requires:
                 if requirement not in arguments and requirement in context:
                     arguments[requirement] = context[requirement]
+            if (invalid := self._validate_tool_arguments(tool, arguments)) is not None:
+                return invalid, False
+            args_repr = truncate_string(json.dumps(arguments, default=str, ensure_ascii=False), max_length=4000)
+            log_debug(
+                f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
+                prefix="[LLM tools]",
+            )
             try:
-                args_repr = truncate_string(
-                    json.dumps(arguments, default=str, ensure_ascii=False),
-                    max_length=4000,
-                )
+                formatted = self._format_tool_result(await self._execute_tool(tool, arguments))
+            except UNRECOVERABLE_ERRORS:
+                raise
+            except Exception as e:
                 log_debug(
-                    f"LLM tool call start tool={name!r} call_id={call_id!r} arguments={args_repr}",
-                    prefix="[LLM tools]",
-                )
-                if isinstance(tool, MCPTool):
-                    result = await tool.execute(**arguments)
-                elif isinstance(tool, FunctionTool):
-                    if asyncio.iscoroutinefunction(tool.function):
-                        result = await tool.function(**arguments)
-                    else:
-                        # Synchronous function, run in thread
-                        result = await asyncio.to_thread(tool.function, **arguments)
-                else:
-                    raise TypeError(f"Unsupported tool type for {name!r}: {type(tool)!r}")
-                formatted = self._format_tool_result(result)
-                log_debug(
-                    f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
-                    f"{truncate_string(formatted, max_length=16000)}",
-                    prefix="[LLM tools]",
-                    show_length=True,
-                )
-            except Exception:
-                log_debug(
-                    [
-                        f"LLM tool call failed tool={name!r} call_id={call_id!r}",
-                        traceback.format_exc(),
-                    ],
+                    [f"LLM tool call failed tool={name!r} call_id={call_id!r}", traceback.format_exc()],
                     prefix="[LLM tools]",
                     show_sep="above",
                 )
-                raise
-            return Message(
-                role="tool",
-                content=formatted,
-                name=name,
-                tool_call_id=call_id,
+                return f"Tool {name!r} failed: {format_tool_error(e)}", False
+            log_debug(
+                f"LLM tool call result tool={name!r} call_id={call_id!r}\n"
+                f"{truncate_string(formatted, max_length=16000)}",
+                prefix="[LLM tools]",
+                show_length=True,
             )
-        results = await asyncio.gather(
-            *(run_single_tool_call(call) for call in tool_calls)
-        )
-        return [msg for msg in results if msg is not None]
+            return formatted, True
+
+        valid_tools = [*tool_instances, *([state.submit.name] if state.submit else [])]
+        keys: list[str | None] = [None] * len(parsed)
+        first: dict[str, int] = {}
+        pending: dict[int, asyncio.Future] = {}
+        for i, (name, arguments, call_id, error) in enumerate(parsed):
+            if contents[i] is not None or i == submission:
+                continue
+            if not name:
+                contents[i] = f"Tool call is missing a tool name. Valid tools: {', '.join(sorted(valid_tools))}."
+            elif name not in tool_instances:
+                contents[i] = format_unknown_name("tool", name, valid_tools)
+            elif error:
+                contents[i] = f"{error} Parameters: {self._describe_tool_parameters(tool_instances[name])}."
+            elif exhausted:
+                contents[i] = state.not_run_note()
+            else:
+                # A repeated call to a tool with side effects must run again,
+                # e.g. re-applying a filter another call has since replaced.
+                if getattr(tool_instances[name], "read_only", False):
+                    key = json.dumps([name, arguments], sort_keys=True, default=str)
+                    keys[i] = key
+                    if key in state.results or key in first:
+                        continue
+                    first[key] = i
+                pending[i] = asyncio.ensure_future(run(name, dict(arguments), call_id))
+
+        outcomes = dict(zip(pending, await asyncio.gather(*pending.values()), strict=True)) if pending else {}
+        for i, (content, ok) in outcomes.items():
+            contents[i] = content
+            # Failures are not cached, so a transient error can be retried.
+            if ok and keys[i] is not None:
+                state.results[keys[i]] = content
+        for i, key in enumerate(keys):
+            if key is None or i in outcomes:
+                continue
+            earlier = state.results.get(key)
+            if earlier is None:
+                earlier = contents[first[key]]
+            contents[i] = DUPLICATE_TOOL_CALL_NOTE + earlier
+
+        if submission is not None:
+            rejection = await self._check_submission(state, parsed[submission][1])
+            contents[submission] = "accepted" if rejection is None else rejection
+
+        tool_messages: list[Message] = []
+        for (name, arguments, call_id, _), content in zip(parsed, contents, strict=True):
+            record_trace(self, ToolCall(str(name), dict(arguments), content))
+            tool_messages.append(Message(
+                role="tool",
+                content=content,
+                name=name or "unknown",
+                tool_call_id=call_id,
+            ))
+        return tool_messages
 
     async def initialize(self, log_level: str):
         try:
             self._ready = False
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
             self._ready = True
@@ -815,9 +1580,15 @@ class Llm(param.Parameterized):
         ------
         The string or response_model field.
         """
+        # Tool rounds recurse through stream(), so the budget and the call
+        # cache travel with the recursion instead of resetting each round.
+        tool_state = kwargs.pop("_tool_state", None) or ToolLoopState(
+            max_rounds=int(kwargs.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))
+        )
         combined_tools = self._combine_tools(tools)
         _, tool_instances, tool_contexts = self._normalize_tools(combined_tools)
         messages, contains_image = self._check_for_image(messages)
+        model_spec = await self._resolve_routing(model_spec, messages)
         if self.logfire_tags is not None or contains_image:
             output = await self.invoke(
                 messages,
@@ -869,6 +1640,7 @@ class Llm(param.Parameterized):
 
         tool_call_accum: dict[int, dict[str, Any]] = {}
         tool_call_order: list[int] = []
+        reasoning: dict[str, str] = {}
         response_id: str | None = None
         try:
             async for chunk in chunks:
@@ -879,6 +1651,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -894,6 +1667,7 @@ class Llm(param.Parameterized):
                 if response_model is None:
                     string += self._get_delta(chunk)
                     yield string
+                    self._accumulate_reasoning(reasoning, chunk)
                     tool_calls = self._extract_stream_tool_calls(chunk)
                     if tool_calls:
                         self._accumulate_tool_calls(tool_call_accum, tool_call_order, tool_calls)
@@ -902,15 +1676,25 @@ class Llm(param.Parameterized):
 
         if response_model is None and tool_instances and tool_call_accum:
             tool_calls = self._tool_calls_from_accum(tool_call_accum, tool_call_order)
-            tool_messages = await self._run_tool_calls(tool_instances, tool_calls, tool_contexts, messages)
-            if tool_messages:
+            tool_messages, stop = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages, tool_state
+            )
+            if stop:
+                log_debug(
+                    f"Tool budget of {tool_state.max_rounds} rounds exhausted; ending the stream.",
+                    prefix="[LLM tools]",
+                )
+            else:
+                kwargs["_tool_state"] = tool_state
                 if (
                     getattr(self, "api", None) == "responses"
                     and hasattr(self, "_tool_messages_to_response_inputs")
                 ):
                     next_messages = self._tool_messages_to_response_inputs(tool_messages)
                     next_kwargs = dict(kwargs)
-                    if response_id:
+                    if getattr(self, "stateless_responses", False):
+                        next_messages = messages + self._tool_calls_to_response_inputs(tool_calls) + next_messages
+                    elif response_id:
                         next_kwargs["previous_response_id"] = response_id
                     async for chunk in self.stream(
                         next_messages,  # type: ignore[arg-type]
@@ -923,7 +1707,7 @@ class Llm(param.Parameterized):
                     ):
                         yield chunk
                 else:
-                    tool_calls_message = self._tool_calls_message(tool_calls)
+                    tool_calls_message = self._tool_calls_message(tool_calls, reasoning)
                     async for chunk in self.stream(
                         messages + [tool_calls_message] + tool_messages,
                         system=system,
@@ -939,15 +1723,20 @@ class Llm(param.Parameterized):
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
         previous_role = None
         for i, message in enumerate(messages):
-            role = message["role"]
+            if "role" in message:
+                role = message["role"]
+            else:
+                role = message["type"]
             if role == "system":
+                content = message.get("content", "")
+                log_debug(f"System prompt:\n\033[90m{content}\033[0m", show_length=True)
                 continue
             content = message.get("content") if isinstance(message, dict) else None
             if not content and "tool_calls" in message:
-                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=1000)
+                content = truncate_string(json.dumps(message["tool_calls"], indent=2), max_length=10000)
             role_char = role[0]
             log_debug(f"Message \033[95m{i} ({role_char})\033[0m: {format_msg_content(content)}")
-            if previous_role == role:
+            if previous_role == role and not role.startswith("tool"):
                 log_debug(
                     "\033[91mWARNING: Two consecutive messages from the same role; "
                     "some providers disallow this.\033[0m"
@@ -965,8 +1754,601 @@ class Llm(param.Parameterized):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
+
+
+class LlmCli(Llm):
+    """Base class for locally authenticated coding CLIs.
+
+    These providers invoke an already authenticated local CLI instead of handling
+    credentials. Lumen renders its messages as a text prompt and sends it over
+    standard input. Each subclass parses the CLI-specific response format to
+    obtain the final text response. For structured responses, Lumen appends the
+    Pydantic JSON Schema to the prompt, extracts the returned JSON value, and
+    validates it against the response model.
+
+    They are intended for local development only: output is collected after the
+    command completes and native Lumen function tools are not forwarded to the
+    CLI.
+    """
+
+    executable = param.String(default="", constant=True, doc="Path or name of the CLI executable.")
+
+    working_dir = param.String(default=None, allow_None=True, constant=True, doc="""
+        Working directory for CLI subprocesses. By default, the CLI inherits the
+        directory from which Lumen was launched, or runs in a fresh temporary
+        directory for providers that isolate each request.""")
+
+    _supports_stream = False
+    _supports_model_stream = False
+    _supports_vision = False
+
+    # Arguments that make the CLI report whether a user is signed in, if it has such a command.
+    _auth_status_args: tuple[str, ...] = ()
+
+    @classmethod
+    def _auth_status(cls) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(
+                [cls.param.executable.default, *cls._auth_status_args],
+                capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+    @classmethod
+    def signed_in(cls) -> bool | None:
+        """Whether the CLI reports a signed-in user, or None if it has no way to say."""
+        if not cls._auth_status_args:
+            return None
+        result = cls._auth_status()
+        return result is not None and result.returncode == 0
+
+    def _create_base_client(self, **kwargs) -> Any:
+        raise NotImplementedError("CLI-backed providers do not create an SDK client.")
+
+    def _check_for_image(self, messages: list[Message]) -> tuple[list[Message], bool]:
+        messages, contains_image = super()._check_for_image(messages)
+        if contains_image:
+            raise ValueError(f"{self.display_name} does not support image inputs.")
+        return messages, False
+
+    @staticmethod
+    def _content_to_text(content: str | Image | list[dict[str, Any]]) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    if item.get("type") == "text":
+                        parts.append(str(item.get("text", "")))
+                    else:
+                        parts.append(json.dumps(item, default=str, ensure_ascii=False))
+                else:
+                    parts.append(str(item))
+            return "\n".join(parts)
+        return str(content)
+
+    def _messages_to_prompt(self, messages: list[Message]) -> str:
+        rendered = []
+        for message in messages:
+            role = message.get("role", "user").upper()
+            content = self._content_to_text(message.get("content", ""))
+            tool_calls = message.get("tool_calls")
+            if not content and tool_calls:
+                content = json.dumps(tool_calls, default=str, ensure_ascii=False)
+            rendered.append(f"[{role}]\n{content}")
+        return "\n\n".join(rendered)
+
+    @staticmethod
+    def _extract_json(output: str) -> Any:
+        """Extract the first JSON value from a CLI response."""
+        output = output.strip()
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(output):
+            if character not in "[{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(output[index:])
+            except json.JSONDecodeError:
+                continue
+            return value
+        raise ValueError("The CLI did not return valid JSON for Lumen's structured response.")
+
+    def _structured_prompt(self, prompt: str, response_model: type[BaseModel]) -> str:
+        schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+        return (
+            f"{prompt}\n\n"
+            "Return only one JSON value matching this JSON Schema. Do not use Markdown, "
+            "explain the answer, or call tools.\n"
+            f"JSON Schema:\n{schema}"
+        )
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        cwd = cwd or self.working_dir
+        if cwd and not Path(cwd).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {cwd!r}")
+        return await self._communicate(await self._spawn(command, cwd), prompt)
+
+    async def _spawn(self, command: list[str], cwd: str | None) -> asyncio.subprocess.Process:
+        try:
+            return await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+
+    async def _communicate(self, process: asyncio.subprocess.Process, prompt: str) -> str:
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(prompt.encode("utf-8")), timeout=self.timeout
+            )
+        except asyncio.CancelledError:
+            process.kill()
+            await process.wait()
+            raise
+        except TimeoutError as exc:
+            process.kill()
+            await process.wait()
+            raise TimeoutError(
+                f"{self.display_name} did not finish within {self.timeout:g} seconds."
+            ) from exc
+
+        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")
+        if process.returncode:
+            detail = stderr_text.strip() or stdout_text.strip() or "no error output"
+            detail = truncate_string(detail, max_length=4000)
+            raise RuntimeError(
+                f"{self.display_name} exited with status {process.returncode}: {detail}"
+            )
+        return stdout_text
+
+    def _build_command(self, model: str | None) -> list[str]:
+        raise NotImplementedError
+
+    def _decode_output(self, output: str) -> str:
+        raise NotImplementedError
+
+    async def _run_tool_loop(
+        self,
+        messages: list[Message],
+        structured_model: type[BaseModel] | None,
+        tool_instances: dict,
+        tool_contexts: dict,
+        model_spec: str | dict = "default",
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
+        **kwargs,
+    ) -> BaseModel | str:
+        if tool_instances:
+            log_debug(
+                "CLI providers do not support native Lumen tools; continuing without them.",
+                prefix="[LLM tools]",
+            )
+        kwargs.pop("tools", None)
+        return await super()._run_tool_loop(
+            messages,
+            structured_model,
+            {},
+            {},
+            model_spec=model_spec,
+            max_tool_rounds=max_tool_rounds,
+            **kwargs,
+        )
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        model = self._get_model_kwargs(model_spec).get("model")
+        prompt = self._messages_to_prompt(messages)
+        if response_model is not None:
+            prompt = self._structured_prompt(prompt, response_model)
+
+        command = self._build_command(model)
+        log_debug(f"CLI command: \033[96m{' '.join(command)} <stdin>\033[0m")
+        stdout = await self._run_command(command, prompt)
+        output = self._decode_output(stdout)
+
+        if response_model is not None:
+            try:
+                result = response_model.model_validate(self._extract_json(output))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{self.display_name} returned an invalid structured response: {exc}"
+                ) from exc
+        else:
+            result = output
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
+        return result
+
+
+class CodexCli(LlmCli):
+    """Use the locally authenticated Codex CLI as a Lumen provider."""
+
+    display_name = param.String(default="Codex CLI", constant=True)
+
+    executable = param.String(default="codex", constant=True)
+
+    _auth_status_args = ("login", "status")
+
+    sandbox = param.Selector(
+        default="read-only",
+        objects=["read-only", "workspace-write", "danger-full-access"],
+        constant=True,
+        doc="Codex sandbox policy. The safe read-only policy is the default.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "exec", "--json", "--sandbox", self.sandbox,
+            "--skip-git-repo-check", "--ephemeral",
+        ]
+        if model:
+            command.extend(["--model", model])
+        return [*command, "-"]
+
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            item = event.get("item") if isinstance(event, dict) else None
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or item.get("content")
+                if text:
+                    final_message = str(text)
+        if final_message is None:
+            raise ValueError("Codex CLI did not return a final agent message.")
+        return final_message.strip()
+
+
+class ClaudeCode(LlmCli):
+    """Use the locally authenticated Claude Code CLI as a Lumen provider."""
+
+    display_name = param.String(default="Claude Code CLI", constant=True)
+
+    executable = param.String(default="claude", constant=True)
+
+    _auth_status_args = ("auth", "status")
+
+    # Not plan: every tool is already disabled, and plan mode adds planning
+    # remarks to each answer ("I'll answer directly rather than creating a
+    # plan file"), which leak into Lumen's text and break JSON replies.
+    permission_mode = param.Selector(
+        default="dontAsk",
+        objects=["plan", "manual", "dontAsk", "acceptEdits", "auto", "bypassPermissions"],
+        constant=True,
+        doc="Claude Code permission mode. dontAsk never prompts and, with every tool disabled, never acts.",
+    )
+
+    max_turns = param.Integer(
+        default=3,
+        bounds=(1, None),
+        constant=True,
+        doc="Maximum Claude Code turns per Lumen request, including internal tool calls.",
+    )
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    @classmethod
+    def signed_in(cls) -> bool:
+        # `claude auth status` prints JSON whose loggedIn field is the answer.
+        result = cls._auth_status()
+        if result is None or result.returncode != 0:
+            return False
+        try:
+            return json.loads(result.stdout).get("loggedIn") is True
+        except json.JSONDecodeError:
+            return False
+
+    def _build_command(self, model: str | None) -> list[str]:
+        command = [
+            self.executable, "--print", "--output-format", "json",
+            "--no-session-persistence", "--max-turns", str(self.max_turns),
+            "--permission-mode", self.permission_mode,
+            # Lumen runs its own tool loop, so Claude Code's built-in tools and
+            # MCP servers only spend turns and hit --max-turns. User settings
+            # would add the user's own hooks and instructions to every answer.
+            "--tools", "", "--strict-mcp-config", "--setting-sources=",
+        ]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Claude Code never reads the project Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            return await super()._run_command(command, prompt, cwd or self.working_dir or tmp)
+
+    def _decode_output(self, output: str) -> str:
+        try:
+            response = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Claude Code CLI returned invalid JSON.") from exc
+        if not isinstance(response, dict):
+            raise ValueError("Claude Code CLI returned an unexpected JSON response.")
+        if response.get("is_error"):
+            raise RuntimeError(str(response.get("result") or "Claude Code returned an error."))
+        if "result" not in response:
+            raise ValueError("Claude Code CLI response did not include a result.")
+        # The CLI can use several models, e.g. a small one for side tasks;
+        # the one that cost the most is the one that wrote the answer
+        used = response.get("modelUsage") or {}
+        model = max(used, key=lambda name: (used[name] or {}).get("costUSD") or 0, default="claude-code")
+        if (usage := parse_usage(response, "anthropic", model, {})) is not None:
+            # The CLI prices its own calls, so no pricing table is needed
+            cost = response.get("total_cost_usd")
+            record_usage(self, self.usage, replace(usage, cost_usd=cost if isinstance(cost, (int, float)) else None))
+        return str(response["result"]).strip()
+
+
+class _AcpProcess:
+    """A long-running `copilot --acp --stdio` process that answers many prompts.
+
+    ACP is the Agent Client Protocol, JSON-RPC over stdin and stdout that lets
+    a program drive a coding agent. Starting the CLI takes several seconds, so
+    reusing one process makes each request much faster than launching the CLI
+    per request.
+    """
+
+    def __init__(self, command: list[str]):
+        self.command = command
+        self.loop = asyncio.get_running_loop()
+        self.process = None
+        self._lock = asyncio.Lock()
+        self._next_id = 0
+        self._pending: dict[int, asyncio.Future] = {}
+        self._chunks: dict[str, list[str]] = {}
+
+    @property
+    def alive(self) -> bool:
+        return self.loop is asyncio.get_running_loop() and (
+            self.process is None or self.process.returncode is None
+        )
+
+    async def _start(self):
+        # Both are held for the life of the process: the directory must outlive
+        # it, and an unreferenced reader task could be garbage collected.
+        self._cwd = tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        self.process = await asyncio.create_subprocess_exec(
+            *self.command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            cwd=self._cwd.name,
+            limit=2**26,
+        )
+        self._reader = asyncio.create_task(self._read())
+        await self._request("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+
+    def _send(self, message: dict):
+        self.process.stdin.write((json.dumps({"jsonrpc": "2.0", **message}) + "\n").encode("utf-8"))
+
+    async def _request(self, method: str, params: dict) -> dict:
+        self._next_id += 1
+        request_id = self._next_id
+        future = self.loop.create_future()
+        self._pending[request_id] = future
+        self._send({"id": request_id, "method": method, "params": params})
+        try:
+            response = await future
+        finally:
+            self._pending.pop(request_id, None)
+        if "error" in response:
+            raise RuntimeError(f"GitHub Copilot CLI {method} failed: {response['error'].get('message')}")
+        return response["result"]
+
+    async def _read(self):
+        async for line in self.process.stdout:
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "method" in message and "id" in message:
+                # Every tool is disabled, so refuse any permission or client request.
+                result = {"outcome": {"outcome": "cancelled"}}
+                self._send({"id": message["id"], "result": result})
+            elif "id" in message:
+                future = self._pending.get(message["id"])
+                if future and not future.done():
+                    future.set_result(message)
+            elif message.get("method") == "session/update":
+                update = message["params"]["update"]
+                chunks = self._chunks.get(message["params"]["sessionId"])
+                if chunks is not None and update.get("sessionUpdate") == "agent_message_chunk":
+                    chunks.append(update["content"].get("text", ""))
+        await self.process.wait()
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(RuntimeError(
+                    f"GitHub Copilot CLI exited with status {self.process.returncode}."
+                ))
+
+    async def prompt(self, prompt: str, cwd: str) -> str:
+        async with self._lock:
+            if self.process is None:
+                await self._start()
+        session_id = (await self._request("session/new", {"cwd": cwd, "mcpServers": []}))["sessionId"]
+        self._chunks[session_id] = []
+        try:
+            result = await self._request(
+                "session/prompt", {"sessionId": session_id, "prompt": [{"type": "text", "text": prompt}]}
+            )
+        except BaseException:
+            # A timeout or cancellation would otherwise leave Copilot generating
+            # an answer nobody reads, still counting against the user's quota.
+            if self.process.returncode is None:
+                self._send({"method": "session/cancel", "params": {"sessionId": session_id}})
+            raise
+        finally:
+            chunks = self._chunks.pop(session_id)
+        # Copilot reports session notices as whole "Info: " or "Warning: "
+        # chunks ahead of the answer; drop those before the first answer text.
+        while chunks and re.match(r"(Info|Warning): ", chunks[0]):
+            chunks.pop(0)
+        text = "".join(chunks)
+        if result.get("stopReason") != "end_turn":
+            raise RuntimeError(f"GitHub Copilot CLI stopped early ({result.get('stopReason')}): {text}")
+        return text
+
+
+class CopilotCli(LlmCli):
+    """Use the locally authenticated GitHub Copilot CLI as a Lumen provider."""
+
+    display_name = param.String(default="GitHub Copilot CLI", constant=True)
+
+    executable = param.String(default="copilot", constant=True)
+
+    model_kwargs = param.Dict(default={"default": {"model": None}})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._acp_processes: dict[tuple[str, ...], _AcpProcess] = {}
+
+    def _build_command(self, model: str | None) -> list[str]:
+        # An allowlist naming no real tool disables every tool, including user
+        # MCP tools that deny rules cannot match; the deny rules are a backstop.
+        command = [
+            self.executable, "--no-ask-user", "--no-custom-instructions", "--disable-builtin-mcps",
+            "--no-remote-export", "--no-auto-update", "--available-tools=none", "--deny-tool=shell",
+            "--deny-tool=write", "--deny-tool=read", "--deny-tool=url", "--deny-tool=memory",
+        ]
+        if model and model != "auto":
+            # ACP mode silently ignores --model, so a chosen model runs one CLI per request.
+            return [*command, "--output-format", "json", "--stream", "off", "--model", model]
+        return [*command, "--acp", "--stdio"]
+
+    async def _run_command(self, command: list[str], prompt: str, cwd: str | None = None) -> str:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so Copilot never sees the files of the directory Lumen runs in.
+        with tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True) as tmp:
+            cwd = self.working_dir or tmp
+            if "--acp" not in command:
+                return await super()._run_command(command, prompt, cwd)
+            if not Path(cwd).is_dir():
+                raise ValueError(f"CLI working directory does not exist: {cwd!r}")
+            return await self._run_acp(command, prompt, cwd)
+
+    async def _run_acp(self, command: list[str], prompt: str, cwd: str) -> str:
+        key = tuple(command)
+        acp = self._acp_processes.get(key)
+        if acp is None or not acp.alive:
+            acp = self._acp_processes[key] = _AcpProcess(command)
+        try:
+            text = await asyncio.wait_for(acp.prompt(prompt, cwd), timeout=self.timeout)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Could not find {self.executable!r}. Install it and sign in to its CLI before "
+                f"using the {self.display_name} provider."
+            ) from exc
+        except TimeoutError as exc:
+            raise TimeoutError(f"{self.display_name} did not finish within {self.timeout:g} seconds.") from exc
+        # Same event shape as the one-shot JSON output, so one decoder serves both.
+        return json.dumps({"type": "assistant.message", "data": {"content": text}})
+
+    def _decode_output(self, output: str) -> str:
+        final_message = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            data = event.get("data") if isinstance(event, dict) and event.get("type") == "assistant.message" else None
+            if isinstance(data, dict) and data.get("content"):
+                final_message = str(data["content"])
+        if final_message is None:
+            raise ValueError("GitHub Copilot CLI did not return a final assistant message.")
+        return final_message.strip()
+
+
+class AntigravityCli(LlmCli):
+    """Use the locally authenticated Google Antigravity CLI as a Lumen provider."""
+
+    display_name = param.String(default="Antigravity CLI", constant=True)
+
+    executable = param.String(default="agy", constant=True)
+
+    # The fastest model measured; Antigravity's own default is far slower.
+    model_kwargs = param.Dict(default={"default": {"model": "gemini-3.8-flash-low"}})
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._spares: dict[tuple[str, ...], tuple] = {}
+
+    def _build_command(self, model: str | None) -> list[str]:
+        # stream-json input is the only way to pass the prompt on stdin
+        # instead of the command line, and it requires stream-json output.
+        command = [self.executable, "--input-format", "stream-json", "--output-format", "stream-json"]
+        if model:
+            command.extend(["--model", model])
+        return command
+
+    async def _start(self, command: list[str]) -> tuple:
+        # Each request gets a fresh empty directory unless working_dir is set,
+        # so the agent never sees the files of the directory Lumen runs in.
+        tmp = None if self.working_dir else tempfile.TemporaryDirectory(prefix="lumen-cli-", ignore_cleanup_errors=True)
+        process = await self._spawn(command, self.working_dir or tmp.name)
+        return asyncio.get_running_loop(), process, tmp
+
+    async def _run_command(self, command: list[str], prompt: str) -> str:
+        if self.working_dir and not Path(self.working_dir).is_dir():
+            raise ValueError(f"CLI working directory does not exist: {self.working_dir!r}")
+        key = tuple(command)
+        loop, process, tmp = self._spares.pop(key, None) or await self._start(command)
+        if loop is not asyncio.get_running_loop() or process.returncode is not None:
+            loop, process, tmp = await self._start(command)
+        # agy spends about ten seconds starting up before it reads stdin, so
+        # start the process for the next request now. A process serves only
+        # one request because every turn it reads shares one conversation.
+        self._spares[key] = await self._start(command)
+        message = json.dumps({"event": "user", "message": {"content": prompt}})
+        try:
+            return await self._communicate(process, message + "\n")
+        finally:
+            if tmp is not None:
+                tmp.cleanup()
+
+    def _decode_output(self, output: str) -> str:
+        result = None
+        for line in output.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and event.get("event") == "result":
+                result = event.get("result") or {}
+        if result is None:
+            raise ValueError("Antigravity CLI did not return a result.")
+        if result.get("status") != "SUCCESS":
+            raise RuntimeError(str(result.get("error") or f"Antigravity CLI finished with status {result.get('status')}."))
+        response = str(result.get("response") or "").strip()
+        if not response:
+            # A tool that headless mode blocks ends the turn with SUCCESS and no answer.
+            denied = ", ".join(action.get("display_name", "") for action in result.get("denied_actions") or [])
+            raise RuntimeError(f"Antigravity CLI returned no answer. Tools blocked in headless mode: {denied or 'none'}.")
+        return response
 
 
 class LlamaCpp(Llm, LlamaCppMixin):
@@ -982,33 +2364,43 @@ class LlamaCpp(Llm, LlamaCppMixin):
 
     model_kwargs = param.Dict(default={
         "default": {
-            "repo_id": "unsloth/Qwen3-32B-GGUF",
-            "filename": "Qwen3-32B-Q5_K_M.gguf",
-            "chat_format": "qwen",
+            "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+            "filename": "Qwen3.5-9B-Q5_K_M.gguf",
+            # The embedded Qwen3.5+ template opens a <think> block that the
+            # JSON grammar would then have to fill.
+            "chat_format": "chatml",
+            # n_ctx=0 would allocate the full 262k-token KV cache.
+            "n_ctx": 32768,
         },
     })
 
+    # Entries are "<repo_id>/<filename>:<chat_format>"; see resolve_model_spec.
     select_models = param.List(default=[
-        "unsloth/Qwen3-32B-GGUF",
-        "unsloth/Qwen3-Coder-32B-A3B-Instruct-GGUF",
-        "unsloth/Qwen2.5-Coder-32B-Instruct-GGUF",
-        "meta-llama/Llama-3.3-70B-Instruct-GGUF",
-        "nvidia/Nemotron-3-Nano-30B-GGUF"
+        "unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf:chatml",
+        "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf:chatml",
+        "unsloth/Qwen3.5-9B-GGUF/Qwen3.5-9B-Q5_K_M.gguf:chatml",
+        "unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf:chat_template.default",
     ], constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True)
 
     # LlamaCpp doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
 
-    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
-        if isinstance(model_spec, dict):
-            return model_spec
+    def _routing_config(self, model_spec: str) -> dict | None:
+        # A repo id names a model directly rather than resolving to an entry,
+        # so routing must not override a model the caller asked for by name.
+        if model_spec not in self.model_kwargs and "/" in model_spec:
+            return None
+        return super()._routing_config(model_spec)
 
-        if model_spec in self.model_kwargs or "/" not in model_spec:
+    def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
+        if isinstance(model_spec, dict) or model_spec in self.model_kwargs or "/" not in model_spec:
             model_kwargs = super()._get_model_kwargs(model_spec)
         else:
-            base_kwargs = self.model_kwargs["default"]
+            # super() strips the routing keys, so the resolved repo id inherits
+            # a base config that is already safe to hand to the SDK.
+            base_kwargs = super()._get_model_kwargs("default")
             model_kwargs = self.resolve_model_spec(model_spec, base_kwargs)
 
         if "n_ctx" not in model_kwargs:
@@ -1018,10 +2410,6 @@ class LlamaCpp(Llm, LlamaCppMixin):
             return self._instantiate_client_kwargs(model_kwargs=model_kwargs)
         except Exception:
             return dict(model_kwargs)
-
-    @property
-    def _client_kwargs(self) -> dict[str, Any]:
-        return {"temperature": self.temperature}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._instantiate_client(**kwargs)
@@ -1078,27 +2466,35 @@ class OpenAI(Llm, OpenAIMixin):
         - ``chat_completions``: Uses ``/v1/chat/completions`` (default)
         - ``responses``: Uses ``/v1/responses``""")
 
+    stateless_responses = param.Boolean(default=False, doc="""
+        Resend the full conversation on each Responses API request instead of
+        chaining ``previous_response_id``, for providers such as OpenRouter
+        that do not store responses.""")
+
     display_name = param.String(default="OpenAI", constant=True)
 
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-5.4-mini"},  # Use standard models, not reasoning models (gpt-5, o4-mini)
-        "ui": {"model": "gpt-5.4-nano"},
+        "default": {"model": "gpt-6-luna"},  # Runs with reasoning disabled; see ADAPTIVE_KWARGS
     })
 
     select_models = param.List(default=[
-        "gpt-5.2",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.4-nano"
+        "gpt-6-luna",
+        "gpt-5.6-luna",
+        "gpt-6-sol",
+        "gpt-5.4-nano",
     ], constant=True, doc="""Warning: Reasoning models (gpt-5, o4-mini) are much slower and not suitable for dialog interfaces.""")
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
 
     _supports_logfire = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Per-model request fixes learned from the API, e.g. gpt-5.6-luna
+        # rejecting a non-default temperature. See ADAPTIVE_KWARGS.
+        self._kwarg_fixes: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def _resolve_openai_mode(cls, mode: Mode) -> Mode:
@@ -1143,14 +2539,29 @@ class OpenAI(Llm, OpenAIMixin):
             })
         return inputs
 
+    @classmethod
+    def _response_output_items(cls, response: Any) -> list[dict[str, Any]]:
+        items = getattr(response, "output", None) or []
+        return [
+            item if isinstance(item, dict)
+            else item.model_dump(exclude_none=True) if hasattr(item, "model_dump")
+            else dict(vars(item))
+            for item in items
+        ]
+
+    @classmethod
+    def _tool_calls_to_response_inputs(cls, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [{
+            "type": "function_call",
+            "call_id": call["id"],
+            "name": call["function"]["name"],
+            "arguments": call["function"]["arguments"],
+        } for call in tool_calls]
+
     def models(self) -> set[str]:
         """Return the set of available model identifiers from OpenAI."""
         client = OpenAIClient(api_key=self.api_key, timeout=5)
         return {m.id for m in client.models.list().data}
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1159,6 +2570,10 @@ class OpenAI(Llm, OpenAIMixin):
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(async_client=True, **kwargs)
+        if self.api == "responses":
+            meter_method(self, client.responses, "create", "openai")
+        else:
+            meter_method(self, client.chat.completions, "create", "openai")
         if self.logfire_tags:
             self._logfire.instrument_openai(client)
         return client
@@ -1291,65 +2706,85 @@ class OpenAI(Llm, OpenAIMixin):
         tool_instances: dict,
         tool_contexts: dict,
         model_spec: str | dict = "default",
-        max_tool_rounds: int = 16,
+        max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        submit: SubmitTool | None = None,
         **kwargs
     ) -> BaseModel | str:
         if self.api != "responses":
             return await super()._run_tool_loop(
-                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds, **kwargs
+                messages, structured_model, tool_instances, tool_contexts, model_spec, max_tool_rounds,
+                submit=submit, **kwargs
             )
 
         max_retries = kwargs.pop("max_retries", None)
         requested_stream = bool(kwargs.get("stream", False))
         if requested_stream and structured_model is None:
             kwargs.pop("response_model", None)
-            return await self.run_client(model_spec, messages, **kwargs)
+            return await self._traced_run_client(model_spec, messages, **kwargs)
 
         has_inbuilt = any(
             isinstance(t, dict) and t.get("type") not in (None, "function")
-            for t in kwargs.get("tools")
+            for t in kwargs.get("tools", [])
         )
 
+        uses_tools = bool(tool_instances) or has_inbuilt or submit is not None
         # When there are NO inbuilt tools and NO function-tool instances we
         # can ask for the structured response in a single round-trip.
-        if structured_model is not None and not tool_instances and not has_inbuilt:
+        if structured_model is not None and not uses_tools:
             kwargs["response_model"] = structured_model
             if max_retries is not None:
                 kwargs["max_retries"] = max_retries
         else:
             kwargs.pop("response_model", None)
 
-        output = await self.run_client(model_spec, messages, **kwargs)
-        if not tool_instances and not has_inbuilt:
+        output = await self._traced_run_client(model_spec, messages, **kwargs)
+        if not uses_tools:
             return output
 
-        for _ in range(max_tool_rounds):
+        state = ToolLoopState(max_rounds=max_tool_rounds, submit=submit)
+        # Outputs for the calls of the last response, which a request chained
+        # onto it through previous_response_id must include.
+        pending_outputs: list[dict[str, Any]] = []
+        history = list(messages)
+        while True:
             tool_calls = self._extract_tool_calls(output)
             if not tool_calls:
                 break
-            tool_messages = await self._run_tool_calls(
-                tool_instances, tool_calls, tool_contexts, messages
+            tool_messages, stop = await self._run_tool_round(
+                tool_instances, tool_calls, tool_contexts, messages, state
             )
-            if not tool_messages:
-                break
+            if state.answer is not None:
+                return state.answer
             tool_outputs = self._tool_messages_to_response_inputs(tool_messages)
-            if not tool_outputs:
+            if self.stateless_responses:
+                history += self._response_output_items(output) + tool_outputs
+            if stop or not tool_outputs:
+                pending_outputs = tool_outputs
                 break
             next_kwargs = dict(kwargs)
-            response_id = getattr(output, "id", None)
+            response_id = None if self.stateless_responses else getattr(output, "id", None)
             if response_id:
                 next_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, tool_outputs, **next_kwargs)
+            next_inputs = history if self.stateless_responses else tool_outputs
+            output = await self._traced_run_client(model_spec, next_inputs, **next_kwargs)
 
         if structured_model:
             final_kwargs = dict(kwargs)
             final_kwargs["response_model"] = structured_model
             if max_retries is not None:
                 final_kwargs["max_retries"] = max_retries
-            response_id = getattr(output, "id", None)
+            response_id = None if self.stateless_responses else getattr(output, "id", None)
             if response_id:
                 final_kwargs["previous_response_id"] = response_id
-            output = await self.run_client(model_spec, [], **final_kwargs)
+            if self.stateless_responses and not tool_calls:
+                history += self._response_output_items(output)
+            final_messages = list(pending_outputs) if response_id else list(history)
+            if submit is not None:
+                # The previous response or the history already holds the model's text reply.
+                replied = response_id or self.stateless_responses
+                final_messages += self._submit_nudge(None if replied else output, submit)
+            output = await self._traced_run_client(model_spec, final_messages, **final_kwargs)
+            output = await self._check_fallback_answer(state, output)
         return output
 
     async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
@@ -1376,7 +2811,56 @@ class OpenAI(Llm, OpenAIMixin):
         # Add timeout to the partial
         return partial(client_callable.func, *client_callable.args, timeout=self.timeout, **client_callable.keywords)
 
+    def _apply_kwarg_fixes(self, model: str, kwargs: dict[str, Any]):
+        for key, value in self._kwarg_fixes.get(model, {}).items():
+            if value is None:
+                kwargs.pop(key, None)
+            else:
+                kwargs[key] = value
+
+    def _learn_kwarg_fix(self, model: str, error: openai.BadRequestError) -> bool:
+        """
+        Record how to satisfy a model that rejected a request parameter,
+        returning whether anything new was learned. Explicit ``create_kwargs``
+        are never overridden, so a deliberate choice still surfaces its error.
+        """
+        fixes = self._kwarg_fixes.setdefault(model, {})
+        # Some gateways (e.g. Kilo) report a dict here rather than a parameter name.
+        if not isinstance(error.param, str):
+            return False
+        if error.param not in ADAPTIVE_KWARGS or error.param in fixes or error.param in self.create_kwargs:
+            return False
+        fixes[error.param] = ADAPTIVE_KWARGS[error.param]
+        log_debug(f"Adapting to \033[96m{model!r}\033[0m: {error.param}={fixes[error.param]!r}")
+        return True
+
     async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        model = self._get_model_kwargs(model_spec)["model"]
+        self._apply_kwarg_fixes(model, kwargs)
+        if not self._supports_vision:
+            # A tool loop resends its own messages each round, so images it
+            # added before vision was disabled come back here
+            messages = strip_images(messages)
+        while True:
+            try:
+                return await self._send(model_spec, messages, **kwargs)
+            except Exception as e:
+                # A text-only model can still answer the text, and later
+                # requests should not render images it cannot read.
+                if self._supports_vision and is_image_rejection(e):
+                    log_debug(f"Disabling vision: \033[96m{model!r}\033[0m rejected image input")
+                    self._supports_vision = False
+                    messages = strip_images(messages)
+                    continue
+                # instructor re-raises provider errors wrapped in its own
+                # retry exception, so the 400 is found on the cause chain.
+                error = find_bad_request(e)
+                # Each retry records one more parameter, so this terminates.
+                if error is None or not self._learn_kwarg_fix(model, error):
+                    raise
+                self._apply_kwarg_fixes(model, kwargs)
+
+    async def _send(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
         if self.api == "chat_completions":
             return await super().run_client(model_spec, messages, **kwargs)
 
@@ -1386,7 +2870,7 @@ class OpenAI(Llm, OpenAIMixin):
             kwargs["tools"] = self._transform_responses_tools(kwargs.get("tools"))
         client = await self.get_client(model_spec, **kwargs)
         result = await client(input=messages, **kwargs)
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
 
@@ -1403,22 +2887,19 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
     mode = param.Selector(default=Mode.TOOLS)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gpt-4o-mini"},
-        "edit": {"model": "gpt-4o"},
+        "default": {"model": "gpt-5.4-mini"},
+        "edit": {"model": "gpt-5.4"},
     })
 
+    # GPT-5.6 and GPT-6 reject function tools on chat completions unless
+    # reasoning_effort is "none", and only OpenAI applies that fix adaptively.
     select_models = param.List(default=[
-        "gpt-35-turbo",
-        "gpt-4-turbo",
-        "gpt-4o",
-        "gpt-4o-mini"
+        "gpt-5.4-mini",
+        "gpt-5.4",
+        "gpt-5.4-nano",
     ], constant=True)
 
-    temperature = param.Number(default=1, bounds=(0, None), constant=True)
-
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
+    temperature = param.Number(default=1, bounds=(0, None), allow_None=True, constant=True)
 
     def _get_model_kwargs(self, model_spec: str | dict) -> dict[str, Any]:
         model_kwargs = super()._get_model_kwargs(model_spec)
@@ -1426,7 +2907,9 @@ class AzureOpenAI(Llm, AzureOpenAIMixin):
         return {**instance_kwargs, **model_kwargs}
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(async_client=True, **kwargs)
+        client = self._instantiate_client(async_client=True, **kwargs)
+        meter_method(self, client.chat.completions, "create", "openai")
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         if self.interceptor:
@@ -1460,18 +2943,16 @@ class MistralAI(Llm, MistralAIMixin):
     })
 
     select_models = param.List(default=[
-        "mistral-medium-latest",
-        "magistral-medium-latest",
-        "mistral-large-latest",
-        "magistral-small-latest",
         "mistral-small-latest",
-        "codestral-latest",
+        "mistral-medium-latest",
+        "mistral-large-latest",
+        "ministral-14b-latest",
         "ministral-8b-latest",
         "ministral-3b-latest",
-        "devstral-small-latest"
+        "codestral-latest",
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_model_stream = False  # instructor doesn't work with Mistral's streaming
     _instructor_wrapper = "mistral"
@@ -1481,12 +2962,11 @@ class MistralAI(Llm, MistralAIMixin):
         from mistralai import Mistral
         return {m.id for m in Mistral(api_key=self.api_key).models.list().data}
 
-    @property
-    def _client_kwargs(self):
-        return {"temperature": self.temperature}
-
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
     def _get_completion_method(self, stream: bool = False) -> Callable:
         return self._base_client.chat.stream_async if stream else self._base_client.chat.complete_async
@@ -1537,7 +3017,10 @@ class AzureMistralAI(MistralAI, AzureMistralAIMixin):
     ], constant=True, doc="Available models for selection dropdowns")
 
     def _create_base_client(self, **kwargs) -> Any:
-        return self._instantiate_client(**kwargs)
+        client = self._instantiate_client(**kwargs)
+        meter_method(self, client.chat, "complete_async", "mistral")
+        meter_method(self, client.chat, "stream_async", "mistral", stream_method=True)
+        return client
 
 
 class Anthropic(Llm, AnthropicMixin):
@@ -1545,25 +3028,36 @@ class Anthropic(Llm, AnthropicMixin):
     A LLM implementation that calls Anthropic models such as Claude.
     """
 
+    cache = param.Selector(default="5m", objects=[None, "5m", "1h"], doc="""
+        Prompt-caching TTL. None disables caching; "5m" refreshes free on each
+        cache hit; "1h" costs more on write. Caches the tools+system+messages
+        prefix. Ignored on providers that don't support automatic caching.""")
+
     display_name = param.String(default="Anthropic", constant=True)
 
     mode = param.Selector(default=Mode.ANTHROPIC_TOOLS, objects=[Mode.ANTHROPIC_JSON, Mode.ANTHROPIC_TOOLS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "claude-haiku-4-5"},
-        "edit": {"model": "claude-sonnet-4-5"},
+        "default": {"model": "claude-haiku-5-5"},
+        "edit": {"model": "claude-sonnet-5-5"},
     })
 
+    # Claude 4.7+ rejects a non-default temperature and Sonnet/Opus 5.5 reject
+    # the forced tool_choice instructor sends, so newer models fail here.
     select_models = param.List(default=[
-        "claude-sonnet-4-5",
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
         "claude-haiku-4-5",
-        "claude-opus-4-5"
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_model_stream = True
+    _supports_prompt_cache = True
     _instructor_wrapper = "anthropic"
 
     def models(self) -> set[str]:
@@ -1575,10 +3069,11 @@ class Anthropic(Llm, AnthropicMixin):
 
     @property
     def _client_kwargs(self):
-        return {"temperature": self.temperature, "max_tokens": 1024}
+        return {**super()._client_kwargs, "max_tokens": 1024}
 
     def _create_base_client(self, **kwargs) -> Any:
         client = self._instantiate_client(**kwargs)
+        meter_method(self, client.messages, "create", "anthropic")
         if self.logfire_tags:
             self._logfire.instrument_anthropic(client)
         return client
@@ -1663,7 +3158,7 @@ class Anthropic(Llm, AnthropicMixin):
 
         return filtered, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = system
         return messages, input_kwargs
@@ -1728,6 +3223,66 @@ class Anthropic(Llm, AnthropicMixin):
                 }]
         return []
 
+    def _cache_control(self) -> dict[str, Any] | None:
+        if not (self._supports_prompt_cache and self.cache):
+            return None
+        cache_control = {"type": "ephemeral"}
+        if self.cache == "1h":
+            cache_control["ttl"] = "1h"
+        return cache_control
+
+    @staticmethod
+    def _model_name(model: str) -> str:
+        """Return the Claude model name without a Bedrock inference prefix."""
+        return model.rsplit("anthropic.", maxsplit=1)[-1]
+
+    @classmethod
+    def _uses_native_structured_output(cls, model: str) -> bool:
+        """Whether the model supports Anthropic's native structured output API."""
+        name = cls._model_name(model)
+        return name.startswith((
+            "claude-haiku-5-5",
+            "claude-sonnet-5-5",
+            "claude-opus-5-5",
+        ))
+
+    @classmethod
+    def _omit_temperature(cls, model: str) -> bool:
+        """Whether Anthropic rejects a non-default sampling temperature."""
+        name = cls._model_name(model)
+        return name.startswith((
+            "claude-haiku-5",
+            "claude-sonnet-5",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-opus-5",
+        ))
+
+    async def _run_native_structured(
+        self,
+        model: str,
+        messages: list[Message],
+        response_model: type[BaseModel],
+        **kwargs,
+    ):
+        """Run structured-only requests through Anthropic's native JSON API."""
+        if self._base_client is None:
+            self._base_client = self._create_base_client()
+
+        parse_kwargs = dict(kwargs)
+        parse_kwargs.pop("response_model", None)
+        parse_kwargs.pop("max_retries", None)
+        parse_kwargs.pop("stream", None)
+        # A string system prompt already carries its own cache breakpoint.
+        parse_kwargs.pop("cache_control", None)
+        result = await self._base_client.messages.parse(
+            model=model,
+            messages=messages,
+            output_format=response_model,
+            **parse_kwargs,
+        )
+        return result.parsed_output
+
     async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
         """Override to handle Anthropic-specific message format."""
         log_debug(f"Input messages: \033[95m{len(messages)} messages\033[0m including system")
@@ -1768,13 +3323,39 @@ class Anthropic(Llm, AnthropicMixin):
                 )
             previous_role = role
 
+        cache_control = self._cache_control()
+        if cache_control is not None:
+            kwargs["cache_control"] = cache_control
+            # Automatic caching only writes at the end of the conversation, so
+            # a new question never reuses the previous one's tools+system
+            # prefix. An explicit breakpoint on the system prompt does.
+            if isinstance(kwargs.get("system"), str) and kwargs["system"]:
+                kwargs["system"] = [
+                    {"type": "text", "text": kwargs["system"], "cache_control": cache_control}
+                ]
+
+        model = self._get_model_kwargs(model_spec)["model"]
+        if self._omit_temperature(model):
+            kwargs.pop("temperature", None)
+
+        response_model = kwargs.get("response_model")
+        if (
+            response_model is not None
+            and not tool_specs
+            and not kwargs.get("stream", False)
+            and self._uses_native_structured_output(model)
+        ):
+            return await self._run_native_structured(
+                model, filtered_messages, **kwargs
+            )
+
         client = await self.get_client(model_spec, **kwargs)
         result = await client(messages=filtered_messages, **kwargs)
         if response_model := kwargs.get("response_model"):
             log_debug(f"Response model: \033[93m{response_model.__name__!r}\033[0m")
             if isinstance(result, ImageResponse):
                 result = result.output
-        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=1000)}\033[0m\n---")
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
         return result
 
     @classmethod
@@ -1813,21 +3394,34 @@ class AnthropicBedrock(BedrockMixin, Anthropic):  # Keep it before Anthropic so 
 
     display_name = param.String(default="Anthropic on AWS Bedrock", constant=True)
 
+    _supports_prompt_cache = False  # Bedrock does not support automatic prompt caching
+
     model_kwargs = param.Dict(default={
-        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+        "default": {"model": "us.anthropic.claude-haiku-5-5"},
+        "ui": {"model": "us.anthropic.claude-haiku-5-5"},
+        "edit": {"model": "us.anthropic.claude-sonnet-5-5"},
     })
+
+    select_models = param.List(default=[
+        "us.anthropic.claude-haiku-5-5",
+        "us.anthropic.claude-sonnet-5-5",
+        "us.anthropic.claude-opus-5-5",
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "us.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-4-6-v1",
+    ], constant=True, doc="Available Claude models on Bedrock")
 
     def _create_base_client(self, **kwargs) -> Any:
         from anthropic.lib.bedrock import AsyncAnthropicBedrock
-        return AsyncAnthropicBedrock(
+        client = AsyncAnthropicBedrock(
             aws_access_key=self.aws_access_key_id,
             aws_secret_key=self.api_key,
             aws_session_token=self.aws_session_token,
             aws_region=self.region_name,
             **kwargs
         )
+        meter_method(self, client.messages, "create", "anthropic")
+        return client
 
 
 class Bedrock(Llm, BedrockMixin):
@@ -1845,27 +3439,22 @@ class Bedrock(Llm, BedrockMixin):
     mode = param.Selector(default=Mode.BEDROCK_TOOLS, objects=[Mode.BEDROCK_JSON, Mode.BEDROCK_TOOLS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "ui": {"model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
-        "edit": {"model": "us.anthropic.claude-opus-4-5-20251101-v1:0"},
+        "default": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+        "ui": {"model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+        "edit": {"model": "us.anthropic.claude-sonnet-4-6"},
     })
 
     select_models = param.List(default=[
-        # Inference profiles (cross-region) - recommended for Claude 4+
-        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        # Claude is only served through cross-region inference profiles
         "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-        "us.anthropic.claude-opus-4-5-20251101-v1:0",
-        "us.anthropic.claude-opus-4-1-20250805-v1:0",
-        "us.anthropic.claude-sonnet-4-20250514-v1:0",
-        # Claude 3.5 with inference profile
-        "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-        "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-        # Direct model IDs (if inference profiles don't work)
-        "anthropic.claude-3-haiku-20240307-v1:0",
-        "anthropic.claude-3-sonnet-20240229-v1:0",
-    ], constant=True, doc="Available Claude models on Bedrock")
+        "us.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-opus-4-6-v1",
+        "us.amazon.nova-2-lite-v1:0",
+        "qwen.qwen3-next-80b-a3b",
+        "deepseek.v3.2",
+    ], constant=True, doc="Available models on Bedrock")
 
-    temperature = param.Number(default=0.7, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 1), allow_None=True, constant=True)
 
     _instructor_wrapper = "bedrock"
     _supports_stream = True
@@ -1873,7 +3462,7 @@ class Bedrock(Llm, BedrockMixin):
 
     @property
     def _client_kwargs(self):
-        return {"temperature": self.temperature, "maxTokens": 4096}
+        return {**super()._client_kwargs, "maxTokens": 4096}
 
     def _create_base_client(self, **kwargs) -> Any:
         """Create boto3 bedrock-runtime client for inference."""
@@ -1930,7 +3519,7 @@ class Bedrock(Llm, BedrockMixin):
 
         return bedrock_messages, system_text
 
-    def _add_system_message(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
+    def _apply_system(self, messages: list[Message], system: str, input_kwargs: dict[str, Any]):
         if system:
             input_kwargs["system"] = [{"text": system}]
         return messages, input_kwargs
@@ -1969,14 +3558,21 @@ class Bedrock(Llm, BedrockMixin):
 
         if stream:
             resp = await asyncio.to_thread(self._base_client.converse_stream, **call_kwargs)
-            return self._wrap_stream(resp)
+            return self._wrap_stream(resp, model, contextvars.copy_context())
         else:
             resp = await asyncio.to_thread(self._base_client.converse, **call_kwargs)
+            usage = parse_usage(resp, "bedrock", model, self.usage_pricing)
+            if usage is not None:
+                record_usage(self, self.usage, usage)
             return resp["output"]["message"]["content"][0]["text"]
 
-    async def _wrap_stream(self, response):
+    async def _wrap_stream(self, response, model, context):
         """Wrap synchronous Bedrock stream as async generator."""
         for chunk in response["stream"]:
+            if "metadata" in chunk:
+                usage = parse_usage(chunk, "bedrock", model, self.usage_pricing)
+                if usage is not None:
+                    context.run(record_usage, self, self.usage, usage)
             yield chunk
 
     @classmethod
@@ -2006,22 +3602,21 @@ class Google(Llm, GenAIMixin):
     mode = param.Selector(default=Mode.GENAI_TOOLS, objects=[Mode.GENAI_TOOLS, Mode.GENAI_STRUCTURED_OUTPUTS])
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "gemini-3-flash-preview"},
+        "default": {"model": "gemini-3.8-flash"},
     })
 
+    # gemini-3.5-flash-lite and gemini-3.1-pro-preview reject the
+    # thinking_budget=0 that run_client always sends, so 3.1-flash-lite stays
+    # the lite option until it is shut down. gemini-3.7-flash and
+    # gemini-3.5-flash are served by 3.8-flash and 3.6-flash, so only the
+    # latter are listed.
     select_models = param.List(default=[
-        "gemini-3-flash-preview",
-        "gemini-3-pro-preview",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro"
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.1-flash-lite",
     ], constant=True)
 
-    temperature = param.Number(default=1, bounds=(0, 1), constant=True)
+    temperature = param.Number(default=1, bounds=(0, 1), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_model_stream = True
@@ -2044,7 +3639,10 @@ class Google(Llm, GenAIMixin):
     def _create_base_client(self, **kwargs) -> Any:
         if self.logfire_tags:
             self._logfire.instrument_google_genai()
-        return self._instantiate_client()
+        client = self._instantiate_client()
+        meter_method(self, client.aio.models, "generate_content", "google")
+        meter_method(self, client.aio.models, "generate_content_stream", "google", stream_method=True)
+        return client
 
     def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
         return instructor.from_genai(base_client, mode=mode, use_async=True)
@@ -2062,12 +3660,16 @@ class Google(Llm, GenAIMixin):
         return str(response)
 
     @classmethod
-    def _messages_to_contents(cls, messages: list[Message]) -> tuple[list[dict[str, Any]], str | None]:
+    def _messages_to_contents(
+        cls, messages: list[Message]
+    ) -> tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]:
         """
         Transform messages into contents format expected by Google GenAI API.
 
         Extracts system messages and returns them separately since Google
-        requires them via the system_instruction parameter.
+        requires them via the system_instruction parameter. Also returns a
+        role-normalized (assistant → model) flat messages list for use with
+        instructor's Gemini provider, which rejects role="assistant".
 
         Parameters
         ----------
@@ -2076,21 +3678,29 @@ class Google(Llm, GenAIMixin):
 
         Returns
         -------
-        tuple[list[dict[str, Any]], str | None]
-            Tuple of (contents list, system_instruction)
+        tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]
+            Tuple of (contents list, system_instruction, instructor_messages)
         """
+        # Normalize roles up front: Gemini (and instructor's Gemini converter)
+        # use "model" instead of "assistant".
+        normalized = [
+            {**m, "role": "model"} if m.get("role") == "assistant" else m
+            for m in messages
+        ]
+
         contents = []
         system_instruction = None
+        instructor_messages = []
 
-        for message in messages:
+        for message in normalized:
             role = message["role"]
             content = message["content"]
             if role == "system":
                 system_instruction = content
                 continue
 
-            # Assistant message containing tool calls → model with function_call parts
-            if role == "assistant" and message.get("tool_calls"):
+            # Model message containing tool calls → function_call parts
+            if role == "model" and message.get("tool_calls"):
                 parts = []
                 for tc in message["tool_calls"]:
                     name, args, _ = cls._parse_tool_call(tc)
@@ -2131,8 +3741,9 @@ class Google(Llm, GenAIMixin):
                     "role": role,
                     "parts": [{"text": content}]
                 })
+                instructor_messages.append({"role": role, "content": content})
 
-        return contents, system_instruction
+        return contents, system_instruction, instructor_messages
 
     async def get_client(self, model_spec: str | dict, response_model: BaseModel | None = None, **kwargs):
         model_kwargs = self._get_model_kwargs(model_spec)
@@ -2214,7 +3825,7 @@ class Google(Llm, GenAIMixin):
                 description=func.get("description", ""),
                 parameters=parameters,
             ))
-        return Tool(function_declarations=declarations) if declarations else None
+        return [Tool(function_declarations=declarations)] if declarations else None
 
     @classmethod
     def _get_delta(cls, chunk: Any) -> str:
@@ -2253,17 +3864,19 @@ class Google(Llm, GenAIMixin):
 
         tools = self._translate_tool_specs(kwargs.pop("tools", []))
         client = await self.get_client(model_spec, **kwargs)
-        contents, system_instruction = self._messages_to_contents(messages)
-        config = GenerateContentConfig(
+        contents, system_instruction, instructor_messages = self._messages_to_contents(messages)
+        config_kwargs = dict(
             http_options=http_options,
-            temperature=self.temperature,
             thinking_config=thinking_config,
             system_instruction=system_instruction,
             tools=tools,
         )
+        if self.temperature is not None:
+            config_kwargs["temperature"] = self.temperature
+        config = GenerateContentConfig(**config_kwargs)
 
         if response_model:
-            result = await client(messages=messages, config=config, **kwargs)
+            result = await client(messages=instructor_messages, config=config, **kwargs)
             return result
 
         kwargs.pop("stream", None)
@@ -2332,30 +3945,260 @@ class Ollama(OpenAI):
 
     display_name = param.String(default="Ollama", constant=True)
 
-    endpoint = param.String(default="http://localhost:11434/v1", doc="The Ollama API endpoint.")
+    endpoint = param.String(default="http://localhost:11434/v1", doc="""
+        The Ollama API endpoint; read from OLLAMA_HOST when it is set.""")
 
     mode = param.Selector(default=Mode.JSON)
 
     model_kwargs = param.Dict(default={
-        "default": {"model": "qwen3:32b"},
+        "default": {"model": "qwen3.5:9b"},
     })
 
     select_models = param.List(default=[
-        "qwen3:32b",
-        "qwen3-coder:32b",
-        "nemotron-3-nano:30b",
-        "mistral-small3.2:24b",
+        "qwen3.6:35b-a3b",
+        "qwen3.8:27b",
+        "qwen3.5:9b",
+        "gemma4:26b",
+        "gpt-oss:20b",
+        "nemotron-3.5-lightning:30b",
     ], constant=True)
 
-    temperature = param.Number(default=0.25, bounds=(0, None), constant=True)
+    temperature = param.Number(default=0.25, bounds=(0, None), allow_None=True, constant=True)
+
+    def __init__(self, **params):
+        if "endpoint" not in params and (host := os.environ.get("OLLAMA_HOST")):
+            # Ollama accepts "host", "host:port" or a full URL here.
+            url = urlsplit(host if "://" in host else f"http://{host}")
+            params["endpoint"] = f"{url.scheme}://{url.hostname}:{url.port or 11434}/v1"
+        super().__init__(**params)
 
     def models(self, endpoint: str | None = None) -> set[str]:
         """Return the set of available model identifiers from Ollama."""
-        base_url = (endpoint or self.endpoint).rstrip('/').removesuffix('/v1')
-        tags_response = requests.get(f"{base_url}/api/tags", timeout=5)
-        if tags_response.status_code != 200:
-            return set()
-        return {m.get("name", "") for m in tags_response.json().get("models", [])}
+        return set(ollama_models(endpoint or self.endpoint, timeout=5) or ())
+
+
+class MLX(Llm):
+    """
+    An LLM implementation using Apple MLX via mlx-lm.
+
+    Requires ``mlx-lm`` (``pip install mlx-lm``).
+
+    Two modes of operation:
+
+    - **In-process** (default, ``endpoint=None``): Loads the model
+      directly into the Python process via ``mlx_lm.load`` and runs
+      inference on the Metal GPU. No server needed.
+    - **Server** (``endpoint="http://localhost:8080/v1"``): Connects
+      to a running ``mlx_lm.server`` via its OpenAI-compatible API.
+      Start the server separately with::
+
+          mlx_lm.server --model mlx-community/Qwen3.5-27B-4bit --port 8080
+    """
+
+    display_name = param.String(default="MLX", constant=True, doc="""
+        Display name shown in the UI.""")
+
+    endpoint = param.String(default="http://localhost:8080/v1", allow_None=True, doc="""
+        If set, connect to a running mlx_lm.server at this URL
+        (e.g. 'http://localhost:8080/v1') instead of loading the
+        model in-process. When None, the model is loaded directly
+        via mlx_lm.load.""")
+
+    mode = param.Selector(default=Mode.JSON, objects=BASE_MODES, doc="""
+        The instructor calling mode. Defaults to JSON for
+        structured output from local MLX models.""")
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "mlx-community/Qwen3.5-9B-MLX-4bit"},
+    }, doc="""
+        Model definitions indexed by type. Each value is a dict
+        with at least a 'model' key naming a Hugging Face model ID.""")
+
+    select_models = param.List(default=[
+        "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "mlx-community/Qwen3.6-35B-A3B-4bit",
+        "mlx-community/Qwen3.8-27B-4bit",
+        "mlx-community/gemma-4-26b-a4b-it-4bit",
+    ], constant=True, doc="""
+        Available MLX models for selection dropdowns.""")
+
+    chat_template_kwargs = param.Dict(default={}, doc="""
+        Additional keyword arguments passed to the tokenizer's
+        apply_chat_template. Only used in in-process mode.
+        In server mode, set these via the server's
+        --chat-template-args flag instead.
+        Note: 'enable_thinking' is set automatically from the
+        enable_thinking param; no need to include it here.""")
+
+    enable_thinking = param.Boolean(default=False, doc="""
+        Whether to enable the model's thinking/reasoning mode.
+        In in-process mode this is passed to apply_chat_template.
+        In server mode this is sent per-request and does NOT
+        change the server's --chat-template-args flag.""")
+
+    max_tokens = param.Integer(default=8192, bounds=(1, None), constant=True, doc="""
+        Default maximum number of tokens to generate per request.
+        Can be overridden per-call via invoke/stream kwargs.
+        Note: in server mode this is sent as a per-request parameter
+        and does NOT change the server's --max-tokens default.""")
+
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True, constant=True, doc="""
+        The sampling temperature. Lower values produce more
+        deterministic outputs. In server mode this is sent
+        per-request and does NOT change the server's --temp flag.
+        When None, the backend's own default sampler is used.""")
+
+    _instructor_wrapper = None
+    _supports_vision = False
+
+    @property
+    def _use_endpoint(self) -> bool:
+        return self.endpoint is not None
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._mlx_models: dict[str, tuple] = {}  # model_id -> (model, tokenizer)
+        if self._use_endpoint:
+            # Override to use OpenAI-compatible wrapper
+            self._instructor_wrapper = "openai"
+
+    def _load_mlx_model(self, model_id: str) -> tuple:
+        """Load and cache an MLX model. Duplicate loads are harmless but wasteful."""
+        if model_id not in self._mlx_models:
+            from mlx_lm import load
+            self._mlx_models[model_id] = load(model_id)
+        return self._mlx_models[model_id]
+
+    def _messages_to_prompt(self, tokenizer, messages: list[Message]) -> str:
+        """Convert chat messages to a prompt string using the tokenizer's chat template."""
+        chat_messages = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(
+                    item if isinstance(item, str) else item["text"]
+                    for item in content
+                    if isinstance(item, str) or (isinstance(item, dict) and item.get("type") == "text")
+                )
+            if not isinstance(content, str):
+                content = str(content)
+            chat_messages.append({"role": msg["role"], "content": content})
+        template_kwargs = {"enable_thinking": self.enable_thinking, **self.chat_template_kwargs}
+        return tokenizer.apply_chat_template(
+            chat_messages, tokenize=False, add_generation_prompt=True,
+            **template_kwargs,
+        )
+
+    def _make_sampler(self):
+        """Create an MLX sampler from the configured temperature."""
+        from mlx_lm.sample_utils import make_sampler
+        if self.temperature is None:
+            return make_sampler()
+        return make_sampler(temp=self.temperature)
+
+    def _create_chat_completion(self, messages: list[Message], **kwargs) -> Any:
+        """Synchronous chat completion compatible with instructor's patch(create=...)."""
+        from mlx_lm import generate as mlx_generate
+
+        model_spec = kwargs.pop("model", "default")
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model_id = model_kwargs["model"]
+        model, tokenizer = self._load_mlx_model(model_id)
+
+        max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+        prompt = self._messages_to_prompt(tokenizer, messages)
+        sampler = self._make_sampler()
+
+        text = mlx_generate(
+            model, tokenizer, prompt=prompt,
+            max_tokens=max_tokens, sampler=sampler, verbose=False,
+        )
+
+        msg = MessageModel(content=text, name=None, role="assistant")
+        return Response(choices=[Choice(message=msg, delta=None, finish_reason="stop")])
+
+    def _create_endpoint_client(self, async_client: bool = True):
+        """Create an AsyncOpenAI client pointed at the mlx_lm.server endpoint."""
+        cls = openai.AsyncOpenAI if async_client else openai.OpenAI
+        return cls(base_url=self.endpoint, api_key="mlx")
+
+    def _create_base_client(self, **kwargs) -> Any:
+        if self._use_endpoint:
+            return self._create_endpoint_client(async_client=True)
+        return self
+
+    def _create_instructor_client(self, base_client: Any, mode: Mode) -> Any:
+        if self._use_endpoint:
+            return instructor.from_openai(base_client, mode=mode)
+        return patch(create=self._create_chat_completion, mode=mode)
+
+    def _get_completion_method(self) -> Callable:
+        if self._use_endpoint:
+            return self._base_client.chat.completions.create
+        return self._create_chat_completion
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        return {**super()._client_kwargs, "max_tokens": self.max_tokens}
+
+    @classmethod
+    def warmup(cls, model_kwargs: dict | None):
+        """Pre-download model weights from Hugging Face Hub."""
+        from mlx_lm import load
+        model_kwargs = model_kwargs or {}
+        if "default" not in model_kwargs:
+            model_kwargs["default"] = cls.model_kwargs["default"]
+        for spec in model_kwargs.values():
+            if isinstance(spec, dict) and "model" in spec:
+                load(spec["model"])
+
+    async def get_client(self, model_spec: str | dict, response_model: type[BaseModel] | None = None, **kwargs):
+        model_kwargs = self._get_model_kwargs(model_spec)
+        model_id = model_kwargs["model"]
+        mode = kwargs.pop("mode", self.mode)
+
+        if self._use_endpoint:
+            # Server mode: use the OpenAI-compatible client
+            if self._base_client is None:
+                self._base_client = self._create_base_client()
+        else:
+            # In-process mode: ensure model is loaded
+            await asyncio.to_thread(self._load_mlx_model, model_id)
+
+        if response_model:
+            if mode not in self._instructor_clients:
+                base = self._base_client if self._use_endpoint else self
+                self._instructor_clients[mode] = self._create_instructor_client(base, mode)
+            client = self._instructor_clients[mode]
+            if self._use_endpoint:
+                return partial(client.chat.completions.create, model=model_id, **self._get_create_kwargs(response_model))
+            return client
+
+        if self._use_endpoint:
+            return partial(self._base_client.chat.completions.create, model=model_id, **self._get_create_kwargs(response_model))
+        return self._create_chat_completion
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message], **kwargs):
+        self._log_messages(messages)
+        response_model = kwargs.get("response_model")
+        kwargs.pop("max_retries", None)
+        client = await self.get_client(model_spec, **kwargs)
+
+        if self._use_endpoint:
+            # Server mode: async OpenAI client
+            result = await client(messages=messages, **kwargs)
+        # In-process mode: run synchronous mlx_lm in a thread
+        elif response_model:
+            result = await asyncio.to_thread(client, messages=messages, **kwargs)
+        else:
+            kwargs.pop("response_model", None)
+            kwargs.pop("stream", None)
+            result = await asyncio.to_thread(
+                self._create_chat_completion, messages, model=model_spec, **kwargs
+            )
+
+        log_debug(f"LLM Response: \033[95m{truncate_string(str(result), max_length=10000)}\033[0m\n---")
+        return result
 
 
 class Groq(OpenAI):
@@ -2381,18 +4224,19 @@ class Groq(OpenAI):
         doc="The Groq API endpoint.",
     )
 
+    # Groq validates tool-call arguments server side and rejects a mismatch
+    # with an APIError before instructor can retry, which made chart specs
+    # fail every attempt. json_schema output is validated client side instead.
+    mode = param.Selector(default=Mode.JSON_SCHEMA)
+
     model_kwargs = param.Dict(default={
-        "default": {"model": "llama-3.3-70b-versatile"},
+        "default": {"model": "openai/gpt-oss-120b"},
     })
 
     select_models = param.List(default=[
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "llama-4-scout-17b-16e-instruct",
-        "meta-llama/llama-4-maverick-17b-128e-instruct",
-        "gemma2-9b-it",
-        "mistral-saba-24b",
-        "qwen-qwq-32b",
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b",
     ], constant=True, doc="Available Groq models for selection dropdowns.")
 
 
@@ -2431,10 +4275,16 @@ class WebLLM(Llm):
         "Qwen2.5-7B-Instruct-q4f16_1-MLC"
     ], constant=True)
 
-    temperature = param.Number(default=0.4, bounds=(0, None))
+    temperature = param.Number(default=0.4, bounds=(0, None), allow_None=True)
 
     # WebLLM doesn't use from_* wrapper - uses patch(create=...)
     _instructor_wrapper = None
+
+    @property
+    def _client_kwargs(self) -> dict[str, Any]:
+        # WebLLM has never forwarded temperature through this path; the sampler
+        # is configured on the panel_web_llm component itself.
+        return {}
 
     def __init__(self, **params):
         from panel_web_llm import WebLLM as pnWebLLM
@@ -2494,7 +4344,7 @@ class WebLLM(Llm):
         self._status.name = pn.rx('Loading LLM {:.1f}%').format(progress)
         try:
             await self.invoke(
-                messages=[{'role': 'user', 'content': 'Ready? "Y" or "N"'}],
+                messages=[{'role': 'user', 'content': 'Ready? Just "Y" or "N"'}],
                 model_spec="ui",
             )
         except Exception as e:
@@ -2525,7 +4375,7 @@ class LiteLLM(Llm):
 
     fallback_models = param.List(default=[], doc="""
         List of fallback models to try if the primary model fails.
-        Example: ["gpt-4o-mini", "claude-3-haiku", "gemini/gemini-1.5-flash"]""")
+        Example: ["gpt-5.4-nano", "anthropic/claude-haiku-4-5", "gemini/gemini-3.8-flash"]""")
 
     litellm_params = param.Dict(default={}, doc="""
         Additional parameters to pass to litellm.acompletion().
@@ -2535,13 +4385,13 @@ class LiteLLM(Llm):
 
     model_kwargs = param.Dict(default={
         "default": {"model": "gpt-5.4-mini"},
-        "edit": {"model": "anthropic/claude-sonnet-4-5"},
+        "edit": {"model": "anthropic/claude-sonnet-4-6"},
         "sql": {"model": "gpt-5.4-mini"},
     }, doc="""
         Model configurations by type. LiteLLM supports model strings like:
-        - OpenAI: "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5-mini"
-        - Anthropic: "anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-4-5"
-        - Google: "gemini/gemini-2.0-flash", "gemini/gemini-2.5-flash"
+        - OpenAI: "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4"
+        - Anthropic: "anthropic/claude-sonnet-4-6", "anthropic/claude-haiku-4-5"
+        - Google: "gemini/gemini-3.8-flash", "gemini/gemini-3.1-flash-lite"
         - Mistral: "mistral/mistral-medium-latest", "mistral/mistral-small-latest"
         - And many more with format: "provider/model" or just "model" for defaults
     """)
@@ -2553,18 +4403,16 @@ class LiteLLM(Llm):
     select_models = param.List(default=[
         "gpt-5.4-mini",
         "gpt-5.4-nano",
-        "gpt-5-mini",
-        "anthropic/claude-sonnet-4-5",
+        "gpt-5.4",
         "anthropic/claude-haiku-4-5",
-        "anthropic/claude-opus-4-1",
-        "gemini/gemini-2.0-flash",
-        "gemini/gemini-2.5-flash",
-        "mistral/mistral-medium-latest",
+        "anthropic/claude-sonnet-4-6",
+        "gemini/gemini-3.8-flash",
+        "gemini/gemini-3.1-flash-lite",
         "mistral/mistral-small-latest",
-        "mistral/codestral-latest"
+        "mistral/mistral-medium-latest",
     ], constant=True)
 
-    temperature = param.Number(default=0.7, bounds=(0, 2), constant=True)
+    temperature = param.Number(default=0.7, bounds=(0, 2), allow_None=True, constant=True)
 
     _supports_logfire = True
     _supports_stream = True
@@ -2595,14 +4443,13 @@ class LiteLLM(Llm):
             if self.fallback_models:
                 router_kwargs['fallbacks'] = self.fallback_models
             self._router = Router(model_list=model_list, timeout=self.timeout, **router_kwargs)
+            meter_method(self, self._router, "acompletion", "openai")
         return self._router
 
     @property
     def _client_kwargs(self):
         """Base kwargs for all LiteLLM calls."""
-        kwargs = {"temperature": self.temperature}
-        kwargs.update(self.litellm_params)
-        return kwargs
+        return {**super()._client_kwargs, **self.litellm_params}
 
     def _create_base_client(self, **kwargs) -> Any:
         return self._get_router()
@@ -2658,20 +4505,24 @@ class OpenRouter(OpenAI):
         doc="The OpenRouter API endpoint.",
     )
 
+    # OpenRouter rejects previous_response_id.
+    stateless_responses = param.Boolean(default=True)
+
     model_kwargs = param.Dict(default={
-        "default": {"model": "openai/gpt-4o-mini"},
+        "default": {"model": "openai/gpt-6-luna"},
     })
 
     select_models = param.List(default=[
-        "openai/gpt-4o-mini",
-        "openai/gpt-4o",
-        "anthropic/claude-3.5-sonnet",
-        "anthropic/claude-3.5-haiku",
-        "google/gemini-2.5-flash",
-        "google/gemini-2.5-pro",
-        "mistralai/mistral-large",
-        "mistralai/mistral-small",
-        "meta-llama/llama-3.3-70b-instruct",
+        "openai/gpt-6-luna",
+        "openai/gpt-6-sol",
+        "qwen/qwen3.8-flash",
+        "qwen/qwen3.7-plus",
+        "z-ai/glm-5.3-flash",
+        "z-ai/glm-5.3-flashx",
+        "deepseek/deepseek-v4.1-flash",
+        "deepseek/deepseek-v4-pro-0813",
+        "anthropic/claude-haiku-4.5",
+        "google/gemini-3.8-flash",
     ], constant=True, doc="Available OpenRouter models for selection dropdowns.")
 
     def models(self) -> set[str]:
@@ -2693,3 +4544,61 @@ class OpenRouter(OpenAI):
             for model in response.json().get("data", [])
             if model.get("id")
         }
+
+
+class Kilo(OpenAI):
+    """
+    An LLM implementation using the Kilo API.
+
+    Kilo provides an OpenAI-compatible endpoint that routes requests to
+    models from multiple providers. Its free tier needs no account; for other
+    models, set the ``KILO_API_KEY`` environment variable or pass ``api_key``
+    directly. The provider is auto-detected when
+    ``KILO_API_KEY`` is present, or can be selected explicitly with
+    ``--provider kilo``.
+    """
+
+    api_key = param.String(default="anonymous", doc="""
+        The Kilo API key. The free tier accepts any placeholder value.""")
+
+    api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
+
+    display_name = param.String(
+        default="Kilo",
+        constant=True,
+        doc="Display name for UI",
+    )
+
+    endpoint = param.String(
+        default="https://api.kilo.ai/api/gateway",
+        doc="The Kilo API endpoint.",
+    )
+
+    model_kwargs = param.Dict(default={
+        "default": {"model": "kilo-auto/free"},
+    })
+
+    select_models = param.List(default=[
+        "kilo-auto/free",
+        "kilo-auto/balanced",
+        "kilo-auto/efficient",
+        "kilo-auto/frontier",
+    ], constant=True, doc="Available Kilo models for selection dropdowns.")
+
+    def models(self) -> set[str]:
+        """Return the set of available model identifiers from Kilo."""
+        return {model_json["id"] for model_json in requests.get("https://api.kilo.ai/api/gateway/models").json()["data"]}
+
+    async def run_client(self, model_spec: str | dict, messages: list[Message] | list[dict[str, Any]], **kwargs):
+        try:
+            return await super().run_client(model_spec, messages, **kwargs)
+        except Exception as e:
+            error = find_bad_request(e)
+            # kilo-auto/free routes to models whose upstream provider rejects a
+            # forced tool call or response_format with a 400. JSON asked for in
+            # plain text needs neither, so switch for the rest of the session.
+            if error is None or self.mode is Mode.MD_JSON or not KILO_STRUCTURED_REJECTION.search(str(error)):
+                raise
+            log_debug(f"Kilo's upstream rejected a structured request; switching to {Mode.MD_JSON.name}")
+            self.mode = Mode.MD_JSON
+            return await super().run_client(model_spec, messages, **kwargs)

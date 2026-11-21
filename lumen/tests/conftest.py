@@ -9,12 +9,23 @@ import panel as pn
 import pytest
 
 from bokeh.document import Document  # type: ignore
-from hvplot.tests.util import makeMixedDataFrame
 
 from lumen.config import config
 from lumen.sources.base import FileSource, Source
 from lumen.state import state
+from lumen.tests.utils import makeMixedDataFrame
+from lumen.util import try_import
 from lumen.variables.base import Variables
+
+
+def pytest_configure():
+    # Install the extensions once, before xdist starts its workers,
+    # so they don't race to download them; on Windows the loser fails with
+    # "Access is denied" moving the file into place.
+    if (duckdb := try_import("duckdb")) and not os.environ.get("PYTEST_XDIST_WORKER"):
+        duckdb.execute("INSTALL sqlite")
+        duckdb.execute("INSTALL httpfs")
+        duckdb.execute("INSTALL spatial")
 
 
 @pytest.fixture
@@ -77,6 +88,22 @@ def mixed_df_object_type():
     yield df
     pd.set_option('mode.string_storage', string)
 
+@pytest.fixture(params=['pandas', 'polars', 'pyarrow'])
+def constructor(request):
+    """Builds the same frame in each dataframe library narwhals supports.
+
+    Parametrizing a test over this fixture runs it once per backend; backends
+    that are not installed skip rather than fail, which is what keeps the
+    core test environment (pandas only) green.
+    """
+    backend = request.param
+    if backend == 'pandas':
+        return pd.DataFrame
+    module = pytest.importorskip(backend)
+    if backend == 'polars':
+        return module.DataFrame
+    return module.table
+
 @pytest.fixture
 def yaml_file():
     tf = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False)
@@ -123,7 +150,7 @@ def document():
 
 @pytest.fixture
 def cachedir():
-    tmp_dir = tempfile.TemporaryDirectory()
+    tmp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     yield tmp_dir.name
     tmp_dir.cleanup()
 

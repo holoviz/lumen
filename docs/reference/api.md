@@ -5,14 +5,17 @@ Welcome to the Lumen API documentation. Browse the modules below:
 ## Modules
 
 - [AI Module](api/ai.md) - AI-powered agents and analysis
+- [Data](api/data.md) - Model-free tools for describing data to a language model and running its SQL safely
 - [Pipeline](api/pipeline.md) - Data pipeline components
+- [Filters](api/filters.md) - Interactive data filters
+- [Variables](api/variables.md) - Shared variables for specifications
 - [Sources](api/sources.md) - Data source connectors
 - [Transforms](api/transforms.md) - Data transformation utilities
 - [Views](api/views.md) - Visualization components
 
 ## How-To Guides
 
-These API modules are for reference. For practical guides on using these components, see the [Configuration guides](../configuration/):
+These API modules are for reference. For practical guides on using these components, see the Configuration guides:
 
 - [Agents](../configuration/agents.md) — Create custom agents
 - [Data Sources](../configuration/sources.md) — Connect to databases and files
