@@ -201,6 +201,29 @@ def test_answer_without_counted_calls_has_no_usage_line(chart_answer):
     assert chart_answer.with_spec(chart_answer._chart_spec()[1]).usage.records == []
 
 
+@pytest.mark.parametrize("ask_fn", [ask, aask])
+async def test_planning_error_returns_a_retryable_answer(ask_fn, llm, frame_source, capsys):
+    def fail():
+        raise RuntimeError("provider down")
+
+    llm.set_responses([fail, _plan(("ChatAgent", "Explain")), "Three rows."])
+    question = "How many rows?"
+    agents = [ChatAgent(), SQLAgent()]
+    if ask_fn is aask:
+        failed = await aask(frame_source, question, llm=llm, agents=agents)
+    else:
+        failed = ask(frame_source, question, llm=llm, agents=agents)
+
+    assert failed.status == "error"
+    assert failed.error == "RuntimeError: provider down"
+    assert failed.plan is None and failed.sql is None
+    assert "Traceback" not in capsys.readouterr().err
+
+    retried = await failed.aretry() if ask_fn is aask else failed.retry()
+    assert retried.status == "success"
+    assert retried.question == question and retried.value == "Three rows."
+
+
 async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):
     def fail():
         raise RuntimeError("LLM unavailable")
@@ -2113,14 +2136,20 @@ def test_the_chat_widget_starts_with_the_answers_so_far(chart_answer, frame_sour
     assert question.object == "Value by category?" and card.object is chart_answer.__panel__()
 
 
-async def test_a_failed_call_in_the_chat_widget_shows_an_error(frame_source):
-    class Failing(MockLLM):
-        async def invoke(self, *args, **kwargs):
-            raise RuntimeError("rate limited")
+async def test_a_failed_call_in_the_chat_widget_shows_an_error(llm, frame_source):
+    _chat_only(llm)
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    first = await conversation.aask("How many rows?")
+    assert first.status == "success"
+    history, context = conversation._messages.copy(), conversation._context
 
-    conversation = chat(frame_source, llm=Failing(), agents=[ChatAgent(), SQLAgent()])
-    reply = await conversation._reply("Total value?", "User", conversation.__panel__())
-    assert reply.severity == "error" and "rate limited" in reply.object
+    with patch.object(llm, "invoke", side_effect=RuntimeError("rate limited")):
+        reply = await conversation._reply("Total value?", "User", conversation.__panel__())
+
+    first_answer, failed = conversation.answers
+    assert first_answer is first and failed.status == "error"
+    assert reply[0].severity == "error" and "rate limited" in reply[0].object
+    assert conversation._messages == history and conversation._context is context
 
 
 def test_a_chat_outside_a_kernel_is_its_answers_as_html(chart_answer, frame_source):
