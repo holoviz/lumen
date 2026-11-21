@@ -342,6 +342,9 @@ class LLMUser(param.Parameterized):
         -------
         The structured response from the LLM
         """
+        merged_tools = _merge_prompt_tools(self.llm_tools, tools, context)
+        # The prompt names the tools the model is given
+        prompt_kwargs.setdefault("tool_names", [tool.name for tool in merged_tools or []])
         system = await self._render_prompt(prompt_name, messages, context, **prompt_kwargs)
         if response_model is None:
             try:
@@ -359,7 +362,6 @@ class LLMUser(param.Parameterized):
             model_spec = model_spec[model_index]
 
         invoke_kw: dict = {}
-        merged_tools = _merge_prompt_tools(self.llm_tools, tools, context)
         if merged_tools is not None:
             invoke_kw["tools"] = merged_tools
         if max_retries is not None:
@@ -421,7 +423,9 @@ class LLMUser(param.Parameterized):
         ------
         Chunks of the response from the LLM as they are generated
         """
-        # Render the prompt
+        stream_merged = _merge_prompt_tools(self.llm_tools, tools, context)
+        # The prompt names the tools the model is given
+        kwargs.setdefault("tool_names", [tool.name for tool in stream_merged or []])
         system = await self._render_prompt(prompt_name, messages, context, **kwargs)
 
         # Determine the response model
@@ -440,8 +444,6 @@ class LLMUser(param.Parameterized):
 
         if model_index is not None:
             model_spec = model_spec[model_index]
-
-        stream_merged = _merge_prompt_tools(self.llm_tools, tools, context)
 
         # Stream from the LLM
         async for chunk in self.llm.stream(
