@@ -92,6 +92,16 @@ if TYPE_CHECKING:
 _MARKDOWN = MarkdownIt("gfm-like", {"html": False})
 
 
+class _StaticHTML:
+    """HTML that marimo and IPython show as it is."""
+
+    def __init__(self, html: str):
+        self.html = html
+
+    def _repr_html_(self) -> str:
+        return self.html
+
+
 def _in_kernel() -> bool:
     """Whether code runs in a Jupyter kernel, where Panel output gets comms."""
     try:
@@ -2202,6 +2212,26 @@ class Answer(param.Parameterized):
         bundle["text/html"] = "\n".join(card)
         return bundle
 
+    def widget(self) -> Any:
+        """
+        The answer card as an anywidget (``pip install anywidget``), for
+        notebooks that render widgets but not Panel, such as marimo, where
+        it is how an answer shows. The chart stays interactive, and a click
+        on a Vega-Lite chart sets answer.selection.
+        """
+        try:
+            # Deferred: anywidget is optional
+            from .widget import answer_widget
+        except ImportError as e:
+            raise ImportError("answer.widget() needs anywidget: pip install anywidget") from e
+        return answer_widget(self)
+
+    def _display_(self) -> Any:
+        """What marimo shows: the widget card, or the static one without anywidget."""
+        if importlib.util.find_spec("anywidget") is not None:
+            return self.widget()
+        return _StaticHTML(self._static_bundle(self._chart_bundle())["text/html"])
+
     def _repr_mimebundle_(self, include=None, exclude=None):
         if not _in_kernel():
             return self._static_bundle(self._chart_bundle())
@@ -2213,6 +2243,9 @@ class Answer(param.Parameterized):
             bundle = None
         if bundle is not None:
             return bundle
+        if importlib.util.find_spec("anywidget") is not None:
+            # Widgets render without jupyter_bokeh, and keep hvPlot charts too
+            return self.widget()._repr_mimebundle_(include=include, exclude=exclude)
         # Panel cannot render here, but notebook front-ends draw Vega-Lite
         # themselves, so the chart goes out as its own output and keeps its
         # tooltips. IPython is present, since this runs in a kernel.
