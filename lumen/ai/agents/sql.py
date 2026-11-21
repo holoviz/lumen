@@ -26,6 +26,7 @@ from ...sources.duckdb import DuckDBSource
 from ...sources.xarray_sql import XArraySQLSource
 from ...transforms.sql import SQLLimit
 from ...util import as_pandas
+from ..actor import _merge_prompt_tools
 from ..config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError,
     DeterministicQueryError, EmptyResultError, MissingContextError, QueryError,
