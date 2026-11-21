@@ -1,12 +1,15 @@
 import asyncio
 import base64
+import io
 import json
 import logging
+import re
 import subprocess
 import sys
 import threading
 import time
 import warnings
+import zipfile
 
 from typing import Any, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2186,6 +2189,30 @@ def test_chat_to_app_is_a_dashboard_of_each_answer_with_its_data(two_answer_chat
     pd.testing.assert_frame_equal(
         as_pandas(table.pipeline.data).reset_index(drop=True), expected.reset_index(drop=True), check_dtype=False,
     )
+
+
+def test_chat_to_app_as_html_is_one_page_with_lumen_inside(two_answer_chat, tmp_path):
+    page = two_answer_chat.to_app(tmp_path / "app.html", title="Penguins")
+    assert (tmp_path / "app.html").read_text(encoding="utf-8") == page
+    assert "loadPyodide" in page and page.count("data:application/zip;base64,") == 1
+    # Nothing else to fetch from beside the page
+    assert "app.resources.zip'" not in page and "serviceWorker" not in page
+    archive = re.search(r"data:application/zip;base64,([^']+)'", page).group(1)
+    names = zipfile.ZipFile(io.BytesIO(base64.b64decode(archive))).namelist()
+    assert "lumen/dashboard.py" in names and not any(name.startswith(("lumen/ai/", "lumen/tests/")) for name in names)
+
+
+def test_chat_to_app_as_html_refuses_a_map(frame_source, tmp_path):
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    regions = gpd.GeoDataFrame({"v": [1.0]}, geometry=[Polygon([(0, 0), (1, 0), (1, 1)])], crs="EPSG:4326")
+    source = read({"regions": regions})
+    pipeline = Pipeline(source=source, table="regions")
+    conversation = chat(source)
+    conversation.answers = [Answer(question="Map?", value="", status="success", pipeline=pipeline)]
+    with pytest.raises(ValueError, match="spatial extension has no Pyodide build"):
+        conversation.to_app(tmp_path / "app.html")
+    assert not (tmp_path / "app.html").exists()
 
 
 def test_chat_to_app_needs_an_answer_with_data(frame_source):

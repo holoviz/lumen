@@ -1,8 +1,14 @@
 import base64
+import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 
 from io import BytesIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from textwrap import dedent
 from typing import Any
 
@@ -197,3 +203,56 @@ def docx_add_chart(doc, editor) -> bool:
     png.seek(0)
     doc.add_picture(png, width=Inches(6))
     return True
+
+
+#: What a Lumen dashboard imports, installed in the browser. Lumen itself
+#: goes in as files, since its own requirements include packages with no
+#: browser build, such as tiktoken.
+PYODIDE_REQUIREMENTS = [
+    "chardet", "duckdb", "holoviews", "hvplot", "jinja2", "markdown-it-py", "narwhals", "panel-material-ui",
+    "pillow", "platformdirs", "pyarrow", "pyyaml", "requests", "sqlglot", "tqdm",
+]
+
+_PYODIDE_APP = """\
+import panel_material_ui  # noqa: F401  its components must be on the page before Lumen draws any
+import yaml
+
+from lumen.dashboard import Dashboard
+
+Dashboard(yaml.safe_load({spec!r})).servable()
+"""
+
+
+_CONVERT = "import json, sys; from panel.io.convert import convert_apps; convert_apps([sys.argv[1]], **json.loads(sys.argv[2]))"
+
+
+def to_pyodide_html(spec: str, title: str) -> str:
+    """
+    A Lumen dashboard spec as one HTML page that runs it in the browser
+    with Pyodide: no Python server, only the Pyodide and package downloads
+    on first load. Lumen's own files are inside the page.
+    """
+    with TemporaryDirectory() as tmp:
+        build = Path(tmp)
+        # The dashboard needs neither the AI modules nor the tests
+        shutil.copytree(Path(__file__).parents[1], build / "lumen", ignore=shutil.ignore_patterns("ai", "tests", "__pycache__"))
+        (build / "app.py").write_text(_PYODIDE_APP.format(spec=spec), encoding="utf-8")
+        files = [str(path) for path in (build / "lumen").rglob("*") if path.is_file()]
+        options = dict(
+            dest_path=str(build / "out"), runtime="pyodide", title=title, requirements=PYODIDE_REQUIREMENTS,
+            resources=files, build_pwa=False, build_index=False,
+        )
+        # Its own process: converting runs the app, which would change this
+        # session's Panel config, and starts a process pool that a script
+        # read from stdin cannot spawn from
+        subprocess.run(
+            [sys.executable, "-c", _CONVERT, str(build / "app.py"), json.dumps(options)],
+            check=True, capture_output=True, cwd=build,
+        )
+        html = (build / "out" / "app.html").read_text(encoding="utf-8")
+        archive = base64.b64encode((build / "out" / "app.resources.zip").read_bytes()).decode()
+    # The page fetches its files as a zip; inlined, the page is the whole app
+    reference = "'app.resources.zip'"
+    if html.count(reference) != 1:
+        raise RuntimeError("Panel's converted page no longer loads its files as Lumen expects; save the spec as .yaml instead.")
+    return html.replace(reference, f"'data:application/zip;base64,{archive}'")

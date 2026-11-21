@@ -72,7 +72,9 @@ from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .editors import LumenEditor
-from .export import format_output, make_md_cell, make_preamble
+from .export import (
+    format_output, make_md_cell, make_preamble, to_pyodide_html,
+)
 from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
@@ -1118,7 +1120,9 @@ class Chat(param.Parameterized):
         it has none, and its written answer. Each answer's result is in the
         spec as CSV, so the file runs on its own, with no LLM and no access
         to the original data; it shows the results as they were, not a new
-        query. Returns the YAML, and writes it to path when given.
+        query. A path ending in .html gets one page that runs the dashboard
+        in the browser with Pyodide, with no server at all. Returns the
+        YAML, or the page, and writes it to path when given.
         """
         tables, layouts = {}, []
         for i, answer in enumerate(self.answers, 1):
@@ -1146,6 +1150,13 @@ class Chat(param.Parameterized):
             "layouts": layouts,
         }
         text = yaml.dump(spec, sort_keys=False, allow_unicode=True)
+        if path is not None and Path(path).suffix.lower() in (".html", ".htm"):
+            if any(geometry_columns(df) for df in tables.values()):
+                raise ValueError(
+                    "A map cannot run in the browser app: DuckDB's spatial extension has no Pyodide build. "
+                    "Save the app as .yaml and run it with lumen serve."
+                )
+            text = to_pyodide_html(text, title or "Lumen")
         if path is not None:
             Path(path).write_text(text, encoding="utf-8")
         return text
