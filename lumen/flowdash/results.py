@@ -56,7 +56,9 @@ def derive(source: BaseSQLSource, table: str, sql: str, schema: dict[str, Any] |
     ``source`` plus a table ``table`` defined by ``sql``, a query on
     ``source``. Each result table is declared by its expanded statement, so
     reading one through the source runs on any engine. ``schema``, the
-    result's column schemas, saves asking the engine for them.
+    result's column schemas, saves asking the engine for its columns and
+    their types; value ranges and counts are left out, since the schema may
+    come from a capped fetch.
     """
     root, definitions = _DERIVED.get(source, (source, {}))
     definitions = {**definitions, table: sql}
@@ -68,7 +70,10 @@ def derive(source: BaseSQLSource, table: str, sql: str, schema: dict[str, Any] |
         derived = root.create_sql_expr_source({**tables, **results})
     stored = {**(source._get_schema_cache() or {})}
     if schema is not None:
-        stored[table] = schema
+        stored[table] = {
+            column: {key: spec[key] for key in ("type", "format") if key in spec}
+            for column, spec in schema.items() if isinstance(spec, dict)
+        }
     if stored:
         derived._schema_cache = stored
     _DERIVED[derived] = (root, definitions)

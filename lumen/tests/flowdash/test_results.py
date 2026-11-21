@@ -169,3 +169,33 @@ def test_completions_offer_a_results_columns_without_running_it(executed):
     assert set(words.values()) >= {"orders", "by_region", "total"}
     assert words.types["by_region"] == "table"
     assert not [q for q in executed if "SUM(amount)" in q]
+
+
+def test_a_refresh_runs_a_table_node_on_a_result_once(executed):
+    source = duckdb_source()
+    ops = chain(source, ("paid", PAID))
+    ops.add_node(TABLE_ID, {"table": "paid"}, name="table")
+    ops.connect("paid.result", "table.source")
+    ops.add_node(DATA_ID, {}, name="table_rows")
+    ops.connect("table.pipeline", "table_rows.pipeline")
+    assert len(output(ops, "table_rows", "data")) == 3
+    executed.clear()
+
+    ops.editor.param.trigger("refresh")
+
+    assert len(output(ops, "table_rows", "data")) == 3
+    assert len([q for q in executed if not q.endswith("LIMIT 0")]) == 2
+
+
+def test_a_result_table_is_renamed_from_a_table_differing_only_in_case():
+    ops = chain(duckdb_source(), ("Orders", PAID), ("n", "SELECT COUNT(*) AS n FROM orders"))
+
+    assert output(ops, "Orders", "pipeline").table == "Orders_result"
+    assert rows(ops, "n") == [(4,)]
+
+
+def test_the_stored_result_schema_keeps_types_but_no_values():
+    ops = chain(duckdb_source(), ("paid", PAID))
+    stored = output(ops, "paid", "result")._get_schema_cache()["paid"]
+    assert set(stored) == {"customer", "region", "amount"}
+    assert all(set(spec) <= {"type", "format"} for spec in stored.values())
