@@ -18,6 +18,7 @@ from .checks import (
     extract_sql_error_location, forget_probes, pipeline_columns, probe_query,
     selection_warnings,
 )
+from .deckgl import DECKGL_ID, DeckGLNode, check_deckgl
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
     QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ID, SOURCE_TYPE, SOURCES_KEY, SQL_ID,
@@ -29,6 +30,8 @@ from .nodes import (
     set_row_ceiling, spec_param, table_pipeline, unbind_source,
 )
 
+COMPONENTS[DECKGL_ID] = DeckGLNode
+
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.
 __flowdash_components__ = COMPONENTS
@@ -36,6 +39,7 @@ __flowdash_components__ = COMPONENTS
 __all__ = [
     "COMPONENTS",
     "DATA_ID",
+    "DECKGL_ID",
     "FILTER_ID",
     "NODE_TIMEOUT",
     "PIPELINE_TYPE",
@@ -51,6 +55,7 @@ __all__ = [
     "VIEW_ID",
     "CheckDiagnostic",
     "DataNode",
+    "DeckGLNode",
     "FilterNode",
     "LumenViewNode",
     "SQLNode",
@@ -61,6 +66,7 @@ __all__ = [
     "bound_sources",
     "check_chart",
     "check_columns",
+    "check_deckgl",
     "check_filter_config",
     "check_query",
     "check_source_config",
