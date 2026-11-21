@@ -889,27 +889,49 @@ def selection_warnings(spec: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(warnings))
 
 
+def check_view_spec(
+    config: dict[str, Any], inputs: dict[str, Any], *, settings: Any = (),
+    check: Any = None, warnings: Any = None,
+) -> Any:
+    """
+    Check the ``spec`` of a view node's config. The problems of the spec's
+    declared ``settings`` (``panel_flowdash.SpecSetting``) come first. Then,
+    with an input pipeline, ``check(spec, columns)`` checks the spec against
+    the pipeline's columns and raises ``ValueError`` saying what to fix, and
+    ``warnings(spec)`` lists problems shown with the config without refusing
+    it.
+    """
+    pipeline, spec = inputs.get("pipeline"), config.get("spec")
+    if not spec:
+        return None
+    if settings:
+        try:
+            from panel_flowdash.spec_settings import problems
+        except ImportError:  # panel-flowdash without spec settings
+            problems = None
+        if problems is not None and (found := problems(spec, settings)):
+            return " ".join(found)
+    if pipeline is None:
+        return None
+    if check is not None:
+        try:
+            check(spec, pipeline_columns(pipeline))
+        except _DiagnosticError as exc:
+            return exc.diagnostic
+        except ValueError as exc:
+            return CheckDiagnostic(str(exc), field="spec")
+    if warnings is None:
+        return None
+    found = [w for w in map(_unverified, warnings(spec)) if w is not None]
+    return found or None
+
+
 def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     """
     Check a ``Lumen/view`` config with ``check_chart`` against the input's
     columns, warning about selections a filter cannot apply exactly.
     """
-    pipeline, spec = inputs.get("pipeline"), config.get("spec")
-    if not spec:
-        return None
-    try:
-        from panel_flowdash.spec_settings import problems
-    except ImportError:  # panel-flowdash without spec settings
-        problems = None
-    if problems is not None and (found := problems(spec, VEGA_LITE_SETTINGS)):
-        return " ".join(found)
-    if pipeline is None:
-        return None
-    try:
-        check_chart(spec, pipeline_columns(pipeline))
-    except _DiagnosticError as exc:
-        return exc.diagnostic
-    except ValueError as exc:
-        return CheckDiagnostic(str(exc), field="spec")
-    warnings = [w for w in map(_unverified, selection_warnings(spec)) if w is not None]
-    return warnings or None
+    return check_view_spec(
+        config, inputs, settings=VEGA_LITE_SETTINGS, check=check_chart,
+        warnings=selection_warnings,
+    )

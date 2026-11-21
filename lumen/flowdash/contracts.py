@@ -102,6 +102,21 @@ def _spec_fields(spec: Any) -> set[str]:
     return fields
 
 
+def spec_fields(spec: Any) -> set[str]:
+    """The columns a view spec reads: every string under a ``field`` key, at any depth."""
+    return _spec_fields(spec)
+
+
+def _view_fields(component: Any) -> Callable[[Any], set[str]] | None:
+    """How the view node of ``component`` reads columns from its spec, or None if it is no view node."""
+    from .nodes import COMPONENTS, LumenViewNode
+
+    cls = COMPONENTS.get(component) if isinstance(component, str) else None
+    if isinstance(cls, type) and issubclass(cls, LumenViewNode):
+        return cls.spec_fields
+    return None
+
+
 def _view_reader(component: Any) -> Callable[[Any], set[str]] | None:
     """
     How the view node of ``component`` reads columns from its spec, or None
