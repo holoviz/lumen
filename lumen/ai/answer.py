@@ -1503,22 +1503,27 @@ class Answer(param.Parameterized):
     def _mesh(self) -> Any:
         """
         The answer's data on its mesh, as an xugrid UgridDataset, when it
-        came from a mesh and keeps the face index; faces the query left out
-        are NaN.
+        came from a mesh and keeps the face, node or edge index; those the
+        query left out are NaN.
         """
         grids = mesh_of(self.pipeline.source)
         if not grids:
             return None
         df = as_pandas(self.pipeline.data)
-        grid = next((g for g in grids.values() if g.face_dimension in df.columns), None)
-        if grid is None:
+        located = (
+            (grid, dim, size) for grid in grids.values()
+            for dim, size in ((grid.face_dimension, grid.n_face), (grid.node_dimension, grid.n_node), (grid.edge_dimension, grid.n_edge))
+            if dim in df.columns
+        )
+        if (found := next(located, None)) is None:
             return None
+        grid, dim, size = found
         # Deferred: xugrid is optional; a mesh source exists only when it is installed
         import xugrid as xu
-        index = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])] + [grid.face_dimension]
-        # The face centres the faces table adds are the mesh's own, not values to draw
+        index = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])] + [dim]
+        # The centres a location's table adds are the mesh's own, not values to draw
         values = [c for c in df.select_dtypes("number").columns if c not in index and c not in ("x", "y", "lon", "lat")]
-        ds = df.set_index(index)[values].to_xarray().reindex({grid.face_dimension: np.arange(grid.n_face)})
+        ds = df.set_index(index)[values].to_xarray().reindex({dim: np.arange(size)})
         return xu.UgridDataset(ds, grids=[grid])
 
     @property
@@ -1767,15 +1772,24 @@ class Answer(param.Parameterized):
         """
         An interactive map of the answer's geometry: lonboard's when it is
         installed, otherwise hvPlot's, on a basemap when geoviews is installed.
-        An answer about a mesh is drawn on its triangles with hvPlot.
+        An answer about a mesh is drawn on its triangles with hvPlot, or
+        for edge values as points at the edge centres.
         """
         if self.pipeline is not None and (mesh := self._mesh()) is not None:
             # Deferred: registers hvPlot's xugrid accessor, and xugrid is optional
             import hvplot.xugrid  # noqa: F401
 
+            var = mesh[next(iter(mesh.data_vars))]
+            grid = var.ugrid.grid
+            if grid.edge_dimension in var.dims:
+                # hvPlot's xugrid backend draws face and node values, so an edge's is a point at its centre
+                centres = pd.DataFrame({grid.edge_dimension: np.arange(grid.n_edge), "x": grid.edge_x, "y": grid.edge_y})
+                values = var.obj.to_dataframe().reset_index().merge(centres)
+                extra = [dim for dim in var.dims if dim != grid.edge_dimension]
+                return values.hvplot.points("x", "y", c=var.name, groupby=extra or None)
             # hvPlot's xugrid backend draws a mesh as triangles; filled and
             # coloured by its value column "z", or only the edges show
-            return mesh[next(iter(mesh.data_vars))].hvplot(filled=True).opts(edge_color="z", node_size=0)
+            return var.hvplot(filled=True).opts(edge_color="z", node_size=0)
         gdf = self.gdf
         if gdf is None:
             raise ValueError("This answer has no geometry to map.")

@@ -90,7 +90,7 @@ Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as co
 {%- if mesh is defined and mesh %}
 
 ## Unstructured mesh
-The data is on an unstructured mesh: each variable table has one row per mesh face (and time step), keyed by the face index column, and the `_faces` table holds each face's centre (`x`/`y`, or `lon`/`lat`). Join a variable to `_faces` on the face index to filter or group by location. Keep the face index column in the result whenever the answer should be drawn on the mesh.
+The data is on an unstructured mesh: each variable table has one row per mesh face, node or edge (and time step), keyed by that location's index column, and the `_faces`, `_nodes` and `_edges` tables hold each location's centre (`x`/`y`, or `lon`/`lat`). Join a variable to the centres table with the same index column to filter or group by location. Keep the index column in the result whenever the answer should be drawn on the mesh.
 {%- endif %}
 {%- endblock -%}
 

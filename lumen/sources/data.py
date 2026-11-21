@@ -283,17 +283,21 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         elif (mesh := _as_mesh(src)) is not None:
             grid = mesh.ugrid.grid
             prefix = name or grid.name
-            # Face centres as their own table, so questions can filter or
-            # join on location; the face variables join it on the face index
             x, y = ("lon", "lat") if grid.crs is not None and grid.crs.is_geographic else ("x", "y")
-            frames[f"{prefix}_faces"] = pd.DataFrame({
-                grid.face_dimension: np.arange(grid.n_face), x: grid.face_x, y: grid.face_y,
-            })
-            for var, values in mesh.obj.data_vars.items():
-                if grid.face_dimension in values.dims:
-                    grids[str(var)] = mesh.obj[[var]]
-                    meshes[str(var)] = grid
-            meshes[f"{prefix}_faces"] = grid
+            used = {dim for values in mesh.obj.data_vars.values() for dim in values.dims}
+            for kind, dim in (("faces", grid.face_dimension), ("nodes", grid.node_dimension), ("edges", grid.edge_dimension)):
+                if kind != "faces" and dim not in used:
+                    # Edge centres need the edges worked out; only for edge variables
+                    continue
+                # Each location's centres as a table, so questions can filter
+                # or join on location; its variables join it on the index
+                xs, ys = getattr(grid, f"{kind[:-1]}_x"), getattr(grid, f"{kind[:-1]}_y")
+                frames[f"{prefix}_{kind}"] = pd.DataFrame({dim: np.arange(len(xs)), x: xs, y: ys})
+                meshes[f"{prefix}_{kind}"] = grid
+                for var, values in mesh.obj.data_vars.items():
+                    if dim in values.dims:
+                        grids[str(var)] = mesh.obj[[var]]
+                        meshes[str(var)] = grid
         elif (xr := try_import_xarray()) and isinstance(src, (xr.Dataset, xr.DataArray)):
             if isinstance(src, xr.DataArray):
                 # The variable becomes the table, so the dict key names it

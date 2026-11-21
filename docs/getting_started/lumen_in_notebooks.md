@@ -297,7 +297,7 @@ mean_air = air.ask("Map the mean air temperature in degrees Celsius", llm=Kilo()
 2. A table with `lat` and `lon` columns is drawn as points on a basemap.
 3. The air temperature grid is drawn as a quadmesh over coastlines.
 
-**Unstructured meshes.** Ocean and climate model output on a UGRID mesh reads with `lumen.read(mesh)`, from an xugrid `UgridDataset` or an xarray Dataset with a mesh topology variable (`pip install "lumen[mesh]"`). Each face variable becomes a table with one row per face (and time step), and a `<mesh>_faces` table holds each face's centre, so questions can filter by location. An answer that keeps the face index comes back on the mesh: `answer.ds` is a `UgridDataset` and `answer.map()` draws it on its triangles with hvPlot's xugrid backend. Node and edge variables are not read yet.
+**Unstructured meshes.** Ocean and climate model output on a UGRID mesh reads with `lumen.read(mesh)`, from an xugrid `UgridDataset` or an xarray Dataset with a mesh topology variable (`pip install "lumen[mesh]"`). Each face, node or edge variable becomes a table with one row per location (and time step), and `<mesh>_faces`, `<mesh>_nodes` and `<mesh>_edges` tables hold their centres, so questions can filter by location. An answer that keeps the index comes back on the mesh: `answer.ds` is a `UgridDataset`, and `answer.map()` draws face and node values on the mesh's triangles with hvPlot's xugrid backend and edge values as points at the edge centres.
 
 An answer over a table with a geometry column, or over an xarray Dataset, has a few more fields:
 
