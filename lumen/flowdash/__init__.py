@@ -14,17 +14,19 @@ Importing ``lumen`` does not import this package or panel-flowdash.
 from .checks import (
     PROBE_TIMEOUT, CheckDiagnostic, check_chart, check_columns,
     check_filter_config, check_query, check_source_config, check_sql_config,
-    check_table_config, check_view_config, extract_sql_error_location,
-    forget_probes, pipeline_columns, probe_query, selection_warnings,
+    check_table_config, check_view_config, check_view_spec,
+    extract_sql_error_location, forget_probes, pipeline_columns, probe_query,
+    selection_warnings,
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
     QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ID, SOURCE_TYPE, SOURCES_KEY, SQL_ID,
-    TABLE_ID, VIEW_ID, DataNode, FilterNode, SourceNode, SQLNode, TableNode,
-    ViewNode, bind_source, bound_sources, compile_sql, effective_limit, fetch,
-    filter_condition, filtered_pipeline, forget, host_sources, missing_source,
-    pipeline_sql, primed_result, python_value, result_sql, row_ceiling,
-    selection_conditions, set_row_ceiling, table_pipeline, unbind_source,
+    TABLE_ID, VIEW_ID, DataNode, FilterNode, LumenViewNode, SourceNode,
+    SQLNode, TableNode, ViewNode, bind_source, bound_sources, compile_sql,
+    effective_limit, fetch, filter_condition, filtered_pipeline, forget,
+    host_sources, missing_source, pipeline_sql, primed_result, python_value,
+    register_view, result_sql, row_ceiling, selection_conditions,
+    set_row_ceiling, spec_param, table_pipeline, unbind_source,
 )
 
 # What the package offers as a FlowDash component library, under stable ids
@@ -50,6 +52,7 @@ __all__ = [
     "CheckDiagnostic",
     "DataNode",
     "FilterNode",
+    "LumenViewNode",
     "SQLNode",
     "SourceNode",
     "TableNode",
@@ -64,6 +67,7 @@ __all__ = [
     "check_sql_config",
     "check_table_config",
     "check_view_config",
+    "check_view_spec",
     "compile_sql",
     "effective_limit",
     "extract_sql_error_location",
@@ -79,11 +83,13 @@ __all__ = [
     "primed_result",
     "probe_query",
     "python_value",
+    "register_view",
     "result_sql",
     "row_ceiling",
     "selection_conditions",
     "selection_warnings",
     "set_row_ceiling",
+    "spec_param",
     "table_pipeline",
     "unbind_source",
 ]

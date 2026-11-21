@@ -1,6 +1,6 @@
 """
 Lumen sources, tables, filters, SQL queries and Vega-Lite views as FlowDash
-nodes.
+nodes. View nodes share ``LumenViewNode``, registered with ``register_view``.
 
 Edges between these nodes carry a Lumen ``Source`` or ``Pipeline`` rather
 than a DataFrame, so a query placed on a SQL node runs in the source's
@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import datetime as dt
+import functools
 import hashlib
 import inspect
 import math
@@ -65,12 +66,13 @@ from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
 from .checks import (
     _engine_error, _read, check_chart, check_filter_config, check_query,
-    check_source_config, check_sql_config, check_table_config,
-    check_view_config, forget_probes, pipeline_columns,
+    check_source_config, check_sql_config, check_table_config, check_view_spec,
+    forget_probes, pipeline_columns, selection_warnings,
 )
 from .choices import pipeline_column_types, source_choices, table_choices
 from .contracts import (
     DATA_ID, FILTER_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SourceContract,
+    spec_fields as contract_spec_fields,
 )
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
@@ -1205,42 +1207,100 @@ def responsive_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return {**defaults, **spec}
 
 
-@register(
-    component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart", tags=["view"],
-    description=(
-        "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
-        "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
-        "selection output gives what is selected: wire it to a filter's selection input that "
-        "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
-    ),
-    config=["spec", "debounce"],
-    check_config=check_view_config,
-    requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
-    provides=[{"key": "selection", "type": SELECTION_TYPE}],
-)
-class ViewNode(LumenNode):
+def spec_param(doc: str, settings: list | None = None, **params: Any) -> param.Dict:
+    """
+    The ``spec`` param of a view node: a dict FlowDash edits as JSON, with
+    the curated ``settings`` (``panel_flowdash.SpecSetting``) its form shows
+    as another view of the same spec. Without settings the spec is edited as
+    JSON alone.
+    """
+    metadata = {"flowdash": {"widget": "spec", "settings": list(settings or [])}}
+    return param.Dict(default={}, doc=doc, metadata=metadata, **params)
+
+
+def register_view(
+    *, config: list[str] | None = None, provides: list[dict[str, Any]] | None = None,
+    check_config: Any = None, tags: list[str] | None = None, **options: Any,
+):
+    """
+    Register a ``LumenViewNode`` subclass as a FlowDash component that reads
+    a required ``pipeline`` input and is configured by its ``spec`` and the
+    other ``config`` params. It is tagged a view, so its tile shows even
+    when it has outputs, e.g. a selection. Without ``check_config`` the spec is checked by
+    the class's ``check_spec`` and ``spec_warnings`` and its declared
+    settings, see ``check_view_spec``.
+    """
+    def decorator(cls: type[LumenViewNode]) -> type[LumenViewNode]:
+        check = check_config if check_config is not None else _view_check(cls)
+        return register(
+            component=True, page=False, tags=["view", *(tags or [])], config=["spec", *(config or [])],
+            check_config=check,
+            requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
+            provides=list(provides or []), **options,
+        )(cls)
+    return decorator
+
+
+def _view_check(cls: type[LumenViewNode]) -> Any:
+    settings = (cls.param.spec.metadata or {}).get("flowdash", {}).get("settings") or []
+
+    def check_view(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
+        return check_view_spec(
+            config, inputs, settings=settings, check=cls.check_spec, warnings=cls.spec_warnings,
+            requires_spec=cls.requires_spec,
+        )
+
+    check_view.__doc__ = f"Check a {cls.__name__} config against its input's columns."
+    return check_view
+
+
+@functools.cache
+def _view_class(view_type: str) -> type:
+    """The Lumen View class of ``view_type``, e.g. ``"vegalite"``, imported on first use."""
+    from ..views.base import View
+
+    return View._get_type(view_type)
+
+
+class LumenViewNode(LumenNode):
+    """
+    A view of a Lumen pipeline drawn from a spec, e.g. a chart. The spec
+    names the pipeline's columns and brings no data: the view gets the
+    pipeline's rows, at most the host's row ceiling, through ``fetch``, so
+    it shares one query with the pipeline's other readers.
+
+    A subclass names the Lumen ``view_type`` it draws (e.g. ``"vegalite"``),
+    declares its ``spec`` with ``spec_param`` and is registered with
+    ``register_view``. It can override ``check_spec`` (refuse a spec before
+    it is drawn), ``spec_warnings``, ``spec_fields`` (the columns the
+    dashboard's schema contract records), ``_view_params`` (how the spec
+    becomes the Lumen view's params, filling the tile by default),
+    ``_built``, ``_summary`` and ``_preview`` (the card and its pop-out).
+    """
+
+    __abstract = True
 
     pipeline = param.Parameter(doc="The upstream pipeline.")
 
-    spec = param.Dict(default={}, doc="""
-        The Vega-Lite spec, without data. A width or height it leaves out
-        follows the tile's, and colours it leaves out the dashboard's
-        ``color_scheme`` setting, if it has one.""",
-        metadata={"flowdash": {"widget": "spec", "settings": VEGA_LITE_SETTINGS}})
+    spec = spec_param("The view's spec, without data.")
 
-    debounce = param.Integer(default=DEBOUNCE, bounds=(0, None), doc="""
-        Milliseconds the chart waits after the last change of a selection
-        before reporting it, so a drag reports once rather than on every
-        mouse move.""")
+    # The type of the Lumen View the node draws, e.g. "vegalite".
+    view_type: ClassVar[str] = ""
 
-    selection = param.ClassSelector(class_=Selection, default=EMPTY, doc="""
-        What is selected on the chart, by the spec's selection params.""")
+    # Whether the view needs a spec to draw; a table, say, draws its pipeline with an empty one.
+    requires_spec: ClassVar[bool] = True
+
+    # Whether the view takes the dashboard's colour scheme, so it is drawn again when that changes.
+    themed: ClassVar[bool] = False
+
+    _waiting: ClassVar[str] = "Waiting for a pipeline"
+
+    _waiting_for_spec: ClassVar[str] = "Waiting for a spec"
 
     def __init__(self, **params):
-        self._link = None
         super().__init__(**params)
         settings = getattr(self.editor, "settings", None)
-        if settings is not None and "color_scheme" in settings.param:
+        if self.themed and settings is not None and "color_scheme" in settings.param:
             node = weakref.ref(self)
 
             def follow(*_events):
@@ -1248,6 +1308,21 @@ class ViewNode(LumenNode):
                     view._refresh()
 
             settings.param.watch(follow, "color_scheme")
+
+    @staticmethod
+    def check_spec(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
+        """The spec to draw for a pipeline with ``columns``, or ``ValueError`` saying what to fix."""
+        return spec
+
+    @staticmethod
+    def spec_warnings(spec: dict[str, Any]) -> list[str]:
+        """Problems of ``spec`` shown with the config without refusing it."""
+        return []
+
+    @staticmethod
+    def spec_fields(spec: Any) -> set[str]:
+        """The columns of its pipeline ``spec`` reads."""
+        return contract_spec_fields(spec)
 
     @param.depends("pipeline", "spec", watch=True, on_init=True)
     def _refresh(self, *events):
@@ -1257,25 +1332,112 @@ class ViewNode(LumenNode):
         scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
         return scheme if isinstance(scheme, str) and scheme else None
 
-    def _resolve(self):
-        if self.pipeline is None or not self.spec:
-            return None
-        from ..views.base import VegaLiteView
+    def _view_params(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """
+        The params of the Lumen view besides its pipeline, from the checked
+        spec. The view fills its tile, which a view whose spec cannot size it
+        to its container does through its pane's sizing.
+        """
+        return {"spec": spec, "sizing_mode": "stretch_both"}
 
+    def _resolve(self):
+        if self.pipeline is None or (self.requires_spec and not self.spec):
+            return None
         if is_failure(self.pipeline):
             raise ValueError(f"The input failed: {failure_text(self.pipeline)}")
-        spec = check_chart(self.spec, pipeline_columns(self.pipeline))
-        # The rows come through fetch, so the chart shares one query with the pipeline's other readers.
+        spec = self.check_spec(self.spec or {}, pipeline_columns(self.pipeline))
+        # The rows come through fetch, so the view shares one query with the pipeline's other readers.
         rows = fetch(self.pipeline, row_ceiling(self.editor))
-        spec = themed_spec(responsive_spec(spec), self._color_scheme())
-        view = VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=spec)
+        view_type = _view_class(self.view_type)
+        view = view_type(pipeline=_clone(self.pipeline, data=rows), **self._view_params(spec))
         view.update()
+        self._built(view)
+        return view
+
+    def _built(self, view: Any) -> None:
+        """Called with each view the node draws, before it is shown."""
+
+    def _body(self):
+        view = self._object
+        if view is not None:
+            return view.panel
+        return pn.pane.Markdown(self._waiting if self.pipeline is None else self._waiting_for_spec)
+
+    def _summary(self, spec: dict[str, Any], data: Any) -> str:
+        """A line saying what the view shows, e.g. for hosts that draw no chart previews."""
+        title = getattr(getattr(type(self), "__panel_app_metadata__", None), "title", None) or "View"
+        if data is None or not hasattr(data, "__len__"):
+            return title
+        return f"{title}, {len(data):,} row{'' if len(data) == 1 else 's'}"
+
+    def _preview(self, spec: dict[str, Any], data: Any) -> Any:
+        """
+        What the node's card shows and pops out: by default the first rows
+        of the view's data and how many the pipeline has.
+        """
+        if isinstance(self.pipeline, Pipeline) and (rows := _fetched_preview(self.pipeline)) is not None:
+            return rows
+        if data is None or not hasattr(data, "head"):
+            return self._summary(spec, data)
+        return _preview_frame(data.head(PREVIEW_ROWS), len(data))
+
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is not None or self._object is None:
+            return None
+        spec = getattr(self._object, "spec", None)
+        spec = spec if isinstance(spec, dict) else self.spec
+        data = getattr(getattr(self._object, "pipeline", None), "data", None)
+        return self._preview(spec, data)
+
+
+@register_view(
+    title="Lumen Vega-Lite view", icon="bar_chart",
+    description=(
+        "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
+        "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
+        "selection output gives what is selected: wire it to a filter's selection input that "
+        "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
+    ),
+    config=["debounce"],
+    provides=[{"key": "selection", "type": SELECTION_TYPE}],
+)
+class ViewNode(LumenViewNode):
+
+    spec = spec_param("""
+        The Vega-Lite spec, without data. A width or height it leaves out
+        follows the tile's, and colours it leaves out the dashboard's
+        ``color_scheme`` setting, if it has one.""", settings=VEGA_LITE_SETTINGS)
+
+    debounce = param.Integer(default=DEBOUNCE, bounds=(0, None), doc="""
+        Milliseconds the chart waits after the last change of a selection
+        before reporting it, so a drag reports once rather than on every
+        mouse move.""")
+
+    selection = param.ClassSelector(class_=Selection, default=EMPTY, doc="""
+        What is selected on the chart, by the spec's selection params.""")
+
+    view_type = "vegalite"
+
+    themed = True
+
+    check_spec = staticmethod(check_chart)
+
+    spec_warnings = staticmethod(selection_warnings)
+
+    def __init__(self, **params):
+        self._link = None
+        super().__init__(**params)
+
+    def _view_params(self, spec: dict[str, Any]) -> dict[str, Any]:
+        # The spec fills the tile, so the pane keeps the sizing Vega gives a container size.
+        return {"spec": themed_spec(responsive_spec(spec), self._color_scheme())}
+
+    def _built(self, view: Any) -> None:
         if isinstance(view._panel, pn.pane.Vega):
             # A new chart starts with nothing selected; the link reports that.
             self._link = link_selection(
                 self, view._panel, debounce=self.debounce, link=self._link, source=self.node_id,
             )
-        return view
 
     @param.depends("debounce", watch=True)
     def _update_debounce(self):
@@ -1285,18 +1447,13 @@ class ViewNode(LumenNode):
             if isinstance(pane, pn.pane.Vega):
                 pane.debounce = self.debounce
 
-    def _body(self):
-        view = self._object
-        return pn.pane.Markdown("Waiting for a pipeline") if view is None else view.panel
+    def _summary(self, spec: dict[str, Any], data: Any) -> str:
+        return _chart_summary(spec, data)
 
-    def __flowdash_preview__(self, output: str | None = None) -> Any:
-        if self._error is not None or self._object is None:
-            return None
-        spec = self._object.spec
-        data = getattr(getattr(self._object, "pipeline", None), "data", None)
+    def _preview(self, spec: dict[str, Any], data: Any) -> Any:
         # A host that does not draw charts would list the dict's keys, so it gets a line of text.
         if "chart" not in _preview_kinds():
-            return _chart_summary(spec, data)
+            return self._summary(spec, data)
         return {
             PREVIEW_KIND_KEY: "chart",
             "format": "vega-lite",

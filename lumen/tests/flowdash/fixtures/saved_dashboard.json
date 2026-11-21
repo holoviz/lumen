@@ -1,0 +1,191 @@
+{
+ "breakpoints": [],
+ "edges": [
+  {
+   "source": "data",
+   "source_port": "source",
+   "target": "by_category",
+   "target_port": "source"
+  },
+  {
+   "source": "by_category",
+   "source_port": "pipeline",
+   "target": "chart",
+   "target_port": "pipeline"
+  },
+  {
+   "source": "data",
+   "source_port": "source",
+   "target": "sales",
+   "target_port": "source"
+  },
+  {
+   "source": "sales",
+   "source_port": "pipeline",
+   "target": "by_cat",
+   "target_port": "pipeline"
+  },
+  {
+   "source": "chart",
+   "source_port": "selection",
+   "target": "by_cat",
+   "target_port": "selection"
+  },
+  {
+   "source": "by_cat",
+   "source_port": "filtered",
+   "target": "points",
+   "target_port": "pipeline"
+  }
+ ],
+ "groups": [],
+ "items": [
+  {
+   "component_id": "Lumen/source",
+   "config": {
+    "ref": "data"
+   },
+   "instance_id": "data",
+   "origin": "te8ddd796",
+   "x": 0.0,
+   "y": 112.5
+  },
+  {
+   "component_id": "Lumen/sql",
+   "config": {
+    "sql": "SELECT category, SUM(amount) AS total FROM sales GROUP BY category",
+    "table": "by_category"
+   },
+   "instance_id": "by_category",
+   "origin": "te8ddd796",
+   "x": 380.0,
+   "y": 0.0
+  },
+  {
+   "component_id": "Lumen/view",
+   "config": {
+    "debounce": 250,
+    "spec": {
+     "encoding": {
+      "x": {
+       "field": "category",
+       "type": "nominal"
+      },
+      "y": {
+       "field": "total",
+       "type": "quantitative"
+      }
+     },
+     "mark": {
+      "tooltip": true,
+      "type": "bar"
+     },
+     "title": "Totals"
+    }
+   },
+   "instance_id": "chart",
+   "origin": "te8ddd796",
+   "x": 760.0,
+   "y": 101.5
+  },
+  {
+   "component_id": "Lumen/table",
+   "config": {
+    "limit": 100,
+    "table": "sales"
+   },
+   "instance_id": "sales",
+   "origin": "te8ddd796",
+   "x": 380.0,
+   "y": 192.0
+  },
+  {
+   "component_id": "Lumen/filter",
+   "config": {
+    "field": "category"
+   },
+   "instance_id": "by_cat",
+   "origin": "te8ddd796",
+   "x": 1140.0,
+   "y": 79.5
+  },
+  {
+   "component_id": "Lumen/view",
+   "config": {
+    "spec": {
+     "encoding": {
+      "x": {
+       "field": "category",
+       "type": "nominal"
+      },
+      "y": {
+       "field": "amount",
+       "type": "quantitative"
+      }
+     },
+     "mark": "point",
+     "width": 300
+    }
+   },
+   "instance_id": "points",
+   "origin": "te8ddd796",
+   "x": 1520.0,
+   "y": 101.5
+  }
+ ],
+ "parameters": {},
+ "reference_width": null,
+ "responsive_layouts": {},
+ "settings": {
+  "controls_position": "top",
+  "description": "",
+  "header_layout": "compact",
+  "node_previews": false,
+  "refresh_period": 0.0,
+  "tile_cards": true,
+  "tile_titles": false,
+  "viewers_can_inspect": false
+ },
+ "tile_layout": [
+  {
+   "index": 0,
+   "instance_id": "data",
+   "visible": false
+  },
+  {
+   "index": 1,
+   "instance_id": "by_category",
+   "visible": false
+  },
+  {
+   "index": 2,
+   "instance_id": "chart",
+   "visible": false
+  },
+  {
+   "index": 3,
+   "instance_id": "sales",
+   "visible": false
+  },
+  {
+   "index": 4,
+   "instance_id": "by_cat",
+   "visible": false
+  },
+  {
+   "index": 5,
+   "instance_id": "points",
+   "visible": false
+  }
+ ],
+ "title": "Untitled",
+ "turns": [
+  {
+   "actor": "user",
+   "at": "2026-11-21T16:28:34Z",
+   "id": "te8ddd796",
+   "summary": "Added data. Added by_category. Connected data to by_category. Added chart. Connected by_category to chart. Added sales. Connected data to sales. Added by_cat. And 4 more changes."
+  }
+ ],
+ "version": 4
+}
