@@ -768,6 +768,7 @@ async def test_sql_node_runs_the_query_off_the_event_loop(source, monkeypatch):
         return compile_sql_(*args, **kwargs)
 
     monkeypatch.setattr(flowdash_nodes, "compile_sql", recording)
+    monkeypatch.setattr(flowdash_nodes, "_in_served_session", lambda: True)
     node = SQLNode(source=source, sql=QUERY)
     assert node._object is None
     for _ in range(200):
@@ -785,6 +786,11 @@ async def test_sql_node_runs_the_query_off_the_event_loop(source, monkeypatch):
             break
     await asyncio.sleep(0.05)
     assert node._error is None and len(node._object.data) == 2
+
+
+async def test_sql_node_outside_a_served_session_resolves_at_once(source):
+    node = SQLNode(source=source, sql=QUERY)
+    assert node._object is not None and len(node._object.data) == 2
 
 
 def test_source_preview_without_stored_sizes_names_the_tables(source):

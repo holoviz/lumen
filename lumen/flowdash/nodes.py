@@ -606,6 +606,11 @@ def _blocks_event_loop() -> bool:
     return True
 
 
+def _in_served_session() -> bool:
+    doc = pn.state.curdoc
+    return doc is not None and getattr(doc, "session_context", None) is not None
+
+
 def _preview_pool() -> ThreadPoolExecutor:
     with _PREVIEW_LOCK:
         if not _PREVIEW_POOL:
@@ -937,12 +942,13 @@ class SQLNode(LumenNode):
     @param.depends("source", "sql", "table", "limit", watch=True, on_init=True)
     def _refresh(self, *events):
         self._run += 1
-        if self.source is None or not self.sql.strip() or not _blocks_event_loop() or self._primed():
+        # Headless sessions read a node's output right after changing it, so only a served one waits.
+        if self.source is None or not self.sql.strip() or not _in_served_session() or self._primed():
             super()._refresh()
             return
         # The previous error describes a query that is being replaced.
         self._error = None
-        run, doc = self._run, pn.state.curdoc if getattr(pn.state.curdoc, "session_context", None) else None
+        run, doc = self._run, pn.state.curdoc
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
