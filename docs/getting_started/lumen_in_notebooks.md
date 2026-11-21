@@ -343,11 +343,11 @@ Files, globs and URLs stay on disk and are queried in place, so `lumen.read({"sa
 |-----------|--------------|
 | JupyterLab, Notebook 7 | The interactive card: answer, chart and an expandable SQL section |
 | Google Colab | The interactive card. Panel warns that `jupyter_bokeh` is missing; the card still works without it. With panel-material-ui 0.16.7 or earlier the card stays light in Colab's dark theme |
-| VS Code | The interactive card once `jupyter_bokeh` is installed in the kernel's environment. Without it, Panel prints an install hint and you get the answer, the Vega-Lite chart and the SQL as plain outputs |
-| marimo | A static card with the answer, a PNG and the SQL. Pick the Vega-Lite output in the cell's output menu for the interactive chart |
+| VS Code | The interactive card once `jupyter_bokeh` is installed in the kernel's environment. Without it, the widget card below when `anywidget` is installed, or else the answer, the Vega-Lite chart and the SQL as plain outputs |
+| marimo | With `pip install anywidget`, a widget card: the answer, an interactive chart (Vega-Lite, or hvPlot as standalone Bokeh with its tools and tooltips), the SQL and the steps; a click on a Vega-Lite chart sets `answer.selection`. Without anywidget, a static card with a PNG |
 | Python REPL or script | Echoing `answer` shows its status and first line; `answer.value` and `answer.sql` hold the full text |
 
-The PNG and plain-output fallbacks cover Vega-Lite charts only. An hvPlot chart (gridded data, geometry) shows in the interactive card and nowhere else.
+The PNG and plain-output fallbacks cover Vega-Lite charts only; the widget card also draws hvPlot charts (gridded data, geometry). `answer.widget()` returns that card anywhere widgets render. Unlike the Panel card it has no ask box, chart editor or drawing tool.
 
 For VS Code, install the widget bridge into the same environment as the kernel:
 
