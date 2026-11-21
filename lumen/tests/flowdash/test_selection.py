@@ -107,6 +107,13 @@ def test_chart_cannot_read_the_filter_its_selection_drives(source):
         ops.connect("loop.selection", "loop_filter.selection")
 
 
+def test_chart_with_a_selection_output_is_shown_as_a_tile(source):
+    ops = brushed_dashboard(source)
+    hidden = {e["instance_id"] for e in ops.editor.layout if e.get("visible") is False}
+    assert ops._instance("chart") not in hidden
+    assert ops._instance("sales") in hidden
+
+
 def test_view_debounce_reaches_the_chart(source):
     ops = brushed_dashboard(source)
     pane = instance(ops, "chart")._object._panel

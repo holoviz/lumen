@@ -1099,7 +1099,7 @@ def responsive_spec(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 @register(
-    component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart",
+    component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart", tags=["view"],
     description=(
         "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
         "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
