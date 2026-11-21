@@ -32,7 +32,7 @@ turns:
         origin: taecfc1a3
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       paid_order_amount_by_region:
         component: Lumen/sql
         origin: tbb52bd53
@@ -97,7 +97,7 @@ turns:
         origin: taecfc1a3
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       paid_order_amount_by_region:
         component: Lumen/sql
         origin: tbb52bd53

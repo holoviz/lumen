@@ -32,7 +32,7 @@ turns:
         origin: t47a4d175
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       customer_with_most_paid_orders:
         component: Lumen/sql
         origin: te3c3a895

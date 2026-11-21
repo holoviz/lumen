@@ -39,13 +39,19 @@ A dashboard cannot open connections of its own. The app hands the editor the dat
 | Lumen Source (`Lumen/source`) | | `ref` | `source` |
 | Lumen Table (`Lumen/table`) | `source` | `table`, `limit` | `pipeline` |
 | Lumen Filter (`Lumen/filter`) | `pipeline`, `value`, `selection` | `field` | `filtered` |
-| Lumen SQL (`Lumen/sql`) | `source` | `sql`, `table`, `limit` | `pipeline`, `data` |
+| Lumen SQL (`Lumen/sql`) | `source` | `sql`, `table`, `limit` | `pipeline`, `data`, `result` |
 | Lumen Data (`Lumen/data`) | `pipeline` | | `data` |
 | Lumen Vega-Lite view (`Lumen/view`) | `pipeline` | `spec`, `debounce` | `selection` |
 
 Edges between Lumen nodes carry a Lumen pipeline rather than a table of rows, so the work happens in the source's engine. A table node fetches nothing by itself. A filter node fed by a widget, say a Select on `species`, adds `WHERE "species" = 'Adelie'` and the row limit to the query the source runs, rather than Lumen filtering all rows after fetching them. A filter's value can be a single value, a list (from a MultiChoice) or a `(start, end)` range; an empty value keeps every row.
 
 Rows are fetched where they are needed: by a **Lumen Data** node, which outputs a DataFrame for any FlowDash component that takes one, by a chart, or by a node's own preview when it is shown. Every query is capped at 100,000 rows; a table or SQL node's `limit` can lower that.
+
+### Querying an earlier result
+
+A SQL node's `result` output is its source plus one more table, named by the node's `table`, holding the node's result. Wire it to another SQL node's `source` and that query can read the result by name next to the source's own tables, `SELECT region, SUM(amount) FROM paid_orders GROUP BY region`, or a table node can show it. Editing the first query runs the second again.
+
+The result table is the first node's full query, not the rows its tile shows, so a follow-up counts every row even when the first node is capped. Lumen runs the follow-up as one statement on the original source, with each earlier query it reads written in as a CTE (`WITH paid_orders AS (...) SELECT ...`), so it works on every SQL source, not only DuckDB. Since SQL does not promise that a CTE keeps its `ORDER BY`, order the follow-up itself.
 
 ### Brushing a chart
 
