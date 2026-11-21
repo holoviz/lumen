@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
@@ -7,6 +10,21 @@ import panel as pn
 import yaml
 
 from .util import extract_refs, is_ref
+
+log = logging.getLogger(__name__)
+
+
+def _shared_source_hash(spec: dict[str, Any]) -> str:
+    """
+    Stable hash of a shared source definition, so two dashboards
+    declaring the same shared source can be compared by what they
+    declare rather than by the live values of the source built from
+    it (which __init__ may have processed, e.g. file paths turned
+    into read expressions). Routing keys ('name', 'shared') and the
+    separately loaded 'filters' are not part of the definition.
+    """
+    canonical = {k: v for k, v in spec.items() if k not in ('name', 'shared', 'filters')}
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True, default=str).encode('utf-8')).hexdigest()
 
 if TYPE_CHECKING:
     from bokeh.document import Document  # type: ignore
@@ -26,6 +44,11 @@ class _session_state:
     """
 
     global_sources: dict[str, Source] = {}
+
+    # Hash of the definition each shared source was built from, keyed by
+    # source name, so a second dashboard declaring the same shared source
+    # can be checked against the first instead of silently reusing it.
+    _global_source_hashes: dict[str, str] = {}
 
     global_filters: dict[str, dict[str, tuple[dict[str, Any], dict[str, Any]]]] = {}
 
@@ -258,25 +281,29 @@ class _session_state:
                 continue
             source_spec = dict(source_spec)
             filter_specs: dict[str, Any] = source_spec.pop('filters', {})
+            spec_hash = _shared_source_hash(source_spec)
             source = self.global_sources.get(name)
-            source_type = Source._get_type(source_spec['type'])
-            reinitialize = False
-            if source is not None:
-                # Check if old source is the same as the new source
-                params = {
-                    k: v for k, v in source.param.get_param_values()
-                    if k != 'name'
-                }
-                new_spec = dict(source_spec, **{
-                    k: v for k, v in source_type.param.get_param_values()
-                    if k != 'name'
-                })
-                reinitialize = params == new_spec
-            if self.loading_msg is not None:
-                self.loading_msg.object = f'Loading {name} source...'
-            if reinitialize or source is None:
+            recorded = self._global_source_hashes.get(name)
+            if source is not None and recorded is not None and spec_hash != recorded:
+                # A second dashboard declares the same shared source with a
+                # different definition: its data or tables would differ, so
+                # silently reusing the first dashboard's source would answer
+                # the second dashboard's questions with the wrong data.
+                # Keep the existing source and say so rather than failing
+                # the load or silently swapping the definition.
+                log.warning(
+                    f"Shared source '{name}' was already defined with a "
+                    "different definition; keeping the existing source and "
+                    "ignoring the new definition."
+                )
+            else:
+                # A new shared source, or the same definition again: build
+                # (or rebuild) it from the spec and record the definition.
                 source_spec['name'] = name
                 self.global_sources[name] = source = Source.from_spec(source_spec)
+                self._global_source_hashes[name] = spec_hash
+            if self.loading_msg is not None:
+                self.loading_msg.object = f'Loading {name} source...'
             if source.cache_dir and clear_cache:
                 source.clear_cache()
             if not filter_specs:
