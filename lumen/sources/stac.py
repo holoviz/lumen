@@ -51,6 +51,12 @@ except ImportError as e:
         "packages. Install them with: pip install 'lumen[stac]'"
     ) from e
 
+# Optional: reads collections of images (e.g. COGs), which xpystac cannot open
+try:
+    import odc.stac as odc_stac
+except ImportError:
+    odc_stac = None
+
 # Optional: only used to auto-sign Planetary Computer assets. Suppress its
 # import-time pydantic deprecation so it does not surface under -W error.
 try:
@@ -89,6 +95,15 @@ class STACSource(BaseSQLSource):
         {"data", "zarr", "references", "index"}
     )
 
+    bands = param.List(default=None, allow_None=True, item_type=str, doc="""
+        The bands (asset keys) to read from a collection of images, e.g.
+        ["red", "nir"]; None reads every band.""")
+
+    bbox = param.NumericTuple(default=None, allow_None=True, length=4, doc="""
+        The area (west, south, east, north) in longitude and latitude to read
+        a collection of images (e.g. COGs) for; such collections are read
+        through odc-stac, and only for an area.""")
+
     chunks = param.Parameter(default=None, doc="""
         Dask chunk specification forwarded to xr.open_dataset and the
         delegated XArraySQLSource. Defaults to None (no dask graph),
@@ -100,12 +115,20 @@ class STACSource(BaseSQLSource):
     collections = param.List(default=None, allow_None=True, doc="""
         Optional subset of collection IDs to expose. None exposes all.""")
 
+    datetime = param.String(default=None, allow_None=True, doc="""
+        The time range of images to read, as a STAC search datetime, e.g.
+        "2024-06-01/2024-06-30".""")
+
     default_limit = param.Integer(default=100_000, allow_None=True, doc="""
         Row cap injected as a SQLLimit transform on get() so a naive call
         against a TB-scale STAC collection does not materialize the whole
         xarray grid. Set to None to disable, or pass sql_transforms=[...]
         explicitly to override (the caller's transforms pass through
         unchanged).""")
+
+    max_items = param.Integer(default=50, bounds=(1, None), doc="""
+        The most scenes read from a collection of images for the bbox and
+        datetime.""")
 
     open_kwargs = param.Dict(default={}, doc="""
         Additional keyword arguments forwarded to xr.open_dataset().""")
@@ -114,6 +137,10 @@ class STACSource(BaseSQLSource):
         Optional callable that rewrites/signs asset URLs before reading
         (forwarded to xpystac as ``patch_url``). For Planetary Computer this
         defaults to planetary_computer.sign when that package is installed.""")
+
+    resolution = param.Number(default=None, allow_None=True, bounds=(0, None), inclusive_bounds=(False, True), doc="""
+        The pixel size in degrees for a collection of images; None gives
+        about 500 pixels across the bbox.""")
 
     sql_expr = param.String(default='SELECT * FROM {table}', doc="""
         The SQL expression template for table queries.""")
@@ -160,6 +187,9 @@ class STACSource(BaseSQLSource):
             # nothing here.
             for var_name in self._extract_columns(collection):
                 self._var_pre_index.setdefault(var_name, collection.id)
+            # A collection of images names its bands in item_assets
+            for band in collection.extra_fields.get("item_assets", {}):
+                self._var_pre_index.setdefault(band, collection.id)
         if self.collections:
             allowed = set(self.collections)
             ids = [cid for cid in ids if cid in allowed]
@@ -226,16 +256,7 @@ class STACSource(BaseSQLSource):
         item_has_xr_asset = any(self._is_xarray_asset(a) for a in first_item_assets)
         if first_item is not None and item_has_xr_asset:
             candidates.append(first_item)
-        if not candidates:
-            observed = sorted({
-                (a.media_type or "(unset)")
-                for a in (*collection.assets.values(), *first_item_assets)
-            })
-            raise ValueError(
-                f"STAC collection {collection.id!r} has no xarray-openable "
-                f"asset (saw media_types: {observed}); for COG or other image "
-                "collections use stackstac or odc-stac instead."
-            )
+        # None: a collection of images, read through odc-stac instead
         return candidates
 
     def _object_signer(self):
@@ -261,13 +282,37 @@ class STACSource(BaseSQLSource):
             obj, engine="stac", chunks=self.chunks, **kwargs
         )
 
+    def _load_images(self, collection_id: str) -> xr.Dataset:
+        """
+        A collection of images (e.g. COGs) as a dataset on a longitude and
+        latitude grid over the bbox, its scenes for one day merged.
+        """
+        if self.bbox is None:
+            raise ValueError(
+                f"STAC collection {collection_id!r} holds images (e.g. COGs), which are read for an area: "
+                "give STACSource bbox=(west, south, east, north), and datetime= for a time range."
+            )
+        if odc_stac is None:
+            raise ImportError("Reading a collection of images needs odc-stac: pip install 'lumen[stac]'")
+        items = self._client.search(
+            collections=[collection_id], bbox=self.bbox, datetime=self.datetime, max_items=self.max_items,
+        ).item_collection()
+        if not len(items):
+            raise ValueError(f"STAC collection {collection_id!r} has no items in bbox={self.bbox} and datetime={self.datetime!r}.")
+        west, _, east, _ = self.bbox
+        return odc_stac.load(
+            items, bands=self.bands, bbox=self.bbox, crs="EPSG:4326",
+            resolution=self.resolution or (east - west) / 500, chunks={}, groupby="solar_day",
+            patch_url=self.patch_url or self._object_signer(),
+        )
+
     def _resolve(self, collection_id: str) -> XArraySQLSource:
         if collection_id in self._delegates:
             return self._delegates[collection_id]
         collection = self._get_collection(collection_id)
         candidates = self._openable_candidates(collection)
         signer = self._object_signer()
-        dataset, last_error = None, None
+        dataset, last_error = (self._load_images(collection_id), None) if not candidates else (None, None)
         for obj in candidates:
             try:
                 signed = signer(obj) if signer is not None else obj

@@ -88,7 +88,7 @@ def _fake_asset(href, media_type=None, roles=None):
 
 
 def _fake_collection(cid, assets=None, title=None, description=None,
-                     cube_variables=None):
+                     cube_variables=None, item_assets=None):
     extent = SimpleNamespace(
         spatial=SimpleNamespace(bboxes=[[-180, -90, 180, 90]]),
         temporal=SimpleNamespace(intervals=[["2020-01-01T00:00:00Z", None]]),
@@ -103,6 +103,7 @@ def _fake_collection(cid, assets=None, title=None, description=None,
         assets=assets or {},
         stac_extensions=[],
         cube_variables=cube_variables,
+        extra_fields={"item_assets": dict.fromkeys(item_assets or [], {})},
     )
 
 
@@ -483,7 +484,7 @@ class TestAssetSelection:
         ],
         ids=["no-items", "cog-only-item"],
     )
-    def test_raises_when_no_xarray_openable(self, mock_stac_client, cid, item_assets):
+    def test_an_image_collection_has_no_xarray_candidates(self, mock_stac_client, cid, item_assets):
         source = STACSource(url="https://example.com/stac")
         collection = _fake_collection(cid)
         if item_assets is None:
@@ -494,8 +495,57 @@ class TestAssetSelection:
             source._client, "search",
             return_value=SimpleNamespace(items=lambda: items_iter),
         ):
-            with pytest.raises(ValueError, match="no xarray-openable asset"):
-                source._openable_candidates(collection)
+            # None, so it is read through odc-stac instead
+            assert source._openable_candidates(collection) == []
+
+
+def _images(collection_id="sentinel-2-l2a", items=2):
+    """A STACSource over a catalog whose one collection holds only COGs."""
+    cog = _fake_asset("https://host/scene.tif", media_type="image/tiff; application=geotiff; profile=cloud-optimized", roles=["data"])
+    collection = _fake_collection(collection_id, item_assets=["red"])
+    found = [SimpleNamespace(id=f"scene-{i}", assets={"red": cog}) for i in range(items)]
+    client = SimpleNamespace(
+        get_collections=lambda: [collection],
+        get_collection=lambda cid: collection,
+        search=lambda **kwargs: SimpleNamespace(items=lambda: iter(found), item_collection=lambda: found),
+    )
+    return client, found
+
+
+def _image_grid():
+    times = pd.date_range("2024-06-01", periods=2, freq="5D")
+    lats, lons = np.linspace(37.75, 37.80, 3), np.linspace(-122.30, -122.25, 4)
+    red = np.arange(2 * 3 * 4, dtype="uint16").reshape(2, 3, 4)
+    return xr.Dataset({"red": (["time", "latitude", "longitude"], red)}, coords={"time": times, "latitude": lats, "longitude": lons, "spatial_ref": 4326})
+
+
+class TestImageCollections:
+    def test_an_image_collection_reads_through_odc_stac_for_the_bbox(self):
+        client, found = _images()
+        bbox = (-122.30, 37.75, -122.25, 37.80)
+        with patch("pystac_client.Client.open", return_value=client), \
+             patch.object(stac_mod.odc_stac, "load", return_value=_image_grid()) as load:
+            source = STACSource(url="https://example.com/stac", bbox=bbox, datetime="2024-06", bands=["red"])
+            means = source.execute("SELECT time, AVG(red) AS red FROM red GROUP BY time ORDER BY time")
+        assert means.red.tolist() == [5.5, 17.5]
+        (items,), kwargs = load.call_args
+        assert items == found and kwargs["bbox"] == bbox and kwargs["bands"] == ["red"]
+        # On longitude and latitude, about 500 pixels across the bbox
+        assert kwargs["crs"] == "EPSG:4326" and kwargs["resolution"] == pytest.approx(0.05 / 500)
+
+    def test_an_image_collection_needs_a_bbox(self):
+        client, _ = _images()
+        with patch("pystac_client.Client.open", return_value=client):
+            source = STACSource(url="https://example.com/stac")
+            with pytest.raises(ValueError, match=r"holds images .* give STACSource bbox="):
+                source.get("sentinel-2-l2a")
+
+    def test_an_image_collection_without_items_in_the_bbox_says_so(self):
+        client, _ = _images(items=0)
+        with patch("pystac_client.Client.open", return_value=client):
+            source = STACSource(url="https://example.com/stac", bbox=(0, 0, 1, 1), datetime="1990")
+            with pytest.raises(ValueError, match="has no items in bbox"):
+                source.get("sentinel-2-l2a")
 
 
 # ---- Lifecycle ----
