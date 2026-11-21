@@ -364,8 +364,10 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     check_query(sql, source)
     root, statement = expand(sql, source)
     frame = execute(root, result_sql(root, statement, limit), timeout)
-    # The result table joins the source's own tables, so it must not shadow one the query reads.
-    while table in source.get_tables():
+    # The result table joins the source's own tables, so it must not shadow one the query reads,
+    # in any case, since engines and the CTEs inlined for it match names regardless of case.
+    taken = {name.lower() for name in source.get_tables()}
+    while table.lower() in taken:
         table = f"{table}_result"
     kwargs = {"materialize": False} if isinstance(root, DuckDBSource) else {}
     # The capped statement, so a filter downstream sees the rows the node outputs and no more.
@@ -1331,6 +1333,9 @@ class LumenNode(Viewer):
         refresh runs each query once.
         """
         source = self._read_source()
+        # A SQL node's result changes when that node runs again, which runs this node then.
+        if is_derived(source):
+            return
         if isinstance(source, Source):
             source.clear_cache()
         if isinstance(source, BaseSQLSource):
@@ -1654,11 +1659,6 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return (id(root), result_sql(root, statement, limit)) in _RESULTS
         except Exception:
             return True
-
-    def _on_dashboard_refresh(self):
-        # A result source changes when its node runs again, which runs this node then.
-        if not is_derived(self.source):
-            super()._on_dashboard_refresh()
 
     def _resolve(self) -> Pipeline | None:
         if self.source is None or not self.sql.strip():
