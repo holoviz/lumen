@@ -1,4 +1,4 @@
-import datetime  # noqa: ICN001
+import datetime
 import inspect
 
 from abc import abstractmethod

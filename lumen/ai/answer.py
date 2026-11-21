@@ -67,7 +67,9 @@ from ..util import (
 from ..views import VegaLiteView, View, hvPlotView
 from ..views.base import GRIDDED_KINDS, hvPlotBaseView, hvPlotUIView
 from .actor import step_title_callback
-from .agents import Agent, ChatAgent, SQLAgent, VegaLiteAgent
+from .agents import (
+    Agent, ChatAgent, SQLAgent, VegaLiteAgent,
+)
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
