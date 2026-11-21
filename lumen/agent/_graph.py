@@ -9,6 +9,8 @@ from panel_flowdash.agent import (
     DashboardOps, OperationError, OutputUnavailable,
 )
 
+from ..flowdash import COMPONENTS, LumenViewNode
+
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
     """Names of the nodes in the order they were placed, optionally of one component."""
@@ -48,3 +50,9 @@ PIPELINE_PORTS = {"Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/
 def pipeline_port(ops: DashboardOps, name: str) -> str | None:
     """The port of node ``name`` that outputs a Lumen pipeline, if it has one."""
     return PIPELINE_PORTS.get(component_of(ops, name))
+
+
+def view_class(component: str) -> type | None:
+    """The ``LumenViewNode`` class registered as ``component``, or None for any other component."""
+    cls = COMPONENTS.get(component)
+    return cls if isinstance(cls, type) and issubclass(cls, LumenViewNode) else None
