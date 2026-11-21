@@ -341,12 +341,16 @@ class OpenAIFunctionModel(FunctionModel):
 def test_openai_models_keep_openai_settings_and_others_get_neutral_ones():
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     openai = OpenAIProvider(api_key="x")
     assert model_settings_for(OpenAIResponsesModel("gpt-6-luna", provider=openai)) == MODEL_SETTINGS
     assert model_settings_for(OpenAIChatModel("gpt-6-luna", provider=openai)) == MODEL_SETTINGS
+    azure = OpenAIChatModel("gpt-6-luna", provider=AzureProvider(
+        azure_endpoint="https://x.openai.azure.com", api_version="2024-12-01-preview", api_key="x"))
+    assert azure.system == "azure" and model_settings_for(azure) == MODEL_SETTINGS
     haiku = OpenRouterModel("anthropic/claude-haiku-5.5", provider=OpenRouterProvider(api_key="x"))
     assert model_settings_for(haiku) == OTHER_MODEL_SETTINGS == {"thinking": False, "max_tokens": 1000, "cache": True}
 

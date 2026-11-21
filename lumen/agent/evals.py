@@ -30,7 +30,7 @@ from ..flowdash import SQL_ID, VIEW_ID
 from ..sources.duckdb import DuckDBSource
 from ..util import as_pandas
 from . import _graph
-from .assistant import MODEL_SETTINGS, OTHER_MODEL_SETTINGS
+from .assistant import MODEL_SETTINGS, OTHER_MODEL_SETTINGS, model_settings_for
 from .headless import AgentSession, TurnResult
 
 # Name of the SQL node a case's pre-seeded query is placed as.
@@ -231,8 +231,9 @@ class FlowDashSubject:
 
     Pass ``model``, e.g. a ``FunctionModel``, or ``cassette``, the path of a
     recorded model trace, to run offline. ``model_settings`` replaces the
-    agent's default model settings, ``model_settings_for`` each model. ``traces`` is a directory each case's
-    model trace is written to, by default ``$LUMEN_AGENT_TRACES`` if set, so
+    agent's default model settings, ``model_settings_for`` each model;
+    ``settings`` records the ones the model ``build_model`` gave gets.
+    ``traces`` is a directory each case's model trace is written to, by default ``$LUMEN_AGENT_TRACES`` if set, so
     the CLI and its BIRD workers can record them too. The suite instructions
     given to ``build_model`` are appended to the agent's. ``fingerprint`` is
     the stamp of runs without them, since it may not depend on
@@ -250,6 +251,7 @@ class FlowDashSubject:
         traces = traces if traces is not None else os.environ.get(TRACES_ENV)
         self.traces = Path(traces) if traces else None
         self.instructions = ""
+        self._built = None
 
     def partial_usage(self) -> Usage | None:
         """The usage of the case running now, or of the one that just ended, e.g. by a timeout or an error."""
@@ -261,9 +263,11 @@ class FlowDashSubject:
     @property
     def settings(self) -> dict[str, Any]:
         """The model settings of every request, recorded with the run settings."""
-        if self.model_settings is None:
-            return {"model_settings": {"openai": MODEL_SETTINGS, "other": OTHER_MODEL_SETTINGS}}
-        return {"model_settings": self.model_settings}
+        if self.model_settings is not None:
+            return {"model_settings": self.model_settings}
+        if self._built is not None:
+            return {"model_settings": model_settings_for(self._built)}
+        return {"model_settings": {"openai_azure": MODEL_SETTINGS, "other": OTHER_MODEL_SETTINGS}}
 
     @property
     def requires_api_key(self) -> bool:
@@ -273,12 +277,14 @@ class FlowDashSubject:
                     api: str | None = None, instructions: str = "") -> Any:
         self.instructions = instructions
         if self.model is not None:
-            return self.model
-        if self.cassette is not None:
+            self._built = self.model
+        elif self.cassette is not None:
             from panel_agents.adapters.cassette import Cassette
 
-            return Cassette.from_trace(self.cassette)
-        return build_model(model, provider=provider, api_key=api_key, api=api)
+            self._built = Cassette.from_trace(self.cassette)
+        else:
+            self._built = build_model(model, provider=provider, api_key=api_key, api=api)
+        return self._built
 
     def fingerprint(self) -> str | None:
         return agent_fingerprint()
