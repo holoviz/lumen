@@ -261,3 +261,7 @@ lumen-ai serve --help
 ```
 
 Shows all available flags including Panel server options.
+
+## FlowDash app
+
+`lumen serve data.csv --flowdash` serves the data in an experimental FlowDash app built from Lumen's nodes instead of the Lumen AI explorer. See [FlowDash app](flowdash.md).
