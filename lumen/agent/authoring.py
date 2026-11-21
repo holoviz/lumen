@@ -1,4 +1,4 @@
-"""Tools that validate a query, chart or table before placing it on the dashboard as a node."""
+"""Tools that validate a query, chart, table or map before placing it on the dashboard as a node."""
 from __future__ import annotations
 
 import dataclasses
@@ -15,9 +15,13 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID, check_query,
-    effective_limit, host_metrics, pipeline_columns, primed_result, result_sql,
+    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_VIEW_ID,
+    VIEW_ID, check_query, effective_limit, fetch, host_metrics,
+    pipeline_columns, primed_result, result_sql, row_ceiling,
     selection_warnings,
+)
+from ..flowdash.deckgl import (
+    fit_view_state, layer_type, map_summary, position_columns,
 )
 from ..flowdash.metrics import MetricError, prepare
 from ..flowdash.nodes import metric_query
@@ -215,6 +219,43 @@ def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     return f"Placed table {name!r} of {data!r} ({options})."
 
 
+def add_map(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
+    """Place a deck.gl map of a SQL, table or filter node's rows with longitude and latitude columns.
+
+    Args:
+        data: SQL, table or filter node to map.
+        name: Descriptive snake_case node name.
+        spec: deck.gl JSON spec without data: each layer draws the node's rows, has an
+            "@@type" and reads columns in "@@=" expressions with arithmetic, comparisons
+            and ?: only, no function calls, URLs or "@@function". Pick ScatterplotLayer
+            for points (sized or coloured by a value), HexagonLayer or GridLayer to bin
+            many points ("extruded": true for 3D), ColumnLayer for 3D bars at points,
+            HeatmapLayer for density, ArcLayer for origin-destination pairs. Leave out
+            mapStyle, initialViewState and colours to follow the page's theme, fit the
+            rows and take the dashboard's colours. A fixed colour is an RGBA list. E.g.
+            {"layers": [{"@@type": "ScatterplotLayer", "getPosition": "@@=[lon, lat]",
+            "getRadius": "@@=capacity * 1000", "radiusMinPixels": 2, "pickable": true}],
+            "tooltip": {"text": "{name}: {capacity}"}} or {"layers": [{"@@type":
+            "HexagonLayer", "getPosition": "@@=[lon, lat]", "radius": 20000,
+            "extruded": true, "elevationScale": 50, "pickable": true}]}.
+    """
+    spec = place_view(ctx, DECKGL_ID, data, name, {"spec": spec})["spec"]
+    ops = ctx.deps.ops
+    try:
+        rows = fetch(_graph.output(ops, data, _graph.pipeline_port(ops, data)), row_ceiling(ops.editor))
+    except Exception:
+        rows = None
+    placed = f"Placed map {name!r} of {data!r}: {map_summary(spec, rows)}."
+    if "initialViewState" in spec or rows is None:
+        return placed
+    if (view := fit_view_state(spec, rows)) is not None:
+        return f"{placed} Fitted to the rows at longitude {view['longitude']}, latitude {view['latitude']}, zoom {view['zoom']}."
+    if len(rows) and (lon_lat := position_columns(spec)) is not None:
+        return (f"{placed}\nNote: no row has a longitude in -180..180 and a latitude in -90..90 "
+                f"in [{', '.join(lon_lat)}], so the map shows the whole world; getPosition takes [longitude, latitude].")
+    return placed
+
+
 def _upstream_port(ops, data: str) -> str:
     if data not in _graph.nodes(ops):
         raise ModelRetry(f"No node {data!r}.")
@@ -288,8 +329,8 @@ def add_text(
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_metric, add_chart, add_table and add_text."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_text], max_retries=3)
+    """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map and add_text."""
+    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
 
 
 class CheckedConfig(AbstractCapability[FlowDashDeps]):

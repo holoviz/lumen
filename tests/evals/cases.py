@@ -54,6 +54,12 @@ def source(inputs: Inputs) -> DuckDBSource:
             "('Roscoe', 'TX', 2010, 2000), ('Horse Hollow', 'TX', 2010, 2500), ('Story', 'IA', 2015, 1000), "
             "('Fowler Ridge', 'IN', 2009, 1650)) AS t(p_name, t_state, p_year, t_cap)"
         )}
+    elif fixture == "turbines":
+        tables = {"turbines": (
+            "SELECT * FROM (VALUES ('Story County', 'IA', -93.5, 42.0, 1500), ('Roscoe', 'TX', -100.5, 32.4, 2300), "
+            "('Alta', 'CA', -118.3, 35.0, 3000), ('Fowler Ridge', 'IN', -87.3, 40.6, 1650), "
+            "('Shepherds Flat', 'OR', -120.0, 45.6, 2500)) AS t(p_name, t_state, xlong, ylat, t_cap)"
+        )}
     elif fixture == "documents":
         tables = {"document_index": "SELECT 1 AS indexed"}
     else:
