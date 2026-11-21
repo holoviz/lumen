@@ -9,7 +9,8 @@ from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..ai.agents.sql import (
-    PROMPT_OTHER_TABLES, execute_distinct_values, execute_exploration_sql,
+    PROMPT_OTHER_TABLES, SCHEMA_MAX_TOKENS, execute_distinct_values,
+    execute_exploration_sql,
 )
 from ..ai.data_quality import lint_data
 from ..ai.schemas import Metaset, get_metaset
@@ -25,16 +26,11 @@ from . import _graph
 STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
 SCHEMA_TABLES_SHOWN = 25
-
-DIALECT_NOTES = {
-    "duckdb": """\
-DuckDB notes:
-- Quote column names with double quotes and strings with single quotes.
-- Range predicates: "date" >= '2023-06-01' AND "date" < '2023-09-01'.
-- Window filtering: QUALIFY ROW_NUMBER() OVER (...) <= 5.
-- Use TRY_CAST for conversions that may fail.""",
-    "snowflake": "Snowflake notes:\n- No quotes around database, schema or table names.",
-}
+# Placed nodes list_tables shows, and the characters of SQL it shows of each.
+NODES_SHOWN = 12
+# A node from a shared dashboard may hold any amount of SQL.
+NODE_SQL_CHARS = 300
+NODE_COLUMNS = 12
 
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
 
@@ -73,52 +69,87 @@ def _sources(source: BaseSQLSource) -> dict[tuple[str, str], BaseSQLSource]:
     return {(source.name, table): source for table in source.get_tables()}
 
 
+def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
+    component = _graph.component_of(ops, name)
+    config = _graph.config_of(ops, name)
+    if component == SQL_ID:
+        try:
+            frame = _graph.output(ops, name, "data")
+            names = [str(c) for c in frame.columns] if frame is not None else []
+            if sql_chars is not None and len(names) > NODE_COLUMNS:
+                names = [*names[:NODE_COLUMNS], f"and {len(names) - NODE_COLUMNS} more"]
+            columns = f"columns: {', '.join(names)}" if frame is not None else "no result"
+        except OperationError as exc:
+            columns = str(exc)
+        sql = " ".join(str(config.get("sql", "")).split())
+        if sql_chars is not None and len(sql) > sql_chars:
+            sql = f"{sql[:sql_chars]} [... {len(sql) - sql_chars} more characters]"
+        return f"- {name} (SQL; {columns}): {sql}"
+    if component == VIEW_ID:
+        spec = config.get("spec")
+        spec = spec if isinstance(spec, dict) else {}
+        mark = spec.get("mark")
+        mark = mark.get("type") if isinstance(mark, dict) else mark
+        fields = ", ".join(
+            f"{channel}={definition['field']}" for channel, definition in (spec.get("encoding") or {}).items()
+            if isinstance(definition, dict) and "field" in definition
+        )
+        return f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})"
+    return None
+
+
 def placed_nodes(ops) -> str | None:
-    """The SQL and chart nodes on the dashboard, with the columns of each SQL node's result."""
-    lines = []
-    for name in _graph.nodes(ops):
-        component = _graph.component_of(ops, name)
-        if component == SQL_ID:
-            try:
-                frame = _graph.output(ops, name, "data")
-                columns = f"columns: {', '.join(map(str, frame.columns))}" if frame is not None else "no result"
-            except OperationError as exc:
-                columns = str(exc)
-            lines.append(f"- {name} (SQL; {columns})")
-        elif component == VIEW_ID:
-            lines.append(f"- {name} (chart)")
+    """
+    The SQL and chart nodes on the dashboard, most recently placed first:
+    each SQL node's query on one line, cut after ``NODE_SQL_CHARS``
+    characters, and its result's columns, and each chart's mark, data node
+    and encoded fields, so the agent can change a node it did not place
+    itself. At most ``NODES_SHOWN`` are listed, followed by how many more
+    there are.
+    """
+    limit = NODES_SHOWN
+    names = [n for n in reversed(_graph.nodes(ops)) if _graph.component_of(ops, n) in (SQL_ID, VIEW_ID)]
+    lines = [_node_line(ops, name, NODE_SQL_CHARS) for name in names[:limit]]
+    if len(names) > limit:
+        lines.append(f"- and {len(names) - limit} more; list_tables(node=...) shows one in full.")
     return "\n".join(lines) or None
 
 
-async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None) -> str:
-    """List the tables of a source node with their columns, the source's SQL dialect and the SQL nodes already placed.
+async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, node: str | None = None) -> str:
+    """List a source node's tables with column types and stats, its SQL dialect and the nodes already placed.
 
     Args:
-        source: The name of a source node; may be left out when there is only one.
+        source: Source node; defaults to the only one.
+        node: Only show this placed node, with its full SQL.
     """
+    if node is not None:
+        if node not in _graph.nodes(ctx.deps.ops):
+            raise ModelRetry(f"No node {node!r} on the dashboard.")
+        return _node_line(ctx.deps.ops, node, None) or f"{node!r} is not a SQL or chart node."
     name, src = resolve_source(ctx.deps, source)
     tables = src.get_tables()
     meta = await metaset(src)
     others = ", ".join(n for n in _graph.nodes(ctx.deps.ops, SOURCE_ID) if n != name)
-    text = f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
-    text += f"; other source nodes: {others}):\n" if others else "):\n"
-    text += meta.table_context(n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False)
-    if src.dialect in DIALECT_NOTES:
-        text += "\n\n" + DIALECT_NOTES[src.dialect]
+    text = ""
     if placed := placed_nodes(ctx.deps.ops):
-        text += "\n\nNodes on the dashboard:\n" + placed
+        text += "Nodes on the dashboard, most recent first:\n" + placed + "\n\n"
+    text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
+    text += f"; other source nodes: {others}):\n" if others else "):\n"
+    text += meta.compact_context(
+        n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False, max_tokens=SCHEMA_MAX_TOKENS,
+    )
     return text
 
 
 async def describe_table(
     ctx: RunContext[FlowDashDeps], table: str, source: str | None = None, columns: list[str] | None = None
 ) -> str:
-    """Describe the columns of a table: SQL type, keys, value ranges or most common values, and null share.
+    """Describe a table's columns: type, keys, ranges or common values, null share.
 
     Args:
-        table: The table name, as list_tables gives it.
-        source: The name of a source node; may be left out when there is only one.
-        columns: Only describe these columns.
+        table: Table name.
+        source: Source node; defaults to the only one.
+        columns: Only these columns.
     """
     _, src = resolve_source(ctx.deps, source)
     meta = await metaset(src)
@@ -133,13 +164,13 @@ async def describe_table(
 async def distinct_values(
     ctx: RunContext[FlowDashDeps], table: str, column: str, like: str | None = None, source: str | None = None
 ) -> str:
-    """List the most frequent stored values of a column with their row counts, to filter on the exact spelling.
+    """List a column's most frequent stored values with row counts.
 
     Args:
-        table: The table name.
-        column: The column name.
-        like: Only list values containing this text, ignoring case.
-        source: The name of a source node; may be left out when there is only one.
+        table: Table name.
+        column: Column name.
+        like: Only values containing this text, ignoring case.
+        source: Source node; defaults to the only one.
     """
     _, src = resolve_source(ctx.deps, source)
     return await execute_distinct_values(
@@ -148,13 +179,11 @@ async def distinct_values(
 
 
 async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = None) -> str:
-    """Run a read-only query to inspect the data and return its row count, column types and first rows.
-
-    The result is not placed on the dashboard; use add_sql for results the user should see.
+    """Run a read-only query for your own checks; returns row count, column types and first rows.
 
     Args:
         sql: One SELECT or WITH query.
-        source: The name of a source node; may be left out when there is only one.
+        source: Source node; defaults to the only one.
     """
     _, src = resolve_source(ctx.deps, source)
     try:
@@ -184,8 +213,11 @@ def check_data(ctx: RunContext[FlowDashDeps], node: str) -> str:
     return lint(frame)
 
 
-def data_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The data tools: list_tables, describe_table, distinct_values, run_sql and check_data."""
+def data_toolset(check: bool = False) -> FunctionToolset[FlowDashDeps]:
+    """
+    The data tools: list_tables, describe_table, distinct_values and run_sql,
+    and with ``check`` check_data, whose findings add_sql already reports.
+    """
     return FunctionToolset[FlowDashDeps](
-        [list_tables, describe_table, distinct_values, run_sql, check_data], max_retries=2,
+        [list_tables, describe_table, distinct_values, run_sql, *([check_data] if check else [])], max_retries=2,
     )

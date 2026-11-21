@@ -26,3 +26,16 @@ def test_lumen_does_not_import_flowdash_or_agent():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "[]"
+
+
+@pytest.mark.parametrize("version, refused", [
+    ("0.1.0b2", True), ("0.1.0b2.dev4+g1234abc", True), ("0.1.0b3", False), ("0.1.1.dev2+gabc", False), ("0.0.0+unknown", False),
+])
+def test_agent_checks_the_panel_agents_version(version, refused):
+    pytest.importorskip("panel_agents")
+    pytest.importorskip("panel_flowdash")
+    code = f"import panel_agents; panel_agents.__version__ = {version!r}; import lumen.agent"
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert (result.returncode != 0) is refused
+    if refused:
+        assert f"needs panel-agents >= 0.1.0b3, found {version}" in result.stderr

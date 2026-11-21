@@ -1,12 +1,16 @@
 """Tools that validate a query or chart before placing it on the dashboard as a node."""
 from __future__ import annotations
 
+import dataclasses
+
 from typing import Any
 
 import sqlglot
 
 from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ToolReturn
 
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
@@ -41,23 +45,15 @@ def _marks(spec: dict[str, Any]) -> list[str]:
     return marks
 
 
-async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
-    """Place a SQL node that runs a read-only query on a source node, and return a preview of its result.
-
-    The query is executed first; if it fails, the engine's error comes back for you to fix the
-    query and call again. Use it for every result the user should see.
-
-    Args:
-        source: The name of the source node to query.
-        name: A short descriptive snake_case name for the new node, e.g. "paid_total_by_region".
-        sql: One SELECT or WITH query over the source's tables.
+async def _test_run(src, sql: str, limit: int) -> tuple[str, str, Any]:
     """
-    ops = ctx.deps.ops
-    source_node, src = resolve_source(ctx.deps, source)
+    Clean, check and run ``sql`` as a SQL node with ``limit`` rows would,
+    returning the cleaned query, the statement run and its result; any
+    problem is raised as ``ModelRetry`` with the engine's error.
+    """
     try:
-        sql = clean_sql(sql.strip(), src.dialect, prettify=True)
+        sql = clean_sql(str(sql).strip(), src.dialect, prettify=True)
         check_query(sql, src)
-        limit = row_ceiling(ops.editor)
         statement = result_sql(src, sql, limit)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
         raise ModelRetry(format_error(exc)) from exc
@@ -65,6 +61,21 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
         frame = await src.execute_with_timeout(statement, QUERY_TIMEOUT)
     except Exception as exc:
         raise ModelRetry(format_error(exc)) from exc
+    return sql, statement, frame
+
+
+async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
+    """Place a SQL node with a read-only query and return a preview of its result; errors come back to fix.
+
+    Args:
+        source: Source node.
+        name: Descriptive snake_case node name.
+        sql: One SELECT or WITH query.
+    """
+    ops = ctx.deps.ops
+    source_node, src = resolve_source(ctx.deps, source)
+    limit = row_ceiling(ops.editor)
+    sql, statement, frame = await _test_run(src, sql, limit)
     with primed_result(src, statement, frame):
         _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{source_node}.source", f"{name}.source")
     try:
@@ -80,9 +91,9 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     """Place a Vega-Lite chart of a SQL node's result.
 
     Args:
-        data: The name of the SQL node whose result the chart shows.
-        name: A short descriptive snake_case name for the chart node, e.g. "revenue_by_region_chart".
-        spec: A Vega-Lite spec without `data` or URLs; its encodings use the SQL node's column names.
+        data: SQL node to chart.
+        name: Descriptive snake_case node name.
+        spec: Vega-Lite spec using the node's columns, without data or URLs.
     """
     ops = ctx.deps.ops
     try:
@@ -102,3 +113,52 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
     """The authoring tools: add_sql and add_chart."""
     return FunctionToolset[FlowDashDeps]([add_sql, add_chart], max_retries=3)
+
+
+class CheckedConfig(AbstractCapability[FlowDashDeps]):
+    """
+    Checks what ``set_config`` gives a Lumen SQL or chart node as add_sql and
+    add_chart check it, before the node changes: SQL is cleaned, checked and
+    run, and a chart spec is checked against its data's columns. A problem
+    comes back for the model to fix, and a changed query reports its result.
+    """
+
+    async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
+        config = args.get("config") if tool_def.name == "set_config" else None
+        if not isinstance(config, dict):
+            return await handler(args)
+        ops, name = ctx.deps.ops, args.get("name")
+        component = next((node["component"] for node in ops.nodes() if node["name"] == name), None)
+        if component == VIEW_ID and "spec" in config:
+            data = _graph.upstream(ops, name)
+            try:
+                pipeline = _graph.output(ops, data, "pipeline") if data else None
+            except OperationError:
+                pipeline = None
+            if isinstance(pipeline, Pipeline):
+                try:
+                    config = {**config, "spec": check_chart(config["spec"], [str(c) for c in pipeline.data.columns])}
+                except ValueError as exc:
+                    raise ModelRetry(str(exc)) from exc
+            return await handler({**args, "config": config})
+        if component != SQL_ID or "sql" not in config or (upstream := _graph.upstream(ops, name)) is None:
+            return await handler(args)
+        _, src = resolve_source(ctx.deps, upstream)
+        before = _graph.config_of(ops, name)
+        ceiling = row_ceiling(ops.editor)
+        rows = config.get("limit", before.get("limit"))
+        limit = min(int(rows), ceiling) if isinstance(rows, int) else ceiling
+        sql, statement, frame = await _test_run(src, config["sql"], limit)
+        config = {**config, "sql": sql}
+        with primed_result(src, statement, frame):
+            result = await handler({**args, "config": config})
+        try:
+            frame = _graph.output(ops, name, "data")
+        except OperationError as exc:
+            ops.set_config(name, {key: before[key] for key in config if key in before})
+            raise ModelRetry(str(exc)) from exc
+        capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
+        preview = f"\n\nResult{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+        if isinstance(result, ToolReturn) and isinstance(result.return_value, str):
+            return dataclasses.replace(result, return_value=result.return_value + preview)
+        return result

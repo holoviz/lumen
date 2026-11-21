@@ -273,7 +273,11 @@ class Subject(Protocol):
     ``build_model`` or ``run`` having been called.
 
     Subjects may also set ``requires_api_key = False`` (default True) when
-    they run offline, e.g. on a pydantic-ai ``FunctionModel`` or a cassette.
+    they run offline, e.g. on a pydantic-ai ``FunctionModel`` or a cassette,
+    and ``settings``, a JSON-serializable dict of options that change how the
+    subject behaves (e.g. model settings), which is recorded with the run
+    settings and is part of the case fingerprint, and ``partial_usage()``,
+    the ``Usage`` of the case run so far, recorded when it times out or raises.
     """
 
     name: str
@@ -679,16 +683,19 @@ class CheckResult(Evaluator[Inputs, Output, Expected]):
 
 
 def run_settings(settings: dict[str, Any] | None = None, subject: str | None = None,
-                 scoring: Scoring | None = None) -> dict[str, Any]:
+                 scoring: Scoring | None = None, subject_settings: dict[str, Any] | None = None) -> dict[str, Any]:
     """
-    Add the subject and scoring mode to the run settings when they differ from
-    the defaults, so default runs keep their earlier fingerprints.
+    Add the subject, scoring mode and the subject's own ``settings`` to the
+    run settings when they differ from the defaults, so default runs keep
+    their earlier fingerprints.
     """
     settings = dict(settings or {})
     if subject and subject != DEFAULT_SUBJECT:
         settings["subject"] = subject
     if scoring and scoring != DEFAULT_SCORING:
         settings["scoring"] = scoring
+    if subject_settings:
+        settings["subject_settings"] = subject_settings
     return settings
 
 
@@ -708,6 +715,12 @@ def case_fingerprint(cases: list[Case], fixtures: dict[str, Any] | None = None,
         payload["subject"] = subject_fingerprint
     payload = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _partial_usage(subject: Any) -> Usage | None:
+    """What a subject's run used before it timed out or raised, if the subject reports it."""
+    partial = getattr(subject, "partial_usage", None)
+    return partial() if callable(partial) else None
 
 
 def model_metadata(model: Any) -> dict[str, Any]:
@@ -767,7 +780,7 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
     elif ui_params or agent_params:
         raise ValueError("ui_params and agent_params apply to the default subject only")
     scoring = effective_scoring(subject, scoring)
-    settings = run_settings(settings, subject.name, scoring)
+    settings = run_settings(settings, subject.name, scoring, getattr(subject, "settings", None))
     if instructions is None:
         instructions = getattr(llm, "suite_instructions", "")
     subject_fingerprint = subject.fingerprint()
@@ -780,10 +793,12 @@ async def evaluate(llm: Any, dataset: Dataset, source_factory: Any, output: Path
                 timeout=prompt_timeout * max(1, len(inputs.prompts)),
             )
         except TimeoutError:
-            return Output([Turn(prompt, "timeout", None, [], [], None, None, None, None, [])])
+            usage = _partial_usage(subject)
+            return Output([Turn(prompt, "timeout", None, [], [], None, None, None, None, [], usage=usage)], usage)
         except Exception as exc:
             error = _error_message(exc)
-            return Output([Turn(prompt, "error", None, [], [], None, None, None, None, [], task_errors=[error])])
+            usage = _partial_usage(subject)
+            return Output([Turn(prompt, "error", None, [], [], None, None, None, None, [], task_errors=[error], usage=usage)], usage)
 
     cases = [case for case in dataset.cases if case.name == case_name] if case_name else dataset.cases
     if not cases:
