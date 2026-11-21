@@ -520,6 +520,16 @@ def _image_grid():
 
 
 class TestImageCollections:
+    def test_a_band_routes_to_the_chosen_collection_not_a_hidden_one(self):
+        client, _ = _images()
+        other = _fake_collection("sentinel-2-pre-c1-l2a", item_assets=["red"])
+        chosen = client.get_collections()[0]
+        client.get_collections = lambda: [other, chosen]
+        with patch("pystac_client.Client.open", return_value=client):
+            source = STACSource(url="https://example.com/stac", collections=["sentinel-2-l2a"])
+            assert source.get_tables() == ["sentinel-2-l2a"]
+        assert source._var_pre_index["red"] == "sentinel-2-l2a"
+
     def test_an_image_collection_reads_through_odc_stac_for_the_bbox(self):
         client, found = _images()
         bbox = (-122.30, 37.75, -122.25, 37.80)

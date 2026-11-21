@@ -177,6 +177,10 @@ class STACSource(BaseSQLSource):
     def get_tables(self) -> list[str]:
         ids = []
         for collection in self._client.get_collections():
+            if self.collections and collection.id not in self.collections:
+                # Nor indexed: a variable of a hidden collection, e.g. another
+                # Sentinel-2 product's "red", must not take a query
+                continue
             # Cache the full object: metadata for every collection then costs
             # one get_collections() request, not one request per collection.
             self._collection_cache[collection.id] = collection
@@ -190,9 +194,6 @@ class STACSource(BaseSQLSource):
             # A collection of images names its bands in item_assets
             for band in collection.extra_fields.get("item_assets", {}):
                 self._var_pre_index.setdefault(band, collection.id)
-        if self.collections:
-            allowed = set(self.collections)
-            ids = [cid for cid in ids if cid in allowed]
         return sorted(ids)
 
     def _get_collection(self, collection_id: str):
