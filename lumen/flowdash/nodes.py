@@ -68,7 +68,10 @@ from .checks import (
     check_source_config, check_sql_config, check_table_config,
     check_view_config, forget_probes, pipeline_columns,
 )
-from .choices import pipeline_column_types, source_choices, table_choices
+from .choices import (
+    palette_presets, pipeline_column_types, source_choices, source_presets,
+    table_choices, table_presets,
+)
 from .contracts import (
     DATA_ID, FILTER_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SourceContract,
 )
@@ -889,6 +892,7 @@ class LumenNode(Viewer):
     contract=SourceContract(),
     config_choices=source_choices,
     provides=[{"key": "source", "type": SOURCE_TYPE}],
+    **palette_presets(source_presets),
 )
 class SourceNode(LumenNode):
 
@@ -1105,6 +1109,7 @@ class PipelineNode(LumenNode):
     config_choices=table_choices,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}],
+    **palette_presets(table_presets),
 )
 class TableNode(PipelineNode):
 

@@ -14,7 +14,9 @@ from lumen.flowdash import (
     COMPONENTS, FILTER_ID, PIPELINE_TYPE, SOURCE_ALIASES_KEY, SOURCE_ID,
     SOURCES_KEY, TABLE_ID,
 )
-from lumen.flowdash.choices import pipeline_column_types
+from lumen.flowdash.choices import (
+    palette_presets, pipeline_column_types, source_presets, table_presets,
+)
 from lumen.flowdash.nodes import table_pipeline
 from lumen.sources.duckdb import DuckDBSource
 
@@ -107,3 +109,37 @@ async def test_inspector_shows_the_tables_as_a_dropdown(source):
     table.value = "sales"
     await settle()
     assert editor._component_instances[node].table == "sales"
+
+
+needs_presets = pytest.mark.skipif(
+    not palette_presets(source_presets), reason="panel-flowdash without palette_presets"
+)
+
+
+def test_presets_list_each_source_and_table(source):
+    other = DuckDBSource(uri=":memory:", tables={"plants": "SELECT 1 AS x"})
+    context = {SOURCES_KEY: {"shop": source, "energy": other}}
+    assert [p["title"] for p in source_presets(context)] == ["shop (source)", "energy (source)"]
+    assert source_presets(context)[0]["config"] == {"ref": "shop"}
+    assert source_presets(context)[0]["tooltip"] == "Source shop: regions, sales"
+    tables = table_presets(context)
+    assert [p["title"] for p in tables] == ["regions (shop)", "sales (shop)", "plants (energy)"]
+    assert tables[1]["config"] == {"table": "sales"} and tables[1]["tooltip"] == "Source shop, table sales"
+    assert source_presets({}) == table_presets({}) == []
+
+
+@needs_presets
+def test_palette_presets_place_working_nodes(source):
+    editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"shop": source}}, notifications=False)
+    items = {item["label"]: item for group in editor._palette.items for item in group["items"]}
+    assert items["sales (shop)"]["tooltip"] == "Source shop, table sales"
+
+    editor._on_palette_clicked(items["shop (source)"])
+    editor._on_palette_clicked(items["sales (shop)"])
+    ops = DashboardOps(editor)
+    source_node, table_node = (node["name"] for node in ops.nodes())
+    assert ops.node_config(source_node) == {"ref": "shop"}
+    assert ops.node_config(table_node) == {"table": "sales"}
+    ops.connect(f"{source_node}.source", f"{table_node}.source")
+    assert ops.node_output(f"{source_node}.source") is source
+    assert ops.node_output(f"{table_node}.pipeline").table == "sales"
