@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import re
 import threading
 import weakref
 
@@ -270,6 +271,20 @@ def _distinct_sql(pipeline: Pipeline, field: str, limit: int) -> str | None:
     return SQLLimit(limit=limit, write=source.dialect).apply(sql)
 
 
+# The values a dashboard file holds as a literal; an object column of dates offers none.
+_PLAIN = (str, bool, int, float)
+
+_DIGITS = re.compile(r"(\d+)")
+
+
+def _natural_key(value: Any) -> tuple:
+    """Sort numbers before text and text naturally, so ``region_2`` comes before ``region_10``."""
+    if isinstance(value, str):
+        return (1, [(0, int(part), "") if part.isdigit() else (1, 0, part.casefold())
+                    for part in _DIGITS.split(value) if part])
+    return (0, value)
+
+
 def distinct_values(pipeline: Pipeline, field: str, limit: int | None = None,
                     timeout: float | None = None, rows: int | None = None) -> list[Any] | None:
     """
@@ -294,10 +309,9 @@ def distinct_values(pipeline: Pipeline, field: str, limit: int | None = None,
     if len(unique) > limit:
         return None
     values = [python_value(value) for value in unique]
-    try:
-        return sorted(values)
-    except TypeError:
-        return sorted(values, key=str)
+    if not all(isinstance(value, _PLAIN) for value in values):
+        return None
+    return sorted(values, key=_natural_key)
 
 
 def _read_distinct(pipeline: Pipeline, field: str, rows: int | None) -> list[Any] | None:
