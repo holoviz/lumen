@@ -41,6 +41,9 @@ _SELECTABLE = (hv.Points, hv.Scatter, hv.Bars, hv.Polygons, hv.Path)
 #: The group of the empty layer an area is drawn on, which holds no data
 DRAW_GROUP = "LumenDraw"
 
+#: How to draw an area, which Bokeh's polygon tool does not show
+DRAW_HINT = "Draw an area to ask about it: pick the polygon tool, press and hold to start, click to add corners, press and hold to finish."
+
 #: Column names read as longitude and latitude
 _LON, _LAT = ("lon", "longitude", "lng"), ("lat", "latitude")
 
@@ -266,7 +269,11 @@ def region(data: dict) -> Any:
 def split_by_region(df: pd.DataFrame, area: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The rows inside an area and the rest: shapes that touch it, or points whose longitude and latitude fall in it."""
     if is_geodataframe(df):
-        mask = np.asarray(df.geometry.intersects(area))
+        shapes = df.geometry
+        if shapes.crs is not None and not shapes.crs.is_geographic:
+            # The area is in longitude and latitude; a projected frame is compared in them too
+            shapes = shapes.to_crs(4326)
+        mask = np.asarray(shapes.intersects(area))
     else:
         lon = next((c for c in df.columns if str(c).lower() in _LON), None)
         lat = next((c for c in df.columns if str(c).lower() in _LAT), None)
@@ -282,7 +289,7 @@ def _draw_stream(layer: hv.Polygons, on_region: Callable[[Any], None]) -> hv.str
     # Bokeh 3.4+ starts and ends a polygon on a press and hold, not a double tap
     stream = hv.streams.PolyDraw(
         source=layer, num_objects=1, drag=False,
-        tooltip="Draw an area: press and hold to start, click to add corners, press and hold to finish",
+        tooltip=DRAW_HINT,
     )
     stream.add_subscriber(lambda data: on_region(region(data)))
     return stream

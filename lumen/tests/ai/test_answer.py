@@ -2652,6 +2652,16 @@ def test_a_map_gets_a_draw_tool_and_a_plain_chart_does_not():
     assert not any(isinstance(s, PolyDraw) for s in plain._streams)
 
 
+def test_a_map_says_how_to_draw_an_area_and_a_plain_chart_does_not():
+    from lumen.ai.selection import DRAW_HINT
+
+    def hints(answer):
+        return [pane for pane in answer.__panel__().select(pn.pane.Markdown) if pane.object == DRAW_HINT]
+
+    assert len(hints(_points_map())) == 1
+    assert hints(_points_map(geo=False)) == []
+
+
 def test_drawing_an_area_selects_the_rows_inside_it():
     answer = _points_map()
     answer.__panel__()
@@ -2675,6 +2685,17 @@ def test_an_area_selects_shapes_that_touch_it():
         pytest.skip("geopandas is not installed")
     regions = gpd.GeoDataFrame({"name": ["near", "far"]}, geometry=[Polygon([(0, 0), (2, 0), (2, 2)]), Polygon([(5, 5), (6, 5), (6, 6)])])
     inside, outside = split_by_region(regions, Polygon([(1, 0), (3, 0), (3, 3), (1, 3)]))
+    assert list(inside["name"]) == ["near"] and list(outside["name"]) == ["far"]
+
+
+def test_an_area_selects_projected_shapes_by_their_longitude_and_latitude():
+    from lumen.ai.selection import split_by_region
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    regions = gpd.GeoDataFrame(
+        {"name": ["near", "far"]}, geometry=[Polygon([(10, 40), (12, 40), (12, 42)]), Polygon([(15, 45), (16, 45), (16, 46)])], crs=4326,
+    ).to_crs(3857)
+    inside, outside = split_by_region(regions, Polygon([(11, 40), (13, 40), (13, 43), (11, 43)]))
     assert list(inside["name"]) == ["near"] and list(outside["name"]) == ["far"]
 
 

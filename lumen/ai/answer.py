@@ -30,6 +30,7 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+import holoviews as hv
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
 import pandas as pd
@@ -79,7 +80,7 @@ from .llm import (
 )
 from .report import ActorTask, Report, TaskGroup
 from .selection import (
-    about, about_region, ask_box, split_by_region, watch_clicks,
+    DRAW_HINT, about, about_region, ask_box, split_by_region, watch_clicks,
 )
 from .sharing import mask_frame, sharing
 from .tools import MetadataLookup
@@ -2023,12 +2024,21 @@ class Answer(param.Parameterized):
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
                 severity="error", sizing_mode="stretch_width",
             )
-        self._streams += watch_clicks(view, lambda rows: setattr(self, "selection", rows), on_region=self._on_region)
+        streams = watch_clicks(view, lambda rows: setattr(self, "selection", rows), on_region=self._on_region)
+        self._streams += streams
         if isinstance(view, hvPlotView) and view.kwargs.get("responsive"):
             # A responsive plot stretches to its container, and a notebook
             # output has no height to give it, so it would collapse
-            return Column(view, min_height=400, sizing_mode="stretch_both")
-        return view
+            chart = Column(view, min_height=400, sizing_mode="stretch_both")
+        else:
+            chart = view
+        if not any(isinstance(stream, hv.streams.PolyDraw) for stream in streams):
+            return chart
+        # The gesture is Bokeh's own and nothing on the map says it
+        hint = Markdown(
+            DRAW_HINT, sizing_mode="stretch_width", margin=(0, 10), styles={"font-size": "0.8em", "opacity": "0.7"},
+        )
+        return Column(chart, hint, sizing_mode="stretch_width")
 
     def _spec_card(self, language: str, text: str, chart_index: int) -> Card:
         """
