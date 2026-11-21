@@ -1,5 +1,8 @@
+import json
+
+import holoviews as hv
 from panel.layout import Column
-from panel.pane import Markdown
+from panel.pane import HoloViews, Markdown
 from panel.widgets import Checkbox
 
 from lumen.views.base import Panel
@@ -43,6 +46,19 @@ def test_panel_layout_roundtrip():
             'type': 'panel.layout.base.Column'
         }
     }
+
+def test_panel_holoviews_to_spec_json_serializable():
+    column = Column(HoloViews(hv.Curve([0, 1])))
+
+    spec = Panel(object=column).to_spec()
+
+    # The spec must round-trip through JSON, i.e. NumPy scalars and
+    # arrays in the HoloViews data must be plain Python types.
+    assert json.loads(json.dumps(spec)) == spec
+
+    panel_view = Panel.from_spec(spec)
+    assert isinstance(panel_view.object, Column)
+
 
 def test_panel_cross_reference_param():
     a = Checkbox(label="A")
