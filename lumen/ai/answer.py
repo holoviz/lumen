@@ -67,7 +67,7 @@ from ..util import (
 from ..views import VegaLiteView, View, hvPlotView
 from ..views.base import GRIDDED_KINDS, hvPlotBaseView, hvPlotUIView
 from .actor import step_title_callback
-from .agents import ChatAgent, SQLAgent, VegaLiteAgent
+from .agents import Agent, ChatAgent, SQLAgent, VegaLiteAgent
 from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
@@ -378,7 +378,13 @@ if os.name == "posix":  # Windows cannot fork
 
 async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
     if agents is not None:
-        return Planner(llm=llm, agents=agents, headless=True)
+        planner_agents = []
+        for agent in agents:
+            if isinstance(agent, Agent) and agent.llm is None:
+                planner_agents.append(_clone(agent))
+            else:
+                planner_agents.append(agent)
+        return Planner(llm=llm, agents=planner_agents, headless=True)
     planner = _planners.get(source)
     if planner is not None and planner.llm is llm and planner not in _busy:
         return planner

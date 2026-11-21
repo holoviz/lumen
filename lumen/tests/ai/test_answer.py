@@ -2609,17 +2609,14 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
 
-async def test_aask_reuses_agents_across_questions_with_per_question_llm(frame_source):
-    """The same agent instances can answer with different LLMs per question."""
-    PlanModel = make_plan_model(["ChatAgent", "SQLAgent"], [])
+def _named_chat_llm_setup(actor_names):
+    PlanModel = make_plan_model(list(actor_names), [])
     (Step,) = get_args(PlanModel.__annotations__["steps"])
-
-    def plan():
-        return PlanModel(
-            chain_of_thought="x",
-            title="t",
-            steps=[Step(actor="ChatAgent", instruction="Explain", title="Explain")],
-        )
+    plan = PlanModel(
+        chain_of_thought="x",
+        title="t",
+        steps=[Step(actor=actor_names[0], instruction="Explain", title="Explain")],
+    )
 
     class Named(MockLLM):
         def __init__(self, name, **params):
@@ -2628,36 +2625,34 @@ async def test_aask_reuses_agents_across_questions_with_per_question_llm(frame_s
 
         async def invoke(self, messages, system="", response_model=None, **kwargs):
             if response_model is not None and "Plan" in response_model.__name__:
-                return plan()
+                return plan
             return f"answered by {self.who}"
 
+    return Named
+
+
+async def test_aask_reuses_agents_across_questions_with_per_question_llm(frame_source):
+    """The same agent instances can answer with different LLMs per question."""
+    Named = _named_chat_llm_setup(["ChatAgent", "SQLAgent"])
     agents = [ChatAgent(), SQLAgent()]
     assert (await aask(frame_source, "How many rows?", llm=Named("A"), agents=agents)).value == "answered by A"
     assert (await aask(frame_source, "How many rows?", llm=Named("B"), agents=agents)).value == "answered by B"
 
 
+async def test_aask_reuses_agents_concurrently_with_per_question_llm(frame_source):
+    """Concurrent questions using the same agent instances keep their own LLMs."""
+    Named = _named_chat_llm_setup(["ChatAgent", "SQLAgent"])
+    agents = [ChatAgent(), SQLAgent()]
+    answers = await asyncio.gather(
+        aask(frame_source, "How many rows?", llm=Named("A"), agents=agents),
+        aask(frame_source, "How many rows?", llm=Named("B"), agents=agents),
+    )
+    assert {answer.value for answer in answers} == {"answered by A", "answered by B"}
+
+
 async def test_aask_respects_agent_explicit_llm(frame_source):
     """An agent given an LLM on purpose keeps it across questions."""
-    PlanModel = make_plan_model(["ChatAgent"], [])
-    (Step,) = get_args(PlanModel.__annotations__["steps"])
-
-    def plan():
-        return PlanModel(
-            chain_of_thought="x",
-            title="t",
-            steps=[Step(actor="ChatAgent", instruction="Explain", title="Explain")],
-        )
-
-    class Named(MockLLM):
-        def __init__(self, name, **params):
-            super().__init__(**params)
-            self.who = name
-
-        async def invoke(self, messages, system="", response_model=None, **kwargs):
-            if response_model is not None and "Plan" in response_model.__name__:
-                return plan()
-            return f"answered by {self.who}"
-
+    Named = _named_chat_llm_setup(["ChatAgent"])
     pinned = Named("pinned")
     agents = [ChatAgent(llm=pinned)]
     assert (await aask(frame_source, "How many rows?", llm=Named("A"), agents=agents)).value == "answered by pinned"

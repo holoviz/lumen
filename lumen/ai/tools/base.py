@@ -243,8 +243,7 @@ class ToolUser(Actor):
         for tool in prompt_tools:
             if isinstance(tool, Actor):
                 # For already instantiated Actors, set properties directly
-                if not tool._llm_user_provided:
-                    tool.llm = self.llm or params.get("llm")
+                tool.llm = self.llm or params.get("llm")
                 if tool.interface is None:
                     tool.interface = self.interface or params.get("interface")
 

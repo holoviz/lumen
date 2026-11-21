@@ -1,4 +1,4 @@
-﻿import datetime as dt
+import datetime  # noqa: ICN001
 import inspect
 
 from abc import abstractmethod
@@ -159,7 +159,7 @@ class LLMUser(param.Parameterized):
 
         Can be set at the class level (subclassing) or on an instance.
 
-        **Example â€” subclassing**::
+        **Example — subclassing**::
 
             INSTRUCTION_OVERRIDE = \"\"\"
             {{ super() }}
@@ -172,7 +172,7 @@ class LLMUser(param.Parameterized):
                     "main": {"instructions": INSTRUCTION_OVERRIDE}
                 }
 
-        **Example â€” instance level**::
+        **Example — instance level**::
 
             agent = SQLAgent(template_overrides={
                 "main": {"instructions": "{{ super() }}\\nBe concise."}
@@ -181,7 +181,6 @@ class LLMUser(param.Parameterized):
 
 
     def __init__(self, **params):
-        self._llm_user_provided = params.get("llm") is not None
         super().__init__(**params)
         self._validate_template_overrides()
         self._validate_prompts()
@@ -261,7 +260,7 @@ class LLMUser(param.Parameterized):
         """Gather context for the prompt template."""
         prompt_context = dict(kwargs)
         prompt_context["memory"] = context
-        prompt_context["current_datetime"] = dt.datetime.now()
+        prompt_context["current_datetime"] = datetime.datetime.now()
         return prompt_context
 
     async def _render_prompt(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs) -> str:
