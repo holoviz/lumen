@@ -194,26 +194,31 @@ def test_inline_tables_writes_one_with_clause_in_other_dialects(dialect):
     assert [cte.alias for cte in parsed.find_all(sqlglot.exp.CTE)] == ["paid", "by_region", "ranked", "top"]
 
 
-def test_inline_tables_drops_an_order_by_no_limit_depends_on():
-    tables = {
-        "ordered": "SELECT region, amount FROM orders ORDER BY amount",
-        "top2": "SELECT region, amount FROM orders ORDER BY amount DESC LIMIT 2",
-    }
-    sql = inline_tables("SELECT * FROM ordered, top2", tables, "duckdb")
-    ordered, top2 = (cte.this for cte in sqlglot.parse_one(sql, read="duckdb").find_all(sqlglot.exp.CTE))
-    assert ordered.args.get("order") is None
-    assert top2.args.get("order") is not None
+def test_inline_tables_keeps_the_order_distinct_on_depends_on():
+    duckdb = pytest.importorskip("duckdb")
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE orders AS SELECT * FROM (VALUES ('Ada', 50), ('Ada', 7), ('Bo', 15), ('Bo', 40)) AS t(customer, amount)")
+    tables = {"biggest": "SELECT DISTINCT ON (customer) customer, amount FROM orders ORDER BY customer, amount DESC"}
+    sql = inline_tables("SELECT * FROM biggest ORDER BY customer", tables, "duckdb")
+    assert "ORDER BY customer, amount DESC" in sql
+    for _ in range(5):
+        assert conn.execute(sql).fetchall() == [("Ada", 50), ("Bo", 40)]
 
 
-def test_inline_tables_writes_ctes_sql_server_accepts():
+def test_inline_tables_keeps_an_order_by_in_other_dialects():
+    sql = inline_tables("SELECT * FROM ordered", {"ordered": "SELECT a FROM t ORDER BY a"}, "postgres")
+    assert "ORDER BY a" in sql and "OFFSET" not in sql
+
+
+def test_inline_tables_makes_a_ctes_order_by_legal_on_sql_server():
     tables = {
         "by_region": "SELECT region, SUM(amount) AS total FROM orders GROUP BY region ORDER BY total DESC",
         "top": "SELECT TOP 1 region FROM by_region ORDER BY total DESC",
     }
     sql = inline_tables("SELECT region FROM top", tables, "tsql")
     by_region, top = (cte.this for cte in sqlglot.parse_one(sql, read="tsql").find_all(sqlglot.exp.CTE))
-    assert by_region.args.get("order") is None
-    assert "TOP 1" in top.sql(dialect="tsql") and top.args.get("order") is not None
+    assert by_region.sql(dialect="tsql").endswith("ORDER BY total DESC OFFSET 0 ROWS")
+    assert top.sql(dialect="tsql").startswith("SELECT TOP 1") and "OFFSET" not in top.sql(dialect="tsql")
 
 
 def test_inline_tables_quotes_an_alias_referenced_quoted():

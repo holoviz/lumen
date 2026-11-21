@@ -91,14 +91,17 @@ def _rename_ref(table: sqlglot.exp.Table, name: sqlglot.exp.Identifier) -> None:
     table.set("this", name.copy())
 
 
-def _drop_unbounded_order(query: sqlglot.exp.Expression) -> None:
+def _legal_order(query: sqlglot.exp.Expression, dialect: str | None) -> None:
     """
-    Drop the ORDER BY of a query that will be a CTE, unless a LIMIT, TOP,
-    OFFSET or FETCH depends on it: a CTE does not keep its rows' order, and
-    SQL Server refuses ORDER BY there otherwise.
+    Make the ORDER BY of a query that will be a CTE legal on SQL Server,
+    which refuses one there unless TOP, OFFSET or FETCH depends on it, by
+    adding ``OFFSET 0 ROWS``. The ORDER BY itself is kept everywhere, since
+    DISTINCT ON, QUALIFY and order-sensitive aggregates can depend on it.
     """
+    if dialect != "tsql" or not query.args.get("order"):
+        return
     if not any(query.args.get(key) for key in ("limit", "offset", "fetch")):
-        query.set("order", None)
+        query.set("offset", sqlglot.exp.Offset(expression=sqlglot.exp.Literal.number(0)))
 
 
 def _unique(name: str, taken: set[str]) -> str:
@@ -123,9 +126,9 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
     renamed table keeps its old name as its alias. A name bound to a CTE
     of the query, or qualified with a schema, is never inlined, and a
     definition that reads its own name reads the table of that name. A
-    CTE's alias is quoted when any reference to it is. A CTE drops its
-    ORDER BY unless a LIMIT or OFFSET depends on it, since a CTE keeps no
-    order and SQL Server refuses one; order the query itself instead.
+    CTE's alias is quoted when any reference to it is. On SQL Server, a
+    CTE's ORDER BY without TOP or OFFSET gets ``OFFSET 0 ROWS``, which makes
+    it legal there. A CTE keeps no row order, so order the query itself.
 
     Returns ``sql`` unchanged when it reads none of ``tables``; raises
     ``ValueError`` when the definitions read each other in a cycle.
@@ -212,10 +215,10 @@ def inline_tables(sql: str, tables: t.Mapping[str, str], dialect: str | None = N
         if with_ is not None:
             for cte in list(with_.expressions):
                 cte.args["alias"].set("this", hoisted[id(cte)].copy())
-                _drop_unbounded_order(cte.this)
+                _legal_order(cte.this, read)
                 ctes.append(cte.pop())
             with_.pop()
-        _drop_unbounded_order(tree)
+        _legal_order(tree, read)
         alias = sqlglot.exp.TableAlias(this=names[key].copy())
         ctes.append(sqlglot.exp.CTE(this=tree, alias=alias))
 
