@@ -141,7 +141,7 @@ _FEATURE_KEYS = frozenset({"properties", "geometry", "type", "id"})
 _TEMPLATE = re.compile(r"\{([^{}]+)\}")
 
 
-def _layer_type(layer: dict[str, Any]) -> str | None:
+def layer_type(layer: dict[str, Any]) -> str | None:
     kind = layer.get("@@type")
     return kind if isinstance(kind, str) else None
 
@@ -204,7 +204,7 @@ def tooltip_fields(tooltip: Any) -> set[str]:
 
 def layer_fields(layer: dict[str, Any]) -> set[str]:
     """The columns a deck.gl layer's expressions read."""
-    feature = _layer_type(layer) == "GeoJsonLayer"
+    feature = layer_type(layer) == "GeoJsonLayer"
     fields: set[str] = set()
     for expression in _expressions(layer):
         fields |= expression_names(expression, feature)[0]
@@ -358,7 +358,7 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
         if not isinstance(layer, dict):
             raise ValueError(f"Layer {index + 1} must be an object.")
         name = _layer_name(index, layer)
-        kind = _layer_type(layer)
+        kind = layer_type(layer)
         if kind is None:
             hint = " (`type` is pydeck's name for it)" if "type" in layer else ""
             raise ValueError(f"{name} needs an `@@type`{hint}, e.g. \"ScatterplotLayer\".")
@@ -494,7 +494,7 @@ def map_summary(spec: dict[str, Any], data: Any) -> str:
     """A line saying what a map shows, e.g. ``Map of 2 layers (Hexagon, Scatterplot) of xlong and ylat, 4 rows``."""
     layers = [layer for layer in spec.get("layers") or [] if isinstance(layer, dict)]
     kinds = list(dict.fromkeys(
-        kind.removesuffix("Layer") for layer in layers if (kind := _layer_type(layer))
+        kind.removesuffix("Layer") for layer in layers if (kind := layer_type(layer))
     ))
     if len(layers) == 1 and kinds:
         text = f"{kinds[0]} map"
@@ -587,7 +587,7 @@ class DeckGLNode(LumenViewNode):
             spec["initialViewState"] = self._fitted or dict(WORLD_VIEW)
         color = SCHEME_COLORS.get(self._color_scheme() or "", SCHEME_COLORS["tableau10"])
         for layer in spec["layers"]:
-            for prop in COLOR_PROPS.get(_layer_type(layer) or "", ()):
+            for prop in COLOR_PROPS.get(layer_type(layer) or "", ()):
                 layer.setdefault(prop, color)
         return {
             "spec": spec, "tooltips": tooltip, "sizing_mode": "stretch_both",

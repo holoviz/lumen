@@ -1024,8 +1024,13 @@ async def test_add_map_places_a_checked_map_and_previews_it(turbines):
     placed = add_map(ctx, "all_turbines", "turbine_map", POINTS)
     assert placed == (
         "Placed map 'turbine_map' of 'all_turbines': Scatterplot map of xlong and ylat, 3 rows. "
-        "Fitted to the rows at longitude -105.635, latitude 36.96, zoom 4.1."
+        "Fitted to the rows at longitude -105.635, latitude 36.96, zoom 4.1.\n"
+        "Note: getRadius is in metres; at zoom 4.1 a pixel is about 3,647 m, so radii under 3,647 m "
+        'all draw at the minimum size. To size points by a value, set "radiusUnits": "pixels" and '
+        "scale getRadius to about 2 to 20."
     )
+    pixels = {"layers": [{**POINTS["layers"][0], "radiusUnits": "pixels", "getRadius": "@@=2 + capacity * 4"}]}
+    assert add_map(ctx, "all_turbines", "pixel_map", pixels).endswith("zoom 4.1.")
     assert _graph.component_of(turbines.ops, "turbine_map") == DECKGL_ID
     assert _graph.config_of(turbines.ops, "turbine_map")["spec"] == POINTS
     assert "from: all_turbines.pipeline\n    to: turbine_map.pipeline" in turbines.graph()
@@ -1049,10 +1054,11 @@ def _layer(**props):
     (_layer(iconAtlas="https://example.com/atlas.png"), "never loads URLs or files"),
     (_layer(getRadius="@@='https://example.com'"), "may not name URLs or paths"),
     (_layer(getRadius={"@@function": "fetch"}), "calls a function with `@@function`"),
+    (_layer(extensions=[{"@@type": "FillStyleExtension", "fillPatternAtlas": "@@=x"}]), "builds a 'FillStyleExtension'"),
     (_layer(getRadius="@@=Math.max(capacity, 1)"), "take no function calls"),
     (_layer(data="https://example.com/rows.json"), "remove its `data`"),
     (_layer(getRadius="@@=power"), "reads power, which the data does not have"),
-], ids=["map-style-url", "prop-url", "expression-url", "function", "call", "data", "column"])
+], ids=["map-style-url", "prop-url", "expression-url", "function", "nested-type", "call", "data", "column"])
 async def test_add_map_refuses_what_a_map_spec_may_not_load_or_read(turbines, spec, error):
     ctx = SimpleNamespace(deps=turbines.deps)
     await add_sql(ctx, "data", "all_turbines", "SELECT * FROM turbines")
@@ -1072,8 +1078,10 @@ async def test_add_map_notes_positions_off_the_globe(turbines):
         "Note: no row has a longitude in -180..180 and a latitude in -90..90 in [ylat, xlong], "
         "so the map shows the whole world; getPosition takes [longitude, latitude]."
     )
-    with pytest.raises(ModelRetry, match="No node 'nothing'"):
+    with pytest.raises(ModelRetry, match="No node 'nothing'. The SQL, table and filter nodes are: all_turbines.$"):
         add_map(ctx, "nothing", "other", POINTS)
+    with pytest.raises(ModelRetry, match="'turbines' is a source table. Place a SQL node on it with add_sql first"):
+        add_map(ctx, "turbines", "other", POINTS)
     with pytest.raises(ModelRetry, match="no Lumen pipeline output to show"):
         add_map(ctx, "data", "other", POINTS)
 
@@ -1103,6 +1111,15 @@ async def test_set_config_checks_a_map_spec_against_the_allowlist():
     assert all(part.outcome == "retried" for part in retried)
     assert isinstance(requests[3].parts[0], ToolReturnPart)
     assert spec == bigger
+
+
+async def test_add_map_before_any_query_says_to_place_one(turbines):
+    with pytest.raises(ModelRetry) as info:
+        add_map(SimpleNamespace(deps=turbines.deps), "turbines", "turbine_map", POINTS)
+    assert str(info.value) == (
+        "No node 'turbines': 'turbines' is a source table. Place a SQL node on it with add_sql first "
+        "and pass that node's name."
+    )
 
 
 @pytest.fixture
