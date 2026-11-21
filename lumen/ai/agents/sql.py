@@ -1388,8 +1388,7 @@ class SQLAgent(BaseLumenAgent):
 
             metaset = context.get("metaset")
             tool_list = self._sql_tools(sources, metaset)
-            from ..actor import _merge_prompt_tools
-            merged_tools = _merge_prompt_tools(self.llm_tools, tool_list, context) or tool_list
+            merged_tools = _merge_prompt_tools(self.llm_tools, tool_list, context) or []
             tool_names = [tool.name for tool in merged_tools]
             checked: dict[str, t.Any] = {}
             with self.llm.trace() as events:
