@@ -69,6 +69,10 @@ def test_import_guard_uses_try_except(module_path, class_name, guard_package, pi
 def test_import_raises_when_dependency_missing(module_path, class_name, guard_package, pip_extra):
     """Importing the module should raise ImportError with a helpful message
     when the optional dependency is not installed."""
+    if pip_extra == "stac":
+        # STACSource reads through the xarray source, whose own dependencies
+        # (duckdb, xarray) the core test environment leaves out
+        pytest.importorskip("lumen.sources.xarray_sql")
     real_import = builtins.__import__
     blocked_root = guard_package.split(".")[0]
 
