@@ -12,6 +12,9 @@ import lumen
 
 from lumen.sources.data import _zarr_kind
 
+# anndata itself sets pandas' deprecated future.infer_string option on newer pandas
+pytestmark = pytest.mark.filterwarnings("ignore:The 'future.infer_string' option is deprecated")
+
 
 def _read(data):
     try:
