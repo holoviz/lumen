@@ -116,8 +116,9 @@ class STACSource(BaseSQLSource):
         Optional subset of collection IDs to expose. None exposes all.""")
 
     datetime = param.String(default=None, allow_None=True, doc="""
-        The time range of images to read, as a STAC search datetime, e.g.
-        "2024-06-01/2024-06-30".""")
+        The time range to read, as a STAC search datetime, e.g.
+        "2024-06-01/2024-06-30": the scenes of a collection of images, and
+        the time steps of a gridded (Zarr, NetCDF) collection.""")
 
     default_limit = param.Integer(default=100_000, allow_None=True, doc="""
         Row cap injected as a SQLLimit transform on get() so a naive call
@@ -349,6 +350,11 @@ class STACSource(BaseSQLSource):
             dataset = dataset.drop_vars(scalar_vars)
         # Cloud Zarr stores often have ragged/inconsistent dask chunks;
         # XArraySQLSource (DataFusion) requires uniform chunks.
+        if self.datetime and "time" in dataset.dims:
+            # xarray-sql reads whole chunks and does not stop at a LIMIT, so
+            # the time window is what keeps a query of a long record small
+            start, _, end = self.datetime.partition("/")
+            dataset = dataset.sel(time=slice(start or None, end or start or None))
         dataset = dataset.unify_chunks()
         delegate = XArraySQLSource.from_dataset(dataset, chunks=self.chunks)
         self._delegates[collection_id] = delegate

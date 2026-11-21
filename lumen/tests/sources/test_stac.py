@@ -298,6 +298,12 @@ class TestResolution:
         assert "pressure" in schema
         assert "time" in schema
 
+    def test_datetime_reads_only_its_time_steps_of_a_gridded_collection(self, mock_stac_client, synthetic_dataset):
+        source = STACSource(url="https://example.com/stac", datetime="2020-01-03/2020-01-05")
+        with patch.object(STACSource, "_open_dataset", return_value=synthetic_dataset):
+            delegate, _ = source._delegate_table("air-temperature")
+        assert delegate.dataset.sizes["time"] == 3
+
     def test_get_schema_never_aggregates_over_the_grid(self, mock_stac_client, synthetic_dataset):
         """A COUNT, DISTINCT or MIN over a cloud-scale collection reads all of it."""
         source = STACSource(url="https://example.com/stac")
