@@ -456,6 +456,9 @@ class Llm(param.Parameterized):
     # Whether the LLM supports vision (multimodal image content)
     _supports_vision = True
 
+    # Whether the LLM can call Lumen's function tools
+    _supports_tools = True
+
     # Used for `instructor.from_*` wrapping; subclasses may override
     _instructor_wrapper: str = "openai"
 
@@ -1783,6 +1786,7 @@ class LlmCli(Llm):
     _supports_stream = False
     _supports_model_stream = False
     _supports_vision = False
+    _supports_tools = False
 
     # Arguments that make the CLI report whether a user is signed in, if it has such a command.
     _auth_status_args: tuple[str, ...] = ()

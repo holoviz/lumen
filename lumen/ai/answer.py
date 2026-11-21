@@ -81,6 +81,7 @@ from .selection import about, ask_box, watch_clicks
 from .sharing import mask_frame, sharing
 from .testing import MissingRecording
 from .tools import MetadataLookup
+from .tools.geocode import ATTRIBUTION, GEOCODED
 from .ui import ExplorerUI
 from .usage import UsageCollector
 from .utils import errors_in_result, format_error
@@ -167,7 +168,7 @@ _UNSET: Any = object()
 def configure(
     *, llm: Llm | None = _UNSET, agents: list | None = _UNSET, max_rows: int | None = _UNSET,
     share: Literal["sample", "schema", "none"] | None = None, mask_pii: bool | None = None,
-    cache: bool | None = None,
+    cache: bool | None = None, geocode: bool | None = None,
 ) -> dict[str, Any]:
     """
     Set the defaults for ask, aask and chat in this session.
@@ -188,6 +189,10 @@ def configure(
     data with the same model again returns the answer without LLM calls.
     LUMEN_AI_CACHE=1 turns it on too; clear_cache() empties it.
 
+    geocode lets the SQL agent look up place names ("within 50 km of
+    Delhi") with OpenStreetMap's Nominatim service. Each place name is sent
+    there, so it is off unless turned on, here or with LUMEN_AI_GEOCODE=1.
+
     Returns the settings now in effect.
     """
     if llm is not _UNSET:
@@ -199,8 +204,11 @@ def configure(
     if max_rows is not _UNSET:
         # The class default, so every SQLAgent without its own value uses it
         SQLAgent.max_rows = max_rows
-    sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii).items() if v is not None})
-    return {**_settings, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows, "share": sharing.share}
+    sharing.param.update({k: v for k, v in dict(share=share, mask_pii=mask_pii, geocode=geocode).items() if v is not None})
+    return {
+        **_settings, "geocode": sharing.geocode, "mask_pii": sharing.mask_pii, "max_rows": SQLAgent.max_rows,
+        "share": sharing.share,
+    }
 
 
 def _clone(obj: Any, **overrides) -> Any:
@@ -972,7 +980,10 @@ async def _aask_messages(
             _answer_cache.move_to_end(key)
             return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
+    # Task-local, so questions asked at once keep their own places
+    GEOCODED.set(places := [])
     answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    answer.geocoded = places
     if returns is not None:
         await _typed(answer, returns, planner.llm)
     if key is not None and answer.status == "success":
@@ -1245,6 +1256,10 @@ class Answer(param.Parameterized):
 
     value = param.String(default="", doc="""
         The written answer.""")
+
+    geocoded = param.List(default=[], doc="""
+        The place names this answer looked up with OpenStreetMap
+        Nominatim, which were sent there.""")
 
     selection = param.DataFrame(default=None, allow_None=True, doc="""
         The rows clicked or box-selected on the chart or map, which
@@ -1985,15 +2000,19 @@ class Answer(param.Parameterized):
 
     @property
     def _usage_note(self) -> str:
-        """One line on what the answer cost, or nothing when no call was counted."""
+        """One line on what the answer cost and the places it geocoded, or nothing when neither applies."""
+        parts = []
         if self.cached:
-            return "From the answer cache, no LLM calls"
-        if self.usage is None or not self.usage.records:
-            return ""
-        note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
-        if self.usage.cost_usd is not None:
-            note += f" · ${self.usage.cost_usd:.4f}"
-        return note
+            parts.append("From the answer cache, no LLM calls")
+        elif self.usage is not None and self.usage.records:
+            note = f"{self.usage.input_tokens:,} in / {self.usage.output_tokens:,} out tokens"
+            if self.usage.cost_usd is not None:
+                note += f" · ${self.usage.cost_usd:.4f}"
+            parts.append(note)
+        if self.geocoded:
+            # What left the machine, and the attribution OpenStreetMap's licence asks for
+            parts.append(ATTRIBUTION.replace("Geocoded", f"Geocoded {', '.join(map(repr, self.geocoded))}"))
+        return " · ".join(parts)
 
     def _usage_pane(self) -> Markdown:
         return Markdown(
