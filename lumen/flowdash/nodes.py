@@ -41,6 +41,7 @@ from concurrent.futures import (
     Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import Any, ClassVar
 
 import numpy as np
@@ -1369,6 +1370,34 @@ class SourceNode(LumenNode):
         return _source_summary(self._object)
 
 
+def single_number(data: Any) -> float | int | None:
+    """
+    The one cell of a result of one row and one column as a Python number,
+    None if it is NULL, raising ``ValueError`` for a result of another shape
+    or a cell that is not a number.
+    """
+    if data is None:
+        return None
+    rows, columns = data.shape
+    if (rows, columns) != (1, 1):
+        raise ValueError(
+            f"The value output needs a result of one row and one column, e.g. SELECT SUM(x) FROM t; "
+            f"this query returns {rows:,} row{'' if rows == 1 else 's'} and "
+            f"{columns:,} column{'' if columns == 1 else 's'}."
+        )
+    value = python_value(data.iat[0, 0])
+    if pd.api.types.is_scalar(value) and pd.isna(value):
+        return None
+    if isinstance(value, Decimal):
+        value = float(value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"The value output needs a number; the query's {data.columns[0]!r} is "
+            f"{type(value).__name__} {value!r}."
+        )
+    return value
+
+
 def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any] | None:
     """
     The table and column names of the wired source, completed in the SQL
@@ -1401,12 +1430,18 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     component=True, page=False, title="Lumen SQL", icon="code",
     description=(
         "A read-only SQL query run by the source's engine. Outputs a Lumen pipeline "
-        "over the result and the result as a DataFrame."
+        "over the result, the result as a DataFrame and, for a result of one row and one "
+        "numeric column such as SELECT SUM(x) FROM t, that cell as a number for a KPI; for "
+        "any other result the value output is empty."
     ),
     config=["sql", "table", "limit"],
     check_config=check_sql_config,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
-    provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
+    provides=[
+        {"key": "pipeline", "type": PIPELINE_TYPE},
+        {"key": "data", "type": "DataFrame"},
+        {"key": "value", "type": "Number"},
+    ],
     config_completions=sql_completions,
 )
 class SQLNode(GlobalFilterTarget, LumenNode):
@@ -1503,6 +1538,18 @@ class SQLNode(GlobalFilterTarget, LumenNode):
         pipeline = self._value()
         return pipeline if pipeline is None or is_failure(pipeline) else pipeline.data
 
+    @param.output(param.Parameter)
+    @param.depends("_object", "_error")
+    def value(self):
+        pipeline = self._value()
+        if pipeline is None or is_failure(pipeline):
+            return pipeline
+        # Every SQL node has this output, so a result it does not fit leaves it empty rather than failing the node.
+        try:
+            return single_number(pipeline.data)
+        except ValueError:
+            return None
+
     def _body(self):
         pipeline = self._object
         if pipeline is None:
@@ -1514,6 +1561,11 @@ class SQLNode(GlobalFilterTarget, LumenNode):
         if self._error is not None or self._object is None:
             return None
         data = self._object.data
+        if output == "value":
+            try:
+                return single_number(data)
+            except ValueError as exc:
+                return f"No value: {exc}"
         if output == "pipeline" or data is None:
             return _pipeline_preview(self, self._object)
         return data
