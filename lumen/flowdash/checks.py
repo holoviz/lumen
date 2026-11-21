@@ -547,8 +547,8 @@ def pipeline_columns(pipeline: Any) -> list[str]:
 # The ``check_config=`` hooks of the nodes, see ``panel_flowdash.register``:
 # check(config, inputs), where ``config`` is the node's whole config with the
 # change applied and ``inputs`` its live input values that are set and not
-# failed. A config that fails is refused in the inspector and by the agent
-# tools before it is applied. None of them fetches rows.
+# failed. A config that fails is refused in the inspector or the code panel
+# and by the agent tools before it is applied. None of them fetches rows.
 
 def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/table`` config: the table must be one of the source's."""

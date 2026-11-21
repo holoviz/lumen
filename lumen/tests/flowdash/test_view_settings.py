@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import panel as pn
+import panel_material_ui as pmui
 import param
 import pytest
 
@@ -199,16 +200,19 @@ def test_without_a_dashboard_scheme_the_chart_keeps_vega_colours(source):
     assert rendered(ops)["config"]["background"] == "transparent"
 
 
-async def test_the_inspector_edits_the_spec_through_the_form(source):
+async def test_the_code_panel_edits_the_spec_through_the_form(source):
     ops = dashboard(source, history_coalesce=0)
     editor = ops.editor
     node = ops._instance("chart")
     select_on_canvas(editor._flow, node_id=node)
-    fields = list(pn.Column(*editor._inspector._body).select(SpecEditor))
-    assert len(fields) == 1
-    field = fields[0]
+    body = pn.Column(*editor._inspector._body)
+    assert not list(body.select(SpecEditor))
+    edit = next(b for b in body.select(pmui.Button) if "fd-edit-spec" in b.css_classes)
+    edit.clicks += 1
+    panel = editor.code_panel
+    assert (panel.instance_id, panel.field) == (node, "spec")
+    field = panel.spec_editor
     assert field.unknown == ["encoding.x.axis", "transform"]
-    await editor._inspector.settle()
     for _ in range(50):
         if field.choices.get("encoding.x.field"):
             break
@@ -216,7 +220,11 @@ async def test_the_inspector_edits_the_spec_through_the_form(source):
     assert field.choices["encoding.x.field"].values() == ["category", "total"]
     before = json.dumps(ops.node_config("chart")["spec"])
     field._controls["title"][1].value = "Sales by category"
-    await editor._inspector.settle()
+    panel.run()
+    for _ in range(50):
+        if ops.node_config("chart")["spec"].get("title"):
+            break
+        await asyncio.sleep(0.02)
     assert ops.node_config("chart")["spec"]["title"] == "Sales by category"
     assert rendered(ops)["title"] == "Sales by category"
     assert editor.undo()

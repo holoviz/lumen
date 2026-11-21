@@ -119,14 +119,17 @@ def test_repeated_agent_model_flags_reach_the_app(csv):
     assert routes.call_args.kwargs["agent_model"] == ["test=Test", "openai:gpt-6-luna=Luna"]
 
 
-def test_one_agent_model_has_no_picker(csv):
+def test_one_agent_model_is_named_without_a_picker(csv):
     pytest.importorskip("pydantic_ai")
     app = build_routes([str(csv)], db_path=csv.parent / "dash.db", agent_model=["test=Test"])["/"]()
+    drawer = app._agent_session.drawer
+    menu = drawer.chat.model_picker._menu
 
     assert app.agent.model.model_name == "test"
     assert app.agent_model == "test"
     assert app.agent_models == []
-    assert "models" not in app._agent_session.drawer.chat_params
+    assert [option["id"] for option in menu.options] == [menu.value] == ["test:test"]
+    assert "remember_model" not in drawer.chat_params
 
 
 def test_several_agent_models_offer_a_picker(csv):

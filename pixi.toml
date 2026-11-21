@@ -54,7 +54,7 @@ param = ">=2.5.0b5"
 
 # panel-flowdash needs Python 3.12, so test-311 runs without it.
 [feature.flowdash.pypi-dependencies]
-panel-flowdash = { version = ">=0.1.0rc5", extras = ["agent"] }
+panel-flowdash = { version = ">=0.1.0rc6", extras = ["agent"] }
 
 [feature.py311.dependencies]
 python = "3.11.*"
