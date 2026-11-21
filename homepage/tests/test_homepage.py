@@ -187,3 +187,30 @@ def test_showcase_video_waits_until_visible(home: Page) -> None:
     home.locator('#showcase').scroll_into_view_if_needed()
     home.wait_for_timeout(1500)
     assert not home.locator('#showcase video').evaluate('v => v.paused')
+
+
+def test_scheme_toggle_cycles_through_system(page: Page, site: str) -> None:
+    """The header toggle offers light, dark and follow-system (#1958)."""
+    page.emulate_media(color_scheme='dark')
+    page.goto(site, wait_until='networkidle')
+
+    def scheme() -> str:
+        return page.evaluate("() => document.documentElement.getAttribute('data-color-scheme')")
+
+    # The default mode is system, so the page follows the dark OS preference
+    # until the toggle is used.
+    toggle = page.get_by_role('button', name='Switch to light mode')
+    expect(toggle).to_be_visible()
+    assert scheme() == 'dark'
+
+    toggle.click()
+    expect(page.get_by_role('button', name='Switch to dark mode')).to_be_visible()
+    assert scheme() == 'light'
+
+    page.get_by_role('button', name='Switch to dark mode').click()
+    expect(page.get_by_role('button', name='Switch to system mode')).to_be_visible()
+    assert scheme() == 'dark'
+
+    page.get_by_role('button', name='Switch to system mode').click()
+    expect(page.get_by_role('button', name='Switch to light mode')).to_be_visible()
+    assert scheme() == 'dark'
