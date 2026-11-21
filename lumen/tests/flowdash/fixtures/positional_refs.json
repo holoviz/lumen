@@ -1,0 +1,107 @@
+{
+ "version": 4,
+ "title": "Untitled",
+ "items": [
+  {
+   "instance_id": "first",
+   "component_id": "Lumen/source",
+   "x": 0.0,
+   "y": 22.0,
+   "config": {
+    "ref": "data"
+   },
+   "origin": "tf1b3f8b7"
+  },
+  {
+   "instance_id": "second",
+   "component_id": "Lumen/source",
+   "x": 0.0,
+   "y": 294.0,
+   "config": {
+    "ref": "data_2"
+   },
+   "origin": "tf1b3f8b7"
+  },
+  {
+   "instance_id": "order_count",
+   "component_id": "Lumen/sql",
+   "x": 380.0,
+   "y": 0.0,
+   "config": {
+    "sql": "SELECT COUNT(*) AS n FROM orders",
+    "table": "order_count"
+   },
+   "origin": "tf1b3f8b7"
+  },
+  {
+   "instance_id": "plant_count",
+   "component_id": "Lumen/sql",
+   "x": 380.0,
+   "y": 272.0,
+   "config": {
+    "sql": "SELECT COUNT(*) AS n FROM plants_csv",
+    "table": "plant_count"
+   },
+   "origin": "tf1b3f8b7"
+  }
+ ],
+ "edges": [
+  {
+   "source": "first",
+   "source_port": "source",
+   "target": "order_count",
+   "target_port": "source"
+  },
+  {
+   "source": "second",
+   "source_port": "source",
+   "target": "plant_count",
+   "target_port": "source"
+  }
+ ],
+ "tile_layout": [
+  {
+   "instance_id": "first",
+   "visible": false,
+   "index": 0
+  },
+  {
+   "instance_id": "second",
+   "visible": false,
+   "index": 1
+  },
+  {
+   "instance_id": "order_count",
+   "visible": false,
+   "index": 2
+  },
+  {
+   "instance_id": "plant_count",
+   "visible": false,
+   "index": 3
+  }
+ ],
+ "breakpoints": [],
+ "responsive_layouts": {},
+ "reference_width": null,
+ "settings": {
+  "description": "",
+  "refresh_period": 0.0,
+  "controls_position": "top",
+  "header_layout": "compact",
+  "node_previews": false,
+  "tile_cards": true,
+  "tile_titles": false,
+  "viewers_can_inspect": false
+ },
+ "turns": [
+  {
+   "id": "tf1b3f8b7",
+   "actor": "user",
+   "at": "2026-11-21T18:06:49Z",
+   "summary": "Added first. Added second. Added order_count. Connected first to order_count. Added plant_count. Connected second to plant_count."
+  }
+ ],
+ "parameters": {},
+ "groups": []
+}

@@ -787,13 +787,12 @@ async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> An
 
 def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/source`` config: the ref must name a source the host provides."""
-    from .nodes import host_sources, missing_source
+    from .nodes import host_sources, lookup_source, missing_source
 
     ref = config.get("ref")
     if not ref:
         return None
-    sources = host_sources()
-    return None if ref in sources else missing_source(ref, sources)
+    return None if lookup_source(ref) is not None else missing_source(ref, host_sources())
 
 
 def _views(spec: Any) -> list[dict[str, Any]]:

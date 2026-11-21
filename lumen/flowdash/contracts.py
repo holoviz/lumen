@@ -271,10 +271,10 @@ class SourceContract:
     """
 
     def _source(self, context: Any) -> Source | None:
-        from .nodes import host_sources
+        from .nodes import lookup_source
 
         ref = context.value
-        return host_sources(context.context).get(ref) if isinstance(ref, str) else None
+        return lookup_source(ref, context.context) if isinstance(ref, str) else None
 
     def expects(self, context: Any) -> dict[str, Any] | None:
         source = self._source(context)

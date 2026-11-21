@@ -102,6 +102,9 @@ PIPELINE_TYPE = _register_port_type(
 
 # The key of the editor context the host puts its sources in, by ref.
 SOURCES_KEY = "lumen.sources"
+# The key of further names of those sources, ``{alias: ref}``, e.g. the positional
+# refs ``lumen serve`` gave before its refs were stable.
+SOURCE_ALIASES_KEY = "lumen.source_aliases"
 
 # Rows a SQL node keeps in memory and a table, filter or data node lets the source
 # return, unless the host sets another ceiling.
@@ -129,8 +132,9 @@ def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
     Returns the ref.
     """
     editor.context.setdefault(SOURCES_KEY, {})[ref] = source
+    aliases = editor.context.get(SOURCE_ALIASES_KEY) or {}
     for node in list(_SOURCE_NODES.get(editor, ())):
-        if node.ref == ref:
+        if ref in (node.ref, aliases.get(node.ref)):
             node._refresh()
     return ref
 
@@ -147,11 +151,24 @@ def bound_sources(editor: Any) -> dict[str, Source]:
 def host_sources(context: Mapping[str, Any] | None = None) -> dict[str, Source]:
     """
     The sources the host lets a dashboard use, by ref, from ``context``
-    or else ``dashboard_context()``. It is the only place a node looks up a
-    host source.
+    or else ``dashboard_context()``. A node looks one up by ref with
+    ``lookup_source``.
     """
     context = dashboard_context() if context is None else context
     return dict(context.get(SOURCES_KEY) or {})
+
+
+def lookup_source(ref: str, context: Mapping[str, Any] | None = None) -> Source | None:
+    """
+    The host source ``ref`` names in ``context`` (or ``dashboard_context()``):
+    the source of that ref, or else of the ref it is an alias of.
+    """
+    context = dashboard_context() if context is None else context
+    sources = host_sources(context)
+    if ref in sources:
+        return sources[ref]
+    alias = (context.get(SOURCE_ALIASES_KEY) or {}).get(ref)
+    return sources.get(alias) if isinstance(alias, str) else None
 
 
 def missing_source(ref: str, sources: Mapping[str, Source]) -> str:
@@ -850,10 +867,10 @@ class SourceNode(LumenNode):
     def _resolve(self) -> Source | None:
         if not self.ref:
             return None
-        sources = host_sources(self._context)
-        if self.ref not in sources:
-            raise ValueError(missing_source(self.ref, sources))
-        return sources[self.ref]
+        source = lookup_source(self.ref, self._context)
+        if source is None:
+            raise ValueError(missing_source(self.ref, host_sources(self._context)))
+        return source
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
