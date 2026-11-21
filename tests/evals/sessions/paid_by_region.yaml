@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taecfc1a3
+      - id: t4d1e2045
         actor: user
-        at: '2026-11-21T18:37:57Z'
+        at: '2026-11-21T19:06:03Z'
         summary: Added data.
-      - id: tbb52bd53
+      - id: tcf5fdfd3
         actor: agent
-        at: '2026-11-21T18:38:01Z'
-        run: run-68ca143acd5b
+        at: '2026-11-21T19:06:03Z'
+        run: run-c7fc5a9b1424
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taecfc1a3
+        origin: t4d1e2045
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tbb52bd53
+        origin: tcf5fdfd3
         config:
           sql: |-
             SELECT
@@ -77,30 +77,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taecfc1a3
+      - id: t4d1e2045
         actor: user
-        at: '2026-11-21T18:37:57Z'
+        at: '2026-11-21T19:06:03Z'
         summary: Added data.
-      - id: tbb52bd53
+      - id: tcf5fdfd3
         actor: agent
-        at: '2026-11-21T18:38:01Z'
-        run: run-68ca143acd5b
+        at: '2026-11-21T19:06:03Z'
+        run: run-c7fc5a9b1424
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: t06b04409
+      - id: ta50d8f29
         actor: agent
-        at: '2026-11-21T18:38:04Z'
-        run: run-4411b8f08905
+        at: '2026-11-21T19:06:03Z'
+        run: run-878c4bfebd98
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taecfc1a3
+        origin: t4d1e2045
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 33.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tbb52bd53
+        origin: tcf5fdfd3
         config:
           sql: |-
             SELECT
