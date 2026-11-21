@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("duckdb")
 
-from panel_flowdash import CheckWarning, FlowDash
+from panel_flowdash import CheckWarning, DashboardSettings, FlowDash
 from panel_flowdash.agent import DashboardOps, OperationError
 from panel_flowdash.ui.node_preview import hook_preview
 
@@ -59,6 +59,12 @@ class TableViewNode(LumenViewNode):
 
     view_type = "table"
 
+    requires_spec = False
+
+    @staticmethod
+    def spec_warnings(spec):
+        return [] if "show_index" in spec else ["Show an index?"]
+
     def _view_params(self, spec):
         return {**spec, "page_size": self.page_size, "sizing_mode": "stretch_both"}
 
@@ -74,8 +80,13 @@ def components(monkeypatch):
     return COMPONENTS_WITH_TESTS
 
 
-def editor_with(source, components):
-    editor = FlowDash(components=components)
+class SchemeSettings(DashboardSettings):
+
+    color_scheme = param.Selector(default="teals", objects=["teals", "blues"])
+
+
+def editor_with(source, components, **editor_params):
+    editor = FlowDash(components=components, **editor_params)
     bind_source(editor, source)
     ops = DashboardOps(editor)
     ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
@@ -101,7 +112,7 @@ def test_register_view_declares_the_pipeline_input_and_spec_config():
 def test_vega_lite_view_keeps_its_registration():
     meta = ViewNode.__panel_app_metadata__
     assert meta.config == ["spec", "debounce"]
-    assert meta.check_config is check_view_config
+    assert meta.check_config({"spec": {"mark": "bar"}}, {}) == check_view_config({"spec": {"mark": "bar"}}, {})
     assert [port["key"] for port in meta.requires] == ["pipeline"]
     assert [port["key"] for port in meta.provides] == ["selection"]
     assert ViewNode.view_type == "vegalite"
@@ -128,6 +139,41 @@ def test_a_view_node_without_a_spec_or_pipeline_waits(source, components):
     assert node._object is None and node._error is None
     assert node.__flowdash_preview__() is None
     assert "Waiting for a pipeline" in node._body().object
+
+    ops.connect("sales.pipeline", "map.pipeline")
+    ops.set_config("map", {"spec": {}})
+    assert node._object is None and node._error is None
+    assert "Waiting for a spec" in node._body().object
+
+
+def test_a_view_node_that_needs_no_spec_draws_with_an_empty_one(source, components):
+    ops = editor_with(source, components)
+    ops.add_node(TABLE_VIEW_ID, {}, name="rows")
+    ops.connect("sales.pipeline", "rows.pipeline")
+
+    node = instance(ops, "rows")
+    assert node.spec == {} and node._error is None
+    assert isinstance(node._object, Table)
+    assert len(node._object.panel.value) == 3
+    preview = node.__flowdash_preview__()
+    assert isinstance(preview, pd.DataFrame) and len(preview) == 3
+    assert not [issue for issue in ops.validate() if issue.severity == "error"]
+
+    check = TableViewNode.__panel_app_metadata__.check_config
+    pipeline = instance(ops, "sales")._object
+    assert check({"spec": {}}, {"pipeline": pipeline}) == ["Show an index?"]
+
+
+def test_only_themed_views_draw_again_when_the_colour_scheme_changes(source, components):
+    ops = editor_with(source, components, settings_class=SchemeSettings)
+    ops.add_node(MAP_ID, {"spec": MAP}, name="map")
+    ops.connect("sales.pipeline", "map.pipeline")
+    ops.add_node(VIEW_ID, {"spec": {"mark": "bar", "encoding": {"x": {"field": "category", "type": "nominal"}}}}, name="chart")
+    ops.connect("sales.pipeline", "chart.pipeline")
+    drawn = {name: instance(ops, name)._object for name in ("map", "chart")}
+    ops.editor.settings.color_scheme = "blues"
+    assert instance(ops, "map")._object is drawn["map"]
+    assert instance(ops, "chart")._object is not drawn["chart"]
 
 
 def test_a_view_node_checks_its_spec_against_the_pipeline(source, components):

@@ -77,8 +77,8 @@ from ..util import get_dataframe_schema
 from .checks import (
     CheckDiagnostic, _engine_error, _read, _unverified, check_chart,
     check_filter_config, check_query, check_source_config, check_sql_config,
-    check_table_config, check_view_config, check_view_spec, forget_probes,
-    pipeline_columns, selection_warnings,
+    check_table_config, check_view_spec, forget_probes, pipeline_columns,
+    selection_warnings,
 )
 from .choices import (
     filter_choices, forget_distinct, metric_choices, metric_presets,
@@ -2235,6 +2235,7 @@ def _view_check(cls: type[LumenViewNode]) -> Any:
     def check_view(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
         return check_view_spec(
             config, inputs, settings=settings, check=cls.check_spec, warnings=cls.spec_warnings,
+            requires_spec=cls.requires_spec,
         )
 
     check_view.__doc__ = f"Check a {cls.__name__} config against its input's columns."
@@ -2276,12 +2277,20 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
     # The type of the Lumen View the node draws, e.g. "vegalite".
     view_type: ClassVar[str] = ""
 
+    # Whether the view needs a spec to draw; a table, say, draws its pipeline with an empty one.
+    requires_spec: ClassVar[bool] = True
+
+    # Whether the view takes the dashboard's colour scheme, so it is drawn again when that changes.
+    themed: ClassVar[bool] = False
+
     _waiting: ClassVar[str] = "Waiting for a pipeline"
+
+    _waiting_for_spec: ClassVar[str] = "Waiting for a spec"
 
     def __init__(self, **params):
         super().__init__(**params)
         settings = getattr(self.editor, "settings", None)
-        if settings is not None and "color_scheme" in settings.param:
+        if self.themed and settings is not None and "color_scheme" in settings.param:
             node = weakref.ref(self)
 
             def follow(*_events):
@@ -2325,11 +2334,11 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         return {"spec": spec, "sizing_mode": "stretch_both"}
 
     def _resolve(self):
-        if self.pipeline is None or not self.spec:
+        if self.pipeline is None or (self.requires_spec and not self.spec):
             return None
         if is_failure(self.pipeline):
             raise ValueError(f"The input failed: {failure_text(self.pipeline)}")
-        spec = self.check_spec(self.spec, pipeline_columns(self.pipeline))
+        spec = self.check_spec(self.spec or {}, pipeline_columns(self.pipeline))
         # The global filters become part of the query, and the rows come through fetch, so
         # the view shares one query with the pipeline's other readers.
         pipeline = self._shown(self.pipeline)
@@ -2345,7 +2354,9 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 
     def _body(self):
         view = self._object
-        return pn.pane.Markdown(self._waiting) if view is None else view.panel
+        if view is not None:
+            return view.panel
+        return pn.pane.Markdown(self._waiting if self.pipeline is None else self._waiting_for_spec)
 
     def _summary(self, spec: dict[str, Any], data: Any) -> str:
         """A line saying what the view shows, e.g. for hosts that draw no chart previews."""
@@ -2383,7 +2394,6 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
     ),
     config=["debounce"],
-    check_config=check_view_config,
     provides=[{"key": "selection", "type": SELECTION_TYPE}],
 )
 class ViewNode(LumenViewNode):
@@ -2402,6 +2412,8 @@ class ViewNode(LumenViewNode):
         What is selected on the chart, by the spec's selection params.""")
 
     view_type = "vegalite"
+
+    themed = True
 
     check_spec = staticmethod(check_chart)
 
