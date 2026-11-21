@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import hvplot.pandas  # noqa: F401  registers .hvplot, used by answer.map
 import nbformat
+import numpy as np
 import pandas as pd
 import panel as pn
 import param
@@ -57,7 +58,9 @@ from ..pipeline import Pipeline
 from ..serializers import Serializer
 from ..sources import Source
 from ..sources.base import BaseSQLSource
-from ..sources.data import input_kinds, joins_grids, read
+from ..sources.data import (
+    input_kinds, joins_grids, mesh_of, read,
+)
 from ..sources.duckdb import DuckDBSource
 from ..sources.xarray_sql import XArraySQLSource
 from ..transforms.sql import SQLLimit
@@ -1500,9 +1503,39 @@ class Answer(param.Parameterized):
         or None otherwise. xarray-sql builds it from the answer's query,
         so it keeps the grid's dimensions instead of a long table.
         """
-        if self.pipeline is None or not isinstance(self.pipeline.source, XArraySQLSource):
+        if self.pipeline is None:
+            return None
+        if (mesh := self._mesh()) is not None:
+            return mesh
+        if not isinstance(self.pipeline.source, XArraySQLSource):
             return None
         return self.pipeline.get_dataset()
+
+    def _mesh(self) -> Any:
+        """
+        The answer's data on its mesh, as an xugrid UgridDataset, when it
+        came from a mesh and keeps the face, node or edge index; those the
+        query left out are NaN.
+        """
+        grids = mesh_of(self.pipeline.source)
+        if not grids:
+            return None
+        df = as_pandas(self.pipeline.data)
+        located = (
+            (grid, dim, size) for grid in grids.values()
+            for dim, size in ((grid.face_dimension, grid.n_face), (grid.node_dimension, grid.n_node), (grid.edge_dimension, grid.n_edge))
+            if dim in df.columns
+        )
+        if (found := next(located, None)) is None:
+            return None
+        grid, dim, size = found
+        # Deferred: xugrid is optional; a mesh source exists only when it is installed
+        import xugrid as xu
+        index = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])] + [dim]
+        # The centres a location's table adds are the mesh's own, not values to draw
+        values = [c for c in df.select_dtypes("number").columns if c not in index and c not in ("x", "y", "lon", "lat")]
+        ds = df.set_index(index)[values].to_xarray().reindex({dim: np.arange(size)})
+        return xu.UgridDataset(ds, grids=[grid])
 
     @property
     def data(self) -> Any:
@@ -1750,7 +1783,24 @@ class Answer(param.Parameterized):
         """
         An interactive map of the answer's geometry: lonboard's when it is
         installed, otherwise hvPlot's, on a basemap when geoviews is installed.
+        An answer about a mesh is drawn on its triangles with hvPlot, or
+        for edge values as points at the edge centres.
         """
+        if self.pipeline is not None and (mesh := self._mesh()) is not None:
+            # Deferred: registers hvPlot's xugrid accessor, and xugrid is optional
+            import hvplot.xugrid  # noqa: F401
+
+            var = mesh[next(iter(mesh.data_vars))]
+            grid = var.ugrid.grid
+            if grid.edge_dimension in var.dims:
+                # hvPlot's xugrid backend draws face and node values, so an edge's is a point at its centre
+                centres = pd.DataFrame({grid.edge_dimension: np.arange(grid.n_edge), "x": grid.edge_x, "y": grid.edge_y})
+                values = var.obj.to_dataframe().reset_index().merge(centres)
+                extra = [dim for dim in var.dims if dim != grid.edge_dimension]
+                return values.hvplot.points("x", "y", c=var.name, groupby=extra or None)
+            # hvPlot's xugrid backend draws a mesh as triangles; filled and
+            # coloured by its value column "z", or only the edges show
+            return var.hvplot(filled=True).opts(edge_color="z", node_size=0)
         gdf = self.gdf
         if gdf is None:
             raise ValueError("This answer has no geometry to map.")

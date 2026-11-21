@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
 import duckdb
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
@@ -262,6 +263,7 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
     sources = []
     remote = False
     mirrors, tables, frames, unnamed, grids, connections = {}, {}, {}, [], {}, []
+    meshes: dict[str, Any] = {}
 
     for src in data:
         name = None
@@ -278,6 +280,24 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
                 unnamed.append(_as_frame(src))
         elif isinstance(src, duckdb.DuckDBPyConnection):
             connections.append((name, src))
+        elif (mesh := _as_mesh(src)) is not None:
+            grid = mesh.ugrid.grid
+            prefix = name or grid.name
+            x, y = ("lon", "lat") if grid.crs is not None and grid.crs.is_geographic else ("x", "y")
+            used = {dim for values in mesh.obj.data_vars.values() for dim in values.dims}
+            for kind, dim in (("faces", grid.face_dimension), ("nodes", grid.node_dimension), ("edges", grid.edge_dimension)):
+                if kind != "faces" and dim not in used:
+                    # Edge centres need the edges worked out; only for edge variables
+                    continue
+                # Each location's centres as a table, so questions can filter
+                # or join on location; its variables join it on the index
+                xs, ys = getattr(grid, f"{kind[:-1]}_x"), getattr(grid, f"{kind[:-1]}_y")
+                frames[f"{prefix}_{kind}"] = pd.DataFrame({dim: np.arange(len(xs)), x: xs, y: ys})
+                meshes[f"{prefix}_{kind}"] = grid
+                for var, values in mesh.obj.data_vars.items():
+                    if dim in values.dims:
+                        grids[str(var)] = mesh.obj[[var]]
+                        meshes[str(var)] = grid
         elif (xr := try_import_xarray()) and isinstance(src, (xr.Dataset, xr.DataArray)):
             if isinstance(src, xr.DataArray):
                 # The variable becomes the table, so the dict key names it
@@ -424,8 +444,42 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
         sources.append(source)
     if grids:
         _add_grids(sources[-1], grids)
+    if meshes:
+        MESHES[sources[-1]] = meshes
 
     return sources
+
+
+def _as_mesh(data: Any) -> Any:
+    """An unstructured mesh as an xugrid UgridDataset, or None for anything else."""
+    if type(data).__module__.split(".")[0] == "xugrid":
+        # Deferred: only reached for xugrid objects, so xugrid is installed
+        import xugrid as xu
+        if isinstance(data, xu.UgridDataArray):
+            return xu.UgridDataset(data.ugrid.to_dataset())
+        return data
+    xr = try_import_xarray()
+    if xr is None or not isinstance(data, xr.Dataset):
+        return None
+    if not any(var.attrs.get("cf_role") == "mesh_topology" for var in data.variables.values()):
+        return None
+    try:
+        # Deferred: xugrid is optional, and only a UGRID mesh needs it
+        import xugrid as xu
+    except ImportError as e:
+        raise ImportError("Reading an unstructured (UGRID) mesh needs xugrid: pip install xugrid") from e
+    return xu.UgridDataset(data)
+
+
+#: The mesh grids behind a source's tables, so an answer can map its faces
+MESHES: WeakKeyDictionary[Source, dict[str, Any]] = WeakKeyDictionary()
+
+
+def mesh_of(source: Source | None) -> dict[str, Any]:
+    """The mesh grids by table of a source read from a mesh, or of one derived from it, which shares its connection."""
+    if not isinstance(source, DuckDBSource):
+        return {}
+    return next((tables for owner, tables in MESHES.items() if owner._connection is source._connection), {})
 
 
 def _add_grids(source: DuckDBSource, grids: dict) -> None:
