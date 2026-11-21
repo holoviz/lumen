@@ -81,24 +81,30 @@ Use the dialect list_tables names for the source.
 # longest legitimate response seen in the evals (about 250 tokens). A response
 # cut off by it is retried, see ``create_agent``. A host that turns reasoning
 # back on must raise or drop the cap, since reasoning tokens count against it.
-# These are the settings of OpenAI's models; other providers' models get
-# OTHER_MODEL_SETTINGS. Model settings are recorded with the eval run
-# settings, not in the agent fingerprint a cassette checks.
+# These are the settings of models from the OpenAI and Azure providers
+# (OPENAI_SYSTEMS); other providers' models get OTHER_MODEL_SETTINGS. Model
+# settings are recorded with the eval run settings, not in the agent
+# fingerprint a cassette checks.
 MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 1000}
 
-# ``openai_reasoning_effort`` only reaches OpenAI's models, so the others turn
-# reasoning off with pydantic-ai's provider-neutral ``thinking``. Anthropic
-# models, directly or through OpenRouter, cache a prompt only below explicit
-# breakpoints, which ``cache`` places after the instructions, the tool
-# definitions and the last message; models that cache by themselves or not at
-# all ignore it. OpenAI's models cache by themselves, and ``cache`` would
-# change their requests to a longer, priced retention.
+# ``openai_reasoning_effort`` only reaches the OpenAI and Azure providers'
+# models, so the others turn reasoning off with pydantic-ai's provider-neutral
+# ``thinking``, including OpenAI's models through OpenRouter, which get the
+# same request this way. A model that cannot stop reasoning (e.g. Gemini Pro
+# or DeepSeek's reasoner) reasons at its lowest effort instead, and its
+# reasoning counts against ``max_tokens``. Anthropic models, directly or
+# through OpenRouter, cache a prompt only below explicit breakpoints, which
+# ``cache`` places after the instructions, the tool definitions and the last
+# message; models that cache by themselves or not at all ignore it. On the
+# OpenAI and Azure providers ``cache`` would change the requests to a longer,
+# priced retention, so their models keep MODEL_SETTINGS.
 OTHER_MODEL_SETTINGS = {"thinking": False, "max_tokens": 1000, "cache": True}
+OPENAI_SYSTEMS = frozenset({"openai", "azure"})
 
 
 def model_settings_for(model: Any) -> dict[str, Any]:
     """The agent's default settings for requests to ``model``, a pydantic-ai model."""
-    return dict(MODEL_SETTINGS if getattr(model, "system", None) == "openai" else OTHER_MODEL_SETTINGS)
+    return dict(MODEL_SETTINGS if getattr(model, "system", None) in OPENAI_SYSTEMS else OTHER_MODEL_SETTINGS)
 
 # Added for an agent that can wire nodes, i.e. with the connect tool.
 SELECTION_INSTRUCTIONS = """
