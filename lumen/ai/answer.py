@@ -1130,7 +1130,10 @@ class Chat(param.Parameterized):
             view = {"type": "table"} if answer.view is None else answer.view.to_spec()
             # Every view reads its answer's result, which the spec holds
             view.pop("pipeline", None)
-            layouts.append({"title": answer.question, "description": answer.value, "pipeline": name, "views": {name: view}})
+            layout = {"title": answer.question, "pipeline": name, "views": {name: view}}
+            if answer.value:
+                layout["description"] = answer.value
+            layouts.append(layout)
         if not layouts:
             raise ValueError("No answer in this conversation has data to put in an app.")
         with config.param.update(serializer="csv"):
