@@ -15,7 +15,7 @@ from .checks import (
     PROBE_TIMEOUT, CheckDiagnostic, check_chart, check_columns,
     check_filter_config, check_query, check_source_config, check_sql_config,
     check_table_config, check_view_config, extract_sql_error_location,
-    forget_probes, pipeline_columns, probe_query,
+    forget_probes, pipeline_columns, probe_query, selection_warnings,
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
@@ -24,7 +24,7 @@ from .nodes import (
     ViewNode, bind_source, bound_sources, compile_sql, effective_limit, fetch,
     filter_condition, filtered_pipeline, forget, host_sources, missing_source,
     pipeline_sql, primed_result, python_value, result_sql, row_ceiling,
-    set_row_ceiling, table_pipeline, unbind_source,
+    selection_conditions, set_row_ceiling, table_pipeline, unbind_source,
 )
 
 # What the package offers as a FlowDash component library, under stable ids
@@ -81,6 +81,8 @@ __all__ = [
     "python_value",
     "result_sql",
     "row_ceiling",
+    "selection_conditions",
+    "selection_warnings",
     "set_row_ceiling",
     "table_pipeline",
     "unbind_source",
