@@ -19,12 +19,13 @@ from .checks import (
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
-    QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ID, SOURCE_TYPE, SOURCES_KEY, SQL_ID,
-    TABLE_ID, VIEW_ID, DataNode, FilterNode, SourceNode, SQLNode, TableNode,
-    ViewNode, bind_source, bound_sources, compile_sql, effective_limit, fetch,
-    filter_condition, filtered_pipeline, forget, host_sources, missing_source,
-    pipeline_sql, primed_result, python_value, result_sql, row_ceiling,
-    selection_conditions, set_row_ceiling, table_pipeline, unbind_source,
+    QUERY_TIMEOUT, RESULT_LIMIT, SOURCE_ALIASES_KEY, SOURCE_ID, SOURCE_TYPE,
+    SOURCES_KEY, SQL_ID, TABLE_ID, VIEW_ID, DataNode, FilterNode, SourceNode,
+    SQLNode, TableNode, ViewNode, bind_source, bound_sources, compile_sql,
+    effective_limit, fetch, filter_condition, filtered_pipeline, forget,
+    host_sources, lookup_source, missing_source, pipeline_sql, primed_result,
+    python_value, result_sql, row_ceiling, selection_conditions,
+    set_row_ceiling, table_pipeline, unbind_source,
 )
 
 # What the package offers as a FlowDash component library, under stable ids
@@ -42,6 +43,7 @@ __all__ = [
     "QUERY_TIMEOUT",
     "RESULT_LIMIT",
     "SOURCES_KEY",
+    "SOURCE_ALIASES_KEY",
     "SOURCE_ID",
     "SOURCE_TYPE",
     "SQL_ID",
@@ -73,6 +75,7 @@ __all__ = [
     "forget",
     "forget_probes",
     "host_sources",
+    "lookup_source",
     "missing_source",
     "pipeline_columns",
     "pipeline_sql",

@@ -11,7 +11,8 @@ from panel_flowdash.agent import DashboardOps
 from panel_flowdash.ui.status_bar import select_on_canvas
 
 from lumen.flowdash import (
-    COMPONENTS, FILTER_ID, PIPELINE_TYPE, SOURCE_ID, SOURCES_KEY, TABLE_ID,
+    COMPONENTS, FILTER_ID, PIPELINE_TYPE, SOURCE_ALIASES_KEY, SOURCE_ID,
+    SOURCES_KEY, TABLE_ID,
 )
 from lumen.flowdash.choices import pipeline_column_types
 from lumen.flowdash.nodes import table_pipeline
@@ -56,6 +57,17 @@ async def test_source_node_offers_the_host_refs(source):
     ops = dashboard(source, DuckDBSource(uri=":memory:", tables=TABLES))
     choices = await config_choices.node_choices(ops.editor, ops._instance("data"))
     assert choices["ref"].values() == ["data", "data_2"]
+
+
+async def test_source_node_offers_the_alias_it_names_a_source_by(source):
+    context = {SOURCES_KEY: {"sales": source}, SOURCE_ALIASES_KEY: {"data": "sales"}}
+    ops = DashboardOps(FlowDash(components=COMPONENTS, context=context, notifications=False))
+    ops.add_node(SOURCE_ID, {"ref": "data"}, name="old")
+    ops.add_node(SOURCE_ID, {"ref": "sales"}, name="new")
+    old = await config_choices.node_choices(ops.editor, ops._instance("old"))
+    new = await config_choices.node_choices(ops.editor, ops._instance("new"))
+    assert old["ref"].values() == ["sales", "data"]
+    assert new["ref"].values() == ["sales"]
 
 
 async def test_table_node_offers_the_tables_of_its_source(source):
