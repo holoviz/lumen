@@ -25,7 +25,6 @@ from ..data.sql import validate_read_only_sql
 from ..data.utils import ANSI_ESCAPE, format_tool_error
 from ..sources.base import BaseSQLSource, QueryTimeoutError
 from ..transforms.sql import SQLLimit
-from .view_settings import VEGA_LITE_SETTINGS
 
 # Seconds the engine may take to plan a query in ``check_sql_config``, waiting
 # for the source's previous probe included.
@@ -871,7 +870,7 @@ def selection_warnings(spec: dict[str, Any]) -> list[str]:
 
 def check_view_spec(
     config: dict[str, Any], inputs: dict[str, Any], *, settings: Any = (),
-    check: Any = None, warnings: Any = None,
+    check: Any = None, warnings: Any = None, requires_spec: bool = True,
 ) -> Any:
     """
     Check the ``spec`` of a view node's config. The problems of the spec's
@@ -879,12 +878,13 @@ def check_view_spec(
     with an input pipeline, ``check(spec, columns)`` checks the spec against
     the pipeline's columns and raises ``ValueError`` saying what to fix, and
     ``warnings(spec)`` lists problems shown with the config without refusing
-    it.
+    it. An empty spec is not checked unless the view draws without one
+    (``requires_spec=False``).
     """
-    pipeline, spec = inputs.get("pipeline"), config.get("spec")
-    if not spec:
+    pipeline, spec = inputs.get("pipeline"), config.get("spec") or {}
+    if not spec and requires_spec:
         return None
-    if settings:
+    if settings and spec:
         try:
             from panel_flowdash.spec_settings import problems
         except ImportError:  # panel-flowdash without spec settings
@@ -909,9 +909,9 @@ def check_view_spec(
 def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     """
     Check a ``Lumen/view`` config with ``check_chart`` against the input's
-    columns, warning about selections a filter cannot apply exactly.
+    columns, warning about selections a filter cannot apply exactly: the
+    check ``register_view`` derives from ``ViewNode``'s hooks.
     """
-    return check_view_spec(
-        config, inputs, settings=VEGA_LITE_SETTINGS, check=check_chart,
-        warnings=selection_warnings,
-    )
+    from .nodes import ViewNode
+
+    return ViewNode.__panel_app_metadata__.check_config(config, inputs)
