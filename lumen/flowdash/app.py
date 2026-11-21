@@ -74,7 +74,7 @@ def build_routes(
         # With a choice every request names its model, so an unusable default must not fail here.
         agent: Any = create_agent(default, **({"defer_model_check": True} if len(models) > 1 else {}))
         params.setdefault("agent_model", default)
-        params.setdefault("agent_models", models if len(models) > 1 else [])
+        params.setdefault("agent_models", models)
     else:
         agent = False
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
