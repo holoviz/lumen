@@ -20,7 +20,7 @@ from ..flowdash import (
 )
 from ..pipeline import Pipeline
 from . import _graph
-from .data import lint, resolve_source
+from .data import lint, resolve_source, source_output
 
 
 def _place(ops, component: str, name: str, config: dict[str, Any], source: str, target: str) -> None:
@@ -68,21 +68,27 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     """Place a SQL node with a read-only query and return a preview of its result; errors come back to fix.
 
     Args:
-        source: Source node.
+        source: Source name from list_tables.
         name: Descriptive snake_case node name.
         sql: One SELECT or WITH query.
     """
     ops = ctx.deps.ops
-    source_node, src = resolve_source(ctx.deps, source)
+    _, src = resolve_source(ctx.deps, source)
     limit = effective_limit(ops.editor, None)
     sql, statement, frame = await _test_run(src, sql, limit)
-    with primed_result(src, statement, frame):
-        _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{source_node}.source", f"{name}.source")
+    port, src, placed = source_output(ctx.deps, source)
     try:
-        frame = _graph.output(ops, name, "data")
-    except OperationError as exc:
-        ops.remove_node(name)
-        raise ModelRetry(str(exc)) from exc
+        with primed_result(src, statement, frame):
+            _place(ops, SQL_ID, name, {"sql": sql, "table": name}, port, f"{name}.source")
+        try:
+            frame = _graph.output(ops, name, "data")
+        except OperationError as exc:
+            ops.remove_node(name)
+            raise ModelRetry(str(exc)) from exc
+    except ModelRetry:
+        if placed is not None:
+            ops.remove_node(placed)
+        raise
     capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
     return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
