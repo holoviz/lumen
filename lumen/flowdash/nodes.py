@@ -68,7 +68,10 @@ from .checks import (
     check_source_config, check_sql_config, check_table_config,
     check_view_config, forget_probes, pipeline_columns,
 )
-from .choices import pipeline_column_types, source_choices, table_choices
+from .choices import (
+    filter_choices, forget_distinct, pipeline_column_types, source_choices,
+    table_choices,
+)
 from .contracts import (
     DATA_ID, FILTER_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SourceContract,
 )
@@ -474,6 +477,7 @@ def forget(pipeline: Any) -> None:
     if isinstance(pipeline, Pipeline):
         _FETCHED.pop(pipeline, None)
         _PREVIEW_FAILED.pop(pipeline, None)
+        forget_distinct(pipeline)
 
 
 def _compute(pipeline: Pipeline, timeout: float) -> Any:
@@ -1093,6 +1097,7 @@ class TableNode(PipelineNode):
     ),
     config=["field"],
     check_config=check_filter_config,
+    config_choices=filter_choices,
     requires=[
         {"key": "pipeline", "type": PIPELINE_TYPE, "required": True},
         {"key": "value", "required": False, "blocking": False},
