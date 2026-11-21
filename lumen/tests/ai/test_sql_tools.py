@@ -494,10 +494,16 @@ def test_is_gridded_for_xarray_and_grids_joined_into_duckdb():
     assert not is_gridded({(joined.name, "plain"): joined})
 
 
-async def _main_prompt(sql_context, test_messages, llm, tool_names=(), **flags):
+async def _main_prompt(sql_context, test_messages, llm, tool_names=None, **flags):
     agent = SQLAgent(llm=llm)
+    context = await sql_context()
+    if tool_names is None:
+        from lumen.ai.actor import _merge_prompt_tools
+        tool_names = [
+            tool.name for tool in (_merge_prompt_tools(agent.llm_tools, [], context) or [])
+        ]
     return await agent._render_prompt(
-        "main", test_messages, await sql_context(), dialect="duckdb", is_final_step=True,
+        "main", test_messages, context, dialect="duckdb", is_final_step=True,
         sql_plan_context=None, active_filters=None, tool_names=list(tool_names), tool_rounds=6, **flags,
     )
 
@@ -506,7 +512,20 @@ async def test_sql_prompt_names_the_gridded_tools_only_when_offered(sql_context,
     # A grid joined into DuckDB is gridded, but the tools only work on an xarray source
     joined = await _main_prompt(sql_context, test_messages, llm, gridded=True)
     assert "## Gridded SQL" in joined and "time_slice" not in joined
-    offered = await _main_prompt(sql_context, test_messages, llm, gridded=True, tool_names=["time_slice"])
+
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    import numpy as np
+
+    from lumen.sources.data import read
+
+    grid = read(xr.Dataset({"t": (("x",), np.arange(3.0))}, coords={"x": [0, 1, 2]}))
+    grid_context = {"source": grid, "sources": [grid], "metaset": None}
+
+    async def make():
+        return grid_context
+
+    offered = await _main_prompt(make, test_messages, llm, gridded=True)
     assert "`time_slice`" in offered
 
 

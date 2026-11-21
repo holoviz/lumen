@@ -1388,6 +1388,9 @@ class SQLAgent(BaseLumenAgent):
 
             metaset = context.get("metaset")
             tool_list = self._sql_tools(sources, metaset)
+            from ..actor import _merge_prompt_tools
+            merged_tools = _merge_prompt_tools(self.llm_tools, tool_list, context) or tool_list
+            tool_names = [tool.name for tool in merged_tools]
             checked: dict[str, t.Any] = {}
             with self.llm.trace() as events:
                 try:
@@ -1409,7 +1412,7 @@ class SQLAgent(BaseLumenAgent):
                         discovery_context=discovery_context,
                         active_filters=self._active_filters(context.get("pipeline")),
                         source_names=sorted({s for s, _ in sources}),
-                        tool_names=[tool.name for tool in tool_list],
+                        tool_names=tool_names,
                         tool_rounds=MAIN_TOOL_ROUNDS,
                         schema_max_tokens=self.schema_max_tokens,
                         schema_tables_shown=self.schema_tables_shown,
