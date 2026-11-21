@@ -51,15 +51,36 @@ def file_stems(data: Sequence[str | os.PathLike | Source]) -> list[str]:
     The stems of the data files in ``data`` that Lumen reads into one
     source, from their file names, whatever directory or URL they are in.
     """
-    stems = []
+    return [stem for name in _file_names(data).values() if (stem := _slug(name.rsplit(".", 1)[0]))]
+
+
+def _file_names(data: Sequence[str | os.PathLike | Source]) -> dict[str, str]:
+    """
+    The table names of the data files in ``data`` by their path: the file
+    name, so a table is named the same from any directory, with ``_2``,
+    ``_3`` and so on for files of one name, in the order of their resolved
+    paths.
+    """
+    found: dict[str, tuple[str, str]] = {}
     for item in data:
         if isinstance(item, Source):
             continue
         text = str(item)
-        path = PurePosixPath(urlsplit(text).path) if "://" in text else Path(text)
-        if path.name.lower().endswith(_DATA_FILES) and (stem := _slug(path.name.rsplit(".", 1)[0])):
-            stems.append(stem)
-    return stems
+        remote = "://" in text
+        path = PurePosixPath(urlsplit(text).path) if remote else Path(text)
+        if path.name.lower().endswith(_DATA_FILES):
+            found[text] = (path.name, text if remote else str(Path(text).resolve()))
+    names: dict[str, str] = {}
+    taken: set[str] = set()
+    for text, (name, _) in sorted(found.items(), key=lambda item: (item[1][0].lower(), item[1][1])):
+        stem, _, suffix = name.rpartition(".")
+        candidate, n = name, 1
+        while candidate.lower() in taken:
+            n += 1
+            candidate = f"{stem}_{n}.{suffix}"
+        names[text] = candidate
+        taken.add(candidate.lower())
+    return {text: names[text] for text in found}
 
 
 def _names(source: Source, stems: Sequence[str]) -> tuple[str, str, list[str]]:
@@ -162,11 +183,17 @@ def source_aliases(refs: Mapping[str, Source], stems: Sequence[str] = ()) -> dic
 def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
     """
     Sources for files, URLs, database connection strings or sources, read
-    as ``lumen serve`` reads them for Lumen AI.
+    as ``lumen serve`` reads them for Lumen AI, except that a data file's
+    table is named by its file name rather than its path (``turbines_csv``
+    for ``turbines.csv`` in any directory), so a query keeps its tables
+    when the same files are served from elsewhere.
     """
     from ..sources.data import resolve_data
 
-    return resolve_data([d if isinstance(d, Source) else str(d) for d in data])
+    names = _file_names(data)
+    return resolve_data([
+        d if isinstance(d, Source) else (names[str(d)], str(d)) if str(d) in names else str(d) for d in data
+    ])
 
 
 def build_routes(
