@@ -370,7 +370,7 @@ def build_routes(
             default, dashboard_tools="layout", **({"defer_model_check": True} if len(models) > 1 else {})
         )
         params.setdefault("agent_model", default)
-        params.setdefault("agent_models", models if len(models) > 1 else [])
+        params.setdefault("agent_models", models)
     else:
         agent = False
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
