@@ -17,31 +17,31 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t37f3517a
+      - id: tc66c334a
         actor: user
-        at: '2026-11-21T22:56:15Z'
+        at: '2026-11-21T23:28:30Z'
         summary: Added data.
-      - id: t326577d6
+      - id: t2e2080a0
         actor: agent
-        at: '2026-11-21T22:56:18Z'
-        run: run-d3a6bc011f4e
+        at: '2026-11-21T23:28:32Z'
+        run: run-bd9cd9062546
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
-        origin: t37f3517a
+        origin: tc66c334a
         config:
           ref: data
         position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: t326577d6
+        origin: t2e2080a0
         config:
           sql: |-
             SELECT
               "category",
               SUM("amount") AS "total_amount"
-            FROM sales
+            FROM "sales"
             WHERE
               NOT "category" IS NULL AND TRIM("category") <> '' AND NOT "amount" IS NULL
             GROUP BY
@@ -59,7 +59,7 @@ turns:
           visible: false
 - question: Show that as a bar chart.
   nodes:
-  - total_amount_by_category_bar_chart
+  - total_amount_by_category_chart
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -73,45 +73,45 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t37f3517a
+      - id: tc66c334a
         actor: user
-        at: '2026-11-21T22:56:15Z'
+        at: '2026-11-21T23:28:30Z'
         summary: Added data.
-      - id: t326577d6
+      - id: t2e2080a0
         actor: agent
-        at: '2026-11-21T22:56:18Z'
-        run: run-d3a6bc011f4e
+        at: '2026-11-21T23:28:32Z'
+        run: run-bd9cd9062546
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: te345834e
+      - id: t6183d79c
         actor: agent
-        at: '2026-11-21T22:56:21Z'
-        run: run-87d2cf4978e1
-        summary: Added total_amount_by_category_bar_chart. Connected total_amount_by_category to total_amount_by_category_bar_chart.
+        at: '2026-11-21T23:28:37Z'
+        run: run-66cfc0b0ca08
+        summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: t37f3517a
+        origin: tc66c334a
         config:
           ref: data
         position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: t326577d6
+        origin: t2e2080a0
         config:
           sql: |-
             SELECT
               "category",
               SUM("amount") AS "total_amount"
-            FROM sales
+            FROM "sales"
             WHERE
               NOT "category" IS NULL AND TRIM("category") <> '' AND NOT "amount" IS NULL
             GROUP BY
               "category"
           table: total_amount_by_category
         position: [380.0, 0.0]
-      total_amount_by_category_bar_chart:
+      total_amount_by_category_chart:
         component: Lumen/view
-        origin: te345834e
+        origin: t6183d79c
         config:
           spec:
             mark:
@@ -125,20 +125,15 @@ turns:
                 field: total_amount
                 type: quantitative
                 title: Total amount
-              tooltip:
-                - field: category
-                  type: nominal
-                - field: total_amount
-                  type: quantitative
         position: [760.0, 11.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
       - from: total_amount_by_category.pipeline
-        to: total_amount_by_category_bar_chart.pipeline
+        to: total_amount_by_category_chart.pipeline
     layout:
       tiles:
-        - node: total_amount_by_category_bar_chart
+        - node: total_amount_by_category_chart
           width: 100.0
         - node: data
           visible: false

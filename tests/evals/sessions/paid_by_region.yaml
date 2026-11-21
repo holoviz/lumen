@@ -17,30 +17,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t4869e67d
+      - id: t40838eb5
         actor: user
-        at: '2026-11-21T22:58:05Z'
+        at: '2026-11-21T23:26:40Z'
         summary: Added data.
-      - id: t071a5cc2
+      - id: td34ac44c
         actor: agent
-        at: '2026-11-21T22:58:10Z'
-        run: run-214c01cf2a94
+        at: '2026-11-21T23:26:45Z'
+        run: run-163aab4424ae
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: t4869e67d
+        origin: t40838eb5
         config:
           ref: data
         position: [0.0, 22.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t071a5cc2
+        origin: td34ac44c
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS total_paid_order_amount
+              SUM(o."amount") AS "total_paid_order_amount"
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
@@ -61,7 +61,7 @@ turns:
           visible: false
 - question: Only keep the west region.
   nodes:
-  - paid_order_amount_by_region
+  - west_paid_order_amount
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -75,35 +75,52 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t4869e67d
+      - id: t40838eb5
         actor: user
-        at: '2026-11-21T22:58:05Z'
+        at: '2026-11-21T23:26:40Z'
         summary: Added data.
-      - id: t071a5cc2
+      - id: td34ac44c
         actor: agent
-        at: '2026-11-21T22:58:10Z'
-        run: run-214c01cf2a94
+        at: '2026-11-21T23:26:45Z'
+        run: run-163aab4424ae
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: t08c8c486
+      - id: t908cbfab
         actor: agent
-        at: '2026-11-21T22:58:12Z'
-        run: run-610dc2db84db
-        summary: Changed the config of paid_order_amount_by_region.
+        at: '2026-11-21T23:26:49Z'
+        run: run-1f54462b64ff
+        summary: Added west_paid_order_amount. Connected data to west_paid_order_amount.
     nodes:
       data:
         component: Lumen/source
-        origin: t4869e67d
+        origin: t40838eb5
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 118.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t071a5cc2
+        origin: td34ac44c
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS total_paid_order_amount
+              SUM(o."amount") AS "total_paid_order_amount"
+            FROM orders AS o
+            JOIN customers AS c
+              ON o."customer_id" = c."customer_id"
+            WHERE
+              o."status" = 'paid' AND TRIM(c."region") <> ''
+            GROUP BY
+              c."region"
+          table: paid_order_amount_by_region
+        position: [380.0, 0.0]
+      west_paid_order_amount:
+        component: Lumen/sql
+        origin: t908cbfab
+        config:
+          sql: |-
+            SELECT
+              c."region",
+              SUM(o."amount") AS "total_paid_order_amount"
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
@@ -111,14 +128,18 @@ turns:
               o."status" = 'paid' AND TRIM(c."region") <> '' AND c."region" = 'west'
             GROUP BY
               c."region"
-          table: paid_order_amount_by_region
-        position: [380.0, 0.0]
+          table: west_paid_order_amount
+        position: [380.0, 192.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
+      - from: data.source
+        to: west_paid_order_amount.source
     layout:
       tiles:
         - node: data
           visible: false
         - node: paid_order_amount_by_region
+          visible: false
+        - node: west_paid_order_amount
           visible: false

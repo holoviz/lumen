@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tf0966e58
+      - id: t43280e11
         actor: user
-        at: '2026-11-21T22:56:34Z'
+        at: '2026-11-21T23:26:15Z'
         summary: Added data.
-      - id: t723e0d02
+      - id: tb455422a
         actor: agent
-        at: '2026-11-21T22:56:36Z'
-        run: run-b4d59c0b35bb
+        at: '2026-11-21T23:26:18Z'
+        run: run-fc45334b2260
         summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: tf0966e58
+        origin: t43280e11
         config:
           ref: data
         position: [0.0, 22.0]
       top_customer_paid_orders:
         component: Lumen/sql
-        origin: t723e0d02
+        origin: tb455422a
         config:
           sql: |-
             SELECT
