@@ -79,6 +79,11 @@ WRAPPED = {
     # Passed through a CTE first, still unshifted
     "WITH c AS (SELECT lat, lon, air - 273.15 AS t FROM air) "
     "SELECT s.name FROM states s JOIN c ON ST_Intersects(s.geometry, ST_MakeEnvelope(c.lon - 1, c.lat - 1, c.lon + 1, c.lat + 1))",
+    "SELECT s.name FROM air a JOIN states s ON ST_Contains(s.geometry, ST_MakePoint(a.lon, a.lat))",
+    "SELECT s.name FROM air a JOIN states s ON ST_Within(ST_Point2D(a.lon, a.lat), s.geometry)",
+    # A box test against each state's extent
+    "SELECT s.name FROM air a JOIN states s ON a.lon BETWEEN ST_XMin(s.geometry) AND ST_XMax(s.geometry)",
+    "SELECT s.name FROM air a JOIN states s ON a.lon >= ST_XMin(s.geometry) AND a.lat <= ST_YMax(s.geometry)",
 ])
 def test_review_finds_a_0_to_360_longitude_against_geometry(sql):
     (finding,) = review_sql(sql, WRAPPED)
@@ -90,6 +95,7 @@ def test_review_finds_a_0_to_360_longitude_against_geometry(sql):
     "WITH c AS (SELECT lat, CASE WHEN lon > 180 THEN lon - 360 ELSE lon END AS lon FROM air) "
     "SELECT s.name FROM c JOIN states s ON ST_Intersects(ST_MakeEnvelope(c.lon - 1, c.lat - 1, c.lon + 1, c.lat + 1), s.geometry)",
     "SELECT ST_Point(lon, lat) FROM air",
+    "SELECT s.name FROM air a JOIN states s ON a.lon - 360 BETWEEN ST_XMin(s.geometry) AND ST_XMax(s.geometry)",
 ])
 def test_review_leaves_shifted_longitudes_and_grids_alone(sql):
     assert review_sql(sql, WRAPPED) == []

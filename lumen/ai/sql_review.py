@@ -222,6 +222,10 @@ def _unit_mismatches(tree: exp.Expression, tables: dict[str, TableFacts]) -> lis
     return findings
 
 
+#: Functions that build a point, longitude first
+_POINTS = ("ST_POINT", "STPOINT", "ST_MAKEPOINT", "ST_POINT2D", "ST_POINT3D", "ST_POINT4D")
+
+
 def _unshifted_longitudes(tree: exp.Expression, tables: dict[str, TableFacts]) -> list[str]:
     """
     A point or cell envelope built from a 0 to 360 grid longitude and used
@@ -242,29 +246,31 @@ def _unshifted_longitudes(tree: exp.Expression, tables: dict[str, TableFacts]) -
         (name, col) for name, facts in tables.items()
         for col, (_, high) in facts.lon_range.items() if high > 180
     }
-    findings, seen = [], set()
+    lons = []
     for node in tree.find_all(exp.Func):
         # Newer sqlglot parses ST_Point into its own expression (key stpoint), older as Anonymous
         name = _name(node) or node.key.upper()
-        if name in ("ST_POINT", "STPOINT"):
+        if name in _POINTS:
             # Longitude is the first argument
-            lons = [node.expressions[0] if isinstance(node, exp.Anonymous) else node.this]
+            lons.append(node.expressions[0] if isinstance(node, exp.Anonymous) else node.this)
         elif name == "ST_MAKEENVELOPE":
             # (min_lon, min_lat, max_lon, max_lat)
-            lons = _args(node)[::2]
-        else:
+            lons += _args(node)[::2]
+        elif name in ("ST_XMIN", "ST_XMAX") and isinstance(node.parent, (exp.Between, exp.Binary)):
+            # A box test against a geometry's extent, e.g. lon BETWEEN ST_XMin(geom) AND ST_XMax(geom)
+            lons += [side for side in node.parent.iter_expressions() if side is not node]
+    findings, seen = [], set()
+    for arg in lons:
+        if "360" in arg.sql():
             continue
-        for arg in lons:
-            if "360" in arg.sql():
-                continue
-            for column in arg.find_all(exp.Column):
-                table = aliases.get(column.table) if column.table else None
-                hit = [(t, c) for t, c in wrapped if c == column.name and (table is None or t == table)]
-                if hit and column.name not in seen and not (column.table and table is None):
-                    seen.add(column.name)
-                    findings.append(
-                        f"{hit[0][0]}.{column.name} runs from 0 to 360 but the geometry uses -180 to 180, so this "
-                        f"point or cell matches no polygon and the query returns no rows. Use CASE WHEN {column.name} > 180 "
-                        f"THEN {column.name} - 360 ELSE {column.name} END in place of {column.name}."
-                    )
+        for column in arg.find_all(exp.Column):
+            table = aliases.get(column.table) if column.table else None
+            hit = [(t, c) for t, c in wrapped if c == column.name and (table is None or t == table)]
+            if hit and column.name not in seen and not (column.table and table is None):
+                seen.add(column.name)
+                findings.append(
+                    f"{hit[0][0]}.{column.name} runs from 0 to 360 but the geometry uses -180 to 180, so this "
+                    f"point or cell matches no polygon and the query returns no rows. Use CASE WHEN {column.name} > 180 "
+                    f"THEN {column.name} - 360 ELSE {column.name} END in place of {column.name}."
+                )
     return findings
