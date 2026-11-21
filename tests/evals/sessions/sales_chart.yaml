@@ -5,7 +5,7 @@ turns:
   nodes:
   - total_amount_by_category
   dashboard: |
-    flowdash: 2
+    flowdash: 1
     title: Untitled
     settings:
       description: ''
@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t01f6d567
+      - id: tdeb06f46
         actor: user
-        at: '2026-11-18T22:31:08Z'
+        at: '2026-11-21T18:35:30Z'
         summary: Added data.
-      - id: t90e9e8ff
+      - id: td632f3dc
         actor: agent
-        at: '2026-11-18T22:31:12Z'
-        run: run-2bb65aa42316
+        at: '2026-11-21T18:35:33Z'
+        run: run-b30961a449dc
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
-        origin: t01f6d567
+        origin: tdeb06f46
         config:
           ref: data
-        position: [0, 0]
+        position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: t90e9e8ff
+        origin: td632f3dc
         config:
           sql: |-
             SELECT
@@ -47,15 +47,21 @@ turns:
             GROUP BY
               "category"
           table: total_amount_by_category
-        position: [350, 0]
+        position: [380.0, 0.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
+    layout:
+      tiles:
+        - node: data
+          visible: false
+        - node: total_amount_by_category
+          visible: false
 - question: Show that as a bar chart.
   nodes:
-  - total_amount_by_category_bar_chart
+  - total_amount_by_category_chart
   dashboard: |
-    flowdash: 2
+    flowdash: 1
     title: Untitled
     settings:
       description: ''
@@ -67,30 +73,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t01f6d567
+      - id: tdeb06f46
         actor: user
-        at: '2026-11-18T22:31:08Z'
+        at: '2026-11-21T18:35:30Z'
         summary: Added data.
-      - id: t90e9e8ff
+      - id: td632f3dc
         actor: agent
-        at: '2026-11-18T22:31:12Z'
-        run: run-2bb65aa42316
+        at: '2026-11-21T18:35:33Z'
+        run: run-b30961a449dc
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: t34bc36c2
+      - id: t9ec79d80
         actor: agent
-        at: '2026-11-18T22:31:16Z'
-        run: run-6fe16dedbc06
-        summary: Added total_amount_by_category_bar_chart. Connected total_amount_by_category to total_amount_by_category_bar_chart.
+        at: '2026-11-21T18:35:35Z'
+        run: run-70bcc0a8c556
+        summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: t01f6d567
+        origin: tdeb06f46
         config:
           ref: data
-        position: [0, 0]
+        position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: t90e9e8ff
+        origin: td632f3dc
         config:
           sql: |-
             SELECT
@@ -102,10 +108,10 @@ turns:
             GROUP BY
               "category"
           table: total_amount_by_category
-        position: [350, 0]
-      total_amount_by_category_bar_chart:
+        position: [380.0, 0.0]
+      total_amount_by_category_chart:
         component: Lumen/view
-        origin: t34bc36c2
+        origin: t9ec79d80
         config:
           spec:
             mark: bar
@@ -118,9 +124,17 @@ turns:
                 field: total_amount
                 type: quantitative
                 title: Total amount
-        position: [700, 0]
+        position: [760.0, 22.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
       - from: total_amount_by_category.pipeline
-        to: total_amount_by_category_bar_chart.pipeline
+        to: total_amount_by_category_chart.pipeline
+    layout:
+      tiles:
+        - node: total_amount_by_category_chart
+          width: 100.0
+        - node: data
+          visible: false
+        - node: total_amount_by_category
+          visible: false

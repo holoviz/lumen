@@ -5,7 +5,7 @@ turns:
   nodes:
   - top_customer_paid_orders
   dashboard: |
-    flowdash: 2
+    flowdash: 1
     title: Untitled
     settings:
       description: ''
@@ -17,42 +17,48 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t15590959
+      - id: t85613444
         actor: user
-        at: '2026-11-18T22:31:27Z'
+        at: '2026-11-21T18:35:45Z'
         summary: Added data.
-      - id: t94c6a56f
+      - id: t8fcf5db9
         actor: agent
-        at: '2026-11-18T22:31:30Z'
-        run: run-bafe56b7f197
+        at: '2026-11-21T18:35:48Z'
+        run: run-8025415c72cb
         summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: t15590959
+        origin: t85613444
         config:
           ref: data
-        position: [0, 0]
+        position: [0.0, 22.0]
       top_customer_paid_orders:
         component: Lumen/sql
-        origin: t94c6a56f
+        origin: t8fcf5db9
         config:
           sql: |-
             SELECT
-              customers."customer",
-              COUNT(orders."order_id") AS paid_order_count
-            FROM customers
-            JOIN orders
-              ON customers."customer_id" = orders."customer_id"
+              c."customer",
+              COUNT(*) AS paid_order_count
+            FROM customers AS c
+            JOIN orders AS o
+              ON c."customer_id" = o."customer_id"
             WHERE
-              orders."status" = 'paid' AND TRIM(customers."customer") <> ''
+              o."status" = 'paid'
             GROUP BY
-              customers."customer"
+              c."customer"
             ORDER BY
               paid_order_count DESC
             LIMIT 1
           table: top_customer_paid_orders
-        position: [350, 0]
+        position: [380.0, 0.0]
     edges:
       - from: data.source
         to: top_customer_paid_orders.source
+    layout:
+      tiles:
+        - node: data
+          visible: false
+        - node: top_customer_paid_orders
+          visible: false
