@@ -19,7 +19,7 @@ from lumen.agent.assistant import (
     model_settings_for,
 )
 from lumen.agent.authoring import (
-    add_chart, add_sql, add_text, check_text,
+    add_chart, add_sql, add_table, add_text, check_text,
 )
 from lumen.agent.data import (
     check_data, data_toolset, describe_table, distinct_values, list_tables,
@@ -27,8 +27,8 @@ from lumen.agent.data import (
 )
 from lumen.agent.headless import source_node_name
 from lumen.flowdash import (
-    FILTER_ID, SOURCE_ALIASES_KEY, SOURCE_ID, SQL_ID, TABLE_ID, bind_source,
-    check_chart,
+    FILTER_ID, SOURCE_ALIASES_KEY, SOURCE_ID, SQL_ID, TABLE_ID, TABLE_VIEW_ID,
+    bind_source, check_chart,
 )
 from lumen.sources.duckdb import DuckDBSource
 
@@ -200,7 +200,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_metric", "add_sql", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
+    assert tools == ["add_chart", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
 async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
@@ -941,6 +941,53 @@ async def test_list_tables_shortens_long_text(ctx):
     assert line == f"- intro (markdown; text): '{shown[:NODE_TEXT_CHARS]} [... {len(shown) - NODE_TEXT_CHARS} more characters]'"
     detail = await list_tables(ctx, node="intro")
     assert detail == f"- intro (markdown; text): {shown!r}"
+
+
+async def test_add_table_shows_a_nodes_rows_and_checks_its_spec(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+
+    assert add_table(ctx, "paid_by_region", "paid_rows") == "Placed table 'paid_rows' of 'paid_by_region' (default options)."
+    assert "from: paid_by_region.pipeline\n    to: paid_rows.pipeline" in session.graph()
+    spec = {"sorters": [{"field": "total", "dir": "desc"}], "formatters": {"total": "money"}}
+    placed = add_table(ctx, "paid_by_region", "sorted_rows", spec)
+    assert placed == "Placed table 'sorted_rows' of 'paid_by_region' (formatters, sorters)."
+    assert _graph.config_of(session.ops, "sorted_rows")["spec"] == spec
+    with pytest.raises(ModelRetry, match="No column\\(s\\) 'revenue'"):
+        add_table(ctx, "paid_by_region", "other", {"hidden_columns": ["revenue"]})
+    with pytest.raises(ModelRetry, match="No node 'nothing'"):
+        add_table(ctx, "nothing", "other")
+    assert "other" not in _graph.nodes(session.ops)
+
+
+async def test_list_tables_lists_any_lumen_view_node(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_chart(ctx, "paid_by_region", "paid_chart", BAR)
+    add_table(ctx, "paid_by_region", "paid_rows", {"page_size": 20})
+    text = await list_tables(ctx)
+    assert '- paid_rows (Lumen table view of paid_by_region; spec {"page_size":20})' in text
+    assert "- paid_chart (chart of paid_by_region; bar; x=region, y=total)" in text
+    assert await list_tables(ctx, node="paid_rows") == '- paid_rows (Lumen table view of paid_by_region; spec {"page_size":20})'
+
+
+async def test_set_config_checks_a_table_spec_against_its_columns():
+    model, requests = script(
+        [ToolCallPart("set_config", {"name": "rows", "config": {"spec": {"frozen_columns": ["revenue"]}}}, tool_call_id="s1")],
+        [ToolCallPart("set_config", {"name": "rows", "config": {"spec": {"frozen_columns": ["region"]}}}, tool_call_id="s2")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        _filtered_customers(session)
+        add_table(SimpleNamespace(deps=session.deps), "by_region", "rows")
+        await session.ask("Freeze the region column")
+        config = _graph.config_of(session.ops, "rows")
+        component = _graph.component_of(session.ops, "rows")
+    finally:
+        session.close()
+
+    (part,) = requests[1].parts
+    assert "revenue" in str(part.content) and part.outcome == "retried"
+    assert component == TABLE_VIEW_ID and config["spec"] == {"frozen_columns": ["region"]}
 
 
 @pytest.fixture

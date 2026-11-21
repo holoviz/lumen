@@ -1,4 +1,4 @@
-"""Tools that validate a query or chart before placing it on the dashboard as a node."""
+"""Tools that validate a query, chart or table before placing it on the dashboard as a node."""
 from __future__ import annotations
 
 import dataclasses
@@ -15,7 +15,7 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    METRIC_ID, QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query,
+    METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID, check_query,
     effective_limit, host_metrics, pipeline_columns, primed_result, result_sql,
     selection_warnings,
 )
@@ -99,6 +99,31 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 
+def place_view(ctx: RunContext[FlowDashDeps], component: str, data: str, name: str,
+               config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Place the Lumen view node ``component`` on the pipeline of node ``data``
+    with ``config``, its spec checked by the view's ``check_spec`` against
+    the pipeline's columns first, and return the config placed. A problem
+    comes back as ``ModelRetry`` for the model to fix.
+    """
+    ops = ctx.deps.ops
+    port = _upstream_port(ops, data)
+    try:
+        pipeline = _graph.output(ops, data, port)
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    if not isinstance(pipeline, Pipeline):
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to show; pass the name of a SQL, metric, table or filter node.")
+    view = _graph.view_class(component)
+    try:
+        config = {**config, "spec": view.check_spec(config.get("spec") or {}, pipeline_columns(pipeline))}
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+    _place(ops, component, name, config, f"{data}.{port}", f"{name}.pipeline")
+    return config
+
+
 async def add_metric(
     ctx: RunContext[FlowDashDeps], metric: str, name: str, measures: list[str] | None = None,
     dimensions: list[str] | None = None, grain: str | None = None, parameters: dict[str, Any] | None = None,
@@ -168,22 +193,25 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
             width and height so the chart fills its tile and follows resizes; set
             them only when the user asks for a fixed size.
     """
-    ops = ctx.deps.ops
-    port = _upstream_port(ops, data)
-    try:
-        pipeline = _graph.output(ops, data, port)
-    except OperationError as exc:
-        raise ModelRetry(str(exc)) from exc
-    if not isinstance(pipeline, Pipeline):
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, metric, table or filter node.")
-    try:
-        spec = check_chart(spec, pipeline_columns(pipeline))
-    except ValueError as exc:
-        raise ModelRetry(str(exc)) from exc
-    _place(ops, VIEW_ID, name, {"spec": spec}, f"{data}.{port}", f"{name}.pipeline")
+    spec = place_view(ctx, VIEW_ID, data, name, {"spec": spec})["spec"]
     placed = f"Placed chart {name!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
     notes = selection_warnings(spec)
     return placed + "".join(f"\nNote: {note}" for note in notes)
+
+
+def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None) -> str:
+    """Place a table showing a SQL, table or filter node's rows, when the user asks to see rows rather than a chart.
+
+    Args:
+        data: SQL, table or filter node to show.
+        name: Descriptive snake_case node name.
+        spec: Optional table options naming the node's columns: page_size, frozen_columns,
+            hidden_columns, sorters ([{"field": ..., "dir": "desc"}]), titles, widths and
+            formatters ({column: "money" | "progress" | "star" | "tickCross" | ...}).
+    """
+    config = place_view(ctx, TABLE_VIEW_ID, data, name, {"spec": spec or {}})
+    options = ", ".join(sorted(config["spec"])) or "default options"
+    return f"Placed table {name!r} of {data!r} ({options})."
 
 
 def _upstream_port(ops, data: str) -> str:
@@ -191,7 +219,7 @@ def _upstream_port(ops, data: str) -> str:
         raise ModelRetry(f"No node {data!r}.")
     port = _graph.pipeline_port(ops, data)
     if port is None:
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, metric, table or filter node.")
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to show; pass the name of a SQL, metric, table or filter node.")
     return port
 
 
@@ -259,17 +287,18 @@ def add_text(
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_metric, add_chart and add_text."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_text], max_retries=3)
+    """The authoring tools: add_sql, add_metric, add_chart, add_table and add_text."""
+    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_text], max_retries=3)
 
 
 class CheckedConfig(AbstractCapability[FlowDashDeps]):
     """
-    Checks what ``set_config`` gives a Lumen SQL or chart node as add_sql and
+    Checks what ``set_config`` gives a Lumen SQL or view node as add_sql and
     add_chart check it, before the node changes: SQL is cleaned, checked and
-    run, and a chart spec is checked against its data's columns, and the
-    text of a heading, Markdown or divider as add_text checks it. A problem
-    comes back for the model to fix, and a changed query reports its result.
+    run, and a view's spec is checked by its ``check_spec`` against its
+    data's columns, and the text of a heading, Markdown or divider as
+    add_text checks it. A problem comes back for the model to fix, and a
+    changed query reports its result.
     """
 
     async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
@@ -281,7 +310,7 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
         if component in TEXT_FIELDS:
             check_text(ops, component, config, name)
             return await handler(args)
-        if component == VIEW_ID and "spec" in config:
+        if (view := _graph.view_class(component)) is not None and "spec" in config:
             data = _graph.upstream(ops, name)
             port = _graph.pipeline_port(ops, data) if data else None
             try:
@@ -290,7 +319,7 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
                 pipeline = None
             if isinstance(pipeline, Pipeline):
                 try:
-                    config = {**config, "spec": check_chart(config["spec"], pipeline_columns(pipeline))}
+                    config = {**config, "spec": view.check_spec(config["spec"], pipeline_columns(pipeline))}
                 except ValueError as exc:
                     raise ModelRetry(str(exc)) from exc
             return await handler({**args, "config": config})
