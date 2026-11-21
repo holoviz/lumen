@@ -17,11 +17,12 @@ from ..ai.schemas import Metaset, get_metaset
 from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..flowdash import (
-    DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_ID,
-    VIEW_ID, bound_sources, check_query, host_metrics, listed_tables,
-    lookup_source,
+    AGGREGATE_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SELECT_ID,
+    SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, bound_sources, check_query,
+    host_metrics, listed_tables, lookup_source,
 )
 from ..flowdash.metrics import Metric
+from ..flowdash.transforms import TRANSFORM_COMPONENTS
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
 from . import _graph
@@ -209,11 +210,28 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
         except OperationError as exc:
             columns = str(exc)
         return f"- {name} (metric {config.get('metric')!r}; {'; '.join([*picked, columns])})"
+    if component in TRANSFORM_COMPONENTS:
+        return f"- {name} ({_transform_text(component, config)} of {_graph.upstream(ops, name)})"
     return None
 
 
+def _transform_text(component: str, config: dict) -> str:
+    def names(key: str) -> str:
+        return ", ".join(map(repr, config.get(key) or [])) or "nothing"
+
+    if component == AGGREGATE_ID:
+        by = f" by {names('by')}" if config.get("by") else ""
+        return f"{config.get('method') or 'sum'} of {names('columns')}{by}"
+    if component == SORT_ID:
+        limit = f", first {config['limit']}" if config.get("limit") else ""
+        return f"sorted by {names('by')}{' descending' if config.get('descending') else ''}{limit}"
+    if component == SELECT_ID:
+        return f"columns {names('columns')}"
+    return f"column {config.get('column')!r} = {config.get('expression')}"
+
+
 # The nodes list_tables shows besides the sources.
-LISTED = (SQL_ID, METRIC_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *_graph.TEXT_FIELDS)
+LISTED = (SQL_ID, METRIC_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *TRANSFORM_COMPONENTS, *_graph.TEXT_FIELDS)
 
 
 def _field(name: str, description: str, *notes: str | None) -> str:
@@ -252,11 +270,13 @@ def metrics_listing(ops) -> str | None:
 
 def placed_nodes(ops) -> str | None:
     """
-    The SQL, chart, table, filter, data and text nodes on the dashboard, most recently placed first:
-    each SQL node's query on one line, cut after ``NODE_SQL_CHARS``
-    characters, and its result's columns, and each chart's mark, data node
-    and encoded fields, and the table, field or input of each table,
-    filter and data node and the start of each text's content, so the agent can change a node it did not place
+    The SQL, metric, chart, table, filter, data, transform and text nodes
+    on the dashboard, most recently placed first: each SQL node's query on
+    one line, cut after ``NODE_SQL_CHARS`` characters, and its result's
+    columns, each chart's mark, data node and encoded fields, the table,
+    field or input of each table, filter and data node, the step of each
+    transform node and the start of each text's content, so the agent can
+    change a node it did not place
     itself. At most ``NODES_SHOWN`` are listed, followed by how many more
     there are.
     """
