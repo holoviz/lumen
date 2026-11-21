@@ -19,7 +19,10 @@ from lumen.agent.data import (
     run_sql,
 )
 from lumen.agent.headless import source_node_name
-from lumen.flowdash import FILTER_ID, TABLE_ID, check_chart
+from lumen.flowdash import (
+    FILTER_ID, SOURCE_ALIASES_KEY, SOURCE_ID, SQL_ID, TABLE_ID, bind_source,
+    check_chart,
+)
 from lumen.sources.duckdb import DuckDBSource
 
 TABLES = {
@@ -92,7 +95,7 @@ async def test_run_sql_previews_and_refuses_writes(ctx, session):
 
 async def test_unknown_source_with_several_source_nodes(ctx, session):
     session.ops.add_node("Lumen/source", {"ref": "data"}, name="other")
-    with pytest.raises(ModelRetry, match="The source nodes are: data, other"):
+    with pytest.raises(ModelRetry, match="The sources are: data, other"):
         await list_tables(ctx, "orders")
 
 
@@ -580,3 +583,92 @@ async def test_set_config_checks_a_chart_fed_by_a_filter_node():
     (part,) = requests[1].parts
     assert "revenue" in str(part.content) and part.outcome == "retried"
     assert spec == REGION_COUNT
+
+
+PLANTS = {"plants": "SELECT * FROM (VALUES ('x', 1), ('y', 2)) AS t(plant, mw)"}
+ROW_COUNTS = "SELECT 'customers' AS \"table\", COUNT(*) AS n FROM customers UNION ALL SELECT 'orders', COUNT(*) FROM orders"
+
+
+@pytest.fixture
+def empty(session):
+    """A dashboard without source nodes whose app provides ``data`` and ``energy``, as ``lumen serve`` does."""
+    session.ops.remove_node("data")
+    bind_source(session.editor, DuckDBSource(uri=":memory:", tables=PLANTS), "energy")
+    return session
+
+
+async def test_tools_read_the_apps_sources_without_source_nodes(ctx, empty):
+    overview = await list_tables(ctx)
+    assert "2 sources; pass one as source for its column stats:" in overview
+    assert "- data (duckdb SQL): customers, orders" in overview
+    assert "- energy (duckdb SQL): plants" in overview
+
+    listed = await list_tables(ctx, "energy")
+    assert listed.startswith("1 table(s) in source 'energy' (duckdb SQL; other sources: data):")
+    assert "plant" in await describe_table(ctx, "plants")
+    assert "'paid': 2" in await distinct_values(ctx, "orders", "status")
+    assert "1 rows x 1 columns" in await run_sql(ctx, "SELECT COUNT(*) AS n FROM plants", "energy")
+    assert empty.ops.nodes() == []
+
+
+async def test_add_sql_places_a_source_node_for_an_apps_source(ctx, empty):
+    await add_sql(ctx, "energy", "plant_count", "SELECT COUNT(*) AS n FROM plants")
+    await add_sql(ctx, "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
+
+    nodes = {node["name"]: node["component"] for node in empty.ops.nodes()}
+    assert nodes == {"energy": SOURCE_ID, "plant_count": SQL_ID, "plant_total": SQL_ID}
+    assert _graph.config_of(empty.ops, "energy") == {"ref": "energy"}
+    assert _graph.upstream(empty.ops, "plant_count") == _graph.upstream(empty.ops, "plant_total") == "energy"
+    assert _graph.output(empty.ops, "plant_total", "data")["mw"].tolist() == [3]
+    listed = await list_tables(ctx, "energy")
+    assert "other sources: data" in listed and "plant_count (SQL" in listed
+
+
+async def test_add_sql_reuses_the_source_node_of_an_apps_source(ctx, empty):
+    empty.ops.add_node(SOURCE_ID, {"ref": "energy"}, name="power")
+    await add_sql(ctx, "energy", "plant_count", "SELECT COUNT(*) AS n FROM plants")
+    assert _graph.upstream(empty.ops, "plant_count") == "power"
+    assert "- power (duckdb SQL): plants" in await list_tables(ctx)
+
+
+async def test_add_sql_places_no_source_node_when_placing_fails(ctx, empty):
+    with pytest.raises(ModelRetry, match="Binder Error"):
+        await add_sql(ctx, "energy", "broken", "SELECT watts FROM plants")
+    empty.ops.add_node(SQL_ID, {}, name="taken")
+    with pytest.raises(ModelRetry):
+        await add_sql(ctx, "energy", "taken", "SELECT COUNT(*) AS n FROM plants")
+    assert [node["name"] for node in empty.ops.nodes()] == ["taken"]
+
+
+async def test_source_node_placed_for_an_apps_source_avoids_taken_names(ctx, empty):
+    empty.ops.add_node(SQL_ID, {}, name="energy")
+    await add_sql(ctx, "energy", "plant_count", "SELECT COUNT(*) AS n FROM plants")
+    assert _graph.upstream(empty.ops, "plant_count") == "energy_source"
+    assert _graph.config_of(empty.ops, "energy_source") == {"ref": "energy"}
+
+
+async def test_add_sql_names_an_apps_source_by_an_alias(ctx, empty):
+    empty.editor.context[SOURCE_ALIASES_KEY] = {"data_2": "energy"}
+    await add_sql(ctx, "data_2", "plant_count", "SELECT COUNT(*) AS n FROM plants")
+    assert _graph.config_of(empty.ops, "energy") == {"ref": "energy"}
+    assert _graph.upstream(empty.ops, "plant_count") == "energy"
+
+
+async def test_agent_answers_on_an_empty_dashboard():
+    model, requests = script(
+        [ToolCallPart("list_tables", {}, tool_call_id="c1")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "row_counts", "sql": ROW_COUNTS}, tool_call_id="c2")],
+        [TextPart("customers has 3 rows and orders 3.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    session.ops.remove_node("data")
+    try:
+        turn = await session.ask("How many rows in each table?")
+    finally:
+        session.close()
+
+    listing = requests[1].parts[0]
+    assert isinstance(listing, ToolReturnPart) and "2 table(s) in source 'data'" in listing.content
+    assert turn.error is None
+    assert turn.nodes == ["data", "row_counts"]
+    assert "from: data.source\n    to: row_counts.source" in turn.graph
