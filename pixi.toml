@@ -11,9 +11,9 @@ PYTHONIOENCODING = "utf-8"
 
 [environments]
 test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals", "anndata"]
+test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals", "anndata"]
+test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals", "anndata"]
 evals = ["py314", "test-core", "ai", "sql", "evals"]
 test-core = ["py313", "test-core"]
 docs = ["py312", "doc", "ai", "sql"]
@@ -111,6 +111,11 @@ geopandas = "*"
 geoviews = "*"
 shapely = "*"
 
+[feature.anndata.dependencies]
+# 0.13 is the first to allow pandas 3, and it needs Python 3.12; an older one
+# would pull pandas 2 into the test environment
+anndata = ">=0.13"
+
 # =============================================
 # =================== TESTS ===================
 # =============================================
@@ -127,7 +132,6 @@ pytest-asyncio = "*"
 test-unit = 'pytest lumen/tests tests/evals -n logical --dist loadgroup'
 
 [feature.test.dependencies]
-anndata = "*"  # lumen.read of AnnData stores and objects
 dask-core = "*"
 datashader = "*"
 fastparquet = "*"
