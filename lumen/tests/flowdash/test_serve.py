@@ -11,7 +11,7 @@ pytest.importorskip("duckdb")
 
 from panel.command import Serve
 from panel_flowdash import FlowDash
-from panel_flowdash.agent import DashboardOps
+from panel_flowdash.agent import DashboardOps, OperationError
 
 from lumen.ai.llm import OpenAI
 from lumen.command.ai import LumenAIServe
@@ -19,7 +19,7 @@ from lumen.flowdash import (
     DATA_ID, SOURCE_ALIASES_KEY, SOURCE_ID, TABLE_ID, bound_sources,
 )
 from lumen.flowdash.app import (
-    build_routes, resolve_sources, source_aliases, source_refs,
+    build_routes, file_stems, resolve_sources, source_aliases, source_refs,
 )
 from lumen.sources.duckdb import DuckDBSource
 
@@ -171,52 +171,93 @@ def served(tmp_path, monkeypatch):
     return tmp_path
 
 
+def refs(*data):
+    return source_refs(resolve_sources(list(data)), file_stems(data))
+
+
+def aliases(*data):
+    return source_aliases(refs(*data), file_stems(data))
+
+
 def test_source_refs_come_from_file_and_database_names(served):
-    assert list(source_refs(resolve_sources(["plants.csv"]))) == ["plants"]
-    assert list(source_refs(resolve_sources(["shop.db", "plants.csv"]))) == ["shop", "plants"]
-    assert list(source_refs(resolve_sources(["plants.csv", "turbines.csv"]))) == ["files"]
+    assert list(refs("plants.csv")) == ["plants"]
+    assert list(refs("shop.db", "plants.csv")) == ["shop", "plants"]
+    assert list(refs("plants.csv", "turbines.csv")) == ["files"]
+
+
+def test_source_refs_do_not_depend_on_the_path_spelling(served):
+    (served / "x").mkdir()
+    (served / "x" / "plants.csv").write_text("plant,mw\nx,1\n")
+    assert list(refs("x/plants.csv")) == ["plants"]
+    assert list(refs(str(served / "x" / "plants.csv"))) == ["plants"]
+    assert file_stems(["https://example.com/data/plants.csv?raw=1", "shop.db"]) == ["plants"]
 
 
 def test_source_refs_do_not_depend_on_the_order_of_the_data(served):
-    first = source_refs(resolve_sources(["shop.db", "plants.csv", "turbines.csv"]))
-    second = source_refs(resolve_sources(["turbines.csv", "plants.csv", "shop.db"]))
+    first = refs("shop.db", "plants.csv", "turbines.csv")
+    second = refs("turbines.csv", "plants.csv", "shop.db")
     assert sorted(first) == sorted(second) == ["files", "shop"]
     assert first["files"].get_tables() == ["plants_csv", "turbines_csv"]
 
 
-def test_source_refs_name_sources_by_their_name_and_deduplicate():
+def test_source_refs_name_sources_by_their_name():
     named = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="Sales Data")
-    one = DuckDBSource(uri=":memory:", tables={"b": "SELECT 1 AS x"})
-    other = DuckDBSource(uri=":memory:", tables={"a": "SELECT 1 AS x"})
-    clash = DuckDBSource(uri=":memory:", tables={"a": "SELECT 2 AS x"}, name="a")
+    counted = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="Sales12345")
+    table = DuckDBSource(uri=":memory:", tables={"b": "SELECT 1 AS x"})
     several = DuckDBSource(uri=":memory:", tables={"a": "SELECT 1 AS x", "b": "SELECT 1 AS x"})
-
-    assert list(source_refs([named, one, other, several])) == ["sales_data", "b", "a", "duckdb"]
-    # Deduplicated by location, type and tables, not by position.
-    assert source_refs([clash, other]) == {"a": clash, "a_2": other}
-    assert source_refs([other, clash]) == {"a_2": other, "a": clash}
+    assert list(source_refs([named, counted, table, several])) == ["sales_data", "sales12345", "b", "duckdb"]
 
 
-def test_source_aliases_keep_positional_refs_and_file_stems(served):
-    refs = source_refs(resolve_sources(["shop.db", "plants.csv", "turbines.csv"]))
-    assert source_aliases(refs) == {
-        "data": "shop", "data_2": "files", "plants": "files", "turbines": "files",
+def test_a_name_two_sources_claim_is_neither_ref(served):
+    (served / "shop.csv").write_text("x\n1\n")
+    assert list(refs("shop.db", "shop.csv")) == ["shop_db", "shop_files"]
+    assert "shop" not in aliases("shop.db", "shop.csv")
+    assert list(refs("shop.db", "plants.csv", "shop.csv")) == ["shop_db", "files"]
+    assert aliases("shop.db", "plants.csv", "shop.csv") == {
+        "data": "shop_db", "data_2": "files", "plants": "files", "plants_files": "files", "shop_files": "files",
     }
-    single = source_refs(resolve_sources(["plants.csv"]))
-    assert source_aliases(single) == {"data": "plants", "files": "plants"}
 
 
-def test_dashboard_saved_with_positional_refs_still_loads(served):
+def test_a_saved_ref_two_sources_claim_fails_instead_of_reading_either(served):
+    """A ref saved from shop.db alone, or shop.csv alone, is reported missing once both are served."""
+    (served / "shop.csv").write_text("x\n1\n")
+    editor = build_routes(["shop.db", "shop.csv"], db_path=served / "dash.db")["/"]()._editor
+    ops = DashboardOps(editor)
+    with pytest.raises(OperationError, match="no source `shop`; its sources are: `shop_db`, `shop_files`"):
+        ops.add_node(SOURCE_ID, {"ref": "shop"}, name="old")
+    ops.add_node(SOURCE_ID, {"ref": "shop_db"}, name="db")
+    assert output(ops, "db", "source").get_tables() == ["orders"]
+
+
+def test_positional_refs_are_never_issued(served):
+    (served / "data.csv").write_text("x\n1\n")
+    (served / "data_2.csv").write_text("x\n1\n")
+    assert list(refs("data.csv")) == ["data_files"]
+    assert aliases("data.csv") == {"data": "data_files", "files": "data_files"}
+    assert list(refs("shop.db", "data.csv", "plants.csv")) == ["shop", "files"]
+    assert aliases("shop.db", "data.csv", "plants.csv") == {
+        "data": "shop", "data_2": "files", "plants": "files", "plants_files": "files", "data_files": "files",
+        "shop_db": "shop",
+    }
+    named = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="data_2")
+    assert list(source_refs([named])) == ["data_2_duckdb"]
+
+
+@pytest.mark.parametrize("fixture", ["positional_refs.json", "positional_refs_v3.json"])
+def test_dashboard_saved_with_positional_refs_still_loads(served, fixture):
     """
-    The fixture was saved when ``lumen serve shop.db plants.csv`` named its
-    sources ``data`` (shop.db, read first) and ``data_2`` (the CSV files).
+    The fixtures were saved when ``lumen serve shop.db plants.csv`` named
+    its sources ``data`` (shop.db, read first) and ``data_2`` (the CSV
+    files), as stored model versions 4 and 3.
     """
     routes = build_routes(["plants.csv", "shop.db"], db_path=served / "dash.db")
     editor = routes["/"]()._editor
     assert list(bound_sources(editor)) == ["shop", "plants"]
-    assert editor.context[SOURCE_ALIASES_KEY] == {"data": "shop", "data_2": "plants", "files": "plants"}
+    assert editor.context[SOURCE_ALIASES_KEY] == {
+        "data": "shop", "data_2": "plants", "files": "plants", "plants_files": "plants", "shop_db": "shop",
+    }
 
-    editor.import_dashboard(json.loads((FIXTURES / "positional_refs.json").read_text()))
+    editor.import_dashboard(json.loads((FIXTURES / fixture).read_text()))
     ops = DashboardOps(editor)
 
     assert ops._item(ops._instance("first"))["config"]["ref"] == "data"
@@ -227,10 +268,8 @@ def test_dashboard_saved_with_positional_refs_still_loads(served):
     assert ops.validate() == []
 
 
-def test_stable_ref_wins_over_a_positional_alias(served):
-    (served / "data.csv").write_text("x\n1\n")
-    editor = build_routes(["shop.db", "data.csv"], db_path=served / "dash.db")["/"]()._editor
-    assert list(bound_sources(editor)) == ["shop", "data"]
+def test_dashboard_saved_from_one_file_keeps_its_source_when_files_are_added(served):
+    editor = build_routes(["turbines.csv", "plants.csv", "shop.db"], db_path=served / "dash.db")["/"]()._editor
     ops = DashboardOps(editor)
-    ops.add_node(SOURCE_ID, {"ref": "data"}, name="first")
-    assert output(ops, "first", "source").get_tables() == ["data_csv"]
+    ops.add_node(SOURCE_ID, {"ref": "plants"}, name="saved")
+    assert output(ops, "saved", "source") is bound_sources(editor)["files"]

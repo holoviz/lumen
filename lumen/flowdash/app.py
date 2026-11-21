@@ -8,8 +8,9 @@ import os
 import re
 
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from panel_flowdash.agent.models import parse_models
 from panel_flowdash.app import FlowDashApp
@@ -22,10 +23,12 @@ from .nodes import SOURCE_ALIASES_KEY, SOURCE_ID, SOURCES_KEY
 LIBRARY = "lumen.flowdash"
 
 
-# param names a source it was not given a name for by its type and a counter.
-_AUTO_NAME = re.compile(r"[A-Z]\w*\d{5}")
-# Lumen names the table of a data file by its file name, e.g. turbines_csv.
+# Lumen reads files with these suffixes into one DuckDB source, see ``resolve_data``.
+_DATA_FILES = (".parq", ".parquet", ".csv", ".json", ".tsv", ".jsonl", ".ndjson")
+# Lumen names the table of a data file by its path, e.g. turbines_csv.
 _FILE_SUFFIX = re.compile(r"_(csv|tsv|parquet|parq|json|jsonl|ndjson)$")
+# The refs lumen serve gave by position before refs were stable; never issued now.
+_POSITIONAL = re.compile(r"data(_\d+)?")
 # The ref of the source holding several data files.
 FILES_REF = "files"
 
@@ -34,53 +37,99 @@ def _slug(text: str) -> str:
     return re.sub(r"\W+", "_", text).strip("_").lower()
 
 
-def _ref_names(source: Source) -> tuple[int, str, list[str]]:
+def _type_slug(source: Source) -> str:
+    return _slug(type(source).__name__.removesuffix("Source")) or "source"
+
+
+def _auto_named(source: Source) -> bool:
+    """Whether param named ``source`` by its type and a counter, as it does without a name."""
+    return re.fullmatch(rf"{re.escape(type(source).__name__)}\d{{5}}", source.name) is not None
+
+
+def file_stems(data: Sequence[str | os.PathLike | Source]) -> list[str]:
     """
-    How ``source`` is named (by its name, files, location, table or type),
-    the ref and the further names that resolve to it.
+    The stems of the data files in ``data`` that Lumen reads into one
+    source, from their file names, whatever directory or URL they are in.
+    """
+    stems = []
+    for item in data:
+        if isinstance(item, Source):
+            continue
+        text = str(item)
+        path = PurePosixPath(urlsplit(text).path) if "://" in text else Path(text)
+        if path.name.lower().endswith(_DATA_FILES) and (stem := _slug(path.name.rsplit(".", 1)[0])):
+            stems.append(stem)
+    return stems
+
+
+def _names(source: Source, stems: Sequence[str]) -> tuple[str, str, list[str]]:
+    """
+    The ref ``source`` is named by unless another source claims it, the tag
+    that tells it apart then, and further names that resolve to it.
     """
     tables = list(source.get_tables())
     if source.name == PROVIDED_SOURCE_NAME:
-        stems = sorted({_slug(_FILE_SUFFIX.sub("", table)) for table in tables} - {""})
-        return 1, (stems[0] if len(stems) == 1 else FILES_REF), [FILES_REF, *stems]
-    if not _AUTO_NAME.fullmatch(source.name) and (name := _slug(source.name)):
-        return 0, name, []
+        stems = sorted(set(stems) or {_slug(_FILE_SUFFIX.sub("", table)) for table in tables} - {""})
+        tagged = [f"{stem}_{FILES_REF}" for stem in stems]
+        return (stems[0] if len(stems) == 1 else FILES_REF), FILES_REF, [FILES_REF, *stems, *tagged]
+    if not _auto_named(source) and (name := _slug(source.name)):
+        return name, _type_slug(source), [f"{name}_{_type_slug(source)}"]
     location = getattr(source, "uri", None) or getattr(source, "url", None)
     if isinstance(location, str) and location != ":memory:":
-        path = re.sub(r"^\w+:/*", "/", location).split("?")[0]
-        if stem := _slug(Path(path).stem):
-            return 2, stem, []
+        parts = urlsplit(location)
+        path = PurePosixPath(parts.path) if "://" in location else Path(location)
+        if stem := _slug(path.stem):
+            tag = _slug(path.suffix) or _slug(parts.scheme) or _type_slug(source)
+            return stem, tag, [f"{stem}_{tag}"]
     if len(tables) == 1 and (table := _slug(tables[0])):
-        return 3, table, []
-    return 4, _slug(type(source).__name__.removesuffix("Source")) or "source", []
+        return table, _type_slug(source), [f"{table}_{_type_slug(source)}"]
+    return _type_slug(source), "", []
 
 
-def source_refs(sources: Sequence[Source]) -> dict[str, Source]:
+def _claims(sources: Sequence[Source], stems: Sequence[str]) -> tuple[dict[int, tuple[str, str, list[str]]], set[str]]:
+    """Each source's names, and the names more than one source claims, or that look positional."""
+    names = {id(source): _names(source, stems) for source in sources}
+    counts: dict[str, int] = {}
+    for base, _, extra in names.values():
+        for name in {base, *extra}:
+            counts[name] = counts.get(name, 0) + 1
+    clashing = {name for name, n in counts.items() if n > 1 or _POSITIONAL.fullmatch(name)}
+    return names, clashing
+
+
+def source_refs(sources: Sequence[Source], stems: Sequence[str] = ()) -> dict[str, Source]:
     """
     The refs source nodes name ``sources`` by, in the order of ``sources``.
 
-    A ref does not depend on the order or number of the sources, so a saved
-    dashboard keeps its sources when files are added, removed or reordered:
-    a source named by its host is named so, a database file or connection by
-    its file or database name, and the data files ``lumen serve`` reads into
-    one source by the file's stem, e.g. ``turbines`` for ``turbines.csv``,
-    or ``files`` when there are several. Sources that would share a ref get
-    ``_2``, ``_3`` and so on: a source named by its host first, then by
-    location, type and tables, and only sources alike in all of these by
-    their order.
-    ``source_aliases`` gives the further names a source resolves by.
+    A ref depends on the data's name, not on its position: a source named by
+    its host is named so, a database file or connection by its file or
+    database name, and the data files ``lumen serve`` reads into one source
+    by the file's stem (``stems``, see ``file_stems``), e.g. ``turbines``
+    for ``turbines.csv``, or ``files`` when there are several.
+
+    A name that two sources claim (counting each data file's stem) is no
+    source's ref: each of them is named with a tag of its kind instead,
+    e.g. ``a_db`` and ``a_files`` for ``a.db`` and ``a.csv``, so a saved
+    dashboard naming ``a`` reports the missing source rather than reading
+    the other one. ``data`` and ``data_2``, ``data_3`` and so on, the refs
+    ``lumen serve`` gave by position before, are tagged the same way.
+    Sources still alike get ``_2``, ``_3`` in the order of their location,
+    type and tables. ``source_aliases`` gives further names that resolve.
     """
+    names, clashing = _claims(sources, stems)
     keys = {}
     for source in sources:
-        kind, name, _ = _ref_names(source)
+        base, tag, _ = names[id(source)]
+        if base in clashing and tag:
+            base = f"{base}_{tag}"
         location = getattr(source, "uri", None) or getattr(source, "url", None)
-        keys[id(source)] = (name, kind, str(location or ""), type(source).__name__, *sorted(source.get_tables()))
+        keys[id(source)] = (base, str(location or ""), type(source).__name__, *sorted(source.get_tables()))
     refs: dict[int, str] = {}
     taken: set[str] = set()
     for source in sorted(sources, key=lambda s: keys[id(s)]):
         base = keys[id(source)][0]
         ref, n = base, 1
-        while ref in taken:
+        while ref in taken or _POSITIONAL.fullmatch(ref):
             n += 1
             ref = f"{base}_{n}"
         refs[id(source)] = ref
@@ -88,20 +137,25 @@ def source_refs(sources: Sequence[Source]) -> dict[str, Source]:
     return {refs[id(source)]: source for source in sources}
 
 
-def source_aliases(refs: Mapping[str, Source]) -> dict[str, str]:
+def source_aliases(refs: Mapping[str, Source], stems: Sequence[str] = ()) -> dict[str, str]:
     """
     Further names that resolve to the refs of ``refs`` (as ``source_refs``
-    orders them), for dashboards saved before refs were stable: ``data``,
-    ``data_2``, ``data_3`` and so on name the sources by position, as
-    ``lumen serve`` named them then, and ``files`` and the stem of each
-    data file name the source holding the data files. A ref always wins
-    over an alias of the same name.
+    orders them), for dashboards saved before: ``data``, ``data_2``,
+    ``data_3`` and so on name the sources by position, as ``lumen serve``
+    named them then, and ``files`` and the stem of each data file name the
+    source holding the data files, so adding or removing a file keeps a
+    saved ref; the tagged ref a source gets when its name clashes names it
+    too. A name that is a ref, or that two sources claim, is no alias.
     """
+    names, clashing = _claims(list(refs.values()), stems)
     aliases: dict[str, str] = {}
-    for i, (ref, source) in enumerate(refs.items()):
-        for alias in ("data" if i == 0 else f"data_{i + 1}", *_ref_names(source)[2]):
-            if alias not in refs:
-                aliases.setdefault(alias, ref)
+    for i, ref in enumerate(refs):
+        aliases["data" if i == 0 else f"data_{i + 1}"] = ref
+    for ref, source in refs.items():
+        base, _, extra = names[id(source)]
+        for alias in {base, *extra}:
+            if alias not in refs and alias not in clashing and alias not in aliases:
+                aliases[alias] = ref
     return aliases
 
 
@@ -146,7 +200,8 @@ def build_routes(
     **params
         Further ``FlowDashApp`` parameters.
     """
-    sources = source_refs(resolve_sources(data))
+    stems = file_stems(data)
+    sources = source_refs(resolve_sources(data), stems)
     models = parse_models(agent_model, source="agent_model")
     if models:
         from ..agent import create_agent
@@ -161,7 +216,7 @@ def build_routes(
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
     editor_options = dict(params.pop("editor_options", {}))
     editor_options["context"] = {
-        **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: source_aliases(sources),
+        **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: source_aliases(sources, stems),
     }
     return FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
