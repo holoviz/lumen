@@ -262,6 +262,14 @@ class TestFollowers:
         found = {u.node: tables(u) for u in usages(doc, "data", SCHEMA, "duckdb")}
         assert found["n"] == {"orders": ["amount", "customer_id", "order_id", "status"]}
 
+    def test_a_result_named_like_a_base_table_in_another_case_is_renamed(self):
+        doc = chain(
+            ("paid", "Lumen/sql", {"sql": PAID, "table": "Orders"}),
+            ("n", "Lumen/sql", {"sql": "SELECT COUNT(*) AS n, MAX(o.order_id) AS last FROM Orders_result, orders o"}),
+        )
+        found = {u.node: tables(u) for u in usages(doc, "data", SCHEMA, "duckdb")}
+        assert found["n"] == {"orders": ["amount", "customer_id", "order_id", "status"]}
+
     def test_a_table_node_on_a_result_reads_the_upstreams_columns(self):
         doc = chain(
             ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
