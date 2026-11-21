@@ -5,11 +5,13 @@ connections) into Lumen Sources.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import warnings
 import weakref
 
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 from weakref import WeakKeyDictionary
 
@@ -238,6 +240,105 @@ def read(
     return sources[0]
 
 
+#: What a row of each AnnData table is, for the LLM
+_ANNDATA_TABLES = {
+    "obs": "One row per cell (observation) with its annotations, keyed by the obs column.",
+    "var": "One row per gene (variable) with its annotations, keyed by the var column.",
+    "obs_var": (
+        "The expression matrix X in long form: one row per cell (obs) and gene (var) with its value X. "
+        "Join obs on obs and var on var."
+    ),
+}
+
+#: The temporary stores in-memory AnnData objects are written to, kept as long as their source
+_ZARR_STORES: WeakKeyDictionary[Source, TemporaryDirectory] = WeakKeyDictionary()
+
+
+def _attrs(path: Path) -> dict:
+    """The attributes of a Zarr group or array, v2 or v3; empty when it has none."""
+    for meta in (path / ".zattrs", path / "zarr.json"):
+        if meta.is_file():
+            attrs = json.loads(meta.read_text(encoding="utf-8"))
+            # Zarr v3 keeps them under "attributes"
+            return attrs.get("attributes", attrs)
+    return {}
+
+
+def _zarr_kind(path: str) -> str | None:
+    """"anndata" or "ome" for a local Zarr store of either, which DuckDB's zarr extension reads, else None."""
+    root = Path(path)
+    attrs = _attrs(root)
+    if attrs.get("encoding-type") == "anndata":
+        return "anndata"
+    if "multiscales" in attrs or "multiscales" in attrs.get("ome", {}):
+        return "ome"
+    return None
+
+
+def _zarr_source(path: str, prefix: str | None = None) -> DuckDBSource:
+    """
+    An AnnData or OME-Zarr store as DuckDB tables, read through DuckDB's
+    zarr extension: AnnData's obs, var and X (as obs_var) and its other
+    tables, or each level of an OME-Zarr image with a row per pixel.
+    """
+    path = str(Path(path).absolute())
+    source = DuckDBSource(
+        uri=":memory:", name=PROVIDED_SOURCE_NAME, initializers=["INSTALL zarr FROM community;", "LOAD zarr;"],
+    )
+    quoted = path.replace("'", "''")
+    tables, metadata = {}, {}
+
+    def add(name: str, sql: str, description: str) -> str:
+        name = normalize_table_name(f"{prefix}_{name}" if prefix else name)
+        tables[name] = sql
+        metadata[name] = {"description": description}
+        return name
+
+    if _zarr_kind(path) == "anndata":
+        with source._connection.cursor() as cursor:
+            found = cursor.execute(
+                f"SELECT group_path, schema_name, table_name, data_vars FROM read_zarr_tables('{quoted}') WHERE table_name IS NOT NULL"
+            ).fetchall()
+        for group, schema, table, variables in found:
+            group = group.replace("'", "''")
+            # e.g. obsm/X_umap as obsm_X_umap, rather than its long table name
+            name = table if schema == "main" or len(variables) != 1 else f"{schema}_{variables[0].rsplit('/', 1)[-1]}"
+            sql = f"SELECT * FROM read_zarr('{quoted}', group_path := '{group}', table_name := '{table}')"
+            if table == "obs_var" and _attrs(Path(path) / "X").get("encoding-type") in ("csr_matrix", "csc_matrix"):
+                # A sparse X has rows for its nonzero values only, so AVG(X) and
+                # COUNT would skip the zeros; the obs_var view fills them in
+                nonzero = add("obs_var_nonzero", sql, "The nonzero values of the sparse expression matrix X: one row per cell (obs) and gene (var) whose X is not 0.")
+                obs, var = (
+                    f"read_zarr('{quoted}', array_path := '{axis}/{_attrs(Path(path) / axis).get('_index', '_index')}')"
+                    for axis in ("obs", "var")
+                )
+                sql = (
+                    f'SELECT o.value AS obs, v.value AS var, COALESCE(n.X, 0) AS X FROM {obs} o CROSS JOIN {var} v '
+                    f'LEFT JOIN "{nonzero}" n ON n.obs = o.value AND n.var = v.value'
+                )
+            add(name, sql, _ANNDATA_TABLES.get(table, f"The {schema} table {table} of the AnnData store."))
+    else:
+        attrs = _attrs(Path(path))
+        # OME-Zarr 0.5 keeps them under "ome"
+        multiscales = attrs.get("multiscales") or attrs["ome"]["multiscales"]
+        for image in multiscales:
+            axes = ", ".join(axis["name"] if isinstance(axis, dict) else axis for axis in image.get("axes", []))
+            for level, dataset in enumerate(image["datasets"]):
+                array = dataset["path"].replace("'", "''")
+                name = image.get("name") or "image"
+                add(
+                    name if level == 0 else f"{name}_level_{level}",
+                    f"SELECT * FROM read_zarr('{quoted}', array_path := '{array}')",
+                    f"Pixel values of the OME-Zarr image at resolution level {level} (0 is full resolution): "
+                    f"one row per pixel, with its axes ({axes}) and its value.",
+                )
+    source.tables = tables
+    for name, sql in tables.items():
+        source._create_view(name, sql)
+    source.metadata = metadata
+    return source
+
+
 def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[Source]:
     """
     Resolve the data into a list of sources.
@@ -283,8 +384,18 @@ def resolve_data(data: DataT | list[DataT] | dict[str, DataT] | None) -> list[So
                 # The variable becomes the table, so the dict key names it
                 src = src.to_dataset(name=name or src.name or "data")
             grids[name or (f"grid_{len(grids)}" if grids else "grid")] = src
+        elif type(src).__module__.split(".")[0] == "anndata":
+            # Written out, since DuckDB reads AnnData from a Zarr store
+            store = TemporaryDirectory(suffix=".zarr")
+            src.write_zarr(store.name)
+            source = _zarr_source(store.name, name)
+            _ZARR_STORES[source] = store
+            sources.append(source)
         elif isinstance(src, (str, Path)):
             src = str(src)
+            if not src.startswith(_REMOTE) and _zarr_kind(src):
+                sources.append(_zarr_source(src, name))
+                continue
             name = name or src
 
             # Handle "no_data" as a special case for starting without data
