@@ -1455,12 +1455,16 @@ class LumenViewNode(LumenNode):
             raise ValueError(f"The input failed: {failure_text(self.pipeline)}")
         spec = self.check_spec(self.spec or {}, pipeline_columns(self.pipeline))
         # The rows come through fetch, so the view shares one query with the pipeline's other readers.
-        rows = fetch(self.pipeline, row_ceiling(self.editor))
+        rows = self._view_rows(fetch(self.pipeline, row_ceiling(self.editor)), spec)
         view_type = _view_class(self.view_type)
         view = view_type(pipeline=_clone(self.pipeline, data=rows), **self._view_params(spec))
         view.update()
         self._built(view)
         return view
+
+    def _view_rows(self, rows: Any, spec: dict[str, Any]) -> Any:
+        """The rows the view is drawn with, e.g. only the columns its spec reads."""
+        return rows
 
     def _built(self, view: Any) -> None:
         """Called with each view the node draws, before it is shown."""
