@@ -75,10 +75,24 @@ Use the dialect list_tables names for the source.
 # longest legitimate response seen in the evals (about 250 tokens). A response
 # cut off by it is retried, see ``create_agent``. A host that turns reasoning
 # back on must raise or drop the cap, since reasoning tokens count against it.
-# ``openai_reasoning_effort`` is only read by OpenAI models and is untested
-# with other providers. Model settings are recorded with the eval run
+# These are the settings of OpenAI's models; other providers' models get
+# OTHER_MODEL_SETTINGS. Model settings are recorded with the eval run
 # settings, not in the agent fingerprint a cassette checks.
 MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 1000}
+
+# ``openai_reasoning_effort`` only reaches OpenAI's models, so the others turn
+# reasoning off with pydantic-ai's provider-neutral ``thinking``. Anthropic
+# models, directly or through OpenRouter, cache a prompt only below explicit
+# breakpoints, which ``cache`` places after the instructions, the tool
+# definitions and the last message; models that cache by themselves or not at
+# all ignore it. OpenAI's models cache by themselves, and ``cache`` would
+# change their requests to a longer, priced retention.
+OTHER_MODEL_SETTINGS = {"thinking": False, "max_tokens": 1000, "cache": True}
+
+
+def model_settings_for(model: Any) -> dict[str, Any]:
+    """The agent's default settings for requests to ``model``, a pydantic-ai model."""
+    return dict(MODEL_SETTINGS if getattr(model, "system", None) == "openai" else OTHER_MODEL_SETTINGS)
 
 # Added for an agent that can wire nodes, i.e. with the connect tool.
 SELECTION_INSTRUCTIONS = """
@@ -131,8 +145,10 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     instructions
         Extra instructions appended to Lumen's.
     model_settings
-        pydantic-ai model settings for every request; defaults to
-        ``MODEL_SETTINGS``. Settings a model does not know are ignored.
+        pydantic-ai model settings for every request. By default each
+        request gets ``model_settings_for`` the model it goes to, also when
+        a run picks another model than the agent's. Settings a model does
+        not know are ignored.
     dashboard_tools
         The FlowDash dashboard tools to offer: a name in ``DASHBOARD_TOOLS``
         (``"data"``, the default, or ``"layout"``), tool names, or None for
@@ -144,7 +160,7 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
-    model_settings = MODEL_SETTINGS if model_settings is None else model_settings
+    settings: Any = (lambda ctx: model_settings_for(ctx.model)) if model_settings is None else dict(model_settings)
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
     capabilities = [ProcessHistory(stub_superseded_lookups), CheckedConfig(), *kwargs.pop("capabilities", [])]
@@ -158,7 +174,7 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     if dashboard_tools is None or "connect" in dashboard_tools:
         text += SELECTION_INSTRUCTIONS
     agent = create_flowdash_agent(
-        model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
+        model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=settings,
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",
         capabilities=capabilities, **kwargs,
     )
