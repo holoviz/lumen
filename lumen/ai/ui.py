@@ -1520,7 +1520,7 @@ class UI(Viewer):
 
         # Update all agent LLMs (respect agents given an LLM on purpose)
         for agent in self._coordinator.agents:
-            if not getattr(agent, "_llm_user_provided", False):
+            if not agent._llm_user_provided:
                 agent.llm = new_llm
 
         # Initialize the new LLM asynchronously
