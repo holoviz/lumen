@@ -297,6 +297,24 @@ class TestResolution:
         assert "pressure" in schema
         assert "time" in schema
 
+    def test_get_schema_never_aggregates_over_the_grid(self, mock_stac_client, synthetic_dataset):
+        """A COUNT, DISTINCT or MIN over a cloud-scale collection reads all of it."""
+        source = STACSource(url="https://example.com/stac")
+        with patch.object(STACSource, "_open_dataset", return_value=synthetic_dataset):
+            delegate, _ = source._delegate_table("air-temperature")
+            real_execute = delegate.execute
+
+            def guarded(sql, *args, **kwargs):
+                if any(word in sql.upper() for word in ("COUNT(", "DISTINCT", "MIN(", "MAX(")):
+                    raise AssertionError(f"full-grid aggregate issued: {sql}")
+                return real_execute(sql, *args, **kwargs)
+
+            with patch.object(delegate, "execute", side_effect=guarded):
+                schema = source.get_schema("air-temperature")
+        assert schema["__len__"] == 200
+        # The whole range from the coordinates, not the sample's
+        assert (schema["lat"]["inclusiveMinimum"], schema["lat"]["inclusiveMaximum"]) == (10.0, 50.0)
+
     def test_schema_on_unopenable_collection_is_empty_not_raising(self, mock_stac_client):
         """Schema is best-effort: an unopenable collection must NOT abort
         catalog enumeration (real STAC catalogs mix xarray + non-xarray)."""

@@ -30,10 +30,12 @@ import warnings
 
 from typing import Any, ClassVar
 
+import numpy as np
 import param
 import sqlglot
 
 from ..transforms.sql import SQLLimit
+from ..util import get_dataframe_schema
 from .base import BaseSQLSource
 from .xarray_sql import XArraySQLSource
 
@@ -334,15 +336,23 @@ class STACSource(BaseSQLSource):
         if table is None:
             # Stay lazy: do not resolve every collection just to list them.
             return {cid: {} for cid in self.get_tables()}
-        # Delegate to the resolved XArraySQLSource, which already builds the
-        # schema from a bounded sample with an O(1) metadata row count.
-        # Best-effort: a collection that is not xarray-openable must not
-        # abort catalog enumeration; data access via get() still fails loudly.
         try:
             delegate, variable = self._delegate_table(table)
-            return delegate.get_schema(variable, limit, shuffle)
-        except Exception:
+        except (ValueError, ImportError):
+            # A catalog mixes collections Lumen can and cannot read; one it
+            # cannot must not stop the others being described. get() still raises.
             return {}
+        # A bounded sample, never COUNT or MIN/MAX over the grid, which would
+        # read a whole cloud-scale collection: the row count is the variable's
+        # size and the dimension ranges come from its coordinates
+        sample = delegate.get(variable, sql_transforms=[SQLLimit(limit=limit or 1000)])
+        schema = get_dataframe_schema(sample)["items"]["properties"]
+        data = delegate.dataset[variable]
+        for dim in data.dims:
+            if dim in schema and dim in data.coords and np.issubdtype(data[dim].dtype, np.number):
+                schema[dim].update(inclusiveMinimum=float(data[dim].min()), inclusiveMaximum=float(data[dim].max()))
+        schema["__len__"] = int(data.size)
+        return schema
 
     def get(self, table: str, **query):
         delegate, variable = self._delegate_table(table)
