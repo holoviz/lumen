@@ -205,9 +205,10 @@ def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     Args:
         data: SQL, table or filter node to show.
         name: Descriptive snake_case node name.
-        spec: Optional table options naming the node's columns: page_size, frozen_columns,
-            hidden_columns, sorters ([{"field": ..., "dir": "desc"}]), titles, widths and
-            formatters ({column: "money" | "progress" | "star" | "tickCross" | ...}).
+        spec: Optional table options naming the node's columns: page_size, layout,
+            show_index, header_filters, frozen_columns, hidden_columns, sorters
+            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles, widths and formatters
+            ({column: "money" | "progress" | "star" | "tickCross" | ...}).
     """
     config = place_view(ctx, TABLE_VIEW_ID, data, name, {"spec": spec or {}})
     options = ", ".join(sorted(config["spec"])) or "default options"

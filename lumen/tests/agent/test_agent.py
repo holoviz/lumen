@@ -964,9 +964,9 @@ async def test_list_tables_lists_any_lumen_view_node(ctx, session):
     add_chart(ctx, "paid_by_region", "paid_chart", BAR)
     add_table(ctx, "paid_by_region", "paid_rows", {"page_size": 20})
     text = await list_tables(ctx)
-    assert '- paid_rows (Lumen table view of paid_by_region; spec {"page_size":20})' in text
+    assert '- paid_rows (table view of paid_by_region; spec {"page_size":20})' in text
     assert "- paid_chart (chart of paid_by_region; bar; x=region, y=total)" in text
-    assert await list_tables(ctx, node="paid_rows") == '- paid_rows (Lumen table view of paid_by_region; spec {"page_size":20})'
+    assert await list_tables(ctx, node="paid_rows") == '- paid_rows (table view of paid_by_region; spec {"page_size":20})'
 
 
 async def test_set_config_checks_a_table_spec_against_its_columns():
@@ -988,6 +988,14 @@ async def test_set_config_checks_a_table_spec_against_its_columns():
     (part,) = requests[1].parts
     assert "revenue" in str(part.content) and part.outcome == "retried"
     assert component == TABLE_VIEW_ID and config["spec"] == {"frozen_columns": ["region"]}
+
+
+async def test_a_table_turn_answers_from_the_node_it_shows(ctx, session):
+    from lumen.agent.evals import answer_nodes
+
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_table(ctx, "paid_by_region", "paid_rows")
+    assert answer_nodes(session.ops, ["paid_rows"]) == ("paid_by_region", [])
 
 
 @pytest.fixture

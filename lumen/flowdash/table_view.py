@@ -44,13 +44,13 @@ DIRECTIONS = ("asc", "desc")
 
 # Spec options and what each holds; the spec's other keys are refused.
 OPTIONS = {
-    "page_size": "rows per page, or leave it out to scroll",
+    "page_size": "rows per page; without it the table scrolls, and Panel pages more than 200 rows itself",
     "show_index": "whether to show the index column (default false)",
     "layout": f"how columns are sized: {', '.join(TABULATOR_LAYOUTS)}",
     "header_filters": "whether each column header has a filter",
     "frozen_columns": "columns kept in view while scrolling sideways",
     "hidden_columns": "columns not shown",
-    "sorters": 'the initial sort, e.g. [{"field": "amount", "dir": "desc"}]',
+    "sorters": 'the initial sort, e.g. [{"field": "amount", "dir": "desc"}]; dir defaults to "asc"',
     "formatters": 'a formatter per column, a name or {"type": name, ...params}',
     "titles": "a header per column",
     "widths": "a width in pixels per column",
@@ -153,6 +153,9 @@ def check_table(spec: dict[str, Any] | None, columns: list[str]) -> dict[str, An
 def tabulator_options(spec: dict[str, Any]) -> dict[str, Any]:
     """The ``Tabulator`` params of a checked table spec: pages only when it sets a page size."""
     options = {**DEFAULTS, **copy.deepcopy(spec)}
+    # Tabulator reads every sorter's direction.
+    if options.get("sorters"):
+        options["sorters"] = [{"dir": "asc", **sorter} for sorter in options["sorters"]]
     if options.get("page_size"):
         options["pagination"] = "remote"
     else:
@@ -180,7 +183,8 @@ def _settings() -> list:
         return []
     return [
         SpecSetting("page_size", label="Rows per page", widget="integer", group="Table",
-                    doc="Show the rows in pages of this many; leave it empty to scroll."),
+                    doc="Show the rows in pages of this many. Left empty, the table scrolls "
+                        "in its tile, and Panel pages more than 200 rows by itself."),
         SpecSetting("layout", label="Column widths", widget="select", options=LAYOUTS,
                     default=DEFAULTS["layout"], group="Table", restrict=False),
         SpecSetting("frozen_columns", label="Freeze column", widget="select", group="Table",
@@ -199,18 +203,17 @@ TABLE_SETTINGS = _settings()
 
 
 @register_view(
-    title="Lumen table view", icon="table_view",
-    description=(
-        "A table of a Lumen pipeline's rows. It draws with an empty spec; the spec can set "
-        "Tabulator options: " + "; ".join(f"{key}: {text}" for key, text in OPTIONS.items()) + "."
-    ),
+    title="Lumen Tabulator view", icon="table_view",
+    description="A table of a Lumen pipeline's rows, with optional paging, sorting and formatting.",
     tags=["table"], default_size={"height": 400}, min_size={"height": 200},
 )
 class TableViewNode(LumenViewNode):
 
-    spec = spec_param("""
-        Tabulator options for the table, e.g. a page size, frozen columns or
-        column formatters. An empty spec shows every column.""", settings=TABLE_SETTINGS)
+    spec = spec_param(
+        "Tabulator options for the table; an empty spec shows every column. The options are "
+        + "; ".join(f"{key}: {text}" for key, text in OPTIONS.items()) + ".",
+        settings=TABLE_SETTINGS,
+    )
 
     view_type = "table"
 

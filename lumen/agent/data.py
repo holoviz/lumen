@@ -189,8 +189,7 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
         spec = json.dumps(config.get("spec") or {}, separators=(",", ":"))
         if sql_chars is not None and len(spec) > sql_chars:
             spec = f"{spec[:sql_chars]} [... {len(spec) - sql_chars} more characters]"
-        title = view.__panel_app_metadata__.title or component
-        return f"- {name} ({title} of {_graph.upstream(ops, name)}; spec {spec})"
+        return f"- {name} ({view.view_type} view of {_graph.upstream(ops, name)}; spec {spec})"
     if component == TABLE_ID:
         limit = f", limit {config['limit']}" if config.get("limit") else ""
         return f"- {name} (table {config.get('table')!r} of {_graph.upstream(ops, name) or config.get('ref')}{limit})"
