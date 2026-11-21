@@ -103,6 +103,39 @@ def test_pipeline_reset_filter_added_later(make_filesource, mixed_df):
     assert_df_equal(pipeline.data, mixed_df)
     assert wfilter.widget.value == []
 
+def test_pipeline_reset_filter_replaced(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    pipeline = Pipeline(source=source, table='test')
+    wfilter = WidgetFilter(field='C', schema={'C': source.get_schema('test')['C']})
+    pipeline.filters = [wfilter]
+
+    wfilter.widget.value = ['foo2']
+    pipeline.param.trigger('update')
+    assert len(pipeline.data) == 1
+
+    pipeline.reset_filters()
+    pipeline.param.trigger('update')
+
+    assert_df_equal(pipeline.data, mixed_df)
+    assert wfilter.widget.value == []
+
+def test_pipeline_reset_select_filter(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    sfilter = WidgetFilter(
+        field='C', multi=False, schema={'C': source.get_schema('test')['C']}
+    )
+    pipeline = Pipeline(source=source, filters=[sfilter], table='test')
+
+    sfilter.widget.value = 'foo2'
+    assert len(pipeline.data) == 1
+
+    pipeline.reset_filters()
+
+    assert_df_equal(pipeline.data, mixed_df)
+    assert sfilter.widget.value == ' '
+
 def test_pipeline_manual_with_filter(make_filesource, mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
     source = make_filesource(str(root))

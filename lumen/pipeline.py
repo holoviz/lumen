@@ -199,20 +199,23 @@ class Pipeline(Viewer, Component):
         self._update_widget = None
         super().__init__(source=source, table=table, filters=filters, schema=schema, **params)
         self._update_widget = Param(self.param['update'], widgets={'update': {'color': 'success'}})[0]
+        self._initial_filter_values: dict[Filter, Any] = {}
         for filt in self.filters:
             self._record_filter_initial(filt)
         self._init_callbacks()
 
-    @staticmethod
-    def _record_filter_initial(filt: Filter) -> None:
-        # The value a filter was created with, so it can be reset later.
-        # Shared filters keep the value their first pipeline saw.
-        if hasattr(filt, '_initial_value'):
+    def _record_filter_initial(self, filt: Filter) -> None:
+        # The value a filter was created with, so reset_filters can restore it.
+        if filt in self._initial_filter_values:
             return
         if isinstance(filt, BaseWidgetFilter) and filt.widget is not None:
-            filt._initial_value = filt.widget.value
+            self._initial_filter_values[filt] = filt.widget.value
         else:
-            filt._initial_value = filt.value
+            self._initial_filter_values[filt] = filt.value
+
+    def _record_new_filters(self, event: param.parameterized.Event) -> None:
+        for filt in event.new:
+            self._record_filter_initial(filt)
 
     def _update_stale(self, event):
         if event.new:
@@ -224,6 +227,7 @@ class Pipeline(Viewer, Component):
 
     def _init_callbacks(self):
         self.param.watch(self._update_data, ['filters', 'sql_transforms', 'transforms', 'table', 'update'])
+        self.param.watch(self._record_new_filters, 'filters')
         self.param.watch(self._sync_source, 'source')
         self._source_watcher = self.source.param.watch(self._update_data, self.source._reload_params)
         for filt in self.filters:
@@ -281,7 +285,7 @@ class Pipeline(Viewer, Component):
         so the pipeline re-queries its data.
         """
         for filt in self.filters:
-            initial = getattr(filt, '_initial_value', filt.value)
+            initial = self._initial_filter_values.get(filt, filt.value)
             if isinstance(filt, BaseWidgetFilter) and filt.widget is not None:
                 filt.widget.value = initial
             else:
