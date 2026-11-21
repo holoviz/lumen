@@ -29,6 +29,7 @@ try:
         Column, Metaset, TableCatalogEntry, get_metaset, resolve_table_slug,
     )
     from lumen.ai.tool_trace import ModelCall, ToolCall
+    from lumen.ai.tools import FunctionTool
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
@@ -563,3 +564,25 @@ def test_has_geometry_counts_only_the_tables_of_the_sources():
     here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
     assert has_geometry(metaset, {("src", "t"): here}) is True
     assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
+
+
+async def test_the_main_prompt_names_the_llm_tools_offered_with_it(sql_context, test_messages, monkeypatch):
+    def time_slice(table: str) -> str:
+        """Stands in for a gridded tool."""
+        return table
+
+    llm = OpenAI(model_kwargs={"default": {"model": "gpt-test"}})
+    monkeypatch.setattr(llm, "run_client", AsyncMock(return_value=_submit('SELECT "id", "score" FROM people')))
+    agent = SQLAgent(llm=llm, clean_data=False, llm_tools=[lambda context: [FunctionTool(time_slice)]])
+    seen = []
+    invoke = agent._invoke_prompt
+
+    async def recording(prompt_name, *args, **kwargs):
+        if prompt_name == "main":
+            seen.append(kwargs["tool_names"])
+        return await invoke(prompt_name, *args, **kwargs)
+
+    monkeypatch.setattr(agent, "_invoke_prompt", recording)
+    await agent.respond(test_messages, await sql_context())
+    # The prompt's tool hints (e.g. the gridded tools) key off these names
+    assert "time_slice" in seen[0]

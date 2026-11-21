@@ -26,6 +26,7 @@ from ...sources.duckdb import DuckDBSource
 from ...sources.xarray_sql import XArraySQLSource
 from ...transforms.sql import SQLLimit
 from ...util import as_pandas
+from ..actor import _expand_llm_tool_entries
 from ..config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError,
     DeterministicQueryError, EmptyResultError, MissingContextError, QueryError,
@@ -1409,7 +1410,12 @@ class SQLAgent(BaseLumenAgent):
                         discovery_context=discovery_context,
                         active_filters=self._active_filters(context.get("pipeline")),
                         source_names=sorted({s for s, _ in sources}),
-                        tool_names=[tool.name for tool in tool_list],
+                        # With the llm_tools offered on this call, e.g. the gridded tools,
+                        # so the prompt describes every tool the model can call
+                        tool_names=[
+                            tool.name for tool in [*tool_list, *_expand_llm_tool_entries(self.llm_tools, context)]
+                            if isinstance(tool, FunctionTool)
+                        ],
                         tool_rounds=MAIN_TOOL_ROUNDS,
                         schema_max_tokens=self.schema_max_tokens,
                         schema_tables_shown=self.schema_tables_shown,
