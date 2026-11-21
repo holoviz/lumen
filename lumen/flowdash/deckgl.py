@@ -3,12 +3,14 @@ A deck.gl map of a Lumen pipeline as a FlowDash node.
 
 The spec is deck.gl's JSON format (as pydeck writes it) without data: every
 layer draws the pipeline's rows, and column-based props are deck.gl
-expressions such as ``"getPosition": "@@=[lon, lat]"``. ``check_deckgl``
-refuses a spec with unknown layer types, layer data or columns the pipeline
-does not have before it is drawn. A spec that leaves out the basemap gets a
-light or dark one following the page, one that leaves out the initial view
-state is fitted to the rows, and layers without a colour take the
-dashboard's colour scheme.
+expressions such as ``"getPosition": "@@=[lon, lat]"``. A spec is written by
+whoever edits the dashboard, its agent included, and is drawn in the browser
+of everyone who views it, so ``check_deckgl`` takes only what it knows to
+draw without fetching anything: the top-level keys, layer types and string
+props it lists, CARTO's basemaps and expressions that read columns the
+pipeline has. A spec that leaves out the basemap gets a light or dark one
+following the page, one that leaves out the initial view state is fitted to
+the rows, and layers without a colour take the dashboard's colour scheme.
 """
 from __future__ import annotations
 
@@ -24,13 +26,12 @@ from typing import Any
 import panel as pn
 
 from .nodes import (
-    COMPONENTS, LumenViewNode, fetch, register_view, row_ceiling, spec_param,
+    LumenViewNode, fetch, register_view, row_ceiling, spec_param,
 )
 
 DECKGL_ID = "Lumen/deckgl"
 
-# The layers that draw one datum per row, which a view of a pipeline can feed.
-# Tile, bitmap and mesh layers load their own data from URLs and are left out.
+# The layers that draw one datum per row from the data they are given.
 LAYER_TYPES = frozenset({
     "ArcLayer", "ColumnLayer", "ContourLayer", "GeoJsonLayer", "GeohashLayer",
     "GreatCircleLayer", "GridCellLayer", "GridLayer", "H3ClusterLayer",
@@ -39,6 +40,25 @@ LAYER_TYPES = frozenset({
     "ScatterplotLayer", "ScreenGridLayer", "SolidPolygonLayer", "TextLayer",
     "TripsLayer",
 })
+
+# The keys a spec may have at the top level.
+SPEC_KEYS = ("layers", "initialViewState", "views", "mapStyle", "controller", "tooltip")
+
+# The view classes a spec's views may name.
+VIEW_TYPES = frozenset({"MapView"})
+
+# Layer props that take a plain string, a name or keyword rather than anything
+# deck.gl would load; any other string must be an expression.
+STRING_PROPS = frozenset({
+    "id", "fontFamily", "fontWeight", "textAnchor", "alignmentBaseline", "wordBreak",
+    "characterSet", "colorScaleType", "elevationScaleType", "aggregation",
+    "colorAggregation", "elevationAggregation", "positionFormat", "radiusUnits",
+    "widthUnits", "sizeUnits", "lineWidthUnits", "getTextAnchor", "getAlignmentBaseline",
+    "getText",
+})
+_PLAIN = re.compile(r"[A-Za-z0-9_][\w ,'\-]*")
+# deck.gl's enumerations Panel registers, e.g. "@@#COORDINATE_SYSTEM.LNGLAT".
+_CONSTANT = re.compile(r"@@#(?:COORDINATE_SYSTEM|GL)\.[A-Z0-9_]+")
 
 # Accessors that take positions, which a list of column names cannot give.
 POSITION_PROPS = ("getPosition", "getSourcePosition", "getTargetPosition")
@@ -74,6 +94,23 @@ BASEMAPS = {
     "dark": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
 }
 
+# The basemaps a spec may name; null draws none.
+MAP_STYLES = frozenset({
+    *BASEMAPS.values(),
+    *(f"https://basemaps.cartocdn.com/gl/{name}-gl-style/style.json" for name in (
+        "positron-nolabels", "dark-matter-nolabels", "voyager", "voyager-nolabels",
+    )),
+})
+
+# Where a spec without positions starts: the whole world.
+WORLD_VIEW = {"longitude": 0, "latitude": 20, "zoom": 1, "pitch": 0, "bearing": 0}
+
+# The attribution box of a dark basemap, which MapLibre draws white.
+DARK_ATTRIBUTION = """
+.maplibregl-ctrl.maplibregl-ctrl-attrib { background-color: rgba(30, 30, 30, 0.7); color: #ddd; }
+.maplibregl-ctrl-attrib a { color: #ddd; }
+"""
+
 EXAMPLE = {
     "layers": [{
         "@@type": "ScatterplotLayer",
@@ -82,18 +119,26 @@ EXAMPLE = {
         "radiusMinPixels": 2,
         "pickable": True,
     }],
+    "tooltip": {"text": "{name}: {capacity}"},
 }
 
 _EXPRESSION = "@@="
 _STRINGS = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
-# A name not read off another value, with the member read off it and whether it is called.
-_NAMES = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?:\s*\.\s*([A-Za-z_$][\w$]*))?(\s*\()?")
+# A datum's column read by name in brackets, e.g. this['total sales'].
+_BRACKETS = re.compile(r"(?<![\w$.])(this|properties)\s*\[\s*('(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\")\s*\]")
+# A name not read off another value, with the member read off it.
+_NAMES = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)(?:\s*\.\s*([A-Za-z_$][\w$]*))?")
+_CALL = re.compile(r"[\w$)\]]\s*\(")
+_LITERALS = frozenset({"true", "false", "null"})
+# Names deck.gl does not resolve on the datum, so an expression reading them draws nothing.
 _GLOBALS = frozenset({
-    "true", "false", "null", "undefined", "NaN", "Infinity", "Math", "Number",
-    "String", "Boolean", "Date", "JSON", "this", "in", "typeof",
+    "Math", "Number", "String", "Boolean", "Date", "JSON", "Object", "Array", "NaN",
+    "Infinity", "undefined", "window", "document", "globalThis", "constructor",
+    "__proto__", "prototype",
 })
 # What a GeoJsonLayer accessor may read off its datum, a GeoJSON Feature.
 _FEATURE_KEYS = frozenset({"properties", "geometry", "type", "id"})
+_TEMPLATE = re.compile(r"\{([^{}]+)\}")
 
 
 def _layer_type(layer: dict[str, Any]) -> str | None:
@@ -116,27 +161,45 @@ def _expressions(value: Any) -> list[str]:
     return []
 
 
+def _unquote(literal: str) -> str:
+    return re.sub(r"\\(.)", r"\1", literal[1:-1])
+
+
 def expression_names(expression: str, feature: bool = False) -> tuple[set[str], set[str]]:
     """
-    The columns a deck.gl expression reads, and the names it reads that are
-    no column of a ``feature`` (a GeoJSON Feature, whose columns are its
-    ``properties``). ``"-"`` reads the whole row.
+    The columns a deck.gl expression reads, and the other names it reads:
+    globals, and for a ``feature`` (a GeoJSON Feature, whose columns are its
+    ``properties``) names that are no column. A column may be read bare,
+    off ``this`` or in brackets (``this['a b']``); ``"-"`` reads the whole row.
     """
     expression = expression.strip()
     if expression == "-":
         return set(), set()
     columns, stray = set(), set()
-    for match in _NAMES.finditer(_STRINGS.sub("''", expression)):
-        name, member, call = match.groups()
-        if (call and not member) or name in _GLOBALS:
+    for match in _BRACKETS.finditer(expression):
+        if match.group(1) == "properties" or not feature:
+            columns.add(_unquote(match.group(2)))
+    expression = _STRINGS.sub("''", _BRACKETS.sub("0", expression))
+    for name, member in _NAMES.findall(expression):
+        if name == "this" and member:
+            name, member = member, ""
+        if name in _LITERALS or name == "this":
             continue
-        if not feature:
+        if name in _GLOBALS:
+            stray.add(name)
+        elif not feature:
             columns.add(name)
         elif name == "properties" and member:
             columns.add(member)
         elif name not in _FEATURE_KEYS:
             stray.add(name)
     return columns, stray
+
+
+def tooltip_fields(tooltip: Any) -> set[str]:
+    """The columns a ``{"text": "{column} ..."}`` tooltip names."""
+    text = tooltip.get("text") if isinstance(tooltip, dict) else None
+    return {name.strip() for name in _TEMPLATE.findall(text)} if isinstance(text, str) else set()
 
 
 def layer_fields(layer: dict[str, Any]) -> set[str]:
@@ -149,11 +212,14 @@ def layer_fields(layer: dict[str, Any]) -> set[str]:
 
 
 def deckgl_fields(spec: Any) -> set[str]:
-    """The columns a deck.gl spec's layers read."""
-    layers = spec.get("layers") if isinstance(spec, dict) else None
-    if not isinstance(layers, list):
+    """The columns a deck.gl spec's layers and tooltip read."""
+    if not isinstance(spec, dict):
         return set()
-    return {f for layer in layers if isinstance(layer, dict) for f in layer_fields(layer)}
+    layers = spec.get("layers")
+    fields = tooltip_fields(spec.get("tooltip"))
+    if isinstance(layers, list):
+        fields |= {f for layer in layers if isinstance(layer, dict) for f in layer_fields(layer)}
+    return fields
 
 
 def _suggest(name: str, options: list[str]) -> str:
@@ -161,12 +227,93 @@ def _suggest(name: str, options: list[str]) -> str:
     return f" Did you mean {close[0]!r}?" if close else ""
 
 
+def _check_value(where: str, key: str, value: Any, *, top: bool = False) -> None:
+    """
+    Refuse what deck.gl's JSON converter would build or load from ``value``:
+    any ``@@function``, any ``@@type`` other than a layer's own, and strings
+    other than expressions, enumerations and plain names under ``STRING_PROPS``.
+    """
+    if isinstance(value, dict):
+        if "@@function" in value:
+            raise ValueError(f"{where} calls a function with `@@function`, which a map spec may not do.")
+        if "@@type" in value and not top:
+            raise ValueError(
+                f"{where} builds a {value['@@type']!r} in `{key}`; a map spec may only name its layers' "
+                "types, not extensions, loaders or other deck.gl classes."
+            )
+        for item_key, item in value.items():
+            if item_key in ("loadOptions", "_subLayerProps", "fetch"):
+                raise ValueError(f"{where} sets `{item_key}`, which a map spec may not set.")
+            if top and item_key == "@@type":
+                continue
+            _check_value(where, item_key, item)
+    elif isinstance(value, list):
+        for item in value:
+            _check_value(where, key, item)
+    elif isinstance(value, str):
+        if value.startswith(_EXPRESSION) or _CONSTANT.fullmatch(value):
+            return
+        if key in STRING_PROPS and _PLAIN.fullmatch(value):
+            return
+        raise ValueError(
+            f"{where} sets `{key}` to the string {value!r}; a map spec takes strings only as "
+            "@@= expressions and as plain names for "
+            f"{', '.join(sorted(STRING_PROPS))}, so it never loads URLs or files."
+        )
+
+
+def _check_expression(name: str, expression: str, feature: bool, columns: list[str]) -> None:
+    if any(re.search(r"[:/]", literal) for literal in _STRINGS.findall(expression)):
+        raise ValueError(
+            f"{name} has a string with ':' or '/' in \"@@={expression}\"; a map spec may not name URLs or paths."
+        )
+    if _CALL.search(_STRINGS.sub("''", expression)):
+        raise ValueError(
+            f"{name} calls a function in \"@@={expression}\"; deck.gl expressions take no function "
+            "calls, so use arithmetic, comparisons and ?: instead, e.g. \"@@=value * 10\"."
+        )
+    fields, stray = expression_names(expression, feature)
+    if globals_read := sorted(stray & _GLOBALS):
+        raise ValueError(
+            f"{name} reads {', '.join(globals_read)} in \"@@={expression}\"; deck.gl expressions can "
+            "only read the row's columns, so use arithmetic, comparisons and ?: instead."
+        )
+    if stray:
+        raise ValueError(
+            f"{name} is a GeoJsonLayer, whose accessors get a GeoJSON Feature: read columns "
+            f"as properties.<column>, e.g. properties.{sorted(stray)[0]}."
+        )
+    _check_columns(name, fields, columns)
+
+
+def _check_columns(name: str, fields: set[str], columns: list[str]) -> None:
+    if unknown := sorted(fields - set(columns)):
+        raise ValueError(
+            f"{name} reads {', '.join(unknown)}, which the data does not have.{_suggest(unknown[0], columns)} "
+            f"Its columns are: {', '.join(columns)}."
+        )
+
+
+def _check_tooltip(tooltip: Any, columns: list[str]) -> None:
+    if isinstance(tooltip, bool):
+        return
+    if not isinstance(tooltip, dict) or set(tooltip) != {"text"} or not isinstance(tooltip["text"], str):
+        raise ValueError(
+            "`tooltip` is true, false or {\"text\": \"...\"} naming columns in braces, "
+            "e.g. {\"text\": \"{name}: {value}\"}."
+        )
+    _check_columns("The tooltip", tooltip_fields(tooltip), columns)
+
+
 def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     """
     The deck.gl spec to draw for a pipeline with ``columns``, or ``ValueError``
-    saying what to fix: the spec is plain JSON, each layer has a known
-    ``@@type`` and no ``data`` of its own, and its expressions read columns
-    the pipeline has.
+    saying what to fix. Only what is known to draw without loading anything
+    passes: the top-level keys in ``SPEC_KEYS``, layers of ``LAYER_TYPES``
+    without data, ``MapView`` views, a basemap of ``MAP_STYLES`` (or null),
+    strings that are expressions, enumerations or plain names of
+    ``STRING_PROPS``, and expressions that read columns the pipeline has
+    without calling functions.
     """
     if not isinstance(spec, dict):
         raise ValueError("The spec must be a deck.gl JSON object.")
@@ -176,11 +323,28 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
         raise ValueError(f"The spec must be plain JSON: {exc}.") from None
     if "map_style" in spec:
         raise ValueError("Name the basemap with `mapStyle`, not `map_style`, or leave it out to follow the page's theme.")
+    if unknown := [key for key in spec if key not in SPEC_KEYS]:
+        raise ValueError(f"The spec may not set {', '.join(map(repr, unknown))}; its keys are {', '.join(SPEC_KEYS)}.")
     style = spec.get("mapStyle")
-    if isinstance(style, str) and style.startswith("mapbox://"):
-        raise ValueError("Mapbox styles need an API key; leave `mapStyle` out to use a CARTO basemap that follows the page's theme.")
-    if not isinstance(spec.get("initialViewState", {}), dict):
-        raise ValueError("`initialViewState` must be an object, e.g. {\"latitude\": 40, \"longitude\": -100, \"zoom\": 3}.")
+    if style is not None and style not in MAP_STYLES:
+        raise ValueError(
+            "`mapStyle` must be one of CARTO's basemaps or null for none; leave it out for one "
+            f"that follows the page's theme. The basemaps are: {', '.join(sorted(MAP_STYLES))}."
+        )
+    state = spec.get("initialViewState", {})
+    if not isinstance(state, dict) or not all(
+        isinstance(v, (int, float)) and not isinstance(v, bool) for v in state.values()
+    ):
+        raise ValueError("`initialViewState` must be an object of numbers, e.g. {\"latitude\": 40, \"longitude\": -100, \"zoom\": 3}.")
+    if not isinstance(spec.get("controller", True), bool):
+        raise ValueError("`controller` must be true or false.")
+    views = spec.get("views", [])
+    if not isinstance(views, list) or not all(isinstance(v, dict) and v.get("@@type") in VIEW_TYPES for v in views):
+        raise ValueError(f"`views` must be a list of {', '.join(sorted(VIEW_TYPES))} objects, e.g. [{{\"@@type\": \"MapView\", \"controller\": true}}].")
+    for view in views:
+        _check_value("A view", "views", view, top=True)
+    if "tooltip" in spec:
+        _check_tooltip(spec["tooltip"], columns)
     layers = spec.get("layers")
     if not isinstance(layers, list) or not layers:
         raise ValueError("The spec needs a `layers` list with at least one layer.")
@@ -207,20 +371,9 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
                     f"{name}'s `{prop}` lists column names; write it as an expression, "
                     f"\"@@=[{', '.join(value)}]\"."
                 )
-        feature = kind == "GeoJsonLayer"
+        _check_value(name, "layers", layer, top=True)
         for expression in _expressions(layer):
-            fields, stray = expression_names(expression, feature)
-            if stray:
-                raise ValueError(
-                    f"{name} is a GeoJsonLayer, whose accessors get a GeoJSON Feature: read columns "
-                    f"as properties.<column>, e.g. properties.{sorted(stray)[0]}."
-                )
-            if unknown := sorted(fields - set(columns)):
-                hint = _suggest(unknown[0], columns)
-                raise ValueError(
-                    f"{name} reads {', '.join(unknown)}, which the data does not have.{hint} "
-                    f"Its columns are: {', '.join(columns)}."
-                )
+            _check_expression(name, expression, kind == "GeoJsonLayer", columns)
     return copy.deepcopy(spec)
 
 
@@ -320,51 +473,79 @@ class DeckGLNode(LumenViewNode):
         self._drawn_dark: bool | None = None
         super().__init__(**params)
 
+    def _view_rows(self, rows: Any, spec: dict[str, Any]) -> Any:
+        """Only the columns the spec reads, and a GeoDataFrame's geometry, go to the browser."""
+        if not hasattr(rows, "columns") or any(e.strip() == "-" for e in _expressions(spec.get("layers"))):
+            return rows
+        keep = deckgl_fields(spec)
+        geometry = getattr(getattr(rows, "geometry", None), "name", None)
+        return rows[[c for c in rows.columns if c in keep or c == geometry]]
+
+    def _style(self, dark: bool) -> dict[str, Any]:
+        """
+        The pane params that change with the page's theme. A changed
+        ``configuration`` makes Panel's deck.gl model draw the map again
+        with the new basemap from the data it already has.
+        """
+        return {
+            "configuration": "{}" if dark else "",
+            "stylesheets": [DARK_ATTRIBUTION] if dark else [],
+        }
+
     def _view_params(self, spec: dict[str, Any]) -> dict[str, Any]:
         spec = copy.deepcopy(spec)
+        tooltip = spec.pop("tooltip", True)
         self._drawn_dark = None
+        dark = self._dark if self._dark is not None else pn.config.theme == "dark"
         if spec.get("mapStyle", BASEMAPS["light"]) in BASEMAPS.values():
-            self._drawn_dark = self._dark if self._dark is not None else pn.config.theme == "dark"
-            spec["mapStyle"] = BASEMAPS["dark" if self._drawn_dark else "light"]
+            self._drawn_dark = dark
+            spec["mapStyle"] = BASEMAPS["dark" if dark else "light"]
         if "initialViewState" not in spec:
             # fetch keeps the rows the view is drawn with, so this runs no query.
             fitted = fit_view_state(spec, fetch(self.pipeline, row_ceiling(self.editor)))
-            if fitted is not None:
-                spec["initialViewState"] = fitted
+            spec["initialViewState"] = fitted or dict(WORLD_VIEW)
         color = SCHEME_COLORS.get(self._color_scheme() or "", SCHEME_COLORS["tableau10"])
         for layer in spec["layers"]:
             for prop in COLOR_PROPS.get(_layer_type(layer) or "", ()):
                 layer.setdefault(prop, color)
-        return {"spec": spec, "sizing_mode": "stretch_both"}
+        return {
+            "spec": spec, "tooltips": tooltip, "sizing_mode": "stretch_both",
+            **self._style(bool(self._drawn_dark)),
+        }
 
-    def _follow_theme(self, dark: bool) -> bool:
-        """Note the page's theme; whether the basemap drawn has the other one."""
+    def _follow_theme(self, dark: bool) -> None:
+        """Give the drawn map the basemap of the page's theme, without sending its rows again."""
         self._dark = dark
-        return self._drawn_dark is not None and self._drawn_dark != dark
+        view = self._object
+        if self._drawn_dark is None or self._drawn_dark == dark or view is None:
+            return
+        self._drawn_dark = dark
+        view.spec["mapStyle"] = BASEMAPS["dark" if dark else "light"]
+        pane = getattr(view, "_panel", None)
+        if isinstance(pane, pn.pane.DeckGL) and isinstance(pane.object, dict):
+            # The basemap goes first, so the map drawn again for the new configuration has it.
+            style = self._style(dark)
+            pane.param.update(object={**pane.object, "mapStyle": view.spec["mapStyle"]}, stylesheets=style["stylesheets"])
+            pane.configuration = style["configuration"]
 
     def _body(self):
         body = super()._body()
         if self._object is None:
             return body
-        # A pmui component follows the page's theme switch, so the map is drawn again with the other basemap.
+        # A pmui component follows the page's theme switch, which the basemap follows too.
         from panel_material_ui import Column
 
         frame = Column(body, sizing_mode="stretch_both", margin=0)
         node = weakref.ref(self)
 
         def follow(event):
-            if (view := node()) is not None and view._follow_theme(event.new):
-                view._refresh()
+            if (view := node()) is not None:
+                view._follow_theme(event.new)
 
         frame.param.watch(follow, "dark_theme")
-        if self._follow_theme(frame.dark_theme) and pn.state.curdoc is not None:
-            # Drawn before the session's theme was known, e.g. while the dashboard loaded.
-            pn.state.curdoc.add_next_tick_callback(self._refresh)
+        # Drawn before the session's theme was known, e.g. while the dashboard loaded.
+        self._follow_theme(frame.dark_theme)
         return frame
 
     def _summary(self, spec: dict[str, Any], data: Any) -> str:
         return _summary(spec, data)
-
-
-# Offered with the other Lumen nodes; nodes.py cannot import this module, which builds on it.
-COMPONENTS[DECKGL_ID] = DeckGLNode

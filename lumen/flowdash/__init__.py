@@ -30,6 +30,8 @@ from .nodes import (
     set_row_ceiling, spec_param, table_pipeline, unbind_source,
 )
 
+COMPONENTS[DECKGL_ID] = DeckGLNode
+
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.
 __flowdash_components__ = COMPONENTS
