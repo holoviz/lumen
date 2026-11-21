@@ -26,7 +26,6 @@ from ...sources.duckdb import DuckDBSource
 from ...sources.xarray_sql import XArraySQLSource
 from ...transforms.sql import SQLLimit
 from ...util import as_pandas
-from ..actor import _merge_prompt_tools
 from ..config import (
     PROMPTS_DIR, SOURCE_TABLE_SEPARATOR, DeterministicError,
     DeterministicQueryError, EmptyResultError, MissingContextError, QueryError,
@@ -1389,8 +1388,6 @@ class SQLAgent(BaseLumenAgent):
 
             metaset = context.get("metaset")
             tool_list = self._sql_tools(sources, metaset)
-            merged_tools = _merge_prompt_tools(self.llm_tools, tool_list, context) or []
-            tool_names = [tool.name for tool in merged_tools]
             checked: dict[str, t.Any] = {}
             with self.llm.trace() as events:
                 try:
@@ -1412,7 +1409,6 @@ class SQLAgent(BaseLumenAgent):
                         discovery_context=discovery_context,
                         active_filters=self._active_filters(context.get("pipeline")),
                         source_names=sorted({s for s, _ in sources}),
-                        tool_names=tool_names,
                         tool_rounds=MAIN_TOOL_ROUNDS,
                         schema_max_tokens=self.schema_max_tokens,
                         schema_tables_shown=self.schema_tables_shown,
