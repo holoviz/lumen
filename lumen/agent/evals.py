@@ -150,6 +150,41 @@ def answer_nodes(ops: Any, names: Iterable[str]) -> tuple[str | None, list[str]]
     return None, views
 
 
+def reads(ops: Any, node: str | None, answers: list[str | None]) -> list[int]:
+    """
+    The earlier turns whose answer nodes ``answers`` (by turn) the SQL node
+    ``node`` reads through SQL-to-SQL edges, directly or through SQL nodes
+    that answer no turn.
+    """
+    found, queue, seen = set(), [node] if node else [], set()
+    while queue:
+        current = queue.pop()
+        upstream = _graph.feeding(ops, f"{current}.source")
+        if upstream is None or not upstream.endswith(".result"):
+            continue
+        name = upstream.rsplit(".", 1)[0]
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in answers:
+            found.add(answers.index(name))
+        else:
+            queue.append(name)
+    return sorted(found)
+
+
+def final_rows(ops: Any, answers: list[str | None]) -> list[list[list[Any]] | None]:
+    """Each turn's answer read again from the dashboard; None for a turn without one or whose node is gone."""
+    rows = []
+    for node in answers:
+        try:
+            frame = _graph.output(ops, node, "data") if node in _graph.nodes(ops) else None
+        except Exception:
+            frame = None
+        rows.append(result_rows(frame)[1] if frame is not None else None)
+    return rows
+
+
 def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
     """Read a ``Turn`` off the dashboard, from the nodes the turn added or changed."""
     ops = session.ops
@@ -217,7 +252,9 @@ class FlowDashSubject:
     One pydantic-ai agent building a FlowDash dashboard of Lumen nodes. Every
     prompt of a case runs through the same agent, conversation and dashboard,
     whatever ``inputs.agents`` names; a pre-seeded ``inputs.query`` is placed
-    as a SQL node named ``result`` first.
+    as a SQL node named ``result`` first. Each turn reports the earlier
+    turns whose answers its answer reads, and after the last turn every
+    answer is read again, for ``turn_reads`` and ``stable_turns``.
 
     Pass ``model``, e.g. a ``FunctionModel``, or ``cassette``, the path of a
     recorded model trace, to run offline. ``model_settings`` replaces the
@@ -280,13 +317,17 @@ class FlowDashSubject:
         self._session = self._last_usage = None
         session = self._session = AgentSession(source, model, instructions=self.instructions, trace=trace,
                                                model_settings=self.model_settings)
-        turns, artifacts = [], []
+        turns, artifacts, answers = [], [], []
+        final = None
         try:
             if inputs.query:
                 session.add_sql(SEEDED_QUERY, inputs.query)
             for prompt in inputs.prompts:
                 result = await session.ask(prompt)
                 turn = snapshot(session, result)
+                answer, _ = answer_nodes(session.ops, [*result.nodes, *result.changed])
+                turn.reads = reads(session.ops, answer, answers)
+                answers.append(answer)
                 turns.append(turn)
                 artifacts.append(TurnArtifacts(
                     graph=result.graph,
@@ -294,8 +335,9 @@ class FlowDashSubject:
                 ))
                 if turn.status == "error":
                     break
+            final = final_rows(session.ops, answers)
         finally:
             session.close()
             self._session = None
             self._last_usage = usage(session.model.responses)
-        return Output(turns, _total(turns), artifacts)
+        return Output(turns, _total(turns), artifacts, final_rows=final)
