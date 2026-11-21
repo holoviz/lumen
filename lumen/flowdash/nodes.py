@@ -83,12 +83,6 @@ SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
 
 
-def _supported(options: dict[str, Any]) -> dict[str, Any]:
-    """The ``register`` options the installed panel-flowdash accepts."""
-    params = inspect.signature(register).parameters
-    return {key: value for key, value in options.items() if key in params}
-
-
 def _register_port_type(name: str, **options: Any) -> str:
     """
     Register a port type with the ``options`` (``color``, ``columns``) the
@@ -916,7 +910,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     check_config=check_sql_config,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
-    **_supported({"config_completions": sql_completions}),
+    config_completions=sql_completions,
 )
 class SQLNode(LumenNode):
 
