@@ -240,11 +240,17 @@ class DuckDBSource(BaseSQLSource):
                     return self._fetch_df(cursor, sql_query, date_as_object=True, backend=self.dataframe_backend)
                 return self._fetch_df(cursor, sql_query)
 
+        work = asyncio.ensure_future(asyncio.to_thread(run))
         try:
-            return await asyncio.wait_for(asyncio.to_thread(run), timeout)
+            return await asyncio.wait_for(asyncio.shield(work), timeout)
         except TimeoutError as e:
-            # Stops the statement, which the default would leave running.
-            cursor.interrupt()
+            # Stops the statement, which the default would leave running. An
+            # interrupt sent before the worker starts the statement is lost,
+            # so send it until the worker returns.
+            while not work.done():
+                cursor.interrupt()
+                await asyncio.wait([work], timeout=0.05)
+            work.exception()
             raise QueryTimeoutError(f"The query did not finish within {timeout} seconds.") from e
 
     def _ingest_table(self, name: str, df: pd.DataFrame):
