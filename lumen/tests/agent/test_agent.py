@@ -200,7 +200,8 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
+    # The app defines no metrics, so add_metric is not offered.
+    assert tools == ["add_chart", "add_map", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
 async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():

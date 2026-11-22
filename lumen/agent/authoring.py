@@ -13,6 +13,7 @@ from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolReturn
+from pydantic_ai.tools import Tool, ToolDefinition
 
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
@@ -245,7 +246,9 @@ async def add_metric(
     dimensions: list[str] | None = None, grain: str | None = None, parameters: dict[str, Any] | None = None,
     order_by: list[str] | None = None, limit: int | None = None,
 ) -> str:
-    """Place a metric node, one of the app's agreed definitions, and return a preview of its result.
+    """Place one of the app's metrics, as list_tables lists them, and return a preview of its result.
+
+    It only places a metric the app defines and cannot create one: compute a new number with add_sql.
 
     Args:
         metric: Metric name from list_tables.
@@ -260,7 +263,9 @@ async def add_metric(
     ops = ctx.deps.ops
     metrics = host_metrics(ops.editor.context)
     if metric not in metrics:
-        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics) or 'none'}.")
+        if not metrics:
+            raise ModelRetry("This app defines no metrics; compute it with add_sql.")
+        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics)}; compute anything else with add_sql.")
     config = {"metric": metric, "measures": measures or [], "dimensions": dimensions or [], "grain": grain or "",
               "order_by": order_by or [], "limit": limit}
     try:
@@ -315,17 +320,27 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     return placed + "".join(f"\nNote: {note}" for note in notes)
 
 
-def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None) -> str:
+TableFormatter = Literal["number", "money", "plaintext", "textarea", "progress", "star", "tickCross", "traffic", "color"]
+
+
+def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None,
+              formatters: dict[str, TableFormatter | dict[str, Any]] | None = None) -> str:
     """Place a table showing a SQL, table or filter node's rows, when the user asks to see rows rather than a chart.
 
     Args:
-        data: SQL, table or filter node to show.
+        data: Name of the SQL, table or filter node to show (a node name, not a source table).
         name: Descriptive snake_case node name.
         spec: Optional table options naming the node's columns: page_size, layout,
             show_index, header_filters, frozen_columns, hidden_columns, sorters
-            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles, widths and formatters
-            ({column: "money" | "progress" | "star" | "tickCross" | ...}).
+            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles and widths.
+        formatters: How to draw a column's cells, a name or {"type": name, ...params}:
+            "number" with thousands separators and "decimals" (default 0 for whole numbers,
+            else 2), "money" ("symbol", "decimals"), "progress" ("min", "max"), "star",
+            "tickCross", "traffic", "color", "plaintext" or "textarea" (no params). Leave a year
+            column unformatted. E.g. {"capacity_mw": {"type": "number", "decimals": 1}}.
     """
+    if formatters:
+        spec = {**(spec or {}), "formatters": {**((spec or {}).get("formatters") or {}), **formatters}}
     config = place_view(ctx, TABLE_VIEW_ID, data, name, {"spec": spec or {}})
     options = ", ".join(sorted(config["spec"])) or "default options"
     return f"Placed table {name!r} of {data!r} ({options})."
@@ -503,9 +518,19 @@ def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[s
     )
 
 
+async def _with_metrics(ctx: RunContext[FlowDashDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
+    """Offer add_metric only to an app that defines metrics."""
+    return tool_def if host_metrics(ctx.deps.ops.editor.context) else None
+
+
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map and add_text."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
+    """
+    The authoring tools: add_sql, add_metric, add_chart, add_table, add_map
+    and add_text. add_metric is offered only in an app that defines metrics,
+    which each run checks, so an app's tools stay the same from run to run.
+    """
+    metric = Tool(add_metric, prepare=_with_metrics)
+    return FunctionToolset[FlowDashDeps]([add_sql, metric, add_chart, add_table, add_map, add_text], max_retries=3)
 
 
 def _refused(result: Any) -> bool:
