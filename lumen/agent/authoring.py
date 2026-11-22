@@ -264,6 +264,9 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
         with primed_result(src, statement, frame):
             result = await handler({**args, "config": config})
         try:
+            # TODO: with panel-flowdash's ExplorationOps (fd #238), an edit to an earlier answer
+            # makes a copy (OwnNodesOnly steps aside for it), so ``name`` would read the frozen
+            # original here, not the copy; see test_checked_config_previews_the_copy_explore_makes.
             frame = _graph.output(ops, name, "data")
         except OperationError as exc:
             ops.set_config(name, {key: before[key] for key in config if key in before})
