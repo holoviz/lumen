@@ -805,16 +805,9 @@ class MetricPreFilter(SQLPreFilter):
 
     @staticmethod
     def top_level_tables(parsed: exp.Expression) -> list[exp.Table]:
-        """The tables in the FROM and JOINs of the outermost SELECT of ``parsed``, or of each side of a UNION."""
-        def outermost(node: exp.Expression) -> list[exp.Select]:
-            if isinstance(node, exp.Select):
-                return [node]
-            if isinstance(node, exp.SetOperation):
-                return [*outermost(node.this), *outermost(node.expression)]
-            return []
-
+        """The tables in the FROM and JOINs of the SELECTs whose rows are the result, see ``outermost_selects``."""
         found = []
-        for select in outermost(parsed):
+        for select in outermost_selects(parsed):
             sources = [select.args.get("from_", select.args.get("from")), *(select.args.get("joins") or [])]
             found += [s.this for s in sources if s is not None and isinstance(s.this, exp.Table)]
         return found
@@ -994,22 +987,48 @@ def _dimension_condition(column: str, value: Any, dialect: str | None) -> exp.Ex
     return target.eq(item(value))
 
 
+def outermost_selects(parsed: exp.Expression) -> list[exp.Select]:
+    """
+    The SELECTs whose rows are the result of ``parsed``: the query itself,
+    each branch of a UNION, and the left side of an EXCEPT or INTERSECT,
+    where a filter narrows the result as it would on its own. A subquery,
+    a CTE and the right side of EXCEPT are never among them.
+    """
+    if isinstance(parsed, exp.Select):
+        return [parsed]
+    if isinstance(parsed, exp.Union):
+        return [*outermost_selects(parsed.this), *outermost_selects(parsed.expression)]
+    if isinstance(parsed, (exp.Except, exp.Intersect)):
+        return outermost_selects(parsed.this)
+    if isinstance(parsed, exp.Subquery):
+        return outermost_selects(parsed.this)
+    return []
+
+
 def _empty_list(node: exp.In, values: Mapping[str, Any], metric: Metric) -> str | None:
-    """The list parameter of ``node`` that is given an empty list, leaving nothing to compare with, if any."""
+    """
+    The list parameter of ``node`` given an empty list, when every item of
+    the IN is such a list and so nothing is left to compare with. With
+    other items the empty lists only drop out of the IN.
+    """
+    names = []
     for item in node.expressions:
         parameter = metric.parameters.get(item.name) if isinstance(item, exp.Placeholder) else None
-        if parameter is not None and parameter.kind == "list" and not values.get(item.name):
-            return item.name
-    return None
+        if parameter is None or parameter.kind != "list" or values.get(item.name):
+            return None
+        names.append(item.name)
+    return names[0] if names else None
 
 
-def _drop_condition(node: exp.In, name: str, metric: Metric, dialect: str | None) -> None:
+def _drop_condition(node: exp.In, name: str, metric: Metric, selects: list[exp.Select],
+                    dialect: str | None) -> None:
     """
     Replace ``x IN (:name)``, or ``x NOT IN (:name)``, whose list is empty
     with TRUE, so it filters nothing, like an empty filter value. That only
-    holds when the condition is ANDed into a WHERE, HAVING or ON clause;
-    under OR, a comparison or a function TRUE would change what the rest
-    means, so the empty list is refused there.
+    holds for a condition ANDed into the WHERE or HAVING of one of the
+    ``selects`` whose rows are the result; anywhere else, e.g. under OR, in
+    a subquery, a CTE, NOT EXISTS, a join or an aggregate's FILTER, TRUE
+    could filter everything or change a measure, so the empty list is refused.
     """
     target = node
     while isinstance(target.parent, exp.Paren):
@@ -1018,13 +1037,13 @@ def _drop_condition(node: exp.In, name: str, metric: Metric, dialect: str | None
         target = target.parent
     while isinstance(target.parent, exp.Paren):
         target = target.parent
-    ancestor = target.parent
-    while isinstance(ancestor, (exp.And, exp.Paren)):
-        ancestor = ancestor.parent
-    if not isinstance(ancestor, (exp.Where, exp.Having, exp.Join)):
+    clause = target.parent
+    while isinstance(clause, (exp.And, exp.Paren)):
+        clause = clause.parent
+    if not (isinstance(clause, (exp.Where, exp.Having)) and any(clause.parent is select for select in selects)):
         raise MetricError(
-            f"Parameter {name!r} of metric {metric.name!r} is an empty list, which only drops a condition "
-            "ANDed into a WHERE, HAVING or ON clause; give it at least one value.", "parameters",
+            f"Parameter {name!r} of metric {metric.name!r} is an empty list, which only drops a condition ANDed "
+            "into the WHERE or HAVING of the query's outermost SELECT; give it at least one value.", "parameters",
         )
     target.replace(exp.true() if dialect not in NO_BOOLEAN_LITERALS else exp.EQ(
         this=exp.Literal.number(1), expression=exp.Literal.number(1)))
@@ -1038,9 +1057,10 @@ def bind_sql(metric: Metric, values: Mapping[str, Any], dialect: str | None) -> 
     """
     read = None if dialect == "any" else dialect
     parsed = parse_expression(metric.sql, read)
+    selects = outermost_selects(parsed)
     for node in list(parsed.find_all(exp.In)):
         if (name := _empty_list(node, values, metric)) is not None:
-            _drop_condition(node, name, metric, read)
+            _drop_condition(node, name, metric, selects, read)
 
     def replace(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.In):
