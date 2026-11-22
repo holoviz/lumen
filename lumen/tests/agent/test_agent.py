@@ -13,7 +13,9 @@ from pydantic_ai.models.function import FunctionModel
 
 from lumen.agent import AgentSession, _graph
 from lumen.agent.assistant import INSTRUCTIONS, create_agent
-from lumen.agent.authoring import add_chart, add_sql, add_text
+from lumen.agent.authoring import (
+    add_chart, add_sql, add_text, check_text,
+)
 from lumen.agent.data import (
     check_data, data_toolset, describe_table, distinct_values, list_tables,
     run_sql,
@@ -741,6 +743,7 @@ async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ct
     (("heading", "title", " "), "Write the heading's text"),
     (("markdown", "intro", "x" * 4001), "4001 characters; keep it to 4000"),
     (("markdown", "intro", "Total: {{ value }}"), "nothing is connected"),
+    (("heading", "title", "Sales", "s" * 401), "401 characters; keep it to 400"),
     (("divider", "rule", "Sales", "sub"), "Only a heading"),
 ])
 def test_add_text_retries_text_it_cannot_place(ctx, session, args, error):
@@ -766,3 +769,26 @@ async def test_set_config_changes_the_text_of_a_text_node_the_agent_placed():
     (retried,) = requests[2].parts
     assert "keep it to 4000" in str(retried.content)
     assert config["text"] == "Paid orders per region." and turn.error is None
+
+
+async def test_a_placeholder_is_allowed_once_the_value_input_is_connected(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_text(ctx, "markdown", "intro", "Paid orders per region.")
+    text = {"text": "Totals: {{ value }}"}
+    with pytest.raises(ModelRetry, match="nothing is connected"):
+        check_text(session.ops, "Text/Markdown", text, "intro")
+    session.ops.connect("paid_by_region.data", "intro.value")
+    check_text(session.ops, "Text/Markdown", text, "intro")
+    session.ops.set_config("intro", text)
+    assert _graph.config_of(session.ops, "intro")["text"] == "Totals: {{ value }}"
+
+
+async def test_list_tables_shortens_long_text(ctx):
+    from lumen.agent.data import NODE_TEXT_CHARS
+
+    add_text(ctx, "markdown", "intro", "word " * 100)
+    line = next(line for line in (await list_tables(ctx)).splitlines() if line.startswith("- intro"))
+    shown = ("word " * 100).strip()
+    assert line == f"- intro (markdown; text): '{shown[:NODE_TEXT_CHARS]} [... {len(shown) - NODE_TEXT_CHARS} more characters]'"
+    detail = await list_tables(ctx, node="intro")
+    assert detail == f"- intro (markdown; text): {shown!r}"
