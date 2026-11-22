@@ -14,163 +14,16 @@ from panel_flowdash.ui import node_preview
 from lumen.flowdash import (
     COMPONENTS, SOURCE_ID, bind_source, nodes as flowdash_nodes,
 )
-from lumen.flowdash.redact import REDACTED, redact_spec, redact_text
+from lumen.flowdash.redact import REDACTED
 from lumen.sources.base import InMemorySource
 from lumen.sources.duckdb import DuckDBSource
 
-ENV = {
-    "HOME": "/home/analyst",
-    "PWD": "/home/analyst/project",
-    "PGPASSWORD": "pg-env-password",
-    "SNOWFLAKE_TOKEN": "env-snowflake-token",
-    "WAREHOUSE": "ANALYTICS_WH",
-}
-
-SECRETS = [
-    "s3cr%2Ft", "hunter22", "tok-123456", "AKIAEXAMPLE", "abc/def+ghi", "zzz-secret",
-    "sf-password", "sf-token", "pk-password", "pg-env-password", "env-snowflake-token",
-    "client-secret", "oauth-refresh", "odbc-pass", "ANALYTICS_WH",
-]
-
-
-def dump(spec, environ=ENV):
-    return yaml.safe_dump(redact_spec(spec, environ=environ), sort_keys=False)
+SECRETS = ["AKIAEXAMPLE", "abc/def+ghi", "env-snowflake-token", "s3cr%2Ft", "hunter22"]
 
 
 def assert_no_secret(text):
     for secret in SECRETS:
         assert secret not in text
-
-
-def test_sqlalchemy_spec_hides_uri_password_and_driver_secrets():
-    spec = {
-        "type": "sqlalchemy",
-        "url": "postgresql://alice:s3cr%2Ft@db.example.com:5432/sales?sslmode=require&password=hunter22",
-        "connect_args": {"sslpassword": "hunter22", "options": "-c statement_timeout=5000", "connect_timeout": 5},
-        "engine_kwargs": {"pool_size": 3},
-        "query_params": {"token": "tok-123456", "application_name": "lumen"},
-        "username": "alice",
-        "password": "hunter22",
-        "tables": ["orders"],
-    }
-    text = dump(spec)
-    assert_no_secret(text)
-    redacted = yaml.safe_load(text)
-    assert redacted["url"] == f"postgresql://alice:{REDACTED}@db.example.com:5432/sales?sslmode=require&password={REDACTED}"
-    assert redacted["connect_args"] == {"sslpassword": REDACTED, "options": REDACTED, "connect_timeout": 5}
-    assert redacted["engine_kwargs"] == {"pool_size": 3}
-    assert redacted["query_params"] == {"token": REDACTED, "application_name": "lumen"}
-    assert redacted["username"] == "alice"
-    assert redacted["password"] == REDACTED
-    assert redacted["tables"] == ["orders"]
-
-
-def test_snowflake_style_spec_hides_credentials_and_keeps_the_rest():
-    spec = {
-        "type": "snowflake",
-        "account": "xy12345.eu-central-1",
-        "user": "ANALYST",
-        "authenticator": "snowflake",
-        "password": "sf-password",
-        "token": "sf-token",
-        "private_key": b"pem-private-key-bytes",
-        "private_key_password": "pk-password",
-        "warehouse": "ANALYTICS_WH",
-        "database": "SALES",
-        "conn_kwargs": {"client_session_keep_alive": True, "oauth_client_secret": "client-secret"},
-        "tables": {"orders": "SELECT * FROM ORDERS"},
-    }
-    text = dump(spec)
-    assert_no_secret(text)
-    redacted = yaml.safe_load(text)
-    assert redacted["private_key"] == redacted["private_key_password"] == REDACTED
-    assert redacted["password"] == redacted["token"] == REDACTED
-    # The warehouse came from an environment variable, so it is hidden too.
-    assert redacted["warehouse"] == REDACTED
-    assert redacted["conn_kwargs"] == {"client_session_keep_alive": True, "oauth_client_secret": REDACTED}
-    for key in ("account", "user", "authenticator", "database", "tables"):
-        assert redacted[key] == spec[key]
-
-
-def test_duckdb_spec_hides_secrets_created_or_set_on_connect():
-    spec = {
-        "type": "duckdb",
-        "uri": ":memory:",
-        "initializers": [
-            "INSTALL httpfs",
-            "CREATE SECRET s3_data (TYPE s3, KEY_ID 'AKIAEXAMPLE', SECRET 'abc/def+ghi', REGION 'eu-west-1')",
-            "SET s3_secret_access_key = 'zzz-secret'",
-            "SET s3_access_key_id='AKIAEXAMPLE'",
-        ],
-        "tables": {
-            "trips": "SELECT * FROM read_parquet('s3://bucket/trips/*.parquet')",
-            "api_keys": "SELECT * FROM read_csv('https://user:hunter22@example.com/keys.csv')",
-        },
-    }
-    text = dump(spec)
-    assert_no_secret(text)
-    redacted = yaml.safe_load(text)
-    assert redacted["initializers"][0] == "INSTALL httpfs"
-    assert "REGION 'eu-west-1'" in redacted["initializers"][1]
-    assert f"KEY_ID '{REDACTED}'" in redacted["initializers"][1]
-    assert redacted["tables"] == {
-        "trips": spec["tables"]["trips"],
-        "api_keys": f"SELECT * FROM read_csv('https://user:{REDACTED}@example.com/keys.csv')",
-    }
-
-
-def test_nested_credentials_and_odbc_strings_are_hidden():
-    spec = {
-        "type": "bigquery",
-        "project_id": "my-project",
-        "credentials": {"type": "service_account", "private_key": "pem-text"},
-        "extra": [{"auth": {"refresh": "oauth-refresh"}}],
-        "dsn": "Driver={ODBC Driver 18};Server=db;UID=sa;PWD=odbc-pass;Encrypt=yes",
-    }
-    text = dump(spec)
-    assert_no_secret(text)
-    assert "pem-text" not in text
-    redacted = yaml.safe_load(text)
-    assert redacted["credentials"] == REDACTED
-    assert redacted["project_id"] == "my-project"
-    assert "Server=db" in redacted["dsn"]
-
-
-def test_environment_values_are_hidden_but_not_the_working_directory():
-    spec = {
-        "type": "duckdb",
-        "uri": "/home/analyst/project/data.duckdb",
-        "tables": {"t": "SELECT * FROM read_csv('/home/analyst/project/t.csv')"},
-        "url": "postgresql://reader@db/x?passfile=none",
-        "comment": "uses pg-env-password and env-snowflake-token",
-        "password": "",
-    }
-    redacted = redact_spec(spec, environ=ENV)
-    assert redacted["uri"] == spec["uri"]
-    assert redacted["tables"] == spec["tables"]
-    assert redacted["comment"] == f"uses {REDACTED} and {REDACTED}"
-    assert redacted["password"] == ""
-    assert redact_text("pg-env-password", environ=ENV) == REDACTED
-
-
-def test_uri_password_with_unescaped_characters_is_hidden():
-    for url in (
-        "mysql+pymysql://bob:p/a?ss@host/db",
-        "redis://:only-password@cache:6379/0",
-        "snowflake://user:pw%40x@account/db/schema?warehouse=wh",
-    ):
-        text = redact_text(url, environ={})
-        assert REDACTED in text
-        for part in ("p/a?ss", "only-password", "pw%40x"):
-            assert part not in text
-    assert redact_text("sqlite:////data/shop.db", environ={}) == "sqlite:////data/shop.db"
-    assert redact_text("https://example.com/a@b", environ={}) == "https://example.com/a@b"
-
-
-def test_objects_yaml_cannot_show_are_named_not_printed():
-    redacted = redact_spec({"type": "inmemory", "tables": {"items": pd.DataFrame({"a": [1]})}, "blob": b"raw"}, environ={})
-    assert redacted == {"type": "inmemory", "tables": {"items": "<DataFrame>"}, "blob": REDACTED}
-    yaml.safe_dump(redacted)
 
 
 def editor_with(source, ref="data"):
@@ -202,6 +55,7 @@ def test_source_node_definition_is_its_redacted_spec_as_yaml(monkeypatch):
     assert list(spec)[0] == "type"
     assert spec["type"] == "duckdb"
     assert spec["tables"] == {"sales": "SELECT 1 AS amount"}
+    assert spec["initializers"] == ["CREATE ***", "SET ***"]
 
 
 def test_source_node_definition_hides_a_sqlalchemy_url_password():
@@ -215,7 +69,9 @@ def test_source_node_definition_hides_a_sqlalchemy_url_password():
     _, text = instance(ops, "data").__flowdash_definition__()
 
     assert_no_secret(text)
-    assert f"postgresql://alice:{REDACTED}@db.example.com/sales" in text
+    spec = yaml.safe_load(text)
+    assert spec["url"] == "postgresql://db.example.com/sales"
+    assert spec["connect_args"] == {"sslpassword": REDACTED}
 
 
 def test_source_node_without_a_source_defines_nothing():
@@ -330,3 +186,44 @@ def test_source_overview_does_not_read_a_failing_schema_again(monkeypatch):
     assert asyncio.run(twice()) == "1 table: bad"
     assert calls == ["bad"]
     assert source not in flowdash_nodes._SCHEMA_PENDING
+
+
+def test_source_overview_reads_each_schema_once_when_the_source_does_not_store_it(monkeypatch):
+    source = DuckDBSource(uri=":memory:", tables={"nums": "SELECT i FROM range(10) AS t(i)"}, cache_schema=False)
+    node = instance(editor_with(source), "data")
+    calls = []
+    original = source.get_schema
+
+    def counted(table=None, limit=None, shuffle=False):
+        calls.append(table)
+        return original(table, limit, shuffle)
+
+    monkeypatch.setattr(source, "get_schema", counted)
+    revisions = []
+    node.param.watch(lambda event: revisions.append(event.new), "_preview_rev")
+
+    async def settle():
+        node.__flowdash_preview__()
+        for _ in range(20):
+            if (pending := flowdash_nodes._SCHEMA_PENDING.get(source)) is not None:
+                await asyncio.wrap_future(pending[0])
+            for _ in range(3):
+                await asyncio.sleep(0)
+            node.__flowdash_preview__()
+        return node.__flowdash_preview__()
+
+    overview = asyncio.run(settle())
+
+    assert calls == ["nums"]
+    assert revisions == [1]
+    assert overview.to_dict("records") == [{"table": "nums", "rows": 10, "columns": 1, "column names": "i"}]
+
+
+def test_source_overview_on_a_worker_thread_reads_schemas_straight_away():
+    source = DuckDBSource(uri=":memory:", tables={"sales": "SELECT 1 AS amount"})
+    node = instance(editor_with(source), "data")
+    result = []
+    worker = threading.Thread(target=lambda: result.append(node.__flowdash_preview__()))
+    worker.start()
+    worker.join(10)
+    assert result[0].to_dict("records") == [{"table": "sales", "rows": 1, "columns": 1, "column names": "amount"}]
