@@ -131,25 +131,31 @@ async def add_metric(
     if existing and _graph.component_of(ops, name) != METRIC_ID:
         raise ModelRetry(f"{name!r} is taken by a node that is not a metric; pick another name.")
     before = (_graph.config_of(ops, name), _graph.inputs_of(ops, name).get("parameters")) if existing else None
+    placed = set(_graph.nodes(ops))
+    target = name
     try:
         if existing:
             ops.set_config(name, config)
+            # An edit of an earlier answer in Explore goes to a copy of it.
+            target = _graph.edited(ops, name, placed)
         else:
             ops.add_node(METRIC_ID, config, name=name)
-        ops.set_inputs(name, {"parameters": parameters or None})
-        frame = _graph.output(ops, name, "data")
+        ops.set_inputs(target, {"parameters": parameters or None})
+        frame = _graph.output(ops, target, "data")
+    except PermissionError as exc:
+        raise ModelRetry(f"Refused: {exc} Place a metric node of your own under another name instead.") from exc
     except OperationError as exc:
         if before is None:
             if name in _graph.nodes(ops):
                 ops.remove_node(name)
         else:
-            ops.set_config(name, before[0])
-            ops.set_inputs(name, {"parameters": before[1]})
+            ops.set_config(target, before[0])
+            ops.set_inputs(target, {"parameters": before[1]})
         raise ModelRetry(str(exc)) from exc
     ceiling = effective_limit(ops.editor, None)
     capped = f" (capped at {ceiling} rows)" if len(frame) >= ceiling else ""
     verb = "Changed" if existing else "Placed"
-    return f"{verb} metric node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+    return f"{verb} metric node {target!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:

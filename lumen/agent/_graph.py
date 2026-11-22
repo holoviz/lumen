@@ -1,6 +1,9 @@
 """Reading nodes, their config, live outputs and wiring through ``DashboardOps``."""
 from __future__ import annotations
 
+import re
+
+from collections.abc import Collection
 from typing import Any
 
 import yaml
@@ -61,3 +64,18 @@ def pipeline_port(ops: DashboardOps, name: str) -> str | None:
 # FlowDash's built-in text components and the config field holding each one's text.
 HEADING_ID, MARKDOWN_ID, DIVIDER_ID = "Text/Heading", "Text/Markdown", "Text/Divider"
 TEXT_FIELDS = {HEADING_ID: "text", MARKDOWN_ID: "text", DIVIDER_ID: "label"}
+
+
+def edited(ops: DashboardOps, name: str, before: Collection[str]) -> str:
+    """
+    The node an edit of node ``name`` changed: ``name``, or the copy of it
+    the edit placed, one of the nodes not in ``before``, as panel-flowdash's
+    ``ExplorationOps`` copies an earlier answer's node to change it. The
+    copy is named after the original with a number, e.g. ``totals_2``.
+    """
+    base = re.escape(re.sub(r"_\d+$", "", name))
+    copy = re.compile(base + r"_\d+")
+    component = component_of(ops, name)
+    return next(
+        (n for n in nodes(ops) if n not in before and copy.fullmatch(n) and component_of(ops, n) == component), name,
+    )
