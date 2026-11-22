@@ -380,13 +380,8 @@ if os.name == "posix":  # Windows cannot fork
 
 async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
     if agents is not None:
-        planner_agents = []
-        for agent in agents:
-            if isinstance(agent, Agent) and agent.llm is None:
-                planner_agents.append(_clone(agent))
-            else:
-                planner_agents.append(agent)
-        return Planner(llm=llm, agents=planner_agents, headless=True)
+        agents = [_clone(agent) if isinstance(agent, Agent) and agent.llm is None else agent for agent in agents]
+        return Planner(llm=llm, agents=agents, headless=True)
     planner = _planners.get(source)
     if planner is not None and planner.llm is llm and planner not in _busy:
         return planner

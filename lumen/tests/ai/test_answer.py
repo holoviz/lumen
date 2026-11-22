@@ -1208,7 +1208,7 @@ def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
     source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
     answer = Answer(source=source, pipeline=Pipeline(source=source, table="climate"))
     with pytest.raises(ValueError, match="joins xarray data"):
-        _ = answer.code
+        answer.code  # noqa: B018
 
 
 async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
@@ -1226,7 +1226,7 @@ async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
     follow_up = await conversation.aask("Only the warm ones")
     assert follow_up.source is not source
     with pytest.raises(ValueError, match="joins xarray data"):
-        _ = follow_up.code
+        follow_up.code  # noqa: B018
 
 
 class FollowUpLLM(MockLLM):
@@ -2092,7 +2092,7 @@ async def test_a_question_typed_into_the_chat_widget_joins_the_chat(llm, frame_s
     await async_wait_until(lambda: widget.objects[-1].object is answer.__panel__(), timeout=10000)
 
     assert answer.value == "The total value is 38."
-    assert next(message.object for message in widget.objects) == "Total value?"
+    assert [message.object for message in widget.objects][0] == "Total value?"  # noqa: RUF015
     assert conversation._messages[-1] == {"role": "assistant", "content": "The total value is 38."}
 
 
@@ -2608,6 +2608,7 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
+
 
 def _named_chat_llm_setup(actor_names):
     PlanModel = make_plan_model(list(actor_names), [])
