@@ -219,7 +219,8 @@ def test_add_filter_control_filters_only_the_listed_views(ctx, session):
     result = add_filter_control(ctx, "rows", "t_state", "state", control="multiselect", views=["by_state", "capacity"])
 
     assert result == (
-        "Placed multiselect 'state' (3 options from 't_state') and filter node 'state_filter' on 'rows'.t_state, "
+        "Placed multiselect 'state' (3 options from 't_state', starting with nothing picked, so every row shows) "
+        "and filter node 'state_filter' on 'rows'.t_state, "
         "fed by 'state'. Reading 'state_filter' now: 'by_state', 'capacity' (through 'capacity_agg'). "
         "Unfiltered: 'all_rows'."
     )
@@ -247,18 +248,35 @@ def test_add_filter_control_select_range_and_date_range(ctx, session):
     years = add_filter_control(ctx, "rows", "p_year", "years", control="range", views=["table_b"])
     dates = add_filter_control(ctx, "rows", "t_date", "dates", control="date_range", views=["table_c"])
 
-    assert "Placed select 'state' (3 options from 't_state', starting on 'CA')" in picked
-    assert "Placed range 'years' (1999 to 2015 from 'p_year', all selected)" in years
-    assert "Placed date_range 'dates' (1999-05-01 to 2015-08-30 from 't_date', all selected)" in dates
-    assert _graph.component_of(session.ops, "state") == "Widgets/Select"
+    full = "starting on the full span, which leaves out only rows without a value"
+    assert "Placed select 'state' (3 options from 't_state', starting with nothing picked, so every row shows)" in picked
+    assert f"Placed range 'years' (1999 to 2015 from 'p_year', {full})" in years
+    assert f"Placed date_range 'dates' (1999-05-01 to 2015-08-30 from 't_date', {full})" in dates
+    assert _graph.component_of(session.ops, "state") == "Widgets/MultiChoice"
+    assert _graph.config_of(session.ops, "state")["max_items"] == 1
     assert _graph.config_of(session.ops, "years")["default_start"] == 1999
     assert _graph.config_of(session.ops, "dates")["default_period"] == "all"
+    assert len(_graph.output(session.ops, "state_filter", "filtered").data) == 5
+    instance(session.ops, "state")._widget.value = ["TX"]
     assert len(_graph.output(session.ops, "state_filter", "filtered").data) == 2
     assert len(_graph.output(session.ops, "years_filter", "filtered").data) == 5
     assert len(_graph.output(session.ops, "dates_filter", "filtered").data) == 5
 
 
+def test_add_filter_control_select_starts_on_an_explicit_value(ctx, session):
+    session.add_sql("rows", "SELECT * FROM turbines")
+    add_table(ctx, "rows", "table_a")
+    result = add_filter_control(ctx, "rows", "t_state", "state", value="TX")
+    assert "(3 options from 't_state', starting on 'TX', so it filters from the start)" in result
+    assert _graph.component_of(session.ops, "state") == "Widgets/Select"
+    assert _graph.config_of(session.ops, "state")["default_options"] == ["TX", "CA", "IA"]
+    assert len(_graph.output(session.ops, "state_filter", "filtered").data) == 2
+
+
 @pytest.mark.parametrize(("kwargs", "message"), [
+    ({"column": "t_state", "value": "NY"}, "'NY' is not a value of 't_state'"),
+    ({"column": "t_state", "control": "multiselect", "value": "TX"}, "a multiselect starts with nothing picked"),
+    ({"column": "p_year", "control": "range", "value": 2010}, "a range starts on the full span"),
     ({"column": "t_state", "control": "range"}, "'t_state' holds string values; a range control takes a numeric column"),
     ({"column": "p_year", "control": "date_range"}, "a date_range control takes a date column"),
     ({"column": "t_state", "views": ["other_table"]}, "'other_table' does not read 'rows''s rows"),

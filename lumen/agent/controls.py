@@ -338,7 +338,7 @@ def _place_before(ops, name: str, views: list[str]) -> None:
 def add_filter_control(
     ctx: RunContext[FlowDashDeps], data: str, column: str, name: str,
     control: Literal["select", "multiselect", "range", "date_range"] = "select", views: list[str] | None = None,
-    label: str = "",
+    label: str = "", value: str | int | float | None = None,
 ) -> str:
     """Add a local filter: a control that filters only some views of a node, through a filter node.
 
@@ -349,10 +349,11 @@ def add_filter_control(
         data: Name of the SQL, metric, table or filter node the views read (a node name, not a source table).
         column: The column to filter on.
         name: Descriptive snake_case name of the control; its filter node is <name>_filter.
-        control: "select" picks one value (starting on the first), "multiselect" any number (none
-            selected keeps every row), "range" a span of a numeric column, "date_range" a span of dates.
+        control: "select" picks one value, "multiselect" any number, "range" a span of a numeric
+            column, "date_range" a span of dates. Each starts unfiltered: nothing picked, or the full span.
         views: Charts, tables and KPIs reading data to filter; all views reading it when left out.
         label: The control's label; defaults to the column in words.
+        value: Only when the user asks for one, the value a select starts on, filtering from the start.
     """
     ops = ctx.deps.ops
     port = _upstream_port(ctx.deps, data)
@@ -380,6 +381,7 @@ def add_filter_control(
     kind = types.get(column)
     text = label or column.replace("_", " ").strip().capitalize()
     config: dict[str, Any] = {"label": text}
+    component = CONTROLS[control]
     if control in ("select", "multiselect"):
         options = column_values(pipeline, column, limit=MAX_OPTIONS + 1)
         if not options:
@@ -388,9 +390,26 @@ def add_filter_control(
             raise ModelRetry(f"{column!r} has more than {MAX_OPTIONS} values, too many to pick from; "
                              "use control='range' for numbers or dates, or filter a smaller column.")
         config["default_options"] = options
-        if control == "select":
+        if value is not None and control != "select":
+            raise ModelRetry("value sets where a select starts; a multiselect starts with nothing picked.")
+        if value is not None:
+            if value not in options:
+                shown = ", ".join(map(repr, options[:20]))
+                raise ModelRetry(f"{value!r} is not a value of {column!r}; its values include {shown}.")
+            # A select always holds an option and starts on its first, so the default goes first.
+            config["default_options"] = [value, *(o for o in options if o != value)]
             config["searchable"] = len(options) > 10
-        summary = f"{len(options)} options from {column!r}" + (f", starting on {options[0]!r}" if control == "select" else "")
+            start = f"starting on {value!r}, so it filters from the start"
+        else:
+            if control == "select":
+                # A select always holds one of its options, so an unfiltered start takes a
+                # multiselect limited to one pick, which keeps every row while nothing is picked.
+                component = CONTROLS["multiselect"]
+                config.update(max_items=1, placeholder="All")
+            start = "starting with nothing picked, so every row shows"
+        summary = f"{len(options)} options from {column!r}, {start}"
+    elif value is not None:
+        raise ModelRetry("value sets where a select starts; a range starts on the full span.")
     elif control == "range":
         if kind not in NUMERIC:
             raise ModelRetry(f"{column!r} holds {kind or 'non-numeric'} values; a range control takes a numeric column.")
@@ -401,7 +420,7 @@ def add_filter_control(
         whole = kind == "integer" or all(float(v).is_integer() for v in span)
         step = 1 if whole else float(f"{(high - low) / 100:.1g}") or 0.01
         config.update(default_start=low, default_end=high, step=step, number_type="integer" if whole else "float")
-        summary = f"{low} to {high} from {column!r}, all selected"
+        summary = f"{low} to {high} from {column!r}, starting on the full span, which leaves out only rows without a value"
     else:
         if kind not in TEMPORAL:
             raise ModelRetry(f"{column!r} holds {kind or 'non-date'} values; a date_range control takes a date column.")
@@ -410,11 +429,11 @@ def add_filter_control(
             raise ModelRetry(f"{column!r} of {data!r} has no dates to span.")
         low, high = (str(v)[:10] for v in span)
         config.update(default_start=low, default_end=high, default_period="all")
-        summary = f"{low} to {high} from {column!r}, all selected"
+        summary = f"{low} to {high} from {column!r}, starting on the full span, which leaves out only rows without a value"
 
     placed = _Placed(ops)
     try:
-        placed.node(CONTROLS[control], config, name)
+        placed.node(component, config, name)
         placed.node(FILTER_ID, {"field": column}, filter_name)
         placed.connect(source, f"{filter_name}.pipeline")
         placed.connect(f"{name}.selected", f"{filter_name}.value")
