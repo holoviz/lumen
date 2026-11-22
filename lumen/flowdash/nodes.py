@@ -323,9 +323,10 @@ def primed_result(source: BaseSQLSource, sql: str, frame: Any) -> Iterator[None]
     """
     Within the block, hand the result of ``sql`` (a ``result_sql``
     statement), already executed by the caller, to the next SQL node that
-    would run it, so it runs once.
+    would run it, so it runs once. On a SQL node's result source, ``sql`` is
+    the statement ``expand`` gives, which runs on the root source.
     """
-    key = (id(source), sql)
+    key = (id(root_of(source)), sql)
     _RESULTS[key] = frame
     try:
         yield
