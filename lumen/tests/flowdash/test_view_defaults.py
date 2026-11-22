@@ -1,4 +1,5 @@
 """A new view node starts from a spec its pipeline's columns suggest, or shows an empty state."""
+import panel as pn
 import pytest
 
 pytest.importorskip("duckdb")
@@ -230,3 +231,18 @@ def test_a_view_outside_an_editor_takes_no_default(source):
     node = ViewNode(pipeline=Pipeline(source=source, table="sales"))
     assert node.spec == {}
     assert node._body().object == "No chart yet"
+
+
+def test_the_drawn_tile_follows_a_connection_without_a_chart(source):
+    ops = editor_with(source, table="names")
+    ops.add_node(VIEW_ID, {}, name="chart")
+    node = instance(ops, "chart")
+    tile = pn.panel(node)
+    assert "Waiting for a pipeline" in tile._inner_layout[0].object
+
+    ops.connect("rows.pipeline", "chart.pipeline")
+    message, button = tile._inner_layout[0].objects
+    assert message.object == "No chart yet" and button.label == "Edit spec"
+
+    ops.disconnect("rows.pipeline", "chart.pipeline")
+    assert "Waiting for a pipeline" in tile._inner_layout[0].object
