@@ -23,6 +23,12 @@ GLOBAL_FILTERS = find_spec("panel_flowdash.global_filters") is not None
 needs_global_filters = pytest.mark.skipif(
     not GLOBAL_FILTERS, reason="panel-flowdash without global filters"
 )
+REPORTS_SKIPPED = GLOBAL_FILTERS and hasattr(
+    __import__("panel_flowdash.global_filters").global_filters, "request_filters"
+)
+needs_reported_filters = pytest.mark.skipif(
+    not REPORTS_SKIPPED, reason="panel-flowdash without request_filters"
+)
 
 SALES = (
     "SELECT * FROM (VALUES ('A', 10, 'TX'), ('B', 20, 'OK'), ('A', 5, 'TX'), ('C', 7, 'NM')) "
@@ -369,3 +375,48 @@ class TestRefusedValues:
         assert chart._error is None
         assert len(chart_rows(ops, "chart")) == 4
         ops.editor.dispose()
+
+
+class TestReporting:
+
+    def test_apply_returns_the_filters_it_skips(self, duckdb_source):
+        ops = dashboard(duckdb_source)
+        chart = node(ops, "chart")
+        skipped = chart.__flowdash_apply_filters__({
+            "state": Predicate("state", "in", ("TX",)),
+            "amount": Predicate("amount", "in", ("n/a",)),
+        })
+        assert skipped == {"amount": "holds numbers, and 'n/a' is not one"}
+        assert chart_rows(ops, "chart") == [("A", 5), ("A", 10)]
+        assert chart.__flowdash_apply_filters__({}) == {}
+        ops.editor.dispose()
+
+    def test_columns_changing_later_request_the_filters(self, duckdb_source, monkeypatch):
+        from lumen.flowdash import nodes
+
+        requested = []
+        monkeypatch.setattr(nodes, "request_filters", requested.append)
+        ops = dashboard(duckdb_source)
+        sales = node(ops, "sales")
+        requested.clear()
+        sales.table = ""
+        assert sales in requested and node(ops, "chart") in requested
+        requested.clear()
+        sales.param.trigger("_object")
+        assert requested == []
+        ops.editor.dispose()
+
+    @needs_reported_filters
+    def test_the_tile_says_why_a_filter_is_skipped(self, duckdb_source):
+        ops = dashboard(duckdb_source)
+        editor = ops.editor
+        editor.set_filters([{"column": "amount", "label": "Amount", "widget": "select"}])
+        editor.set_filter_value("amount", ["n/a"])
+        assert len(chart_rows(ops, "chart")) == 4
+        _, hint, detail = editor._global_filters.notes(ops._instance("chart"))
+        assert hint == "Not filtered by Amount"
+        assert "'n/a' is not one" in detail
+        editor.set_filter_value("amount", ["10"])
+        assert chart_rows(ops, "chart") == [("A", 10)]
+        assert editor._global_filters.notes(ops._instance("chart"))[1] == ""
+        editor.dispose()
