@@ -20,6 +20,7 @@ from pydantic_ai.messages import ModelResponse
 
 from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
+from .explore import OwnNodesOnly
 from .history import stub_superseded_lookups
 
 # The instructions stay the same for a whole conversation and for every
@@ -209,6 +210,44 @@ HAS_ARRANGE_TILES = any(tool.__name__ == "arrange_tiles" for tool in FLOWDASH_TO
 
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
+# How the drawer's agent treats a question about an answer already on the dashboard.
+FOLLOW_UPS = """\
+- When the user narrows or changes an answer already on the dashboard, e.g. "only show the
+  west region" or "sort it by total", edit that answer's node with set_config; do not add a
+  node for it. Only a new question computed from an earlier result, e.g. totalling,
+  ranking or thresholding it, gets a new node: query that result by its table name with
+  add_sql(source=<its SQL node>), and order that query yourself.
+"""
+
+# How the drawer's agent uses the nodes already on the dashboard.
+BUILD_ON = """\
+- Build on nodes already on the dashboard when the question is about them. Place each new
+  result with add_sql and each chart with add_chart on a SQL node, or a table with
+  add_table when the user asks to see rows; change a node with set_config and remove one
+  with remove_node.
+"""
+
+# How the Explore view's agent does instead: the dashboard and earlier answers stay as they are.
+EXPLORE_BUILD_ON = """\
+- Your nodes answer in the user's Explore feed, not on the dashboard. Build on the
+  dashboard's nodes and on earlier answers when the question is about them, but never
+  change them. Place each new result with add_sql and each chart with add_chart on a SQL
+  node, or a table with add_table when the user asks to see rows, and use set_config only
+  to fix a node you placed for the current question. The user can add an answer to the
+  dashboard from its card.
+"""
+
+EXPLORE_FOLLOW_UPS = """\
+- Build every follow-up on the answer it is about, including narrowing it, e.g. to show
+  only one region: query that answer by its table name with add_sql(source=<its SQL node>),
+  and order that query yourself.
+"""
+
+EXPLORE_INSTRUCTIONS = INSTRUCTIONS.replace(BUILD_ON, EXPLORE_BUILD_ON).replace(FOLLOW_UPS, EXPLORE_FOLLOW_UPS)
+
+# The FlowDash dashboard tools the Explore agent gets: fixing the nodes it placed.
+EXPLORE_DASHBOARD_TOOLS = ("set_config",)
+
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
 DASHBOARD_TOOLS = {
     # Answering questions: change or remove a node the agent can see in list_tables.
@@ -224,7 +263,8 @@ DATA_DASHBOARD_TOOLS = DASHBOARD_TOOLS["data"]
 
 def create_agent(model: Any = None, *, instructions: str | None = None, model_settings: dict[str, Any] | None = None,
                  dashboard_tools: str | Collection[str] | None = "data",
-                 dashboard_instructions: bool | None = None, **kwargs: Any) -> Agent[FlowDashDeps, str]:
+                 dashboard_instructions: bool | None = None, base_instructions: str = INSTRUCTIONS,
+                 **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
     The FlowDash agent with Lumen's data and authoring toolsets.
 
@@ -259,14 +299,18 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         Whether to add FlowDash's instructions about the dashboard YAML and
         its tools and its component catalogue, which an agent with all the
         dashboard tools needs; by default only with ``dashboard_tools=None``.
+    base_instructions
+        Lumen's instructions, which ``instructions`` are appended to;
+        ``create_explore_agent`` passes ``EXPLORE_INSTRUCTIONS``.
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
     settings: Any = (lambda ctx: model_settings_for(ctx.model)) if model_settings is None else dict(model_settings)
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
-    text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
+    text = base_instructions + (f"\n{instructions}" if instructions else "")
+    # Capabilities given here wrap the tools outside CheckedConfig, so e.g. a refusal comes before a test run.
     capabilities = [
-        ProcessHistory(stub_superseded_lookups), CheckedConfig(), ReasoningRequired(), *kwargs.pop("capabilities", []),
+        ProcessHistory(stub_superseded_lookups), *kwargs.pop("capabilities", []), CheckedConfig(), ReasoningRequired(),
     ]
     # set_config now runs the SQL it is given, so fixing a query may take a few tries, and a
     # second cut-off answer in a run would otherwise end it.
@@ -298,3 +342,20 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         return output
 
     return agent
+
+
+def create_explore_agent(model: Any = None, **kwargs: Any) -> Agent[FlowDashDeps, str]:
+    """
+    The agent of FlowDash's Explore view with Lumen's data and authoring
+    toolsets, for ``FlowDashApp(explore_agent=...)``. Unlike the drawer's
+    agent, which edits an answer in place when asked to narrow it, it
+    builds every follow-up on the earlier answer with
+    ``add_sql(source=<its SQL node>)``, so the dashboard and earlier
+    answers stay as they are. Of FlowDash's dashboard tools it only gets
+    ``set_config``, which ``OwnNodesOnly`` limits to the nodes the current
+    question placed. ``kwargs`` are passed on to ``create_agent``.
+    """
+    kwargs.setdefault("name", "Explore")
+    kwargs.setdefault("dashboard_tools", EXPLORE_DASHBOARD_TOOLS)
+    kwargs["capabilities"] = [OwnNodesOnly(), *kwargs.get("capabilities", [])]
+    return create_agent(model, base_instructions=EXPLORE_INSTRUCTIONS, **kwargs)
