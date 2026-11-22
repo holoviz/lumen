@@ -20,7 +20,9 @@ from lumen.agent.assistant import (
 )
 from lumen.agent.explore import OwnNodesOnly
 from lumen.agent.headless import streamable
-from lumen.flowdash import SOURCE_ID, SQL_ID, bound_sources
+from lumen.flowdash import (
+    METRIC_ID, SOURCE_ID, SQL_ID, bound_sources,
+)
 from lumen.flowdash.app import build_routes
 from lumen.sources.duckdb import DuckDBSource
 
@@ -406,3 +408,58 @@ async def test_explore_stops_lumens_tools_once_the_user_opens_another_dashboard(
     await explore_app.ask("Total by category")
 
     assert results(explore_app.requests)["call-2"].startswith("Refused: the user switched to another dashboard")
+
+
+BAR = {"mark": "bar", "encoding": {"x": {"field": "category", "type": "nominal"}, "y": {"field": "total", "type": "quantitative"}}}
+
+
+async def test_explore_answers_on_a_fresh_dashboard_from_the_apps_sources(explore_app):
+    ref = _source(explore_app)
+    explore_app.script(
+        ("add_sql", {"source": ref, "name": "totals", "sql": explore_app.totals}),
+        ("add_chart", {"data": "totals", "name": "totals_chart", "spec": BAR}),
+        "Done.",
+    )
+    run = await explore_app.ask("Chart the totals by category")
+
+    found = results(explore_app.requests)
+    ex = explore_app.explorations
+    assert found["call-1"].startswith("Placed SQL node 'totals'") and found["call-2"].startswith("Placed chart")
+    assert ex.node_config(ref) == {"ref": ref}
+    assert ex.exploration().leaves(run) == ["totals_chart"]
+    assert explore_app.ops.nodes() == []
+
+
+@pytest.fixture
+def metric_app(tmp_path):
+    project = tmp_path / "flowdash.yaml"
+    project.write_text(
+        "metrics:\n  revenue:\n    source: sales\n    table: sales\n"
+        "    measures:\n      total: SUM(amount)\n      orders: COUNT(*)\n    dimensions:\n      category: category\n"
+    )
+    explore = exploring(tmp_path, project=project)
+    explore.ops.add_node(METRIC_ID, {"metric": "revenue", "measures": ["total"], "dimensions": ["category"]}, name="by_category")
+    yield explore
+    explore.close()
+
+
+async def test_explore_builds_on_a_dashboard_metric_and_copies_an_earlier_one(metric_app):
+    metric_app.script(
+        ("add_metric", {"metric": "revenue", "name": "by_category", "measures": ["orders"]}),
+        ("add_metric", {"metric": "revenue", "name": "orders", "measures": ["orders"], "dimensions": ["category"]}),
+        "Done.",
+    )
+    first = await metric_app.ask("Count the orders per category")
+    refused, placed = (results(metric_app.requests)[f"call-{n}"] for n in (1, 2))
+    metric_app.script(("add_metric", {"metric": "revenue", "name": "orders", "measures": ["orders"]}), "Done.")
+    await metric_app.ask("Only the total count")
+    changed = results(metric_app.requests)["call-1"]
+
+    ex = metric_app.explorations
+    assert refused.startswith("Refused: 'by_category' is a node of the dashboard") and "under another name" in refused
+    assert placed.startswith("Placed metric node 'orders'")
+    assert changed.startswith("Changed metric node 'orders_2'") and "Use 'orders_2' from now on." in changed
+    assert ex.node_config("orders")["dimensions"] == ["category"] and ex.node_config("orders_2")["dimensions"] == []
+    assert ex.exploration().leaves(first) == ["orders"]
+    assert metric_app.ops.node_config("by_category")["measures"] == ["total"]
+    assert [node["name"] for node in metric_app.ops.nodes()] == ["by_category"]
