@@ -672,3 +672,13 @@ async def test_agent_answers_on_an_empty_dashboard():
     assert turn.error is None
     assert turn.nodes == ["data", "row_counts"]
     assert "from: data.source\n    to: row_counts.source" in turn.graph
+
+
+async def test_a_source_node_named_like_another_apps_source_does_not_hide_it(ctx, empty):
+    empty.ops.add_node(SOURCE_ID, {"ref": "data"}, name="energy")
+    overview = await list_tables(ctx)
+    assert "- energy (duckdb SQL): customers, orders" in overview
+    assert "- app:energy (duckdb SQL): plants" in overview
+    await add_sql(ctx, "app:energy", "plant_count", "SELECT COUNT(*) AS n FROM plants")
+    assert _graph.upstream(empty.ops, "plant_count") == "energy_source"
+    assert _graph.config_of(empty.ops, "energy_source") == {"ref": "energy"}
