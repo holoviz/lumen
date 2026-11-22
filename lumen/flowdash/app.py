@@ -84,7 +84,7 @@ def _type_slug(source: Source) -> str:
 
 def _auto_named(source: Source) -> bool:
     """Whether param named ``source`` by its type and a counter, as it does without a name."""
-    return re.fullmatch(rf"{re.escape(type(source).__name__)}\d{{5}}", source.name) is not None
+    return re.fullmatch(rf"{re.escape(type(source).__name__)}\d{{5,}}", source.name) is not None
 
 
 def _numbered(names: Sequence[str]) -> list[str]:

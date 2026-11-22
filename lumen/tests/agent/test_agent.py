@@ -700,3 +700,40 @@ def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_n
 
     assert 'add_node("Lumen/table", {"ref"' in TABLE_INSTRUCTIONS
     assert TABLE_INSTRUCTIONS not in INSTRUCTIONS
+
+
+@pytest.fixture
+def explored(empty):
+    """Operations on the exploration of ``empty``, as FlowDash's Explore view answers on it."""
+    flowdash_agent = pytest.importorskip("panel_flowdash.agent")
+    if not hasattr(flowdash_agent, "ExplorationOps"):
+        pytest.skip("panel-flowdash without ExplorationOps")
+    empty.editor.new_dashboard("Plants")
+    ops = flowdash_agent.ExplorationOps(empty.ops)
+    yield ops
+    ops.dispose()
+
+
+async def test_add_sql_in_explore_places_the_apps_source_beside_the_dashboard(empty, explored):
+    from panel_flowdash.agent import FlowDashDeps
+
+    ctx = SimpleNamespace(deps=FlowDashDeps(explored))
+    result = await add_sql(ctx, "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
+
+    assert result.startswith("Placed SQL node 'plant_total'")
+    assert _graph.config_of(explored, "energy") == {"ref": "energy"}
+    assert _graph.output(explored, "plant_total", "data")["mw"].tolist() == [3]
+    assert empty.ops.nodes() == []
+
+
+async def test_add_sql_in_explore_turns_a_refused_source_node_into_a_retry(empty, explored):
+    from panel_flowdash.agent import FlowDashDeps
+
+    def refuse(component, config):
+        return False
+
+    refuse.host_sources = True
+    explored.allow_source = refuse
+    with pytest.raises(ModelRetry, match="^Refused: .*Query a source node already on the dashboard"):
+        await add_sql(SimpleNamespace(deps=FlowDashDeps(explored)), "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
+    assert explored.nodes() == [] and empty.ops.nodes() == []
