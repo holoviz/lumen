@@ -2,6 +2,12 @@
 
 Once you're set up and exploring, here's how to get the most out of Lumen AI.
 
+## Token usage
+
+A single question can make several LLM calls — the planner plus the agents that gather data, write SQL, and build the chart — so token use adds up over a conversation. With a hosted provider you pay for those tokens (see [Is Lumen free?](../faq.md#is-lumen-free)).
+
+Every answer reports what it used: `answer.usage.input_tokens` and `answer.usage.output_tokens`, plus `answer.usage.cost_usd` when the provider prices the model. The answer card ends with a one-line summary of the same numbers. If you want to explore without per-token cost, use a local model (Ollama, Llama.cpp).
+
 ## Message examples
 
 Here are some ideas to spark your exploration:
