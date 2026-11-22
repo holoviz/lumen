@@ -348,6 +348,25 @@ def test_earlier_table_names_never_come_from_the_working_directory(served):
     assert legacy == {"plants_csv"}
 
 
+def test_concurrent_queries_on_a_source_with_earlier_names_create_no_views_again(served, caplog):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from lumen.flowdash import compile_sql, fetch
+
+    source = refs("plants.csv")["plants"]
+    queries = ["SELECT * FROM plants", "SELECT * FROM plants_csv WHERE mw > 1", "SELECT plant FROM plants WHERE mw = 3"]
+
+    def run(i):
+        pipeline = compile_sql(source, queries[i % 3], f"result_{i % 3}")
+        return i % 3, len(fetch(pipeline))
+
+    with caplog.at_level("WARNING"), ThreadPoolExecutor(8) as pool:
+        counts = list(pool.map(run, range(64 * 3)))
+    assert set(counts) == {(0, 3), (1, 2), (2, 1)}
+    assert "could not create a view" not in caplog.text
+    assert "conflict" not in caplog.text
+
+
 def test_sources_keep_resolve_data_order_when_it_makes_sources_of_its_own(served):
     import pandas as pd
 
