@@ -7,6 +7,7 @@ from typing import Any
 from panel_flowdash.agent import (
     FlowDashDeps, create_agent as create_flowdash_agent,
 )
+from panel_flowdash.agent.tools import TOOLS as FLOWDASH_TOOLS
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import ModelResponse
@@ -107,6 +108,16 @@ Place a Lumen/source node only when several tables or SQL nodes need the same so
 and then connect it to their source inputs instead of setting ref.
 """
 
+# Added for an agent that places tiles, i.e. with the place_tile tool.
+LAYOUT_INSTRUCTIONS = """
+## Laying out the dashboard
+When building or extending a dashboard, put KPIs (single numbers) first in a row, charts side by
+side two to a row and tables below them.{arrange}
+"""
+
+# FlowDash releases before arrange_tiles have no tool to lay all tiles out again.
+HAS_ARRANGE_TILES = any(tool.__name__ == "arrange_tiles" for tool in FLOWDASH_TOOLS)
+
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
@@ -114,7 +125,10 @@ DASHBOARD_TOOLS = {
     # Answering questions: change or remove a node the agent can see in list_tables.
     "data": ("set_config", "remove_node"),
     # Also arranging what it placed: wiring nodes and placing them as tiles.
-    "layout": ("set_config", "remove_node", "connect", "disconnect", "place_tile"),
+    "layout": (
+        "set_config", "remove_node", "connect", "disconnect", "place_tile",
+        *(("arrange_tiles",) if HAS_ARRANGE_TILES else ()),
+    ),
 }
 DATA_DASHBOARD_TOOLS = DASHBOARD_TOOLS["data"]
 
@@ -128,7 +142,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     By default it is an agent for answering questions about data: besides
     its own tools it can change or remove nodes, whose SQL ``list_tables``
     shows. ``dashboard_tools="layout"`` also lets it wire nodes and place
-    tiles, and ``dashboard_tools=None`` gives it every FlowDash dashboard
+    tiles, and lay them all out again with FlowDash's ``arrange_tiles`` where
+    FlowDash has it, and ``dashboard_tools=None`` gives it every FlowDash dashboard
     tool with FlowDash's instructions, as the dashboard assistant has.
 
     Placing or configuring Lumen's source and table nodes needs no
@@ -171,6 +186,9 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         text += SELECTION_INSTRUCTIONS
     if dashboard_tools is None or "add_node" in dashboard_tools:
         text += TABLE_INSTRUCTIONS
+    if dashboard_tools is not None and "place_tile" in dashboard_tools:
+        arrange = " Call arrange_tiles once at the end to lay the tiles out." if "arrange_tiles" in dashboard_tools else ""
+        text += LAYOUT_INSTRUCTIONS.format(arrange=arrange)
     agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",

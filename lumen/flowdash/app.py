@@ -355,7 +355,11 @@ def build_routes(
 
         default = models[0]["id"]
         # With a choice every request names its model, so an unusable default must not fail here.
-        agent: Any = create_agent(default, **({"defer_model_check": True} if len(models) > 1 else {}))
+        # The drawer's assistant builds dashboards, so it also wires nodes and lays out tiles;
+        # the Explore view keeps its own agent for answering questions.
+        agent: Any = create_agent(
+            default, dashboard_tools="layout", **({"defer_model_check": True} if len(models) > 1 else {})
+        )
         params.setdefault("agent_model", default)
         params.setdefault("agent_models", models if len(models) > 1 else [])
     else:
