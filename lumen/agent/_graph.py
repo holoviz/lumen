@@ -50,6 +50,7 @@ def upstream(ops: DashboardOps, name: str) -> str | None:
 # The output port that carries a Lumen pipeline, by component.
 PIPELINE_PORTS = {
     "Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/sql": "pipeline", "Lumen/metric": "pipeline",
+    "Lumen/aggregate": "result", "Lumen/sort": "result", "Lumen/select": "result", "Lumen/derive": "result",
 }
 
 
