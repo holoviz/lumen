@@ -122,8 +122,8 @@ def source_output(deps: FlowDashDeps, source: str) -> tuple[str, BaseSQLSource, 
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
     except PermissionError as exc:
-        raise ModelRetry(
-            f"Refused: {exc} Query a source node already on the dashboard, or an earlier SQL node, instead."
+        raise PermissionError(
+            f"{exc} Query a source node already on the dashboard, or an earlier SQL node, instead."
         ) from exc
     return f"{node}.source", value, node
 

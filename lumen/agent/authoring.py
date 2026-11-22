@@ -284,7 +284,7 @@ async def add_metric(
         ops.set_inputs(target, {"parameters": parameters or None})
         frame = _graph.output(ops, target, "data")
     except PermissionError as exc:
-        raise ModelRetry(f"Refused: {exc} Place a metric node of your own under another name instead.") from exc
+        raise PermissionError(f"{exc} Place a metric node of your own under another name instead.") from exc
     except OperationError as exc:
         if before is None:
             if name in _graph.nodes(ops):

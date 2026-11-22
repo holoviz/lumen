@@ -136,7 +136,7 @@ async def test_add_metric_in_explore_refuses_to_change_a_dashboard_metric_node(s
     explored = flowdash_agent.ExplorationOps(session.ops)
     ctx = SimpleNamespace(deps=flowdash_agent.FlowDashDeps(explored))
     try:
-        with pytest.raises(ModelRetry, match="^Refused: 'by_state' is a node of the dashboard.*under another name"):
+        with pytest.raises(PermissionError, match="^'by_state' is a node of the dashboard.*under another name"):
             await add_metric(ctx, "capacity", "by_state", ["turbines"], ["state"])
         result = await add_metric(ctx, "capacity", "turbines_by_state", ["turbines"], ["state"])
     finally:
@@ -145,3 +145,33 @@ async def test_add_metric_in_explore_refuses_to_change_a_dashboard_metric_node(s
     assert result.startswith("Placed metric node 'turbines_by_state'")
     assert _graph.config_of(session.ops, "by_state")["measures"] == ["capacity_mw"]
     assert [node["name"] for node in session.ops.nodes()] == ["by_state"]
+
+
+async def test_add_metric_in_explore_changes_and_reports_the_copy_of_an_earlier_answer(session, monkeypatch):
+    import panel_agents
+
+    from panel_flowdash import agent_edits
+
+    flowdash_agent = pytest.importorskip("panel_flowdash.agent")
+    if not hasattr(flowdash_agent, "ExplorationOps"):
+        pytest.skip("panel-flowdash without ExplorationOps")
+    session.editor.new_dashboard("Capacity")
+    explored = flowdash_agent.ExplorationOps(session.ops)
+    ctx = SimpleNamespace(deps=flowdash_agent.FlowDashDeps(explored))
+    run = {"id": "first"}
+    monkeypatch.setattr(panel_agents, "current_run_id", lambda: run["id"])
+    try:
+        with agent_edits("first"):
+            await add_metric(ctx, "capacity", "mine", ["capacity_mw"], ["state"])
+        run["id"] = "second"
+        with agent_edits("second"):
+            changed = await add_metric(ctx, "capacity", "mine", ["turbines"], ["state"])
+            again = await add_metric(ctx, "capacity", "mine", ["turbines"], ["year"])
+        configs = {name: explored.node_config(name) for name in ("mine", "mine_2")}
+        frame = _graph.output(explored, "mine_2", "data")
+    finally:
+        explored.dispose()
+
+    assert changed.startswith("Changed metric node 'mine_2'") and again.startswith("Changed metric node 'mine_2'")
+    assert configs["mine"]["measures"] == ["capacity_mw"] and configs["mine_2"]["dimensions"] == ["year"]
+    assert "year" in frame.columns and "year" in again

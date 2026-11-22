@@ -1152,7 +1152,7 @@ async def test_add_sql_in_explore_places_the_apps_source_beside_the_dashboard(em
     assert empty.ops.nodes() == []
 
 
-async def test_add_sql_in_explore_turns_a_refused_source_node_into_a_retry(empty, explored):
+async def test_add_sql_in_explore_passes_on_a_refused_source_node_with_a_hint(empty, explored):
     from panel_flowdash.agent import FlowDashDeps
 
     def refuse(component, config):
@@ -1160,6 +1160,6 @@ async def test_add_sql_in_explore_turns_a_refused_source_node_into_a_retry(empty
 
     refuse.host_sources = True
     explored.allow_source = refuse
-    with pytest.raises(ModelRetry, match="^Refused: .*Query a source node already on the dashboard"):
+    with pytest.raises(PermissionError, match="Query a source node already on the dashboard"):
         await add_sql(SimpleNamespace(deps=FlowDashDeps(explored)), "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
     assert explored.nodes() == [] and empty.ops.nodes() == []
