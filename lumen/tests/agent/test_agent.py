@@ -418,13 +418,40 @@ async def test_a_model_known_to_always_reason_gets_its_lowest_effort():
 MANDATORY = "Reasoning is mandatory for this endpoint and cannot be disabled."
 
 
-async def test_a_model_refusing_reasoning_off_is_asked_again_with_its_default_reasoning():
-    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if "reasoning" in body else None)
+def effort(body):
+    return body.get("reasoning", {}).get("effort")
+
+
+async def test_a_model_refusing_reasoning_off_is_asked_again_at_low_effort():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if effort(body) == "none" else None)
     first, second = await ask(model, "Hi", "Again")
 
     assert first.error is None and first.output == "ok" and second.error is None
-    assert ["reasoning" in body for body in bodies] == [True, False, False]
+    assert [effort(body) for body in bodies] == ["none", "low", "low"]
     assert bodies[2]["max_tokens"] == 1000
+
+
+async def test_a_model_refusing_low_effort_too_is_asked_again_with_its_default_reasoning():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if "reasoning" in body else None)
+    first, second = await ask(model, "Hi", "Again")
+
+    assert first.error is None and second.error is None
+    assert [effort(body) for body in bodies] == ["none", "low", None, None]
+
+
+async def test_a_rejected_request_without_an_http_status_is_asked_again_too():
+    from pydantic_ai.exceptions import (
+        ModelRequestRejectedError, RetryModelRequest,
+    )
+
+    from lumen.agent.assistant import ReasoningRequired
+
+    capability = ReasoningRequired()
+    request = SimpleNamespace(model=SimpleNamespace(system="grpc", model_name="m"), model_settings={"thinking": False})
+    with pytest.raises(RetryModelRequest):
+        await capability.on_model_request_error(None, request_context=request,
+                                                error=ModelRequestRejectedError(model_name="m", message=MANDATORY))
+    assert capability.levels == {"grpc:m": "low"}
 
 
 async def test_other_bad_requests_are_not_asked_again():
