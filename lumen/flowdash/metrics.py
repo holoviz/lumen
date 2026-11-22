@@ -561,7 +561,7 @@ class _Reader:
             self.fail((*path, "parameters", clash),
                       f"Parameter {clash!r} has the name of a dimension, which filters by that name already.")
         if sql is not None:
-            self.check_sql(sql, parameters, (*path, "sql"))
+            self.check_sql(sql, parameters, (*path, "sql"), spec.get("parameters") or {})
         if len(self.problems) > before:
             return None
         return Metric(name, source, description, table, sql, measures, dimensions, parameters)
@@ -718,7 +718,7 @@ class _Reader:
                 return None
         return parameter
 
-    def check_sql(self, sql: str, parameters: dict[str, Parameter], path: tuple) -> None:
+    def check_sql(self, sql: str, parameters: dict[str, Parameter], path: tuple, declared: Any = ()) -> None:
         try:
             parsed = parse_expression(sql)
         except sqlglot.errors.SqlglotError as exc:
@@ -729,7 +729,7 @@ class _Reader:
             return
         used = placeholders(sql)
         for name in used:
-            if name not in parameters:
+            if name not in parameters and name not in declared:
                 self.fail(path, f"The query uses :{name}, which is not a parameter of the metric.")
         for name, parameter in parameters.items():
             if name not in used:
@@ -980,10 +980,53 @@ def _dimension_condition(column: str, value: Any, dialect: str | None) -> exp.Ex
     return target.eq(item(value))
 
 
+def _empty_list(node: exp.In, values: Mapping[str, Any], metric: Metric) -> str | None:
+    """The list parameter of ``node`` that is given an empty list, leaving nothing to compare with, if any."""
+    for item in node.expressions:
+        parameter = metric.parameters.get(item.name) if isinstance(item, exp.Placeholder) else None
+        if parameter is not None and parameter.kind == "list" and not values.get(item.name):
+            return item.name
+    return None
+
+
+def _drop_condition(node: exp.In, name: str, metric: Metric, dialect: str | None) -> None:
+    """
+    Replace ``x IN (:name)``, or ``x NOT IN (:name)``, whose list is empty
+    with TRUE, so it filters nothing, like an empty filter value. That only
+    holds when the condition is ANDed into a WHERE, HAVING or ON clause;
+    under OR, a comparison or a function TRUE would change what the rest
+    means, so the empty list is refused there.
+    """
+    target = node
+    while isinstance(target.parent, exp.Paren):
+        target = target.parent
+    if isinstance(target.parent, exp.Not):
+        target = target.parent
+    while isinstance(target.parent, exp.Paren):
+        target = target.parent
+    ancestor = target.parent
+    while isinstance(ancestor, (exp.And, exp.Paren)):
+        ancestor = ancestor.parent
+    if not isinstance(ancestor, (exp.Where, exp.Having, exp.Join)):
+        raise MetricError(
+            f"Parameter {name!r} of metric {metric.name!r} is an empty list, which only drops a condition "
+            "ANDed into a WHERE, HAVING or ON clause; give it at least one value.", "parameters",
+        )
+    target.replace(exp.true() if dialect not in NO_BOOLEAN_LITERALS else exp.EQ(
+        this=exp.Literal.number(1), expression=exp.Literal.number(1)))
+
+
 def bind_sql(metric: Metric, values: Mapping[str, Any], dialect: str | None) -> str:
-    """The query of a SQL metric with each placeholder replaced by a typed literal of its coerced value."""
+    """
+    The query of a SQL metric with each placeholder replaced by a typed
+    literal of its coerced value. A list parameter given an empty list drops
+    the condition it is in, see ``_drop_condition``.
+    """
     read = None if dialect == "any" else dialect
     parsed = parse_expression(metric.sql, read)
+    for node in list(parsed.find_all(exp.In)):
+        if (name := _empty_list(node, values, metric)) is not None:
+            _drop_condition(node, name, metric, read)
 
     def replace(node: exp.Expression) -> exp.Expression:
         if isinstance(node, exp.In):
@@ -994,9 +1037,6 @@ def bind_sql(metric: Metric, values: Mapping[str, Any], dialect: str | None) -> 
                     items.extend(literal(parameter.item, v, read) for v in values.get(item.name) or [])
                 else:
                     items.append(item)
-            if not items:
-                return exp.true() if read not in NO_BOOLEAN_LITERALS else exp.EQ(
-                    this=exp.Literal.number(1), expression=exp.Literal.number(1))
             node.set("expressions", items)
             return node
         if isinstance(node, exp.Placeholder) and node.name in metric.parameters:

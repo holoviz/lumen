@@ -71,9 +71,9 @@ from ..transforms.sql import (
 )
 from ..util import get_dataframe_schema
 from .checks import (
-    CheckDiagnostic, _engine_error, _read, check_chart, check_filter_config,
-    check_query, check_source_config, check_sql_config, check_table_config,
-    check_view_config, forget_probes, pipeline_columns,
+    CheckDiagnostic, _engine_error, _read, _unverified, check_chart,
+    check_filter_config, check_query, check_source_config, check_sql_config,
+    check_table_config, check_view_config, forget_probes, pipeline_columns,
 )
 from .choices import (
     filter_choices, metric_choices, metric_presets, palette_presets,
@@ -1797,11 +1797,19 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
         prepare(metric, metric_query(config, inputs.get("parameters")))
     except MetricError as exc:
         return CheckDiagnostic(str(exc), field=exc.field if exc.field in config else None)
+    wired = inputs.get("parameters")
+    if isinstance(wired, (list, tuple)):
+        names = [name for item in wired if isinstance(item, Mapping) for name in item]
+        twice = sorted({name for name in names if names.count(name) > 1})
+        if twice:
+            return _unverified(
+                f"More than one Lumen Parameter node sets {', '.join(map(repr, twice))}; the one wired last wins."
+            )
     return None
 
 
 @register(
-    component=True, page=False, title="Lumen Metric", icon="functions",
+    component=True, page=False, title="Lumen Metric", icon="functions", tags=["transform"],
     description=(
         "A metric the app defines: a named, described query over one of its sources. Pick the "
         "measures and the dimensions to group by, and a grain for a time dimension; the parameters "
@@ -1906,7 +1914,7 @@ def metric_parameter_names(metrics: Mapping[str, Metric]) -> list[str]:
 
 
 @register(
-    component=True, page=False, title="Lumen Parameter", icon="tune",
+    component=True, page=False, title="Lumen Parameter", icon="tune", tags=["transform"],
     description=(
         "Names a value as a parameter of a metric, e.g. a slider's value as the metric's n: wire the "
         "value in and the parameters output to a Lumen Metric node's parameters input, which takes "
