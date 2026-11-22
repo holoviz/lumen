@@ -97,7 +97,9 @@ class SQLAggregate(SQLTransform):
         keys = [_column(column) for column in self.by]
         expression = exp.select(*keys, *aggregates).from_(self._to_subquery(self.parse_sql(sql_in)))
         if keys:
-            expression = expression.group_by(*keys).order_by(*keys)
+            expression = expression.group_by(*keys).order_by(
+                *(exp.Ordered(this=key, nulls_first=False) for key in keys)
+            )
         return self.to_sql(expression)
 
 
@@ -236,6 +238,8 @@ def aggregate_schema(schema: Mapping[str, Any], by: list[str], columns: list[str
             result[column] = {"type": "integer"}
         elif method == "mean":
             result[column] = {"type": "number"}
+        elif method == "sum" and (schema.get(column) or {}).get("type") == "boolean":
+            result[column] = {"type": "integer"}
         else:
             result[column] = _typed(schema.get(column))
     return result
@@ -262,16 +266,35 @@ def _schema_type(data_type: exp.DataType) -> dict[str, Any]:
     return {}
 
 
+def _resolve(column: exp.Column, columns: list[str]) -> str | None:
+    """The input column a reference names: exactly when quoted, ignoring case otherwise."""
+    if column.name in columns:
+        return column.name
+    if column.this.quoted:
+        return None
+    return next((c for c in columns if c.lower() == column.name.lower()), None)
+
+
 def expression_type(expression: str, schema: Mapping[str, Any], dialect: str) -> dict[str, Any]:
     """The schema of the column ``expression`` computes from the columns of ``schema``, or ``{}`` if unknown."""
-    types = {}
-    for column in _columns_of(schema):
-        spec = schema.get(column) or {}
-        kind = spec.get("format") if spec.get("format") in ("datetime", "date") else spec.get("type")
-        types[column] = _SQL_TYPES.get(kind, "VARCHAR")
+    columns = _columns_of(schema)
     try:
-        tables = {"frame": types}
-        select = exp.select(_alias(sqlglot.parse_one(expression, read=_read(dialect)), "value")).from_("frame")
+        parsed = sqlglot.parse_one(expression, read=_read(dialect))
+        # The references become plain placeholders, so names sqlglot would fold or
+        # could not resolve, e.g. with spaces or capitals, keep their types.
+        types, names = {}, {}
+        for reference in list(parsed.find_all(exp.Column)):
+            column = _resolve(reference, columns)
+            spec = schema.get(column) or {} if column is not None else {}
+            kind = spec.get("format") if spec.get("format") in ("datetime", "date") else spec.get("type")
+            if kind not in _SQL_TYPES:
+                return {}
+            name = names.setdefault(column, f"c{len(names)}")
+            types[name] = _SQL_TYPES[kind]
+            reference.replace(exp.column(name))
+        tables = {"frame": types} if types else {}
+        select = exp.select(_alias(parsed, "value"))
+        select = select.from_("frame") if types else select
         select = annotate_types(qualify(select, schema=tables, dialect=_read(dialect)), schema=tables)
         return _schema_type(select.selects[0].type)
     except Exception:
@@ -304,6 +327,10 @@ def parse_expression(expression: str, dialect: str) -> exp.Expression:
     ):
         raise ValueError("Give one SQL expression, e.g. \"amount\" / 1000, not a query or several expressions.")
     parsed = select.selects[0]
+    if isinstance(parsed, exp.Star) or parsed.find(exp.Star):
+        raise ValueError("Name the columns the expression reads; * is not a value.")
+    if any(column.table for column in parsed.find_all(exp.Column)):
+        raise ValueError("Name the input's columns without a table, e.g. \"amount\", not t.\"amount\".")
     if isinstance(parsed, exp.Alias):
         raise ValueError("Leave the alias out of the expression; the column's name is its own setting.")
     if parsed.find(exp.Query, exp.Table):
@@ -355,7 +382,7 @@ def check_aggregate_config(config: dict[str, Any], inputs: dict[str, Any]) -> st
         return f"Counting rows makes a column {COUNT_COLUMN!r}, which is also a grouping column."
     if method in NUMERIC_METHODS:
         types = pipeline_column_types(pipeline) or {}
-        if text := [c for c in columns if types.get(c) not in ("integer", "number", "boolean")]:
+        if text := [c for c in columns if types.get(c) in ("string", "datetime", "date")]:
             return f"Cannot take the {method} of {', '.join(map(repr, text))}, which is not numeric."
     return None
 
@@ -396,11 +423,7 @@ def check_derive_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
     if pipeline is None:
         return None
     columns = pipeline_columns(pipeline)
-    lowered = {c.lower() for c in columns}
-    unknown = [
-        c.name for c in parsed.find_all(exp.Column)
-        if c.name not in columns and (c.this.quoted or c.name.lower() not in lowered)
-    ]
+    unknown = [c.name for c in parsed.find_all(exp.Column) if _resolve(c, columns) is None]
     return _unknown(list(dict.fromkeys(unknown)), columns)
 
 

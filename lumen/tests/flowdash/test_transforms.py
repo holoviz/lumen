@@ -17,7 +17,8 @@ from lumen.flowdash import (
 from lumen.flowdash.choices import pipeline_column_types
 from lumen.flowdash.contracts import check_unrecorded, expects
 from lumen.flowdash.transforms import (
-    check_derive_config, expression_type, parse_expression,
+    aggregate_schema, check_aggregate_config, check_derive_config,
+    expression_type, parse_expression,
 )
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
@@ -207,6 +208,9 @@ def test_output_schema_is_known_without_fetching(executed, tmp_path):
     (DERIVE_ID, {"column": "x", "expression": "amount, region"}, "one SQL expression"),
     (DERIVE_ID, {"column": "x", "expression": "1 FROM sales"}, "one SQL expression"),
     (DERIVE_ID, {"column": "x;y", "expression": "1"}, "not a column name"),
+    (DERIVE_ID, {"column": "x", "expression": "*"}, "not a value"),
+    (DERIVE_ID, {"column": "x", "expression": "COUNT(*) OVER ()"}, "not a value"),
+    (DERIVE_ID, {"column": "x", "expression": 'sales."amount" * 2'}, "without a table"),
 ])
 def test_checks_refuse_configs_before_they_apply(tmp_path, component, config, error):
     ops = chain(duckdb_source(tmp_path), (component, {}))
@@ -220,8 +224,11 @@ def test_derived_expression_window_functions_are_allowed():
 
 
 def test_expression_type_falls_back_to_unknown():
-    schema = {"amount": {"type": "integer"}, "sold": {"type": "string", "format": "datetime"}}
+    schema = {"amount": {"type": "integer"}, "sold": {"type": "string", "format": "datetime"},
+              "Cap kw": {"type": "integer"}, "Price": {"type": "number"}}
     assert expression_type("amount / 2", schema, "duckdb") == {"type": "number"}
+    assert expression_type('"Cap kw" * 2', schema, "duckdb") == {"type": "integer"}
+    assert expression_type("price + 1", schema, "duckdb") == {"type": "number"}
     assert expression_type("CAST(sold AS DATE)", schema, "duckdb") == {"type": "string", "format": "date"}
     assert expression_type("no_such_function(amount)", schema, "duckdb") == {}
 
@@ -299,3 +306,34 @@ def test_unrecorded_check_names_the_transform_reading_a_missing_column():
 def test_transform_output_is_a_lumen_pipeline(tmp_path):
     ops = chain(duckdb_source(tmp_path), (SELECT_ID, {"columns": ["category"]}))
     assert isinstance(result(ops), Pipeline)
+
+
+def test_aggregate_sums_columns_of_unknown_type(tmp_path):
+    ops = chain(
+        duckdb_source(tmp_path),
+        (DERIVE_ID, {"column": "Amount x2", "expression": '"amount" * 2'}),
+        (DERIVE_ID, {"column": "opaque", "expression": "no_such_function(amount)"}),
+        data=False,
+    )
+    assert pipeline_column_types(ops.node_output("step0.result"))["Amount x2"] == "integer"
+    assert check_aggregate_config(
+        {"by": ["category"], "columns": ["opaque"], "method": "sum"}, {"pipeline": result(ops)}
+    ) is None
+
+
+def test_sum_of_a_boolean_is_an_integer():
+    schema = {"category": {"type": "string"}, "paid": {"type": "boolean"}}
+    assert aggregate_schema(schema, ["category"], ["paid"], "sum")["paid"] == {"type": "integer"}
+
+
+@pytest.mark.parametrize("make", SOURCES, ids=["duckdb", "sqlite", "memory"])
+def test_aggregate_puts_null_groups_last_on_every_engine(make, tmp_path, monkeypatch):
+    if make is sqlite_source:
+        pytest.importorskip("sqlalchemy")
+    with_null = SALES.astype({"region": object})
+    with_null.loc[0, "region"] = None
+    monkeypatch.setitem(globals(), "SALES", with_null)
+    monkeypatch.setitem(globals(), "VALUES", VALUES.replace("'north', 10", "NULL, 10"))
+    ops = chain(make(tmp_path), (AGGREGATE_ID, {"by": ["region"], "columns": ["amount"], "method": "count"}))
+    assert [r[0] for r in rows(ops)][:2] == ["north", "south"]
+    assert pd.isna(rows(ops)[-1][0])

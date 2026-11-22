@@ -31,7 +31,7 @@ from .transforms import (
     AggregateNode, DeriveNode, SelectNode, SortNode, transformed_pipeline,
 )
 
-COMPONENTS = {**COMPONENTS, **TRANSFORM_COMPONENTS}
+COMPONENTS.update(TRANSFORM_COMPONENTS)
 
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.

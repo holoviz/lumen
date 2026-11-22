@@ -14,7 +14,7 @@ resolved.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -100,6 +100,18 @@ def _spec_fields(spec: Any) -> set[str]:
     return fields
 
 
+def _view_reader(component: Any) -> Callable[[Any], set[str]] | None:
+    """
+    How the view node of ``component`` reads columns from its spec, or None
+    if it is no view node: through ``_view_fields`` where the module has it,
+    for every Lumen view node, otherwise for the Vega-Lite view.
+    """
+    view_fields = globals().get("_view_fields")
+    if view_fields is not None:
+        return view_fields(component)
+    return _spec_fields if component == VIEW_ID else None
+
+
 def _through(lineage, upstream):
     """The columns of the pipeline ``upstream`` maps back from, for a column of a step after it."""
     def columns(column: str) -> set[str]:
@@ -133,9 +145,9 @@ def _reader_fields(doc: Mapping[str, Any], node: str) -> dict[str, set[str]]:
                 if config.get("field"):
                     fields[target] = upstream(config["field"])
                 queue.append((target, upstream))
-            elif component == VIEW_ID:
+            elif (read := _view_reader(component)) is not None:
                 seen.add(target)
-                fields[target] = set().union(*(upstream(f) for f in _spec_fields(config.get("spec") or {})))
+                fields[target] = set().union(*(upstream(f) for f in read(config.get("spec") or {})))
             elif component in COLUMN_USES:
                 seen.add(target)
                 use = COLUMN_USES[component](config)

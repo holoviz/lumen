@@ -23,12 +23,11 @@ from panel_flowdash.parameters import (
 )
 
 from ..sources.base import Source
-from . import COMPONENTS
 from .contracts import (
     SOURCE_ID, SourceContract, check_unrecorded, read_tables, source_dialect,
     source_schema,
 )
-from .nodes import SOURCES_KEY
+from .nodes import COMPONENTS, SOURCES_KEY
 
 OK, FAILED, CONTRACT, USAGE = 0, 1, 2, 3
 
