@@ -43,9 +43,14 @@ def _text(sql: str, params: Any) -> Any:
     """
     ``sql`` as a ``text()`` clause; without parameters every ``:name`` in
     it, e.g. in a string literal or a comment, is escaped, so it is sent as
-    written rather than refused as a bind parameter without a value.
+    written rather than refused as a bind parameter without a value. A
+    query that names a parameter it does not pass then gets the driver's
+    error rather than SQLAlchemy's.
     """
-    return text(sql if params else _BIND_PARAM.sub(r"\\:\1", sql))
+    if not params:
+        # text() turns an escaped \:name into :name, so a backslash written before one is doubled to keep it.
+        sql = _BIND_PARAM.sub(r"\\:\1", re.sub(r"\\(?=:\w)", r"\\\\", sql))
+    return text(sql)
 
 
 class SQLAlchemySource(BaseSQLSource):

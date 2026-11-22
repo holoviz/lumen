@@ -438,9 +438,9 @@ def test_null_takes_the_default_and_a_required_parameter_needs_a_value(duck):
 
 
 def test_sql_parameters_need_a_default_or_required():
-    assert "flowdash.yaml:6:7: Parameter 'n' of a SQL metric needs a `default` or `required: true`." in problems(
+    assert problems(
         "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM t LIMIT :n\n    parameters:\n      n: {type: integer}\n"
-    )
+    ) == ["flowdash.yaml:6:7: Parameter 'n' of a SQL metric needs a `default` or `required: true`."]
     assert problems(
         "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM t LIMIT :n\n    parameters:\n"
         "      n: {type: number, default: 1}\n"
@@ -500,7 +500,8 @@ def test_sqlite_grains_are_timestamps(lite, duck):
 
 def test_sqlite_runs_queries_with_colons_in_literals_and_comments(lite):
     text = PROJECT.replace(
-        "WHERE t_state IN (:states)", "WHERE t_state IN (:states) AND p_name != 'a :b' -- top :n\n     "
+        "WHERE t_state IN (:states)",
+        "WHERE t_state IN (:states) AND p_name != 'a :b' AND p_name != 'c \\\\:d' -- top :n\n     ",
     )
     top = metrics_for(lite, text)["top_projects"]
     assert run(metric_pipeline(top, lite, Query(parameters={"states": ["x :y", "TX"]}))) == [
@@ -558,3 +559,52 @@ def test_parameter_nodes_drive_a_metric_from_widgets(dashboard):
     assert output(ops, "top", "data").values.tolist() == [["Roscoe", 3500], ["Horse Hollow", 2500]]
     with pytest.raises(OperationError, match="No metric takes a parameter 'm'"):
         ops.add_node(PARAMETER_ID, {"parameter": "m"}, name="m")
+
+
+@pytest.mark.parametrize("where, rows", [
+    ("t_state NOT IN (:ex)", 5),
+    ("p_year > 2000 AND t_state NOT IN (:ex)", 4),
+    ("(p_year > 2000 AND (t_state IN (:ex)))", 4),
+    ("p_year > 2000 AND NOT (t_state IN (:ex))", 4),
+])
+def test_an_empty_list_drops_the_condition_it_is_anded_into(duck, where, rows):
+    text = (
+        f"metrics:\n  m:\n    source: data\n    sql: SELECT * FROM turbines WHERE {where}\n"
+        "    parameters:\n      ex: {type: \"list[string]\", default: [CA]}\n"
+    )
+    metric = metrics_for(duck, text)["m"]
+    assert len(run(metric_pipeline(metric, duck, Query(parameters={"ex": []})))) == rows
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT * FROM turbines WHERE p_year > 2010 OR t_state IN (:ex)",
+    "SELECT * FROM turbines WHERE NOT (p_year > 2010 OR t_state NOT IN (:ex))",
+    "SELECT t_state IN (:ex) AS picked FROM turbines",
+    "SELECT * FROM turbines WHERE (t_state IN (:ex)) = FALSE",
+])
+def test_an_empty_list_is_refused_where_dropping_its_condition_changes_the_query(duck, sql):
+    text = (
+        f"metrics:\n  m:\n    source: data\n    sql: \"{sql}\"\n"
+        "    parameters:\n      ex: {type: \"list[string]\", default: [CA]}\n"
+    )
+    metric = metrics_for(duck, text)["m"]
+    with pytest.raises(MetricError, match="'ex' of metric 'm' is an empty list, which only drops a condition ANDed"):
+        metric_pipeline(metric, duck, Query(parameters={"ex": []}))
+
+
+def test_parameter_tiles_start_hidden_and_duplicates_warn(dashboard):
+    from lumen.flowdash import PARAMETER_ID
+
+    ops = dashboard
+    ops.add_node(METRIC_ID, {"metric": "top_projects"}, name="top")
+    for name in ("a", "b"):
+        ops.add_node(PARAMETER_ID, {"parameter": "n"}, name=name)
+        ops.set_inputs(name, {"value": 1 if name == "a" else 3})
+        ops.connect(f"{name}.parameters", "top.parameters")
+    hidden = {e["instance_id"] for e in ops.editor.layout if e.get("visible") is False}
+    assert {ops._instance("a"), ops._instance("b"), ops._instance("top")} <= hidden
+    assert len(output(ops, "top", "data")) == 3
+    from panel_flowdash.config_check import check_node_sync
+
+    result = check_node_sync(ops.editor, ops._instance("top"))
+    assert result.warnings == ["More than one Lumen Parameter node sets 'n'; the one wired last wins."]
