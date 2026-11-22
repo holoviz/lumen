@@ -77,16 +77,16 @@ from .checks import (
 )
 from .choices import (
     filter_choices, metric_choices, metric_presets, palette_presets,
-    pipeline_column_types, source_choices, source_presets, table_choices,
-    table_presets,
+    parameter_choices, pipeline_column_types, source_choices, source_presets,
+    table_choices, table_presets,
 )
 from .contracts import (
-    DATA_ID, FILTER_ID, METRIC_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID,
-    SourceContract,
+    DATA_ID, FILTER_ID, METRIC_ID, PARAMETER_ID, SOURCE_ID, SQL_ID, TABLE_ID,
+    VIEW_ID, SourceContract,
 )
 from .metrics import (
     METRICS_KEY, Metric, MetricError, MetricPreFilter, Query, aggregate,
-    bind_sql, check_query_fields, table_sql,
+    bind_sql, coerce_dimension_values, prepare, table_sql,
 )
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
@@ -630,7 +630,7 @@ def fetch(pipeline: Pipeline, limit: int = RESULT_LIMIT, timeout: float = NODE_T
         data = execute(source, SQLLimit(limit=limit, write=source.dialect).apply(sql), timeout)
     else:
         data = _compute(pipeline, timeout)
-    data = data if len(data) <= limit else data.head(limit)
+    data = _parse_temporal(pipeline, data if len(data) <= limit else data.head(limit))
     fetched[limit] = data
     return data
 
@@ -832,6 +832,23 @@ def column_values(pipeline: Any, column: str, limit: int = FILTER_OPTIONS, span:
         return sorted(values)
     except TypeError:
         return sorted(values, key=str)
+
+
+def _parse_temporal(pipeline: Pipeline, data: Any) -> Any:
+    """
+    ``data`` with the truncated dates of a metric pipeline as timestamps,
+    which an engine without a timestamp type, such as SQLite, returns as text.
+    """
+    step = next((t for t in pipeline.sql_transforms if isinstance(t, MetricAggregate)), None)
+    if step is None or not isinstance(data, pd.DataFrame):
+        return data
+    text = [c for c in step.temporal if c in data.columns and not pd.api.types.is_datetime64_any_dtype(data[c])]
+    if not text:
+        return data
+    data = data.copy()
+    for column in text:
+        data[column] = pd.to_datetime(data[column])
+    return data
 
 
 _REFRESHED: weakref.WeakKeyDictionary[Any, weakref.WeakSet] = weakref.WeakKeyDictionary()
@@ -1639,12 +1656,18 @@ class FilterNode(PipelineNode):
 
 
 def _read_tables(sql: str, source: BaseSQLSource) -> dict[str, list[str]]:
-    """The columns of each of ``source``'s tables that ``sql`` reads, leaving out its CTEs."""
+    """
+    The columns of each of ``source``'s tables in the FROM and JOINs of
+    ``sql``'s outermost query, which a filter on a SQL metric may filter
+    inside it; a table a subquery or a CTE reads, or a CTE of the table's
+    name, is left alone, so a filter never changes, say, a total a share
+    is taken of.
+    """
     parsed = sqlglot.parse_one(sql, read=None if source.dialect == "any" else source.dialect)
     ctes = {cte.alias_or_name.lower() for cte in parsed.find_all(sqlglot.exp.CTE)}
     tables = {table.lower(): table for table in source.get_tables()}
     read: dict[str, list[str]] = {}
-    for node in parsed.find_all(sqlglot.exp.Table):
+    for node in MetricPreFilter.top_level_tables(parsed):
         name = node.name
         if not isinstance(node.this, sqlglot.exp.Identifier) or name.lower() in ctes or name.lower() not in tables:
             continue
@@ -1662,7 +1685,7 @@ def _metric_schema(metric: Metric, query: Query, pipeline: Pipeline, timeout: fl
     """
     sql = pipeline_sql(pipeline)
     frame = execute(pipeline.source, SQLLimit(limit=0, write=pipeline.source.dialect).apply(sql), timeout)
-    schema = get_dataframe_schema(frame)["items"]["properties"]
+    schema = get_dataframe_schema(_parse_temporal(pipeline, frame))["items"]["properties"]
     for name in schema:
         field = metric.measures.get(name) or metric.dimensions.get(name)
         if field is None:
@@ -1689,15 +1712,18 @@ def metric_pipeline(metric: Metric, source: Source, query: Query, limit: int = R
         raise ValueError(f"The source failed: {failure_text(source)}")
     if not isinstance(source, BaseSQLSource):
         raise MetricError(f"Metric {metric.name!r} needs a SQL source; {type(source).__name__} does not run SQL.")
-    check_query_fields(metric, query)
-    values = metric.values(query.parameters)
+    query, values = prepare(metric, query)
     dialect = source.dialect
     read = None if dialect == "any" else dialect
     if metric.form == "structured":
         if metric.table not in source.get_tables():
             raise MetricError(f"The source {metric.source!r} has no table {metric.table!r}.")
+        columns = {str(c): spec for c, spec in source.get_schema(metric.table).items() if c != "__len__"}
+        values = coerce_dimension_values(metric, values, columns)
+        if query.limit is not None:
+            query.limit = min(query.limit, limit)
         transform = aggregate(metric, query, values, dialect)
-        transform.columns = [str(c) for c in source.get_schema(metric.table) if c != "__len__"]
+        transform.columns = list(columns)
         check_query(transform.apply(table_sql(metric.table, read)), source)
         pipeline = Pipeline(
             source=source, table=metric.table, schema={}, name=metric.name,
@@ -1726,16 +1752,31 @@ def metric_pipeline(metric: Metric, source: Source, query: Query, limit: int = R
 
 def metric_query(config: Mapping[str, Any], parameters: Any = None) -> Query:
     """The ``Query`` a ``Lumen/metric`` node's config and ``parameters`` input ask for."""
-    if parameters is not None and not isinstance(parameters, Mapping):
-        raise MetricError(
-            f"The parameters input takes a mapping of parameter names to values, got {type(parameters).__name__}.",
-            "parameters",
-        )
     return Query(
-        measures=list(config.get("measures") or []), dimensions=list(config.get("dimensions") or []),
-        grain=config.get("grain") or None, order_by=list(config.get("order_by") or []),
-        limit=config.get("limit"), parameters=dict(parameters or {}),
+        measures=list(dict.fromkeys(config.get("measures") or [])),
+        dimensions=list(dict.fromkeys(config.get("dimensions") or [])),
+        grain=config.get("grain") or None, order_by=list(dict.fromkeys(config.get("order_by") or [])),
+        limit=config.get("limit"), parameters=merged_parameters(parameters),
     )
+
+
+def merged_parameters(parameters: Any) -> dict[str, Any]:
+    """
+    The values a ``Lumen/metric`` node's ``parameters`` input holds: one
+    mapping, or the mappings of the nodes wired to it, later ones winning.
+    """
+    if parameters is None:
+        return {}
+    items = [parameters] if isinstance(parameters, Mapping) else parameters
+    if not isinstance(items, (list, tuple)) or not all(isinstance(item, Mapping) for item in items if item is not None):
+        raise MetricError(
+            "The parameters input takes a mapping of parameter names to values, e.g. {\"n\": 5}, or the "
+            "outputs of Lumen Parameter nodes; wire a widget to a Lumen Parameter node first.", "parameters",
+        )
+    merged: dict[str, Any] = {}
+    for item in items:
+        merged.update(item or {})
+    return merged
 
 
 def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
@@ -1753,9 +1794,7 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     if metric is None:
         return CheckDiagnostic(missing_metric(name, metrics), field="metric")
     try:
-        query = metric_query(config, inputs.get("parameters"))
-        check_query_fields(metric, query)
-        metric.values(query.parameters)
+        prepare(metric, metric_query(config, inputs.get("parameters")))
     except MetricError as exc:
         return CheckDiagnostic(str(exc), field=exc.field if exc.field in config else None)
     return None
@@ -1773,7 +1812,7 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     config=["metric", "measures", "dimensions", "grain", "order_by", "limit"],
     check_config=check_metric_config,
     config_choices=metric_choices,
-    requires=[{"key": "parameters", "required": False, "blocking": False}],
+    requires=[{"key": "parameters", "required": False, "blocking": False, "multiple": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
     **palette_presets(metric_presets),
 )
@@ -1799,9 +1838,11 @@ class MetricNode(PipelineNode):
         Rows the metric returns at most, e.g. the top 10 with ``order_by``,
         at most the host's row ceiling, which is also the default.""")
 
-    parameters = param.Dict(default={}, allow_None=True, doc="""
+    parameters = param.Parameter(default=None, doc="""
         Values of the metric's parameters by name, over their defaults, and
-        of dimensions to filter by, e.g. ``{"n": 5, "state": ["TX", "IA"]}``.""")
+        of dimensions to filter by, e.g. ``{"n": 5, "state": ["TX", "IA"]}``:
+        a mapping, or the outputs of the Lumen Parameter nodes wired to it.
+        A value of None takes the default.""")
 
     _waiting = "Pick a metric"
 
@@ -1832,10 +1873,7 @@ class MetricNode(PipelineNode):
             raise ValueError(missing_source(metric.source, host_sources(self._context)))
         self._source = source
         query = metric_query(self._config(), self.parameters)
-        ceiling = row_ceiling(self.editor)
-        if metric.form == "structured" and query.limit is not None:
-            query.limit = min(query.limit, ceiling)
-        return metric_pipeline(metric, source, query, ceiling)
+        return metric_pipeline(metric, source, query, row_ceiling(self.editor))
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -1847,6 +1885,66 @@ class MetricNode(PipelineNode):
     def data(self):
         pipeline = self._value()
         return pipeline if pipeline is None or is_failure(pipeline) else fetch(pipeline, row_ceiling(self.editor))
+
+
+def check_parameter_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
+    """Check a ``Lumen/parameter`` config: the name must be one some metric the host defines takes."""
+    name = config.get("parameter")
+    names = metric_parameter_names(host_metrics())
+    if not name or not names or name in names:
+        return None
+    return CheckDiagnostic(
+        f"No metric takes a parameter {name!r}; the metrics take: {', '.join(names)}.", field="parameter",
+    )
+
+
+def metric_parameter_names(metrics: Mapping[str, Metric]) -> list[str]:
+    """What the metrics' ``parameters`` inputs take, by name: parameters, column dimensions, ``limit`` and ``order_by``."""
+    return list(dict.fromkeys(
+        name for metric in metrics.values() for name in [*metric.parameters, *metric._filterable(), *metric.knobs()]
+    ))
+
+
+@register(
+    component=True, page=False, title="Lumen Parameter", icon="tune",
+    description=(
+        "Names a value as a parameter of a metric, e.g. a slider's value as the metric's n: wire the "
+        "value in and the parameters output to a Lumen Metric node's parameters input, which takes "
+        "several. An empty value takes the metric's default."
+    ),
+    config=["parameter"],
+    check_config=check_parameter_config,
+    config_choices=parameter_choices,
+    requires=[{"key": "value", "required": False, "blocking": False}],
+    provides=[{"key": "parameters"}],
+)
+class ParameterNode(LumenNode):
+
+    parameter = param.String(default="", doc="The name of the metric parameter or dimension the value is for.")
+
+    value = param.Parameter(default=None, doc="The value, e.g. a widget's.")
+
+    @param.depends("parameter", "value", watch=True, on_init=True)
+    def _refresh(self, *events):
+        super()._refresh()
+
+    def _resolve(self) -> dict[str, Any] | None:
+        if not self.parameter:
+            return None
+        value = self.value
+        if is_failure(value):
+            raise ValueError(f"The input failed: {failure_text(value)}")
+        return {self.parameter: python_value(value)}
+
+    @param.output(param.Parameter)
+    @param.depends("_object", "_error")
+    def parameters(self):
+        return self._value()
+
+    def _body(self):
+        if self._object is None:
+            return pn.pane.Markdown("Pick a parameter")
+        return pn.pane.Markdown(", ".join(f"`{k}` = {v!r}" for k, v in self._object.items()))
 
 
 @register(
@@ -2032,5 +2130,5 @@ class ViewNode(GlobalFilterTarget, LumenNode):
 
 COMPONENTS = {
     SOURCE_ID: SourceNode, TABLE_ID: TableNode, FILTER_ID: FilterNode, SQL_ID: SQLNode,
-    DATA_ID: DataNode, VIEW_ID: ViewNode, METRIC_ID: MetricNode,
+    DATA_ID: DataNode, VIEW_ID: ViewNode, METRIC_ID: MetricNode, PARAMETER_ID: ParameterNode,
 }

@@ -481,6 +481,10 @@ class MetricAggregate(SQLTransform):
         The columns of the input, which conditions added before this
         transform may filter on although the output does not have them.""")
 
+    temporal = param.List(default=[], doc="""
+        The output columns holding truncated dates or times, which an engine
+        without a timestamp type, such as SQLite, returns as text.""")
+
     transform_type: ClassVar[str] = 'sql_metric_aggregate'
 
     def apply(self, sql_in: str) -> str:

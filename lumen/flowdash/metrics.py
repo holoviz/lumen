@@ -38,7 +38,10 @@ the structured form a parameter filters ``column`` with ``op`` before
 aggregating, and every column dimension can be filtered by its name too; in
 the SQL form a parameter is a value bound to its placeholder. Values are
 coerced to the declared type and bound as sqlglot literals, never formatted
-into the SQL text. ``format`` is a d3-format string.
+into the SQL text. A value of None takes the parameter's default. A
+structured metric's ``limit`` and ``order_by`` are parameters as well, see
+``Metric.knobs``; a SQL metric's parameters each need a default or
+``required: true``. ``format`` is a d3-format string.
 
 A time dimension (``type: time``) is truncated to the grain a node picks;
 period comparisons will be keys of the time dimension, so the format leaves
@@ -77,6 +80,9 @@ METRICS_KEY = "lumen.metrics"
 SCALAR_TYPES = ("string", "number", "integer", "boolean", "date", "datetime")
 RANGE_TYPES = ("number", "integer", "date", "datetime")
 GRAINS = ("year", "quarter", "month", "week", "day", "hour")
+
+# The parameters that shape a structured metric's result, see ``Metric.knobs``.
+KNOBS = ("limit", "order_by")
 
 OPS = {"=", "!=", ">", ">=", "<", "<=", "in", "between"}
 _COMPARISONS = {"=": exp.EQ, "!=": exp.NEQ, ">": exp.GT, ">=": exp.GTE, "<": exp.LT, "<=": exp.LTE}
@@ -309,21 +315,27 @@ class Metric:
     def values(self, given: Mapping[str, Any] | None) -> dict[str, Any]:
         """
         The parameter values of a query: the defaults updated with ``given``,
-        coerced and checked. In the structured form ``given`` may also name a
-        column dimension, whose value keeps the rows equal to it (or to one of
-        a list). Raises ``MetricError``.
+        coerced and checked. A value of None, or one left out, takes the
+        parameter's default; a required parameter without either is refused.
+        In the structured form ``given`` may also name a column dimension,
+        whose value keeps the rows equal to it (or to one of a list), and
+        ``limit`` and ``order_by``, which ``knobs`` reads. Raises
+        ``MetricError``.
         """
-        given = dict(given or {})
+        given = {key: value for key, value in (given or {}).items() if key not in self.knobs()}
         unknown = [key for key in given if key not in self.parameters and key not in self._filterable()]
         if unknown:
-            known = [*self.parameters, *self._filterable()]
+            known = [*self.parameters, *self._filterable(), *self.knobs()]
             raise MetricError(
                 f"Metric {self.name!r} has no parameter {unknown[0]!r}; its parameters are: "
                 f"{', '.join(known) or 'none'}.", "parameters",
             )
         values: dict[str, Any] = {}
         for name, parameter in self.parameters.items():
-            raw = given.get(name, parameter.default)
+            if name in self.knobs():
+                continue
+            raw = given.get(name)
+            raw = parameter.default if raw is None else raw
             try:
                 values[name] = parameter.coerce(raw)
             except ValueError as exc:
@@ -331,9 +343,26 @@ class Metric:
             if values[name] is None and parameter.required:
                 raise MetricError(f"Metric {self.name!r} needs a value for {name!r}.", "parameters")
         for name in given:
-            if name not in self.parameters:
+            if name not in self.parameters and given[name] is not None:
                 values[name] = _dimension_value(self.name, name, given[name])
         return values
+
+    def knobs(self) -> dict[str, Parameter]:
+        """
+        The parameters of a structured metric that shape its result rather
+        than filter its rows: ``limit``, the rows it returns at most, and
+        ``order_by``, the columns it is sorted by (``-`` first for
+        descending). The metric may declare either to give it a default,
+        bounds or options; a SQL metric has none.
+        """
+        if self.form == "sql":
+            return {}
+        return {
+            "limit": self.parameters.get("limit") or Parameter(
+                "limit", "integer", bounds=(1, None), description="Rows returned at most, e.g. for a top 10"),
+            "order_by": self.parameters.get("order_by") or Parameter(
+                "order_by", "list", "string", description="Columns to sort by, - first for descending"),
+        }
 
     def _filterable(self) -> list[str]:
         if self.form == "sql":
@@ -659,9 +688,14 @@ class _Reader:
             for key in ("column", "op"):
                 if key in item:
                     self.fail((*path, key), f"Parameter {name!r}: a SQL metric binds :{name} in its query and takes no {key}.")
+        elif name in KNOBS:
+            expected = {"limit": "integer", "order_by": "list[string]"}[name]
+            if given != expected or column is not None or op is not None:
+                self.fail(path, f"Parameter {name!r} sets the metric's {name}: it is of type {expected} "
+                          "and has no column or op.")
         elif column is None:
-            self.fail(path, f"Parameter {name!r} needs a `column` to filter by; only a SQL metric's "
-                      "parameters are bound into its query.")
+            self.fail(path, f"Parameter {name!r} needs a `column` to filter by; only `limit`, `order_by` "
+                      "and a SQL metric's parameters take none.")
         elif op is None:
             op = default_op
         elif op not in OPS:
@@ -669,11 +703,13 @@ class _Reader:
         elif (op == "in") != (kind == "list") or (op == "between") != (kind == "range"):
             self.fail((*path, "op"), f"Parameter {name!r}: op {op!r} does not fit type {given!r}; "
                       f"use op {default_op!r} for it.")
+        if sql and item.get("default") is None and required is not True:
+            self.fail(path, f"Parameter {name!r} of a SQL metric needs a `default` or `required: true`.")
         if len(self.problems) > before:
             return None
         parameter = Parameter(name, kind, inner, None, required, bounds, options,
                               self.text(item.get("description"), (*path, "description"), "description") or "",
-                              column, op if not sql else None)
+                              column, op if not (sql or name in KNOBS) else None)
         if item.get("default") is not None:
             try:
                 parameter = dataclasses.replace(parameter, default=parameter.coerce(item["default"]))
@@ -702,6 +738,10 @@ class _Reader:
                 for placeholder in parsed.find_all(exp.Placeholder):
                     if placeholder.name == name and not isinstance(placeholder.parent, exp.In):
                         self.fail(path, f"List parameter :{name} may only be used in IN (:{name}).")
+            for placeholder in parsed.find_all(exp.Placeholder):
+                if (placeholder.name == name and isinstance(placeholder.parent, (exp.Limit, exp.Offset))
+                        and parameter.kind != "integer"):
+                    self.fail(path, f"Parameter :{name} in LIMIT or OFFSET must be an integer.")
 
 
 def read_metrics(project: ProjectFile) -> MetricSet:
@@ -749,6 +789,33 @@ class MetricPreFilter(SQLPreFilter):
 
     transform_type: ClassVar[str] = "sql_metric_prefilter"
 
+    @staticmethod
+    def top_level_tables(parsed: exp.Expression) -> list[exp.Table]:
+        """The tables in the FROM and JOINs of the outermost SELECT of ``parsed``, or of each side of a UNION."""
+        def outermost(node: exp.Expression) -> list[exp.Select]:
+            if isinstance(node, exp.Select):
+                return [node]
+            if isinstance(node, exp.SetOperation):
+                return [*outermost(node.this), *outermost(node.expression)]
+            return []
+
+        found = []
+        for select in outermost(parsed):
+            sources = [select.args.get("from_", select.args.get("from")), *(select.args.get("joins") or [])]
+            found += [s.this for s in sources if s is not None and isinstance(s.this, exp.Table)]
+        return found
+
+    def apply(self, sql_in: str) -> str:
+        conditions = {table: conds for table, conds in self.conditions if conds}
+        if not conditions:
+            return sql_in
+        expression = self.parse_sql(sql_in)
+        ctes = {cte.alias_or_name.lower() for cte in expression.find_all(exp.CTE)}
+        for table in self.top_level_tables(expression):
+            if table.name in conditions and table.name.lower() not in ctes and isinstance(table.this, exp.Identifier):
+                table.replace(self._create_filtered_subquery(table.name, conditions[table.name], table.alias or None))
+        return self.to_sql(expression)
+
 
 @dataclass
 class Query:
@@ -791,8 +858,45 @@ def check_query_fields(metric: Metric, query: Query) -> None:
                 )
     outputs = [*query.dimensions, *query.measures]
     for key in query.order_by:
-        if key.lstrip("-") not in outputs:
-            raise MetricError(f"Cannot order by {key.lstrip('-')!r}; the columns are: {', '.join(outputs)}.", "order_by")
+        name = key[1:] if isinstance(key, str) and key.startswith("-") else key
+        if name not in outputs:
+            raise MetricError(f"Cannot order by {key!r}; order by one of {', '.join(outputs)}, "
+                              "with - first for descending.", "order_by")
+
+
+def resolve_knobs(metric: Metric, query: Query) -> Query:
+    """
+    ``query`` with the ``limit`` and ``order_by`` of its parameters, which
+    win over the node's config, which wins over the metric's defaults;
+    each is checked like a parameter. Raises ``MetricError``.
+    """
+    knobs = metric.knobs()
+    if not knobs:
+        return query
+    given = query.parameters
+    resolved = {}
+    for name, configured in (("limit", query.limit), ("order_by", query.order_by)):
+        value = given.get(name)
+        value = configured if value is None or value == [] else value
+        value = knobs[name].default if value is None or value == [] else value
+        try:
+            resolved[name] = knobs[name].coerce(value)
+        except ValueError as exc:
+            raise MetricError(f"Parameter {name!r} of metric {metric.name!r}: {exc}.", "parameters") from None
+    return dataclasses.replace(
+        query, limit=resolved["limit"], order_by=resolved["order_by"] or [],
+        parameters={k: v for k, v in given.items() if k not in knobs},
+    )
+
+
+def prepare(metric: Metric, query: Query) -> tuple[Query, dict[str, Any]]:
+    """
+    ``query`` with its ``limit`` and ``order_by`` resolved, checked against
+    ``metric``, and the coerced values of its parameters. Raises ``MetricError``.
+    """
+    query = resolve_knobs(metric, query)
+    check_query_fields(metric, query)
+    return query, metric.values(query.parameters)
 
 
 def aggregate(metric: Metric, query: Query, values: Mapping[str, Any], dialect: str | None) -> MetricAggregate:
@@ -802,16 +906,19 @@ def aggregate(metric: Metric, query: Query, values: Mapping[str, Any], dialect: 
     def sql(expression: exp.Expression) -> str:
         return expression.sql(dialect=read)
 
-    dimensions = []
+    dimensions, temporal = [], []
     for name in query.dimensions:
         dimension = metric.dimensions[name]
         target = parse_expression(dimension.expr, read)
         if dimension.time and query.grain:
             target = truncate(target, query.grain, read)
+            temporal.append(name)
         dimensions.append([name, sql(target)])
     measures = [[name, sql(parse_expression(metric.measures[name].expr, read))] for name in query.measures]
     where = []
     for name, value in values.items():
+        if name in metric.knobs():
+            continue
         if name in metric.parameters:
             parameter = metric.parameters[name]
             cond = condition(_column(parameter.column), parameter, value, read)
@@ -822,8 +929,35 @@ def aggregate(metric: Metric, query: Query, values: Mapping[str, Any], dialect: 
     return MetricAggregate(
         dimensions=dimensions, measures=measures, where=where,
         order_by=[[key.lstrip("-"), key.startswith("-")] for key in query.order_by],
-        limit=query.limit, read=read, write=read,
+        limit=query.limit, temporal=temporal, read=read, write=read,
     )
+
+
+def column_kind(spec: Mapping[str, Any] | None) -> str | None:
+    """The parameter type of a column from its schema entry, e.g. ``integer`` or ``date``."""
+    spec = spec or {}
+    if spec.get("format") in ("date", "datetime", "date-time"):
+        return "date" if spec["format"] == "date" else "datetime"
+    return {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}.get(spec.get("type"))
+
+
+def coerce_dimension_values(metric: Metric, values: Mapping[str, Any], columns: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    ``values`` with each dimension filter's value coerced to the type of its
+    column in ``columns``, the table's schema. Raises ``MetricError``.
+    """
+    coerced = dict(values)
+    for name, value in values.items():
+        if name in metric.parameters or value is None:
+            continue
+        kind = column_kind(columns.get(metric.dimensions[name].column))
+        if kind is None:
+            continue
+        try:
+            coerced[name] = [coerce_scalar(kind, v) for v in value] if isinstance(value, list) else coerce_scalar(kind, value)
+        except ValueError as exc:
+            raise MetricError(f"Filter {name!r} of metric {metric.name!r}: {exc}.", "parameters") from None
+    return coerced
 
 
 def _dimension_condition(column: str, value: Any, dialect: str | None) -> exp.Expression | None:
@@ -861,14 +995,17 @@ def bind_sql(metric: Metric, values: Mapping[str, Any], dialect: str | None) -> 
                 else:
                     items.append(item)
             if not items:
-                return exp.false() if read not in NO_BOOLEAN_LITERALS else exp.EQ(
-                    this=exp.Literal.number(1), expression=exp.Literal.number(0))
+                return exp.true() if read not in NO_BOOLEAN_LITERALS else exp.EQ(
+                    this=exp.Literal.number(1), expression=exp.Literal.number(1))
             node.set("expressions", items)
             return node
         if isinstance(node, exp.Placeholder) and node.name in metric.parameters:
             value = values.get(node.name)
             if value is None:
                 return exp.Null()
+            if isinstance(node.parent, (exp.Limit, exp.Offset)) and value < 0:
+                raise MetricError(f"Parameter {node.name!r} of metric {metric.name!r} is a row count; "
+                                  f"it cannot be {value}.", "parameters")
             return literal(metric.parameters[node.name].kind, value, read)
         return node
 
@@ -971,6 +1108,8 @@ def check_metric(metric: Metric, source: Source) -> None:
                     hint = f" Did you mean {close[0]!r}?" if close else ""
                     raise MetricCheckError(f"Unknown column {column!r} in {path[0][:-1]} {name!r}.{hint}", path)
         for name, parameter in metric.parameters.items():
+            if parameter.column is None:
+                continue
             if parameter.column not in columns and parameter.column.lower() not in lowered:
                 close = difflib.get_close_matches(parameter.column, list(columns), n=1)
                 hint = f" Did you mean {close[0]!r}?" if close else ""

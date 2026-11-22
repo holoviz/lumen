@@ -19,7 +19,7 @@ from ..flowdash import (
     effective_limit, host_metrics, pipeline_columns, primed_result, result_sql,
     selection_warnings,
 )
-from ..flowdash.metrics import MetricError, check_query_fields
+from ..flowdash.metrics import MetricError, prepare
 from ..flowdash.nodes import metric_query
 from ..pipeline import Pipeline
 from . import _graph
@@ -124,8 +124,7 @@ async def add_metric(
               "order_by": order_by or [], "limit": limit}
     try:
         query = metric_query(config, parameters)
-        check_query_fields(metrics[metric], query)
-        metrics[metric].values(query.parameters)
+        prepare(metrics[metric], query)
     except MetricError as exc:
         raise ModelRetry(str(exc)) from exc
     existing = name in _graph.nodes(ops)

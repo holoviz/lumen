@@ -138,7 +138,7 @@ def main(args=None):
     try:
         ret = args.invoke(args)
     except Exception as e:
-        die("ERROR: " + str(e))
+        die(str(e))
 
     if ret is False:
         sys.exit(1)
