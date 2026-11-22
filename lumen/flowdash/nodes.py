@@ -140,6 +140,20 @@ def add_legacy_tables(source: Source, names: Mapping[str, str]) -> None:
     source.tables = {**source.tables, **{name: f'SELECT * FROM "{table}" {LEGACY_TABLE}' for name, table in names.items()}}
 
 
+# The file each table of a served data files' source reads, by table.
+_SERVED_FILES: weakref.WeakKeyDictionary[Source, dict[str, str]] = weakref.WeakKeyDictionary()
+
+
+def set_served_files(source: Source, files: Mapping[str, str]) -> None:
+    """Record the file, as given, that each table of ``source`` reads."""
+    _SERVED_FILES[source] = dict(files)
+
+
+def served_file(source: Source, table: str) -> str | None:
+    """The file, as given, that ``table`` of a served ``source`` reads, if it reads one."""
+    return _SERVED_FILES.get(source, {}).get(table)
+
+
 def listed_tables(source: Source) -> list[str]:
     """The tables of ``source`` to list, without those that only keep an earlier name."""
     declared = getattr(source, "tables", None)
