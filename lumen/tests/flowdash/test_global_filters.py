@@ -312,3 +312,60 @@ class TestNodes:
         node(ops, "sales").table = "sales"
         assert chart_rows(ops, "chart") == [("A", 5), ("A", 10)]
         editor.dispose()
+
+
+class TestRefusedValues:
+
+    def test_a_selection_larger_than_the_options_is_refused(self, duckdb_source):
+        pipeline = table_pipeline(duckdb_source, "sales")
+        values = tuple(str(i) for i in range(FILTER_OPTIONS + 1))
+        conditions, mismatched = global_conditions(pipeline, {
+            "state": Predicate("state", "in", values),
+            "category": Predicate("category", "in", values[:FILTER_OPTIONS]),
+        })
+        assert [c for c, _ in conditions] == ["category"]
+        assert f"at most {FILTER_OPTIONS} values" in mismatched["state"]
+        assert globally_filtered(pipeline, {"state": Predicate("state", "in", values)}) is pipeline
+
+    def test_big_integers_keep_their_precision(self, duckdb_source):
+        assert global_condition(Predicate("id", "in", ("9007199254740993",)), "integer") == [9007199254740993]
+        assert global_condition(Predicate("id", "range", ("9007199254740993", None)), "number") == (
+            9007199254740993, None
+        )
+        assert global_condition(Predicate("x", "range", ("0.1", "2.5")), "number") == (0.1, 2.5)
+        big = DuckDBSource(uri=":memory:", tables={
+            "ids": "SELECT * FROM (VALUES (9007199254740992::BIGINT), (9007199254740993::BIGINT)) AS t(id)"
+        })
+        pipeline = globally_filtered(table_pipeline(big, "ids"), {
+            "id": Predicate("id", "in", ("9007199254740993",)),
+        })
+        assert "'9007199254740993'" in pipeline_sql(pipeline)
+        assert fetch(pipeline)["id"].tolist() == [9007199254740993]
+
+    def test_a_fraction_on_a_column_of_integers_is_refused(self):
+        with pytest.raises(FilterMismatch, match="fractional"):
+            global_condition(Predicate("amount", "in", ("1.5",)), "integer")
+
+    @pytest.mark.parametrize("value", ["1e309", "-1e309", "nan", "NaN", "inf", "-Infinity", float("nan"), float("inf")])
+    def test_non_finite_numbers_are_refused(self, value):
+        with pytest.raises(FilterMismatch, match="finite"):
+            global_condition(Predicate("amount", "in", (value,)), "number")
+        with pytest.raises(FilterMismatch, match="finite"):
+            global_condition(Predicate("amount", "range", (value, None)), "integer")
+
+    @pytest.mark.parametrize("kind", ["string", "integer", "date", "boolean", None])
+    def test_nul_bytes_are_refused(self, kind):
+        with pytest.raises(FilterMismatch, match="NUL"):
+            global_condition(Predicate("state", "in", ("TX\x00",)), kind)
+
+    @pytest.mark.parametrize("value", ["TX\x00", "1e309", "nan"])
+    def test_a_view_given_values_it_cannot_take_shows_every_row(self, duckdb_source, value):
+        ops = dashboard(duckdb_source)
+        chart = node(ops, "chart")
+        filters = {"amount": Predicate("amount", "range", (value, None))}
+        if "\x00" in value:
+            filters["state"] = Predicate("state", "in", (value,))
+        chart.__flowdash_apply_filters__(filters)
+        assert chart._error is None
+        assert len(chart_rows(ops, "chart")) == 4
+        ops.editor.dispose()
