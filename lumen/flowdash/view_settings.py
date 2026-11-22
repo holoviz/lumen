@@ -1,5 +1,5 @@
 """
-The settings of a Vega-Lite view that FlowDash's inspector shows as a form
+The settings of a Vega-Lite view that FlowDash's code panel shows as a form
 beside the spec, and the theme a view follows when it is drawn.
 
 Each setting is a path into the spec (see ``panel_flowdash.SpecSetting``):
@@ -279,7 +279,7 @@ def _settings() -> list:
     ]
 
 
-#: The settings of a Vega-Lite view's spec, as the inspector's form shows them.
+#: The settings of a Vega-Lite view's spec, as the code panel's form shows them.
 VEGA_LITE_SETTINGS = _settings()
 
 

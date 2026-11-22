@@ -109,7 +109,7 @@ With a panel-flowdash that has the dashboard filter bar, its filters reach the L
 
 ### Checks
 
-Each node's config is checked before it is applied, whether it is typed in the editor's inspector or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source and table nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
+Each node's config is checked before it is applied, whether it is typed in the editor's inspector or code panel, or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source and table nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
 
 SQL nodes accept one read-only `SELECT` or `WITH` query, checked in steps:
 
