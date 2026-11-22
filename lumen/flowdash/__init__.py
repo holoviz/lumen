@@ -23,8 +23,8 @@ from .nodes import (
     SOURCES_KEY, SQL_ID, TABLE_ID, VIEW_ID, DataNode, FilterNode, SourceNode,
     SQLNode, TableNode, ViewNode, bind_source, bound_sources, compile_sql,
     effective_limit, fetch, filter_condition, filtered_pipeline, forget,
-    host_sources, lookup_source, missing_source, pipeline_sql, primed_result,
-    python_value, result_sql, row_ceiling, selection_conditions,
+    host_sources, listed_tables, lookup_source, missing_source, pipeline_sql,
+    primed_result, python_value, result_sql, row_ceiling, selection_conditions,
     set_row_ceiling, table_pipeline, unbind_source,
 )
 
@@ -75,6 +75,7 @@ __all__ = [
     "forget",
     "forget_probes",
     "host_sources",
+    "listed_tables",
     "lookup_source",
     "missing_source",
     "pipeline_columns",

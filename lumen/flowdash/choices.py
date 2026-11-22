@@ -64,7 +64,9 @@ def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, l
     source = inputs.get("source")
     if not isinstance(source, Source):
         return {}
-    return {"table": sorted(source.get_tables())}
+    from .nodes import listed_tables
+
+    return {"table": sorted(listed_tables(source))}
 
 
 # Tables per source, read once per reload: the palette asks for presets whenever it
@@ -84,8 +86,10 @@ def _tables(source: Source) -> list[str]:
     token = getattr(source, "_schema_cache", None)
     if cached is not None and cached[0] is token and cached[1] == declared:
         return cached[2]
+    from .nodes import listed_tables
+
     try:
-        tables = sorted(source.get_tables())
+        tables = sorted(listed_tables(source))
     except Exception:
         return []
     _TABLES[source] = (token, declared, tables)

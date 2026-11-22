@@ -159,3 +159,15 @@ def test_presets_read_each_sources_tables_once_until_it_reloads(source, monkeypa
     assert len(calls) == 2
     source.tables = {**source.tables, "extra": "SELECT 1 AS x"}
     assert "extra (shop)" in [p["title"] for p in table_presets(context)]
+
+
+def test_presets_name_tables_after_the_served_source(tmp_path, monkeypatch):
+    from lumen.flowdash.app import resolve_sources, source_refs
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "turbines.csv").write_text("turbine,mw\na,1\n")
+    (tmp_path / "plants.csv").write_text("plant,mw\nx,1\n")
+    context = {SOURCES_KEY: source_refs(resolve_sources(["turbines.csv", "plants.csv"]))}
+    assert [p["title"] for p in source_presets(context)] == ["local (source)"]
+    assert source_presets(context)[0]["tooltip"] == "Source local: plants, turbines"
+    assert [p["title"] for p in table_presets(context)] == ["plants (local)", "turbines (local)"]
