@@ -920,7 +920,7 @@ class SourceNode(LumenNode):
         source = self._object
         if source is None:
             return pn.pane.Markdown("No source")
-        return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(listed_tables(source))}")
+        return pn.pane.Markdown(f"{self.ref}: {', '.join(listed_tables(source))}")
 
     def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | str | None:
         if self._error is not None or self._object is None:
