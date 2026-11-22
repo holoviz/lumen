@@ -14,7 +14,7 @@ The data arguments are read as for Lumen AI (files, URLs, `duckdb://` and SQLAlc
 | --- | --- |
 | `--flowdash` | Serve the FlowDash app. Without it `lumen serve` is unchanged. |
 | `--db-path PATH` | The SQLite database dashboards are saved in; `dashboards.db` in the working directory by default. |
-| `--project FILE` | The project file whose `metrics:` section defines the app's [metrics](#metrics). Without it, `flowdash.yaml` next to the data files or in the working directory is read, if there is one. |
+| `--project FILE` | The project file whose `metrics:` section defines the app's [metrics](#metrics). Without it, `flowdash.yaml` next to the data files is read, if there is one. |
 | `--agent-model MODEL[=LABEL]` | A pydantic-ai model, e.g. `openai:gpt-6-luna`, for Lumen's FlowDash agent. Repeat it to let people pick the model below the chat's input; the first is the default and `=LABEL` names it in the picker. Without it the app has no agent. |
 
 With two models the assistant's chat shows a model picker, and the browser remembers the pick:
@@ -39,7 +39,7 @@ Dashboards saved with earlier names keep working where the name is unambiguous. 
 
 ## Metrics
 
-A metric is a named, described query over one of the app's sources, defined once in the `metrics:` section of the project file, `flowdash.yaml`, and shared by every dashboard and the agent. Other top-level sections of the file are ignored with a warning, so app settings can live in the same file.
+A metric is a named, described query over one of the app's sources, defined once in the `metrics:` section of the project file, `flowdash.yaml`, and shared by every dashboard and the agent. The file is panel-flowdash's project file: Lumen registers its `metrics:` section, and sections nothing registered are ignored with a warning, so the app's other settings live in the same file.
 
 ``` yaml
 metrics:
@@ -141,4 +141,4 @@ Each session's editor copies the `lumen.sources` dict, so adding or removing a s
 
 Lumen's agent reads every source the app provides by its ref, also on a dashboard with no source node yet, and its `add_sql` places a source node for a source when no node shows it. Placing or re-pointing a source node with the dashboard tools (`add_node`, `set_config`) still needs approval through `agent_sensitive_components`.
 
-The agent's `list_tables` lists the app's metrics with their descriptions, formats and parameters, and `add_metric` places a metric node, which needs no approval since it only names a metric the app defines. The agent prefers a metric that answers the question to writing SQL. A project sets the metrics under the `lumen.metrics` key of the context, e.g. `read_metrics(load_project("flowdash.yaml"))` from `lumen.flowdash.metrics` and `lumen.flowdash.project`; `build_routes(project=...)` also checks them against the sources.
+The agent's `list_tables` lists the app's metrics with their descriptions, formats and parameters, and `add_metric` places a metric node, which needs no approval since it only names a metric the app defines. The agent prefers a metric that answers the question to writing SQL. A project sets the metrics under the `lumen.metrics` key of the context, e.g. `read_metrics(load_project("flowdash.yaml", context={"lumen.sources": sources}))` from `lumen.flowdash.metrics` and `lumen.flowdash.project`, which checks them against `sources`; `build_routes(project=...)` does that for you.

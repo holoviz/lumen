@@ -131,7 +131,7 @@ class LumenAIServe(Serve):
             help="""
             With --flowdash, the project file whose metrics: section defines the metrics
             dashboards and the agent may use. Defaults to flowdash.yaml next to the data
-            files or in the working directory, if there is one.
+            files, if there is one.
             """,
         )
         flowdash.add_argument(
@@ -332,13 +332,13 @@ class LumenAIServe(Serve):
         from panel.io.application import build_applications
 
         from ..flowdash.app import build_routes
-        from ..flowdash.project import find_project
+        from ..flowdash.project import project_beside
 
         data = [path for path in paths if path != "no_data"]
         # Configured as the base command configures it later, so the project file is logged now.
         logging.basicConfig(format=args.log_format, filename=args.log_file)
         logging.getLogger("lumen").setLevel(settings.py_log_level(args.log_level) or logging.INFO)
-        project = getattr(args, "project", None) or find_project(data)
+        project = getattr(args, "project", None) or project_beside(data)
         if project is not None:
             logging.getLogger("lumen.flowdash").info("Reading the project file %s", project)
         routes = build_routes(data, db_path=args.db_path, agent_model=args.agent_model, project=project)

@@ -68,11 +68,10 @@ from sqlglot import exp
 from ..sources.base import BaseSQLSource, Source
 from ..transforms.sql import NO_BOOLEAN_LITERALS, MetricAggregate, SQLPreFilter
 from .project import (
-    Problem, ProjectError, ProjectFile, register_section,
+    Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
 
 SECTION = "metrics"
-register_section(SECTION, "Named, described queries over the app's sources, see lumen.flowdash.metrics.")
 
 # The key of the editor context the host puts its ``MetricSet`` in.
 METRICS_KEY = "lumen.metrics"
@@ -384,9 +383,9 @@ def _dimension_value(metric: str, name: str, value: Any) -> Any:
 class MetricSet(Mapping[str, Metric]):
     """The metrics of a project file, by name, and where each is written."""
 
-    def __init__(self, metrics: Mapping[str, Metric] | None = None, project: ProjectFile | None = None):
+    def __init__(self, metrics: Mapping[str, Metric] | None = None, section: Section | None = None):
         self._metrics = dict(metrics or {})
-        self.project = project
+        self.section = section
 
     def __getitem__(self, name: str) -> Metric:
         return self._metrics[name]
@@ -401,9 +400,7 @@ class MetricSet(Mapping[str, Metric]):
         return f"MetricSet({list(self._metrics)})"
 
     def problem(self, path: tuple, message: str) -> Problem:
-        if self.project is None:
-            return Problem(message)
-        return self.project.problem((SECTION, *path), message)
+        return Problem(message) if self.section is None else self.section.problem(path, message)
 
 
 @functools.lru_cache(maxsize=512)
@@ -471,12 +468,12 @@ def placeholders(sql: str, dialect: str | None = None) -> list[str]:
 class _Reader:
     """Reads the ``metrics:`` section into ``Metric``s, collecting every problem with its position."""
 
-    def __init__(self, project: ProjectFile):
-        self.project = project
+    def __init__(self, section: Section):
+        self.section = section
         self.problems: list[Problem] = []
 
     def fail(self, path: tuple, message: str, key: bool = False) -> None:
-        self.problems.append(self.project.problem((SECTION, *path), message, key))
+        self.problems.append(self.section.problem(path, message, key=key))
 
     def mapping(self, value: Any, path: tuple, what: str, keys: set[str] | None = None) -> dict | None:
         if not isinstance(value, dict):
@@ -512,9 +509,9 @@ class _Reader:
         return value
 
     def read(self) -> MetricSet:
-        section = self.project.section(SECTION)
+        section = self.section.value
         if section is None:
-            return MetricSet(project=self.project)
+            return MetricSet(section=self.section)
         if not isinstance(section, dict):
             self.fail((), "`metrics` must be a mapping of metric names to definitions.")
             raise ProjectError(self.problems)
@@ -526,7 +523,7 @@ class _Reader:
                     metrics[name] = metric
         if self.problems:
             raise ProjectError(self.problems)
-        return MetricSet(metrics, self.project)
+        return MetricSet(metrics, self.section)
 
     def metric(self, name: str, spec: Any) -> Metric | None:
         path = (name,)
@@ -744,9 +741,26 @@ class _Reader:
                     self.fail(path, f"Parameter :{name} in LIMIT or OFFSET must be an integer.")
 
 
-def read_metrics(project: ProjectFile) -> MetricSet:
-    """The metrics of ``project``'s ``metrics:`` section. Raises ``ProjectError`` with every problem found."""
-    return _Reader(project).read()
+def load_section(section: Section) -> MetricSet:
+    """
+    The loader of the ``metrics:`` section: its metrics, checked against
+    the Lumen sources of the project's context when it has them (see
+    ``check_metrics``), with a metric over a source the app does not serve
+    left out and reported by ``Section.warn``. Raises ``ProjectError`` with
+    every problem found.
+    """
+    from .nodes import SOURCES_KEY
+
+    metrics = _Reader(section).read()
+    if SOURCES_KEY not in section.context:
+        return metrics
+    return check_metrics(metrics, section.context)[0]
+
+
+def read_metrics(project: Project) -> MetricSet:
+    """The metrics of a loaded project file, or none if it has no ``metrics:`` section."""
+    metrics = project.get(SECTION)
+    return metrics if isinstance(metrics, MetricSet) else MetricSet()
 
 
 # ---------------------------------------------------------------------------
@@ -1082,8 +1096,10 @@ def check_metrics(metrics: MetricSet, context: Mapping[str, Any]) -> tuple[Metri
         source = lookup_source(metric.source, context)
         if source is None:
             refs = ", ".join(sorted(host_sources(context))) or "none"
-            warnings.append(metrics.problem((name, "source"), f"Metric {name!r} is left out: the app serves no "
-                                            f"source {metric.source!r}; its sources are: {refs}."))
+            message = f"Metric {name!r} is left out: the app serves no source {metric.source!r}; its sources are: {refs}."
+            # Section.warn logs the warning and keeps it in the project's warnings.
+            report = getattr(metrics.section, "warn", None)
+            warnings.append(report((name, "source"), message) if report is not None else Problem(message))
             continue
         try:
             check_metric(metric, source)
@@ -1096,7 +1112,7 @@ def check_metrics(metrics: MetricSet, context: Mapping[str, Any]) -> tuple[Metri
         kept[name] = metric
     if problems:
         raise ProjectError(problems)
-    return MetricSet(kept, metrics.project), warnings
+    return MetricSet(kept, metrics.section), warnings
 
 
 class MetricCheckError(ValueError):
@@ -1186,6 +1202,7 @@ def _probe(source: BaseSQLSource, sql: str, metric: Metric, path: tuple = ()) ->
         raise MetricCheckError(f"Metric {metric.name!r}: the engine refused its query: {message}", path) from None
 
 
-def load_metrics(project: ProjectFile, context: Mapping[str, Any]) -> tuple[MetricSet, list[Problem]]:
-    """The checked metrics of ``project`` over the host sources of ``context``, and the warnings found."""
-    return check_metrics(read_metrics(project), context)
+register_section(ProjectSection(
+    SECTION, load_section, title="Metrics", icon="functions",
+    description="Named, described queries over the app's sources, see lumen.flowdash.metrics.",
+))
