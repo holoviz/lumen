@@ -561,6 +561,50 @@ def test_parameter_nodes_drive_a_metric_from_widgets(dashboard):
         ops.add_node(PARAMETER_ID, {"parameter": "m"}, name="m")
 
 
+def test_an_empty_list_leaves_the_other_items_of_its_in(duck):
+    text = (
+        "metrics:\n  m:\n    source: data\n    sql: SELECT p_name FROM turbines WHERE t_state IN (:ex, 'CA')\n"
+        "    parameters:\n      ex: {type: \"list[string]\", default: [TX]}\n"
+    )
+    metric = metrics_for(duck, text)["m"]
+    assert run(metric_pipeline(metric, duck, Query(parameters={"ex": []}))) == [("Alta",)]
+
+
+@pytest.mark.parametrize("sql, rows", [
+    ("SELECT p_name FROM turbines WHERE p_year > 2009 AND t_state IN (:ex) "
+     "UNION ALL SELECT p_name FROM turbines WHERE t_state NOT IN (:ex)", 8),
+    ("SELECT p_name FROM turbines WHERE t_state IN (:ex) EXCEPT SELECT p_name FROM turbines WHERE p_year > 2009", 1),
+    ("SELECT t_state, COUNT(*) AS n FROM turbines GROUP BY t_state HAVING t_state IN (:ex) AND COUNT(*) > 0", 3),
+])
+def test_an_empty_list_drops_its_condition_in_each_select_of_the_result(duck, sql, rows):
+    text = (
+        f"metrics:\n  m:\n    source: data\n    sql: \"{sql}\"\n"
+        "    parameters:\n      ex: {type: \"list[string]\", default: [CA]}\n"
+    )
+    metric = metrics_for(duck, text)["m"]
+    assert len(run(metric_pipeline(metric, duck, Query(parameters={"ex": []})))) == rows
+
+
+def test_an_empty_list_default_in_a_subquery_stops_startup(duck):
+    text = (
+        "metrics:\n  m:\n    source: data\n    sql: \"SELECT p_name FROM turbines WHERE p_name NOT IN "
+        "(SELECT p_name FROM turbines WHERE t_state IN (:ex))\"\n"
+        "    parameters:\n      ex: {type: \"list[string]\", default: []}\n"
+    )
+    with pytest.raises(ProjectError, match="'ex' of metric 'm' is an empty list"):
+        metrics_for(duck, text)
+
+
+def test_a_sql_metric_filter_never_reaches_the_right_side_of_except(duck):
+    text = PROJECT + """\
+  newer:
+    source: data
+    sql: SELECT p_name FROM turbines EXCEPT SELECT p_name FROM turbines WHERE p_year < 2005
+"""
+    newer = metric_pipeline(metrics_for(duck, text)["newer"], duck, Query())
+    assert sorted(run(filtered_pipeline(newer, "t_state", "TX"))) == [("Horse Hollow",)]
+
+
 @pytest.mark.parametrize("where, rows", [
     ("t_state NOT IN (:ex)", 5),
     ("p_year > 2000 AND t_state NOT IN (:ex)", 4),
@@ -577,6 +621,20 @@ def test_an_empty_list_drops_the_condition_it_is_anded_into(duck, where, rows):
 
 
 @pytest.mark.parametrize("sql", [
+    "SELECT p_name FROM turbines WHERE p_name NOT IN (SELECT p_name FROM turbines WHERE t_state IN (:ex))",
+    "SELECT p_name FROM turbines AS o WHERE NOT EXISTS "
+    "(SELECT 1 FROM turbines AS i WHERE i.p_name = o.p_name AND i.t_state IN (:ex))",
+    "SELECT p_name FROM turbines EXCEPT SELECT p_name FROM turbines WHERE t_state IN (:ex)",
+    "SELECT o.p_name FROM turbines AS o LEFT JOIN (SELECT p_name FROM turbines WHERE t_state IN (:ex)) AS x "
+    "ON x.p_name = o.p_name WHERE x.p_name IS NULL",
+    "WITH sel AS (SELECT p_name FROM turbines WHERE t_state IN (:ex)) "
+    "SELECT p_name FROM turbines WHERE p_name NOT IN (SELECT p_name FROM sel)",
+    "SELECT a.p_name FROM turbines AS a JOIN turbines AS b ON a.p_name = b.p_name AND b.t_state IN (:ex)",
+    "SELECT COUNT(*) FILTER (WHERE t_state IN (:ex)) AS n FROM turbines",
+    "SELECT p_name FROM turbines WHERE NOT NOT t_state IN (:ex)",
+    "SELECT p_name FROM turbines WHERE NOT (t_state IN (:ex) AND p_year > 0)",
+    "SELECT p_name FROM turbines WHERE (t_state IN (:ex)) IS TRUE",
+    "SELECT t_state FROM turbines GROUP BY t_state HAVING COUNT(*) > 5 OR t_state IN (:ex)",
     "SELECT * FROM turbines WHERE p_year > 2010 OR t_state IN (:ex)",
     "SELECT * FROM turbines WHERE NOT (p_year > 2010 OR t_state NOT IN (:ex))",
     "SELECT t_state IN (:ex) AS picked FROM turbines",
@@ -588,7 +646,8 @@ def test_an_empty_list_is_refused_where_dropping_its_condition_changes_the_query
         "    parameters:\n      ex: {type: \"list[string]\", default: [CA]}\n"
     )
     metric = metrics_for(duck, text)["m"]
-    with pytest.raises(MetricError, match="'ex' of metric 'm' is an empty list, which only drops a condition ANDed"):
+    with pytest.raises(MetricError, match="'ex' of metric 'm' is an empty list, which only drops a condition ANDed "
+                       "into the WHERE or HAVING of the query's outermost SELECT"):
         metric_pipeline(metric, duck, Query(parameters={"ex": []}))
 
 
