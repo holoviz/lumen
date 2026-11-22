@@ -87,6 +87,12 @@ try:
 except ImportError:
     Choices = None
 
+try:
+    from panel_flowdash import request_filters
+except ImportError:
+    # A panel-flowdash without global filters never asks the nodes for their columns.
+    request_filters = None
+
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
 
@@ -1128,10 +1134,15 @@ class GlobalFilterTarget:
             return None
         return pipeline_columns(pipeline)
 
-    def __flowdash_apply_filters__(self, filters: Mapping[str, Any]) -> None:
+    def __flowdash_apply_filters__(self, filters: Mapping[str, Any]) -> dict[str, str]:
+        """Apply ``filters`` to what the node shows; return why it skips the others, by column."""
         filters = dict(filters)
         if filters != self._global_filters:
             self._global_filters = filters
+        pipeline = self._filter_pipeline()
+        if not filters or not isinstance(pipeline, Pipeline):
+            return {}
+        return global_conditions(pipeline, filters)[1]
 
     def __flowdash_column_values__(self, column: str) -> list | tuple | None:
         span = _filter_widget(self.editor, column) == "range"
@@ -1140,17 +1151,15 @@ class GlobalFilterTarget:
     def _columns_changed(self, *events):
         """
         Have FlowDash hand the node its filters again when its columns
-        change, e.g. when a query run off the event loop returns: FlowDash
-        reads the columns of a component that filters itself only when the
-        dashboard changes.
+        change without an input changing, e.g. when a query run off the
+        event loop returns.
         """
         columns = self.__flowdash_columns__()
         if columns == self._declared:
             return
         self._declared = columns
-        filters = getattr(self.editor, "_global_filters", None)
-        if filters is not None and getattr(filters, "filters", None) and callable(getattr(filters, "apply", None)):
-            filters.apply()
+        if request_filters is not None:
+            request_filters(self)
 
 
 def _filter_widget(editor: Any, column: str) -> str | None:
