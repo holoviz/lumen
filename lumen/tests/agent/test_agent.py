@@ -11,7 +11,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from lumen.agent import AgentSession, _graph
+from lumen.agent import AgentSession, _graph, assistant
 from lumen.agent.assistant import INSTRUCTIONS, create_agent
 from lumen.agent.authoring import (
     add_chart, add_sql, add_text, check_text,
@@ -439,6 +439,24 @@ async def test_dashboard_tool_presets():
         session.close()
     assert {"connect", "disconnect", "place_tile", "set_config", "remove_node"} <= set(seen[0])
     assert "replace_dashboard" not in seen[0]
+    assert ("arrange_tiles" in seen[0]) == assistant.HAS_ARRANGE_TILES
+
+
+def test_layout_agent_is_told_how_to_lay_out_tiles(monkeypatch):
+    given = []
+    monkeypatch.setattr(
+        assistant, "create_flowdash_agent",
+        lambda *args, **kwargs: given.append((kwargs["instructions"], kwargs["tools"])) or assistant.Agent("test"),
+    )
+    assistant.create_agent("test")
+    assistant.create_agent("test", dashboard_tools="layout")
+    assistant.create_agent("test", dashboard_tools=["set_config", "place_tile"])
+    (data, _), (layout, tools), (placing, _) = given
+    assert "## Laying out the dashboard" not in data
+    assert "## Laying out the dashboard" in layout and "## Laying out the dashboard" in placing
+    assert ("call arrange_tiles" in layout.lower()) == ("arrange_tiles" in tools) == assistant.HAS_ARRANGE_TILES
+    assert "arrange_tiles" not in placing
+
 
 
 async def test_list_tables_summarizes_placed_charts(ctx, session):
