@@ -32,6 +32,8 @@ Lumen YAML dashboards are served without `--flowdash`, as before. The Lumen AI o
 
 A dashboard cannot open connections of its own. The app hands the editor the data you served, and a **Lumen Source** node names it by `ref`: the first source is `data`, further ones `data_2`, `data_3` and so on. All CSV, Parquet and JSON files go into one DuckDB source, so `lumen serve a.csv b.parquet --flowdash` gives one source `data` with two tables.
 
+A source node's preview lists its tables with their row and column counts and column names. Reading a table's schema counts its rows, so in the app a background worker reads the schemas the source has not stored yet, at most 20 tables, and the card fills in once they are there. Selecting a source node shows its spec as YAML, read only, in the code panel under the canvas (with a panel-flowdash that supports it). Credentials are never shown: passwords in connection URIs, settings named like a password, secret, token, key or credentials, strings passed to the driver such as `connect_args`, secrets in SQL run on connect such as DuckDB's `CREATE SECRET`, and values read from environment variables all read `***`.
+
 ## Nodes
 
 | Node | Inputs | Config | Outputs |

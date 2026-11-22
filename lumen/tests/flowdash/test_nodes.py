@@ -391,8 +391,10 @@ def test_source_node_preview_uses_cached_schema_without_querying(source, execute
     executed.clear()
 
     cached = node.__flowdash_preview__(output="source")
-    assert list(cached.columns) == ["table", "rows", "cols"]
-    assert cached.to_dict("records") == [{"table": "sales", "rows": 3, "cols": 2}]
+    assert list(cached.columns) == ["table", "rows", "columns", "column names"]
+    assert cached.to_dict("records") == [
+        {"table": "sales", "rows": 3, "columns": 2, "column names": "category, amount"}
+    ]
     assert executed == []
 
     preview = hook_preview(node)
@@ -403,8 +405,7 @@ def test_source_node_preview_in_memory_and_error_states(source):
     mem = InMemorySource(tables={"items": pd.DataFrame({"a": [1, 2, 3, 4], "b": ["x", "y", "z", "w"]})})
     ops = editor_with(mem)
     preview = _instance(ops, "data").__flowdash_preview__()
-    assert list(preview.columns) == ["table", "rows", "cols"]
-    assert preview.to_dict("records") == [{"table": "items", "rows": 4, "cols": 2}]
+    assert preview.to_dict("records") == [{"table": "items", "rows": 4, "columns": 2, "column names": "a, b"}]
 
     ops.add_node(SOURCE_ID, {}, name="empty")
     assert _instance(ops, "empty").__flowdash_preview__() is None
