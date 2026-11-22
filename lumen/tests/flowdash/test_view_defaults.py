@@ -3,6 +3,7 @@ import panel as pn
 import pytest
 
 pytest.importorskip("duckdb")
+spec_settings = pytest.importorskip("panel_flowdash.spec_settings")
 
 from panel_flowdash import FlowDash
 from panel_flowdash.agent import DashboardOps
@@ -11,15 +12,18 @@ from lumen.flowdash import (
     COMPONENTS, SOURCE_ID, TABLE_ID, VIEW_ID, ViewNode, bind_source,
 )
 from lumen.flowdash.checks import check_chart
+from lumen.flowdash.contracts import spec_fields
 from lumen.flowdash.defaults import (
     TOP_CATEGORIES, schema_kinds, vega_lite_default,
 )
+from lumen.flowdash.view_settings import VEGA_LITE_SETTINGS
 from lumen.views.base import VegaLiteView
 
 DATE = {"type": "string", "format": "datetime"}
 TEXT = {"type": "string", "enum": ["a", "b"]}
 NUMBER = {"type": "number", "inclusiveMinimum": 0, "inclusiveMaximum": 10}
 INTEGER = {"type": "integer"}
+NAN = float("nan")
 
 TABLES = {
     "sales": "SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)",
@@ -52,14 +56,28 @@ def config(ops, name):
     return next(item["config"] for item in ops.editor._tile_items if item["instance_id"] == ops._instance(name))
 
 
-def test_schema_kinds_sort_columns_and_skip_ids():
+def test_schema_kinds_sort_columns_and_skip_ids_and_nulls():
     schema = {
         "when": DATE, "day": {"type": "string", "format": "date"}, "region": TEXT,
-        "ok": {"type": "boolean"}, "amount": NUMBER, "id": INTEGER, "order_id": INTEGER, "__len__": 3,
+        "ok": {"type": "boolean"}, "count": INTEGER, "amount": NUMBER, "id": INTEGER, "order_id": INTEGER,
+        "empty": {"type": "string", "enum": [None]},
+        "blank": {"type": "number", "inclusiveMinimum": NAN, "inclusiveMaximum": NAN},
+        "year": {"type": "integer", "inclusiveMinimum": 1990, "inclusiveMaximum": 2024},
+        "built": {"type": "integer", "inclusiveMinimum": 1950, "inclusiveMaximum": 2020},
+        "__len__": 3,
     }
     assert schema_kinds(schema) == {
-        "temporal": ["when", "day"], "numeric": ["amount"], "categorical": ["region", "ok"],
+        "temporal": ["when", "day"], "year": ["year", "built"],
+        "numeric": ["amount", "count"], "categorical": ["region", "ok"],
     }
+
+
+def test_text_listing_only_dates_is_temporal():
+    dates = {"type": "string", "enum": ["2024-01-01", "2024-02-01", None]}
+    assert schema_kinds({"month": dates})["temporal"] == ["month"]
+    assert schema_kinds({"code": {"type": "string", "enum": ["2024-01-01", "other"]}})["categorical"] == ["code"]
+    spec = vega_lite_default({"month": dates, "region": TEXT, "amount": NUMBER})
+    assert spec["encoding"]["x"] == {"field": "month", "type": "temporal"}
 
 
 def test_a_date_and_a_number_make_a_line():
@@ -69,20 +87,67 @@ def test_a_date_and_a_number_make_a_line():
     assert spec["encoding"]["y"] == {"field": "amount", "aggregate": "sum", "type": "quantitative"}
 
 
-def test_a_category_and_a_number_make_bars_of_the_largest_sums():
+def test_a_year_is_the_x_axis_never_the_measure():
+    year = {"type": "integer", "inclusiveMinimum": 2001, "inclusiveMaximum": 2020}
+    spec = vega_lite_default({"year": year, "region": TEXT, "sales": INTEGER})
+    assert spec["mark"] == "line"
+    assert spec["encoding"]["x"] == {"field": "year", "type": "ordinal"}
+    assert spec["encoding"]["y"]["field"] == "sales"
+    assert vega_lite_default({"fiscal_yr": INTEGER, "sales": NUMBER})["encoding"]["x"]["field"] == "fiscal_yr"
+    assert vega_lite_default({"year": year}) is None
+
+
+def test_coordinates_are_not_measured():
+    spec = vega_lite_default({"state": TEXT, "xlong": NUMBER, "pickup_lat": NUMBER, "capacity": INTEGER})
+    assert spec["encoding"]["y"]["field"] == "capacity"
+    assert vega_lite_default({"lon": NUMBER, "lat": NUMBER}) is None
+
+
+def test_a_fraction_is_measured_before_an_integer():
+    spec = vega_lite_default({"region": TEXT, "units": INTEGER, "revenue": NUMBER})
+    assert spec["encoding"]["y"]["field"] == "revenue"
+
+
+def test_columns_of_nulls_are_never_charted():
+    spec = vega_lite_default({
+        "empty": {"type": "string", "enum": [None]}, "region": TEXT,
+        "blank": {"type": "number", "inclusiveMinimum": NAN, "inclusiveMaximum": NAN}, "amount": NUMBER,
+    })
+    assert spec["encoding"]["x"]["field"] == "region"
+    assert spec["encoding"]["y"]["field"] == "amount"
+    assert vega_lite_default({"blank": {"type": "number", "inclusiveMinimum": None, "inclusiveMaximum": None}}) is None
+
+
+def test_a_category_and_a_number_make_bars_largest_first():
     spec = vega_lite_default({"name": {"type": "string"}, "region": TEXT, "amount": NUMBER})
-    assert spec["mark"] == "bar"
+    assert spec == {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "region", "type": "nominal", "sort": "-y"},
+            "y": {"field": "amount", "aggregate": "sum", "type": "quantitative"},
+        },
+    }
+    assert spec_settings.unknown_paths(spec, VEGA_LITE_SETTINGS) == []
+
+
+def test_many_categories_keep_the_largest_sums():
+    spec = vega_lite_default({"name": {"type": "string"}, "amount": NUMBER})
     aggregate, window, top = spec["transform"]
-    assert aggregate == {"aggregate": [{"op": "sum", "field": "amount", "as": "amount"}], "groupby": ["region"]}
+    assert aggregate == {"aggregate": [{"op": "sum", "field": "amount", "as": "amount"}], "groupby": ["name"]}
     assert window["sort"] == [{"field": "amount", "order": "descending"}]
     assert top == {"filter": f"datum._rank <= {TOP_CATEGORIES}"}
-    assert spec["encoding"]["y"] == {"field": "region", "type": "nominal", "sort": "-x"}
-    assert spec["encoding"]["x"]["field"] == "amount"
+    assert spec["encoding"]["x"]["sort"] == "-y"
+    listed = {"type": "string", "enum": [str(i) for i in range(TOP_CATEGORIES + 1)]}
+    assert "transform" in vega_lite_default({"name": listed, "amount": NUMBER})
 
 
-def test_a_category_without_listed_values_is_used_when_no_other_is():
-    spec = vega_lite_default({"name": {"type": "string"}, "amount": NUMBER})
-    assert spec["transform"][0]["groupby"] == ["name"]
+def test_dotted_names_are_escaped_and_still_read_their_columns():
+    schema = {"a.b": {"type": "string"}, "v[1]": NUMBER}
+    spec = vega_lite_default(schema)
+    assert spec["encoding"]["x"]["field"] == "a\\.b"
+    assert spec["encoding"]["y"]["field"] == "v\\[1\\]"
+    assert check_chart(spec, list(schema)) == spec
+    assert spec_fields(spec) == {"a.b", "v[1]"}
 
 
 def test_two_numbers_make_points_and_one_a_histogram():
@@ -103,7 +168,8 @@ def test_no_number_makes_no_default(schema):
 
 @pytest.mark.parametrize("schema", [
     {"when": DATE, "amount": NUMBER}, {"region": TEXT, "amount": NUMBER},
-    {"x": NUMBER, "y": NUMBER}, {"amount": NUMBER},
+    {"x": NUMBER, "y": NUMBER}, {"amount": NUMBER}, {"name": {"type": "string"}, "amount": NUMBER},
+    {"year": INTEGER, "amount": NUMBER},
 ])
 def test_every_default_passes_the_chart_check(schema):
     spec = vega_lite_default(schema)
@@ -120,7 +186,7 @@ def test_a_new_view_starts_from_the_default_when_connected(source):
 
     ops.connect("rows.pipeline", "chart.pipeline")
     assert node.spec == vega_lite_default(node.pipeline.schema)
-    assert node.spec["encoding"]["y"]["field"] == "category"
+    assert node.spec["encoding"]["x"]["field"] == "category"
     assert isinstance(node._object, VegaLiteView) and node._error is None
     assert config(ops, "chart")["spec"] == node.spec
     saved = ops.editor.export_dashboard()
@@ -128,15 +194,20 @@ def test_a_new_view_starts_from_the_default_when_connected(source):
     assert item["config"]["spec"] == node.spec
 
 
-def test_undoing_the_connection_takes_its_default_with_it(source):
-    ops = editor_with(source)
+@pytest.mark.parametrize("coalesce", [0, 60])
+def test_the_default_is_part_of_the_connection_and_undone_with_it(source, coalesce):
+    ops = editor_with(source, history_coalesce=coalesce)
     ops.add_node(VIEW_ID, {}, name="chart")
     history = ops.editor._history
     history.flush()
+    before = len(history.versions)
     ops.connect("rows.pipeline", "chart.pipeline")
     history.flush()
     assert instance(ops, "chart").spec
-    assert history.versions[-1].metadata["ops"][0] == {"op": "set_config", "args": {"name": "chart", "keys": ["spec"]}}
+    assert len(history.versions) == before + 1
+    assert history.versions[-1].metadata["op"] == "connect"
+    assert "transform" in history.versions[-1].value or "mark: bar" in history.versions[-1].value
+    assert ops.editor.dirty
 
     assert ops.editor.undo(whole_runs=False)
     node = instance(ops, "chart")
@@ -147,6 +218,18 @@ def test_undoing_the_connection_takes_its_default_with_it(source):
     node = instance(ops, "chart")
     assert node.spec == vega_lite_default(node.pipeline.schema)
     assert isinstance(node._object, VegaLiteView)
+
+
+def test_preview_mode_leaves_the_default_for_later(source):
+    ops = editor_with(source)
+    ops.add_node(VIEW_ID, {}, name="chart")
+    node = instance(ops, "chart")
+    ops.editor.preview = True
+    node.pipeline = instance(ops, "rows")._object
+    assert node.spec == {} and node._may_default
+    ops.editor.preview = False
+    ops.connect("rows.pipeline", "chart.pipeline")
+    assert node.spec
 
 
 def test_a_view_given_a_spec_keeps_it(source):
@@ -215,6 +298,20 @@ def test_the_edit_spec_button_opens_the_code_panel(source):
     assert panel.instance_id == ops._instance("chart")
 
 
+def test_the_edit_spec_button_hides_while_the_code_panel_shows_the_view(source):
+    ops = editor_with(source, table="names")
+    ops.add_node(VIEW_ID, {}, name="chart")
+    ops.connect("rows.pipeline", "chart.pipeline")
+    node = instance(ops, "chart")
+    _, button = node._body().objects
+    assert button.visible
+    assert node.edit_spec()
+    assert not button.visible
+    ops.editor.close_code_panel()
+    ops.editor.code_panel.instance_id = None
+    assert button.visible
+
+
 def test_viewers_get_no_edit_spec_button(source):
     ops = editor_with(source, table="names")
     ops.add_node(VIEW_ID, {}, name="chart")
@@ -246,3 +343,43 @@ def test_the_drawn_tile_follows_a_connection_without_a_chart(source):
 
     ops.disconnect("rows.pipeline", "chart.pipeline")
     assert "Waiting for a pipeline" in tile._inner_layout[0].object
+
+
+
+@pytest.fixture
+def ticks(monkeypatch):
+    from lumen.flowdash import nodes
+
+    callbacks = []
+    monkeypatch.setattr(nodes, "_next_tick", callbacks.append)
+    return callbacks
+
+
+def test_a_pipeline_arriving_without_an_edit_records_the_default_on_the_next_tick(source, ticks):
+    ops = editor_with(source, history_coalesce=0)
+    ops.add_node(VIEW_ID, {}, name="chart")
+    history = ops.editor._history
+    history.flush()
+    before = len(history.versions)
+    node = instance(ops, "chart")
+    node.pipeline = instance(ops, "rows")._object
+    assert node.spec and len(history.versions) == before
+    [record] = ticks
+    record()
+    history.flush()
+    assert len(history.versions) == before + 1
+    assert history.versions[-1].metadata["op"] == "set_config"
+
+
+def test_a_connection_recorded_after_the_default_needs_no_extra_edit(source, ticks):
+    ops = editor_with(source, history_coalesce=0)
+    ops.add_node(VIEW_ID, {}, name="chart")
+    history = ops.editor._history
+    history.flush()
+    ops.connect("rows.pipeline", "chart.pipeline")
+    history.flush()
+    count = len(history.versions)
+    [record] = ticks
+    record()
+    history.flush()
+    assert len(history.versions) == count
