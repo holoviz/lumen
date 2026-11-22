@@ -3,7 +3,7 @@ fixture: turbines
 turns:
 - question: Map the turbines, sized by capacity.
   nodes:
-  - turbine_locations
+  - turbine_locations_capacity
   - turbines_capacity_map
   dashboard: |
     flowdash: 1
@@ -18,26 +18,26 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t544de307
+      - id: t425af00e
         actor: user
-        at: '2026-11-22T16:08:05Z'
+        at: '2026-11-22T23:48:36Z'
         summary: Added data.
-      - id: t6c54ee02
+      - id: t9b5b4de0
         actor: agent
-        at: '2026-11-22T16:08:08Z'
-        run: run-3fd1d33d021e
-        summary: Added turbine_locations. Connected data to turbine_locations. Added turbines_capacity_map.
-          Connected turbine_locations to turbines_capacity_map.
+        at: '2026-11-22T23:48:40Z'
+        run: run-fec9772e3882
+        summary: Added turbine_locations_capacity. Connected data to turbine_locations_capacity. Added turbines_capacity_map.
+          Connected turbine_locations_capacity to turbines_capacity_map.
     nodes:
       data:
         component: Lumen/source
-        origin: t544de307
+        origin: t425af00e
         config:
           ref: data
         position: [0.0, 44.0]
-      turbine_locations:
+      turbine_locations_capacity:
         component: Lumen/sql
-        origin: t6c54ee02
+        origin: t9b5b4de0
         config:
           sql: |-
             SELECT
@@ -49,11 +49,11 @@ turns:
             FROM turbines
             WHERE
               NOT "xlong" IS NULL AND NOT "ylat" IS NULL AND NOT "t_cap" IS NULL
-          table: turbine_locations
+          table: turbine_locations_capacity
         position: [380.0, 0.0]
       turbines_capacity_map:
         component: Lumen/deckgl
-        origin: t6c54ee02
+        origin: t9b5b4de0
         config:
           spec:
             layers:
@@ -63,12 +63,12 @@ turns:
                 getRadius: '@@=2 + t_cap / 200'
                 pickable: true
             tooltip:
-              text: '{p_name} ({t_state}): {t_cap}'
+              text: '{p_name} ({t_state}) — capacity: {t_cap}'
         position: [760.0, 44.0]
     edges:
       - from: data.source
-        to: turbine_locations.source
-      - from: turbine_locations.pipeline
+        to: turbine_locations_capacity.source
+      - from: turbine_locations_capacity.pipeline
         to: turbines_capacity_map.pipeline
     layout:
       tiles:
@@ -77,5 +77,5 @@ turns:
           height: 420
         - node: data
           visible: false
-        - node: turbine_locations
+        - node: turbine_locations_capacity
           visible: false

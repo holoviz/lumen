@@ -46,7 +46,7 @@ def test_explore_builds_follow_ups_on_earlier_answers_and_the_drawer_edits_them(
     assert EXPLORE_FOLLOW_UPS in EXPLORE_INSTRUCTIONS and FOLLOW_UPS not in EXPLORE_INSTRUCTIONS
     assert "but never\n  change them" in EXPLORE_INSTRUCTIONS and "remove_node" not in EXPLORE_INSTRUCTIONS
     assert "use set_config only to fix a node you placed for the current question" in EXPLORE_INSTRUCTIONS.replace("\n  ", " ")
-    assert "edit that answer's node with set_config" in INSTRUCTIONS
+    assert "edit that\n  answer's nodes in place" in INSTRUCTIONS
     assert "remove_node" in tools(create_agent("test"))
 
 

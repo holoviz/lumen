@@ -18,9 +18,9 @@ from pydantic_ai.messages import (
     ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart,
 )
 
-# Tools whose results only inform a query, and the tools that place one.
+# Tools whose results only inform a query, and the tools that place or change one.
 LOOKUP_TOOLS = frozenset({"list_tables", "describe_table", "distinct_values", "run_sql", "check_data"})
-PLACING_TOOLS = frozenset({"add_sql", "add_chart"})
+PLACING_TOOLS = frozenset({"add_sql", "add_chart", "update_chart"})
 
 SUPERSEDED = "[Shown before a node was placed; call the tool again if you need it.]"
 
@@ -28,7 +28,7 @@ SUPERSEDED = "[Shown before a node was placed; call the tool again if you need i
 def _placed(part) -> bool:
     return (
         isinstance(part, ToolReturnPart) and part.tool_name in PLACING_TOOLS
-        and isinstance(part.content, str) and part.content.startswith("Placed")
+        and isinstance(part.content, str) and part.content.startswith(("Placed", "Changed"))
     )
 
 
