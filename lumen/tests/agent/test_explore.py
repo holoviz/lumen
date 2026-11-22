@@ -372,6 +372,25 @@ async def test_explore_previews_the_copy_it_makes_of_an_earlier_answer(explore_a
     assert "SUM(amount)" in ex.node_config("totals")["sql"] and ex.exploration().leaves(first) == ["totals"]
 
 
+async def test_explore_previews_the_copy_again_when_a_request_edits_the_original_twice(explore_app):
+    explore_app.ops.add_node(SOURCE_ID, {"ref": _source(explore_app)}, name="data")
+    explore_app.script(("add_sql", {"source": "data", "name": "totals", "sql": explore_app.totals}), "Done.")
+    await explore_app.ask("Total by category")
+    count = f'SELECT category, COUNT(*) AS n FROM "{explore_app.table}" GROUP BY category'
+    biggest = f'SELECT category, MAX(amount) AS biggest FROM "{explore_app.table}" GROUP BY category'
+    explore_app.script(
+        ("set_config", {"name": "totals", "config": {"sql": count}}),
+        ("set_config", {"name": "totals", "config": {"sql": biggest}}),
+        "Done.",
+    )
+    await explore_app.ask("Count them, no, the largest amount instead")
+
+    second = results(explore_app.requests)["call-2"]
+    ex = explore_app.explorations
+    assert "biggest" in second.split("Result")[1] and "totals_3" not in [n["name"] for n in ex.nodes()]
+    assert "MAX(amount)" in ex.node_config("totals_2")["sql"] and "SUM(amount)" in ex.node_config("totals")["sql"]
+
+
 async def test_explore_reports_a_refused_change_of_a_dashboard_node_without_a_preview(explore_app):
     explore_app.ops.add_node(SOURCE_ID, {"ref": _source(explore_app)}, name="data")
     explore_app.ops.add_node(SQL_ID, {"sql": explore_app.totals, "table": "totals"}, name="totals")
@@ -384,14 +403,16 @@ async def test_explore_reports_a_refused_change_of_a_dashboard_node_without_a_pr
     assert explore_app.ops.node_config("totals")["sql"] == explore_app.totals
 
 
-async def test_explore_turns_a_refusal_of_lumens_tools_into_a_retry(explore_app):
+async def test_explore_reports_refusals_of_lumens_tools_without_using_up_retries(explore_app):
     explore_app.ops.add_node(SOURCE_ID, {"ref": _source(explore_app)}, name="data")
     explore_app.ops.editor.read_only = True
-    explore_app.script(("add_sql", {"source": "data", "name": "totals", "sql": explore_app.totals}), "I can't.")
+    call = ("add_sql", {"source": "data", "name": "totals", "sql": explore_app.totals})
+    explore_app.script(*[call] * 5, "I can't.")
     await explore_app.ask("Total by category")
 
-    (refused,) = explore_app.requests[1].parts
-    assert refused.outcome == "retried" and str(refused.content).startswith("Refused: ")
+    refusals = [part for request in explore_app.requests[1:6] for part in request.parts]
+    assert len(refusals) == 5
+    assert all(part.outcome != "retried" and str(part.content).startswith("Refused: ") for part in refusals)
     assert explore_app.runner.error is None
 
 
