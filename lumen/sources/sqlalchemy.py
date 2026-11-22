@@ -35,6 +35,19 @@ MISSING_TABLE_PATTERNS = {
 }
 
 
+# What ``text()`` reads as a bind parameter, e.g. ``:name``, but not ``::cast``.
+_BIND_PARAM = re.compile(r"(?<![:\w\\]):(\w+)(?!:)")
+
+
+def _text(sql: str, params: Any) -> Any:
+    """
+    ``sql`` as a ``text()`` clause; without parameters every ``:name`` in
+    it, e.g. in a string literal or a comment, is escaped, so it is sent as
+    written rather than refused as a bind parameter without a value.
+    """
+    return text(sql if params else _BIND_PARAM.sub(r"\\:\1", sql))
+
+
 class SQLAlchemySource(BaseSQLSource):
     """
     SQLAlchemySource uses SQLAlchemy to connect to various SQL databases.
@@ -304,7 +317,7 @@ class SQLAlchemySource(BaseSQLSource):
 
         # Use context manager to ensure connection is closed
         with self._connection as connection:
-            result = connection.execute(text(sql_query), params, *args, **kwargs)
+            result = connection.execute(_text(sql_query, params), params, *args, **kwargs)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
             return df
 
@@ -344,7 +357,7 @@ class SQLAlchemySource(BaseSQLSource):
         sql_query, params = self._convert_params(sql_query, params)
 
         async with self._engine.connect() as connection:
-            result = await connection.execute(text(sql_query), params, *args, **kwargs)
+            result = await connection.execute(_text(sql_query, params), params, *args, **kwargs)
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
             return df

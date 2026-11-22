@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 
 from pathlib import Path
 from unittest.mock import patch
@@ -406,3 +407,24 @@ def test_flowdash_refuses_a_project_file_with_problems(csv):
 def test_project_only_applies_with_flowdash(csv):
     with pytest.raises(ValueError, match="--project only apply with --flowdash"):
         LumenAIServe(argparse.ArgumentParser()).invoke(parse(str(csv), "--project", "x.yaml"))
+
+
+@pytest.mark.parametrize("given", [True, False])
+def test_the_project_file_read_is_logged(csv, caplog, given):
+    project = csv.parent / "flowdash.yaml"
+    project.write_text(METRICS)
+    argv = [str(csv), "--flowdash", *(["--project", str(project)] if given else [])]
+    with patch.object(Serve, "invoke", return_value=True), caplog.at_level("INFO", logger="lumen.flowdash"):
+        LumenAIServe(argparse.ArgumentParser()).invoke(parse(*argv))
+    assert f"Reading the project file {project}" in caplog.text
+
+
+def test_a_failing_command_reports_its_error_once(csv, monkeypatch, capsys):
+    from lumen.command import ai
+
+    (csv.parent / "flowdash.yaml").write_text(METRICS.replace("SUM(amount)", "SUM(amout)"))
+    monkeypatch.setattr(sys, "argv", ["lumen", "serve", str(csv), "--flowdash"])
+    with patch.object(Serve, "invoke", return_value=True), pytest.raises(SystemExit):
+        ai.main()
+    err = capsys.readouterr().err
+    assert err.startswith("ERROR: ") and not err.startswith("ERROR: ERROR")

@@ -117,9 +117,9 @@ def problems(text):
      "flowdash.yaml:7:22: Dimension 'd' has grains but is not `type: time`"),
     ("metrics:\n  m:\n    source: data\n    sql: SELECT a FROM t LIMIT :n\n",
      "flowdash.yaml:4:10: The query uses :n, which is not a parameter of the metric."),
-    ("metrics:\n  m:\n    source: data\n    sql: SELECT a FROM t\n    parameters:\n      n: {type: integer}\n",
+    ("metrics:\n  m:\n    source: data\n    sql: SELECT a FROM t\n    parameters:\n      n: {type: integer, default: 1}\n",
      "flowdash.yaml:6:7: Parameter 'n' is not used as :n in the query."),
-    ("metrics:\n  m:\n    source: data\n    sql: SELECT a FROM t WHERE a = :s\n    parameters:\n      s: {type: \"list[string]\"}\n",
+    ("metrics:\n  m:\n    source: data\n    sql: SELECT a FROM t WHERE a = :s\n    parameters:\n      s: {type: \"list[string]\", required: true}\n",
      "flowdash.yaml:4:10: List parameter :s may only be used in IN (:s)."),
     ("metrics:\n  m:\n    source: data\n    tabel: t\n", "flowdash.yaml:4:5: Unknown key 'tabel' in Metric 'm'. Did you mean 'table'?"),
     ("metrics:\n  m:\n    source: data\n    table: t\n    table: u\n", "flowdash.yaml:5:5: 'table' is given twice."),
@@ -197,7 +197,7 @@ def test_find_project_next_to_the_data_then_in_the_working_directory(tmp_path):
 def test_values_are_bound_as_typed_literals(kind, value, rendered):
     text = (
         "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM turbines WHERE x = :v\n"
-        f"    parameters:\n      v: {{type: {kind}}}\n"
+        f"    parameters:\n      v: {{type: {kind}, required: true}}\n"
     )
     metric = read_metrics(parse_project(text))["m"]
     sql = bind_sql(metric, metric.values({"v": value}), "duckdb")
@@ -212,7 +212,7 @@ def test_values_are_bound_as_typed_literals(kind, value, rendered):
 def test_values_of_the_wrong_type_are_refused(kind, value):
     text = (
         "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM turbines WHERE x = :v\n"
-        f"    parameters:\n      v: {{type: {kind}}}\n"
+        f"    parameters:\n      v: {{type: {kind}, required: true}}\n"
     )
     metric = read_metrics(parse_project(text))["m"]
     with pytest.raises(MetricError, match="Parameter 'v' of metric 'm'"):
@@ -224,7 +224,7 @@ def test_list_values_bounds_options_and_unknown_names(duck):
     sql = bind_sql(metric, metric.values({"states": ["TX", "x') OR ('1'='1"], "n": 3}), "duckdb")
     assert "t_state IN ('TX', 'x'') OR (''1''=''1')" in sql
     assert sql.endswith("LIMIT 3")
-    assert "FALSE" in bind_sql(metric, metric.values({"states": []}), "duckdb")
+    assert "WHERE TRUE GROUP BY" in " ".join(bind_sql(metric, metric.values({"states": []}), "duckdb").split())
     with pytest.raises(MetricError, match=r"outside the bounds \[1, 50\]"):
         metric.values({"n": 500})
     with pytest.raises(MetricError, match="has no parameter 'm'; its parameters are: n, states"):
@@ -310,7 +310,7 @@ def test_query_fields_are_checked(duck):
         metric_pipeline(capacity, duck, Query(["turbines"], ["state"], grain="year"))
     with pytest.raises(MetricError, match="has no grain 'hour'"):
         metric_pipeline(capacity, duck, Query(["turbines"], ["online"], grain="hour"))
-    with pytest.raises(MetricError, match="Cannot order by 'year'"):
+    with pytest.raises(MetricError, match="Cannot order by '-year'"):
         metric_pipeline(capacity, duck, Query(["turbines"], ["state"], order_by=["-year"]))
 
 
@@ -318,6 +318,10 @@ def test_query_fields_are_checked(duck):
 
 def output(ops, name, port):
     return getattr(ops.editor.graph.get_state(ops._instance(name)), port)
+
+
+def instance(ops, name):
+    return ops.editor._component_instances[ops._instance(name)]
 
 
 @pytest.fixture
@@ -412,3 +416,145 @@ def test_dates_coerce(duck):
     assert metric.values({})["after"] == dt.date(2010, 1, 1)
     assert run(metric_pipeline(metric, duck, Query(["n"], parameters={"span": ["2010-01-01", None]}))) == [(3,)]
     assert run(metric_pipeline(metric, duck, Query(["n"], parameters={"span": [None, "2010-06-30"], "after": "1990-01-01"}))) == [(3,)]
+
+
+# Review follow-ups
+
+def test_null_takes_the_default_and_a_required_parameter_needs_a_value(duck):
+    capacity = metrics_for(duck)["capacity"]
+    assert capacity.values({"since": None}) == {"since": 2000}
+    text = PROJECT.replace("default: 2000, column: p_year", "column: p_year, options: [2000, 2010]")
+    optional = metrics_for(duck, text)["capacity"]
+    assert optional.values({"since": None}) == {"since": None}
+    with pytest.raises(MetricError, match="is not one of 2000, 2010"):
+        optional.values({"since": 1990})
+    top = metrics_for(duck)["top_projects"]
+    assert top.values({"n": None, "states": None}) == {"n": 2, "states": ["CA", "TX", "IA"]}
+    required = read_metrics(parse_project(
+        "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM turbines LIMIT :n\n"
+        "    parameters:\n      n: {type: integer, required: true}\n"))["m"]
+    with pytest.raises(MetricError, match="needs a value for 'n'"):
+        required.values({"n": None})
+
+
+def test_sql_parameters_need_a_default_or_required():
+    assert "flowdash.yaml:6:7: Parameter 'n' of a SQL metric needs a `default` or `required: true`." in problems(
+        "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM t LIMIT :n\n    parameters:\n      n: {type: integer}\n"
+    )
+    assert problems(
+        "metrics:\n  m:\n    source: data\n    sql: SELECT * FROM t LIMIT :n\n    parameters:\n"
+        "      n: {type: number, default: 1}\n"
+    ) == ["flowdash.yaml:4:10: Parameter :n in LIMIT or OFFSET must be an integer."]
+
+
+def test_a_negative_row_count_is_refused(duck):
+    top = metrics_for(duck, PROJECT.replace("bounds: [1, 50]", "bounds: [null, 50]"))["top_projects"]
+    with pytest.raises(MetricError, match="is a row count; it cannot be -1"):
+        bind_sql(top, top.values({"n": -1}), "duckdb")
+
+
+def test_limit_and_order_by_are_parameters_of_a_structured_metric(duck):
+    capacity = metrics_for(duck)["capacity"]
+    by_state = Query(["capacity_mw"], ["state"], order_by=["state"])
+    assert [r[0] for r in run(metric_pipeline(capacity, duck, by_state))] == ["IA", "TX"]
+    top = Query(["capacity_mw"], ["state"], order_by=["state"], parameters={"limit": 1, "order_by": ["-capacity_mw"]})
+    assert run(metric_pipeline(capacity, duck, top)) == [("TX", 6.0)]
+    with pytest.raises(MetricError, match="Parameter 'limit' of metric 'capacity': .*bounds"):
+        metric_pipeline(capacity, duck, Query(["turbines"], parameters={"limit": 0}))
+    declared = metrics_for(duck, PROJECT.replace(
+        "      since:", "      limit: {type: integer, default: 1, bounds: [1, 5]}\n      since:"))["capacity"]
+    assert len(run(metric_pipeline(declared, duck, Query(["turbines"], ["state"])))) == 1
+    with pytest.raises(MetricError, match=r"outside the bounds \[1, 5\]"):
+        metric_pipeline(declared, duck, Query(["turbines"], ["state"], parameters={"limit": 9}))
+    assert problems(PROJECT.replace("      since:", "      limit: {type: number}\n      since:"))[0].endswith(
+        "Parameter 'limit' sets the metric's limit: it is of type integer and has no column or op.")
+
+
+def test_order_by_refuses_a_doubled_minus_and_fields_are_deduplicated(duck):
+    capacity = metrics_for(duck)["capacity"]
+    with pytest.raises(MetricError, match="Cannot order by '--turbines'"):
+        metric_pipeline(capacity, duck, Query(["turbines"], ["state"], order_by=["--turbines"]))
+    from lumen.flowdash.nodes import metric_query
+
+    query = metric_query({"measures": ["turbines", "turbines"], "dimensions": ["state", "state"]})
+    assert list(metric_pipeline(capacity, duck, query).schema) == ["state", "turbines"]
+
+
+def test_dimension_filters_are_coerced_to_the_column_type(duck):
+    capacity = metrics_for(duck)["capacity"]
+    assert run(metric_pipeline(capacity, duck, Query(["turbines"], parameters={"year": "2010"}))) == [(2,)]
+    with pytest.raises(MetricError, match="Filter 'year' of metric 'capacity': expected an integer, got 'soon'"):
+        metric_pipeline(capacity, duck, Query(["turbines"], parameters={"year": "soon"}))
+    with pytest.raises(MetricError, match="Filter 'state' of metric 'capacity': expected a string, got 1"):
+        metric_pipeline(capacity, duck, Query(["turbines"], parameters={"state": [1]}))
+
+
+def test_sqlite_grains_are_timestamps(lite, duck):
+    for source in (lite, duck):
+        capacity = metrics_for(source)["capacity"]
+        pipeline = metric_pipeline(capacity, source, Query(["turbines"], ["online"], grain="year", order_by=["online"]))
+        frame = fetch(pipeline, 10)
+        assert str(frame["online"].dtype).startswith("datetime64"), source
+        assert pipeline.schema["online"]["type"] == "string" and pipeline.schema["online"]["format"] == "datetime"
+
+
+def test_sqlite_runs_queries_with_colons_in_literals_and_comments(lite):
+    text = PROJECT.replace(
+        "WHERE t_state IN (:states)", "WHERE t_state IN (:states) AND p_name != 'a :b' -- top :n\n     "
+    )
+    top = metrics_for(lite, text)["top_projects"]
+    assert run(metric_pipeline(top, lite, Query(parameters={"states": ["x :y", "TX"]}))) == [
+        ("Roscoe", 3500), ("Horse Hollow", 2500)]
+
+
+def test_sql_metric_filters_only_the_tables_its_outer_query_reads(duck):
+    text = PROJECT + """\
+  shares:
+    source: data
+    sql: |
+      SELECT t_state, SUM(t_cap) * 1.0 / (SELECT SUM(t_cap) FROM turbines) AS share
+      FROM turbines GROUP BY t_state ORDER BY t_state
+  shadowed:
+    source: data
+    sql: |
+      WITH turbines AS (SELECT p_name, t_cap FROM main.turbines WHERE t_cap > 1500)
+      SELECT p_name, SUM(t_cap) AS kw FROM turbines GROUP BY p_name ORDER BY p_name
+"""
+    metrics = metrics_for(duck, text)
+    texas = filtered_pipeline(metric_pipeline(metrics["shares"], duck, Query()), "p_year", 2010)
+    assert run(texas) == [("TX", 4500 / 10000)]
+    shadowed = metric_pipeline(metrics["shadowed"], duck, Query())
+    assert run(shadowed) == [("Alta", 3000), ("Horse Hollow", 2500), ("Roscoe", 2000)]
+    assert run(filtered_pipeline(shadowed, "kw", (2500, None))) == [("Alta", 3000), ("Horse Hollow", 2500)]
+    with pytest.raises(ValueError, match="no column 't_state'"):
+        filtered_pipeline(shadowed, "t_state", "TX")
+
+
+@pytest.mark.parametrize("function", ["fts3_tokenizer", "current_query", "txid_current"])
+def test_more_functions_are_denied(function):
+    from lumen.flowdash.checks import DENIED_FUNCTIONS
+
+    assert "current_role" in DENIED_FUNCTIONS
+    text = f"metrics:\n  m:\n    source: data\n    table: t\n    measures:\n      x: \"COUNT({function}('a'))\"\n"
+    assert problems(text)[0].endswith(f"Measure 'x' calls {function}(), which reads the engine's settings or environment.")
+
+
+def test_parameter_nodes_drive_a_metric_from_widgets(dashboard):
+    from lumen.flowdash import PARAMETER_ID
+
+    ops = dashboard
+    ops.add_node(METRIC_ID, {"metric": "top_projects"}, name="top")
+    ops.add_node("Widgets/Slider", {"label": "N", "default_start": 1, "default_end": 10, "default_value": 1},
+                 name="slider")
+    ops.add_node(PARAMETER_ID, {"parameter": "n"}, name="n")
+    ops.connect("slider.selected", "n.value")
+    ops.connect("n.parameters", "top.parameters")
+    ops.add_node(PARAMETER_ID, {"parameter": "states"}, name="states")
+    ops.set_inputs("states", {"value": ["TX"]})
+    ops.connect("states.parameters", "top.parameters")
+    assert output(ops, "top", "data").values.tolist() == [["Roscoe", 3500]]
+    instance(ops, "slider").value = 3
+    assert output(ops, "n", "parameters") == {"n": 3}
+    assert output(ops, "top", "data").values.tolist() == [["Roscoe", 3500], ["Horse Hollow", 2500]]
+    with pytest.raises(OperationError, match="No metric takes a parameter 'm'"):
+        ops.add_node(PARAMETER_ID, {"parameter": "m"}, name="m")

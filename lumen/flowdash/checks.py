@@ -47,6 +47,7 @@ DENIED_FUNCTIONS = frozenset({
     "current_setting", "getenv", "load_extension", "current_user", "user", "session_user",
     "current_database", "current_catalog", "current_schema", "current_schemas", "version",
     "pragma_version", "pragma_platform", "duckdb_settings", "set_config", "getvariable",
+    "fts3_tokenizer", "current_query", "txid_current", "current_role",
 })
 
 _CANDIDATE_BINDINGS_RE = re.compile(r'Candidate bindings:\s*(?::\s*)?"([^"]+)"')

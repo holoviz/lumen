@@ -189,6 +189,14 @@ def metric_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, 
     return choices
 
 
+def parameter_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    """Offer a ``Lumen/parameter`` node the names the host's metrics take as parameters."""
+    from .nodes import host_metrics, metric_parameter_names
+
+    names = metric_parameter_names(host_metrics())
+    return {"parameter": names} if names else {}
+
+
 def metric_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     """A ``Lumen/metric`` palette entry per metric the host defines, with the metric filled in."""
     from .nodes import METRICS_KEY

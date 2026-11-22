@@ -21,15 +21,15 @@ from .checks import (
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, METRIC_ID, METRICS_KEY, NODE_TIMEOUT,
-    PIPELINE_TYPE, PREVIEW_ROWS, QUERY_TIMEOUT, RESULT_LIMIT,
+    PARAMETER_ID, PIPELINE_TYPE, PREVIEW_ROWS, QUERY_TIMEOUT, RESULT_LIMIT,
     SOURCE_ALIASES_KEY, SOURCE_ID, SOURCE_TYPE, SOURCES_KEY, SQL_ID, TABLE_ID,
-    VIEW_ID, DataNode, FilterNode, MetricNode, SourceNode, SQLNode, TableNode,
-    ViewNode, bind_source, bound_sources, compile_sql, effective_limit, fetch,
-    filter_condition, filterable_columns, filtered_pipeline, forget,
-    host_metrics, host_sources, listed_tables, lookup_source, metric_pipeline,
-    missing_source, pipeline_sql, primed_result, python_value, result_sql,
-    row_ceiling, selection_conditions, set_row_ceiling, table_pipeline,
-    unbind_source,
+    VIEW_ID, DataNode, FilterNode, MetricNode, ParameterNode, SourceNode,
+    SQLNode, TableNode, ViewNode, bind_source, bound_sources, compile_sql,
+    effective_limit, fetch, filter_condition, filterable_columns,
+    filtered_pipeline, forget, host_metrics, host_sources, listed_tables,
+    lookup_source, metric_pipeline, missing_source, pipeline_sql,
+    primed_result, python_value, result_sql, row_ceiling, selection_conditions,
+    set_row_ceiling, table_pipeline, unbind_source,
 )
 
 # What the package offers as a FlowDash component library, under stable ids
@@ -43,6 +43,7 @@ __all__ = [
     "METRICS_KEY",
     "METRIC_ID",
     "NODE_TIMEOUT",
+    "PARAMETER_ID",
     "PIPELINE_TYPE",
     "PREVIEW_ROWS",
     "PROBE_TIMEOUT",
@@ -59,6 +60,7 @@ __all__ = [
     "DataNode",
     "FilterNode",
     "MetricNode",
+    "ParameterNode",
     "SQLNode",
     "SourceNode",
     "TableNode",
