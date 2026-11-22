@@ -3,7 +3,6 @@ import asyncio
 
 import pandas as pd
 import panel as pn
-import panel_material_ui as pmui
 import pytest
 
 pytest.importorskip("duckdb")
@@ -196,15 +195,21 @@ def test_a_list_of_frozen_columns_is_left_to_the_spec():
     assert settings["frozen_columns"].write(spec, None) == {}
 
 
+def edit_spec_button(editor):
+    """The inspector's Edit spec button, in its body or, on later panel-flowdash, in its header."""
+    found = pn.Column(*editor._inspector._body, editor._inspector.__panel__()).select(
+        lambda obj: "fd-edit-spec" in (getattr(obj, "css_classes", None) or [])
+    )
+    return next(iter(found))
+
+
 async def test_the_code_panel_edits_the_spec_through_the_form(source):
     ops = dashboard(source, history_coalesce=0)
     editor = ops.editor
     rows = ops._instance("rows")
     select_on_canvas(editor._flow, node_id=rows)
-    body = pn.Column(*editor._inspector._body)
-    assert not list(body.select(SpecEditor))
-    edit = next(b for b in body.select(pmui.Button) if "fd-edit-spec" in b.css_classes)
-    edit.clicks += 1
+    assert not list(pn.Column(*editor._inspector._body).select(SpecEditor))
+    edit_spec_button(editor).clicks += 1
     panel = editor.code_panel
     assert (panel.instance_id, panel.field) == (rows, "spec")
     field = panel.spec_editor
