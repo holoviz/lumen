@@ -374,6 +374,51 @@ class TestGeoshapeGeometryValidation:
         VegaLiteEditor.validate_spec(spec)
 
 
+class TestColorSchemeValidation:
+    """An unknown `scale.scheme` compiles cleanly and draws nothing, so
+    validation has to reject it or the only symptom is an empty chart."""
+
+    def _spec(self, scheme):
+        return {
+            "data": {"values": [{"x": 1, "y": 2, "c": 2020}, {"x": 2, "y": 3, "c": 2021}]},
+            "mark": "point",
+            "encoding": {
+                "x": {"field": "x", "type": "quantitative"},
+                "y": {"field": "y", "type": "quantitative"},
+                "color": {"field": "c", "type": "ordinal", "scale": {"scheme": scheme}},
+            },
+        }
+
+    def test_rejects_diverging_as_a_scheme(self):
+        with pytest.raises(RuntimeError, match="Unknown color scheme 'diverging'"):
+            VegaLiteEditor.validate_spec(self._spec("diverging"))
+
+    def test_rejects_an_unknown_scheme(self):
+        with pytest.raises(RuntimeError, match="Unknown color scheme 'notascheme'"):
+            VegaLiteEditor.validate_spec(self._spec("notascheme"))
+
+    def test_rejects_an_unknown_scheme_name_in_object_form(self):
+        with pytest.raises(RuntimeError, match="Unknown color scheme 'diverging'"):
+            VegaLiteEditor.validate_spec(self._spec({"name": "diverging"}))
+
+    def test_rejects_an_unknown_scheme_in_a_layer(self):
+        spec = {"layer": [self._spec("diverging")]}
+        with pytest.raises(RuntimeError, match=r"encoding\.color\.scale\.scheme"):
+            VegaLiteEditor.validate_spec(spec)
+
+    def test_suggests_a_close_match(self):
+        with pytest.raises(RuntimeError, match="Did you mean 'viridis'"):
+            VegaLiteEditor.validate_spec(self._spec("virdis"))
+
+    @pytest.mark.parametrize("scheme", ["viridis", "redblue", "category10", "blues", "spectral", "tableau20"])
+    def test_accepts_known_schemes(self, scheme):
+        VegaLiteEditor.validate_spec(self._spec(scheme))
+
+    def test_accepts_a_scheme_object_and_mixed_case(self):
+        VegaLiteEditor.validate_spec(self._spec({"name": "viridis", "count": 5}))
+        VegaLiteEditor.validate_spec(self._spec("Viridis"))
+
+
 def test_normalize_vegalite_spec_rewrites_the_comma_number_format():
     """A bare ',' format makes Vega print 6000 as 6e+3, however deep in the spec the model wrote it."""
     raw = {

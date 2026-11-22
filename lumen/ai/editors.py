@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import inspect
 import json
 import logging
@@ -352,6 +353,34 @@ class LumenEditor(Viewer):
         return f"{self.__class__.__name__}:\n```yaml\n{self.spec}\n```"
 
 
+# Color schemes Vega knows, from vega-scale's palettes.js (`discrete` + `continuous`).
+# Vega registers them lowercased and vl-convert compiles any other string without
+# complaint, so an unknown name only shows up as an empty chart at render time.
+VEGA_COLOR_SCHEMES = frozenset({
+    # Discrete (categorical)
+    "accent", "category10", "category20", "category20b", "category20c",
+    "dark2", "observable10", "paired", "pastel1", "pastel2",
+    "set1", "set2", "set3", "tableau10", "tableau20",
+    # Continuous, single- and multi-hue sequential
+    "blues", "greens", "greys", "oranges", "purples", "reds",
+    "bluegreen", "bluepurple", "greenblue", "orangered", "purpleblue",
+    "purplebluegreen", "purplered", "redpurple", "yellowgreen",
+    "yelloworangebrown", "yelloworangered",
+    # Continuous, diverging
+    "blueorange", "brownbluegreen", "purplegreen", "purpleorange",
+    "redblue", "redgrey", "yellowgreenblue", "redyellowblue",
+    "redyellowgreen", "pinkyellowgreen", "spectral",
+    # Continuous, interpolating
+    "viridis", "magma", "inferno", "plasma", "cividis",
+    "rainbow", "sinebow", "turbo",
+    # Continuous, other sequential
+    "browns", "tealblues", "teals", "warmgreys",
+    "goldgreen", "goldorange", "goldred",
+    "lightgreyred", "lightgreyteal", "lightmulti", "lightorange", "lighttealblue",
+    "darkblue", "darkgold", "darkgreen", "darkmulti", "darkred",
+})
+
+
 class VegaLiteEditor(LumenEditor):
 
     export_formats = ("yaml", "png", "jpeg", "pdf", "svg", "html", "webp", "tiff", "eps")
@@ -447,6 +476,47 @@ class VegaLiteEditor(LumenEditor):
                 cls._check_geoshape_data(value, data)
 
     @classmethod
+    def _check_color_schemes(cls, node: Any, path: str = "") -> None:
+        """Raise if any scale names a color scheme Vega does not know.
+
+        vl-convert compiles any string in `scale.scheme` without complaint and
+        Vega then draws nothing at all, so the only symptom is an empty chart;
+        raising turns that silence into an error the agent can retry against.
+        Scheme names are matched case-insensitively, as Vega lowercases them,
+        and may also sit in a `{name: ...}` scheme object; expression refs
+        cannot be checked statically, so they are skipped.
+        """
+        if isinstance(node, list):
+            for i, item in enumerate(node):
+                cls._check_color_schemes(item, f"{path}[{i}]")
+            return
+        if not isinstance(node, dict):
+            return
+
+        scale = node.get("scale")
+        if isinstance(scale, dict):
+            scheme = scale.get("scheme")
+            name = scheme.get("name") if isinstance(scheme, dict) else scheme
+            if isinstance(name, str) and name.lower() not in VEGA_COLOR_SCHEMES:
+                location = f"{path}.scale.scheme" if path else "scale.scheme"
+                if name.lower() == "diverging":
+                    hint = (
+                        " 'diverging' is a kind of color scale, not a scheme name; "
+                        "use a diverging scheme such as 'redblue', 'blueorange' or 'spectral'."
+                    )
+                elif (close := difflib.get_close_matches(name.lower(), VEGA_COLOR_SCHEMES, n=3, cutoff=0.6)):
+                    hint = f" Did you mean {', '.join(repr(s) for s in close)}?"
+                else:
+                    hint = ""
+                raise RuntimeError(
+                    f"Unknown color scheme {name!r} at {location}. Vega renders the chart "
+                    f"empty when a scale names a scheme it does not know.{hint}"
+                )
+
+        for key, value in node.items():
+            cls._check_color_schemes(value, f"{path}.{key}" if path else key)
+
+    @classmethod
     def validate_spec(cls, spec):
         if "spec" in spec:
             spec = spec["spec"]
@@ -459,6 +529,7 @@ class VegaLiteEditor(LumenEditor):
             raise RuntimeError(msg) from e
 
         cls._check_geoshape_data(spec)
+        cls._check_color_schemes(spec)
         return super().validate_spec(spec)
 
     def __str__(self):
