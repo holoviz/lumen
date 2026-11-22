@@ -117,12 +117,16 @@ class DuckDBSource(BaseSQLSource):
 
     def __init__(self, **params):
         connection = params.pop('_connection', None)
+        views = params.pop('_views', None)
         params["read_only"] = params.get('read_only', params.get("uri") not in (None, ':memory:'))
         super().__init__(**params)
         # A connection handed in belongs to the caller, so close() leaves it open
         self._owns_connection = not connection
         # The Pipelines mirrored in, and the watchers re-ingesting their data
         self._mirror_watchers: list = []
+        # The body of each view created on the connection, and the lock creating them, shared
+        # by the sources reusing it, so their tables' views are not created again concurrently.
+        self._views: tuple[threading.Lock, dict[str, str]] = views if connection and views else (threading.Lock(), {})
         if connection:
             self._connection = connection
         else:
@@ -217,9 +221,14 @@ class DuckDBSource(BaseSQLSource):
     def _create_view(self, name: str, body: str) -> str | None:
         """Create a view `name` defined by `body`, returning its quoted name or None on failure."""
         quoted = name if name.startswith('"') and name.endswith('"') else f'"{name}"'
+        lock, created = self._views
         try:
-            with self._connection.cursor() as cursor:
-                cursor.execute(f"CREATE OR REPLACE VIEW {quoted} AS {body}")
+            with lock:
+                if created.get(quoted) == body:
+                    return quoted
+                with self._connection.cursor() as cursor:
+                    cursor.execute(f"CREATE OR REPLACE VIEW {quoted} AS {body}")
+                created[quoted] = body
         except Exception as e:
             # Queries naming the table then fail with a catalog error that
             # hides this cause, so surface it here.
@@ -615,6 +624,7 @@ class DuckDBSource(BaseSQLSource):
         # Reuse connection unless it has changed
         if 'uri' not in kwargs and 'initializers' not in kwargs:
             source_params['_connection'] = self._connection
+            source_params['_views'] = self._views
         source_params.pop('name', None)
         source = type(self)(**source_params)
 
