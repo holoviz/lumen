@@ -25,9 +25,7 @@ from typing import Any
 
 import panel as pn
 
-from .nodes import (
-    LumenViewNode, fetch, register_view, row_ceiling, spec_param,
-)
+from .nodes import LumenViewNode, register_view, spec_param
 
 DECKGL_ID = "Lumen/deckgl"
 
@@ -552,10 +550,13 @@ class DeckGLNode(LumenViewNode):
         # The page's theme once a drawn map has seen it, and the theme of the basemap drawn.
         self._dark: bool | None = None
         self._drawn_dark: bool | None = None
+        # The view state fitting the rows of the map being drawn, for a spec without one.
+        self._fitted: dict[str, Any] | None = None
         super().__init__(**params)
 
     def _view_rows(self, rows: Any, spec: dict[str, Any]) -> Any:
         """Only the columns the spec reads, and a GeoDataFrame's geometry, go to the browser."""
+        self._fitted = None if "initialViewState" in spec else fit_view_state(spec, rows)
         if not hasattr(rows, "columns") or any(e.strip() == "-" for e in _expressions(spec.get("layers"))):
             return rows
         keep = deckgl_fields(spec)
@@ -582,9 +583,8 @@ class DeckGLNode(LumenViewNode):
             self._drawn_dark = dark
             spec["mapStyle"] = BASEMAPS["dark" if dark else "light"]
         if "initialViewState" not in spec:
-            # fetch keeps the rows the view is drawn with, so this runs no query.
-            fitted = fit_view_state(spec, fetch(self.pipeline, row_ceiling(self.editor)))
-            spec["initialViewState"] = fitted or dict(WORLD_VIEW)
+            # Fitted in _view_rows to the rows the map draws.
+            spec["initialViewState"] = self._fitted or dict(WORLD_VIEW)
         color = SCHEME_COLORS.get(self._color_scheme() or "", SCHEME_COLORS["tableau10"])
         for layer in spec["layers"]:
             for prop in COLOR_PROPS.get(layer_type(layer) or "", ()):

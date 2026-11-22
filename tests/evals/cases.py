@@ -151,6 +151,19 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
         "Only show the west region, returning region and total_amount."
     ], fixture="commerce", agents=("SQLAgent",)),
          metadata=Expected(actors=["SQLAgent"], rows=[["west", 40]], turn_rows=[[["east", 65], ["west", 40]], [["west", 40]]])),
+    Case(name="followup_aggregate", inputs=Inputs([
+        "List paid orders, returning only customer, region and amount.",
+        "Now total those by region, returning region and total_amount."
+    ], fixture="commerce"),
+         metadata=Expected(rows=[["east", 65], ["west", 40]], turn_reads=[None, 0], stable_turns=True, turn_rows=[
+             [["Ada", "east", 30], ["Ada", "east", 20], ["Bo", "west", 40], ["Cy", "east", 15]], [["east", 65], ["west", 40]],
+         ])),
+    Case(name="followup_threshold", inputs=Inputs([
+        "Total paid amount per customer, for customers with paid orders, returning only customer and total.",
+        "Which of those are above 30? Return customer and total."
+    ], fixture="commerce"),
+         metadata=Expected(rows=[["Ada", 50], ["Bo", 40]], turn_reads=[None, 0], stable_turns=True,
+                           turn_rows=[[["Ada", 50], ["Bo", 40], ["Cy", 15]], [["Ada", 50], ["Bo", 40]]])),
     Case(name="planner_commerce_join", inputs=Inputs([
         "For every customer, show their name and total paid order amount, including customers with no paid orders."
     ], fixture="commerce"),
