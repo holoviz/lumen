@@ -128,12 +128,9 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     tiles, and ``dashboard_tools=None`` gives it every FlowDash dashboard
     tool with FlowDash's instructions, as the dashboard assistant has.
 
-    A host running the agent in a ``FlowDashApp`` must make placing or
-    configuring a Lumen source node need approval, e.g.
-    ``FlowDashApp(agent_sensitive_components=["Lumen/source"])``;
-    ``AgentSession`` attaches that policy itself. Table nodes need none:
-    their ``ref`` can only name a source the app already lets the agent
-    read. An agent that can place any component (``dashboard_tools=None``)
+    Placing or configuring Lumen's source and table nodes needs no
+    approval: their ``ref`` can only name a source the app already lets
+    the agent read. An agent that can place any component (``dashboard_tools=None``)
     is told to read a table with one table node naming its source by ref.
 
     Parameters
