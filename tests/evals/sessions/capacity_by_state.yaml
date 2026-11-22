@@ -1,0 +1,58 @@
+lumen_session: 1
+fixture: turbine_metrics
+turns:
+- question: What is the installed capacity in MW by state, counting projects since 2005?
+  nodes:
+  - installed_capacity_by_state_since_2005
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      node_previews: false
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    turns:
+      - id: te12a3f82
+        actor: user
+        at: '2026-11-22T00:57:11Z'
+        summary: Added data.
+      - id: t95e315da
+        actor: agent
+        at: '2026-11-22T00:57:13Z'
+        run: run-9efe6e7f2080
+        summary: Added installed_capacity_by_state_since_2005. Set Parameters of installed_capacity_by_state_since_2005.
+    nodes:
+      data:
+        component: Lumen/source
+        origin: te12a3f82
+        config:
+          ref: data
+        position: [0.0, 22.0]
+      installed_capacity_by_state_since_2005:
+        component: Lumen/metric
+        origin: t95e315da
+        config:
+          metric: capacity
+          measures:
+            - capacity_mw
+          dimensions:
+            - state
+          grain: ''
+          order_by:
+            - -capacity_mw
+          limit: null
+        inputs:
+          parameters:
+            since: 2005
+        position: [380.0, 0.0]
+    layout:
+      tiles:
+        - node: data
+          visible: false
+        - node: installed_capacity_by_state_since_2005
+          visible: false

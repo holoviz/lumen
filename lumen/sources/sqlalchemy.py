@@ -35,6 +35,24 @@ MISSING_TABLE_PATTERNS = {
 }
 
 
+# What ``text()`` reads as a bind parameter, e.g. ``:name``, but not ``::cast``.
+_BIND_PARAM = re.compile(r"(?<![:\w\\]):(\w+)(?!:)")
+
+
+def _text(sql: str, params: Any) -> Any:
+    """
+    ``sql`` as a ``text()`` clause; without parameters every ``:name`` in
+    it, e.g. in a string literal or a comment, is escaped, so it is sent as
+    written rather than refused as a bind parameter without a value. A
+    query that names a parameter it does not pass then gets the driver's
+    error rather than SQLAlchemy's.
+    """
+    if not params:
+        # text() turns an escaped \:name into :name, so a backslash written before one is doubled to keep it.
+        sql = _BIND_PARAM.sub(r"\\:\1", re.sub(r"\\(?=:\w)", r"\\\\", sql))
+    return text(sql)
+
+
 class SQLAlchemySource(BaseSQLSource):
     """
     SQLAlchemySource uses SQLAlchemy to connect to various SQL databases.
@@ -304,7 +322,7 @@ class SQLAlchemySource(BaseSQLSource):
 
         # Use context manager to ensure connection is closed
         with self._connection as connection:
-            result = connection.execute(text(sql_query), params, *args, **kwargs)
+            result = connection.execute(_text(sql_query, params), params, *args, **kwargs)
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
             return df
 
@@ -344,7 +362,7 @@ class SQLAlchemySource(BaseSQLSource):
         sql_query, params = self._convert_params(sql_query, params)
 
         async with self._engine.connect() as connection:
-            result = await connection.execute(text(sql_query), params, *args, **kwargs)
+            result = await connection.execute(_text(sql_query, params), params, *args, **kwargs)
             rows = result.fetchall()
             df = pd.DataFrame(rows, columns=result.keys())
             return df

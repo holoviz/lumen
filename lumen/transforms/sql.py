@@ -16,9 +16,9 @@ from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
     LT, Alias, ArrayAgg, Boolean, Column, Count, Distinct, Expression, Func,
-    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV,
-    Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_,
-    func, or_, replace_placeholders, select, to_identifier,
+    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Ordered, Pivot,
+    ReadCSV, Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample,
+    and_, func, or_, replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
@@ -451,6 +451,64 @@ class SQLGroupBy(SQLTransform):
         expression = select(*self.by, *aggs).from_(subquery).group_by(*self.by)
         return self.to_sql(expression)
 
+
+class MetricAggregate(SQLTransform):
+    """
+    Aggregates the input query by named expressions, as a metric defines
+    them: ``SELECT <dimensions>, <measures> FROM (<input>) WHERE <where>
+    GROUP BY <dimensions> ORDER BY ... LIMIT n``. Unlike ``SQLGroupBy`` an
+    output column may be any expression, e.g. ``SUM(t_cap) / 1000 AS
+    capacity_mw``.
+
+    The expressions and conditions are SQL in the ``read`` dialect, built
+    by the caller from parsed expressions and typed literals, never from
+    text a request supplied.
+    """
+
+    dimensions = param.List(default=[], doc="""
+        ``[name, expression]`` of each column grouped by, in output order.""")
+
+    measures = param.List(default=[], doc="""
+        ``[name, expression]`` of each aggregate column, after the dimensions.""")
+
+    where = param.List(default=[], doc="Conditions on the input's rows, combined with AND.")
+
+    order_by = param.List(default=[], doc="``[name, descending]`` of each output column sorted by.")
+
+    limit = param.Integer(default=None, allow_None=True, doc="Rows returned at most.")
+
+    columns = param.List(default=[], doc="""
+        The columns of the input, which conditions added before this
+        transform may filter on although the output does not have them.""")
+
+    temporal = param.List(default=[], doc="""
+        The output columns holding truncated dates or times, which an engine
+        without a timestamp type, such as SQLite, returns as text.""")
+
+    transform_type: ClassVar[str] = 'sql_metric_aggregate'
+
+    def apply(self, sql_in: str) -> str:
+        if not (self.dimensions or self.measures):
+            raise ValueError("MetricAggregate needs at least one dimension or measure.")
+
+        def parsed(text: str) -> Expression:
+            return sqlglot.parse_one(text, read=self.read)
+
+        subquery = self._to_subquery(self.parse_sql(sql_in), "metric_base")
+        selects = [parsed(expr).as_(name, quoted=True) for name, expr in [*self.dimensions, *self.measures]]
+        expression = select(*selects).from_(subquery)
+        if self.where:
+            expression = expression.where(and_(*(parsed(condition) for condition in self.where)))
+        if self.dimensions:
+            expression = expression.group_by(*(parsed(expr) for _, expr in self.dimensions))
+        if self.order_by:
+            expression = expression.order_by(*(
+                Ordered(this=Column(this=Identifier(this=name, quoted=True)), desc=bool(desc), nulls_first=False)
+                for name, desc in self.order_by
+            ))
+        if self.limit is not None:
+            expression = expression.limit(self.limit)
+        return self.to_sql(expression)
 
 
 class SQLLimit(SQLTransform):
