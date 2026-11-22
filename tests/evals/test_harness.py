@@ -816,11 +816,11 @@ async def test_every_emitted_check_is_classified():
         chart_mark="bar", chart_fields={"nominal": "x"}, tool_calls=["t"], tool_arguments={"t": {}}, tool_result_contains={"t": []},
         turn_rows=[[[1]]], turn_tables=["t"], sql_contains=["select"], turn_planner_actors=[["SQLAgent"]],
         forbidden_actors=["ChatAgent"], follow_up_types=["new"], planned_actors=["SQLAgent"], document_contains=["d"],
-        validation_correct=True, error_contains="e",
+        validation_correct=True, error_contains="e", turn_reads=[None], stable_turns=True,
     )
     dataset = Dataset[Inputs, Output, Expected](name="all", cases=[Case(name="all", inputs=Inputs(["x"]), metadata=expected)],
                                                 evaluators=[CheckResult()])
-    report = await dataset.evaluate(lambda inputs: Output([Turn("x", "success", "a", [], [], "select", ["x"], [[1]], 1, [])]))
+    report = await dataset.evaluate(lambda inputs: Output([Turn("x", "success", "a", [], [], "select", ["x"], [[1]], 1, [], reads=[])]))
     emitted = set(report.cases[0].assertions)
     assert emitted - {"execution_accuracy"} <= ARCHITECTURE_CHECKS | OUTCOME_CHECKS
     assert {item for item in ARCHITECTURE_CHECKS | OUTCOME_CHECKS} - emitted == {"execution_accuracy"}
@@ -832,6 +832,44 @@ async def test_every_emitted_check_is_classified():
     report = await Dataset(name="new", cases=[Case(name="new", inputs=Inputs(["x"]))], evaluators=[NewCheck()]).evaluate(
         lambda inputs: Output([]))
     assert "Unclassified checks: unclassified" in report.cases[0].evaluator_failures[0].error_message
+
+
+def _turn(rows, reads=None):
+    return Turn("q", "success", None, [], [], "select", ["x"], rows, len(rows), [], reads=reads)
+
+
+@pytest.mark.asyncio
+async def test_turn_reads_and_stable_turns():
+    expected = Expected(turn_rows=[[[1], [2]], [[3]]], turn_reads=[None, 0], stable_turns=True)
+    dataset = Dataset[Inputs, Output, Expected](
+        name="follow", cases=[Case(name="follow", inputs=Inputs(["a", "b"]), metadata=expected)], evaluators=[CheckResult()],
+    )
+
+    async def scored(output):
+        report = await dataset.evaluate(lambda inputs: output)
+        return {name: result.value for name, result in report.cases[0].assertions.items()}
+
+    reads_first = Output([_turn([[1], [2]], []), _turn([[3]], [0])])
+    assert (await scored(reads_first))["turn_reads"] and (await scored(reads_first))["stable_turns"]
+    rebuilt = Output([_turn([[1], [2]], []), _turn([[3]], [])])
+    assert not (await scored(rebuilt))["turn_reads"]
+    unreported = Output([_turn([[1], [2]]), _turn([[3]])])
+    assert "turn_reads" not in await scored(unreported)
+    changed = Output([_turn([[1], [2]], []), _turn([[3]], [0])], final_rows=[[[1]], [[3]]])
+    assert not (await scored(changed))["stable_turns"]
+    joined = Expected(turn_reads=[None, None, [1, 0]])
+    turns = [_turn([[1]], []), _turn([[1]], []), _turn([[1]], [0, 1])]
+    report = await Dataset(name="j", cases=[Case(name="j", inputs=Inputs(["a", "b", "c"]), metadata=joined)],
+                           evaluators=[CheckResult()]).evaluate(lambda inputs: Output(turns))
+    assert report.cases[0].assertions["turn_reads"].value is True
+
+
+def test_unset_follow_up_expectations_leave_case_fingerprints_alone():
+    case = Case(name="c", inputs=Inputs(["q"]), metadata=Expected(rows=[[1]]))
+    # The fingerprint of this case before turn_reads and stable_turns existed.
+    assert case_fingerprint([case]) == "f0a5a514fa24f549a3c2a1767336341bf7543b5d292f313f8984bbea606c7ce7"
+    with_follow_ups = Case(name="c", inputs=Inputs(["q"]), metadata=Expected(rows=[[1]], stable_turns=True))
+    assert case_fingerprint([with_follow_ups]) != case_fingerprint([case])
 
 
 @pytest.mark.asyncio
