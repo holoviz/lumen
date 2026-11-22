@@ -196,29 +196,12 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert tools == ["add_chart", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
-def evil_source_calls(session):
-    yaml = session.ops.get_dashboard().replace("ref: data", "ref: other")
-    return [
-        ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "evil"}, tool_call_id="c1"),
-        ToolCallPart("set_config", {"name": "data", "config": {"ref": "other"}}, tool_call_id="c2"),
-        ToolCallPart("replace_dashboard", {"dashboard_yaml": yaml}, tool_call_id="c3"),
-    ]
-
-
-async def test_agent_cannot_place_or_change_source_nodes():
-    returns = []
-
-    def respond(messages, info):
-        for part in messages[-1].parts:
-            if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-                returns.append(str(part.content))
-        if len(returns) == 0 and not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(parts=calls)
-        return ModelResponse(parts=[TextPart("Done.")])
-
-    model = FunctionModel(respond)
+async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
+    model, _ = script(
+        [ToolCallPart("set_config", {"name": "data", "config": {"ref": "other"}})],
+        [TextPart("Done.")],
+    )
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=create_agent(model, dashboard_tools=None))
-    calls = evil_source_calls(session)
     before = session.graph()
     try:
         turn = await session.ask("Point the dashboard at another database")
@@ -226,30 +209,27 @@ async def test_agent_cannot_place_or_change_source_nodes():
         session.close()
 
     assert turn.error is None
-    assert len(returns) == 3 and all("source nodes are placed and configured by the app" in text for text in returns)
-    assert turn.graph == before and turn.nodes == [] and turn.changed == []
+    assert "The app provides no source `other`" in " ".join(turn.tool_results.values())
+    assert turn.graph == before and turn.changed == []
 
 
-async def test_approver_decides_source_changes():
+async def test_agent_places_and_configures_a_source_node_without_approval():
     decisions = []
-
-    def approve(tool, args):
-        decisions.append(tool)
-        return tool == "add_node"
-
     model, _ = script(
         [ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "second"})],
+        [ToolCallPart("set_config", {"name": "second", "config": {"ref": "data"}})],
         [TextPart("Done.")],
     )
-    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, approve=approve,
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           approve=lambda tool, args: decisions.append(tool) or False,
                            agent=create_agent(model, dashboard_tools=None))
     try:
         turn = await session.ask("Add a second source node")
     finally:
         session.close()
 
-    assert decisions == ["add_node"]
-    assert turn.nodes == ["second"]
+    assert decisions == []
+    assert turn.error is None and turn.nodes == ["second"]
 
 
 async def test_concurrent_sessions_keep_their_own_sources():

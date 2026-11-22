@@ -96,7 +96,7 @@ def test_served_app_offers_lumen_nodes_over_the_data(csv):
 
     assert type(editor) is FlowDash
     assert app.agent is False
-    assert SOURCE_ID in app.agent_sensitive_components
+    assert SOURCE_ID not in app.agent_sensitive_components
     (source,) = bound_sources(editor).values()
     assert list(bound_sources(editor)) == ["sales"]
     (table,) = listed_tables(source)
