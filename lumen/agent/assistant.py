@@ -15,6 +15,7 @@ from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
 from .explore import OwnNodesOnly
 from .history import stub_superseded_lookups
+from .tool_calls import FlowDashToolCalls
 
 # The instructions stay the same for a whole conversation and for every
 # source, so the provider's prompt cache keeps them; what changes reaches the
@@ -191,10 +192,14 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
     model_settings = MODEL_SETTINGS if model_settings is None else model_settings
-    toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
+    data, authoring = data_toolset(), authoring_toolset()
+    toolsets = [data, authoring, *kwargs.pop("toolsets", [])]
     text = base_instructions + (f"\n{instructions}" if instructions else "")
+    calls = FlowDashToolCalls([*data.tools, *authoring.tools], editing=authoring.tools)
     # Capabilities given here wrap the tools outside CheckedConfig, so e.g. a refusal comes before a test run.
-    capabilities = [ProcessHistory(stub_superseded_lookups), *kwargs.pop("capabilities", []), CheckedConfig()]
+    capabilities = [
+        ProcessHistory(stub_superseded_lookups), calls, *kwargs.pop("capabilities", []), CheckedConfig(),
+    ]
     # set_config now runs the SQL it is given, so fixing a query may take a few tries, and a
     # second cut-off answer in a run would otherwise end it.
     kwargs.setdefault("retries", {"tools": 3, "output": 2})
