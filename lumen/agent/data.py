@@ -20,6 +20,8 @@ from ..flowdash import (
     DATA_ID, FILTER_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID,
     check_query,
 )
+from ..flowdash.nodes import effective_limit
+from ..flowdash.results import expand
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
 from . import _graph
@@ -68,6 +70,57 @@ async def metaset(source: Source) -> Metaset:
 
 def _sources(source: BaseSQLSource) -> dict[tuple[str, str], BaseSQLSource]:
     return {(source.name, table): source for table in source.get_tables()}
+
+
+def resolve_input(deps: FlowDashDeps, name: str | None) -> tuple[str, BaseSQLSource]:
+    """
+    The node named ``name`` and the source a query reading it runs on: an
+    earlier SQL node's result, whose result table the query can read by
+    name, or a source as ``resolve_source`` finds it. A name that matches no
+    node falls back to ``resolve_source``, e.g. to the only source; any other
+    node is refused.
+    """
+    try:
+        port = _graph.input_port(deps.ops, name) if name else None
+        if port is None:
+            return resolve_source(deps, name)
+        value = _graph.output(deps.ops, *port.rsplit(".", 1))
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    if not isinstance(value, BaseSQLSource):
+        raise ModelRetry(f"SQL node {name!r} has no result yet.")
+    return name, value
+
+
+def _result_line(ops, name: str) -> str | None:
+    """A SQL node's result as a table a later query can read: its name, rows and typed columns."""
+    try:
+        pipeline = _graph.output(ops, name, "pipeline")
+        frame = _graph.output(ops, name, "data")
+    except OperationError:
+        return None
+    if pipeline is None or frame is None:
+        return None
+    limit = _graph.config_of(ops, name).get("limit")
+    ceiling = effective_limit(ops.editor, limit if isinstance(limit, int) else None)
+    rows = f"{len(frame)} rows shown, the tile's limit; a query reads every row" if len(frame) >= ceiling else f"{len(frame)} row{'s' * (len(frame) != 1)}"
+    types = {column: spec.get("type", "") for column, spec in (pipeline.schema or {}).items() if isinstance(spec, dict)}
+    columns = ", ".join(f"{column} {types.get(str(column), '')}".strip() for column in frame.columns)
+    return f"- {name}: table {pipeline.table!r} ({rows}); columns: {columns}"
+
+
+def earlier_results(ops) -> str | None:
+    """
+    The results of the SQL nodes on the dashboard, most recent first, which
+    a new query reads by table name when ``add_sql`` gets the node as its
+    source. Their columns come from the results, not from the catalog of
+    the source's tables.
+    """
+    names = [n for n in reversed(_graph.nodes(ops, SQL_ID))][:NODES_SHOWN]
+    lines = [line for name in names if (line := _result_line(ops, name)) is not None]
+    if not lines:
+        return None
+    return "Earlier results you can query by table name (pass the node as add_sql's source):\n" + "\n".join(lines)
 
 
 def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
@@ -125,6 +178,8 @@ def placed_nodes(ops) -> str | None:
     lines = [_node_line(ops, name, NODE_SQL_CHARS) for name in names[:limit]]
     if len(names) > limit:
         lines.append(f"- and {len(names) - limit} more; list_tables(node=...) shows one in full.")
+    if lines and (results := earlier_results(ops)):
+        lines += ["", results]
     return "\n".join(lines) or None
 
 
@@ -198,12 +253,14 @@ async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = 
         sql: One SELECT or WITH query.
         source: Source node; defaults to the only one.
     """
-    _, src = resolve_source(ctx.deps, source)
+    _, src = resolve_input(ctx.deps, source)
     try:
-        check_query(clean_sql(sql.strip(), src.dialect), src)
+        cleaned = clean_sql(sql.strip(), src.dialect)
+        check_query(cleaned, src)
+        root, statement = expand(cleaned, src)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
         return f"SQL parse/clean error: {format_error(exc)}"
-    return await execute_exploration_sql(None, sql, sources=_sources(src), timeout=QUERY_TIMEOUT)
+    return await execute_exploration_sql(None, statement, sources=_sources(root), timeout=QUERY_TIMEOUT)
 
 
 def lint(frame) -> str:

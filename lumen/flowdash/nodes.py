@@ -72,7 +72,9 @@ from .choices import pipeline_column_types, source_choices, table_choices
 from .contracts import (
     DATA_ID, FILTER_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SourceContract,
 )
-from .results import derive, expand, is_derived
+from .results import (
+    derive, expand, is_derived, root_of,
+)
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
 try:
@@ -209,9 +211,10 @@ def primed_result(source: BaseSQLSource, sql: str, frame: Any) -> Iterator[None]
     """
     Within the block, hand the result of ``sql`` (a ``result_sql``
     statement), already executed by the caller, to the next SQL node that
-    would run it, so it runs once.
+    would run it, so it runs once. On a SQL node's result source, ``sql`` is
+    the statement ``expand`` gives, which runs on the root source.
     """
-    key = (id(source), sql)
+    key = (id(root_of(source)), sql)
     _RESULTS[key] = frame
     try:
         yield

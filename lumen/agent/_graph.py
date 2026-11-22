@@ -9,6 +9,8 @@ from panel_flowdash.agent import (
     DashboardOps, OperationError, OutputUnavailable,
 )
 
+from ..flowdash import bound_sources
+
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
     """Names of the nodes in the order they were placed, optionally of one component."""
@@ -52,6 +54,23 @@ def feeding(ops: DashboardOps, target: str) -> str | None:
 def reading(ops: DashboardOps, output: str) -> list[str]:
     """The nodes whose inputs read the output port ``output`` (``node.port``)."""
     return list(dict.fromkeys(edge["to"].split(".")[0] for edge in _edges(ops) if edge["from"] == output))
+
+
+def input_port(ops: DashboardOps, name: str) -> str | None:
+    """
+    The output a new SQL node reading node ``name`` connects to when that is
+    an earlier SQL node: its ``result``. None for a source node, a name that
+    is no node or a name the app provides a source under, which names that
+    source; ``OperationError`` for any other node.
+    """
+    if name not in nodes(ops) or name in bound_sources(ops.editor):
+        return None
+    component = component_of(ops, name)
+    if component == "Lumen/sql":
+        return f"{name}.result"
+    if component == "Lumen/source":
+        return None
+    raise OperationError(f"{name!r} is a {component} node; pass a source or an earlier SQL node.")
 
 
 # The output port that carries a Lumen pipeline, by component.
