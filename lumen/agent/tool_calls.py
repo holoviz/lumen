@@ -32,8 +32,10 @@ class FlowDashToolCalls(AbstractCapability[FlowDashDeps]):
       call fails (``abort_call``) and report it when it succeeds
       (``take_notes``);
     - the edit listeners hear about each call of an editing tool;
-    - a refusal of the operations, a ``PermissionError``, comes back for the
-      model to work around rather than ending the run.
+    - a refusal of the operations, a ``PermissionError``, is the tool's
+      result, "Refused: ..." as panel-flowdash's tools give it, so refusals
+      do not use up the tool's retries; an ``OperationError`` is a mistake
+      the model is asked to fix.
 
     Parameters
     ----------
@@ -77,7 +79,7 @@ class FlowDashToolCalls(AbstractCapability[FlowDashDeps]):
                         abort()
                     raise
         except PermissionError as exc:
-            raise ModelRetry(f"Refused: {exc}") from exc
+            return f"Refused: {exc}"
         except OperationError as exc:
             raise ModelRetry(str(exc)) from exc
         finally:
