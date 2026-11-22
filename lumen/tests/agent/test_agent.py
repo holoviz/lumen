@@ -196,29 +196,12 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert tools == ["add_chart", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
-def evil_source_calls(session):
-    yaml = session.ops.get_dashboard().replace("ref: data", "ref: other")
-    return [
-        ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "evil"}, tool_call_id="c1"),
-        ToolCallPart("set_config", {"name": "data", "config": {"ref": "other"}}, tool_call_id="c2"),
-        ToolCallPart("replace_dashboard", {"dashboard_yaml": yaml}, tool_call_id="c3"),
-    ]
-
-
-async def test_agent_cannot_place_or_change_source_nodes():
-    returns = []
-
-    def respond(messages, info):
-        for part in messages[-1].parts:
-            if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-                returns.append(str(part.content))
-        if len(returns) == 0 and not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(parts=calls)
-        return ModelResponse(parts=[TextPart("Done.")])
-
-    model = FunctionModel(respond)
+async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
+    model, _ = script(
+        [ToolCallPart("set_config", {"name": "data", "config": {"ref": "other"}})],
+        [TextPart("Done.")],
+    )
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=create_agent(model, dashboard_tools=None))
-    calls = evil_source_calls(session)
     before = session.graph()
     try:
         turn = await session.ask("Point the dashboard at another database")
@@ -226,30 +209,27 @@ async def test_agent_cannot_place_or_change_source_nodes():
         session.close()
 
     assert turn.error is None
-    assert len(returns) == 3 and all("source nodes are placed and configured by the app" in text for text in returns)
-    assert turn.graph == before and turn.nodes == [] and turn.changed == []
+    assert "The app provides no source `other`" in " ".join(turn.tool_results.values())
+    assert turn.graph == before and turn.changed == []
 
 
-async def test_approver_decides_source_changes():
+async def test_agent_places_and_configures_a_source_node_without_approval():
     decisions = []
-
-    def approve(tool, args):
-        decisions.append(tool)
-        return tool == "add_node"
-
     model, _ = script(
         [ToolCallPart("add_node", {"component": "Lumen/source", "config": {"ref": "data"}, "name": "second"})],
+        [ToolCallPart("set_config", {"name": "second", "config": {"ref": "data"}})],
         [TextPart("Done.")],
     )
-    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, approve=approve,
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           approve=lambda tool, args: decisions.append(tool) or False,
                            agent=create_agent(model, dashboard_tools=None))
     try:
         turn = await session.ask("Add a second source node")
     finally:
         session.close()
 
-    assert decisions == ["add_node"]
-    assert turn.nodes == ["second"]
+    assert decisions == []
+    assert turn.error is None and turn.nodes == ["second"]
 
 
 async def test_concurrent_sessions_keep_their_own_sources():
@@ -720,3 +700,40 @@ def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_n
 
     assert 'add_node("Lumen/table", {"ref"' in TABLE_INSTRUCTIONS
     assert TABLE_INSTRUCTIONS not in INSTRUCTIONS
+
+
+@pytest.fixture
+def explored(empty):
+    """Operations on the exploration of ``empty``, as FlowDash's Explore view answers on it."""
+    flowdash_agent = pytest.importorskip("panel_flowdash.agent")
+    if not hasattr(flowdash_agent, "ExplorationOps"):
+        pytest.skip("panel-flowdash without ExplorationOps")
+    empty.editor.new_dashboard("Plants")
+    ops = flowdash_agent.ExplorationOps(empty.ops)
+    yield ops
+    ops.dispose()
+
+
+async def test_add_sql_in_explore_places_the_apps_source_beside_the_dashboard(empty, explored):
+    from panel_flowdash.agent import FlowDashDeps
+
+    ctx = SimpleNamespace(deps=FlowDashDeps(explored))
+    result = await add_sql(ctx, "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
+
+    assert result.startswith("Placed SQL node 'plant_total'")
+    assert _graph.config_of(explored, "energy") == {"ref": "energy"}
+    assert _graph.output(explored, "plant_total", "data")["mw"].tolist() == [3]
+    assert empty.ops.nodes() == []
+
+
+async def test_add_sql_in_explore_turns_a_refused_source_node_into_a_retry(empty, explored):
+    from panel_flowdash.agent import FlowDashDeps
+
+    def refuse(component, config):
+        return False
+
+    refuse.host_sources = True
+    explored.allow_source = refuse
+    with pytest.raises(ModelRetry, match="^Refused: .*Query a source node already on the dashboard"):
+        await add_sql(SimpleNamespace(deps=FlowDashDeps(explored)), "energy", "plant_total", "SELECT SUM(mw) AS mw FROM plants")
+    assert explored.nodes() == [] and empty.ops.nodes() == []

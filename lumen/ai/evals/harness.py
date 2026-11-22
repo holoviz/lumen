@@ -172,6 +172,8 @@ class Turn:
     document_summary: str | None = None
     validation_correct: bool | None = None
     validation_missing: list[str] | None = None
+    # The earlier turns whose answers this turn's answer reads, by index; empty when it reads none.
+    reads: list[int] | None = None
 
 
 @dataclass
@@ -191,6 +193,10 @@ class Output:
     turns: list[Turn]
     usage: Usage | None = None
     artifacts: list[TurnArtifacts] | None = None
+    # Each turn's answer read again after the last turn, for subjects whose answers can change
+    # later; None when every answer stays as it was given. An element is None when that turn's
+    # answer is gone, e.g. its node was removed, which fails stable_turns for a turn with rows.
+    final_rows: list[list[list[Any]] | None] | None = None
 
 
 Scoring = Literal["all", "outcome"]
@@ -235,6 +241,12 @@ class Expected:
     validation_correct: bool | None = field(default=None, metadata=_architecture("validation"))
     gold_sql: str | None = field(default=None, metadata=_outcome("execution_accuracy"))
     error_contains: str | None = field(default=None, metadata=_outcome("error"))
+    # Per turn, the earlier turn (an index, or a list of indices) whose answer the turn's answer
+    # reads, or None when it reads none, which equals an empty Turn.reads. Scored only for
+    # subjects that report Turn.reads.
+    turn_reads: list[int | list[int] | None] | None = field(default=None, metadata=_outcome("turn_reads"))
+    # After the last turn, every earlier answer still gives its turn_rows.
+    stable_turns: bool = field(default=False, metadata=_outcome("stable_turns"))
 
     def expectation_kinds(self) -> set[str]:
         """Kinds of the expectations this case sets beyond the defaults."""
@@ -242,6 +254,19 @@ class Expected:
             item.metadata["kind"] for item in fields(self)
             if getattr(self, item.name) != item.default
         }
+
+
+# Expectations added after evaluator version 2, left out of a case's fingerprint while unset so
+# the fingerprints of cases that do not use them stay as they were.
+_UNSET_UNFINGERPRINTED = {"turn_reads": None, "stable_turns": False}
+
+
+def _rows_match(rows: list[list[Any]] | None, expected: list[list[Any]]) -> bool:
+    return rows is not None and len(rows) == len(expected) and sorted(rows, key=str) == sorted(expected, key=str)
+
+
+def _reads(value: int | list[int] | None) -> list[int]:
+    return [] if value is None else [value] if isinstance(value, int) else sorted(value)
 
 
 ARCHITECTURE_CHECKS = frozenset(
@@ -679,6 +704,16 @@ class CheckResult(Evaluator[Inputs, Output, Expected]):
             checks["validation"] = last.validation_correct is expected.validation_correct
         if expected.error_contains is not None:
             checks["error"] = expected.error_contains in " ".join(last.task_errors or [])
+        if expected.turn_reads is not None and all(turn.reads is not None for turn in ctx.output.turns):
+            checks["turn_reads"] = len(ctx.output.turns) == len(expected.turn_reads) and all(
+                sorted(turn.reads) == _reads(reads)
+                for turn, reads in zip(ctx.output.turns, expected.turn_reads, strict=True)
+            )
+        if expected.stable_turns:
+            final = ctx.output.final_rows or [turn.rows for turn in ctx.output.turns]
+            checks["stable_turns"] = expected.turn_rows is not None and len(final) == len(expected.turn_rows) and all(
+                rows is None or _rows_match(found, rows) for found, rows in zip(final, expected.turn_rows, strict=True)
+            )
         return checks
 
 
@@ -703,7 +738,10 @@ def case_fingerprint(cases: list[Case], fixtures: dict[str, Any] | None = None,
                      instructions: str = "", instruction_version: str = "",
                      settings: dict[str, Any] | None = None, subject_fingerprint: str | None = None) -> str:
     definitions = [
-        {"name": case.name, "inputs": asdict(case.inputs), "expected": asdict(case.metadata or Expected())}
+        {"name": case.name, "inputs": asdict(case.inputs), "expected": {
+            key: value for key, value in asdict(case.metadata or Expected()).items()
+            if key not in _UNSET_UNFINGERPRINTED or value != _UNSET_UNFINGERPRINTED[key]
+        }}
         for case in cases
     ]
     payload = {"evaluator_version": EVALUATOR_VERSION, "cases": definitions, "fixtures": fixtures,

@@ -99,10 +99,9 @@ In a `flowdash serve` project, set `component_libraries = ["lumen.flowdash"]` in
 from lumen.sources.duckdb import DuckDBSource
 
 component_libraries = ["lumen.flowdash"]
-agent_sensitive_components = ["Lumen/source"]
 editor_options = {"context": {"lumen.sources": {"data": DuckDBSource(uri="warehouse.duckdb")}}}
 ```
 
 Each session's editor copies the `lumen.sources` dict, so adding or removing a source in one session does not reach another; the source objects themselves are shared. Without sources, a source node says how to provide them.
 
-Lumen's agent reads every source the app provides by its ref, also on a dashboard with no source node yet, and its `add_sql` places a source node for a source when no node shows it. Placing or re-pointing a source node with the dashboard tools (`add_node`, `set_config`) still needs approval through `agent_sensitive_components`. A table node's `ref` needs none: like the source nodes `add_sql` places, it can only name a source the app already lets the agent read.
+Lumen's agent reads every source the app provides by its ref, also on a dashboard with no source node yet, and its `add_sql` places a source node for a source when no node shows it. Placing or re-pointing a source or table node with the dashboard tools (`add_node`, `set_config`) needs no approval, since a `ref` can only name a source the app already lets the agent read. A project that wants approval for them can still list them in `agent_sensitive_components`.
