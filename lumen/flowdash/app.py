@@ -4,6 +4,7 @@ A FlowDash app over data the host provides, built from Lumen's nodes; what
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import weakref
@@ -34,8 +35,13 @@ _POSITIONAL = re.compile(r"data(_\d+)?")
 # Names the source of several served files had before; still resolve as aliases.
 FILES_REF = "files"
 
-# The source each served data file is read into, with the files, in command-line order.
-_FILES: weakref.WeakKeyDictionary[Source, list[_DataFile]] = weakref.WeakKeyDictionary()
+# The source the served data files are read into: the files in command-line order
+# and the names a served folder or the files' folders gave it.
+_FILES: weakref.WeakKeyDictionary[Source, tuple[list[_DataFile], list[str]]] = weakref.WeakKeyDictionary()
+# The names of a served source from before ``name_sources`` named it by its ref.
+_NAMES: weakref.WeakKeyDictionary[Source, tuple[str, list[str]]] = weakref.WeakKeyDictionary()
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,8 +65,10 @@ class _DataFile:
         if not name.lower().endswith(_DATA_FILES):
             return None
         stem, _, extension = name.rpartition(".")
+        # A folder counts only when given, never the working directory's name.
+        given_folder = remote or Path(text).parent != Path(".")
         return cls(text, text if remote else str(path), _slug(stem) or "data", _slug(extension),
-                   _slug(path.parent.name), remote)
+                   _slug(path.parent.name) if given_folder else "", remote)
 
 
 def _slug(text: str) -> str:
@@ -101,7 +109,7 @@ def _served_files(data: Sequence[str | os.PathLike | Source]) -> tuple[list[_Dat
     files: dict[str, _DataFile] = {}
     given = []
     for item in data:
-        if isinstance(item, Source):
+        if not isinstance(item, (str, os.PathLike)):
             continue
         text = str(item)
         if "://" not in text and Path(text).is_dir():
@@ -166,15 +174,21 @@ def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
     work in queries where only one file had them, but are not listed.
     """
     from ..sources.data import resolve_data
-    from .nodes import add_legacy_tables
+    from .nodes import add_legacy_tables, set_served_files
 
     files, folder = _served_files(data)
     tables = _numbered([file.stem for file in files])
+    stems = [file.stem for file in files]
+    if clashing := [(table, file) for file, table in zip(files, tables, strict=True) if stems.count(file.stem) > 1]:
+        logger.warning(
+            "Data files share a name, so their tables are numbered in the order given: %s",
+            ", ".join(f"{table}: {file.text}" for table, file in clashing),
+        )
     items: list[Any] = []
     positions: list[int] = []
     first_file = None
     for position, item in enumerate(data):
-        if isinstance(item, Source):
+        if not isinstance(item, (str, os.PathLike)):
             items.append(item)
             positions.append(position)
             continue
@@ -189,14 +203,21 @@ def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
     sources = resolve_data(items)
     provided = next((s for s in sources if s.name == PROVIDED_SOURCE_NAME), None) if files else None
     others = [s for s in sources if s is not provided]
-    order = dict(zip(map(id, others), positions, strict=True)) if len(others) == len(positions) else {}
     if provided is not None:
         with param.edit_constant(provided):
             provided.name = _source_name(files, folder)
         add_legacy_tables(provided, _legacy_tables(files, tables))
-        _FILES[provided] = files
+        folders = sorted({file.parent for file in files if file.parent} | ({folder} if folder else set()))
+        _FILES[provided] = (files, folders)
+        set_served_files(provided, {table: file.text for file, table in zip(files, tables, strict=True)})
+    if len(others) != len(positions):
+        # Data that resolve_data reads into sources of its own making, e.g. data
+        # frames; its order is then the one to keep.
+        return sources
+    order = dict(zip(map(id, others), positions, strict=True))
+    if provided is not None:
         order[id(provided)] = first_file
-    return sorted(sources, key=lambda s: order.get(id(s), len(data)))
+    return sorted(sources, key=lambda s: order[id(s)])
 
 
 def _names(source: Source) -> tuple[str, list[str]]:
@@ -204,10 +225,13 @@ def _names(source: Source) -> tuple[str, list[str]]:
     The name ``source`` is named by, and the names earlier releases of
     ``lumen serve --flowdash`` may have given it.
     """
-    files = _FILES.get(source)
-    if files is not None:
+    if source in _NAMES:
+        return _NAMES[source]
+    served = _FILES.get(source)
+    if served is not None:
+        files, folders = served
         stems = sorted({file.stem for file in files})
-        legacy = [FILES_REF, *stems, *(f"{stem}_{FILES_REF}" for stem in stems)]
+        legacy = [FILES_REF, "local", *stems, *(f"{stem}_{FILES_REF}" for stem in stems), *folders]
         return _slug(source.name) or "data", legacy
     tables = list(source.get_tables())
     if not _auto_named(source) and (name := _slug(source.name)):
@@ -238,6 +262,19 @@ def source_refs(sources: Sequence[Source]) -> dict[str, Source]:
     """
     refs = _numbered([_names(source)[0] for source in sources])
     return dict(zip(refs, sources, strict=True))
+
+
+def name_sources(refs: Mapping[str, Source]) -> None:
+    """
+    Name each source of ``refs`` by its ref, so a source node and the agent
+    show the name a dashboard uses, keeping the names it had for
+    ``source_aliases``.
+    """
+    for ref, source in refs.items():
+        _NAMES.setdefault(source, _names(source))
+        if source.name != ref:
+            with param.edit_constant(source):
+                source.name = ref
 
 
 def source_aliases(refs: Mapping[str, Source]) -> dict[str, str]:
@@ -300,6 +337,8 @@ def build_routes(
         Further ``FlowDashApp`` parameters.
     """
     sources = source_refs(resolve_sources(data))
+    aliases = source_aliases(sources)
+    name_sources(sources)
     models = parse_models(agent_model, source="agent_model")
     if models:
         from ..agent import create_agent
@@ -314,7 +353,7 @@ def build_routes(
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
     editor_options = dict(params.pop("editor_options", {}))
     editor_options["context"] = {
-        **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: source_aliases(sources),
+        **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: aliases,
     }
     return FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
