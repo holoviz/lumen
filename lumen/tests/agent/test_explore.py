@@ -235,3 +235,27 @@ async def test_the_guard_steps_aside_on_panel_flowdashs_exploration_ops(monkeypa
     if not hasattr(flowdash_agent, "ExplorationOps"):
         pytest.skip("panel-flowdash without ExplorationOps (fd #238)")
     assert await _step_aside(flowdash_agent.ExplorationOps, monkeypatch) == ("changed", [{"name": "frozen"}])
+
+
+async def test_explore_fixes_a_table_it_placed_but_cannot_rewrite_an_earlier_node_with_add_metric():
+    session, requests = explore_session(
+        [ToolCallPart("add_sql", {"source": "data", "name": "mine", "sql": "SELECT category FROM sales"}, tool_call_id="a1")],
+        [ToolCallPart("add_table", {"data": "mine", "name": "rows"}, tool_call_id="a2")],
+        [ToolCallPart("set_config", {"name": "rows", "config": {"spec": {"page_size": 5}}}, tool_call_id="s1")],
+        [TextPart("Placed and fixed my table.")],
+        [ToolCallPart("add_metric", {"metric": "capacity", "name": "totals"}, tool_call_id="m1")],
+        [TextPart("Refused.")],
+    )
+    try:
+        session.add_sql("totals", "SELECT category, SUM(amount) AS total FROM sales GROUP BY category")
+        await session.ask("Show the categories as a table of five rows")
+        await session.ask("Turn the totals into a metric")
+        spec = _graph.config_of(session.ops, "rows")["spec"]
+    finally:
+        session.close()
+
+    fixed = requests[3].parts[0]
+    assert isinstance(fixed, ToolReturnPart) and fixed.outcome != "retried"
+    assert spec == {"page_size": 5}
+    (refused,) = requests[5].parts
+    assert refused.outcome == "retried" and "stay as they are in Explore" in str(refused.content)
