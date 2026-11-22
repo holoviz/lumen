@@ -34,6 +34,7 @@ import hashlib
 import inspect
 import math
 import threading
+import time
 import weakref
 
 from collections.abc import Iterator, Mapping
@@ -904,9 +905,15 @@ def default_table(sql: str) -> str:
 _OVERVIEW_NAMES = 6
 # Tables of a source whose schema a source's overview reads; the others are listed by name only.
 _OVERVIEW_TABLES = 20
-# The schema of each table read for a source's overview, or None if it failed, so it is read once
-# even when the source does not store schemas itself.
-_SCHEMAS_READ: weakref.WeakKeyDictionary[Source, dict[str, dict | None]] = weakref.WeakKeyDictionary()
+# Tables whose schema FlowDash's preview worker reads straight away, while the inspector waits for it.
+_OVERVIEW_TABLES_INLINE = 5
+# Seconds a schema read for a source's overview is remembered, so a changed table shows up again.
+_SCHEMA_TTL = 120
+# FlowDash's preview worker threads, which run the inspector's and code panel's preview hooks.
+_FLOWDASH_PREVIEW_THREAD = "flowdash-preview"
+# The schema of each table read for a source's overview, or None if it failed, with when it was
+# read, so it is read once in a while even when the source does not store schemas itself.
+_SCHEMAS_READ: weakref.WeakKeyDictionary[Source, dict[str, tuple[float, dict | None]]] = weakref.WeakKeyDictionary()
 # The schema reads queued or running, and the source nodes to refresh once each is done.
 _SCHEMA_PENDING: weakref.WeakKeyDictionary[Source, tuple[Future, weakref.WeakSet]] = weakref.WeakKeyDictionary()
 
@@ -915,7 +922,7 @@ def _table_metadata(source: Source, table: str, cached: Mapping[str, Any]) -> tu
     """The row count and column names of ``table`` that are known without a query."""
     schema = cached.get(table)
     if not isinstance(schema, dict):
-        schema = _SCHEMAS_READ.get(source, {}).get(table)
+        schema = _schemas_read(source).get(table)
     if isinstance(schema, dict):
         length = schema.get("__len__")
         rows = length if isinstance(length, int) and not isinstance(length, bool) else None
@@ -947,7 +954,7 @@ def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
     tables = list(listed_tables(source))
     cached = source._get_schema_cache() or {}
     entries = [(table, *_table_metadata(source, table, cached)) for table in tables]
-    read = _SCHEMAS_READ.get(source, {})
+    read = _schemas_read(source)
     missing = [table for table, _, names in entries[:_OVERVIEW_TABLES] if names is None and table not in read]
     if all(names is None for _, _, names in entries):
         count = len(entries)
@@ -962,6 +969,16 @@ def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
     return overview, missing
 
 
+def _schemas_read(source: Source) -> dict[str, dict | None]:
+    """The schemas read for ``source``'s overview that have not expired, None for those that failed."""
+    now = time.monotonic()
+    with _PREVIEW_LOCK:
+        read = _SCHEMAS_READ.get(source, {})
+        for table in [table for table, (at, _) in read.items() if now - at > _SCHEMA_TTL]:
+            del read[table]
+        return {table: schema for table, (_, schema) in read.items()}
+
+
 def _read_schemas(source: Source, tables: list[str]) -> None:
     """Read the schema of each of ``tables`` and remember it, or that it failed."""
     for table in tables:
@@ -970,7 +987,9 @@ def _read_schemas(source: Source, tables: list[str]) -> None:
         except Exception:
             schema = None
         with _PREVIEW_LOCK:
-            _SCHEMAS_READ.setdefault(source, {})[table] = schema if isinstance(schema, dict) else None
+            _SCHEMAS_READ.setdefault(source, {})[table] = (
+                time.monotonic(), schema if isinstance(schema, dict) else None
+            )
 
 
 def _source_summary(node: LumenNode, source: Source) -> pd.DataFrame | str:
@@ -978,17 +997,19 @@ def _source_summary(node: LumenNode, source: Source) -> pd.DataFrame | str:
     The overview a source node previews: its tables with their row and
     column counts and column names. Reading a schema counts the table's
     rows, so on the event loop the schemas not known yet are read by a
-    worker and the node's previews refresh once the batch is done. On a
-    worker thread, e.g. the inspector's, they are read straight away, and on
-    the main thread without a loop, e.g. headless, only what is known is shown.
+    worker and the node's previews refresh once the batch is done. On
+    FlowDash's preview worker, which runs the inspector's Data tab off the
+    loop, the first few are read straight away. Anywhere else, e.g. headless
+    or an agent's tool thread, only what is known is shown, so nothing is
+    queried.
     """
     overview, missing = _source_overview(source)
     if not missing:
         return overview
     if not _blocks_event_loop():
-        if threading.current_thread() is threading.main_thread():
+        if not threading.current_thread().name.startswith(_FLOWDASH_PREVIEW_THREAD):
             return overview
-        _read_schemas(source, missing)
+        _read_schemas(source, missing[:_OVERVIEW_TABLES_INLINE])
         return _source_overview(source)[0]
     with _PREVIEW_LOCK:
         if (pending := _SCHEMA_PENDING.get(source)) is not None:

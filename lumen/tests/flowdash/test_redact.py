@@ -138,6 +138,73 @@ cases.update({
 })
 
 
+AWS = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+cases.update({
+    "host_token": {"host": "ghp_S3CR3TXYZ"},
+    "database_token": {"database": f"tok{S}"},
+    "database_md": {"database": f"md:my_db?motherduck_token={S}"},
+    "uri_md": {"uri": f"md:?motherduck_token={S}"},
+    "host_userinfo": {"host": f"u:{S}@h"},
+    "cache_dir_userinfo": {"cache_dir": f"s3://u:{S}@bucket/cache"},
+    "cache_dir_query": {"cache_dir": f"/tmp/c?token={S}"},
+    "root_path_secret": {"root": f"/home/u/{S}"},
+    "url_path_token": {"url": f"https://hooks.example.com/services/{S}/data.csv"},
+    "url_slash_pw": {"url": f"postgresql://u:pa/{S}@host/db"},
+    "url_hash_pw": {"url": f"postgresql://u:p#{S}@host/db"},
+    "url_digits_pw": {"url": f"postgresql://u:1234/{S}@host/db"},
+    "url_fragment": {"url": f"https://h/f.csv#{S}"},
+    "url_ipv6": {"url": f"postgresql://u:{S}@[::1]:5432/db"},
+    "table_key_url_creds": {"tables": {f"s3://AKIA:{S}@b/f.csv": "SELECT 1"}},
+    "table_key_secret_name": {"tables": {f"tok_{S}": "SELECT 1"}},
+    "table_list_url_creds": {"tables": [f"https://u:{S}@h/f.csv"]},
+    "table_value_url_query": {"tables": {"t": f"https://h/f.csv?sig={S}"}},
+    "table_value_path_aws": {"tables": {"t": AWS}},
+    "excluded_tables_url": {"excluded_tables": [f"https://u:{S}@h/x"]},
+    "table_params": {"table_params": {"t": {"token": S}}},
+    "mirror_key": {"mirrors": {f"https://u:{S}@h/x": "t"}},
+    "sql_comment_line": {"tables": {"t": f"SELECT 1 -- token {S}\n"}},
+    "sql_comment_block": {"tables": {"t": f"SELECT /* {S} */ 1"}},
+    "sql_hint": {"tables": {"t": f"SELECT /*+ {S} */ 1"}},
+    "sql_quoted_ident": {"tables": {"t": f'SELECT * FROM "AKIA{S}"'}},
+    "sql_quoted_ident_alias": {"tables": {"t": f'SELECT 1 AS "{S}"'}},
+    "sql_unquoted_ident": {"tables": {"t": f"SELECT 1 AS tok_{S}"}},
+    "sql_read_csv_url": {"tables": {"t": f"SELECT * FROM read_csv('https://u:{S}@h/f.csv?token={S}')"}},
+    "sql_read_csv_kw_aws": {"tables": {"t": f"SELECT * FROM read_csv('s3://b/f.csv', s3_secret_access_key='{AWS}')"}},
+    "sql_literal_aws": {"tables": {"t": f"SELECT '{AWS}' AS k"}},
+    "sql_literal_file": {"tables": {"t": f"SELECT 'x{S}.csv' AS k"}},
+    "sql_insert_aws": {"initializers": [f"INSERT INTO creds VALUES ('{AWS}')"]},
+    "sql_create_secret_aws": {"initializers": [f"CREATE SECRET (TYPE s3, KEY_ID 'AKIA', SECRET '{AWS}')"]},
+    "sql_create_persistent_secret_aws": {"initializers": [f"CREATE PERSISTENT SECRET s (TYPE s3, SECRET '{AWS}')"]},
+    "sql_create_table_as": {"initializers": [f"CREATE TABLE c AS SELECT '{AWS}' AS s"]},
+    "sql_create_default": {"initializers": [f"CREATE TABLE c (s VARCHAR DEFAULT '{S}')"]},
+    "sql_national": {"tables": {"t": f"SELECT N'{S}'"}},
+    "sql_hex": {"tables": {"t": f"SELECT x'{S.encode().hex()}'"}},
+    "sql_raw_dollar": {"tables": {"t": f"SELECT $${S}$$"}},
+    "sql_raw_dollar_tag": {"tables": {"t": f"SELECT $tag${S}$tag$"}},
+    "sql_estring": {"tables": {"t": f"SELECT E'{S}'"}},
+    "sql_map_header": {"initializers": [f"CREATE SECRET h (TYPE http, EXTRA_HTTP_HEADERS MAP {{'Authorization': 'Bearer {S}'}})"]},
+    "sql_struct_key": {"tables": {"t": f"SELECT {{'{S}': 1}} AS s"}},
+    "sql_attach_conn": {"initializers": [f"ATTACH 'host=h password={S}' AS db (TYPE postgres)"]},
+    "sql_attach_path": {"initializers": [f"ATTACH 's3://u:{S}@b/x.duckdb' AS db"]},
+    "sql_set_variable": {"initializers": [f"SET VARIABLE tok = '{S}'"]},
+    "sql_call": {"initializers": [f"CALL load_aws_credentials('{S}')"]},
+    "sql_select_fn": {"initializers": [f"SELECT set_config('s3_secret', '{S}')"]},
+    "sql_multi": {"initializers": [f"SELECT 1; SET s3_secret_access_key='{S}'; SELECT 2"]},
+    "sql_semicolon_in_literal": {"initializers": [f"SELECT 'a;{S}'"]},
+    "sql_expr_param": {"sql_expr": f"SELECT * FROM {{table}} WHERE token = '{S}'"},
+    "sql_cast_ident": {"tables": {"t": f"SELECT CAST('{S}' AS VARCHAR)"}},
+    "unparseable": {"tables": {"t": f"SELEC '{S}' FRM"}},
+    "key_lower_secret": {f"tok{S.lower()}": "x"},
+    "safe_setting_secret_val": {"warehouse": f"tok_{S}"},
+    "schema_secret": {"schema": S},
+    "nested_source": {"source": {"type": "sqlalchemy", "url": f"pg://u:{S}@h/d"}},
+    "array": {"api_key": np.array([1, 2])},
+    "frame": {"x": pd.DataFrame({"a": [1]})},
+    "env_whole_short": {"host": "tok123"},
+})
+CANARIES += [S.lower(), AWS, S.encode().hex()]
+
+
 @pytest.mark.parametrize("name", sorted(cases))
 def test_no_secret_survives(name, caplog):
     with caplog.at_level(logging.DEBUG):
@@ -157,6 +224,7 @@ def test_safe_values_stay_readable():
             "orders": "/data/orders.csv",
             "events": "s3://bucket/events/*.parquet",
             "by_region": "SELECT region, SUM(amount) AS total FROM read_parquet('/data/o.parquet') GROUP BY region",
+            "nums": "SELECT i\nFROM range(500) t(i)  -- note\nWHERE i > 2",
         },
         "excluded_tables": ["tmp_scratch"],
     }
@@ -167,7 +235,9 @@ def test_safe_values_stay_readable():
     assert redacted["initializers"] == ["INSTALL httpfs", "LOAD ***", "SET ***"]
     assert redacted["tables"]["orders"] == "/data/orders.csv"
     assert redacted["tables"]["events"] == "s3://bucket/events/*.parquet"
-    assert "read_parquet('/data/o.parquet')" in redacted["tables"]["by_region"].lower()
+    assert redacted["tables"]["by_region"] == spec["tables"]["by_region"]
+    # SQL is shown as written, not as sqlglot writes it again, with comments dropped.
+    assert redacted["tables"]["nums"] == "SELECT i\nFROM range(500) t(i)\nWHERE i > 2"
     assert redacted["excluded_tables"] == ["tmp_scratch"]
 
 

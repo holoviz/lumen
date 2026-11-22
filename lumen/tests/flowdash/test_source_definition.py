@@ -219,11 +219,43 @@ def test_source_overview_reads_each_schema_once_when_the_source_does_not_store_i
     assert overview.to_dict("records") == [{"table": "nums", "rows": 10, "columns": 1, "column names": "i"}]
 
 
-def test_source_overview_on_a_worker_thread_reads_schemas_straight_away():
-    source = DuckDBSource(uri=":memory:", tables={"sales": "SELECT 1 AS amount"})
-    node = instance(editor_with(source), "data")
+def overview_on_thread(node, name):
     result = []
-    worker = threading.Thread(target=lambda: result.append(node.__flowdash_preview__()))
+    worker = threading.Thread(target=lambda: result.append(node.__flowdash_preview__()), name=name)
     worker.start()
     worker.join(10)
-    assert result[0].to_dict("records") == [{"table": "sales", "rows": 1, "columns": 1, "column names": "amount"}]
+    return result[0]
+
+
+def test_source_overview_on_flowdash_preview_worker_reads_schemas_straight_away():
+    source = DuckDBSource(uri=":memory:", tables={"sales": "SELECT 1 AS amount"})
+    node = instance(editor_with(source), "data")
+    overview = overview_on_thread(node, "flowdash-preview_0")
+    assert overview.to_dict("records") == [{"table": "sales", "rows": 1, "columns": 1, "column names": "amount"}]
+
+
+def test_source_overview_on_another_thread_does_not_query(executed):
+    source = DuckDBSource(uri=":memory:", tables={"sales": "SELECT 1 AS amount"})
+    node = instance(editor_with(source), "data")
+    executed.clear()
+    assert overview_on_thread(node, "agent-tool") == "1 table: sales"
+    assert executed == []
+
+
+def test_source_overview_reads_a_schema_again_once_it_expires(monkeypatch):
+    source = DuckDBSource(uri=":memory:", tables={"nums": "SELECT 1 AS i"}, cache_schema=False)
+    node = instance(editor_with(source), "data")
+    calls = []
+    original = source.get_schema
+
+    def counted(table=None, limit=None, shuffle=False):
+        calls.append(table)
+        return original(table, limit, shuffle)
+
+    monkeypatch.setattr(source, "get_schema", counted)
+    overview_on_thread(node, "flowdash-preview_0")
+    overview_on_thread(node, "flowdash-preview_0")
+    assert calls == ["nums"]
+    monkeypatch.setattr(flowdash_nodes, "_SCHEMA_TTL", -1)
+    overview_on_thread(node, "flowdash-preview_0")
+    assert calls == ["nums", "nums"]
