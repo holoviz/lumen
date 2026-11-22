@@ -110,6 +110,12 @@ except ImportError:
     # A panel-flowdash without global filters never asks the nodes for their columns.
     request_filters = None
 
+try:
+    from panel_flowdash import placement_context
+except ImportError:
+    # panel-flowdash 0.1.0rc7 and earlier, where the ``_legacy_`` helpers and ``_next_tick`` stand in for it.
+    placement_context = None
+
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
 
@@ -2255,6 +2261,68 @@ def _next_tick(callback: Any) -> None:
         doc.add_next_tick_callback(callback)
 
 
+def _legacy_new_view(editor: Any) -> bool:
+    """
+    Whether a view created now is one someone added, for a panel-flowdash
+    without ``placement_context``. A dashboard is loaded, or a version
+    restored, with the canvas muted; without the flag, in a FlowDash that
+    renamed it, no view can tell a new node from a loaded one, so none
+    takes a default.
+    """
+    return editor is not None and not getattr(editor, "_muted", True)
+
+
+def _legacy_store_default(node: LumenViewNode, default: dict[str, Any]) -> None:
+    """
+    Set the spec of ``node`` to ``default`` for a panel-flowdash without
+    ``FlowDash.set_default``, as part of the edit that gave the node its
+    pipeline, which FlowDash records right after the pipeline arrives. A
+    pipeline that arrives on its own, e.g. a query run off the event loop,
+    has no such edit, so the default is then recorded as a config edit on
+    the next tick.
+    """
+    editor = node.editor
+    history = getattr(editor, "_history", None)
+    if history is None or not hasattr(editor, "_hydrating"):
+        node.spec = default
+        return
+    head = getattr(history, "_head", None)
+    # FlowDash records no version while it hydrates; the spec is still synced back and marks the dashboard unsaved.
+    hydrating, editor._hydrating = editor._hydrating, True
+    try:
+        node.spec = default
+    finally:
+        editor._hydrating = hydrating
+    node_ref, editor_ref = weakref.ref(node), weakref.ref(editor)
+
+    def record():
+        owner, view = editor_ref(), node_ref()
+        if owner is None or view is None or getattr(getattr(owner, "_history", None), "_head", None) != head:
+            return
+        graph = getattr(owner, "_dataflow_graph", None)
+        name_of, record_edit = getattr(owner, "_node_name", None), getattr(owner, "_record_edit", None)
+        if graph is None or not callable(name_of) or not callable(record_edit):
+            return
+        try:
+            node_id = view.node_id()
+            if node_id is None or graph.get_config_state(node_id) is None:
+                return
+            name = name_of(node_id)
+            record_edit(f"Changed the config of {name}", op="set_config", args={"name": name, "keys": ["spec"]})
+        except Exception:
+            logger.warning("The default spec of a Lumen view could not be recorded", exc_info=True)
+
+    _next_tick(record)
+
+
+def _legacy_code_panel_node(editor: Any) -> Any:
+    """The id of the node the code panel shows, for a panel-flowdash without ``FlowDash.code_panel_node``."""
+    try:
+        return editor.code_panel.param.instance_id
+    except Exception:
+        return None
+
+
 @functools.cache
 def _view_class(view_type: str) -> type:
     """The Lumen View class of ``view_type``, e.g. ``"vegalite"``, imported on first use."""
@@ -2311,10 +2379,11 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
     _empty: ClassVar[str] = "No chart yet"
 
     def __init__(self, **params):
-        editor = current_dashboard()
-        # A dashboard is loaded, or a version restored, with the canvas muted; only a new view takes a default.
-        # Without the flag, a FlowDash that renamed it, no view can tell a new node from a loaded one, so none takes a default.
-        self._may_default = editor is not None and not getattr(editor, "_muted", True)
+        if placement_context is None:
+            self._may_default = _legacy_new_view(current_dashboard())
+        else:
+            # A view a dashboard load, an undo or a restored version brings back keeps its spec.
+            self._may_default = placement_context() == "new"
         super().__init__(**params)
         settings = getattr(self.editor, "settings", None)
         if self.themed and settings is not None and "color_scheme" in settings.param:
@@ -2382,49 +2451,23 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
             return False
         if not default:
             return False
-        self._store_default(default)
-        return True
+        return self._store_default(default)
 
-    def _store_default(self, default: dict[str, Any]) -> None:
+    def _store_default(self, default: dict[str, Any]) -> bool:
         """
-        Set the spec to ``default`` as part of the edit that gave the node its
-        pipeline, e.g. connecting it, which FlowDash records right after the
-        pipeline arrives, so one undo takes back both. A pipeline that arrives
-        on its own, e.g. a query run off the event loop, has no such edit, so
-        the default is then recorded as a config edit on the next tick.
+        Give the node ``default`` as its spec through the editor's
+        ``set_default``, which records it as part of the edit that gave the
+        node its pipeline, e.g. connecting it, so one undo takes back both.
+        True if the spec changed; one set off the event loop changes later.
         """
-        editor = self.editor
-        history = getattr(editor, "_history", None)
-        if history is None or not hasattr(editor, "_hydrating"):
-            self.spec = default
-            return
-        head = getattr(history, "_head", None)
-        # FlowDash records no version while it hydrates; the spec is still synced back and marks the dashboard unsaved.
-        hydrating, editor._hydrating = editor._hydrating, True
-        try:
-            self.spec = default
-        finally:
-            editor._hydrating = hydrating
-        node, editor_ref = weakref.ref(self), weakref.ref(editor)
-
-        def record():
-            owner, view = editor_ref(), node()
-            if owner is None or view is None or getattr(getattr(owner, "_history", None), "_head", None) != head:
-                return
-            graph = getattr(owner, "_dataflow_graph", None)
-            name_of, record_edit = getattr(owner, "_node_name", None), getattr(owner, "_record_edit", None)
-            if graph is None or not callable(name_of) or not callable(record_edit):
-                return
-            try:
-                node_id = view.node_id()
-                if node_id is None or graph.get_config_state(node_id) is None:
-                    return
-                name = name_of(node_id)
-                record_edit(f"Changed the config of {name}", op="set_config", args={"name": name, "keys": ["spec"]})
-            except Exception:
-                logger.warning("The default spec of a Lumen view could not be recorded", exc_info=True)
-
-        _next_tick(record)
+        if placement_context is None:
+            _legacy_store_default(self, default)
+            return True
+        editor, node_id = self.editor, self.node_id()
+        if editor is None or node_id is None:
+            return False
+        editor.set_default(node_id, {"spec": default})
+        return bool(self.spec)
 
     def _color_scheme(self) -> str | None:
         scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
@@ -2475,10 +2518,7 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         if editor is None or not callable(getattr(editor, "edit_spec", None)):
             return message
         node_id = self.node_id()
-        try:
-            shown = editor.code_panel.param.instance_id
-        except Exception:
-            shown = None
+        shown = _legacy_code_panel_node(editor) if placement_context is None else editor.param.code_panel_node
         # Hidden while the code panel shows this node, which may also be showing the view itself.
         button = pmui.Button(
             label="Edit spec", icon="data_object", variant="outlined", size="small",
