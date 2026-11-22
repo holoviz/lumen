@@ -163,10 +163,10 @@ def test_metric_over_a_source_not_served_is_left_out_with_a_warning(duck):
 
 def test_unknown_sections_are_ignored_with_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="lumen.flowdash.project"):
-        project = parse_project("theme:\n  primary: red\nmetrics: {}\n", PROJECT_FILE)
-    assert project.get("theme") == {"primary": "red"}
+        project = parse_project("widgets:\n  primary: red\nmetrics: {}\n", PROJECT_FILE)
+    assert project.get("widgets") == {"primary": "red"}
     assert read_metrics(project) == {}
-    assert "flowdash.yaml:1:1: Ignoring the unknown section 'theme'" in caplog.text
+    assert "flowdash.yaml:1:1: Ignoring the unknown section 'widgets'" in caplog.text
 
 
 def test_the_project_file_is_found_next_to_the_data_only(tmp_path, monkeypatch):
