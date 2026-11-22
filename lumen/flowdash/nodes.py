@@ -30,6 +30,7 @@ import datetime as dt
 import functools
 import hashlib
 import inspect
+import logging
 import math
 import threading
 import weakref
@@ -85,6 +86,8 @@ except ImportError:
 
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
+
+logger = logging.getLogger(__name__)
 
 
 def _register_port_type(name: str, **options: Any) -> str:
@@ -1320,7 +1323,8 @@ class LumenViewNode(LumenNode):
     def __init__(self, **params):
         editor = current_dashboard()
         # A dashboard is loaded, or a version restored, with the canvas muted; only a new view takes a default.
-        self._may_default = editor is not None and not getattr(editor, "_muted", False)
+        # Without the flag, a FlowDash that renamed it, no view can tell a new node from a loaded one, so none takes a default.
+        self._may_default = editor is not None and not getattr(editor, "_muted", True)
         super().__init__(**params)
         settings = getattr(self.editor, "settings", None)
         if self.themed and settings is not None and "color_scheme" in settings.param:
@@ -1415,13 +1419,20 @@ class LumenViewNode(LumenNode):
 
         def record():
             owner, view = editor_ref(), node()
-            if owner is None or view is None or getattr(owner._history, "_head", None) != head:
+            if owner is None or view is None or getattr(getattr(owner, "_history", None), "_head", None) != head:
                 return
-            node_id = view.node_id()
-            if node_id is None or owner._dataflow_graph.get_config_state(node_id) is None:
+            graph = getattr(owner, "_dataflow_graph", None)
+            name_of, record_edit = getattr(owner, "_node_name", None), getattr(owner, "_record_edit", None)
+            if graph is None or not callable(name_of) or not callable(record_edit):
                 return
-            name = owner._node_name(node_id)
-            owner._record_edit(f"Changed the config of {name}", op="set_config", args={"name": name, "keys": ["spec"]})
+            try:
+                node_id = view.node_id()
+                if node_id is None or graph.get_config_state(node_id) is None:
+                    return
+                name = name_of(node_id)
+                record_edit(f"Changed the config of {name}", op="set_config", args={"name": name, "keys": ["spec"]})
+            except Exception:
+                logger.warning("The default spec of a Lumen view could not be recorded", exc_info=True)
 
         _next_tick(record)
 
@@ -1469,7 +1480,10 @@ class LumenViewNode(LumenNode):
         if editor is None or not callable(getattr(editor, "edit_spec", None)):
             return message
         node_id = self.node_id()
-        panel = getattr(editor, "code_panel", None)
+        try:
+            shown = editor.code_panel.param.instance_id
+        except Exception:
+            shown = None
         # Hidden while the code panel shows this node, which may also be showing the view itself.
         button = pmui.Button(
             label="Edit spec", icon="data_object", variant="outlined", size="small",
@@ -1479,7 +1493,7 @@ class LumenViewNode(LumenNode):
                     editable and not read_only and not preview and (shown is None or shown != node_id)
                 ),
                 editor.param.editable, editor.param.read_only, editor.param.preview,
-                panel.param.instance_id if panel is not None else None,
+                shown,
             ),
         )
         button.on_click(lambda _event: self.edit_spec())

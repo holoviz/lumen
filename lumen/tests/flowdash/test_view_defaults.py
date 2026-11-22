@@ -383,3 +383,66 @@ def test_a_connection_recorded_after_the_default_needs_no_extra_edit(source, tic
     record()
     history.flush()
     assert len(history.versions) == count
+
+
+def test_year_like_values_are_measured_when_nothing_else_is():
+    spread = {"type": "integer", "inclusiveMinimum": 1850, "inclusiveMaximum": 1990}
+    spec = vega_lite_default({"region": TEXT, "visitors": spread})
+    assert spec["mark"] == "bar" and spec["encoding"]["y"]["field"] == "visitors"
+    spec = vega_lite_default({"built": spread, "capacity": NUMBER})
+    assert spec["encoding"]["x"] == {"field": "built", "type": "ordinal"}
+
+
+def test_a_true_false_category_takes_no_top_n():
+    spec = vega_lite_default({"active": {"type": "boolean"}, "amount": NUMBER})
+    assert spec["encoding"]["x"]["field"] == "active" and "transform" not in spec
+
+
+class _Without:
+    """An editor as a node sees it, without one private attribute, as if FlowDash had renamed it."""
+
+    def __init__(self, editor, missing):
+        self._editor, self._missing = editor, missing
+
+    def __getattr__(self, name):
+        if name == self._missing:
+            raise AttributeError(name)
+        return getattr(self._editor, name)
+
+    def __setattr__(self, name, value):
+        if name in ("_editor", "_missing"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._editor, name, value)
+
+
+def test_without_the_mute_flag_no_view_takes_a_default(source, monkeypatch):
+    from lumen.flowdash import nodes
+
+    ops = editor_with(source)
+    monkeypatch.setattr(nodes, "current_dashboard", lambda: _Without(ops.editor, "_muted"))
+    assert not ViewNode()._may_default
+
+
+@pytest.mark.parametrize("missing", ["_history", "_hydrating", "_dataflow_graph", "_node_name", "_record_edit", "code_panel"])
+def test_a_flowdash_without_a_private_attribute_still_draws_the_view(source, ticks, missing):
+    import weakref
+
+    ops = editor_with(source)
+    ops.add_node(VIEW_ID, {}, name="chart")
+    node = instance(ops, "chart")
+    editor = _Without(ops.editor, missing)
+    node._editor = weakref.ref(editor)
+    node.pipeline = instance(ops, "rows")._object
+    assert node.spec and isinstance(node._object, VegaLiteView)
+    for record in ticks:
+        record()
+
+    empty = editor_with(source, table="names")
+    empty.add_node(VIEW_ID, {}, name="chart")
+    view = instance(empty, "chart")
+    stand_in = _Without(empty.editor, missing)
+    view._editor = weakref.ref(stand_in)
+    empty.connect("rows.pipeline", "chart.pipeline")
+    message, button = view._body().objects
+    assert message.object == "No chart yet" and button.visible
