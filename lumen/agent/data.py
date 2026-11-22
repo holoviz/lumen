@@ -31,6 +31,8 @@ SCHEMA_TABLES_SHOWN = 25
 NODES_SHOWN = 12
 # A node from a shared dashboard may hold any amount of SQL.
 NODE_SQL_CHARS = 300
+# The characters of a heading's, Markdown's or divider's text it shows.
+NODE_TEXT_CHARS = 120
 NODE_COLUMNS = 12
 
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
@@ -186,20 +188,27 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
         return f"- {name} (filter on {config.get('field')!r} of {_graph.upstream(ops, name)})"
     if component == DATA_ID:
         return f"- {name} (rows of {_graph.upstream(ops, name)})"
+    if component in _graph.TEXT_FIELDS:
+        field = _graph.TEXT_FIELDS[component]
+        text = " ".join(str(config.get(field) or "").split())
+        if sql_chars is not None and len(text) > NODE_TEXT_CHARS:
+            text = f"{text[:NODE_TEXT_CHARS]} [... {len(text) - NODE_TEXT_CHARS} more characters]"
+        kind = component.split("/")[1].lower()
+        return f"- {name} ({kind}; {field}): {text!r}"
     return None
 
 
 # The nodes list_tables shows besides the sources.
-LISTED = (SQL_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID)
+LISTED = (SQL_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *_graph.TEXT_FIELDS)
 
 
 def placed_nodes(ops) -> str | None:
     """
-    The SQL, chart, table, filter and data nodes on the dashboard, most recently placed first:
+    The SQL, chart, table, filter, data and text nodes on the dashboard, most recently placed first:
     each SQL node's query on one line, cut after ``NODE_SQL_CHARS``
     characters, and its result's columns, and each chart's mark, data node
     and encoded fields, and the table, field or input of each table,
-    filter and data node, so the agent can change a node it did not place
+    filter and data node and the start of each text's content, so the agent can change a node it did not place
     itself. At most ``NODES_SHOWN`` are listed, followed by how many more
     there are.
     """
