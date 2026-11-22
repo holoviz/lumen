@@ -565,15 +565,18 @@ def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | 
     from .nodes import host_sources, lookup_source, missing_source
 
     source, table, ref = inputs.get("source"), config.get("table"), config.get("ref")
+    ignored = None
     if source is None and ref:
         source = lookup_source(ref)
         if source is None:
             return missing_source(ref, host_sources())
-    if source is None or not table:
-        return None
-    if table not in source.get_tables():
+    elif ref:
+        ignored = _unverified(
+            f"The ref {ref!r} is ignored while a source is connected; clear it or disconnect the source."
+        )
+    if source is not None and table and table not in source.get_tables():
         return f"The source has no table {table!r}. Its tables are: {', '.join(sorted(_listed(source)))}."
-    return None
+    return ignored
 
 
 def check_filter_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
