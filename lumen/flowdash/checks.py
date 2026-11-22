@@ -25,6 +25,7 @@ from ..data.sql import validate_read_only_sql
 from ..data.utils import ANSI_ESCAPE, format_tool_error
 from ..sources.base import BaseSQLSource, QueryTimeoutError
 from ..transforms.sql import SQLLimit
+from .defaults import field_column
 
 # Seconds the engine may take to plan a query in ``check_sql_config``, waiting
 # for the source's previous probe included.
@@ -525,7 +526,8 @@ def check_chart(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
         raise ValueError("The chart's data comes from the data node; remove `data` and `datasets` from the spec.")
     if _has_key(spec, URL_KEYS):
         raise ValueError("Charts may not load or link to URLs; remove `url` and `href` from the spec.")
-    unknown = _spec_field_references(spec, "vega-lite") - set(columns) - _transform_fields(spec)
+    references = {field_column(name) for name in _spec_field_references(spec, "vega-lite")}
+    unknown = references - set(columns) - _transform_fields(spec)
     if unknown:
         raise ValueError(
             f"The spec references fields the data does not have: {', '.join(sorted(unknown))}. "

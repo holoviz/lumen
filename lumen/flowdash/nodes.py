@@ -1257,6 +1257,13 @@ def _view_check(cls: type[LumenViewNode]) -> Any:
     return check_view
 
 
+def _next_tick(callback: Any) -> None:
+    """Call ``callback`` once the session's current event is handled; outside a session, never."""
+    doc = pn.state.curdoc
+    if doc is not None and doc.session_context is not None:
+        doc.add_next_tick_callback(callback)
+
+
 @functools.cache
 def _view_class(view_type: str) -> type:
     """The Lumen View class of ``view_type``, e.g. ``"vegalite"``, imported on first use."""
@@ -1362,6 +1369,9 @@ class LumenViewNode(LumenNode):
         if self.spec:
             self._may_default = False
             return False
+        editor = self.editor
+        if editor is not None and (editor.preview or editor.read_only or not editor.editable):
+            return False
         pipeline = self.pipeline
         if pipeline is None or is_failure(pipeline):
             return False
@@ -1378,9 +1388,42 @@ class LumenViewNode(LumenNode):
             return False
         if not default:
             return False
-        # The spec's watchers draw the view, and FlowDash records the change as an edit.
-        self.spec = default
+        self._store_default(default)
         return True
+
+    def _store_default(self, default: dict[str, Any]) -> None:
+        """
+        Set the spec to ``default`` as part of the edit that gave the node its
+        pipeline, e.g. connecting it, which FlowDash records right after the
+        pipeline arrives, so one undo takes back both. A pipeline that arrives
+        on its own, e.g. a query run off the event loop, has no such edit, so
+        the default is then recorded as a config edit on the next tick.
+        """
+        editor = self.editor
+        history = getattr(editor, "_history", None)
+        if history is None or not hasattr(editor, "_hydrating"):
+            self.spec = default
+            return
+        head = getattr(history, "_head", None)
+        # FlowDash records no version while it hydrates; the spec is still synced back and marks the dashboard unsaved.
+        hydrating, editor._hydrating = editor._hydrating, True
+        try:
+            self.spec = default
+        finally:
+            editor._hydrating = hydrating
+        node, editor_ref = weakref.ref(self), weakref.ref(editor)
+
+        def record():
+            owner, view = editor_ref(), node()
+            if owner is None or view is None or getattr(owner._history, "_head", None) != head:
+                return
+            node_id = view.node_id()
+            if node_id is None or owner._dataflow_graph.get_config_state(node_id) is None:
+                return
+            name = owner._node_name(node_id)
+            owner._record_edit(f"Changed the config of {name}", op="set_config", args={"name": name, "keys": ["spec"]})
+
+        _next_tick(record)
 
     def _color_scheme(self) -> str | None:
         scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
@@ -1425,12 +1468,18 @@ class LumenViewNode(LumenNode):
         editor = self.editor
         if editor is None or not callable(getattr(editor, "edit_spec", None)):
             return message
+        node_id = self.node_id()
+        panel = getattr(editor, "code_panel", None)
+        # Hidden while the code panel shows this node, which may also be showing the view itself.
         button = pmui.Button(
             label="Edit spec", icon="data_object", variant="outlined", size="small",
             css_classes=["lumen-edit-spec"],
             visible=pn.bind(
-                lambda editable, read_only, preview: editable and not read_only and not preview,
+                lambda editable, read_only, preview, shown: (
+                    editable and not read_only and not preview and (shown is None or shown != node_id)
+                ),
                 editor.param.editable, editor.param.read_only, editor.param.preview,
+                panel.param.instance_id if panel is not None else None,
             ),
         )
         button.on_click(lambda _event: self.edit_spec())
@@ -1492,9 +1541,9 @@ class ViewNode(LumenViewNode):
         The Vega-Lite spec, without data. A width or height it leaves out
         follows the tile's, and colours it leaves out the dashboard's
         ``color_scheme`` setting, if it has one. A new chart starts from
-        one its pipeline's columns suggest: a line of a number over a date,
-        the largest categories' sums as bars, a scatter of two numbers or a
-        histogram of one.""", settings=VEGA_LITE_SETTINGS)
+        one its pipeline's columns suggest: a line of a number over a date
+        or a year, the largest categories' sums as bars, a scatter of two
+        numbers or a histogram of one.""", settings=VEGA_LITE_SETTINGS)
 
     debounce = param.Integer(default=DEBOUNCE, bounds=(0, None), doc="""
         Milliseconds the chart waits after the last change of a selection

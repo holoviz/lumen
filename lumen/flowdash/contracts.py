@@ -22,6 +22,7 @@ from ..data.contracts import (
     source_schema,
 )
 from ..sources.base import Source
+from .defaults import field_column
 
 # The ids of Lumen's FlowDash components, which saved dashboards refer to.
 SOURCE_ID = "Lumen/source"
@@ -90,7 +91,7 @@ def _spec_fields(spec: Any) -> set[str]:
     if isinstance(spec, dict):
         for key, value in spec.items():
             if key == "field" and isinstance(value, str):
-                fields.add(value)
+                fields.add(field_column(value))
             else:
                 fields |= _spec_fields(value)
     elif isinstance(spec, list):
