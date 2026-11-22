@@ -9,6 +9,8 @@ from panel_flowdash.agent import (
     DashboardOps, OperationError, OutputUnavailable,
 )
 
+from ..flowdash import COMPONENTS, LumenViewNode
+
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
     """Names of the nodes in the order they were placed, optionally of one component."""
@@ -62,3 +64,9 @@ def pipeline_port(ops: DashboardOps, name: str) -> str | None:
 # FlowDash's built-in text components and the config field holding each one's text.
 HEADING_ID, MARKDOWN_ID, DIVIDER_ID = "Text/Heading", "Text/Markdown", "Text/Divider"
 TEXT_FIELDS = {HEADING_ID: "text", MARKDOWN_ID: "text", DIVIDER_ID: "label"}
+
+
+def view_class(component: str) -> type | None:
+    """The ``LumenViewNode`` class registered as ``component``, or None for any other component."""
+    cls = COMPONENTS.get(component)
+    return cls if isinstance(cls, type) and issubclass(cls, LumenViewNode) else None

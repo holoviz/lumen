@@ -1,6 +1,7 @@
 """Model-free tools over the Lumen sources and query results of the open dashboard."""
 from __future__ import annotations
 
+import json
 import weakref
 
 import sqlglot
@@ -158,6 +159,11 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
             if isinstance(definition, dict) and "field" in definition
         )
         return f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})"
+    if (view := _graph.view_class(component)) is not None:
+        spec = json.dumps(config.get("spec") or {}, separators=(",", ":"))
+        if sql_chars is not None and len(spec) > sql_chars:
+            spec = f"{spec[:sql_chars]} [... {len(spec) - sql_chars} more characters]"
+        return f"- {name} ({view.view_type} view of {_graph.upstream(ops, name)}; spec {spec})"
     if component == TABLE_ID:
         limit = f", limit {config['limit']}" if config.get("limit") else ""
         return f"- {name} (table {config.get('table')!r} of {_graph.upstream(ops, name) or config.get('ref')}{limit})"
@@ -204,7 +210,7 @@ def _transform_text(component: str, config: dict) -> str:
     return f"column {config.get('column')!r} = {config.get('expression')}"
 
 
-# The nodes list_tables shows besides the sources.
+# The nodes list_tables shows besides the sources and the Lumen view nodes.
 LISTED = (SQL_ID, METRIC_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *TRANSFORM_COMPONENTS, *_graph.TEXT_FIELDS)
 
 
@@ -242,20 +248,25 @@ def metrics_listing(ops) -> str | None:
     return "\n".join(metric_line(metric) for metric in metrics.values())
 
 
+def listed(component: str) -> bool:
+    """Whether list_tables shows the nodes of ``component``: those in ``LISTED`` and every Lumen view node."""
+    return component in LISTED or _graph.view_class(component) is not None
+
+
 def placed_nodes(ops) -> str | None:
     """
-    The SQL, metric, chart, table, filter, data, transform and text nodes
+    The SQL, metric, view, table, filter, data, transform and text nodes
     on the dashboard, most recently placed first: each SQL node's query on
     one line, cut after ``NODE_SQL_CHARS`` characters, and its result's
-    columns, each chart's mark, data node and encoded fields, the table,
-    field or input of each table, filter and data node, the step of each
-    transform node and the start of each text's content, so the agent can
-    change a node it did not place
-    itself. At most ``NODES_SHOWN`` are listed, followed by how many more
-    there are.
+    columns, each chart's mark, data node and encoded fields, each other
+    view's data node and spec, cut like the SQL, the table, field or input
+    of each table, filter and data node, the step of each transform node
+    and the start of each text's content, so the agent can change a node it
+    did not place itself. At most ``NODES_SHOWN`` are listed, followed by
+    how many more there are.
     """
     limit = NODES_SHOWN
-    names = [n for n in reversed(_graph.nodes(ops)) if _graph.component_of(ops, n) in LISTED]
+    names = [n for n in reversed(_graph.nodes(ops)) if listed(_graph.component_of(ops, n))]
     lines = [_node_line(ops, name, NODE_SQL_CHARS) for name in names[:limit]]
     if len(names) > limit:
         lines.append(f"- and {len(names) - limit} more; list_tables(node=...) shows one in full.")
@@ -273,7 +284,7 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     if node is not None:
         if node not in _graph.nodes(ops):
             raise ModelRetry(f"No node {node!r} on the dashboard.")
-        return _node_line(ops, node, None) or f"{node!r} is not a SQL or chart node."
+        return _node_line(ops, node, None) or f"{node!r} is not a SQL, view, table, filter or data node."
     text = ""
     if placed := placed_nodes(ops):
         text += "Nodes on the dashboard, most recent first:\n" + placed + "\n\n"
