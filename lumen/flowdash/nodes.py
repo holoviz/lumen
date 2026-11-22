@@ -1294,6 +1294,9 @@ class LumenViewNode(LumenNode):
 
     spec = spec_param("The view's spec, without data.")
 
+    # Whether a pipeline is connected, so the body says what the view waits for when nothing is drawn.
+    _connected = param.Boolean(default=False, precedence=-1)
+
     # The type of the Lumen View the node draws, e.g. "vegalite".
     view_type: ClassVar[str] = ""
 
@@ -1346,7 +1349,13 @@ class LumenViewNode(LumenNode):
     def _refresh(self, *events):
         if self._may_default and self._apply_default():
             return
-        super()._refresh()
+        with param.parameterized.batch_call_watchers(self):
+            super()._refresh()
+            self._connected = self.pipeline is not None
+
+    @param.depends("_object", "_error", "_connected")
+    def _render(self):
+        return super()._render()
 
     def _apply_default(self) -> bool:
         """Start from ``default_spec`` once the pipeline's schema is known; True if the spec changed."""
