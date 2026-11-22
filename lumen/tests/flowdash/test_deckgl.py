@@ -326,6 +326,25 @@ def test_fitting_skips_rows_off_the_globe_and_maps_without_positions():
     assert fit_view_state(POINTS, pd.DataFrame({"xlong": [float("nan")], "ylat": [float("nan")]})) is None
 
 
+def test_the_map_is_fitted_to_the_rows_it_draws(turbines, monkeypatch):
+    from lumen.flowdash import nodes
+
+    fetch, fetched = nodes.fetch, []
+
+    def iowa(pipeline, *args, **kwargs):
+        fetched.append(pipeline)
+        rows = fetch(pipeline, *args, **kwargs)
+        return rows[rows["state"] == "IA"]
+
+    # The view draws only Iowa's turbine, as it would with the dashboard's filters on its rows.
+    monkeypatch.setattr(nodes, "fetch", iowa)
+    view = node(map_of(turbines, POINTS))._object
+    assert list(view.pipeline.data["xlong"]) == [-93.5]
+    state = view.spec["initialViewState"]
+    assert (state["longitude"], state["latitude"]) == (-93.5, 42.0)
+    assert len(fetched) == 1
+
+
 def test_a_map_without_positions_starts_on_the_whole_world(turbines):
     spec = {"layers": [{"@@type": "ArcLayer", "getSourcePosition": [0, 0], "getTargetPosition": [10, 10]}]}
     assert node(map_of(turbines, spec))._object.spec["initialViewState"] == WORLD_VIEW
