@@ -126,7 +126,8 @@ class AgentSession:
     instructions
         Extra instructions for the default agent.
     model_settings
-        Model settings for the default agent, by default its ``MODEL_SETTINGS``.
+        Model settings for the default agent, by default ``model_settings_for``
+        the model of each request.
     trace
         A path the model trace of the conversation is appended to.
     metrics

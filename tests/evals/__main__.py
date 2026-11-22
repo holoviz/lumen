@@ -70,7 +70,6 @@ def main():
     except (ImportError, AttributeError, ValueError, TypeError) as exc:
         parser.error(f"Invalid --subject: {exc}")
     scoring = effective_scoring(subject, args.scoring)
-    settings = run_settings(subject=subject.name, scoring=scoring, subject_settings=getattr(subject, "settings", None))
 
     instructions, instruction_version = SUITE_INSTRUCTIONS[args.suite]
     if args.no_sql_cleanup:
@@ -105,6 +104,8 @@ def main():
         parser.error(f"A {args.provider} API key is required for live evaluations")
 
     llm = subject.build_model(args.model, provider=args.provider, api_key=key, api=args.api, instructions=instructions)
+    # After build_model, so a subject can record the settings its model gets.
+    settings = run_settings(subject=subject.name, scoring=scoring, subject_settings=getattr(subject, "settings", None))
     output = args.output or RESULTS / f"{args.model.replace('/', '-')}-{datetime.now(UTC):%Y%m%d-%H%M%S}.json"
     if args.bird_all or args.bird_stratified or args.bird_ids:
         summary = run_all_bird(dataset, output, args.bird_questions, args.bird_databases,
@@ -142,7 +143,7 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
     settings = settings or {}
     resolved = resolve_subject(subject or settings.get("subject"), **subject_options(disable_sql_cleanup))
     settings = run_settings(settings, resolved.name, effective_scoring(resolved, settings.get("scoring")),
-                            getattr(resolved, "settings", None))
+                            settings.get("subject_settings") or getattr(resolved, "settings", None))
     spec = subject_spec(resolved)
     subject_fingerprint = resolved.fingerprint()
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},
