@@ -117,6 +117,12 @@ def source_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _served_file(source: Source, table: str) -> str | None:
+    from .nodes import served_file
+
+    return served_file(source, table)
+
+
 def table_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     """
     A ``Lumen/table`` palette entry per table of each source the host
@@ -127,7 +133,7 @@ def table_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
         {
             "title": f"{table} ({ref})",
             "description": f"Table {table} of the source {ref}; drop it on the {ref} source node's output.",
-            "tooltip": f"Source {ref}, table {table}",
+            "tooltip": f"Source {ref}, table {table}" + (f", file {path}" if (path := _served_file(source, table)) else ""),
             "tags": [ref, table],
             "config": {"table": table},
         }

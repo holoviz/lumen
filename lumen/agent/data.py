@@ -40,8 +40,8 @@ def _sources_by_name(deps: FlowDashDeps) -> dict[str, tuple[str | None, Source |
     """
     The sources the agent can read, by name: each source node by its node
     name, then each source the app provides that no source node shows by its
-    ref, as ``(node or None, source)``. A node that has not resolved has no
-    source.
+    ref, or by ``app:<ref>`` when a node has that name, as
+    ``(node or None, source)``. A node that has not resolved has no source.
     """
     ops = deps.ops
     found: dict[str, tuple[str | None, Source | None]] = {}
@@ -53,8 +53,8 @@ def _sources_by_name(deps: FlowDashDeps) -> dict[str, tuple[str | None, Source |
         found[name] = (name, value if isinstance(value, Source) else None)
     shown = {id(value) for _, value in found.values() if value is not None}
     for ref, value in bound_sources(ops.editor).items():
-        if id(value) not in shown and ref not in found:
-            found[ref] = (None, value)
+        if id(value) not in shown:
+            found[ref if ref not in found else f"app:{ref}"] = (None, value)
             shown.add(id(value))
     return found
 

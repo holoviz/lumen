@@ -171,3 +171,18 @@ def test_presets_name_tables_after_the_served_source(tmp_path, monkeypatch):
     assert [p["title"] for p in source_presets(context)] == ["local (source)"]
     assert source_presets(context)[0]["tooltip"] == "Source local: plants, turbines"
     assert [p["title"] for p in table_presets(context)] == ["plants (local)", "turbines (local)"]
+
+
+def test_table_presets_name_the_file_a_numbered_table_reads(tmp_path, monkeypatch):
+    from lumen.flowdash.app import resolve_sources, source_refs
+
+    monkeypatch.chdir(tmp_path)
+    for folder in ("x", "y"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "plants.csv").write_text("plant\nq\n")
+    context = {SOURCES_KEY: source_refs(resolve_sources(["y/plants.csv", "x/plants.csv"]))}
+    tooltips = {p["title"]: p["tooltip"] for p in table_presets(context)}
+    assert tooltips == {
+        "plants (local)": "Source local, table plants, file y/plants.csv",
+        "plants_2 (local)": "Source local, table plants_2, file x/plants.csv",
+    }
