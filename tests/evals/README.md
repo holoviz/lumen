@@ -84,3 +84,27 @@ pixi run -e evals panel serve tests/evals/dashboard.py --show
 It groups runs by suite and case set, plots pass rate against estimated cost and runtime as well
 as token usage per run and per case, and shows each case's turns, SQL and errors for every run
 that attempted it.
+
+## Dashboard assistant scenarios
+
+`lumen.agent.scenarios` measures the FlowDash dashboard assistant (the drawer agent of
+`lumen serve --flowdash`) on multi-turn scenarios drawn from its playtests: KPIs, filters, titles,
+layout edits, edits in place, wrong-number traps, chart design, claims against the dashboard and
+runaway turns. Each scenario runs on a small synthetic fixture generated in code, optionally from a
+seeded dashboard, and checks the dashboard every turn leaves (its YAML and the live node outputs,
+with numbers compared against SQL on the fixture), never the assistant's text. A turn did what was
+asked when all its checks pass, partly when some do.
+
+```bash
+pixi run -e evals python -m lumen.agent.scenarios --themes                        # replay the cassettes
+pixi run -e evals python -m lumen.agent.scenarios --live --output run.json        # call gpt-6-luna, re-record
+pixi run -e evals python -m lumen.agent.scenarios --diff tests/evals/scenarios/baseline.json
+```
+
+A live run reads `OPENROUTER_API_KEY` (or `--env-file`) and writes a gzipped model trace per
+scenario to `tests/evals/scenarios/`. `baseline.json` is the recorded baseline, and
+`EXPECTED_FAILURES` in `lumen/agent/scenarios/catalog.py` lists the checks that fail in it with
+the workstream of the improvement plan meant to fix each. `test_scenarios.py` replays the
+cassettes offline: those checks report xfail, and XPASS once they flip. When the agent's
+instructions or tools change, the replays are skipped as stale until the scenarios are recorded
+again.
