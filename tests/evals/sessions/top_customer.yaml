@@ -17,30 +17,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t339a179a
+      - id: tfdffbd42
         actor: user
-        at: '2026-11-22T00:57:08Z'
+        at: '2026-11-22T16:07:59Z'
         summary: Added data.
-      - id: t2b5931da
+      - id: t264c957d
         actor: agent
-        at: '2026-11-22T00:57:10Z'
-        run: run-2e6ce2db6935
+        at: '2026-11-22T16:08:01Z'
+        run: run-12066cca6d84
         summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: t339a179a
+        origin: tfdffbd42
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 44.0]
       top_customer_paid_orders:
         component: Lumen/sql
-        origin: t2b5931da
+        origin: t264c957d
         config:
           sql: |-
             SELECT
               c."customer",
-              COUNT(*) AS paid_order_count
+              COUNT(o."order_id") AS paid_order_count
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
