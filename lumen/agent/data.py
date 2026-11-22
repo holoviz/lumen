@@ -110,11 +110,37 @@ def source_output(deps: FlowDashDeps, source: str) -> tuple[str, BaseSQLSource, 
     while node in taken:
         n += 1
         node = f"{ref}_source" if n == 2 else f"{ref}_source_{n - 1}"
+    allow_host_sources(ops)
     try:
         ops.add_node(SOURCE_ID, {"ref": ref}, name=node)
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
+    except PermissionError as exc:
+        raise ModelRetry(
+            f"Refused: {exc} Query a source node already on the dashboard, or an earlier SQL node, instead."
+        ) from exc
     return f"{node}.source", value, node
+
+
+def allow_host_sources(ops) -> None:
+    """
+    Let operations that vet the data sources an agent adds, like
+    panel-flowdash's ``ExplorationOps`` through its ``allow_source``, add a
+    source node that names a source the app provides by its ref alone. Such
+    a node opens no connection of its own; any other source stays up to the
+    operations' own check.
+    """
+    allow = getattr(ops, "allow_source", None)
+    if not callable(allow) or getattr(allow, "host_sources", False):
+        return
+
+    def allow_source(component: str, config: dict) -> bool:
+        if component == SOURCE_ID and set(config) == {"ref"} and config["ref"] in bound_sources(ops.editor):
+            return True
+        return allow(component, config)
+
+    allow_source.host_sources = True
+    ops.allow_source = allow_source
 
 
 async def metaset(source: Source) -> Metaset:
