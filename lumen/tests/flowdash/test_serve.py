@@ -96,7 +96,7 @@ def test_served_app_offers_lumen_nodes_over_the_data(csv):
 
     assert type(editor) is FlowDash
     assert app.agent is False
-    assert SOURCE_ID in app.agent_sensitive_components
+    assert SOURCE_ID not in app.agent_sensitive_components
     (source,) = bound_sources(editor).values()
     assert list(bound_sources(editor)) == ["sales"]
     (table,) = listed_tables(source)
@@ -247,6 +247,11 @@ def test_source_refs_name_sources_by_their_name():
     assert list(source_refs([named, counted, table, several])) == ["sales_data", "sales12345", "b", "duckdb"]
 
 
+def test_a_source_param_named_past_its_99999th_object_is_still_named_by_its_data():
+    late = DuckDBSource(uri=":memory:", tables={"b": "SELECT 1 AS x"}, name="DuckDBSource123456")
+    assert list(source_refs([late])) == ["b"]
+
+
 def test_earlier_table_names_still_read_in_queries_but_are_not_listed(served):
     (served / "x").mkdir()
     (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
@@ -346,6 +351,25 @@ def test_earlier_table_names_never_come_from_the_working_directory(served):
     source = refs("plants.csv")["plants"]
     legacy = set(source.get_tables()) - set(tables(source))
     assert legacy == {"plants_csv"}
+
+
+def test_concurrent_queries_on_a_source_with_earlier_names_create_no_views_again(served, caplog):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from lumen.flowdash import compile_sql, fetch
+
+    source = refs("plants.csv")["plants"]
+    queries = ["SELECT * FROM plants", "SELECT * FROM plants_csv WHERE mw > 1", "SELECT plant FROM plants WHERE mw = 3"]
+
+    def run(i):
+        pipeline = compile_sql(source, queries[i % 3], f"result_{i % 3}")
+        return i % 3, len(fetch(pipeline))
+
+    with caplog.at_level("WARNING"), ThreadPoolExecutor(8) as pool:
+        counts = list(pool.map(run, range(64 * 3)))
+    assert set(counts) == {(0, 3), (1, 2), (2, 1)}
+    assert "could not create a view" not in caplog.text
+    assert "conflict" not in caplog.text
 
 
 def test_sources_keep_resolve_data_order_when_it_makes_sources_of_its_own(served):

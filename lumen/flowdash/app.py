@@ -23,7 +23,7 @@ from panel_flowdash.dashboard_store import DashboardStore
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
-from .nodes import SOURCE_ALIASES_KEY, SOURCE_ID, SOURCES_KEY
+from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
 
 LIBRARY = "lumen.flowdash"
 
@@ -84,7 +84,7 @@ def _type_slug(source: Source) -> str:
 
 def _auto_named(source: Source) -> bool:
     """Whether param named ``source`` by its type and a counter, as it does without a name."""
-    return re.fullmatch(rf"{re.escape(type(source).__name__)}\d{{5}}", source.name) is not None
+    return re.fullmatch(rf"{re.escape(type(source).__name__)}\d{{5,}}", source.name) is not None
 
 
 def _numbered(names: Sequence[str]) -> list[str]:
@@ -376,7 +376,7 @@ def build_routes(
         component_libraries=[LIBRARY, *params.pop("component_libraries", [])],
         editor_options=editor_options,
         agent=agent,
-        agent_sensitive_components=[SOURCE_ID, *params.pop("agent_sensitive_components", [])],
+        agent_sensitive_components=list(params.pop("agent_sensitive_components", [])),
         title=title,
         **params,
     )
