@@ -14,6 +14,7 @@ The data arguments are read as for Lumen AI (files, URLs, `duckdb://` and SQLAlc
 | --- | --- |
 | `--flowdash` | Serve the FlowDash app. Without it `lumen serve` is unchanged. |
 | `--db-path PATH` | The SQLite database dashboards are saved in; `dashboards.db` in the working directory by default. |
+| `--project FILE` | The project file whose `metrics:` section defines the app's [metrics](#metrics). Without it, `flowdash.yaml` next to the data files or in the working directory is read, if there is one. |
 | `--agent-model MODEL[=LABEL]` | A pydantic-ai model, e.g. `openai:gpt-6-luna`, for Lumen's FlowDash agent. Repeat it to let people pick the model below the chat's input; the first is the default and `=LABEL` names it in the picker. Without it the app has no agent. |
 
 With two models the assistant's chat shows a model picker, and the browser remembers the pick:
@@ -36,6 +37,39 @@ Names that clash get `_2`, `_3` and so on in the order you list the data, for ta
 
 Dashboards saved with earlier names keep working where the name is unambiguous. Refs: `data` names the first source and `data_2`, `data_3` and so on the next ones, in the order earlier releases read them (database files and connections first, then the data files), and `files`, `local`, the name of a served folder, each file's stem and the tagged names `shop_db` and `turbines_files` also resolve, so a dashboard saved on a folder keeps its source when files are served beside it. Tables: the earlier `turbines_csv` and the path as given (`x_sales_csv` for `x/sales.csv`) still work in queries, though only the new names are listed. A name two files or two sources had resolves to neither, so the query or source node reports it rather than reading the wrong data, and a source's own ref always wins over an earlier name.
 
+## Metrics
+
+A metric is a named, described query over one of the app's sources, defined once in the `metrics:` section of the project file, `flowdash.yaml`, and shared by every dashboard and the agent. Other top-level sections of the file are ignored with a warning, so app settings can live in the same file.
+
+``` yaml
+metrics:
+  capacity:
+    description: Installed wind capacity.
+    source: turbines                 # the source's ref
+    table: turbines
+    measures:
+      capacity_mw: {expr: "SUM(t_cap) / 1000.0", format: ",.1f", description: Rated capacity in MW}
+      turbines: "COUNT(*)"
+    dimensions:
+      state: {column: t_state, description: Two-letter state code}
+      online: {column: online, type: time, grains: [year, quarter, month]}
+    parameters:
+      since: {type: integer, default: 2005, column: p_year, op: ">="}
+
+  top_projects:
+    description: Projects ranked by installed capacity.
+    source: turbines
+    sql: SELECT p_name, SUM(t_cap) AS kw FROM turbines GROUP BY p_name ORDER BY kw DESC LIMIT :n
+    parameters:
+      n: {type: integer, default: 10, bounds: [1, 50]}
+```
+
+A metric with a `table` lets a **Lumen Metric** node pick its measures and the dimensions to group by, and truncate a time dimension to a `grain`. A metric with `sql` is one fixed read-only query, for rankings, windows and joins, whose `:name` placeholders are its parameters. Parameter types are `string`, `number`, `integer`, `boolean`, `date`, `datetime`, `list[<type>]` and `range[<type>]`, with an optional `default`, `required`, `bounds` and `options`. `format` is a [d3-format](https://d3js.org/d3-format) string, carried in the pipeline's schema with each description.
+
+The node's `parameters` input takes a mapping of parameter values, set in the inspector or wired from another node, e.g. `{"since": 2010}`; it also filters a column dimension by its name, e.g. `{"state": ["TX", "CA"]}`. Values are converted to the declared type and refused outside the bounds or options, and enter the query as SQL literals, never as text. A filter node on a metric filters the rows before they are aggregated, so a filter on `t_state` feeds a chart of capacity by year; a filter on a measure filters the result.
+
+The file is checked when the app starts: each metric's columns, its query with the defaults and every grain must work on its source, and a problem is reported with its line and column, e.g. `flowdash.yaml:10:7: Unknown column 't_sate' in dimension 'state'. Did you mean 't_state'?`. A metric over a source the app does not serve is left out with a warning.
+
 ## Nodes
 
 | Node | Inputs | Config | Outputs |
@@ -46,6 +80,7 @@ Dashboards saved with earlier names keep working where the name is unambiguous. 
 | Lumen SQL (`Lumen/sql`) | `source` | `sql`, `table`, `limit` | `pipeline`, `data` |
 | Lumen Data (`Lumen/data`) | `pipeline` | | `data` |
 | Lumen Vega-Lite view (`Lumen/view`) | `pipeline` | `spec`, `debounce` | `selection` |
+| Lumen Metric (`Lumen/metric`) | `parameters` | `metric`, `measures`, `dimensions`, `grain`, `order_by`, `limit` | `pipeline`, `data` |
 
 Edges between Lumen nodes carry a Lumen pipeline rather than a table of rows, so the work happens in the source's engine. A table node fetches nothing by itself. A filter node fed by a widget, say a Select on `species`, adds `WHERE "species" = 'Adelie'` and the row limit to the query the source runs, rather than Lumen filtering all rows after fetching them. A filter's value can be a single value, a list (from a MultiChoice) or a `(start, end)` range; an empty value keeps every row.
 
@@ -105,3 +140,5 @@ editor_options = {"context": {"lumen.sources": {"data": DuckDBSource(uri="wareho
 Each session's editor copies the `lumen.sources` dict, so adding or removing a source in one session does not reach another; the source objects themselves are shared. Without sources, a source node says how to provide them.
 
 Lumen's agent reads every source the app provides by its ref, also on a dashboard with no source node yet, and its `add_sql` places a source node for a source when no node shows it. Placing or re-pointing a source or table node with the dashboard tools (`add_node`, `set_config`) needs no approval, since a `ref` can only name a source the app already lets the agent read. A project that wants approval for them can still list them in `agent_sensitive_components`.
+
+The agent's `list_tables` lists the app's metrics with their descriptions, formats and parameters, and `add_metric` places a metric node, which needs no approval since it only names a metric the app defines. The agent prefers a metric that answers the question to writing SQL. A project sets the metrics under the `lumen.metrics` key of the context, e.g. `read_metrics(load_project("flowdash.yaml"))` from `lumen.flowdash.metrics` and `lumen.flowdash.project`; `build_routes(project=...)` also checks them against the sources.
