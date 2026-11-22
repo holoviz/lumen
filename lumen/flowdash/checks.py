@@ -25,7 +25,7 @@ from ..data.sql import validate_read_only_sql
 from ..data.utils import ANSI_ESCAPE, format_tool_error
 from ..sources.base import BaseSQLSource, QueryTimeoutError
 from ..transforms.sql import SQLLimit
-from .view_settings import VEGA_LITE_SETTINGS
+from .defaults import field_column
 
 # Seconds the engine may take to plan a query in ``check_sql_config``, waiting
 # for the source's previous probe included.
@@ -527,7 +527,8 @@ def check_chart(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
         raise ValueError("The chart's data comes from the data node; remove `data` and `datasets` from the spec.")
     if _has_key(spec, URL_KEYS):
         raise ValueError("Charts may not load or link to URLs; remove `url` and `href` from the spec.")
-    unknown = _spec_field_references(spec, "vega-lite") - set(columns) - _transform_fields(spec)
+    references = {field_column(name) for name in _spec_field_references(spec, "vega-lite")}
+    unknown = references - set(columns) - _transform_fields(spec)
     if unknown:
         raise ValueError(
             f"The spec references fields the data does not have: {', '.join(sorted(unknown))}. "
@@ -889,27 +890,50 @@ def selection_warnings(spec: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(warnings))
 
 
+def check_view_spec(
+    config: dict[str, Any], inputs: dict[str, Any], *, settings: Any = (),
+    check: Any = None, warnings: Any = None, requires_spec: bool = True,
+) -> Any:
+    """
+    Check the ``spec`` of a view node's config. The problems of the spec's
+    declared ``settings`` (``panel_flowdash.SpecSetting``) come first. Then,
+    with an input pipeline, ``check(spec, columns)`` checks the spec against
+    the pipeline's columns and raises ``ValueError`` saying what to fix, and
+    ``warnings(spec)`` lists problems shown with the config without refusing
+    it. An empty spec is not checked unless the view draws without one
+    (``requires_spec=False``).
+    """
+    pipeline, spec = inputs.get("pipeline"), config.get("spec") or {}
+    if not spec and requires_spec:
+        return None
+    if settings and spec:
+        try:
+            from panel_flowdash.spec_settings import problems
+        except ImportError:  # panel-flowdash without spec settings
+            problems = None
+        if problems is not None and (found := problems(spec, settings)):
+            return " ".join(found)
+    if pipeline is None:
+        return None
+    if check is not None:
+        try:
+            check(spec, pipeline_columns(pipeline))
+        except _DiagnosticError as exc:
+            return exc.diagnostic
+        except ValueError as exc:
+            return CheckDiagnostic(str(exc), field="spec")
+    if warnings is None:
+        return None
+    found = [w for w in map(_unverified, warnings(spec)) if w is not None]
+    return found or None
+
+
 def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     """
     Check a ``Lumen/view`` config with ``check_chart`` against the input's
-    columns, warning about selections a filter cannot apply exactly.
+    columns, warning about selections a filter cannot apply exactly: the
+    check ``register_view`` derives from ``ViewNode``'s hooks.
     """
-    pipeline, spec = inputs.get("pipeline"), config.get("spec")
-    if not spec:
-        return None
-    try:
-        from panel_flowdash.spec_settings import problems
-    except ImportError:  # panel-flowdash without spec settings
-        problems = None
-    if problems is not None and (found := problems(spec, VEGA_LITE_SETTINGS)):
-        return " ".join(found)
-    if pipeline is None:
-        return None
-    try:
-        check_chart(spec, pipeline_columns(pipeline))
-    except _DiagnosticError as exc:
-        return exc.diagnostic
-    except ValueError as exc:
-        return CheckDiagnostic(str(exc), field="spec")
-    warnings = [w for w in map(_unverified, selection_warnings(spec)) if w is not None]
-    return warnings or None
+    from .nodes import ViewNode
+
+    return ViewNode.__panel_app_metadata__.check_config(config, inputs)
