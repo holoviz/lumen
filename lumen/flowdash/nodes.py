@@ -904,8 +904,9 @@ def default_table(sql: str) -> str:
 _OVERVIEW_NAMES = 6
 # Tables of a source whose schema a source's overview reads; the others are listed by name only.
 _OVERVIEW_TABLES = 20
-# The tables of each source whose schema could not be read for its overview, so it is not read again.
-_SCHEMA_FAILED: weakref.WeakKeyDictionary[Source, set[str]] = weakref.WeakKeyDictionary()
+# The schema of each table read for a source's overview, or None if it failed, so it is read once
+# even when the source does not store schemas itself.
+_SCHEMAS_READ: weakref.WeakKeyDictionary[Source, dict[str, dict | None]] = weakref.WeakKeyDictionary()
 # The schema reads queued or running, and the source nodes to refresh once each is done.
 _SCHEMA_PENDING: weakref.WeakKeyDictionary[Source, tuple[Future, weakref.WeakSet]] = weakref.WeakKeyDictionary()
 
@@ -913,6 +914,8 @@ _SCHEMA_PENDING: weakref.WeakKeyDictionary[Source, tuple[Future, weakref.WeakSet
 def _table_metadata(source: Source, table: str, cached: Mapping[str, Any]) -> tuple[int | None, list[str] | None]:
     """The row count and column names of ``table`` that are known without a query."""
     schema = cached.get(table)
+    if not isinstance(schema, dict):
+        schema = _SCHEMAS_READ.get(source, {}).get(table)
     if isinstance(schema, dict):
         length = schema.get("__len__")
         rows = length if isinstance(length, int) and not isinstance(length, bool) else None
@@ -944,11 +947,8 @@ def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
     tables = list(listed_tables(source))
     cached = source._get_schema_cache() or {}
     entries = [(table, *_table_metadata(source, table, cached)) for table in tables]
-    failed = _SCHEMA_FAILED.get(source, set())
-    missing = [
-        table for table, _, names in entries[:_OVERVIEW_TABLES]
-        if names is None and table not in failed
-    ]
+    read = _SCHEMAS_READ.get(source, {})
+    missing = [table for table, _, names in entries[:_OVERVIEW_TABLES] if names is None and table not in read]
     if all(names is None for _, _, names in entries):
         count = len(entries)
         listed = ", ".join(tables)
@@ -963,25 +963,33 @@ def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
 
 
 def _read_schemas(source: Source, tables: list[str]) -> None:
-    """Read and store the schema of each of ``tables``, remembering the ones that fail."""
+    """Read the schema of each of ``tables`` and remember it, or that it failed."""
     for table in tables:
         try:
-            source.get_schema(table)
+            schema = source.get_schema(table)
         except Exception:
-            _SCHEMA_FAILED.setdefault(source, set()).add(table)
+            schema = None
+        with _PREVIEW_LOCK:
+            _SCHEMAS_READ.setdefault(source, {})[table] = schema if isinstance(schema, dict) else None
 
 
 def _source_summary(node: LumenNode, source: Source) -> pd.DataFrame | str:
     """
     The overview a source node previews: its tables with their row and
-    column counts and column names. On the event loop the schemas not
-    stored yet are read by a worker, as reading one counts the table's rows,
-    and the node's card refreshes once they are there; elsewhere only what
-    is stored is shown.
+    column counts and column names. Reading a schema counts the table's
+    rows, so on the event loop the schemas not known yet are read by a
+    worker and the node's previews refresh once the batch is done. On a
+    worker thread, e.g. the inspector's, they are read straight away, and on
+    the main thread without a loop, e.g. headless, only what is known is shown.
     """
     overview, missing = _source_overview(source)
-    if not missing or not _blocks_event_loop():
+    if not missing:
         return overview
+    if not _blocks_event_loop():
+        if threading.current_thread() is threading.main_thread():
+            return overview
+        _read_schemas(source, missing)
+        return _source_overview(source)[0]
     with _PREVIEW_LOCK:
         if (pending := _SCHEMA_PENDING.get(source)) is not None:
             pending[1].add(node)
