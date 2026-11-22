@@ -18,10 +18,10 @@ from lumen.flowdash import (
 from lumen.flowdash.app import build_routes
 from lumen.flowdash.choices import metric_presets
 from lumen.flowdash.metrics import (
-    MetricError, Query, aggregate, bind_sql, check_metrics, read_metrics,
+    MetricError, Query, aggregate, bind_sql, read_metrics,
 )
 from lumen.flowdash.project import (
-    PROJECT_FILE, ProjectError, find_project, load_project, parse_project,
+    PROJECT_FILE, ProjectError, load_project, parse_project, project_beside,
 )
 from lumen.sources.duckdb import DuckDBSource
 from lumen.sources.sqlalchemy import SQLAlchemySource
@@ -81,9 +81,9 @@ def lite(tmp_path):
 
 
 def metrics_for(source, text=PROJECT):
-    metrics, warnings = check_metrics(read_metrics(parse_project(text, PROJECT_FILE)), {SOURCES_KEY: {"data": source}})
-    assert warnings == []
-    return metrics
+    project = parse_project(text, PROJECT_FILE, {SOURCES_KEY: {"data": source}})
+    assert project.warnings == []
+    return read_metrics(project)
 
 
 def problems(text):
@@ -152,12 +152,11 @@ def test_check_reports_an_unknown_table_and_engine_errors(duck):
 
 
 def test_metric_over_a_source_not_served_is_left_out_with_a_warning(duck):
-    metrics, warnings = check_metrics(
-        read_metrics(parse_project(PROJECT.replace("source: data\n    sql", "source: other\n    sql"), PROJECT_FILE)),
-        {SOURCES_KEY: {"data": duck}},
+    project = parse_project(
+        PROJECT.replace("source: data\n    sql", "source: other\n    sql"), PROJECT_FILE, {SOURCES_KEY: {"data": duck}},
     )
-    assert list(metrics) == ["capacity"]
-    assert [str(w) for w in warnings] == [
+    assert list(read_metrics(project)) == ["capacity"]
+    assert [str(w) for w in project.warnings] == [
         "flowdash.yaml:17:13: Metric 'top_projects' is left out: the app serves no source 'other'; its sources are: data."
     ]
 
@@ -165,20 +164,21 @@ def test_metric_over_a_source_not_served_is_left_out_with_a_warning(duck):
 def test_unknown_sections_are_ignored_with_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="lumen.flowdash.project"):
         project = parse_project("theme:\n  primary: red\nmetrics: {}\n", PROJECT_FILE)
-    assert project.section("theme") == {"primary": "red"}
+    assert project.get("theme") == {"primary": "red"}
     assert read_metrics(project) == {}
     assert "flowdash.yaml:1:1: Ignoring the unknown section 'theme'" in caplog.text
 
 
-def test_find_project_next_to_the_data_then_in_the_working_directory(tmp_path):
+def test_the_project_file_is_found_next_to_the_data_only(tmp_path, monkeypatch):
     data, cwd = tmp_path / "data", tmp_path / "cwd"
     data.mkdir(), cwd.mkdir()
+    monkeypatch.chdir(cwd)
     (data / "turbines.csv").write_text("a\n1\n")
-    assert find_project([str(data / "turbines.csv")], cwd=cwd) is None
     (cwd / PROJECT_FILE).write_text("metrics: {}\n")
-    assert find_project([str(data / "turbines.csv")], cwd=cwd) == cwd / PROJECT_FILE
+    assert project_beside([str(data / "turbines.csv")]) is None
     (data / PROJECT_FILE).write_text("metrics: {}\n")
-    assert find_project([str(data / "turbines.csv"), "https://example.com/x.csv"], cwd=cwd) == data / PROJECT_FILE
+    assert project_beside(["https://example.com/x.csv", str(data / "turbines.csv")]) == data / PROJECT_FILE
+    assert project_beside([str(data)]) == data / PROJECT_FILE
     with pytest.raises(ProjectError, match="Cannot read the project file"):
         load_project(tmp_path / "missing.yaml")
 

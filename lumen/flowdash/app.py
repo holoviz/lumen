@@ -23,13 +23,11 @@ from panel_flowdash.dashboard_store import DashboardStore
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
-from .metrics import METRICS_KEY, load_metrics
+from .metrics import METRICS_KEY, read_metrics
 from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
-from .project import ProjectFile, load_project
+from .project import Project, load_project
 
 LIBRARY = "lumen.flowdash"
-
-logger = logging.getLogger(__name__)
 
 
 # Lumen reads files with these suffixes into one DuckDB source, see ``resolve_data``.
@@ -324,7 +322,7 @@ def build_routes(
     *,
     db_path: str | os.PathLike | None = None,
     agent_model: str | Sequence[str] | None = None,
-    project: str | os.PathLike | ProjectFile | None = None,
+    project: str | os.PathLike | Project | None = None,
     title: str = "Lumen",
     **params: Any,
 ) -> dict[str, Any]:
@@ -347,11 +345,11 @@ def build_routes(
         from, each written as ``id`` or ``id=label``. The first is the
         default. Without it the app has no agent.
     project
-        The project file, e.g. ``flowdash.yaml``, or one already loaded.
-        Its ``metrics:`` are checked against ``data`` here, so a bad
-        definition fails with its line and column before the app serves;
-        a metric over a source that is not served is left out with a
-        warning.
+        The project file, e.g. ``flowdash.yaml``, or one already loaded
+        with the sources in its context. Its ``metrics:`` are checked
+        against ``data`` here, so a bad definition fails with its line and
+        column before the app serves; a metric over a source that is not
+        served is left out with a warning.
     title
         The app's title.
     **params
@@ -381,11 +379,9 @@ def build_routes(
         **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: aliases,
     }
     if project is not None:
-        project = project if isinstance(project, ProjectFile) else load_project(project)
-        metrics, warnings = load_metrics(project, context)
-        for warning in warnings:
-            logger.warning("%s", warning)
-        context[METRICS_KEY] = metrics
+        if not isinstance(project, Project):
+            project = load_project(project, context)
+        context[METRICS_KEY] = read_metrics(project)
     editor_options["context"] = context
     return FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
