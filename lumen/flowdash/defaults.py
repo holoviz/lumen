@@ -61,10 +61,14 @@ def _is_id(name: str) -> bool:
     return lowered in _COORDINATES or lowered.rsplit("_", 1)[-1] in _COORDINATES
 
 
-def _is_year(name: str, spec: dict[str, Any]) -> bool:
+def _named_year(name: str, spec: dict[str, Any]) -> bool:
     lowered = name.lower()
-    if lowered in ("year", "yr") or lowered.endswith(("_year", "_yr")) or lowered.startswith("year_"):
-        return spec.get("type") == "integer" or not _finite(spec.get("inclusiveMaximum")) or spec["inclusiveMaximum"] <= YEARS[1]
+    if not (lowered in ("year", "yr") or lowered.endswith(("_year", "_yr")) or lowered.startswith("year_")):
+        return False
+    return spec.get("type") == "integer" or not _finite(spec.get("inclusiveMaximum")) or spec["inclusiveMaximum"] <= YEARS[1]
+
+
+def _year_range(spec: dict[str, Any]) -> bool:
     low, high = spec.get("inclusiveMinimum"), spec.get("inclusiveMaximum")
     return spec.get("type") == "integer" and _finite(low) and _finite(high) and YEARS[0] <= low <= high <= YEARS[1]
 
@@ -81,15 +85,17 @@ def schema_kinds(schema: dict[str, Any] | None) -> dict[str, list[str]]:
     columns of nulls and id columns.
     """
     kinds: dict[str, list[str]] = {"temporal": [], "year": [], "numeric": [], "categorical": []}
-    integers = []
+    integers, in_range = [], []
     for name, spec in _columns(schema).items():
         if _is_empty(spec):
             continue
         kind = spec.get("type")
         if spec.get("format") in _TEMPORAL_FORMATS or (kind == "string" and _is_date_text(spec)):
             kinds["temporal"].append(name)
-        elif kind in ("number", "integer") and _is_year(name, spec):
+        elif kind in ("number", "integer") and _named_year(name, spec):
             kinds["year"].append(name)
+        elif _year_range(spec) and not _is_id(name):
+            in_range.append(name)
         elif kind == "number" and not _is_id(name):
             kinds["numeric"].append(name)
         elif kind == "integer" and not _is_id(name):
@@ -97,6 +103,8 @@ def schema_kinds(schema: dict[str, Any] | None) -> dict[str, list[str]]:
         elif kind == "boolean" or (kind == "string" and not spec.get("format")):
             kinds["categorical"].append(name)
     kinds["numeric"] += integers
+    # Integers whose values all look like years are years when something else is measured, else the measure.
+    kinds["year" if kinds["numeric"] else "numeric"] += in_range
     return kinds
 
 
@@ -152,8 +160,9 @@ def vega_lite_default(schema: dict[str, Any] | None) -> dict[str, Any] | None:
                 "y": {"field": vega_field(y), "aggregate": "sum", "type": "quantitative"},
             },
         }
-        enum = _columns(schema)[category].get("enum")
-        if not (isinstance(enum, list) and len(enum) <= TOP_CATEGORIES):
+        column = _columns(schema)[category]
+        enum = column.get("enum")
+        if column.get("type") != "boolean" and not (isinstance(enum, list) and len(enum) <= TOP_CATEGORIES):
             # Summed first, so the rank is of the sums the bars show and the bars sum one value each.
             spec["transform"] = [
                 {"aggregate": [{"op": "sum", "field": vega_field(y), "as": y}], "groupby": [vega_field(category)]},
