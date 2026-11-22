@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taecfc1a3
+      - id: t863181f5
         actor: user
-        at: '2026-11-21T18:37:57Z'
+        at: '2026-11-22T00:33:22Z'
         summary: Added data.
-      - id: tbb52bd53
+      - id: t5f17b7e4
         actor: agent
-        at: '2026-11-21T18:38:01Z'
-        run: run-68ca143acd5b
+        at: '2026-11-22T00:33:27Z'
+        run: run-d03491c121e9
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taecfc1a3
+        origin: t863181f5
         config:
           ref: data
         position: [0.0, 33.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tbb52bd53
+        origin: t5f17b7e4
         config:
           sql: |-
             SELECT
@@ -46,6 +46,9 @@ turns:
               ON o."customer_id" = c."customer_id"
             WHERE
               o."status" = 'paid'
+              AND NOT o."amount" IS NULL
+              AND NOT c."region" IS NULL
+              AND TRIM(c."region") <> ''
             GROUP BY
               c."region"
             ORDER BY
@@ -77,30 +80,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taecfc1a3
+      - id: t863181f5
         actor: user
-        at: '2026-11-21T18:37:57Z'
+        at: '2026-11-22T00:33:22Z'
         summary: Added data.
-      - id: tbb52bd53
+      - id: t5f17b7e4
         actor: agent
-        at: '2026-11-21T18:38:01Z'
-        run: run-68ca143acd5b
+        at: '2026-11-22T00:33:27Z'
+        run: run-d03491c121e9
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: t06b04409
+      - id: t774d575e
         actor: agent
-        at: '2026-11-21T18:38:04Z'
-        run: run-4411b8f08905
+        at: '2026-11-22T00:33:31Z'
+        run: run-b35d2f5dccee
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taecfc1a3
+        origin: t863181f5
         config:
           ref: data
         position: [0.0, 33.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tbb52bd53
+        origin: t5f17b7e4
         config:
           sql: |-
             SELECT
@@ -110,7 +113,10 @@ turns:
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND c."region" = 'west'
+              o."status" = 'paid'
+              AND NOT o."amount" IS NULL
+              AND c."region" = 'west'
+              AND TRIM(c."region") <> ''
             GROUP BY
               c."region"
             ORDER BY
