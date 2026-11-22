@@ -32,10 +32,33 @@ TABLES = {
 
 
 @pytest.fixture
-def source():
+def legacy(monkeypatch):
+    """Lumen as it runs on a panel-flowdash without ``placement_context`` and ``set_default``."""
+    from lumen.flowdash import nodes
+
+    monkeypatch.setattr(nodes, "placement_context", None)
+
+
+@pytest.fixture
+def public():
+    from lumen.flowdash import nodes
+
+    if nodes.placement_context is None:
+        pytest.skip("panel-flowdash has no placement_context")
+
+
+@pytest.fixture
+def duckdb_source():
     from lumen.sources.duckdb import DuckDBSource
 
     return DuckDBSource(uri=":memory:", tables=TABLES)
+
+
+@pytest.fixture(params=["public", "legacy"])
+def source(request, duckdb_source):
+    """A source to chart, with each of the ways a view takes its default."""
+    request.getfixturevalue(request.param)
+    return duckdb_source
 
 
 def editor_with(source, table="sales", **editor_params):
@@ -198,7 +221,7 @@ def test_a_new_view_starts_from_the_default_when_connected(source):
 def test_the_default_is_part_of_the_connection_and_undone_with_it(source, coalesce):
     ops = editor_with(source, history_coalesce=coalesce)
     ops.add_node(VIEW_ID, {}, name="chart")
-    history = ops.editor._history
+    history = ops.editor.edit_history
     history.flush()
     before = len(history.versions)
     ops.connect("rows.pipeline", "chart.pipeline")
@@ -355,10 +378,24 @@ def ticks(monkeypatch):
     return callbacks
 
 
-def test_a_pipeline_arriving_without_an_edit_records_the_default_on_the_next_tick(source, ticks):
-    ops = editor_with(source, history_coalesce=0)
+def test_a_pipeline_arriving_without_an_edit_records_the_default_right_away(duckdb_source, public):
+    ops = editor_with(duckdb_source, history_coalesce=0)
     ops.add_node(VIEW_ID, {}, name="chart")
-    history = ops.editor._history
+    history = ops.editor.edit_history
+    history.flush()
+    before = len(history.versions)
+    node = instance(ops, "chart")
+    node.pipeline = instance(ops, "rows")._object
+    history.flush()
+    assert node.spec and config(ops, "chart")["spec"] == node.spec
+    assert len(history.versions) == before + 1
+    assert history.versions[-1].metadata["op"] == "set_config"
+
+
+def test_a_pipeline_arriving_without_an_edit_records_the_default_on_the_next_tick(duckdb_source, legacy, ticks):
+    ops = editor_with(duckdb_source, history_coalesce=0)
+    ops.add_node(VIEW_ID, {}, name="chart")
+    history = ops.editor.edit_history
     history.flush()
     before = len(history.versions)
     node = instance(ops, "chart")
@@ -371,10 +408,10 @@ def test_a_pipeline_arriving_without_an_edit_records_the_default_on_the_next_tic
     assert history.versions[-1].metadata["op"] == "set_config"
 
 
-def test_a_connection_recorded_after_the_default_needs_no_extra_edit(source, ticks):
-    ops = editor_with(source, history_coalesce=0)
+def test_a_connection_recorded_after_the_default_needs_no_extra_edit(duckdb_source, legacy, ticks):
+    ops = editor_with(duckdb_source, history_coalesce=0)
     ops.add_node(VIEW_ID, {}, name="chart")
-    history = ops.editor._history
+    history = ops.editor.edit_history
     history.flush()
     ops.connect("rows.pipeline", "chart.pipeline")
     history.flush()
@@ -416,19 +453,19 @@ class _Without:
             setattr(self._editor, name, value)
 
 
-def test_without_the_mute_flag_no_view_takes_a_default(source, monkeypatch):
+def test_without_the_mute_flag_no_view_takes_a_default(duckdb_source, legacy, monkeypatch):
     from lumen.flowdash import nodes
 
-    ops = editor_with(source)
+    ops = editor_with(duckdb_source)
     monkeypatch.setattr(nodes, "current_dashboard", lambda: _Without(ops.editor, "_muted"))
     assert not ViewNode()._may_default
 
 
 @pytest.mark.parametrize("missing", ["_history", "_hydrating", "_dataflow_graph", "_node_name", "_record_edit", "code_panel"])
-def test_a_flowdash_without_a_private_attribute_still_draws_the_view(source, ticks, missing):
+def test_a_flowdash_without_a_private_attribute_still_draws_the_view(duckdb_source, legacy, ticks, missing):
     import weakref
 
-    ops = editor_with(source)
+    ops = editor_with(duckdb_source)
     ops.add_node(VIEW_ID, {}, name="chart")
     node = instance(ops, "chart")
     editor = _Without(ops.editor, missing)
@@ -438,7 +475,7 @@ def test_a_flowdash_without_a_private_attribute_still_draws_the_view(source, tic
     for record in ticks:
         record()
 
-    empty = editor_with(source, table="names")
+    empty = editor_with(duckdb_source, table="names")
     empty.add_node(VIEW_ID, {}, name="chart")
     view = instance(empty, "chart")
     stand_in = _Without(empty.editor, missing)
@@ -446,3 +483,14 @@ def test_a_flowdash_without_a_private_attribute_still_draws_the_view(source, tic
     empty.connect("rows.pipeline", "chart.pipeline")
     message, button = view._body().objects
     assert message.object == "No chart yet" and button.visible
+
+
+def test_the_edit_spec_button_follows_the_code_panel_without_creating_it(duckdb_source, public):
+    ops = editor_with(duckdb_source, table="names")
+    ops.add_node(VIEW_ID, {}, name="chart")
+    ops.connect("rows.pipeline", "chart.pipeline")
+    node = instance(ops, "chart")
+    _, button = node._body().objects
+    assert button.visible and ops.editor._code_panel is None
+    assert node.edit_spec()
+    assert ops.editor.code_panel_node == ops._instance("chart") and not button.visible
