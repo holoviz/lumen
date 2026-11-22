@@ -272,25 +272,31 @@ async def add_metric(
     if existing and _graph.component_of(ops, name) != METRIC_ID:
         raise ModelRetry(f"{name!r} is taken by a node that is not a metric; pick another name.")
     before = (_graph.config_of(ops, name), _graph.inputs_of(ops, name).get("parameters")) if existing else None
+    placed = set(_graph.nodes(ops))
+    target = name
     try:
         if existing:
             ops.set_config(name, config)
+            # An edit of an earlier answer in Explore goes to a copy of it.
+            target = _graph.edited(ops, name, placed)
         else:
             ops.add_node(METRIC_ID, config, name=name)
-        ops.set_inputs(name, {"parameters": parameters or None})
-        frame = _graph.output(ops, name, "data")
+        ops.set_inputs(target, {"parameters": parameters or None})
+        frame = _graph.output(ops, target, "data")
+    except PermissionError as exc:
+        raise ModelRetry(f"Refused: {exc} Place a metric node of your own under another name instead.") from exc
     except OperationError as exc:
         if before is None:
             if name in _graph.nodes(ops):
                 ops.remove_node(name)
         else:
-            ops.set_config(name, before[0])
-            ops.set_inputs(name, {"parameters": before[1]})
+            ops.set_config(target, before[0])
+            ops.set_inputs(target, {"parameters": before[1]})
         raise ModelRetry(str(exc)) from exc
     ceiling = effective_limit(ops.editor, None)
     capped = f" (capped at {ceiling} rows)" if len(frame) >= ceiling else ""
     verb = "Changed" if existing else "Placed"
-    return f"{verb} metric node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+    return f"{verb} metric node {target!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
@@ -502,6 +508,12 @@ def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
     return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
 
 
+def _refused(result: Any) -> bool:
+    """Whether a FlowDash tool's ``result`` says it changed nothing, e.g. a refusal of Explore."""
+    text = result.return_value if isinstance(result, ToolReturn) else result
+    return isinstance(text, str) and text.startswith(("Refused:", "Not available:"))
+
+
 class CheckedConfig(AbstractCapability[FlowDashDeps]):
     """
     Checks what ``set_config`` gives a Lumen SQL or view node as add_sql and
@@ -549,19 +561,22 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
         limit = effective_limit(ops.editor, int(rows) if isinstance(rows, int) else None)
         sql, statement, frame = await _test_run(src, config["sql"], limit)
         config = {**config, "sql": sql}
+        placed = set(_graph.nodes(ops))
         with primed_result(src, statement, frame):
             result = await handler({**args, "config": config})
+        if _refused(result):
+            return result
+        # An edit of an earlier answer in Explore goes to a copy of it, which the preview shows.
+        target = _graph.edited(ops, name, placed)
         try:
-            # TODO: with panel-flowdash's ExplorationOps (fd #238), an edit to an earlier answer
-            # makes a copy (OwnNodesOnly steps aside for it), so ``name`` would read the frozen
-            # original here, not the copy; see test_checked_config_previews_the_copy_explore_makes.
-            frame = _graph.output(ops, name, "data")
+            frame = _graph.output(ops, target, "data")
         except OperationError as exc:
-            ops.set_config(name, {key: before[key] for key in config if key in before})
-            raise ModelRetry(str(exc)) from exc
+            ops.set_config(target, {key: before[key] for key in config if key in before})
+            copied = f" The change went to {target!r}, a copy of {name!r}, which is back as it was." if target != name else ""
+            raise ModelRetry(f"{exc}{copied}") from exc
         capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
         preview = f"\n\nResult{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
-        preview += "".join(f"\n\n{problem}" for problem in await _follower_problems(ops, name))
+        preview += "".join(f"\n\n{problem}" for problem in await _follower_problems(ops, target))
         if isinstance(result, str):
             return result + preview
         if isinstance(result, ToolReturn) and isinstance(result.return_value, str):

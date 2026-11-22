@@ -25,6 +25,7 @@ from lumen.flowdash.choices import (
 from lumen.flowdash.nodes import table_pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.duckdb import DuckDBSource
+from lumen.transforms.sql import SQLGroupBy, SQLLimit
 
 from .test_host import settle
 
@@ -317,6 +318,33 @@ async def test_filter_value_choices_of_a_sql_result(orders):
     ops.add_node(FILTER_ID, {"field": "category"}, name="filter")
     ops.connect("query.pipeline", "filter.pipeline")
     assert await value_choices(ops) == ["A", "B"]
+
+
+class TotalByPaid(SQLGroupBy):
+    """A group-by whose input rows hold the columns its result lacks, as a metric's aggregation has."""
+
+    def input_rows(self, field, sql_in):
+        return sql_in if field in ("category", "amount", "paid") else None
+
+
+async def test_filter_value_choices_of_a_field_only_the_aggregated_rows_have(orders):
+    from lumen.pipeline import Pipeline
+
+    # The result's schema, as a metric pipeline declares it.
+    schema = {"paid": {"type": "boolean"}, "amount": {"type": "number"}}
+    grouped = Pipeline(
+        source=orders, table="orders", schema=schema, sql_transforms=[
+            TotalByPaid(by=["paid"], aggregates={"SUM": "amount"}), SQLLimit(limit=1),
+        ],
+    )
+    assert lumen_choices.distinct_values(grouped, "category") == ["A", "B"]
+    assert lumen_choices.distinct_values(grouped, "unknown") is None
+    plain = Pipeline(
+        source=orders, table="orders", schema=schema,
+        sql_transforms=[SQLGroupBy(by=["paid"], aggregates={"SUM": "amount"})],
+    )
+    assert lumen_choices.distinct_values(plain, "category") is None
+    assert lumen_choices._read_distinct(grouped, "category", None) == ["A", "B"]
 
 
 async def test_filter_value_choices_keep_the_event_loop_free():

@@ -10,6 +10,8 @@ from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import ModelRetry
 from pydantic_ai.capabilities import AbstractCapability
 
+from .authoring import authoring_toolset
+
 try:
     from panel_flowdash.agent import ExplorationOps
 except ImportError:
@@ -18,8 +20,8 @@ except ImportError:
 # Runs whose placed nodes are remembered at once; older runs have ended.
 RUNS_REMEMBERED = 64
 
-# The tools that place a node named by their ``name`` argument.
-PLACING_TOOLS = ("add_sql", "add_chart", "add_table", "add_map", "add_metric", "add_text")
+# The tools that place a node named by their ``name`` argument: each of Lumen's authoring tools.
+PLACING_TOOLS = tuple(authoring_toolset().tools)
 
 # The tools that change an existing node named by their ``name`` argument.
 CHANGING_TOOLS = ("set_config", "add_metric")
@@ -55,10 +57,10 @@ class OwnNodesOnly(AbstractCapability[FlowDashDeps]):
     run's; a node without one, e.g. of a function component, by its id,
     and only one the run placed may change.
 
-    panel-flowdash's ``ExplorationOps`` freezes earlier answers itself and
-    copies one on an edit. Until a release has it, the Explore runner works
-    on the dashboard's own ops, and this keeps the freeze; on an
-    ``ExplorationOps`` it steps aside, so the copy happens.
+    panel-flowdash's ``ExplorationOps`` (0.1.0rc7) freezes earlier answers
+    itself and copies one on an edit, so on it this steps aside and the
+    copy happens. Before that release the Explore runner works on the
+    dashboard's own ops, and this keeps the freeze.
     """
 
     def __init__(self):

@@ -510,6 +510,19 @@ class MetricAggregate(SQLTransform):
             expression = expression.limit(self.limit)
         return self.to_sql(expression)
 
+    def input_rows(self, field: str, sql_in: str) -> str | None:
+        """
+        The rows of the input the conditions keep, which hold ``field`` when
+        it is one of the input's ``columns``, e.g. to read the values a
+        filter before the aggregation can match; None for any other field.
+        """
+        if field not in self.columns:
+            return None
+        expression = select("*").from_(self._to_subquery(self.parse_sql(sql_in), "metric_base"))
+        if self.where:
+            expression = expression.where(and_(*(sqlglot.parse_one(c, read=self.read) for c in self.where)))
+        return self.to_sql(expression)
+
 
 class SQLLimit(SQLTransform):
     """

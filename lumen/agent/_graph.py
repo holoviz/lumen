@@ -1,6 +1,9 @@
 """Reading nodes, their config, live outputs and wiring through ``DashboardOps``."""
 from __future__ import annotations
 
+import re
+
+from collections.abc import Collection
 from typing import Any
 
 import yaml
@@ -105,3 +108,18 @@ def view_class(component: str) -> type | None:
     """The ``LumenViewNode`` class registered as ``component``, or None for any other component."""
     cls = COMPONENTS.get(component)
     return cls if isinstance(cls, type) and issubclass(cls, LumenViewNode) else None
+
+
+def edited(ops: DashboardOps, name: str, before: Collection[str]) -> str:
+    """
+    The node an edit of node ``name`` changed: ``name``, or the copy of it
+    the edit placed, one of the nodes not in ``before``, as panel-flowdash's
+    ``ExplorationOps`` copies an earlier answer's node to change it. The
+    copy is named after the original with a number, e.g. ``totals_2``.
+    """
+    base = re.escape(re.sub(r"_\d+$", "", name))
+    copy = re.compile(base + r"_\d+")
+    component = component_of(ops, name)
+    return next(
+        (n for n in nodes(ops) if n not in before and copy.fullmatch(n) and component_of(ops, n) == component), name,
+    )

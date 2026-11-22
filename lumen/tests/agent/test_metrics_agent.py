@@ -125,3 +125,23 @@ async def test_metric_turn_is_scored_by_its_rows_and_sql():
         session.close()
     assert turn.rows == [["CA", 1], ["IA", 1], ["TX", 2]]
     assert 'FROM (SELECT * FROM "turbines")' in turn.sql
+
+
+async def test_add_metric_in_explore_refuses_to_change_a_dashboard_metric_node(session):
+    flowdash_agent = pytest.importorskip("panel_flowdash.agent")
+    if not hasattr(flowdash_agent, "ExplorationOps"):
+        pytest.skip("panel-flowdash without ExplorationOps")
+    session.editor.new_dashboard("Capacity")
+    await add_metric(SimpleNamespace(deps=session.deps), "capacity", "by_state", ["capacity_mw"], ["state"])
+    explored = flowdash_agent.ExplorationOps(session.ops)
+    ctx = SimpleNamespace(deps=flowdash_agent.FlowDashDeps(explored))
+    try:
+        with pytest.raises(ModelRetry, match="^Refused: 'by_state' is a node of the dashboard.*under another name"):
+            await add_metric(ctx, "capacity", "by_state", ["turbines"], ["state"])
+        result = await add_metric(ctx, "capacity", "turbines_by_state", ["turbines"], ["state"])
+    finally:
+        explored.dispose()
+
+    assert result.startswith("Placed metric node 'turbines_by_state'")
+    assert _graph.config_of(session.ops, "by_state")["measures"] == ["capacity_mw"]
+    assert [node["name"] for node in session.ops.nodes()] == ["by_state"]

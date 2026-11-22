@@ -2018,3 +2018,20 @@ def test_describe_survives_a_round_trip_through_the_spec(described_source):
         metadata = restored.get_metadata("orders")
     assert metadata["description"] == "Mine"
     assert metadata["columns"]["amount"]["description"] == "Order value in EUR"
+
+
+def test_sources_sharing_a_connection_create_its_views_once(caplog):
+    from concurrent.futures import ThreadPoolExecutor
+
+    source = DuckDBSource(uri=":memory:", tables={"orders": "SELECT * FROM (VALUES (1), (2)) AS t(amount)"})
+
+    def derive(i):
+        derived = source.create_sql_expr_source({"big": "SELECT * FROM orders WHERE amount > 1"}, materialize=False)
+        return derived.execute('SELECT COUNT(*) FROM "big"').iloc[0, 0]
+
+    with caplog.at_level("WARNING"), ThreadPoolExecutor(8) as pool:
+        assert set(pool.map(derive, range(64))) == {1}
+    assert "could not create a view" not in caplog.text
+    own = DuckDBSource(uri=":memory:", tables={"orders": "SELECT 1 AS amount"})
+    assert source.create_sql_expr_source({})._views is source._views
+    assert own._views is not source._views

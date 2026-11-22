@@ -823,6 +823,18 @@ class MetricPreFilter(SQLPreFilter):
                 table.replace(self._create_filtered_subquery(table.name, conditions[table.name], table.alias or None))
         return self.to_sql(expression)
 
+    def input_rows(self, field: str, sql_in: str) -> str | None:
+        """
+        The rows, with their filters, of the first table the query reads
+        that has ``field``, e.g. to read the values a filter on that table
+        can match; None when no table has it.
+        """
+        table = next((name for name, columns in self.tables.items() if field in columns), None)
+        if table is None:
+            return None
+        conditions = dict(self.conditions).get(table) or []
+        return self.to_sql(exp.select("*").from_(self._create_filtered_subquery(table, conditions)))
+
 
 @dataclass
 class Query:
