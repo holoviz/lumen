@@ -198,3 +198,121 @@ class TestParameter:
     def test_an_unknown_ref_is_refused(self, ops):
         with pytest.raises(OperationError, match="no source `nowhere`"):
             ops.bind_parameters({"data": "nowhere"})
+
+
+PAID = "SELECT customer_id, amount FROM orders WHERE status = 'paid'"
+
+
+def chain(*nodes):
+    """A SQL node on the source, then nodes each reading the ``result`` of the one before it."""
+    (first, *rest) = nodes
+    doc = graph(first)
+    previous = first[0]
+    for name, component, config in rest:
+        doc["nodes"][name] = {"component": component, "config": config}
+        doc["edges"].append({"from": f"{previous}.result", "to": f"{name}.source"})
+        previous = name
+    return doc
+
+
+class TestFollowers:
+
+    def doc(self):
+        return chain(
+            ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
+            ("by_region", "Lumen/sql", {"sql": (
+                "SELECT region, SUM(amount) AS total FROM paid JOIN customers USING (customer_id) GROUP BY region"
+            ), "table": "by_region"}),
+            ("top", "Lumen/sql", {"sql": "SELECT region FROM by_region ORDER BY total DESC LIMIT 1"}),
+        )
+
+    def test_a_follower_reads_the_base_columns_its_upstreams_read(self):
+        found = {u.node: (u.coverage, tables(u)) for u in usages(self.doc(), "data", SCHEMA, "duckdb")}
+        upstream = {"orders": ["amount", "customer_id", "status"]}
+        assert found == {
+            "paid": (FULL, upstream),
+            "by_region": (FULL, {**upstream, "customers": ["customer_id", "region"]}),
+            "top": (FULL, {**upstream, "customers": ["customer_id", "region"]}),
+        }
+
+    def test_a_dropped_base_column_names_the_upstream_and_every_follower(self):
+        doc = self.doc()
+        schema = {**SCHEMA, "orders": {k: v for k, v in SCHEMA["orders"].items() if k != "status"}}
+        problems = check(doc, "data", expects(doc, "data", SCHEMA, "duckdb"), schema, "duckdb")
+        assert [(p.node, p.message) for p in problems] == [
+            (node, "Table 'orders' has no column 'status'.") for node in ("paid", "by_region", "top")
+        ]
+        schema = {**SCHEMA, "customers": {k: v for k, v in SCHEMA["customers"].items() if k != "region"}}
+        assert [p.node for p in check_unrecorded(doc, "data", schema, "duckdb")] == ["by_region", "top"]
+
+    def test_a_column_the_upstream_does_not_output_names_the_follower(self):
+        doc = chain(
+            ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
+            ("by_status", "Lumen/sql", {"sql": "SELECT status FROM paid"}),
+        )
+        problems = check(doc, "data", expects(doc, "data", SCHEMA, "duckdb"), SCHEMA, "duckdb")
+        assert [(p.node, p.warning) for p in problems] == [("by_status", True)]
+        assert "status" in problems[0].message
+
+    def test_a_follower_reads_a_result_renamed_away_from_a_base_table(self):
+        doc = chain(
+            ("orders", "Lumen/sql", {"sql": PAID, "table": "orders"}),
+            ("n", "Lumen/sql", {"sql": "SELECT COUNT(*) AS n, MAX(o.order_id) AS last FROM orders_result, orders o"}),
+        )
+        found = {u.node: tables(u) for u in usages(doc, "data", SCHEMA, "duckdb")}
+        assert found["n"] == {"orders": ["amount", "customer_id", "order_id", "status"]}
+
+    def test_a_result_named_like_a_base_table_in_another_case_is_renamed(self):
+        doc = chain(
+            ("paid", "Lumen/sql", {"sql": PAID, "table": "Orders"}),
+            ("n", "Lumen/sql", {"sql": "SELECT COUNT(*) AS n, MAX(o.order_id) AS last FROM Orders_result, orders o"}),
+        )
+        found = {u.node: tables(u) for u in usages(doc, "data", SCHEMA, "duckdb")}
+        assert found["n"] == {"orders": ["amount", "customer_id", "order_id", "status"]}
+
+    def test_a_table_node_on_a_result_reads_the_upstreams_columns(self):
+        doc = chain(
+            ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
+            ("paid_table", "Lumen/table", {"table": "paid"}),
+        )
+        found = {u.node: (u.coverage, tables(u)) for u in usages(doc, "data", SCHEMA, "duckdb")}
+        assert found["paid_table"] == (FULL, {"orders": ["amount", "customer_id", "status"]})
+
+
+def test_rebinding_names_a_follower_of_a_node_reading_a_dropped_column():
+    editor = FlowDash(components=COMPONENTS, notifications=False, history_coalesce=0)
+    bind_source(editor, DuckDBSource(uri=":memory:", tables=COMMERCE), "data")
+    ops = DashboardOps(editor)
+    doc = chain(
+        ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
+        ("total", "Lumen/sql", {"sql": "SELECT SUM(amount) AS total FROM paid", "table": "total"}),
+    )
+    ops.replace_yaml(yaml.safe_dump(doc), revision=ops.revision())
+    ops.declare_parameter("data", "data", "ref", type="source")
+    assert ops.node_output("total.data")["total"].tolist() == [30]
+    renamed = {**COMMERCE, "orders": COMMERCE["orders"].replace("status", "state")}
+    bind_source(editor, DuckDBSource(uri=":memory:", tables=renamed), "other")
+    try:
+        with pytest.raises(ContractError) as info:
+            editor.bind_parameters({"data": "other"})
+        assert info.value.nodes == ["paid", "total"]
+    finally:
+        editor.dispose()
+
+
+def test_a_join_reads_the_base_columns_of_both_branches():
+    doc = chain(
+        ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
+        ("totals", "Lumen/sql", {"sql": "SELECT customer_id, SUM(amount) AS total FROM paid GROUP BY customer_id", "table": "totals"}),
+    )
+    doc["nodes"]["names"] = {"component": "Lumen/sql", "config": {"sql": "SELECT customer_id, customer FROM customers", "table": "names"}}
+    doc["edges"].append({"from": "data.source", "to": "names.source"})
+    doc["nodes"]["joined"] = {"component": "Lumen/sql", "config": {
+        "sql": "SELECT n.customer, t.total FROM totals t JOIN names n USING (customer_id)", "table": "joined"}}
+    doc["edges"] += [{"from": "totals.result", "to": "joined.source"}, {"from": "names.result", "to": "joined.source"}]
+
+    found = {u.node: (u.coverage, tables(u)) for u in usages(doc, "data", SCHEMA, "duckdb")}
+    assert found["joined"] == (FULL, {"orders": ["amount", "customer_id", "status"], "customers": ["customer", "customer_id"]})
+    schema = {**SCHEMA, "customers": {k: v for k, v in SCHEMA["customers"].items() if k != "customer"}}
+    problems = check(doc, "data", expects(doc, "data", SCHEMA, "duckdb"), schema, "duckdb")
+    assert [p.node for p in problems] == ["names", "joined"]

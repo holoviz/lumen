@@ -25,7 +25,14 @@ from ..data.sql import validate_read_only_sql
 from ..data.utils import ANSI_ESCAPE, format_tool_error
 from ..sources.base import BaseSQLSource, QueryTimeoutError
 from ..transforms.sql import SQLLimit
+from ..util import normalize_table_name
 from .defaults import field_column
+from .results import expand, merge
+
+try:
+    from panel_flowdash.config_check import stored_config
+except ImportError:
+    stored_config = None
 
 # Seconds the engine may take to plan a query in ``check_sql_config``, waiting
 # for the source's previous probe included.
@@ -674,12 +681,14 @@ async def probe_query(sql: str, source: BaseSQLSource, timeout: float | None = N
     finish within ``timeout`` seconds (``PROBE_TIMEOUT`` by default), waiting
     for the source's previous probe included, raises ``QueryTimeoutError``.
     Queries the engine accepted are remembered until the source's table
-    definitions change or ``forget_probes`` is called.
+    definitions change or ``forget_probes`` is called. On a SQL node's
+    result source the probe is the expanded statement, run on the root.
     """
     timeout = PROBE_TIMEOUT if timeout is None else timeout
-    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(sql)
+    source, statement = expand(sql, source)
+    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(statement)
     # A table the host redefines makes the queries accepted before unknown again.
-    key = (sql, repr(source.tables))
+    key = (statement, repr(source.tables))
     with _GUARD:
         probed = _PROBED.setdefault(source, OrderedDict())
         lock = _PROBE_LOCKS.setdefault(source, threading.Lock())
@@ -764,23 +773,42 @@ async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> An
     time, the query could not be verified, which is a warning rather than
     a problem. Other sources are never probed, since a slow probe would keep
     running; there ``check_columns`` compares the columns with the stored
-    schemas instead.
+    schemas instead. A new ``table`` must be a name DuckDB keeps as it is,
+    ignoring case, so the name a later query reads the result by is the one
+    the engine has; one a saved node already has only gets a warning, so the
+    node stays editable.
     """
+    if (table := config.get("table")) and table.lower() != normalize_table_name(table):
+        message = (
+            f"The table name {table!r} should be letters, digits and underscores, "
+            f"e.g. {normalize_table_name(table) or 'result'!r}."
+        )
+        # Without stored_config a saved name cannot be told from a new one, so neither is refused.
+        if stored_config is not None and ((stored := stored_config()) is None or stored.get("table") != table):
+            return CheckDiagnostic(message, field="table")
+        warning = _unverified(message)
+        if not (config.get("sql") or "").strip():
+            return warning
+    else:
+        warning = None
     raw_sql = config.get("sql") or ""
     sql = raw_sql.strip()
     if not sql:
         return None
-    source = inputs.get("source")
+    try:
+        source = merge(inputs.get("source"))
+    except ValueError as exc:
+        return CheckDiagnostic(str(exc), field="source")
     try:
         if source is None:
             check_unbound_sql(sql)
-            return None
+            return warning
         if not isinstance(source, BaseSQLSource):
             return CheckDiagnostic(f"{type(source).__name__} does not run SQL.", field="sql")
         await asyncio.to_thread(check_query, sql, source)
         if not source.cancels_queries:
             await asyncio.to_thread(check_columns, sql, source)
-            return None
+            return warning
     except _DiagnosticError as exc:
         return _adjust_leading_whitespace(exc.diagnostic, raw_sql, field="sql")
     except sqlglot.errors.SqlglotError as exc:
@@ -801,7 +829,7 @@ async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> An
             "The node reports any error when it runs the query."
         )
     if problem is None:
-        return None
+        return warning
     if isinstance(problem, CheckDiagnostic):
         return _adjust_leading_whitespace(problem, raw_sql, field="sql")
     return CheckDiagnostic(str(problem), field="sql")
