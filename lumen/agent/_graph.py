@@ -48,3 +48,8 @@ PIPELINE_PORTS = {"Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/
 def pipeline_port(ops: DashboardOps, name: str) -> str | None:
     """The port of node ``name`` that outputs a Lumen pipeline, if it has one."""
     return PIPELINE_PORTS.get(component_of(ops, name))
+
+
+# FlowDash's built-in text components and the config field holding each one's text.
+HEADING_ID, MARKDOWN_ID, DIVIDER_ID = "Text/Heading", "Text/Markdown", "Text/Divider"
+TEXT_FIELDS = {HEADING_ID: "text", MARKDOWN_ID: "text", DIVIDER_ID: "label"}

@@ -13,7 +13,9 @@ from pydantic_ai.models.function import FunctionModel
 
 from lumen.agent import AgentSession, _graph
 from lumen.agent.assistant import INSTRUCTIONS, create_agent
-from lumen.agent.authoring import add_chart, add_sql
+from lumen.agent.authoring import (
+    add_chart, add_sql, add_text, check_text,
+)
 from lumen.agent.data import (
     check_data, data_toolset, describe_table, distinct_values, list_tables,
     run_sql,
@@ -193,7 +195,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_sql", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
+    assert tools == ["add_chart", "add_sql", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
 
 
 async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
@@ -399,7 +401,7 @@ async def test_model_trace_records_the_stubbed_history(tmp_path):
     finally:
         session.close()
     recorded = ModelMessagesTypeAdapter.dump_python(load_messages(trace), mode="json")
-    strip = lambda ms: [{k: v for k, v in m.items() if k not in ("metadata", "timestamp")} for m in ms]  # noqa: E731
+    strip = lambda ms: [{k: v for k, v in m.items() if k not in ("metadata", "timestamp")} for m in ms]
     assert strip(recorded) == strip(held)
     assert any("rewind" in line for line in trace.read_text().splitlines())
 
@@ -447,7 +449,7 @@ async def test_list_tables_summarizes_placed_charts(ctx, session):
 
 
 async def test_list_tables_shortens_long_node_sql(ctx, monkeypatch):
-    import lumen.agent.data as data
+    from lumen.agent import data
 
     monkeypatch.setattr(data, "NODE_SQL_CHARS", 20)
     await add_sql(ctx, "data", "paid_by_region", BY_REGION)
@@ -700,3 +702,73 @@ def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_n
 
     assert 'add_node("Lumen/table", {"ref"' in TABLE_INSTRUCTIONS
     assert TABLE_INSTRUCTIONS not in INSTRUCTIONS
+
+
+async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ctx, session):
+    assert add_text(ctx, "heading", "title", "Paid orders", subtitle="By region", size="Title") == "Placed heading 'title'."
+    add_text(ctx, "markdown", "intro", "This dashboard shows **paid** orders per region.")
+    add_text(ctx, "divider", "rule")
+
+    assert _graph.config_of(session.ops, "title") == {
+        "text": "Paid orders", "subtitle": "By region", "size": "Title",
+    }
+    assert _graph.config_of(session.ops, "intro")["text"] == "This dashboard shows **paid** orders per region."
+    assert _graph.component_of(session.ops, "rule") == "Text/Divider"
+    text = await list_tables(ctx)
+    assert "- intro (markdown; text): 'This dashboard shows **paid** orders per region.'" in text
+    assert "- title (heading; text): 'Paid orders'" in text
+
+
+@pytest.mark.parametrize("args, error", [
+    (("heading", "title", " "), "Write the heading's text"),
+    (("markdown", "intro", "x" * 4001), "4001 characters; keep it to 4000"),
+    (("markdown", "intro", "Total: {{ value }}"), "nothing is connected"),
+    (("heading", "title", "Sales", "s" * 401), "401 characters; keep it to 400"),
+    (("divider", "rule", "Sales", "sub"), "Only a heading"),
+])
+def test_add_text_retries_text_it_cannot_place(ctx, session, args, error):
+    with pytest.raises(ModelRetry, match=error):
+        add_text(ctx, *args)
+    assert [node["name"] for node in session.ops.nodes()] == ["data"]
+
+
+async def test_set_config_changes_the_text_of_a_text_node_the_agent_placed():
+    model, requests = script(
+        [ToolCallPart("add_text", {"kind": "markdown", "name": "intro", "text": "Draft."}, tool_call_id="a1")],
+        [ToolCallPart("set_config", {"name": "intro", "config": {"text": "y" * 5000}}, tool_call_id="s1")],
+        [ToolCallPart("set_config", {"name": "intro", "config": {"text": "Paid orders per region."}}, tool_call_id="s2")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("Add an intro")
+        config = _graph.config_of(session.ops, "intro")
+    finally:
+        session.close()
+
+    (retried,) = requests[2].parts
+    assert "keep it to 4000" in str(retried.content)
+    assert config["text"] == "Paid orders per region." and turn.error is None
+
+
+async def test_a_placeholder_is_allowed_once_the_value_input_is_connected(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_text(ctx, "markdown", "intro", "Paid orders per region.")
+    text = {"text": "Totals: {{ value }}"}
+    with pytest.raises(ModelRetry, match="nothing is connected"):
+        check_text(session.ops, "Text/Markdown", text, "intro")
+    session.ops.connect("paid_by_region.data", "intro.value")
+    check_text(session.ops, "Text/Markdown", text, "intro")
+    session.ops.set_config("intro", text)
+    assert _graph.config_of(session.ops, "intro")["text"] == "Totals: {{ value }}"
+
+
+async def test_list_tables_shortens_long_text(ctx):
+    from lumen.agent.data import NODE_TEXT_CHARS
+
+    add_text(ctx, "markdown", "intro", "word " * 100)
+    line = next(line for line in (await list_tables(ctx)).splitlines() if line.startswith("- intro"))
+    shown = ("word " * 100).strip()
+    assert line == f"- intro (markdown; text): '{shown[:NODE_TEXT_CHARS]} [... {len(shown) - NODE_TEXT_CHARS} more characters]'"
+    detail = await list_tables(ctx, node="intro")
+    assert detail == f"- intro (markdown; text): {shown!r}"
