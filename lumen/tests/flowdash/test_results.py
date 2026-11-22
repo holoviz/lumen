@@ -238,9 +238,11 @@ def test_a_refresh_runs_a_join_once_per_input_and_the_rest_once(executed):
 
     ops.editor.param.trigger("refresh")
 
-    # FlowDash hands the join each new input as it arrives, so it runs once per input.
+    # The join runs at most once per input: once when FlowDash hands it its new inputs together,
+    # otherwise once as each arrives. Every other node runs once.
     queries = [q for q in executed if not q.endswith("LIMIT 0")]
-    assert len(queries) == 5 and sum("JOIN customers_per_region" in q for q in queries) == 2
+    joins = sum("JOIN customers_per_region" in q for q in queries)
+    assert joins in (1, 2) and len(queries) == 3 + joins
     assert rows(ops, "joined") == [("east", 2, 65), ("west", 1, 40)]
 
 
@@ -286,7 +288,12 @@ def test_a_pipeline_on_the_source_input_is_refused_naming_its_edge():
     ops = chain(duckdb_source(), ("paid", PAID))
     ops.add_node(SQL_ID, {"sql": "SELECT * FROM paid", "table": "both"}, name="both")
     ops.connect("paid.result", "both.source")
-    ops.connect("paid.pipeline", "both.source")
+    try:
+        ops.connect("paid.pipeline", "both.source")
+    except OperationError as exc:
+        # panel-flowdash type-checks the members of a multiple input itself.
+        assert "Type mismatch" in str(exc)
+        return
 
     error = str(getattr(output(ops, "both", "data"), "exception", ""))
     assert "source takes a Lumen SQL source or a SQL node's result; paid.pipeline gives a Lumen pipeline." in error

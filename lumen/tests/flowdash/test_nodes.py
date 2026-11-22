@@ -371,8 +371,13 @@ def test_a_sql_node_refuses_a_pipeline_on_its_source_input(source):
     ops = dashboard(source)
     ops.add_node(SQL_ID, {"sql": "SELECT 1 AS x FROM sales"}, name="other")
 
-    # panel-flowdash does not type-check the members of a multiple input, so the node refuses it.
-    ops.connect("by_category.pipeline", "other.source")
+    # A panel-flowdash that type-checks the members of a multiple input refuses the edge;
+    # an earlier one connects it and the node refuses it.
+    try:
+        ops.connect("by_category.pipeline", "other.source")
+    except OperationError as exc:
+        assert "Type mismatch" in str(exc)
+        return
     assert "source takes a Lumen SQL source or a SQL node's result; by_category.pipeline gives a Lumen pipeline." in failure(ops, "other")
 
 
