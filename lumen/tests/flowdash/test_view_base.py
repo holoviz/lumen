@@ -106,7 +106,7 @@ def test_register_view_declares_the_pipeline_input_and_spec_config():
     assert meta.provides == []
     assert meta.config == ["spec"]
     assert TableViewNode.__panel_app_metadata__.config == ["spec", "page_size"]
-    assert MapNode.param.spec.metadata == {"flowdash": {"widget": "spec", "settings": []}}
+    assert MapNode.param.spec.metadata == {"flowdash": {"widget": "spec", "settings": [], "two_way": True}}
 
 
 def test_vega_lite_view_keeps_its_registration():
@@ -143,7 +143,8 @@ def test_a_view_node_without_a_spec_or_pipeline_waits(source, components):
     ops.connect("sales.pipeline", "map.pipeline")
     ops.set_config("map", {"spec": {}})
     assert node._object is None and node._error is None
-    assert "Waiting for a spec" in node._body().object
+    assert "No chart yet" in node._body().objects[0].object
+    assert node.__flowdash_preview__() == "No chart yet"
 
 
 def test_a_view_node_that_needs_no_spec_draws_with_an_empty_one(source, components):
