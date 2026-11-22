@@ -419,7 +419,8 @@ def _coordinates(schema: dict[str, Any], names: tuple[str, ...], bound: float) -
             continue
         name = str(column).lower()
         if name in names:
-            prefix = ""
+            # xlong and ylat pair with each other, never with a bare lon or lat.
+            prefix = "xy" if name[0] in "xy" and name[1:].lstrip("_") in names else ""
         elif "_" in name and name.rsplit("_", 1)[1] in names:
             prefix = name.rsplit("_", 1)[0]
         else:
@@ -450,7 +451,7 @@ def deckgl_default(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     pairs = [prefix for prefix in lons if prefix in lats and lons[prefix] != lats[prefix]]
     if not pairs:
         return None
-    prefix = min(pairs, key=lambda p: (p != "", p.split("_")[-1] in _SECOND_POINT, pairs.index(p)))
+    prefix = min(pairs, key=lambda p: (p not in ("", "xy"), p != "", p.split("_")[-1] in _SECOND_POINT, pairs.index(p)))
     lon, lat = lons[prefix], lats[prefix]
     return {
         "layers": [{
