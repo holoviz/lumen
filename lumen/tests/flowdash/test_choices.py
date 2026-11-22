@@ -212,3 +212,13 @@ def test_table_presets_name_the_file_a_numbered_table_reads(tmp_path, monkeypatc
         "plants (local)": "Source local, table plants, file y/plants.csv",
         "plants_2 (local)": "Source local, table plants_2, file x/plants.csv",
     }
+
+
+async def test_table_node_shows_its_ref_as_ignored_while_a_source_is_connected(source):
+    ops = dashboard(source)
+    choices = await config_choices.node_choices(ops.editor, ops._instance("table"))
+    assert list(choices) == ["table"]
+    ops.editor._apply_config_patch(ops._instance("table"), {"ref": "data"})
+    choices = await config_choices.node_choices(ops.editor, ops._instance("table"))
+    assert choices["ref"].labelled() == {"data (ignored while a source is connected)": "data"}
+    assert choices["table"].values() == ["regions", "sales"]

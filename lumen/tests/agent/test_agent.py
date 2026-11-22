@@ -712,6 +712,14 @@ async def test_the_dashboard_assistant_reads_a_table_with_one_node():
     assert "to: customers.source" not in turn.graph
     assert "- customers (table 'customers' of data)" in text
     assert "picked by the source's ref" in seen["instructions"]
+    assert "## Reading a table" in seen["instructions"]
+
+
+def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_node():
+    from lumen.agent.assistant import TABLE_INSTRUCTIONS
+
+    assert 'add_node("Lumen/table", {"ref"' in TABLE_INSTRUCTIONS
+    assert TABLE_INSTRUCTIONS not in INSTRUCTIONS
 
 
 @pytest.fixture

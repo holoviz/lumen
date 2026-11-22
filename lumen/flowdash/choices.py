@@ -20,6 +20,8 @@ from panel_flowdash.util import is_failure
 from ..sources.base import Source
 from .checks import pipeline_columns
 
+IGNORED_REF = "ignored while a source is connected"
+
 _TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
 
 
@@ -63,13 +65,16 @@ def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, l
     """
     Offer the refs of the host's sources for a ``Lumen/table`` node, and the
     tables of its source: the connected one, or else the one its ref names.
+    With a source connected, a ref it still holds is only shown as ignored.
     """
     from .nodes import listed_tables, lookup_source
 
-    choices: dict[str, Any] = dict(source_choices(config, inputs))
-    source = inputs.get("source")
-    if source is None and config.get("ref"):
-        source = lookup_source(config["ref"])
+    source, ref = inputs.get("source"), config.get("ref")
+    if source is None:
+        choices: dict[str, Any] = dict(source_choices(config, inputs))
+        source = lookup_source(ref) if ref else None
+    else:
+        choices = {"ref": {f"{ref} ({IGNORED_REF})": ref}} if ref else {}
     if isinstance(source, Source):
         choices["table"] = sorted(listed_tables(source))
     return choices

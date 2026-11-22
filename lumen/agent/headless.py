@@ -36,7 +36,8 @@ SENSITIVE_COMPONENTS = (SOURCE_ID,)
 
 DENIED = (
     "Refused: source nodes are placed and configured by the app, not by the assistant. "
-    "Use the source nodes already on the dashboard."
+    "Use the source nodes already on the dashboard, or read a table with a Lumen/table "
+    "node naming the source by ref."
 )
 
 

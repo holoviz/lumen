@@ -201,3 +201,17 @@ def test_table_nodes_list_after_filters_and_data(source):
     ops.connect("only_a.filtered", "rows.pipeline")
     instance(ops, "only_a").value = "B"
     assert ops.node_output("rows.data")["amount"].tolist() == [20]
+
+
+def test_a_ref_beside_a_connected_source_is_applied_with_a_warning(source):
+    from lumen.flowdash.checks import check_table_config
+
+    warning = check_table_config({"ref": "shop", "table": "sales"}, {"source": source})
+    assert warning == "The ref 'shop' is ignored while a source is connected; clear it or disconnect the source."
+    assert check_table_config({"table": "sales"}, {"source": source}) is None
+    ops = editor({"shop": source})
+    ops.add_node(SOURCE_ID, {"ref": "shop"}, name="shop")
+    ops.add_node(TABLE_ID, {}, name="sales")
+    ops.connect("shop.source", "sales.source")
+    ops.set_config("sales", {"ref": "shop", "table": "sales"})
+    assert ops.node_output("sales.pipeline").table == "sales"
