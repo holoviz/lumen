@@ -247,6 +247,11 @@ def test_source_refs_name_sources_by_their_name():
     assert list(source_refs([named, counted, table, several])) == ["sales_data", "sales12345", "b", "duckdb"]
 
 
+def test_a_source_param_named_past_its_99999th_object_is_still_named_by_its_data():
+    late = DuckDBSource(uri=":memory:", tables={"b": "SELECT 1 AS x"}, name="DuckDBSource123456")
+    assert list(source_refs([late])) == ["b"]
+
+
 def test_earlier_table_names_still_read_in_queries_but_are_not_listed(served):
     (served / "x").mkdir()
     (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
