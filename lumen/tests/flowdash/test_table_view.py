@@ -3,6 +3,7 @@ import asyncio
 
 import pandas as pd
 import panel as pn
+import panel_material_ui as pmui
 import pytest
 
 pytest.importorskip("duckdb")
@@ -195,19 +196,29 @@ def test_a_list_of_frozen_columns_is_left_to_the_spec():
     assert settings["frozen_columns"].write(spec, None) == {}
 
 
-async def test_the_inspector_edits_the_spec_through_the_form(source):
+async def test_the_code_panel_edits_the_spec_through_the_form(source):
     ops = dashboard(source, history_coalesce=0)
     editor = ops.editor
-    select_on_canvas(editor._flow, node_id=ops._instance("rows"))
-    (field,) = pn.Column(*editor._inspector._body).select(SpecEditor)
-    await editor._inspector.settle()
+    rows = ops._instance("rows")
+    select_on_canvas(editor._flow, node_id=rows)
+    body = pn.Column(*editor._inspector._body)
+    assert not list(body.select(SpecEditor))
+    edit = next(b for b in body.select(pmui.Button) if "fd-edit-spec" in b.css_classes)
+    edit.clicks += 1
+    panel = editor.code_panel
+    assert (panel.instance_id, panel.field) == (rows, "spec")
+    field = panel.spec_editor
     for _ in range(50):
         if field.choices.get("frozen_columns"):
             break
         await asyncio.sleep(0.02)
     assert field.choices["frozen_columns"].values() == COLUMNS
     field._controls["page_size"][1].value = 2
-    await editor._inspector.settle()
+    panel.run()
+    for _ in range(50):
+        if ops.node_config("rows").get("spec"):
+            break
+        await asyncio.sleep(0.02)
     assert ops.node_config("rows")["spec"] == {"page_size": 2}
     assert node(ops)._object.panel.page_size == 2
     assert editor.undo()
