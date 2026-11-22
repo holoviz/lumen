@@ -1,8 +1,8 @@
 """
 Schema contracts of FlowDash dashboards: the tables, columns and column
-types the nodes downstream of a ``Lumen/source`` node read, so the dashboard
-can be rerun on other data and refuse data it cannot use before any query
-runs.
+types the nodes downstream of a ``Lumen/source`` node, or of a
+``Lumen/table`` node naming its source by ref, read, so the dashboard can be
+rerun on other data and refuse data it cannot use before any query runs.
 
 The columns of each ``Lumen/sql`` node come from ``lumen.data.contracts``;
 the fields of filter and view nodes on a ``Lumen/table`` node, or on a SQL
@@ -130,15 +130,52 @@ def _reader_fields(doc: Mapping[str, Any], node: str) -> dict[str, set[str]]:
     return fields
 
 
+def ref_nodes(doc: Mapping[str, Any]) -> dict[str, str]:
+    """
+    The nodes of a document that read a host source by ref, and the ref each
+    names: source nodes, and table nodes with a ref and no source connected,
+    since a connected source is read instead.
+    """
+    connected = {target for _, _, target, port in _edges(doc) if port == "source"}
+    found = {}
+    for name, node in (doc.get("nodes") or {}).items():
+        if not isinstance(node, Mapping):
+            continue
+        component, ref = node.get("component"), (node.get("config") or {}).get("ref")
+        if component == SOURCE_ID or (component == TABLE_ID and ref and name not in connected):
+            found[name] = str(ref or "")
+    return found
+
+
+def _table_usages(doc: Mapping[str, Any], node: str, table: str, column_name) -> list[NodeUsage]:
+    """What table node ``node`` reading ``table`` and the filters and views on it read."""
+    nodes = doc.get("nodes") or {}
+    usage = NodeUsage(node, TABLE_ID, FULL)
+    usage.add(table)
+    found = [usage]
+    for reader, fields in _reader_fields(doc, node).items():
+        reader_usage = NodeUsage(reader, nodes[reader]["component"], FULL)
+        for name in fields:
+            reader_usage.add(table, column_name(table, name))
+        found.append(reader_usage)
+    return found
+
+
 def usages(doc: Mapping[str, Any], source_node: str, schema: Mapping[str, Mapping[str, Any]],
            dialect: str | None = None) -> list[NodeUsage]:
     """
     What each node reading ``source_node`` directly reads of its tables, and the
     nodes that read those nodes' output where it passes table columns through:
     filters and views on a table node, or on a SQL node that selects ``*``.
+    For a table node that names its source by ref, ``source_node`` itself is
+    the node reading the table.
     """
     nodes = doc.get("nodes") or {}
     table_name, column_name = _resolver(schema)
+    own = nodes.get(source_node) or {}
+    if own.get("component") == TABLE_ID:
+        table = table_name((own.get("config") or {}).get("table") or "")
+        return _table_usages(doc, source_node, table, column_name) if table else []
     found = []
     for source, _, target, _ in _edges(doc):
         if source != source_node:
@@ -162,16 +199,8 @@ def usages(doc: Mapping[str, Any], source_node: str, schema: Mapping[str, Mappin
                     found.append(reader_usage)
         elif component == TABLE_ID:
             table = table_name(config.get("table") or "")
-            if not table:
-                continue
-            usage = NodeUsage(target, TABLE_ID, FULL)
-            usage.add(table)
-            found.append(usage)
-            for reader, fields in _reader_fields(doc, target).items():
-                reader_usage = NodeUsage(reader, nodes[reader]["component"], FULL)
-                for name in fields:
-                    reader_usage.add(table, column_name(table, name))
-                found.append(reader_usage)
+            if table:
+                found += _table_usages(doc, target, table, column_name)
     return found
 
 
@@ -264,11 +293,16 @@ def source_contract(doc: Mapping[str, Any], source_node: str, source: Source) ->
 
 class SourceContract:
     """
-    The ``contract`` of ``Lumen/source`` nodes, see ``panel_flowdash.parameters``:
-    a parameter on a source node's ``ref`` records the tables, columns and
-    column types its downstream nodes read, and a source bound to it later
-    must have them.
+    The ``contract`` of ``Lumen/source`` and ``Lumen/table`` nodes, see
+    ``panel_flowdash.parameters``: a parameter on a node's ``ref`` records
+    the tables, columns and column types the node and its downstream nodes
+    read, and a source bound to it later must have them. A table node with
+    a source connected reads that source, so its ref has no contract.
     """
+
+    def _applies(self, context: Any) -> bool:
+        node = context.parameter.node
+        return context.parameter.field == "ref" and node in ref_nodes(context.document)
 
     def _source(self, context: Any) -> Source | None:
         from .nodes import lookup_source
@@ -277,6 +311,8 @@ class SourceContract:
         return lookup_source(ref, context.context) if isinstance(ref, str) else None
 
     def expects(self, context: Any) -> dict[str, Any] | None:
+        if not self._applies(context):
+            return None
         source = self._source(context)
         if source is None:
             return None
@@ -287,6 +323,8 @@ class SourceContract:
 
         from .nodes import host_sources, missing_source
 
+        if not self._applies(context):
+            return []
         source = self._source(context)
         if source is None:
             return [ContractProblem(None, missing_source(str(context.value), host_sources(context.context)))]

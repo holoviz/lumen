@@ -557,8 +557,18 @@ def _listed(source: Any) -> list[str]:
 
 
 def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
-    """Check a ``Lumen/table`` config: the table must be one of the source's."""
-    source, table = inputs.get("source"), config.get("table")
+    """
+    Check a ``Lumen/table`` config: without a connected source the ref must
+    name a source the host provides, and the table must be one of the
+    source's.
+    """
+    from .nodes import host_sources, lookup_source, missing_source
+
+    source, table, ref = inputs.get("source"), config.get("table"), config.get("ref")
+    if source is None and ref:
+        source = lookup_source(ref)
+        if source is None:
+            return missing_source(ref, host_sources())
     if source is None or not table:
         return None
     if table not in source.get_tables():

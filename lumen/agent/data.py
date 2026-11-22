@@ -155,7 +155,7 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
         return f"- {name} (chart of {_graph.upstream(ops, name)}; {mark or 'composite'}; {fields})"
     if component == TABLE_ID:
         limit = f", limit {config['limit']}" if config.get("limit") else ""
-        return f"- {name} (table {config.get('table')!r} of {_graph.upstream(ops, name)}{limit})"
+        return f"- {name} (table {config.get('table')!r} of {_graph.upstream(ops, name) or config.get('ref')}{limit})"
     if component == FILTER_ID:
         return f"- {name} (filter on {config.get('field')!r} of {_graph.upstream(ops, name)})"
     if component == DATA_ID:

@@ -11,13 +11,15 @@ needed, by a data node (the boundary to components that take a DataFrame),
 a view node or a tile preview. Each node resolves its Lumen object once per
 change and every output reads that object.
 
-Source nodes never build a source from their config: the host hands the
-editor the sources a dashboard may use, by ref, in the editor's context under
-``"lumen.sources"`` (``FlowDash(context={"lumen.sources": {...}})``, or
-``bind_source`` on an editor that exists), and a source node only names one
-of them by ``ref``. Whoever edits a dashboard can therefore only point it at
-sources the host chose, never open a new connection. A source node whose ref
-is bound later picks the source up then.
+Source and table nodes never build a source from their config: the host
+hands the editor the sources a dashboard may use, by ref, in the editor's
+context under ``"lumen.sources"`` (``FlowDash(context={"lumen.sources":
+{...}})``, or ``bind_source`` on an editor that exists), and a node only
+names one of them by ``ref``. Whoever edits a dashboard can therefore only
+point it at sources the host chose, never open a new connection. A node
+whose ref is bound later picks the source up then. A table node names its
+source by ``ref`` itself, so one node reads a table; a source node is for
+SQL nodes and for table nodes that share it through its output.
 
 The host also sets how many rows a query of these nodes may return
 (``set_row_ceiling``); a node's ``limit`` can lower that, never raise it.
@@ -831,6 +833,10 @@ class LumenNode(Viewer):
     # Whether the node reads a source directly, and so runs again on the dashboard's refresh.
     _reads_source: ClassVar[bool] = False
 
+    def _read_source(self) -> Any:
+        """The source the node reads, if it reads one directly."""
+        return getattr(self, "source", None)
+
     def _on_dashboard_refresh(self):
         """
         Run the node again on the dashboard's refresh with its source's cache
@@ -838,7 +844,7 @@ class LumenNode(Viewer):
         pipeline, which flows downstream and is fetched afresh, so one
         refresh runs each query once.
         """
-        source = getattr(self, "source", None)
+        source = self._read_source()
         if isinstance(source, Source):
             source.clear_cache()
         if isinstance(source, BaseSQLSource):
@@ -884,9 +890,29 @@ class LumenNode(Viewer):
         return pn.panel(self._render)
 
 
+def _track_ref(node: LumenNode) -> None:
+    """Refresh ``node``, which names a host source by ref, when ``bind_source`` binds that ref."""
+    if node.editor is not None:
+        _SOURCE_NODES.setdefault(node.editor, weakref.WeakSet()).add(node)
+
+
+def _ref_source(ref: str, context: Mapping[str, Any]) -> Source | None:
+    """The host source ``ref`` names, None for no ref; an unknown ref raises with the refs there are."""
+    if not ref:
+        return None
+    source = lookup_source(ref, context)
+    if source is None:
+        raise ValueError(missing_source(ref, host_sources(context)))
+    return source
+
+
 @register(
     component=True, page=False, title="Lumen Source", icon="storage",
-    description="A Lumen data source the app provides, named by its ref.",
+    description=(
+        "A Lumen data source the app provides, named by its ref, for SQL nodes and for several "
+        "table nodes that share one connection. A table node names a source by ref itself, so "
+        "reading one table needs no source node."
+    ),
     config=["ref"],
     check_config=check_source_config,
     contract=SourceContract(),
@@ -900,20 +926,14 @@ class SourceNode(LumenNode):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.editor is not None:
-            _SOURCE_NODES.setdefault(self.editor, weakref.WeakSet()).add(self)
+        _track_ref(self)
 
     @param.depends("ref", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
 
     def _resolve(self) -> Source | None:
-        if not self.ref:
-            return None
-        source = lookup_source(self.ref, self._context)
-        if source is None:
-            raise ValueError(missing_source(self.ref, host_sources(self._context)))
-        return source
+        return _ref_source(self.ref, self._context)
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -1101,13 +1121,17 @@ class PipelineNode(LumenNode):
 @register(
     component=True, page=False, title="Lumen Table", icon="table_chart",
     description=(
-        "A table of a Lumen source. Outputs a Lumen pipeline that fetches nothing by itself: "
-        "filter nodes and the row limit become part of the source's query."
+        "A table of a source the app provides, picked by the source's ref and the table's name. "
+        "Outputs a Lumen pipeline that fetches nothing by itself: filter nodes and the row limit "
+        "become part of the source's query. Connect a Lumen Source node to the source input "
+        "instead of setting ref to share one source node between several tables; a connected "
+        "source is read instead of ref."
     ),
-    config=["table", "limit"],
+    config=["ref", "table", "limit"],
     check_config=check_table_config,
+    contract=SourceContract(),
     config_choices=table_choices,
-    requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
+    requires=[{"key": "source", "type": SOURCE_TYPE, "required": False}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}],
     **palette_presets(table_presets),
 )
@@ -1115,7 +1139,9 @@ class TableNode(PipelineNode):
 
     _reads_source = True
 
-    source = param.Parameter(doc="The upstream source.")
+    source = param.Parameter(doc="A source node's output, read instead of ref while connected.")
+
+    ref = param.String(default="", doc="Name of a source the host provides, read when no source is connected.")
 
     table = param.String(default="", doc="Name of a table of the source.")
 
@@ -1125,16 +1151,29 @@ class TableNode(PipelineNode):
         filter nodes downstream, which become part of the same query, so
         it is not a sample the filters then narrow.""")
 
-    _waiting = "Waiting for a source and a table"
+    _waiting = "Pick a source and a table"
 
-    @param.depends("source", "table", "limit", watch=True, on_init=True)
+    def __init__(self, **params):
+        super().__init__(**params)
+        _track_ref(self)
+
+    @param.depends("source", "ref", "table", "limit", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
 
-    def _resolve(self) -> Pipeline | None:
-        if self.source is None or not self.table:
+    def _read_source(self) -> Any:
+        if self.source is not None:
+            return self.source
+        try:
+            return _ref_source(self.ref, self._context)
+        except ValueError:
             return None
-        return table_pipeline(self.source, self.table, effective_limit(self.editor, self.limit))
+
+    def _resolve(self) -> Pipeline | None:
+        source = self.source if self.source is not None else _ref_source(self.ref, self._context)
+        if source is None or not self.table:
+            return None
+        return table_pipeline(source, self.table, effective_limit(self.editor, self.limit))
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")

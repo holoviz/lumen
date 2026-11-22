@@ -682,3 +682,33 @@ async def test_a_source_node_named_like_another_apps_source_does_not_hide_it(ctx
     await add_sql(ctx, "app:energy", "plant_count", "SELECT COUNT(*) AS n FROM plants")
     assert _graph.upstream(empty.ops, "plant_count") == "energy_source"
     assert _graph.config_of(empty.ops, "energy_source") == {"ref": "energy"}
+
+
+async def test_the_dashboard_assistant_reads_a_table_with_one_node():
+    seen = {}
+    responses = [
+        [ToolCallPart("add_node", {"component": TABLE_ID, "config": {"ref": "data", "table": "customers"}, "name": "customers"})],
+        [ToolCallPart("add_chart", {"data": "customers", "name": "regions", "spec": REGION_COUNT})],
+        [TextPart("Done.")],
+    ]
+
+    def respond(messages, info):
+        seen.setdefault("instructions", messages[0].instructions)
+        return ModelResponse(parts=responses[sum(isinstance(m, ModelResponse) for m in messages)])
+
+    decisions = []
+    model = FunctionModel(respond)
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           approve=lambda tool, args: decisions.append(tool) or False,
+                           agent=create_agent(model, dashboard_tools=None))
+    try:
+        turn = await session.ask("Chart customers per region")
+        text = await list_tables(SimpleNamespace(deps=session.deps))
+    finally:
+        session.close()
+
+    assert turn.error is None and decisions == []
+    assert turn.nodes == ["customers", "regions"]
+    assert "to: customers.source" not in turn.graph
+    assert "- customers (table 'customers' of data)" in text
+    assert "picked by the source's ref" in seen["instructions"]
