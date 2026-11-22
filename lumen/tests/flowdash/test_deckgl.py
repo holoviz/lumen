@@ -373,6 +373,7 @@ def test_an_exact_name_wins_over_a_suffixed_one():
     ({"end_lon": LON, "end_lat": LAT, "start_lon": LON, "start_lat": LAT}, "@@=[start_lon, start_lat]"),
     ({"pickup_longitude": LON, "pickup_latitude": LAT}, "@@=[pickup_longitude, pickup_latitude]"),
     ({"x_long": LON, "y_lat": LAT}, "@@=[x_long, y_lat]"),
+    ({"xlong": LON, "ylat": LAT, "lon": LON}, "@@=[xlong, ylat]"),
 ])
 def test_a_map_reads_one_pair_of_coordinates(schema, position):
     assert deckgl_default(schema)["layers"][0]["getPosition"] == position
@@ -387,6 +388,8 @@ def test_a_map_reads_one_pair_of_coordinates(schema, position):
     {"x": LON, "y": LAT},
     {"longitude deg": LON, "lat": LAT},
     {"origin_lng": LON, "dest_lat": LAT},
+    {"lon": LON, "y_lat": LAT},
+    {"xlong": LON, "lat": LAT},
     {"lon": {"type": "number", "inclusiveMinimum": float("nan"), "inclusiveMaximum": float("nan")}, "lat": LAT},
 ])
 def test_no_coordinates_make_no_default_map(schema):
