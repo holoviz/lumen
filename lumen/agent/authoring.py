@@ -17,10 +17,10 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_VIEW_ID,
-    VIEW_ID, CheckDiagnostic, check_query, check_sql_config, effective_limit,
-    fetch, host_metrics, pipeline_columns, primed_result, result_sql,
-    row_ceiling, selection_warnings,
+    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID,
+    CheckDiagnostic, check_query, check_sql_config, effective_limit, fetch,
+    host_metrics, pipeline_columns, primed_result, result_sql, row_ceiling,
+    selection_warnings,
 )
 from ..flowdash.deckgl import (
     fit_view_state, layer_type, map_summary, position_columns,
@@ -34,7 +34,9 @@ from . import _graph
 from ._graph import (
     DIVIDER_ID, HEADING_ID, MARKDOWN_ID, TEXT_FIELDS,
 )
-from .data import lint, resolve_source, source_output
+from .data import (
+    _sources_by_name, lint, resolve_source, source_output,
+)
 
 
 def _place(ops, component: str, name: str, config: dict[str, Any], source: str, target: str) -> None:
@@ -400,7 +402,7 @@ def _upstream_port(deps: FlowDashDeps, data: str) -> str:
     if data not in _graph.nodes(ops):
         shown = [node for node in _graph.nodes(ops) if _graph.pipeline_port(ops, node)]
         hint = f" The SQL, table and filter nodes are: {', '.join(shown)}." if shown else ""
-        if any(data in _source_tables(deps, source) for source in _graph.nodes(ops, SOURCE_ID)):
+        if any(data in _source_tables(deps, source) for source in _sources_by_name(deps)):
             raise ModelRetry(
                 f"No node {data!r}: {data!r} is a source table. Place a SQL node on it with add_sql "
                 f"first and pass that node's name.{hint}"

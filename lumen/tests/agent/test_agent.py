@@ -1120,3 +1120,9 @@ async def test_add_map_before_any_query_says_to_place_one(turbines):
         "No node 'turbines': 'turbines' is a source table. Place a SQL node on it with add_sql first "
         "and pass that node's name."
     )
+
+
+async def test_add_map_on_a_table_of_an_apps_source_says_to_place_a_sql_node(turbines):
+    turbines.ops.remove_node("data")
+    with pytest.raises(ModelRetry, match="'turbines' is a source table. Place a SQL node on it with add_sql first"):
+        add_map(SimpleNamespace(deps=turbines.deps), "turbines", "turbine_map", POINTS)
