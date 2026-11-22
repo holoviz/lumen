@@ -394,3 +394,39 @@ def test_a_source_the_host_passes_keeps_its_name(served):
     ops.add_node(SOURCE_ID, {"ref": "warehouse_db"}, name="w")
     node = first._component_instances[ops._instance("w")]
     assert node._body().object == "warehouse_db: t"
+
+
+METRICS = """\
+metrics:
+  total:
+    source: sales
+    table: sales
+    measures: {amount: "SUM(amount)"}
+    dimensions: {category: category}
+"""
+
+
+@pytest.mark.parametrize("given", [True, False])
+def test_flowdash_reads_the_project_file_given_or_found(csv, given):
+    project = csv.parent / ("metrics.yaml" if given else "flowdash.yaml")
+    project.write_text(METRICS)
+    argv = [str(csv), "--flowdash", *(["--project", str(project)] if given else [])]
+    command = LumenAIServe(argparse.ArgumentParser())
+    with patch.object(Serve, "invoke", return_value=True), \
+         patch("lumen.flowdash.app.build_routes", wraps=build_routes) as routes:
+        command.invoke(parse(*argv))
+    assert Path(routes.call_args.kwargs["project"]) == project
+
+
+def test_flowdash_refuses_a_project_file_with_problems(csv):
+    project = csv.parent / "flowdash.yaml"
+    project.write_text(METRICS.replace("SUM(amount)", "SUM(amout)"))
+    with patch.object(Serve, "invoke", return_value=True), pytest.raises(ValueError, match=(
+        r"flowdash.yaml:5:24: Unknown column 'amout' in measure 'amount'. Did you mean 'amount'\?"
+    )):
+        LumenAIServe(argparse.ArgumentParser()).invoke(parse(str(csv), "--flowdash"))
+
+
+def test_project_only_applies_with_flowdash(csv):
+    with pytest.raises(ValueError, match="--project only apply with --flowdash"):
+        LumenAIServe(argparse.ArgumentParser()).invoke(parse(str(csv), "--project", "x.yaml"))

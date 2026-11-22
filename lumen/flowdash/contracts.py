@@ -30,6 +30,7 @@ FILTER_ID = "Lumen/filter"
 SQL_ID = "Lumen/sql"
 DATA_ID = "Lumen/data"
 VIEW_ID = "Lumen/view"
+METRIC_ID = "Lumen/metric"
 
 
 @dataclass
