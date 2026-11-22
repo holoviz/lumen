@@ -367,12 +367,13 @@ def test_responsive_spec_does_not_change_the_spec():
     assert spec == SPEC
 
 
-def test_pipeline_does_not_connect_to_source_input(source):
+def test_a_sql_node_refuses_a_pipeline_on_its_source_input(source):
     ops = dashboard(source)
-    ops.add_node(SQL_ID, {}, name="other")
+    ops.add_node(SQL_ID, {"sql": "SELECT 1 AS x FROM sales"}, name="other")
 
-    with pytest.raises(OperationError, match=r"(?i)type"):
-        ops.connect("by_category.pipeline", "other.source")
+    # panel-flowdash does not type-check the members of a multiple input, so the node refuses it.
+    ops.connect("by_category.pipeline", "other.source")
+    assert "source takes a Lumen SQL source or a SQL node's result; by_category.pipeline gives a Lumen pipeline." in failure(ops, "other")
 
 
 def _instance(ops, name):

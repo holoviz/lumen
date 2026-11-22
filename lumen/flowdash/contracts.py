@@ -169,23 +169,40 @@ def usages(doc: Mapping[str, Any], source_node: str, schema: Mapping[str, Mappin
     edges = _edges(doc)
     table_name, column_name = _resolver(schema)
     found = []
-    # (node, the port its readers read, the result tables they may query by name)
-    queue: list[tuple[str, str | None, dict[str, str]]] = [(source_node, None, {})]
+    readable: dict[str, dict[str, str]] = {}
+
+    def results(node: str) -> dict[str, str]:
+        """The result tables a query of ``node`` may read by name, from every SQL node's result it reads."""
+        if node not in readable:
+            readable[node] = {}
+            definitions: dict[str, str] = {}
+            for source, source_port, target, _ in edges:
+                upstream = nodes.get(source) or {}
+                if target != node or source_port != "result" or upstream.get("component") != SQL_ID:
+                    continue
+                before = results(source)
+                taken = {t.lower() for t in schema} | {t.lower() for t in before}
+                config = upstream.get("config") or {}
+                definitions.update({**before, _result_table(config, taken): config.get("sql") or ""})
+            readable[node] = definitions
+        return readable[node]
+
+    # (node, the port its readers read)
+    queue: list[tuple[str, str | None]] = [(source_node, None)]
     visited = set()
     while queue:
-        upstream, port, definitions = queue.pop(0)
+        upstream, port = queue.pop(0)
         for source, source_port, target, _ in edges:
             if source != upstream or (port is not None and source_port != port) or target in visited:
                 continue
             node = nodes.get(target) or {}
             component, config = node.get("component"), node.get("config") or {}
+            definitions = results(target)
             if component == SQL_ID:
                 visited.add(target)
-                sql = config.get("sql") or ""
-                usage = sql_usage(target, _expanded(sql, definitions, dialect), schema, dialect)
+                usage = sql_usage(target, _expanded(config.get("sql") or "", definitions, dialect), schema, dialect)
                 found.append(usage)
-                taken = {t.lower() for t in schema} | {t.lower() for t in definitions}
-                queue.append((target, "result", {**definitions, _result_table(config, taken): sql}))
+                queue.append((target, "result"))
                 if usage.coverage != PARTIAL:
                     continue
                 starred = list(usage.tables)
@@ -199,6 +216,7 @@ def usages(doc: Mapping[str, Any], source_node: str, schema: Mapping[str, Mappin
                     if reader_usage.tables:
                         found.append(reader_usage)
             elif component == TABLE_ID:
+                visited.add(target)
                 table = config.get("table") or ""
                 if not table:
                     continue

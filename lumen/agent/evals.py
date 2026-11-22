@@ -159,17 +159,17 @@ def reads(ops: Any, node: str | None, answers: list[str | None]) -> list[int]:
     found, queue, seen = set(), [node] if node else [], set()
     while queue:
         current = queue.pop()
-        upstream = _graph.feeding(ops, f"{current}.source")
-        if upstream is None or not upstream.endswith(".result"):
-            continue
-        name = upstream.rsplit(".", 1)[0]
-        if name in seen:
-            continue
-        seen.add(name)
-        if name in answers:
-            found.add(answers.index(name))
-        else:
-            queue.append(name)
+        for upstream in _graph.feeding_all(ops, f"{current}.source"):
+            if not upstream.endswith(".result"):
+                continue
+            name = upstream.rsplit(".", 1)[0]
+            if name in seen:
+                continue
+            seen.add(name)
+            if name in answers:
+                found.add(answers.index(name))
+            else:
+                queue.append(name)
     return sorted(found)
 
 

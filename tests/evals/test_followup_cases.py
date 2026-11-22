@@ -96,12 +96,34 @@ async def test_a_follow_up_chain_reruns_on_more_data_without_a_model():
     assert yaml.safe_load(output.artifacts[-1].graph)["edges"][-1] == {"from": "paid_orders.result", "to": "totals.source"}
 
 
-@pytest.mark.parametrize("name", ["followup_aggregate", "followup_threshold"])
+@pytest.mark.parametrize("name", ["followup_aggregate", "followup_threshold", "followup_join"])
 def test_follow_up_cases_check_reads_and_stability(name):
     expected = next(case for case in DATASET.cases if case.name == name).metadata
-    assert expected.turn_reads[1] == 0 and expected.stable_turns
+    assert expected.turn_reads[-1] in (0, [0, 1]) and expected.stable_turns
 
 
 def test_narrowing_an_answer_is_not_scored_as_a_follow_up():
     expected = next(case for case in DATASET.cases if case.name == "commerce_followup_filter").metadata
     assert expected.turn_reads is None and not expected.stable_turns
+
+
+async def test_a_join_of_two_earlier_answers_reads_both():
+    case = next(case for case in DATASET.cases if case.name == "followup_join")
+    by_region = "SELECT c.region, SUM(o.amount) AS total FROM orders o JOIN customers c " \
+        "ON o.customer_id = c.customer_id WHERE o.status = 'paid' GROUP BY c.region"
+    join = "SELECT t.region, n.customers, t.total FROM totals t JOIN customer_counts n ON t.region = n.region"
+    model = scripted(
+        [ToolCallPart("add_sql", {"source": "data", "name": "totals", "sql": by_region})],
+        [TextPart("East 65, west 40.")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "customer_counts",
+                                  "sql": "SELECT region, COUNT(*) AS customers FROM customers GROUP BY region"})],
+        [TextPart("East 2, north 1, west 1.")],
+        [ToolCallPart("add_sql", {"source": ["totals", "customer_counts"], "name": "joined", "sql": join})],
+        [TextPart("Joined.")],
+    )
+    subject = FlowDashSubject(model=model)
+    dataset = Dataset[Inputs, Output, Expected](name="join", cases=[case], evaluators=[CheckResult()])
+    report = await evaluate(subject.build_model("gpt-6-luna"), dataset, source, subject=subject)
+    (scored,) = report.cases
+    assert all(result.value for result in scored.assertions.values()), scored.assertions
+    assert "turn_reads" in scored.assertions and "stable_turns" in scored.assertions
