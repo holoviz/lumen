@@ -286,7 +286,8 @@ def test_dashboard_saved_with_positional_refs_still_loads(served, fixture):
     editor = routes["/"]()._editor
     assert list(bound_sources(editor)) == ["plants", "shop"]
     assert editor.context[SOURCE_ALIASES_KEY] == {
-        "data": "shop", "data_2": "plants", "files": "plants", "plants_files": "plants", "shop_db": "shop",
+        "data": "shop", "data_2": "plants", "files": "plants", "local": "plants", "plants_files": "plants",
+        "shop_db": "shop",
     }
 
     editor.import_dashboard(json.loads((FIXTURES / fixture).read_text()))
@@ -306,6 +307,54 @@ def test_dashboard_saved_with_one_file_keeps_its_source_when_files_are_added(ser
     ops.add_node(SOURCE_ID, {"ref": "plants"}, name="saved")
     assert output(ops, "saved", "source") is bound_sources(editor)["local"]
     assert sql_node(ops, "saved", "SELECT COUNT(*) AS n FROM plants")["n"].tolist() == [3]
+
+
+def test_every_served_source_is_named_by_its_ref(served):
+    (served / "shop.csv").write_text("x\n1\n")
+    editor = build_routes(["shop.db", "shop.csv"], db_path=served / "dash.db")["/"]()._editor
+    sources = bound_sources(editor)
+    assert {ref: source.name for ref, source in sources.items()} == {"shop": "shop", "shop_2": "shop_2"}
+    assert editor.context[SOURCE_ALIASES_KEY]["shop_db"] == "shop"
+
+
+def test_a_served_folder_keeps_resolving_when_files_are_served_beside_it(served):
+    (served / "f").mkdir()
+    (served / "f" / "wind.csv").write_text("x\n1\n")
+    assert list(refs("f")) == ["f"]
+    assert aliases("f", "plants.csv")["f"] == "local"
+    assert aliases("f/wind.csv", "plants.csv")["f"] == "local"
+
+
+def test_local_resolves_with_one_file(served):
+    assert aliases("plants.csv")["local"] == "plants"
+
+
+def test_clashing_file_names_are_logged_with_their_tables(served, caplog):
+    for folder in ("x", "y"):
+        (served / folder).mkdir()
+        (served / folder / "sales.csv").write_text("x\n1\n")
+    with caplog.at_level("WARNING", logger="lumen.flowdash.app"):
+        refs("y/sales.csv", "plants.csv", "x/sales.csv")
+    assert "sales: y/sales.csv, sales_2: x/sales.csv" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="lumen.flowdash.app"):
+        refs("plants.csv", "turbines.csv")
+    assert "share a name" not in caplog.text
+
+
+def test_earlier_table_names_never_come_from_the_working_directory(served):
+    source = refs("plants.csv")["plants"]
+    legacy = set(source.get_tables()) - set(tables(source))
+    assert legacy == {"plants_csv"}
+
+
+def test_sources_keep_resolve_data_order_when_it_makes_sources_of_its_own(served):
+    import pandas as pd
+
+    frame = pd.DataFrame({"x": [1]})
+    # The frame joins the data files' source, so there is no source per position.
+    sources = resolve_sources([frame, "plants.csv", "shop.db"])
+    assert [sorted(listed_tables(s)) for s in sources] == [["orders"], ["data", "plants"]]
 
 
 METRICS = """\
