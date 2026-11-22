@@ -24,8 +24,8 @@ from panel_flowdash.parameters import (
 
 from ..sources.base import Source
 from .contracts import (
-    SOURCE_ID, SourceContract, check_unrecorded, read_tables, source_dialect,
-    source_schema,
+    SOURCE_ID, TABLE_ID, SourceContract, check_unrecorded, read_tables,
+    ref_nodes, source_dialect, source_schema,
 )
 from .nodes import COMPONENTS, SOURCES_KEY
 
@@ -33,7 +33,7 @@ OK, FAILED, CONTRACT, USAGE = 0, 1, 2, 3
 
 _TABLE_ENTRY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.+)$")
 
-_CONTRACTS = {SOURCE_ID: SourceContract()}
+_CONTRACTS = {SOURCE_ID: SourceContract(), TABLE_ID: SourceContract()}
 
 
 class RunError(Exception):
@@ -101,15 +101,6 @@ def _problem(name: str | None, problem: ContractProblem | Any) -> dict[str, Any]
     return entry
 
 
-def _source_nodes(doc: Mapping[str, Any]) -> dict[str, str]:
-    """The source nodes of a document and the ref each names."""
-    return {
-        name: str((node.get("config") or {}).get("ref") or "")
-        for name, node in (doc.get("nodes") or {}).items()
-        if isinstance(node, Mapping) and node.get("component") == SOURCE_ID
-    }
-
-
 def _questions(doc: Mapping[str, Any], nodes: list[str]) -> list[str]:
     """The questions of the turns that created ``nodes``, to ask again of the new data."""
     origins = {(doc.get("nodes") or {}).get(n, {}).get("origin") for n in nodes}
@@ -124,7 +115,8 @@ def run_dashboard(text: str | bytes, params: Mapping[str, Any] | None = None,
                   rows: int = 5) -> RunReport:
     """
     Run the dashboard ``text`` with ``params`` bound and ``sources`` given to
-    its source nodes by ref, and report each node.
+    its source nodes, and table nodes naming a source, by ref, and report
+    each node.
 
     A parameter of type ``source`` takes anything ``resolve_source`` reads,
     or a Lumen source; the source is given to the dashboard under the
@@ -154,7 +146,7 @@ def run_dashboard(text: str | bytes, params: Mapping[str, Any] | None = None,
             else:
                 values[name] = value
         for ref, value in given.items():
-            nodes = [n for n, r in _source_nodes(doc).items() if r == ref]
+            nodes = [n for n, r in ref_nodes(doc).items() if r == ref]
             tables = sorted({t for n in nodes for t in read_tables(doc, n)})
             bound[ref] = resolve_source(value, tables)
         doc = bind_document(doc, values)
@@ -163,7 +155,7 @@ def run_dashboard(text: str | bytes, params: Mapping[str, Any] | None = None,
     except Exception as exc:
         return RunReport("usage", USAGE, message=f"Could not read the data: {exc}")
     context = {SOURCES_KEY: bound}
-    unbound = sorted({ref for ref in _source_nodes(doc).values() if ref and ref not in bound})
+    unbound = sorted({ref for ref in ref_nodes(doc).values() if ref and ref not in bound})
     if unbound:
         return RunReport("usage", USAGE, message=(
             "Bind the data of the dashboard's sources: "
@@ -180,7 +172,7 @@ def run_dashboard(text: str | bytes, params: Mapping[str, Any] | None = None,
         name for name in values
         if name in bound and not (declared[name].get("expects") or {}).get("tables")
     }
-    for node, ref in _source_nodes(doc).items():
+    for node, ref in ref_nodes(doc).items():
         if ref not in unrecorded:
             continue
         source = bound[ref]
