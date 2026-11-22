@@ -202,8 +202,8 @@ and then connect it to their source inputs instead of setting ref.
 # Added for an agent that places tiles, i.e. with the place_tile tool.
 LAYOUT_INSTRUCTIONS = """
 ## Laying out the dashboard
-When building or extending a dashboard, put KPIs (single numbers) first in a row, charts side by
-side two to a row and tables below them.{arrange}
+Put KPIs (single numbers) first in a row, charts two to a row and tables below them.{arrange}
+Check the layout each tool returns.
 """
 
 # FlowDash releases before arrange_tiles have no tool to lay all tiles out again.
@@ -328,7 +328,7 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     if dashboard_tools is None or "add_node" in dashboard_tools:
         text += TABLE_INSTRUCTIONS
     if dashboard_tools is not None and "place_tile" in dashboard_tools:
-        arrange = " Call arrange_tiles once at the end to lay the tiles out." if "arrange_tiles" in dashboard_tools else ""
+        arrange = " arrange_tiles does that, keeping place_tile sizes." if "arrange_tiles" in dashboard_tools else ""
         text += LAYOUT_INSTRUCTIONS.format(arrange=arrange)
     agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=settings,

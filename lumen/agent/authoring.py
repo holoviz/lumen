@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import math
 
@@ -9,7 +10,7 @@ from typing import Any, Literal
 
 import sqlglot
 
-from panel_flowdash.agent import FlowDashDeps, OperationError
+from panel_flowdash.agent import DashboardOps, FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolReturn
@@ -421,6 +422,8 @@ def _upstream_port(deps: FlowDashDeps, data: str) -> str:
 
 
 TEXT_IDS = {"heading": HEADING_ID, "markdown": MARKDOWN_ID, "divider": DIVIDER_ID}
+# FlowDash releases before place_tile took before and after cannot put a tile beside another.
+PLACES_BESIDE = "before" in inspect.signature(DashboardOps.place_tile).parameters
 # The most characters each text field may hold; prose longer than this belongs in several tiles.
 TEXT_LIMITS = {
     (HEADING_ID, "text"): 200, (HEADING_ID, "subtitle"): 400,
@@ -453,8 +456,11 @@ def check_text(ops, component: str, config: dict[str, Any], name: str | None = N
 def add_text(
     ctx: RunContext[FlowDashDeps], kind: Literal["heading", "markdown", "divider"], name: str, text: str = "",
     subtitle: str = "", size: Literal["Title", "Heading", "Subheading", "Section"] | None = None,
+    position: Literal["top", "bottom"] | None = None, before: str | None = None, after: str | None = None,
 ) -> str:
     """Place a heading, Markdown prose or a divider with the text you write for it.
+
+    Returns the layout as it is now, row by row.
 
     Args:
         kind: "heading" for a title, "markdown" for prose, "divider" for a rule between groups of tiles.
@@ -462,11 +468,22 @@ def add_text(
         text: The heading's text, the Markdown (at most 4000 characters) or the divider's optional label.
         subtitle: Smaller text below a heading.
         size: A heading's size; "Title" for the dashboard's title.
+        position: "top" or "bottom" of the dashboard. A "Title" heading goes to the top, other text
+            to the bottom, unless you pass before or after.
+        before: Put the text in front of this node's tile, e.g. a section heading above its chart.
+        after: Put the text after this node's tile.
     """
     ops = ctx.deps.ops
     component = TEXT_IDS[kind]
     if kind != "divider" and not text.strip():
         raise ModelRetry(f"Write the {kind}'s text.")
+    if sum(p is not None for p in (position, before, after)) > 1:
+        raise ModelRetry("Pass one of position, before and after.")
+    for other in (before, after):
+        if other is not None and other not in _graph.nodes(ops):
+            raise ModelRetry(f"No node {other!r} to place the {kind} beside.")
+    if (before is not None or after is not None) and not PLACES_BESIDE:
+        raise ModelRetry("This FlowDash version cannot place text beside a tile; use position.")
     config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
     if kind == "heading":
         if subtitle:
@@ -480,7 +497,20 @@ def add_text(
         ops.add_node(component, config, name=name)
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
-    return f"Placed {kind} {name!r}."
+    if position is None and before is None and after is None and size == "Title":
+        position = "top"
+    placed = f"Placed {kind} {name!r}"
+    try:
+        if before is not None or after is not None:
+            ops.place_tile(name, before=before, after=after)
+            placed += f" {'before' if before else 'after'} {before or after!r}"
+        elif position is not None:
+            ops.place_tile(name, index=0 if position == "top" else len(_graph.nodes(ops)))
+            placed += f" at the {position}"
+    except OperationError as exc:
+        placed += f", but not moved: {exc}"
+    describe = getattr(ops, "describe_layout", None)
+    return f"{placed}." + (f"\nLayout now:\n{describe()}" if describe is not None else "")
 
 
 def _source_tables(deps: FlowDashDeps, source: str) -> list[str]:

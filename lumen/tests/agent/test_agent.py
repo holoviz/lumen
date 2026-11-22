@@ -13,7 +13,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from lumen.agent import AgentSession, _graph, assistant
+from lumen.agent import (
+    AgentSession, _graph, assistant, authoring,
+)
 from lumen.agent.assistant import (
     INSTRUCTIONS, MODEL_SETTINGS, OTHER_MODEL_SETTINGS, create_agent,
     model_settings_for,
@@ -605,7 +607,7 @@ def test_layout_agent_is_told_how_to_lay_out_tiles(monkeypatch):
     (data, _), (layout, tools), (placing, _) = given
     assert "## Laying out the dashboard" not in data
     assert "## Laying out the dashboard" in layout and "## Laying out the dashboard" in placing
-    assert ("call arrange_tiles" in layout.lower()) == ("arrange_tiles" in tools) == assistant.HAS_ARRANGE_TILES
+    assert ("arrange_tiles does that" in layout) == ("arrange_tiles" in tools) == assistant.HAS_ARRANGE_TILES
     assert "arrange_tiles" not in placing
 
 
@@ -874,7 +876,9 @@ def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_n
 
 
 async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ctx, session):
-    assert add_text(ctx, "heading", "title", "Paid orders", subtitle="By region", size="Title") == "Placed heading 'title'."
+    assert add_text(ctx, "heading", "title", "Paid orders", subtitle="By region", size="Title").startswith(
+        "Placed heading 'title' at the top"
+    )
     add_text(ctx, "markdown", "intro", "This dashboard shows **paid** orders per region.")
     add_text(ctx, "divider", "rule")
 
@@ -886,6 +890,24 @@ async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ct
     text = await list_tables(ctx)
     assert "- intro (markdown; text): 'This dashboard shows **paid** orders per region.'" in text
     assert "- title (heading; text): 'Paid orders'" in text
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+async def test_add_text_places_a_title_at_the_top_and_text_where_asked(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_chart(ctx, "paid_by_region", "paid_chart", BAR)
+    add_chart(ctx, "paid_by_region", "other_chart", BAR)
+    result = add_text(ctx, "heading", "title", "Paid orders", size="Title")
+    assert result.splitlines()[:3] == ["Placed heading 'title' at the top.", "Layout now:", "Row 1: title 100% 96px"]
+    add_text(ctx, "heading", "section", "Regions", size="Section", before="other_chart")
+    add_text(ctx, "markdown", "notes", "Paid orders only.", position="bottom")
+    shown = [line.split(": ", 1)[1].split()[0] for line in session.ops.describe_layout().splitlines() if line.startswith("Row")]
+    assert shown == ["title", "paid_chart", "section", "other_chart", "notes"]
+
+
+def test_add_text_retries_a_position_beside_a_missing_node(ctx, session):
+    with pytest.raises(ModelRetry, match="No node 'nope'"):
+        add_text(ctx, "heading", "title", "Paid orders", after="nope")
 
 
 @pytest.mark.parametrize("args, error", [
