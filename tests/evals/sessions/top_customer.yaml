@@ -3,7 +3,7 @@ fixture: commerce
 turns:
 - question: Which customer has the most paid orders? Show only that customer and the count.
   nodes:
-  - customer_most_paid_orders
+  - top_customer_paid_orders
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,48 +17,48 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tc6a349f1
+      - id: t339a179a
         actor: user
-        at: '2026-11-21T19:08:50Z'
+        at: '2026-11-22T00:57:08Z'
         summary: Added data.
-      - id: tee6eb8cc
+      - id: t2b5931da
         actor: agent
-        at: '2026-11-21T19:08:52Z'
-        run: run-85568961bb16
-        summary: Added customer_most_paid_orders. Connected data to customer_most_paid_orders.
+        at: '2026-11-22T00:57:10Z'
+        run: run-2e6ce2db6935
+        summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: tc6a349f1
+        origin: t339a179a
         config:
           ref: data
         position: [0.0, 22.0]
-      customer_most_paid_orders:
+      top_customer_paid_orders:
         component: Lumen/sql
-        origin: tee6eb8cc
+        origin: t2b5931da
         config:
           sql: |-
             SELECT
               c."customer",
-              COUNT(o."order_id") AS paid_order_count
-            FROM customers AS c
-            JOIN orders AS o
-              ON c."customer_id" = o."customer_id"
+              COUNT(*) AS paid_order_count
+            FROM orders AS o
+            JOIN customers AS c
+              ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND TRIM(c."customer") <> '' AND TRIM(o."status") <> ''
+              o."status" = 'paid'
             GROUP BY
               c."customer"
             ORDER BY
               paid_order_count DESC
             LIMIT 1
-          table: customer_most_paid_orders
+          table: top_customer_paid_orders
         position: [380.0, 0.0]
     edges:
       - from: data.source
-        to: customer_most_paid_orders.source
+        to: top_customer_paid_orders.source
     layout:
       tiles:
         - node: data
           visible: false
-        - node: customer_most_paid_orders
+        - node: top_customer_paid_orders
           visible: false

@@ -17,37 +17,39 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: te9faccfb
+      - id: t958ecd5c
         actor: user
-        at: '2026-11-21T19:08:33Z'
+        at: '2026-11-22T00:56:49Z'
         summary: Added data.
-      - id: td488eba4
+      - id: t8013de70
         actor: agent
-        at: '2026-11-21T19:08:37Z'
-        run: run-44686623d10b
+        at: '2026-11-22T00:56:52Z'
+        run: run-e00695a2cd04
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
-        origin: te9faccfb
+        origin: t958ecd5c
         config:
           ref: data
         position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: td488eba4
+        origin: t8013de70
         config:
           sql: |-
             SELECT
               "category",
               SUM("amount") AS "total_amount"
-            FROM sales
+            FROM "sales"
             WHERE
               NOT "category" IS NULL
               AND TRIM("category") <> ''
               AND NOT "amount" IS NULL
               AND "amount" <> -9999
             GROUP BY
+              "category"
+            ORDER BY
               "category"
           table: total_amount_by_category
         position: [380.0, 0.0]
@@ -62,7 +64,7 @@ turns:
           visible: false
 - question: Show that as a bar chart.
   nodes:
-  - total_amount_by_category_bar_chart
+  - total_amount_by_category_chart
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -76,36 +78,36 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: te9faccfb
+      - id: t958ecd5c
         actor: user
-        at: '2026-11-21T19:08:33Z'
+        at: '2026-11-22T00:56:49Z'
         summary: Added data.
-      - id: td488eba4
+      - id: t8013de70
         actor: agent
-        at: '2026-11-21T19:08:37Z'
-        run: run-44686623d10b
+        at: '2026-11-22T00:56:52Z'
+        run: run-e00695a2cd04
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: t4b0ba4c9
+      - id: ta52343b7
         actor: agent
-        at: '2026-11-21T19:08:41Z'
-        run: run-1df07c7267f9
-        summary: Added total_amount_by_category_bar_chart. Connected total_amount_by_category to total_amount_by_category_bar_chart.
+        at: '2026-11-22T00:56:54Z'
+        run: run-b4687e21d3ec
+        summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: te9faccfb
+        origin: t958ecd5c
         config:
           ref: data
         position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: td488eba4
+        origin: t8013de70
         config:
           sql: |-
             SELECT
               "category",
               SUM("amount") AS "total_amount"
-            FROM sales
+            FROM "sales"
             WHERE
               NOT "category" IS NULL
               AND TRIM("category") <> ''
@@ -113,15 +115,16 @@ turns:
               AND "amount" <> -9999
             GROUP BY
               "category"
+            ORDER BY
+              "category"
           table: total_amount_by_category
         position: [380.0, 0.0]
-      total_amount_by_category_bar_chart:
+      total_amount_by_category_chart:
         component: Lumen/view
-        origin: t4b0ba4c9
+        origin: ta52343b7
         config:
           spec:
-            mark:
-              type: bar
+            mark: bar
             encoding:
               x:
                 field: category
@@ -136,10 +139,10 @@ turns:
       - from: data.source
         to: total_amount_by_category.source
       - from: total_amount_by_category.pipeline
-        to: total_amount_by_category_bar_chart.pipeline
+        to: total_amount_by_category_chart.pipeline
     layout:
       tiles:
-        - node: total_amount_by_category_bar_chart
+        - node: total_amount_by_category_chart
           width: 100.0
         - node: data
           visible: false
