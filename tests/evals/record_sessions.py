@@ -18,7 +18,7 @@ from lumen.agent.evals import build_model
 from lumen.agent.sessions import save_session
 from lumen.ai.evals.harness import Inputs
 
-from .cases import source
+from .cases import metrics, source
 
 SESSIONS = Path(__file__).parent / "sessions"
 
@@ -26,6 +26,7 @@ QUESTIONS = {
     "sales_chart": ("sales", ["What is the total amount by category?", "Show that as a bar chart."]),
     "paid_by_region": ("commerce", ["What is the total paid order amount per region?", "Only keep the west region."]),
     "top_customer": ("commerce", ["Which customer has the most paid orders? Show only that customer and the count."]),
+    "capacity_by_state": ("turbine_metrics", ["What is the installed capacity in MW by state, counting projects since 2005?"]),
 }
 
 
@@ -41,7 +42,8 @@ async def record(model: str, names: list[str]):
         name_fixture, questions = QUESTIONS[name]
         trace = SESSIONS / f"{name}.trace.jsonl"
         trace.unlink(missing_ok=True)
-        session = AgentSession(fixture(Inputs(questions, fixture=name_fixture)), build_model(model), trace=trace)
+        inputs = Inputs(questions, fixture=name_fixture)
+        session = AgentSession(fixture(inputs), build_model(model), trace=trace, metrics=metrics(inputs))
         try:
             turns = [await session.ask(question) for question in questions]
         finally:

@@ -15,9 +15,12 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query, effective_limit,
-    pipeline_columns, primed_result, result_sql, selection_warnings,
+    METRIC_ID, QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query,
+    effective_limit, host_metrics, pipeline_columns, primed_result, result_sql,
+    selection_warnings,
 )
+from ..flowdash.metrics import MetricError, check_query_fields
+from ..flowdash.nodes import metric_query
 from ..pipeline import Pipeline
 from . import _graph
 from ._graph import (
@@ -96,11 +99,65 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
 
 
-def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
-    """Place a Vega-Lite chart of a SQL, table or filter node's rows.
+async def add_metric(
+    ctx: RunContext[FlowDashDeps], metric: str, name: str, measures: list[str] | None = None,
+    dimensions: list[str] | None = None, grain: str | None = None, parameters: dict[str, Any] | None = None,
+    order_by: list[str] | None = None, limit: int | None = None,
+) -> str:
+    """Place a metric node, one of the app's agreed definitions, and return a preview of its result.
 
     Args:
-        data: SQL, table or filter node to chart.
+        metric: Metric name from list_tables.
+        name: Descriptive snake_case node name; a metric node of this name is changed instead.
+        measures: Measures to compute; a SQL metric has none.
+        dimensions: Dimensions to group by.
+        grain: Time grain of the time dimensions picked, e.g. year.
+        parameters: Parameter values, and column dimensions to filter by with a value or a list.
+        order_by: Columns to sort by; a leading - sorts descending.
+        limit: Rows at most, e.g. 10 for a top 10.
+    """
+    ops = ctx.deps.ops
+    metrics = host_metrics(ops.editor.context)
+    if metric not in metrics:
+        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics) or 'none'}.")
+    config = {"metric": metric, "measures": measures or [], "dimensions": dimensions or [], "grain": grain or "",
+              "order_by": order_by or [], "limit": limit}
+    try:
+        query = metric_query(config, parameters)
+        check_query_fields(metrics[metric], query)
+        metrics[metric].values(query.parameters)
+    except MetricError as exc:
+        raise ModelRetry(str(exc)) from exc
+    existing = name in _graph.nodes(ops)
+    if existing and _graph.component_of(ops, name) != METRIC_ID:
+        raise ModelRetry(f"{name!r} is taken by a node that is not a metric; pick another name.")
+    before = (_graph.config_of(ops, name), _graph.inputs_of(ops, name).get("parameters")) if existing else None
+    try:
+        if existing:
+            ops.set_config(name, config)
+        else:
+            ops.add_node(METRIC_ID, config, name=name)
+        ops.set_inputs(name, {"parameters": parameters or None})
+        frame = _graph.output(ops, name, "data")
+    except OperationError as exc:
+        if before is None:
+            if name in _graph.nodes(ops):
+                ops.remove_node(name)
+        else:
+            ops.set_config(name, before[0])
+            ops.set_inputs(name, {"parameters": before[1]})
+        raise ModelRetry(str(exc)) from exc
+    ceiling = effective_limit(ops.editor, None)
+    capped = f" (capped at {ceiling} rows)" if len(frame) >= ceiling else ""
+    verb = "Changed" if existing else "Placed"
+    return f"{verb} metric node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+
+
+def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
+    """Place a Vega-Lite chart of a SQL, metric, table or filter node's rows.
+
+    Args:
+        data: SQL, metric, table or filter node to chart.
         name: Descriptive snake_case node name.
         spec: Vega-Lite spec using the node's columns, without data or URLs. Leave out
             width and height so the chart fills its tile and follows resizes; set
@@ -113,7 +170,7 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
     if not isinstance(pipeline, Pipeline):
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, table or filter node.")
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, metric, table or filter node.")
     try:
         spec = check_chart(spec, pipeline_columns(pipeline))
     except ValueError as exc:
@@ -129,7 +186,7 @@ def _upstream_port(ops, data: str) -> str:
         raise ModelRetry(f"No node {data!r}.")
     port = _graph.pipeline_port(ops, data)
     if port is None:
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, table or filter node.")
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, metric, table or filter node.")
     return port
 
 
@@ -197,8 +254,8 @@ def add_text(
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_chart and add_text."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_chart, add_text], max_retries=3)
+    """The authoring tools: add_sql, add_metric, add_chart and add_text."""
+    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_text], max_retries=3)
 
 
 class CheckedConfig(AbstractCapability[FlowDashDeps]):
