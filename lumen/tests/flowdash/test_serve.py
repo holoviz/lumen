@@ -128,7 +128,9 @@ def test_one_agent_model_is_named_without_a_picker(csv):
     assert app.agent.model.model_name == "test"
     assert app.agent_model == "test"
     assert [(m["id"], m["label"]) for m in app.agent_models] == [("test", "Test")]
-    assert [option["id"] for option in menu.options] == [menu.value] == ["test:test"]
+    # panel-flowdash main names the model as agent_models lists it, earlier releases by the agent's model.
+    assert [option["id"] for option in menu.options] == [menu.value]
+    assert menu.value in ("test", "test:test")
     assert "remember_model" not in drawer.chat_params
 
 
