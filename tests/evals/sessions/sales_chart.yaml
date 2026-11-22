@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: te9faccfb
+      - id: t9e41b449
         actor: user
-        at: '2026-11-21T19:08:33Z'
+        at: '2026-11-22T12:11:42Z'
         summary: Added data.
-      - id: td488eba4
+      - id: t9925ba14
         actor: agent
-        at: '2026-11-21T19:08:37Z'
-        run: run-44686623d10b
+        at: '2026-11-22T12:11:45Z'
+        run: run-e33d78e3f8d1
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
-        origin: te9faccfb
+        origin: t9e41b449
         config:
           ref: data
         position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: td488eba4
+        origin: t9925ba14
         config:
           sql: |-
             SELECT
@@ -76,30 +76,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: te9faccfb
+      - id: t9e41b449
         actor: user
-        at: '2026-11-21T19:08:33Z'
+        at: '2026-11-22T12:11:42Z'
         summary: Added data.
-      - id: td488eba4
+      - id: t9925ba14
         actor: agent
-        at: '2026-11-21T19:08:37Z'
-        run: run-44686623d10b
+        at: '2026-11-22T12:11:45Z'
+        run: run-e33d78e3f8d1
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: t4b0ba4c9
+      - id: tba77813c
         actor: agent
-        at: '2026-11-21T19:08:41Z'
-        run: run-1df07c7267f9
+        at: '2026-11-22T12:11:48Z'
+        run: run-3a89469e720f
         summary: Added total_amount_by_category_bar_chart. Connected total_amount_by_category to total_amount_by_category_bar_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: te9faccfb
+        origin: t9e41b449
         config:
           ref: data
         position: [0.0, 22.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: td488eba4
+        origin: t9925ba14
         config:
           sql: |-
             SELECT
@@ -117,11 +117,10 @@ turns:
         position: [380.0, 0.0]
       total_amount_by_category_bar_chart:
         component: Lumen/view
-        origin: t4b0ba4c9
+        origin: tba77813c
         config:
           spec:
-            mark:
-              type: bar
+            mark: bar
             encoding:
               x:
                 field: category
