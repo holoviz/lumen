@@ -12,7 +12,8 @@ from .contracts import (
 from .quality import lint_data
 from .sql import (
     build_distinct_values_sql, execute_distinct_values,
-    execute_exploration_sql, format_exploration_result, validate_read_only_sql,
+    execute_exploration_sql, format_exploration_result, inline_tables,
+    validate_read_only_sql,
 )
 from .stats import get_stats_store
 from .utils import clean_sql, format_error
@@ -31,6 +32,7 @@ __all__ = [
     "format_exploration_result",
     "get_metaset",
     "get_stats_store",
+    "inline_tables",
     "lint_data",
     "query_columns",
     "schema_problems",
