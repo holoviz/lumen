@@ -22,6 +22,7 @@ from lumen.ai.evals.harness import (
     CheckResult, Expected, Inputs, Output, artifacts_path, evaluate,
     resolve_subject,
 )
+from lumen.flowdash import DECKGL_ID, SQL_ID
 
 from .cases import DATASET, metrics, source
 
@@ -176,6 +177,17 @@ def test_session_becomes_case_with_rerun_expectations():
     chart = session_case(SESSIONS / "sales_chart.yaml", source).metadata
     assert chart.chart_mark == "bar"
     assert [sorted(rows) for rows in chart.turn_rows] == [[["A", 15.0], ["B", 20.0]]] * 2
+
+
+def test_map_session_places_a_deckgl_map_of_its_query():
+    session = load_session(SESSIONS / "turbines_map.yaml")
+    dashboard = yaml.safe_load(session.turns[-1].dashboard)
+    (name,) = [name for name, node in dashboard["nodes"].items() if node["component"] == DECKGL_ID]
+    (edge,) = [edge for edge in dashboard["edges"] if edge["to"] == f"{name}.pipeline"]
+    assert dashboard["nodes"][edge["from"].split(".")[0]]["component"] == SQL_ID
+    assert "@@=[xlong, ylat]" in str(dashboard["nodes"][name]["config"]["spec"])
+    expected = session_case(SESSIONS / "turbines_map.yaml", source).metadata
+    assert len(expected.rows) == 5 and expected.chart_mark is None
 
 
 def recorded_fingerprints(name):

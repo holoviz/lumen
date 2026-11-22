@@ -1,0 +1,81 @@
+lumen_session: 1
+fixture: turbines
+turns:
+- question: Map the turbines, sized by capacity.
+  nodes:
+  - turbines_map_data
+  - turbines_capacity_map
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      node_previews: false
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    turns:
+      - id: tf4bfd94a
+        actor: user
+        at: '2026-11-21T23:26:19Z'
+        summary: Added data.
+      - id: tf4dde25c
+        actor: agent
+        at: '2026-11-21T23:26:21Z'
+        run: run-f3b7d1521f20
+        summary: Added turbines_map_data. Connected data to turbines_map_data. Added turbines_capacity_map.
+          Connected turbines_map_data to turbines_capacity_map.
+    nodes:
+      data:
+        component: Lumen/source
+        origin: tf4bfd94a
+        config:
+          ref: data
+        position: [0.0, 22.0]
+      turbines_map_data:
+        component: Lumen/sql
+        origin: tf4dde25c
+        config:
+          sql: |-
+            SELECT
+              "p_name",
+              "t_state",
+              "xlong",
+              "ylat",
+              "t_cap"
+            FROM turbines
+            WHERE
+              NOT "xlong" IS NULL AND NOT "ylat" IS NULL AND NOT "t_cap" IS NULL
+          table: turbines_map_data
+        position: [380.0, 0.0]
+      turbines_capacity_map:
+        component: Lumen/deckgl
+        origin: tf4dde25c
+        config:
+          spec:
+            layers:
+              - '@@type': ScatterplotLayer
+                getPosition: '@@=[xlong, ylat]'
+                radiusUnits: pixels
+                getRadius: '@@=2 + t_cap / 200'
+                pickable: true
+            tooltip:
+              text: '{p_name} ({t_state}): {t_cap} MW'
+        position: [760.0, 22.0]
+    edges:
+      - from: data.source
+        to: turbines_map_data.source
+      - from: turbines_map_data.pipeline
+        to: turbines_capacity_map.pipeline
+    layout:
+      tiles:
+        - node: turbines_capacity_map
+          width: 100.0
+          height: 420
+        - node: data
+          visible: false
+        - node: turbines_map_data
+          visible: false
