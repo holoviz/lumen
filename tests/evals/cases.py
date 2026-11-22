@@ -197,6 +197,14 @@ DATASET = Dataset[Inputs, Output, Expected](name="lumen_ai_behavior_v3", cases=[
     ], fixture="commerce"),
          metadata=Expected(rows=[["Ada", 50], ["Bo", 40]], turn_reads=[None, 0], stable_turns=True,
                            turn_rows=[[["Ada", 50], ["Bo", 40], ["Cy", 15]], [["Ada", 50], ["Bo", 40]]])),
+    Case(name="followup_join", inputs=Inputs([
+        "Total paid amount per region, returning only region and total.",
+        "Number of customers per region, returning only region and customers.",
+        "Join those two results on region, returning region, customers and paid total, only for regions with paid orders."
+    ], fixture="commerce"),
+         metadata=Expected(rows=[["east", 2, 65], ["west", 1, 40]], turn_reads=[None, None, [0, 1]], stable_turns=True,
+                           turn_rows=[[["east", 65], ["west", 40]], [["east", 2], ["north", 1], ["west", 1]],
+                                      [["east", 2, 65], ["west", 1, 40]]])),
     Case(name="planner_commerce_join", inputs=Inputs([
         "For every customer, show their name and total paid order amount, including customers with no paid orders."
     ], fixture="commerce"),

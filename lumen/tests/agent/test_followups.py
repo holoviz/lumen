@@ -193,3 +193,76 @@ async def test_set_config_names_a_follower_its_change_breaks():
     (part,) = requests[1].parts
     content = part.model_response_str()
     assert isinstance(part, ToolReturnPart) and "Follower 'ranked' now fails:" in content and "total" in content
+
+
+JOIN_SQL = (
+    "SELECT r.region, c.customers, r.total FROM paid_by_region AS r JOIN customers_per_region AS c "
+    "ON r.region = c.region ORDER BY r.region"
+)
+
+
+def _two_results(session):
+    session.add_sql("paid", PAID)
+    session.add_sql("paid_by_region", "SELECT region, SUM(amount) AS total FROM paid GROUP BY region", source="paid")
+    session.add_sql("customers_per_region", "SELECT region, COUNT(*) AS customers FROM customers GROUP BY region")
+
+
+async def test_add_sql_joins_earlier_results_given_as_a_list(ctx, session):
+    _two_results(session)
+
+    text = await add_sql(ctx, ["paid_by_region", "customers_per_region"], "joined", JOIN_SQL)
+
+    assert text.startswith("Placed SQL node 'joined' on the results of 'paid_by_region' and 'customers_per_region'.")
+    graph = session.graph()
+    assert "from: paid_by_region.result\n    to: joined.source" in graph
+    assert "from: customers_per_region.result\n    to: joined.source" in graph
+    assert _graph.output(session.ops, "joined", "data").values.tolist() == [["east", 2, 50], ["west", 1, 40]]
+
+
+async def test_add_sql_joins_only_earlier_sql_nodes(ctx, session):
+    _two_results(session)
+
+    with pytest.raises(ModelRetry, match="To join, pass earlier SQL nodes; 'data' is not one"):
+        await add_sql(ctx, ["paid_by_region", "data"], "joined", JOIN_SQL)
+    assert "joined" not in _graph.nodes(session.ops)
+
+
+async def test_set_config_on_a_join_tests_its_sql_against_both_results():
+    model, requests = script(
+        [ToolCallPart("set_config", {"name": "joined", "config": {"sql": JOIN_SQL.replace("ORDER BY r.region", "WHERE r.region = 'west'")}}, tool_call_id="s1")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        _two_results(session)
+        session.add_sql("joined", JOIN_SQL, source=["paid_by_region", "customers_per_region"])
+        await session.ask("Only the west region")
+        frame = _graph.output(session.ops, "joined", "data")
+    finally:
+        session.close()
+
+    (part,) = requests[1].parts
+    assert isinstance(part, ToolReturnPart) and "Result: 1 rows" in part.model_response_str()
+    assert frame.values.tolist() == [["west", 1, 40]]
+
+
+async def test_add_sql_takes_a_list_of_nodes_written_as_a_json_string(ctx, session):
+    _two_results(session)
+
+    await add_sql(ctx, '["paid_by_region", "customers_per_region"]', "joined", JOIN_SQL)
+
+    assert _graph.output(session.ops, "joined", "data").values.tolist() == [["east", 2, 50], ["west", 1, 40]]
+
+
+@pytest.mark.parametrize("source", [[], "[]"])
+async def test_add_sql_refuses_an_empty_list(ctx, session, source):
+    with pytest.raises(ModelRetry, match="Pass a source, an earlier SQL node, or a list"):
+        await add_sql(ctx, source, "joined", JOIN_SQL)
+
+
+async def test_add_sql_joins_a_node_named_twice_once(ctx, session):
+    _two_results(session)
+
+    await add_sql(ctx, ["paid_by_region", "paid_by_region"], "again", "SELECT * FROM paid_by_region")
+
+    assert session.graph().count("to: again.source") == 1

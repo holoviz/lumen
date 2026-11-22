@@ -61,6 +61,11 @@ def feeding(ops: DashboardOps, target: str) -> str | None:
     return next((edge["from"] for edge in _edges(ops) if edge["to"] == target), None)
 
 
+def feeding_all(ops: DashboardOps, target: str) -> list[str]:
+    """Every output port, as ``node.port``, connected to the input port ``target``, in connection order."""
+    return [edge["from"] for edge in _edges(ops) if edge["to"] == target]
+
+
 def reading(ops: DashboardOps, output: str) -> list[str]:
     """The nodes whose inputs read the output port ``output`` (``node.port``)."""
     return list(dict.fromkeys(edge["to"].split(".")[0] for edge in _edges(ops) if edge["from"] == output))
