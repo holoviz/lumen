@@ -15,6 +15,11 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from panel_flowdash import register
+
+try:
+    from panel_flowdash import Choices
+except ImportError:
+    Choices = None
 from panel_flowdash.util import is_failure
 
 from ..sources.base import Source
@@ -134,6 +139,68 @@ def table_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
         for ref, source in _host_sources(context).items()
         for table in _tables(source)
     ]
+
+
+def filter_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Offer a ``Lumen/filter`` node on a metric the columns of the rows the
+    metric aggregates besides its own, since it filters them before the
+    aggregation. Other pipelines keep the declared column choices.
+    """
+    from .nodes import _metric_step, filterable_columns
+
+    pipeline = inputs.get("pipeline")
+    if pipeline is None or is_failure(pipeline) or not hasattr(pipeline, "sql_transforms") or _metric_step(pipeline) is None:
+        return {}
+    types = pipeline_column_types(pipeline) or {}
+    return {"field": Choices(filterable_columns(pipeline), types={k: v for k, v in types.items() if v})}
+
+
+def metric_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Offer a ``Lumen/metric`` node the metrics the host defines and, for the
+    one picked, its measures, dimensions, grains and the columns to sort by.
+    """
+    from .nodes import host_metrics
+
+    metrics = host_metrics()
+    if not metrics:
+        return {}
+    choices: dict[str, Any] = {"metric": list(metrics)}
+    metric = metrics.get(config.get("metric"))
+    if metric is None or metric.form == "sql":
+        return choices
+    choices["measures"] = list(metric.measures)
+    choices["dimensions"] = list(metric.dimensions)
+    picked = [metric.dimensions[d] for d in config.get("dimensions") or [] if d in metric.dimensions]
+    grains = [g for d in picked if d.time for g in d.grains]
+    choices["grain"] = {"none": "", **{grain: grain for grain in dict.fromkeys(grains)}}
+    outputs = [*(config.get("dimensions") or []), *(config.get("measures") or [])]
+    choices["order_by"] = {
+        label: value for column in outputs
+        for label, value in ((f"{column} (descending)", f"-{column}"), (column, column))
+    }
+    return choices
+
+
+def metric_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A ``Lumen/metric`` palette entry per metric the host defines, with the metric filled in."""
+    from .nodes import METRICS_KEY
+
+    presets = []
+    for name, metric in (context.get(METRICS_KEY) or {}).items():
+        config: dict[str, Any] = {"metric": name}
+        if metric.form == "structured":
+            config["measures"] = list(metric.measures)[:1]
+        fields = [*metric.measures, *metric.dimensions, *metric.parameters]
+        presets.append({
+            "title": f"{name} (metric)",
+            "description": metric.description or f"The metric {name} the app defines.",
+            "tooltip": f"Metric {name}: {', '.join(fields) or 'a SQL query'}",
+            "tags": ["metric", name, metric.source],
+            "config": config,
+        })
+    return presets
 
 
 def palette_presets(hook: Callable[[Mapping[str, Any]], list[dict[str, Any]]]) -> dict[str, Any]:

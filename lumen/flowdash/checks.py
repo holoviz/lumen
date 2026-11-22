@@ -568,10 +568,12 @@ def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | 
 
 def check_filter_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/filter`` config: the field must be a column of the input pipeline."""
+    from .nodes import filterable_columns
+
     pipeline, field = inputs.get("pipeline"), config.get("field")
     if pipeline is None or not field:
         return None
-    columns = pipeline_columns(pipeline)
+    columns = filterable_columns(pipeline) if hasattr(pipeline, "sql_transforms") else pipeline_columns(pipeline)
     if field not in columns:
         return f"The data has no column {field!r}. Its columns are: {', '.join(columns)}."
     return None
