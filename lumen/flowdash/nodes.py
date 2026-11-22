@@ -49,6 +49,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 import panel as pn
+import panel_material_ui as pmui
 import param
 import sqlglot
 import yaml
@@ -89,6 +90,7 @@ from .contracts import (
     DATA_ID, FILTER_ID, METRIC_ID, PARAMETER_ID, SOURCE_ID, SQL_ID, TABLE_ID,
     VIEW_ID, SourceContract, spec_fields as contract_spec_fields,
 )
+from .defaults import vega_lite_default
 from .metrics import (
     METRICS_KEY, Metric, MetricError, MetricPreFilter, Query, aggregate,
     bind_sql, coerce_dimension_values, prepare, table_sql,
@@ -2200,9 +2202,10 @@ def spec_param(doc: str, settings: list | None = None, **params: Any) -> param.D
     The ``spec`` param of a view node: a dict FlowDash edits as JSON, with
     the curated ``settings`` (``panel_flowdash.SpecSetting``) its form shows
     as another view of the same spec. Without settings the spec is edited as
-    JSON alone.
+    JSON alone. It is synced back from the node, so a default spec the node
+    starts from is saved and undone like any other edit.
     """
-    metadata = {"flowdash": {"widget": "spec", "settings": list(settings or [])}}
+    metadata = {"flowdash": {"widget": "spec", "settings": list(settings or []), "two_way": True}}
     return param.Dict(default={}, doc=doc, metadata=metadata, **params)
 
 
@@ -2261,9 +2264,16 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
     declares its ``spec`` with ``spec_param`` and is registered with
     ``register_view``. It can override ``check_spec`` (refuse a spec before
     it is drawn), ``spec_warnings``, ``spec_fields`` (the columns the
-    dashboard's schema contract records), ``_view_params`` (how the spec
-    becomes the Lumen view's params, filling the tile by default),
-    ``_built``, ``_summary`` and ``_preview`` (the card and its pop-out).
+    dashboard's schema contract records), ``default_spec`` (the spec a new
+    view starts from), ``_view_params`` (how the spec becomes the Lumen
+    view's params, filling the tile by default), ``_built``, ``_summary``
+    and ``_preview`` (the card and its pop-out).
+
+    A view the editor creates with an empty spec takes ``default_spec`` of
+    its pipeline's schema the first time it has one, as an edit of its
+    config that is saved and undone like any other. A view loaded with a
+    dashboard keeps the spec it was saved with, empty or not. Without a
+    spec, a view that needs one shows ``_empty`` and offers to edit it.
     """
 
     __abstract = True
@@ -2285,9 +2295,12 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 
     _waiting: ClassVar[str] = "Waiting for a pipeline"
 
-    _waiting_for_spec: ClassVar[str] = "Waiting for a spec"
+    _empty: ClassVar[str] = "No chart yet"
 
     def __init__(self, **params):
+        editor = current_dashboard()
+        # A dashboard is loaded, or a version restored, with the canvas muted; only a new view takes a default.
+        self._may_default = editor is not None and not getattr(editor, "_muted", False)
         super().__init__(**params)
         settings = getattr(self.editor, "settings", None)
         if self.themed and settings is not None and "color_scheme" in settings.param:
@@ -2314,12 +2327,41 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         """The columns of its pipeline ``spec`` reads."""
         return contract_spec_fields(spec)
 
+    @staticmethod
+    def default_spec(schema: dict[str, Any]) -> dict[str, Any] | None:
+        """The spec a new view of a pipeline with ``schema`` starts from, or None to start empty."""
+        return None
+
     @param.depends("pipeline", "spec", "_global_filters", watch=True, on_init=True)
     def _refresh(self, *events):
+        if self._may_default and self._apply_default():
+            return
         super()._refresh()
 
-    def _filter_pipeline(self) -> Any:
-        return self.pipeline
+    def _apply_default(self) -> bool:
+        """Start from ``default_spec`` once the pipeline's schema is known; True if the spec changed."""
+        if self.spec:
+            self._may_default = False
+            return False
+        pipeline = self.pipeline
+        if pipeline is None or is_failure(pipeline):
+            return False
+        try:
+            schema = pipeline.schema
+        except Exception:
+            return False
+        if not schema:
+            return False
+        self._may_default = False
+        try:
+            default = self.default_spec(schema)
+        except Exception:
+            return False
+        if not default:
+            return False
+        # The spec's watchers draw the view, and FlowDash records the change as an edit.
+        self.spec = default
+        return True
 
     def _color_scheme(self) -> str | None:
         scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
@@ -2349,6 +2391,9 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         self._built(view)
         return view
 
+    def _filter_pipeline(self) -> Any:
+        return self.pipeline
+
     def _built(self, view: Any) -> None:
         """Called with each view the node draws, before it is shown."""
 
@@ -2356,7 +2401,36 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         view = self._object
         if view is not None:
             return view.panel
-        return pn.pane.Markdown(self._waiting if self.pipeline is None else self._waiting_for_spec)
+        if self.pipeline is None:
+            return pn.pane.Markdown(self._waiting)
+        return self._empty_state()
+
+    def _empty_state(self) -> pn.viewable.Viewable:
+        """What a view without a spec shows: ``_empty``, and a button opening the spec while it can be edited."""
+        message = pn.pane.Markdown(self._empty, margin=(0, 5))
+        editor = self.editor
+        if editor is None or not callable(getattr(editor, "edit_spec", None)):
+            return message
+        button = pmui.Button(
+            label="Edit spec", icon="data_object", variant="outlined", size="small",
+            css_classes=["lumen-edit-spec"],
+            visible=pn.bind(
+                lambda editable, read_only, preview: editable and not read_only and not preview,
+                editor.param.editable, editor.param.read_only, editor.param.preview,
+            ),
+        )
+        button.on_click(lambda _event: self.edit_spec())
+        return pn.Column(
+            message, button, sizing_mode="stretch_both",
+            styles={"align-items": "center", "justify-content": "center"},
+        )
+
+    def edit_spec(self) -> bool:
+        """Open the view's spec in the editor's code panel; False where it cannot be shown."""
+        editor, node_id = self.editor, self.node_id()
+        if editor is None or node_id is None:
+            return False
+        return bool(editor.edit_spec(node_id, "spec"))
 
     def _summary(self, spec: dict[str, Any], data: Any) -> str:
         """A line saying what the view shows, e.g. for hosts that draw no chart previews."""
@@ -2377,6 +2451,8 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         return _preview_frame(data.head(PREVIEW_ROWS), len(data))
 
     def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is None and self._object is None and self.pipeline is not None:
+            return self._empty
         if self._error is not None or self._object is None:
             return None
         spec = getattr(self._object, "spec", None)
@@ -2401,7 +2477,10 @@ class ViewNode(LumenViewNode):
     spec = spec_param("""
         The Vega-Lite spec, without data. A width or height it leaves out
         follows the tile's, and colours it leaves out the dashboard's
-        ``color_scheme`` setting, if it has one.""", settings=VEGA_LITE_SETTINGS)
+        ``color_scheme`` setting, if it has one. A new chart starts from
+        one its pipeline's columns suggest: a line of a number over a date,
+        the largest categories' sums as bars, a scatter of two numbers or a
+        histogram of one.""", settings=VEGA_LITE_SETTINGS)
 
     debounce = param.Integer(default=DEBOUNCE, bounds=(0, None), doc="""
         Milliseconds the chart waits after the last change of a selection
@@ -2418,6 +2497,8 @@ class ViewNode(LumenViewNode):
     check_spec = staticmethod(check_chart)
 
     spec_warnings = staticmethod(selection_warnings)
+
+    default_spec = staticmethod(vega_lite_default)
 
     def __init__(self, **params):
         self._link = None
