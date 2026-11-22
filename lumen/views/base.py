@@ -398,7 +398,9 @@ class View(MultiTypeComponent, Viewer):
         if pipeline is not None and (id(obj.dataset.data) in (id(pipeline.data), self._object_data_id)):
             data = '$data'
         else:
-            data = {k: list(v) for k, v in obj.dataset.columns().items()}
+            data = self._serialize_container(
+                dict(obj.dataset.columns()), objects, refs, depth
+            )
         hv_pipeline = obj.pipeline
         if len(hv_pipeline.operations) == 1:
             operation = None

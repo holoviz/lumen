@@ -11,6 +11,7 @@ import warnings
 from functools import partial
 from typing import Any, ClassVar, Literal
 
+import numpy as np
 import pandas as pd
 import param  # type: ignore
 
@@ -232,6 +233,12 @@ class Component(Parameterized):
                     v, objects, refs, depth+1, include_name=include_name
                 ) for v in value
             ]
+        elif isinstance(value, np.ndarray):
+            value = self._serialize_container(
+                value.tolist(), objects, refs, depth+1, include_name=include_name
+            )
+        elif isinstance(value, np.generic):
+            value = value.item()
         elif isinstance(value, Parameterized):
             return self._serialize_parameterized(
                 value, objects, refs, depth, include_name=include_name
@@ -297,6 +304,10 @@ class Component(Parameterized):
                 ]
             elif isinstance(value, (list, dict, Parameterized)):
                 value = self._serialize_container(value, objects, refs, depth, include_name=include_name)
+            elif isinstance(value, np.ndarray):
+                value = self._serialize_container(value.tolist(), objects, refs, depth, include_name=include_name)
+            elif isinstance(value, np.generic):
+                value = value.item()
             elif isinstance(value, type):
                 value = {'type': f"{value.__module__}.{value.__name__}", 'instance': False}
             else:
