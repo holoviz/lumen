@@ -72,6 +72,8 @@ A filter node on a metric filters the rows before they are aggregated, so a filt
 
 The file is checked when the app starts: each metric's columns, its query with the defaults and every grain must work on its source, and a problem is reported with its line and column, e.g. `flowdash.yaml:10:7: Unknown column 't_sate' in dimension 'state'. Did you mean 't_state'?`. A metric over a source the app does not serve is left out with a warning.
 
+A source node's preview lists its tables with their row and column counts and column names. Reading a table's schema counts its rows, so in the app a background worker reads the schemas the source has not stored yet, at most 20 tables, and the card fills in once they are there. Selecting a source node shows its spec as YAML, read only, in the code panel under the canvas (with a panel-flowdash that supports it). Credentials are never shown: passwords in connection URIs, settings named like a password, secret, token, key or credentials, strings passed to the driver such as `connect_args`, secrets in SQL run on connect such as DuckDB's `CREATE SECRET`, and values read from environment variables all read `***`.
+
 ## Nodes
 
 | Node | Inputs | Config | Outputs |
