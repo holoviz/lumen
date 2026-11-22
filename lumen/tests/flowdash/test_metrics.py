@@ -284,6 +284,22 @@ def test_filter_on_a_sql_metric_filters_the_tables_it_reads(duck):
     assert run(filtered_pipeline(pipeline, "capacity_kw", (3000, None))) == [("Roscoe", 3500), ("Alta", 3000)]
 
 
+def test_a_metric_reads_the_rows_holding_a_column_its_result_lacks(duck):
+    capacity = metrics_for(duck)["capacity"]
+    by_state = metric_pipeline(capacity, duck, Query(["capacity_mw"], ["state"]))
+    aggregate = by_state.sql_transforms[0]
+    rows = aggregate.input_rows("p_name", duck.get_sql_expr("turbines"))
+    # Alta came online before the default `since`, so the metric never aggregates it.
+    assert sorted(set(duck.execute(rows)["p_name"])) == ["Horse Hollow", "Roscoe", "Story"]
+    assert aggregate.input_rows("capacity_mw", duck.get_sql_expr("turbines")) is None
+
+    top = metric_pipeline(metrics_for(duck)["top_projects"], duck, Query(parameters={"n": 5}))
+    prefilter = filtered_pipeline(top, "p_year", 2010).sql_transforms[0]
+    rows = prefilter.input_rows("p_name", top.source.get_sql_expr(top.table))
+    assert sorted(set(top.source.execute(rows)["p_name"])) == ["Horse Hollow", "Roscoe"]
+    assert prefilter.input_rows("capacity_kw", "") is None
+
+
 @pytest.mark.parametrize("grain, expected", [
     ("year", ["1999-01-01", "2001-01-01", "2010-01-01", "2015-01-01"]),
     ("quarter", ["1999-01-01", "2001-04-01", "2010-01-01", "2010-10-01", "2015-07-01"]),
