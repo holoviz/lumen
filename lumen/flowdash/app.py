@@ -38,6 +38,9 @@ FILES_REF = "files"
 # The source the served data files are read into: the files in command-line order
 # and the names a served folder or the files' folders gave it.
 _FILES: weakref.WeakKeyDictionary[Source, tuple[list[_DataFile], list[str]]] = weakref.WeakKeyDictionary()
+# The sources ``resolve_sources`` made from paths, URLs and connection strings, which
+# ``name_sources`` may name; a source the host passed keeps its name.
+_BUILT: weakref.WeakSet[Source] = weakref.WeakSet()
 # The names of a served source from before ``name_sources`` named it by its ref.
 _NAMES: weakref.WeakKeyDictionary[Source, tuple[str, list[str]]] = weakref.WeakKeyDictionary()
 
@@ -100,11 +103,14 @@ def _numbered(names: Sequence[str]) -> list[str]:
     return unique
 
 
-def _served_files(data: Sequence[str | os.PathLike | Source]) -> tuple[list[_DataFile], str | None]:
+def _served_files(
+    data: Sequence[str | os.PathLike | Source],
+) -> tuple[list[_DataFile], str | None, list[str]]:
     """
     The data files of ``data`` in command-line order, a folder standing for
     the data files in it by name, each file once; and the folder's name when
-    a single folder is all the data files given.
+    a single folder is all the data files given; and the names of the
+    folders given.
     """
     files: dict[str, _DataFile] = {}
     given = []
@@ -124,7 +130,7 @@ def _served_files(data: Sequence[str | os.PathLike | Source]) -> tuple[list[_Dat
             if (file := _DataFile.of(entry)) is not None:
                 files.setdefault(file.key, file)
     folder = given[0] if len(given) == 1 else None
-    return list(files.values()), folder
+    return list(files.values()), folder, sorted({name for name in given if name})
 
 
 def _source_name(files: Sequence[_DataFile], folder: str | None) -> str:
@@ -176,7 +182,7 @@ def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
     from ..sources.data import resolve_data
     from .nodes import add_legacy_tables, set_served_files
 
-    files, folder = _served_files(data)
+    files, folder, folders = _served_files(data)
     tables = _numbered([file.stem for file in files])
     stems = [file.stem for file in files]
     if clashing := [(table, file) for file, table in zip(files, tables, strict=True) if stems.count(file.stem) > 1]:
@@ -203,11 +209,12 @@ def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
     sources = resolve_data(items)
     provided = next((s for s in sources if s.name == PROVIDED_SOURCE_NAME), None) if files else None
     others = [s for s in sources if s is not provided]
+    passed = {id(item) for item in data if isinstance(item, Source)}
+    _BUILT.update(s for s in sources if id(s) not in passed)
     if provided is not None:
         with param.edit_constant(provided):
             provided.name = _source_name(files, folder)
         add_legacy_tables(provided, _legacy_tables(files, tables))
-        folders = sorted({file.parent for file in files if file.parent} | ({folder} if folder else set()))
         _FILES[provided] = (files, folders)
         set_served_files(provided, {table: file.text for file, table in zip(files, tables, strict=True)})
     if len(others) != len(positions):
@@ -266,11 +273,14 @@ def source_refs(sources: Sequence[Source]) -> dict[str, Source]:
 
 def name_sources(refs: Mapping[str, Source]) -> None:
     """
-    Name each source of ``refs`` by its ref, so a source node and the agent
-    show the name a dashboard uses, keeping the names it had for
-    ``source_aliases``.
+    Name each source ``resolve_sources`` made by its ref, so its source node
+    shows the name a dashboard uses, keeping the names it had for
+    ``source_aliases``. A source the host passed keeps its own name, which
+    other apps and its caches may rely on.
     """
     for ref, source in refs.items():
+        if source not in _BUILT:
+            continue
         _NAMES.setdefault(source, _names(source))
         if source.name != ref:
             with param.edit_constant(source):

@@ -322,7 +322,7 @@ def test_a_served_folder_keeps_resolving_when_files_are_served_beside_it(served)
     (served / "f" / "wind.csv").write_text("x\n1\n")
     assert list(refs("f")) == ["f"]
     assert aliases("f", "plants.csv")["f"] == "local"
-    assert aliases("f/wind.csv", "plants.csv")["f"] == "local"
+    assert "f" not in aliases("f/wind.csv", "plants.csv")
 
 
 def test_local_resolves_with_one_file(served):
@@ -355,3 +355,18 @@ def test_sources_keep_resolve_data_order_when_it_makes_sources_of_its_own(served
     # The frame joins the data files' source, so there is no source per position.
     sources = resolve_sources([frame, "plants.csv", "shop.db"])
     assert [sorted(listed_tables(s)) for s in sources] == [["orders"], ["data", "plants"]]
+
+
+def test_a_source_the_host_passes_keeps_its_name(served):
+    warehouse = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="Warehouse DB")
+    first = build_routes([warehouse, "shop.db"], db_path=served / "one.db")["/"]()._editor
+    other = DuckDBSource(uri=":memory:", tables={"u": "SELECT 1 AS x"}, name="warehouse_db")
+    second = build_routes([other, warehouse], db_path=served / "two.db")["/"]()._editor
+    assert list(bound_sources(first)) == ["warehouse_db", "shop"]
+    assert list(bound_sources(second)) == ["warehouse_db", "warehouse_db_2"]
+    assert warehouse.name == "Warehouse DB" and other.name == "warehouse_db"
+    assert bound_sources(first)["shop"].name == "shop"
+    ops = DashboardOps(first)
+    ops.add_node(SOURCE_ID, {"ref": "warehouse_db"}, name="w")
+    node = first._component_instances[ops._instance("w")]
+    assert node._body().object == "warehouse_db: t"
