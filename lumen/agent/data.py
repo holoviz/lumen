@@ -18,7 +18,7 @@ from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..flowdash import (
     DATA_ID, FILTER_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID,
-    check_query,
+    check_query, listed_tables,
 )
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
@@ -61,7 +61,7 @@ def resolve_source(deps: FlowDashDeps, source: str | None) -> tuple[str, BaseSQL
 async def metaset(source: Source) -> Metaset:
     """The catalog and column statistics of every table of ``source``, computed once per source."""
     if source not in _METASETS:
-        slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in source.get_tables()]
+        slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in listed_tables(source)]
         _METASETS[source] = await get_metaset([source], slugs, stats_timeout=STATS_TIMEOUT)
     return _METASETS[source]
 
@@ -140,7 +140,7 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
             raise ModelRetry(f"No node {node!r} on the dashboard.")
         return _node_line(ctx.deps.ops, node, None) or f"{node!r} is not a SQL or chart node."
     name, src = resolve_source(ctx.deps, source)
-    tables = src.get_tables()
+    tables = listed_tables(src)
     meta = await metaset(src)
     others = ", ".join(n for n in _graph.nodes(ctx.deps.ops, SOURCE_ID) if n != name)
     text = ""
@@ -168,7 +168,7 @@ async def describe_table(
     meta = await metaset(src)
     slug = f"{src.name}{SOURCE_TABLE_SEPARATOR}{table.strip()}"
     if slug not in meta.catalog:
-        raise ModelRetry(f"No table {table!r}. Tables: {', '.join(src.get_tables())}.")
+        raise ModelRetry(f"No table {table!r}. Tables: {', '.join(listed_tables(src))}.")
     await meta.ensure_stats([slug], timeout=STATS_TIMEOUT)
     wanted = {c.strip().strip('"').lower() for c in columns} if columns else None
     return meta.table_detail(slug, include_lineage=False, columns=wanted)

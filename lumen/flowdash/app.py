@@ -6,11 +6,15 @@ from __future__ import annotations
 
 import os
 import re
+import weakref
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
+
+import param
 
 from panel_flowdash.agent.models import parse_models
 from panel_flowdash.app import FlowDashApp
@@ -25,12 +29,38 @@ LIBRARY = "lumen.flowdash"
 
 # Lumen reads files with these suffixes into one DuckDB source, see ``resolve_data``.
 _DATA_FILES = (".parq", ".parquet", ".csv", ".json", ".tsv", ".jsonl", ".ndjson")
-# Lumen names the table of a data file by its path, e.g. turbines_csv.
-_FILE_SUFFIX = re.compile(r"_(csv|tsv|parquet|parq|json|jsonl|ndjson)$")
-# The refs lumen serve gave by position before refs were stable; never issued now.
+# The refs lumen serve gave by position before refs were named after the data.
 _POSITIONAL = re.compile(r"data(_\d+)?")
-# The ref of the source holding several data files.
+# Names the source of several served files had before; still resolve as aliases.
 FILES_REF = "files"
+
+# The source each served data file is read into, with the files, in command-line order.
+_FILES: weakref.WeakKeyDictionary[Source, list[_DataFile]] = weakref.WeakKeyDictionary()
+
+
+@dataclass(frozen=True)
+class _DataFile:
+    """A data file ``lumen serve`` reads into the one DuckDB source of all data files."""
+
+    text: str
+    """The path or URL as given."""
+    key: str
+    """The resolved path, or the URL, so a file given twice is read once."""
+    stem: str
+    extension: str
+    parent: str
+    remote: bool
+
+    @classmethod
+    def of(cls, text: str) -> _DataFile | None:
+        remote = "://" in text
+        path = PurePosixPath(urlsplit(text).path) if remote else Path(text).resolve()
+        name = path.name
+        if not name.lower().endswith(_DATA_FILES):
+            return None
+        stem, _, extension = name.rpartition(".")
+        return cls(text, text if remote else str(path), _slug(stem) or "data", _slug(extension),
+                   _slug(path.parent.name), remote)
 
 
 def _slug(text: str) -> str:
@@ -46,170 +76,196 @@ def _auto_named(source: Source) -> bool:
     return re.fullmatch(rf"{re.escape(type(source).__name__)}\d{{5}}", source.name) is not None
 
 
-def file_stems(data: Sequence[str | os.PathLike | Source]) -> list[str]:
+def _numbered(names: Sequence[str]) -> list[str]:
     """
-    The stems of the data files in ``data`` that Lumen reads into one
-    source, from their file names, whatever directory or URL they are in.
+    ``names`` made unique in their order: the first of a name keeps it, later
+    ones get ``_2``, ``_3`` and so on, never taking a name given as is.
     """
-    return [stem for name in _file_names(data).values() if (stem := _slug(name.rsplit(".", 1)[0]))]
+    reserved, taken, unique = set(names), set(), []
+    for name in names:
+        candidate, n = name, 1
+        while candidate in taken or (candidate != name and candidate in reserved):
+            n += 1
+            candidate = f"{name}_{n}"
+        taken.add(candidate)
+        unique.append(candidate)
+    return unique
 
 
-def _file_names(data: Sequence[str | os.PathLike | Source]) -> dict[str, str]:
+def _served_files(data: Sequence[str | os.PathLike | Source]) -> tuple[list[_DataFile], str | None]:
     """
-    The table names of the data files in ``data`` by their path: the file
-    name, so a table is named the same from any directory. A file listed
-    twice, under any spelling, is read once. When files of one name come
-    from different directories none keeps the bare name: each is prefixed
-    with as many of its parent directories as tell them apart (``x_a.csv``
-    and ``y_a.csv`` for ``x/a.csv`` and ``y/a.csv``), never taking another
-    file's name, so a query saved against one of them fails instead of
-    reading the other.
+    The data files of ``data`` in command-line order, a folder standing for
+    the data files in it by name, each file once; and the folder's name when
+    a single folder is all the data files given.
     """
-    found: dict[str, tuple[str, tuple[str, ...], str]] = {}
+    files: dict[str, _DataFile] = {}
+    given = []
     for item in data:
         if isinstance(item, Source):
             continue
         text = str(item)
-        remote = "://" in text
-        path = PurePosixPath(urlsplit(text).path) if remote else Path(text).resolve()
-        if path.name.lower().endswith(_DATA_FILES):
-            key = text if remote else str(path)
-            found[text] = (path.name, tuple(part for part in path.parent.parts if _slug(part)), key)
-    files: dict[str, tuple[str, tuple[str, ...]]] = {key: (name, parents) for name, parents, key in found.values()}
-    groups: dict[str, list[str]] = {}
-    for key, (name, _) in sorted(files.items()):
-        groups.setdefault(name.lower(), []).append(key)
-    taken = set(groups)
-    names: dict[str, str] = {}
-    for keys in groups.values():
-        if len(keys) == 1:
-            names[keys[0]] = files[keys[0]][0]
+        if "://" not in text and Path(text).is_dir():
+            given.append(_slug(Path(text).resolve().name))
+            texts = [str(p) for p in sorted(Path(text).iterdir()) if p.is_file()]
+        elif _DataFile.of(text) is not None:
+            given.append(None)
+            texts = [text]
+        else:
             continue
-        for depth in range(1, max(len(files[key][1]) for key in keys) + 2):
-            qualified = {
-                key: "_".join([*files[key][1][-depth:], files[key][0]]) if depth <= len(files[key][1])
-                else "_".join([*files[key][1], str(i), files[key][0]])
-                for i, key in enumerate(keys)
-            }
-            lowered = [name.lower() for name in qualified.values()]
-            if len(set(lowered)) == len(lowered) and not taken & set(lowered):
-                break
-        names.update(qualified)
-        taken.update(name.lower() for name in qualified.values())
-    return {text: names[key] for text, (_, _, key) in found.items()}
+        for entry in texts:
+            if (file := _DataFile.of(entry)) is not None:
+                files.setdefault(file.key, file)
+    folder = given[0] if len(given) == 1 else None
+    return list(files.values()), folder
 
 
-def _names(source: Source, stems: Sequence[str]) -> tuple[str, str, list[str]]:
+def _source_name(files: Sequence[_DataFile], folder: str | None) -> str:
+    """The name of the source of the served data files: the file, the folder, or else ``local`` or ``data``."""
+    if folder:
+        return folder
+    if len(files) == 1:
+        return files[0].stem
+    return "data" if any(file.remote for file in files) else "local"
+
+
+def _legacy_tables(files: Sequence[_DataFile], tables: Sequence[str]) -> dict[str, str]:
     """
-    The ref ``source`` is named by unless another source claims it, the tag
-    that tells it apart then, and further names that resolve to it.
+    Names earlier releases gave the files' tables, by the table each now
+    names: the path as given (``x_a_csv`` for ``x/a.csv``) and the file name
+    with its extension (``a_csv``), alone or after its folder. A name two
+    files had, or that is a table now, is left out.
     """
+    from ..util import normalize_table_name
+
+    claims: dict[str, set[str]] = {}
+    for file, table in zip(files, tables, strict=True):
+        names = {normalize_table_name(file.text), f"{file.stem}_{file.extension}"}
+        if file.parent:
+            names.add(f"{file.parent}_{file.stem}_{file.extension}")
+        for name in names:
+            claims.setdefault(name, set()).add(table)
+    return {
+        name: next(iter(targets)) for name, targets in claims.items()
+        if len(targets) == 1 and name not in tables
+    }
+
+
+def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
+    """
+    Sources for files, folders, URLs, database connection strings or
+    sources, read as ``lumen serve`` reads them for Lumen AI, in
+    command-line order (the data files' source where the first of them is
+    given), except for how the data files are named.
+
+    The data files go into one source named after the data: the file's
+    stem for one file, the folder's name for a folder, else ``local`` (or
+    ``data`` when some are URLs). Each file's table is its stem, e.g.
+    ``turbines`` for ``turbines.csv``; files of one stem get ``_2``, ``_3``
+    in command-line order, so adding a file never renames a table a saved
+    dashboard reads. The names earlier releases gave the tables still
+    work in queries where only one file had them, but are not listed.
+    """
+    from ..sources.data import resolve_data
+    from .nodes import add_legacy_tables
+
+    files, folder = _served_files(data)
+    tables = _numbered([file.stem for file in files])
+    items: list[Any] = []
+    positions: list[int] = []
+    first_file = None
+    for position, item in enumerate(data):
+        if isinstance(item, Source):
+            items.append(item)
+            positions.append(position)
+            continue
+        text = str(item)
+        if ("://" not in text and Path(text).is_dir()) or _DataFile.of(text) is not None:
+            if first_file is None:
+                first_file = position
+                items.extend((table, file.text) for file, table in zip(files, tables, strict=True))
+            continue
+        items.append(text)
+        positions.append(position)
+    sources = resolve_data(items)
+    provided = next((s for s in sources if s.name == PROVIDED_SOURCE_NAME), None) if files else None
+    others = [s for s in sources if s is not provided]
+    order = dict(zip(map(id, others), positions, strict=True)) if len(others) == len(positions) else {}
+    if provided is not None:
+        with param.edit_constant(provided):
+            provided.name = _source_name(files, folder)
+        add_legacy_tables(provided, _legacy_tables(files, tables))
+        _FILES[provided] = files
+        order[id(provided)] = first_file
+    return sorted(sources, key=lambda s: order.get(id(s), len(data)))
+
+
+def _names(source: Source) -> tuple[str, list[str]]:
+    """
+    The name ``source`` is named by, and the names earlier releases of
+    ``lumen serve --flowdash`` may have given it.
+    """
+    files = _FILES.get(source)
+    if files is not None:
+        stems = sorted({file.stem for file in files})
+        legacy = [FILES_REF, *stems, *(f"{stem}_{FILES_REF}" for stem in stems)]
+        return _slug(source.name) or "data", legacy
     tables = list(source.get_tables())
-    if source.name == PROVIDED_SOURCE_NAME:
-        stems = sorted(set(stems) or {_slug(_FILE_SUFFIX.sub("", table)) for table in tables} - {""})
-        tagged = [f"{stem}_{FILES_REF}" for stem in stems]
-        return (stems[0] if len(stems) == 1 else FILES_REF), FILES_REF, [FILES_REF, *stems, *tagged]
     if not _auto_named(source) and (name := _slug(source.name)):
-        return name, _type_slug(source), [f"{name}_{_type_slug(source)}"]
+        return name, [f"{name}_{_type_slug(source)}"]
     location = getattr(source, "uri", None) or getattr(source, "url", None)
     if isinstance(location, str) and location != ":memory:":
         parts = urlsplit(location)
         path = PurePosixPath(parts.path) if "://" in location else Path(location)
         if stem := _slug(path.stem):
             tag = _slug(path.suffix) or _slug(parts.scheme) or _type_slug(source)
-            return stem, tag, [f"{stem}_{tag}"]
+            return stem, [f"{stem}_{tag}"]
     if len(tables) == 1 and (table := _slug(tables[0])):
-        return table, _type_slug(source), [f"{table}_{_type_slug(source)}"]
-    return _type_slug(source), "", []
+        return table, [f"{table}_{_type_slug(source)}"]
+    return _type_slug(source), []
 
 
-def _claims(sources: Sequence[Source], stems: Sequence[str]) -> tuple[dict[int, tuple[str, str, list[str]]], set[str]]:
-    """Each source's names, and the names more than one source claims, or that look positional."""
-    names = {id(source): _names(source, stems) for source in sources}
-    counts: dict[str, int] = {}
-    for base, _, extra in names.values():
-        for name in {base, *extra}:
-            counts[name] = counts.get(name, 0) + 1
-    clashing = {name for name, n in counts.items() if n > 1 or _POSITIONAL.fullmatch(name)}
-    return names, clashing
-
-
-def source_refs(sources: Sequence[Source], stems: Sequence[str] = ()) -> dict[str, Source]:
+def source_refs(sources: Sequence[Source]) -> dict[str, Source]:
     """
-    The refs source nodes name ``sources`` by, in the order of ``sources``.
+    The refs source nodes name ``sources`` by, given in command-line order
+    as ``resolve_sources`` returns them.
 
-    A ref depends on the data's name, not on its position: a source named by
-    its host is named so, a database file or connection by its file or
-    database name, and the data files ``lumen serve`` reads into one source
-    by the file's stem (``stems``, see ``file_stems``), e.g. ``turbines``
-    for ``turbines.csv``, or ``files`` when there are several.
-
-    A name that two sources claim (counting each data file's stem) is no
-    source's ref: each of them is named with a tag of its kind instead,
-    e.g. ``a_db`` and ``a_files`` for ``a.db`` and ``a.csv``, so a saved
-    dashboard naming ``a`` reports the missing source rather than reading
-    the other one. ``data`` and ``data_2``, ``data_3`` and so on, the refs
-    ``lumen serve`` gave by position before, are tagged the same way.
-    Sources still alike get ``_2``, ``_3`` in the order of their location,
-    type and tables. ``source_aliases`` gives further names that resolve.
+    A ref is the source's name, not its position: the name ``resolve_sources``
+    gives the data files' source, a name the host gave a source, or a
+    database file's or connection's file or database name (``shop`` for
+    ``shop.db``). Sources of one name get ``_2``, ``_3`` in command-line
+    order, so the first given keeps the name and a source added later
+    never takes over a saved dashboard's ref.
     """
-    names, clashing = _claims(sources, stems)
-    keys = {}
-    for source in sources:
-        base, tag, _ = names[id(source)]
-        if base in clashing and tag:
-            base = f"{base}_{tag}"
-        location = getattr(source, "uri", None) or getattr(source, "url", None)
-        keys[id(source)] = (base, str(location or ""), type(source).__name__, *sorted(source.get_tables()))
-    refs: dict[int, str] = {}
-    taken: set[str] = set()
-    for source in sorted(sources, key=lambda s: keys[id(s)]):
-        base = keys[id(source)][0]
-        ref, n = base, 1
-        while ref in taken or _POSITIONAL.fullmatch(ref):
-            n += 1
-            ref = f"{base}_{n}"
-        refs[id(source)] = ref
-        taken.add(ref)
-    return {refs[id(source)]: source for source in sources}
+    refs = _numbered([_names(source)[0] for source in sources])
+    return dict(zip(refs, sources, strict=True))
 
 
-def source_aliases(refs: Mapping[str, Source], stems: Sequence[str] = ()) -> dict[str, str]:
+def source_aliases(refs: Mapping[str, Source]) -> dict[str, str]:
     """
-    Further names that resolve to the refs of ``refs`` (as ``source_refs``
-    orders them), for dashboards saved before: ``data``, ``data_2``,
-    ``data_3`` and so on name the sources by position, as ``lumen serve``
-    named them then, and ``files`` and the stem of each data file name the
-    source holding the data files, so adding or removing a file keeps a
-    saved ref; the tagged ref a source gets when its name clashes names it
-    too. A name that is a ref, or that two sources claim, is no alias.
+    Further names that resolve to the refs of ``refs``, for dashboards
+    saved by earlier releases: ``data``, ``data_2`` and so on by position in
+    the order those releases read the data (database files and connections
+    first, then the data files), and the names they gave a source (``files``,
+    a data file's stem, ``shop_db``). A ref always wins over an alias, and a
+    name two sources may have had resolves to neither.
     """
-    names, clashing = _claims(list(refs.values()), stems)
-    aliases: dict[str, str] = {}
-    for i, ref in enumerate(refs):
-        aliases["data" if i == 0 else f"data_{i + 1}"] = ref
+    sources = list(refs.values())
+    ref_of = {id(source): ref for ref, source in refs.items()}
+    legacy_order = [s for s in sources if s not in _FILES] + [s for s in sources if s in _FILES]
+    aliases = {
+        ("data" if i == 0 else f"data_{i + 1}"): ref_of[id(source)] for i, source in enumerate(legacy_order)
+    }
+    claims: dict[str, set[str]] = {}
     for ref, source in refs.items():
-        base, _, extra = names[id(source)]
-        for alias in {base, *extra}:
-            if alias not in refs and alias not in clashing and alias not in aliases:
-                aliases[alias] = ref
-    return aliases
-
-
-def resolve_sources(data: Sequence[str | os.PathLike | Source]) -> list[Source]:
-    """
-    Sources for files, URLs, database connection strings or sources, read
-    as ``lumen serve`` reads them for Lumen AI, except that a data file's
-    table is named by its file name rather than its path (``turbines_csv``
-    for ``turbines.csv`` in any directory), so a query keeps its tables
-    when the same files are served from elsewhere.
-    """
-    from ..sources.data import resolve_data
-
-    names = _file_names(data)
-    return resolve_data([
-        d if isinstance(d, Source) else (names[str(d)], str(d)) if str(d) in names else str(d) for d in data
-    ])
+        base, legacy = _names(source)
+        for name in {base, *legacy}:
+            claims.setdefault(name, set()).add(ref)
+    for name, targets in claims.items():
+        if name in refs or name in aliases or _POSITIONAL.fullmatch(name):
+            continue
+        if len(targets) == 1:
+            aliases[name] = next(iter(targets))
+    return {alias: ref for alias, ref in aliases.items() if alias not in refs}
 
 
 def build_routes(
@@ -243,8 +299,7 @@ def build_routes(
     **params
         Further ``FlowDashApp`` parameters.
     """
-    stems = file_stems(data)
-    sources = source_refs(resolve_sources(data), stems)
+    sources = source_refs(resolve_sources(data))
     models = parse_models(agent_model, source="agent_model")
     if models:
         from ..agent import create_agent
@@ -259,7 +314,7 @@ def build_routes(
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
     editor_options = dict(params.pop("editor_options", {}))
     editor_options["context"] = {
-        **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: source_aliases(sources, stems),
+        **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: source_aliases(sources),
     }
     return FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),

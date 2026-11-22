@@ -125,6 +125,30 @@ _RESULTS: dict[tuple[int, str], Any] = {}
 _FETCHED: weakref.WeakKeyDictionary[Pipeline, dict[float, Any]] = weakref.WeakKeyDictionary()
 
 
+# Marks a table that only keeps a name an earlier release gave a served file, so
+# saved queries still read it; listings leave it out. Derived sources copy it.
+LEGACY_TABLE = "/* lumen.flowdash: earlier name */"
+
+
+def add_legacy_tables(source: Source, names: Mapping[str, str]) -> None:
+    """Let queries on a DuckDB ``source`` read its table ``names[name]`` as ``name`` too, unlisted."""
+    connection = getattr(source, "_connection", None)
+    if connection is None or not names:
+        return
+    for name, table in names.items():
+        connection.execute(f'CREATE OR REPLACE VIEW "{name}" AS SELECT * FROM "{table}"')
+    source.tables = {**source.tables, **{name: f'SELECT * FROM "{table}" {LEGACY_TABLE}' for name, table in names.items()}}
+
+
+def listed_tables(source: Source) -> list[str]:
+    """The tables of ``source`` to list, without those that only keep an earlier name."""
+    declared = getattr(source, "tables", None)
+    tables = source.get_tables()
+    if not isinstance(declared, dict):
+        return tables
+    return [t for t in tables if not (isinstance(declared.get(t), str) and LEGACY_TABLE in declared[t])]
+
+
 def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
     """
     Let source nodes of ``editor`` whose ``ref`` is ``ref`` use ``source``,
@@ -282,9 +306,10 @@ def table_pipeline(source: Source, table: str, limit: int = RESULT_LIMIT) -> Pip
         raise ValueError(f"The source failed: {failure_text(source)}")
     if not isinstance(source, Source):
         raise ValueError(f"Expected a Lumen source, got {type(source).__name__}.")
-    tables = source.get_tables()
-    if table not in tables:
-        raise ValueError(f"The source has no table {table!r}. Its tables are: {', '.join(sorted(tables))}.")
+    if table not in source.get_tables():
+        raise ValueError(
+            f"The source has no table {table!r}. Its tables are: {', '.join(sorted(listed_tables(source)))}."
+        )
     if source._supports_sql:
         return Pipeline(
             source=source, table=table, sql_transforms=[SQLLimit(limit=limit, write=source.dialect)], name=table,
@@ -515,7 +540,7 @@ def _source_summary(source: Source) -> pd.DataFrame | str:
     Without a stored size for any table it is a line naming the tables: a
     one-column frame would be captioned as its own shape, e.g. "1 row, 1 column".
     """
-    tables = source.get_tables()
+    tables = listed_tables(source)
     cached = source._get_schema_cache() or {}
     in_memory = source.tables if isinstance(getattr(source, "tables", None), Mapping) else {}
     entries: list[tuple[str, int | None, int | None]] = []
@@ -881,7 +906,7 @@ class SourceNode(LumenNode):
         source = self._object
         if source is None:
             return pn.pane.Markdown("No source")
-        return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(source.get_tables())}")
+        return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(listed_tables(source))}")
 
     def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | str | None:
         if self._error is not None or self._object is None:
@@ -898,7 +923,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     source = inputs.get("source")
     if Choices is None or not isinstance(source, Source) or is_failure(source):
         return None
-    tables = list(source.get_tables())
+    tables = listed_tables(source)
     stored = source._get_schema_cache() or {}
     types: dict[str, str] = dict.fromkeys(tables, "table")
     words = list(tables)
