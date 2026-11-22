@@ -17,7 +17,7 @@ except Exception:
 
 from panel.widgets import Select
 
-from lumen.filters.base import ConstantFilter, ParamFilter
+from lumen.filters.base import ConstantFilter, ParamFilter, WidgetFilter
 from lumen.pipeline import Pipeline
 from lumen.sources.intake_sql import IntakeSQLSource
 from lumen.state import state
@@ -67,6 +67,85 @@ def test_pipeline_with_filter(make_filesource, mixed_df):
     cfilter.value = (0, 2)
     expected = mixed_df.iloc[0:3]
     assert_df_equal(pipeline.data, expected)
+
+def test_pipeline_reset_filters(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    cfilter = ConstantFilter(field='A', value=(1, 2))
+    wfilter = WidgetFilter(field='C', schema={'C': source.get_schema('test')['C']})
+    pipeline = Pipeline(source=source, filters=[cfilter, wfilter], table='test')
+
+    expected = mixed_df.iloc[1:3]
+    assert_df_equal(pipeline.data, expected)
+
+    wfilter.widget.value = ['foo2']
+    cfilter.value = (0, 2)
+    assert len(pipeline.data) == 1
+
+    pipeline.reset_filters()
+
+    assert_df_equal(pipeline.data, expected)
+    assert wfilter.widget.value == []
+    assert cfilter.value == (1, 2)
+
+def test_pipeline_reset_filter_added_later(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    pipeline = Pipeline(source=source, table='test')
+    pipeline.add_filter('widget', field='C')
+    wfilter = pipeline.filters[0]
+
+    wfilter.widget.value = ['foo2']
+    assert len(pipeline.data) == 1
+
+    pipeline.reset_filters()
+
+    assert_df_equal(pipeline.data, mixed_df)
+    assert wfilter.widget.value == []
+
+def test_pipeline_reset_filter_replaced(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    pipeline = Pipeline(source=source, table='test')
+    wfilter = WidgetFilter(field='C', schema={'C': source.get_schema('test')['C']})
+    pipeline.filters = [wfilter]
+
+    wfilter.widget.value = ['foo2']
+    pipeline.param.trigger('update')
+    assert len(pipeline.data) == 1
+
+    pipeline.reset_filters()
+    pipeline.param.trigger('update')
+
+    assert_df_equal(pipeline.data, mixed_df)
+    assert wfilter.widget.value == []
+
+def test_pipeline_reset_select_filter(make_filesource, mixed_df):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    sfilter = WidgetFilter(
+        field='C', multi=False, schema={'C': source.get_schema('test')['C']}
+    )
+    pipeline = Pipeline(source=source, filters=[sfilter], table='test')
+
+    sfilter.widget.value = 'foo2'
+    assert len(pipeline.data) == 1
+
+    pipeline.reset_filters()
+
+    assert_df_equal(pipeline.data, mixed_df)
+    assert sfilter.widget.value == ' '
+
+def test_pipeline_reset_keeps_mutable_initial_value(make_filesource):
+    root = pathlib.Path(__file__).parent / 'sources'
+    source = make_filesource(str(root))
+    cfilter = ConstantFilter(field='C', value=['foo1'])
+    pipeline = Pipeline(source=source, filters=[cfilter], table='test')
+
+    cfilter.value.append('foo2')
+    pipeline.reset_filters()
+
+    assert cfilter.value == ['foo1']
 
 def test_pipeline_manual_with_filter(make_filesource, mixed_df):
     root = pathlib.Path(__file__).parent / 'sources'
