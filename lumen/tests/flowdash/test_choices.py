@@ -1,3 +1,8 @@
+import asyncio
+import datetime as dt
+import time
+
+import pandas as pd
 import pytest
 
 pytest.importorskip("duckdb")
@@ -12,12 +17,13 @@ from panel_flowdash.ui.status_bar import select_on_canvas
 
 from lumen.flowdash import (
     COMPONENTS, FILTER_ID, PIPELINE_TYPE, SOURCE_ALIASES_KEY, SOURCE_ID,
-    SOURCES_KEY, TABLE_ID,
+    SOURCES_KEY, SQL_ID, TABLE_ID, choices as lumen_choices,
 )
 from lumen.flowdash.choices import (
     palette_presets, pipeline_column_types, source_presets, table_presets,
 )
 from lumen.flowdash.nodes import table_pipeline
+from lumen.sources.base import InMemorySource
 from lumen.sources.duckdb import DuckDBSource
 
 from .test_host import settle
@@ -222,3 +228,147 @@ async def test_table_node_shows_its_ref_as_ignored_while_a_source_is_connected(s
     choices = await config_choices.node_choices(ops.editor, ops._instance("table"))
     assert choices["ref"].labelled() == {"data (ignored while a source is connected)": "data"}
     assert choices["table"].values() == ["regions", "sales"]
+
+
+ORDERS = (
+    "SELECT * FROM (VALUES ('B', 1, TRUE, DATE '2020-01-01'), ('A', 2, FALSE, DATE '2020-01-02'), "
+    "('B', 3, TRUE, DATE '2020-01-03'), (NULL, 2, NULL, NULL)) AS t(category, amount, paid, sold_on)"
+)
+
+
+class SlowSource(DuckDBSource):
+    """A DuckDB source whose queries take half a second, blocking the thread they run on."""
+
+    async def execute_with_timeout(self, sql_query, timeout, fetch=False):
+        time.sleep(0.5)
+        return await super().execute_with_timeout(sql_query, timeout, fetch)
+
+
+def filter_dashboard(source, limit=None):
+    ops = dashboard(source)
+    ops.set_config("table", {"table": "orders", "limit": limit} if limit else {"table": "orders"})
+    ops.add_node(FILTER_ID, {"field": "category"}, name="filter")
+    ops.connect("table.pipeline", "filter.pipeline")
+    return ops
+
+
+@pytest.fixture
+def orders():
+    return DuckDBSource(uri=":memory:", tables={"orders": ORDERS})
+
+
+async def value_choices(ops, name="filter", **kwargs):
+    choices = await config_choices.node_choices(ops.editor, ops._instance(name), **kwargs)
+    return choices["value"].values() if "value" in choices else None
+
+
+async def test_filter_node_offers_the_distinct_values_of_its_field(orders):
+    ops = filter_dashboard(orders, limit=1)
+    assert await value_choices(ops) == ["A", "B"]
+    ops.set_config("filter", {"field": "amount"})
+    assert await value_choices(ops) == [1, 2, 3]
+    ops.set_config("filter", {"field": "paid"})
+    assert await value_choices(ops) == [False, True]
+
+
+async def test_filter_value_choices_follow_upstream_filters(orders):
+    ops = filter_dashboard(orders)
+    ops.add_node(FILTER_ID, {"field": "amount"}, name="amount")
+    ops.set_inputs("amount", {"value": [1, 3]})
+    ops.disconnect("table.pipeline", "filter.pipeline")
+    ops.connect("table.pipeline", "amount.pipeline")
+    ops.connect("amount.filtered", "filter.pipeline")
+    assert await value_choices(ops) == ["B"]
+
+
+async def test_filter_offers_no_values_for_dates_or_too_many(orders, monkeypatch):
+    ops = filter_dashboard(orders)
+    ops.set_config("filter", {"field": "sold_on"})
+    assert await value_choices(ops) is None
+    monkeypatch.setattr(lumen_choices, "DISTINCT_LIMIT", 2)
+    ops.set_config("filter", {"field": "amount"})
+    assert await value_choices(ops) is None
+    ops.set_config("filter", {"field": "category"})
+    assert await value_choices(ops) == ["A", "B"]
+
+
+async def test_filter_value_choices_are_read_once_per_pipeline(orders, monkeypatch):
+    from lumen.flowdash import nodes
+
+    ops = filter_dashboard(orders)
+    calls = []
+    execute = nodes.execute
+    monkeypatch.setattr(nodes, "execute", lambda *args, **kw: calls.append(args[1]) or execute(*args, **kw))
+    assert await value_choices(ops) == ["A", "B"]
+    assert await value_choices(ops) == ["A", "B"]
+    assert len(calls) == 1 and "DISTINCT" in calls[0]
+
+
+async def test_filter_value_choices_from_rows_of_a_source_without_sql():
+    frame = pd.DataFrame({"category": ["B", "A", None, "B"], "amount": [1, 2, 3, 4]})
+    ops = filter_dashboard(InMemorySource(tables={"orders": frame}))
+    assert await value_choices(ops) == ["A", "B"]
+
+
+async def test_filter_value_choices_of_a_sql_result(orders):
+    ops = dashboard(orders)
+    ops.add_node(SQL_ID, {"sql": "SELECT category FROM orders WHERE amount > 1"}, name="query")
+    ops.connect("data.source", "query.source")
+    ops.add_node(FILTER_ID, {"field": "category"}, name="filter")
+    ops.connect("query.pipeline", "filter.pipeline")
+    assert await value_choices(ops) == ["A", "B"]
+
+
+async def test_filter_value_choices_keep_the_event_loop_free():
+    ops = filter_dashboard(SlowSource(uri=":memory:", tables={"orders": ORDERS}))
+    ticks = 0
+
+    async def tick():
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0.01)
+
+    ticker = asyncio.ensure_future(tick())
+    try:
+        start = time.monotonic()
+        assert await value_choices(ops) == ["A", "B"]
+        elapsed = time.monotonic() - start
+    finally:
+        ticker.cancel()
+    assert elapsed >= 0.5
+    assert ticks >= 20
+
+
+async def test_filter_value_choices_finish_after_the_inspector_stops_waiting():
+    ops = filter_dashboard(SlowSource(uri=":memory:", tables={"orders": ORDERS}))
+    assert await value_choices(ops, timeout=0.05) is None
+    await settle(0.7)
+    start = time.monotonic()
+    assert await value_choices(ops, timeout=0.05) == ["A", "B"]
+    assert time.monotonic() - start < 0.05
+
+
+async def test_inspector_offers_the_filter_values_as_a_dropdown(orders):
+    ops = filter_dashboard(orders)
+    editor = ops.editor
+    node = ops._instance("filter")
+    select_on_canvas(editor._flow, node_id=node)
+    await settle()
+    selects = [
+        w for w in pn.Column(*editor._inspector._body).select(pmui.Select)
+        if list(w.options.values())[-2:] == ["A", "B"]
+    ]
+    assert selects
+
+
+async def test_filter_value_choices_sort_text_naturally():
+    frame = pd.DataFrame({"category": ["region_10", "Region_2", "region_1"], "amount": [1, 2, 3]})
+    ops = filter_dashboard(InMemorySource(tables={"orders": frame}))
+    assert await value_choices(ops) == ["region_1", "Region_2", "region_10"]
+
+
+async def test_filter_offers_no_values_for_an_object_column_of_dates():
+    frame = pd.DataFrame({"category": [dt.date(2020, 1, 2), dt.date(2020, 1, 1)], "amount": [1, 2]}, dtype=object)
+    ops = filter_dashboard(InMemorySource(tables={"orders": frame}))
+    assert await value_choices(ops) is None

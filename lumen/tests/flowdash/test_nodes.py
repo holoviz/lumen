@@ -797,3 +797,39 @@ def test_source_preview_without_stored_sizes_names_the_tables(source):
     ops = editor_with(source)
     preview = _instance(ops, "data").__flowdash_preview__()
     assert preview == "1 table: sales"
+
+
+@pytest.mark.parametrize("sql, value", [
+    ("SELECT SUM(amount) FROM sales", 35),
+    ("SELECT AVG(amount) AS mean FROM sales", 35 / 3),
+    ("SELECT SUM(amount) FROM sales WHERE category = 'Z'", None),
+])
+def test_sql_node_value_is_the_cell_of_a_one_by_one_result(source, sql, value):
+    ops = dashboard(source, sql)
+    result = output(ops, "by_category", "value")
+    assert result is None if value is None else result == pytest.approx(value)
+    node = ops.editor._component_instances[ops._instance("by_category")]
+    assert node.__flowdash_preview__("value") == result
+
+
+@pytest.mark.parametrize("sql, reason", [
+    (QUERY, "one row and one column, e.g. SELECT SUM(x) FROM t; this query returns 2 rows and 2 columns"),
+    ("SELECT MAX(category) FROM sales", "needs a number; the query's 'max(category)' is str 'B'"),
+])
+def test_sql_node_value_is_empty_for_other_results(source, sql, reason):
+    ops = dashboard(source, sql)
+    assert output(ops, "by_category", "value") is None
+    assert isinstance(output(ops, "by_category", "pipeline"), Pipeline)
+    node = ops.editor._component_instances[ops._instance("by_category")]
+    assert reason in node.__flowdash_preview__("value")
+
+
+def test_sql_node_value_feeds_a_kpi(source):
+    ops = dashboard(source, "SELECT SUM(amount) AS total FROM sales")
+    ops.add_node("Widgets/KPI", {"label": "Total"}, name="kpi")
+    ops.connect("by_category.value", "kpi.value")
+    assert ops.editor._component_instances[ops._instance("kpi")].value == 35
+
+
+def test_sql_field_is_labelled_sql():
+    assert SQLNode.param.sql.label == "SQL"
