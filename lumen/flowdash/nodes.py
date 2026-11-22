@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import datetime as dt
+import decimal
 import hashlib
 import inspect
 import math
@@ -525,16 +526,32 @@ class FilterMismatch(ValueError):
 
 
 def _number(value: Any) -> Any:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+    """
+    ``value`` as a number for a column of numbers. Strings are parsed
+    exactly, so an integral one stays an exact ``int`` however large;
+    others become floats, the precision of such a column. NaN, infinities
+    and values beyond a float's range are refused.
+    """
+    if isinstance(value, bool):
+        raise FilterMismatch(f"holds numbers, and {value!r} is not one")
+    if isinstance(value, int):
         return value
-    if isinstance(value, str):
+    if isinstance(value, float):
+        number = decimal.Decimal(value) if math.isfinite(value) else None
+    elif isinstance(value, str):
         try:
-            number = float(value)
-        except ValueError:
-            pass
-        else:
-            return int(number) if number.is_integer() else number
-    raise FilterMismatch(f"holds numbers, and {value!r} is not one")
+            number = decimal.Decimal(value.strip())
+        except decimal.InvalidOperation:
+            raise FilterMismatch(f"holds numbers, and {value!r} is not one") from None
+    else:
+        raise FilterMismatch(f"holds numbers, and {value!r} is not one")
+    if number is None or not number.is_finite() or not math.isfinite(float(number)):
+        raise FilterMismatch(f"holds numbers, and {value!r} is not a finite one")
+    if number == number.to_integral_value():
+        return int(number)
+    if isinstance(value, float):
+        return value
+    return float(number)
 
 
 def _moment(value: Any) -> Any:
@@ -561,6 +578,8 @@ def _text(value: Any) -> str:
 def _coerce(value: Any, kind: str | None) -> Any:
     """``value`` made comparable with a column of ``kind``, see ``pipeline_column_types``."""
     value = python_value(value)
+    if isinstance(value, str) and "\x00" in value:
+        raise FilterMismatch("cannot be compared with a value holding a NUL character")
     if value is None or kind is None:
         return value
     if kind in ("integer", "number"):
@@ -587,11 +606,17 @@ def global_condition(predicate: Any, kind: str | None = None) -> Any:
     for values the column cannot be compared with, including a range on a
     column of text.
     """
+    if predicate.op == "in" and len(predicate.values) > FILTER_OPTIONS:
+        raise FilterMismatch(
+            f"takes a selection of at most {FILTER_OPTIONS} values, and {len(predicate.values)} were selected"
+        )
     if predicate.op != "in" and kind in ("string", "boolean"):
         raise FilterMismatch(f"holds {'text' if kind == 'string' else 'booleans'}, which have no range")
     values = [_coerce(v, kind) for v in predicate.values]
     try:
         if predicate.op == "in":
+            if kind == "integer" and any(isinstance(v, float) for v in values):
+                raise FilterMismatch("holds integers, which a fractional value never equals")
             return filter_condition(values)
         start, end = values
         if predicate.closed == "left":
