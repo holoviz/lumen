@@ -65,6 +65,10 @@ The chart keeps showing all its rows with the brush highlighted, and the filter 
 
 The chart's check warns about selections a filter cannot apply exactly: a brush on bins without a fixed `step`, a brush on a repeating time unit such as `month`, and a point selection without `fields`.
 
+### Global filters
+
+With a panel-flowdash that has the dashboard filter bar, its filters reach the Lumen charts, tables and SQL results a dashboard shows, matched by column name, with no wiring. Each node adds the filters to the query of what it shows, as a filter node would: `WHERE "state" IN ('TX', 'OK')` or `"amount" BETWEEN ...`, with values written as quoted literals of the source's dialect. Only what the node shows is filtered; its outputs keep every row, so nodes downstream are not filtered twice. A select filter offers the column's distinct values, at most 1000, which the source computes with `SELECT DISTINCT` rather than by fetching rows, and a range filter its minimum and maximum. A chart fed by an aggregate without the column, say totals by category under a filter on state, is left unfiltered and says *Not filtered by State*, and a view can opt out of a filter in its **Tile** settings.
+
 ### Checks
 
 Each node's config is checked before it is applied, whether it is typed in the editor's inspector or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source and table nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
