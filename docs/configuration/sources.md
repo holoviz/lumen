@@ -176,6 +176,47 @@ from lumen.sources.sqlalchemy import SQLAlchemySource
 source = SQLAlchemySource(url='sqlite:///data.db')
 ```
 
+### Oracle
+
+``` py title="Oracle via SQLAlchemy"
+from lumen.sources.sqlalchemy import SQLAlchemySource
+
+source = SQLAlchemySource(
+    url='oracle://user:password@host:1521/service_name'
+)
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Install the `oracledb` driver separately (`pip install oracledb`); `lumen[sql]` only installs SQLAlchemy itself. To use it explicitly, set the driver in the URL: `oracle+oracledb://user:password@host:1521/service_name`.
+
+### MSSQL
+
+``` py title="Microsoft SQL Server via SQLAlchemy"
+from lumen.sources.sqlalchemy import SQLAlchemySource
+
+source = SQLAlchemySource(
+    url='mssql+pyodbc://user:password@host:1433/database'
+)
+
+ui = lmai.ExplorerUI(data=source)
+ui.servable()
+```
+
+Install the `pyodbc` driver separately (`pip install pyodbc`) along with a Microsoft ODBC driver for SQL Server; `lumen[sql]` only installs SQLAlchemy itself. Or use individual parameters instead of a URL:
+
+``` py
+source = SQLAlchemySource(
+    drivername='mssql+pyodbc',
+    username='user',
+    password='password',
+    host='localhost',
+    port=1433,
+    database='mydb'
+)
+```
+
 ## Advanced file handling
 
 ### DuckDB for SQL on files
