@@ -403,35 +403,55 @@ LATITUDE_NAMES = ("lat", "latitude", "ylat", "y_lat")
 _IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 
 
-def _coordinate(schema: dict[str, Any], names: tuple[str, ...], bound: float) -> str | None:
-    """The first number column named like ``names``, e.g. ``lon`` or ``pickup_lon``, within +/- ``bound``."""
-    found = []
+# Prefixes of the second point of a pair, e.g. a trip's end, which a map of the first point skips.
+_SECOND_POINT = ("end", "dest", "destination", "dropoff", "to", "target", "arrival")
+
+
+def _coordinates(schema: dict[str, Any], names: tuple[str, ...], bound: float) -> dict[str, str]:
+    """
+    The number columns named like ``names`` by their prefix, e.g. ``""`` for
+    ``lon`` and ``"pickup"`` for ``pickup_lon``, whose bounds are numbers
+    within +/- ``bound``.
+    """
+    found: dict[str, str] = {}
     for column, spec in schema.items():
         if column == "__len__" or not isinstance(spec, dict) or spec.get("type") not in ("number", "integer"):
             continue
         name = str(column).lower()
-        rank = 0 if name in names else 1 if any(name.endswith(f"_{n}") for n in names) else None
-        if rank is None or not _IDENTIFIER.fullmatch(str(column)):
+        if name in names:
+            prefix = ""
+        elif "_" in name and name.rsplit("_", 1)[1] in names:
+            prefix = name.rsplit("_", 1)[0]
+        else:
             continue
-        low, high = spec.get("inclusiveMinimum"), spec.get("inclusiveMaximum")
-        numbers = [v for v in (low, high) if isinstance(v, (int, float)) and not isinstance(v, bool)]
-        if any(abs(v) > bound for v in numbers):
+        if not _IDENTIFIER.fullmatch(str(column)) or prefix in found:
             continue
-        found.append((rank, str(column)))
-    return min(found)[1] if found else None
+        bounds = [spec[key] for key in ("inclusiveMinimum", "inclusiveMaximum") if key in spec]
+        if any(
+            not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or abs(v) > bound
+            for v in bounds
+        ):
+            continue
+        found[prefix] = str(column)
+    return found
 
 
 def deckgl_default(schema: dict[str, Any] | None) -> dict[str, Any] | None:
     """
     A deck.gl spec for a pipeline with ``schema``: a scatter of its rows,
-    sized in pixels, at the columns named like a longitude and a latitude
-    whose values fit, or None without both.
+    sized in pixels, at a longitude and a latitude column of one pair, e.g.
+    ``lon`` and ``lat`` or ``origin_lng`` and ``origin_lat``, whose values
+    fit. Unprefixed names come first, then a pair's first point (``start``
+    before ``end``), then the order of the columns. None without a pair.
     """
     schema = schema or {}
-    lon = _coordinate(schema, LONGITUDE_NAMES, 180)
-    lat = _coordinate(schema, LATITUDE_NAMES, 90)
-    if lon is None or lat is None or lon == lat:
+    lons = _coordinates(schema, LONGITUDE_NAMES, 180)
+    lats = _coordinates(schema, LATITUDE_NAMES, 90)
+    pairs = [prefix for prefix in lons if prefix in lats and lons[prefix] != lats[prefix]]
+    if not pairs:
         return None
+    prefix = min(pairs, key=lambda p: (p != "", p.split("_")[-1] in _SECOND_POINT, pairs.index(p)))
+    lon, lat = lons[prefix], lats[prefix]
     return {
         "layers": [{
             "@@type": "ScatterplotLayer",
