@@ -45,14 +45,16 @@ TRACES_ENV = "LUMEN_AGENT_TRACES"
 def build_model(model: str, *, provider: str = "openai", api_key: str | None = None, api: str | None = None) -> Any:
     """
     A pydantic-ai model for the harness's model options: OpenAI, or
-    OpenRouter's OpenAI-compatible endpoint. An Anthropic model on OpenRouter
-    is an ``OpenRouterModel``, as ``openrouter:anthropic/...`` picked in the
-    app is, so the agent's ``cache`` setting places its cache breakpoints.
+    OpenRouter's OpenAI-compatible endpoint. On OpenRouter's chat
+    completions it is an ``OpenRouterModel``, as an ``openrouter:`` model
+    picked in the app is, so it gets the same settings: the cache breakpoints
+    an Anthropic model needs, and reasoning at its lowest effort on a model
+    that cannot turn it off.
     """
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    if provider == "openrouter" and model.startswith("anthropic/") and (api or "chat_completions") == "chat_completions":
+    if provider == "openrouter" and (api or "chat_completions") == "chat_completions":
         from pydantic_ai.models.openrouter import OpenRouterModel
         from pydantic_ai.providers.openrouter import OpenRouterProvider
 

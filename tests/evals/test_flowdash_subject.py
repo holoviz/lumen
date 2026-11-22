@@ -49,18 +49,16 @@ def test_flowdash_subject_is_registered_and_offline_with_a_model():
     assert resolve_subject("flowdash").requires_api_key is True
 
 
-def test_anthropic_models_on_openrouter_are_built_as_the_app_builds_them():
-    from pydantic_ai.models.openai import OpenAIChatModel
+def test_openrouter_models_are_built_as_the_app_builds_them():
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
 
     subject = FlowDashSubject()
-    haiku = subject.build_model("anthropic/claude-haiku-5.5", provider="openrouter", api_key="x")
-    granite = subject.build_model("ibm-granite/granite-4.2-8b", provider="openrouter", api_key="x")
-    assert isinstance(haiku, OpenRouterModel)
-    assert type(granite) is OpenAIChatModel
-    assert subject.settings == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
-    subject.build_model("anthropic/claude-haiku-5.5", provider="openrouter", api_key="x")
+    for name in ("anthropic/claude-haiku-5.5", "ibm-granite/granite-4.2-8b", "google/gemini-3.8-flash"):
+        assert isinstance(subject.build_model(name, provider="openrouter", api_key="x"), OpenRouterModel)
     assert subject.settings == {"model_settings": {"thinking": False, "max_tokens": 1000, "cache": True}}
+    assert isinstance(subject.build_model("gpt-6-luna", api_key="x"), OpenAIResponsesModel)
+    assert subject.settings == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
     assert "openai_azure" in FlowDashSubject().settings["model_settings"]
 
 

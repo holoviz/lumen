@@ -340,7 +340,8 @@ def test_openai_models_keep_openai_settings_and_others_get_neutral_ones():
     assert model_settings_for(haiku) == OTHER_MODEL_SETTINGS == {"thinking": False, "max_tokens": 1000, "cache": True}
 
 
-async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_and_cache_the_prompt():
+def openrouter(name, refuse=None):
+    """An OpenRouter model answering "ok" through a mock transport, refusing requests ``refuse`` returns an error for."""
     import httpx
 
     from openai import AsyncOpenAI
@@ -350,21 +351,38 @@ async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_a
     bodies = []
 
     def respond(request):
-        bodies.append(json.loads(request.content))
+        body = json.loads(request.content)
+        bodies.append(body)
+        if refuse is not None and (message := refuse(body)):
+            return httpx.Response(400, json={"error": {"message": message, "code": 400}})
+        usage = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        if body.get("stream"):
+            chunk = {"id": "x", "object": "chat.completion.chunk", "created": 0, "provider": "Test", "model": name,
+                     "choices": [{"index": 0, "finish_reason": "stop", "delta": {"role": "assistant", "content": "ok"}}],
+                     "usage": usage}
+            return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                  content=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n")
         return httpx.Response(200, json={
-            "id": "x", "object": "chat.completion", "created": 0, "provider": "Anthropic",
-            "model": "anthropic/claude-haiku-5.5", "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            "id": "x", "object": "chat.completion", "created": 0, "provider": "Test", "model": name, "usage": usage,
             "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
         })
 
-    client = AsyncOpenAI(api_key="x", base_url="https://openrouter.test/api/v1",
+    client = AsyncOpenAI(api_key="x", base_url="https://openrouter.test/api/v1", max_retries=0,
                          http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
-    model = OpenRouterModel("anthropic/claude-haiku-5.5", provider=OpenRouterProvider(openai_client=client))
+    return OpenRouterModel(name, provider=OpenRouterProvider(openai_client=client)), bodies
+
+
+async def ask(model, *prompts):
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
     try:
-        await session.ask("Hi")
+        return [await session.ask(prompt) for prompt in prompts]
     finally:
         session.close()
+
+
+async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_and_cache_the_prompt():
+    model, bodies = openrouter("anthropic/claude-haiku-5.5")
+    await ask(model, "Hi")
 
     body = bodies[0]
     assert body["reasoning"] == {"effort": "none"} and "reasoning_effort" not in body
@@ -373,6 +391,32 @@ async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_a
     assert body["messages"][0]["content"][-1]["cache_control"] == breakpoints
     assert body["messages"][-1]["content"][-1]["cache_control"] == breakpoints
     assert body["tools"][-1]["cache_control"] == breakpoints
+
+
+async def test_a_model_known_to_always_reason_gets_its_lowest_effort():
+    model, bodies = openrouter("google/gemini-3.8-flash")
+    await ask(model, "Hi")
+
+    assert bodies[0]["reasoning"] == {"effort": "minimal"}
+
+
+MANDATORY = "Reasoning is mandatory for this endpoint and cannot be disabled."
+
+
+async def test_a_model_refusing_reasoning_off_is_asked_again_with_its_default_reasoning():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if "reasoning" in body else None)
+    first, second = await ask(model, "Hi", "Again")
+
+    assert first.error is None and first.output == "ok" and second.error is None
+    assert ["reasoning" in body for body in bodies] == [True, False, False]
+    assert bodies[2]["max_tokens"] == 1000
+
+
+async def test_other_bad_requests_are_not_asked_again():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: "Invalid tool schema")
+    turn, = await ask(model, "Hi")
+
+    assert turn.error is not None and len(bodies) == 1
 
 
 async def test_a_model_picked_for_a_run_gets_its_own_settings_under_the_hosts():

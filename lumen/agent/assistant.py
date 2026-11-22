@@ -1,6 +1,9 @@
 """The FlowDash agent with Lumen's data and authoring tools."""
 from __future__ import annotations
 
+import dataclasses
+import re
+
 from collections.abc import Collection
 from typing import Any
 
@@ -9,7 +12,8 @@ from panel_flowdash.agent import (
 )
 from panel_flowdash.agent.tools import TOOLS as FLOWDASH_TOOLS
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
+from pydantic_ai.exceptions import ModelHTTPError, RetryModelRequest
 from pydantic_ai.messages import ModelResponse
 
 from .authoring import CheckedConfig, authoring_toolset
@@ -106,6 +110,48 @@ def model_settings_for(model: Any) -> dict[str, Any]:
     """The agent's default settings for requests to ``model``, a pydantic-ai model."""
     return dict(MODEL_SETTINGS if getattr(model, "system", None) in OPENAI_SYSTEMS else OTHER_MODEL_SETTINGS)
 
+
+# How OpenRouter and other endpoints refuse a request that turns reasoning off.
+REASONING_REQUIRED = re.compile(r"reasoning\b.{0,40}\b(mandatory|required)", re.IGNORECASE)
+
+
+def _turns_reasoning_off(settings: dict[str, Any]) -> bool:
+    return settings.get("thinking") is False or settings.get("openai_reasoning_effort") == "none"
+
+
+def _model_key(model: Any) -> str:
+    return f"{getattr(model, 'system', '')}:{getattr(model, 'model_name', '')}"
+
+
+class ReasoningRequired(AbstractCapability[Any]):
+    """
+    Leaves reasoning at the provider's default for models whose endpoint
+    refuses a request that turns it off. pydantic-ai's model profiles name
+    most of them, and ``thinking=False`` then asks for their lowest effort;
+    a model the profiles do not know is sent the request once more without
+    the setting after its first refusal, and every later request of this
+    agent to it leaves the setting out.
+    """
+
+    def __init__(self):
+        self.models: set[str] = set()
+
+    async def prepare_model_request(self, ctx, request_context):
+        settings = request_context.model_settings or {}
+        if _model_key(request_context.model) not in self.models or not _turns_reasoning_off(settings):
+            return request_context
+        settings = {k: v for k, v in settings.items() if k not in ("thinking", "openai_reasoning_effort")}
+        return dataclasses.replace(request_context, model_settings=settings)
+
+    async def on_model_request_error(self, ctx, *, request_context, error):
+        key = _model_key(request_context.model)
+        if (isinstance(error, ModelHTTPError) and error.status_code == 400 and key not in self.models
+                and _turns_reasoning_off(request_context.model_settings or {})
+                and REASONING_REQUIRED.search(f"{getattr(error, 'body', '')} {error}")):
+            self.models.add(key)
+            raise RetryModelRequest()
+        raise error
+
 # Added for an agent that can wire nodes, i.e. with the connect tool.
 SELECTION_INSTRUCTIONS = """
 ## Linking a chart's selection to other views
@@ -198,7 +244,9 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     settings: Any = (lambda ctx: model_settings_for(ctx.model)) if model_settings is None else dict(model_settings)
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
-    capabilities = [ProcessHistory(stub_superseded_lookups), CheckedConfig(), *kwargs.pop("capabilities", [])]
+    capabilities = [
+        ProcessHistory(stub_superseded_lookups), CheckedConfig(), ReasoningRequired(), *kwargs.pop("capabilities", []),
+    ]
     # set_config now runs the SQL it is given, so fixing a query may take a few tries, and a
     # second cut-off answer in a run would otherwise end it.
     kwargs.setdefault("retries", {"tools": 3, "output": 2})
