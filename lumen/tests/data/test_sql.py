@@ -210,15 +210,16 @@ def test_inline_tables_keeps_an_order_by_in_other_dialects():
     assert "ORDER BY a" in sql and "OFFSET" not in sql
 
 
-def test_inline_tables_makes_a_ctes_order_by_legal_on_sql_server():
+@pytest.mark.parametrize("dialect", ["tsql", "mssql"])
+def test_inline_tables_makes_a_ctes_order_by_legal_on_sql_server(dialect):
     tables = {
         "by_region": "SELECT region, SUM(amount) AS total FROM orders GROUP BY region ORDER BY total DESC",
         "top": "SELECT TOP 1 region FROM by_region ORDER BY total DESC",
     }
-    sql = inline_tables("SELECT region FROM top", tables, "tsql")
-    by_region, top = (cte.this for cte in sqlglot.parse_one(sql, read="tsql").find_all(sqlglot.exp.CTE))
-    assert by_region.sql(dialect="tsql").endswith("ORDER BY total DESC OFFSET 0 ROWS")
-    assert top.sql(dialect="tsql").startswith("SELECT TOP 1") and "OFFSET" not in top.sql(dialect="tsql")
+    sql = inline_tables("SELECT region FROM top", tables, dialect)
+    by_region, top = (cte.this for cte in sqlglot.parse_one(sql, read=dialect).find_all(sqlglot.exp.CTE))
+    assert by_region.sql(dialect=dialect).endswith("ORDER BY total DESC OFFSET 0 ROWS")
+    assert top.sql(dialect=dialect).startswith("SELECT TOP 1") and "OFFSET" not in top.sql(dialect=dialect)
 
 
 def test_inline_tables_quotes_an_alias_referenced_quoted():

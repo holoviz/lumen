@@ -10,6 +10,8 @@ import narwhals.stable.v2 as nw
 import pandas as pd
 import sqlglot
 
+from sqlglot.dialects.tsql import TSQL
+
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..sources.base import BaseSQLSource
 from ..transforms.sql import SQLLimit
@@ -98,7 +100,14 @@ def _legal_order(query: sqlglot.exp.Expression, dialect: str | None) -> None:
     adding ``OFFSET 0 ROWS``. The ORDER BY itself is kept everywhere, since
     DISTINCT ON, QUALIFY and order-sensitive aggregates can depend on it.
     """
-    if dialect != "tsql" or not query.args.get("order"):
+    if dialect is None or not query.args.get("order"):
+        return
+    # SQL Server sources may name the dialect 'mssql', an alias Lumen registers for T-SQL.
+    try:
+        sql_server = isinstance(sqlglot.Dialect.get_or_raise(dialect), TSQL)
+    except ValueError:
+        sql_server = False
+    if not sql_server:
         return
     if not any(query.args.get(key) for key in ("limit", "offset", "fetch")):
         query.set("offset", sqlglot.exp.Offset(expression=sqlglot.exp.Literal.number(0)))
