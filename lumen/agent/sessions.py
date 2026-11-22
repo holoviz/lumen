@@ -26,9 +26,13 @@ from panel_flowdash.agent import DashboardOps, dashboard_from_yaml
 from pydantic_evals import Case
 
 from ..ai.evals.harness import MAX_ROWS, Expected, Inputs
-from ..flowdash import COMPONENTS, SOURCE_ID, bind_source
+from ..flowdash import (
+    COMPONENTS, METRICS_KEY, SOURCE_ID, bind_source,
+)
 from . import _graph
-from .evals import answer_nodes, chart_summary, result_rows
+from .evals import (
+    answer_nodes, chart_summary, node_sql, result_rows,
+)
 from .headless import TurnResult
 
 FORMAT_VERSION = 1
@@ -82,9 +86,9 @@ def load_session(path: str | os.PathLike) -> Session:
     return Session(data["fixture"], turns)
 
 
-def rerun(dashboard: str, source: Any) -> FlowDash:
-    """Load ``dashboard`` in a new editor with its source nodes bound to ``source``."""
-    editor = FlowDash(components=COMPONENTS)
+def rerun(dashboard: str, source: Any, metrics: Any = None) -> FlowDash:
+    """Load ``dashboard`` in a new editor with its source nodes bound to ``source``, and ``metrics``."""
+    editor = FlowDash(components=COMPONENTS, context={METRICS_KEY: metrics} if metrics else {})
     doc = dashboard_from_yaml(dashboard)
     refs = [
         item["config"]["ref"] for item in doc["items"]
@@ -107,12 +111,12 @@ def first_table(sql: str, dialect: str | None = None) -> str | None:
     return tables[0].name.lower() if tables else None
 
 
-def expected(session: Session, source: Any, expect_columns: bool = False) -> Expected:
-    """The expectations of a session, from each turn's dashboard rerun on ``source``."""
+def expected(session: Session, source: Any, expect_columns: bool = False, metrics: Any = None) -> Expected:
+    """The expectations of a session, from each turn's dashboard rerun on ``source`` with ``metrics``."""
     turn_rows, tables = [], []
     rows = columns = mark = None
     for turn in session.turns:
-        editor = rerun(turn.dashboard, source)
+        editor = rerun(turn.dashboard, source, metrics)
         ops = DashboardOps(editor)
         try:
             data, views = answer_nodes(ops, turn.nodes)
@@ -121,7 +125,8 @@ def expected(session: Session, source: Any, expect_columns: bool = False) -> Exp
                 columns, rows, count = result_rows(_graph.output(ops, data, "data"))
                 rows = rows if count <= MAX_ROWS else None
             turn_rows.append(rows)
-            tables.append(first_table(_graph.config_of(ops, data)["sql"], source.dialect) if data is not None else None)
+            sql = node_sql(ops, data) if data is not None else None
+            tables.append(first_table(sql, source.dialect) if sql else None)
             marks, _ = chart_summary([_graph.config_of(ops, name).get("spec") or {} for name in views])
             mark = marks[-1] if marks else None
         finally:
@@ -133,12 +138,15 @@ def expected(session: Session, source: Any, expect_columns: bool = False) -> Exp
     )
 
 
-def session_case(path: str | os.PathLike, source_factory: Callable[[Inputs], Any], columns: bool = False) -> Case:
+def session_case(path: str | os.PathLike, source_factory: Callable[[Inputs], Any], columns: bool = False,
+                 metrics_factory: Callable[[Inputs], Any] | None = None) -> Case:
     """
     A harness case asking the questions of the session at ``path`` on its
-    fixture; ``columns=True`` also expects the recorded column names.
+    fixture, with the fixture's metrics from ``metrics_factory``;
+    ``columns=True`` also expects the recorded column names.
     """
     session = load_session(path)
     inputs = Inputs(session.questions, fixture=session.fixture)
-    metadata = expected(session, source_factory(inputs), columns)
+    metrics = metrics_factory(inputs) if metrics_factory is not None else None
+    metadata = expected(session, source_factory(inputs), columns, metrics)
     return Case(name=f"session_{Path(path).stem}", inputs=inputs, metadata=metadata)

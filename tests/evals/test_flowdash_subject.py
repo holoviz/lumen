@@ -23,7 +23,7 @@ from lumen.ai.evals.harness import (
     resolve_subject,
 )
 
-from .cases import DATASET, source
+from .cases import DATASET, metrics, source
 
 SESSIONS = Path(__file__).parent / "sessions"
 SESSION_NAMES = sorted(path.stem for path in SESSIONS.glob("*.yaml"))
@@ -215,7 +215,8 @@ def fixture(inputs):
 async def test_cassette_playback_rebuilds_recorded_graph(playback, name):
     session = load_session(SESSIONS / f"{name}.yaml")
     cassette = Cassette.from_trace(SESSIONS / f"{name}.trace.jsonl", strict=True)
-    run = AgentSession(fixture(Inputs(session.questions, fixture=session.fixture)), cassette)
+    inputs = Inputs(session.questions, fixture=session.fixture)
+    run = AgentSession(fixture(inputs), cassette, metrics=metrics(inputs))
     try:
         turns = [await run.ask(question) for question in session.questions]
     finally:
@@ -229,9 +230,9 @@ async def test_cassette_playback_rebuilds_recorded_graph(playback, name):
 
 @pytest.mark.parametrize("name", SESSION_NAMES)
 async def test_session_scored_by_harness_on_cassette(playback, name):
-    subject = FlowDashSubject(cassette=SESSIONS / f"{name}.trace.jsonl")
-    dataset = Dataset[Inputs, Output, Expected](
-        name="sessions", cases=[session_case(SESSIONS / f"{name}.yaml", fixture)], evaluators=[CheckResult()])
+    subject = FlowDashSubject(cassette=SESSIONS / f"{name}.trace.jsonl", metrics=metrics)
+    case = session_case(SESSIONS / f"{name}.yaml", fixture, metrics_factory=metrics)
+    dataset = Dataset[Inputs, Output, Expected](name="sessions", cases=[case], evaluators=[CheckResult()])
     report = await evaluate(subject.build_model("cassette"), dataset, fixture, subject=subject)
 
     assert not report.failures

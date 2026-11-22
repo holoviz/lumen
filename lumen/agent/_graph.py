@@ -35,6 +35,12 @@ def output(ops: DashboardOps, name: str, port: str) -> Any:
         raise OperationError(str(exc)) from exc
 
 
+def inputs_of(ops: DashboardOps, name: str) -> dict[str, Any]:
+    """The literal values set on a node's unconnected inputs."""
+    node = (yaml.safe_load(ops.get_dashboard()).get("nodes") or {}).get(name) or {}
+    return dict(node.get("inputs") or {})
+
+
 def upstream(ops: DashboardOps, name: str) -> str | None:
     """The node feeding ``name``'s first connected input."""
     edges = yaml.safe_load(ops.get_dashboard()).get("edges") or []
@@ -42,7 +48,9 @@ def upstream(ops: DashboardOps, name: str) -> str | None:
 
 
 # The output port that carries a Lumen pipeline, by component.
-PIPELINE_PORTS = {"Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/sql": "pipeline"}
+PIPELINE_PORTS = {
+    "Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/sql": "pipeline", "Lumen/metric": "pipeline",
+}
 
 
 def pipeline_port(ops: DashboardOps, name: str) -> str | None:
