@@ -13,7 +13,9 @@ from panel_flowdash.agent import (
 from panel_flowdash.agent.tools import TOOLS as FLOWDASH_TOOLS
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
-from pydantic_ai.exceptions import ModelHTTPError, RetryModelRequest
+from pydantic_ai.exceptions import (
+    ModelAPIError, ModelRequestRejectedError, RetryModelRequest,
+)
 from pydantic_ai.messages import ModelResponse
 
 from .authoring import CheckedConfig, authoring_toolset
@@ -125,32 +127,42 @@ def _model_key(model: Any) -> str:
 
 class ReasoningRequired(AbstractCapability[Any]):
     """
-    Leaves reasoning at the provider's default for models whose endpoint
-    refuses a request that turns it off. pydantic-ai's model profiles name
-    most of them, and ``thinking=False`` then asks for their lowest effort;
-    a model the profiles do not know is sent the request once more without
-    the setting after its first refusal, and every later request of this
-    agent to it leaves the setting out.
+    Keeps reasoning low for models whose endpoint refuses a request that
+    turns it off. pydantic-ai's model profiles name most of them, and
+    ``thinking=False`` then asks for their lowest effort. A model the
+    profiles do not know is asked again at low effort after its first
+    refusal, so ``max_tokens`` is not spent on default-effort reasoning, and
+    without a reasoning setting if it refuses that too; every later request
+    of this agent to it is sent the same way.
     """
 
     def __init__(self):
-        self.models: set[str] = set()
+        # The reasoning level each refusing model is sent: "low", or None for the provider's default.
+        self.levels: dict[str, str | None] = {}
 
     async def prepare_model_request(self, ctx, request_context):
-        settings = request_context.model_settings or {}
-        if _model_key(request_context.model) not in self.models or not _turns_reasoning_off(settings):
+        key, settings = _model_key(request_context.model), request_context.model_settings or {}
+        if key not in self.levels or not _turns_reasoning_off(settings):
             return request_context
+        level = self.levels[key]
         settings = {k: v for k, v in settings.items() if k not in ("thinking", "openai_reasoning_effort")}
+        if level is not None:
+            settings["thinking"] = level
         return dataclasses.replace(request_context, model_settings=settings)
 
     async def on_model_request_error(self, ctx, *, request_context, error):
         key = _model_key(request_context.model)
-        if (isinstance(error, ModelHTTPError) and error.status_code == 400 and key not in self.models
-                and _turns_reasoning_off(request_context.model_settings or {})
-                and REASONING_REQUIRED.search(f"{getattr(error, 'body', '')} {error}")):
-            self.models.add(key)
+        rejected = isinstance(error, ModelRequestRejectedError) or (
+            isinstance(error, ModelAPIError) and getattr(error, "status_code", None) == 400)
+        refused = rejected and REASONING_REQUIRED.search(f"{getattr(error, 'body', '')} {error}")
+        if refused and key not in self.levels and _turns_reasoning_off(request_context.model_settings or {}):
+            self.levels[key] = "low"
+            raise RetryModelRequest()
+        if refused and self.levels.get(key) == "low":
+            self.levels[key] = None
             raise RetryModelRequest()
         raise error
+
 
 # Added for an agent that can wire nodes, i.e. with the connect tool.
 SELECTION_INSTRUCTIONS = """
