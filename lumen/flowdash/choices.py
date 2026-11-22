@@ -79,6 +79,10 @@ def _distinct_sql(pipeline: Pipeline, field: str, limit: int) -> str | None:
     The statement reading at most ``limit`` distinct values of ``field`` of
     a pipeline read straight from a SQL source, over the rows its filters
     keep but not under its row limit, or None for any other pipeline.
+
+    A field the pipeline's result lacks is read from the rows of the first
+    SQL transform whose ``input_rows(field, sql_in)`` gives a statement
+    holding it, e.g. the rows an aggregation groups; without one, None.
     """
     source = pipeline.source
     if pipeline.pipeline is not None or pipeline.transforms or not isinstance(source, BaseSQLSource):
@@ -89,9 +93,16 @@ def _distinct_sql(pipeline: Pipeline, field: str, limit: int) -> str | None:
     conditions = list(pipeline._filter_query().items())
     if conditions and getattr(source, "filter_in_sql", True):
         sql = SQLFilter(conditions=conditions, write=source.dialect).apply(sql)
+    missing = field not in pipeline_columns(pipeline)
     for transform in pipeline.sql_transforms:
+        input_rows = getattr(transform, "input_rows", None) if missing else None
+        if input_rows is not None and (rows := input_rows(field, sql)) is not None:
+            sql, missing = rows, False
+            break
         if not isinstance(transform, SQLLimit):
             sql = transform.apply(sql)
+    if missing:
+        return None
     sql = SQLDistinct(columns=[field], write=source.dialect).apply(sql)
     return SQLLimit(limit=limit, write=source.dialect).apply(sql)
 
@@ -115,9 +126,10 @@ def distinct_values(pipeline: Pipeline, field: str, limit: int | None = None,
     """
     The distinct values of ``field`` in ``pipeline``, sorted and without
     nulls, or None when it has more than ``limit``, by default
-    ``DISTINCT_LIMIT``. On a SQL source the source computes them, capped in
-    its query and stopped after ``timeout`` seconds; otherwise they are read
-    from the rows the pipeline fetches, at most ``rows``.
+    ``DISTINCT_LIMIT``, or no such field. On a SQL source the source
+    computes them, capped in its query and stopped after ``timeout``
+    seconds; otherwise they are read from the rows the pipeline fetches, at
+    most ``rows``.
     """
     from .nodes import (
         RESULT_LIMIT, execute, fetch, python_value,
@@ -128,8 +140,10 @@ def distinct_values(pipeline: Pipeline, field: str, limit: int | None = None,
     sql = _distinct_sql(pipeline, field, limit + 1)
     if sql is not None:
         column = execute(pipeline.source, sql, timeout).iloc[:, 0]
-    else:
+    elif field in pipeline_columns(pipeline):
         column = fetch(pipeline, rows or RESULT_LIMIT, timeout)[field]
+    else:
+        return None
     unique = column.dropna().unique()
     if len(unique) > limit:
         return None
@@ -141,9 +155,9 @@ def distinct_values(pipeline: Pipeline, field: str, limit: int | None = None,
 
 def _read_distinct(pipeline: Pipeline, field: str, rows: int | None) -> list[Any] | None:
     try:
-        kind = (pipeline_column_types(pipeline) or {}).get(field, "missing")
+        kind = (pipeline_column_types(pipeline) or {}).get(field)
         # A dashboard file cannot hold a date as a literal, and a range suits them better.
-        values = None if kind in ("missing", "datetime", "date") else distinct_values(pipeline, field, rows=rows)
+        values = None if kind in ("datetime", "date") else distinct_values(pipeline, field, rows=rows)
     except Exception:
         values = None
     with _DISTINCT_LOCK:
