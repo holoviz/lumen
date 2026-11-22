@@ -364,8 +364,18 @@ def test_a_longitude_and_a_latitude_make_a_scatter_sized_in_pixels(lon, lat):
 
 
 def test_an_exact_name_wins_over_a_suffixed_one():
-    spec = deckgl_default({"end_lon": LON, "lon": LON, "lat": LAT})
+    spec = deckgl_default({"end_lon": LON, "end_lat": LAT, "lon": LON, "lat": LAT})
     assert spec["layers"][0]["getPosition"] == "@@=[lon, lat]"
+
+
+@pytest.mark.parametrize(("schema", "position"), [
+    ({"origin_lng": LON, "dest_lat": LAT, "dest_lng": LON, "origin_lat": LAT}, "@@=[origin_lng, origin_lat]"),
+    ({"end_lon": LON, "end_lat": LAT, "start_lon": LON, "start_lat": LAT}, "@@=[start_lon, start_lat]"),
+    ({"pickup_longitude": LON, "pickup_latitude": LAT}, "@@=[pickup_longitude, pickup_latitude]"),
+    ({"x_long": LON, "y_lat": LAT}, "@@=[x_long, y_lat]"),
+])
+def test_a_map_reads_one_pair_of_coordinates(schema, position):
+    assert deckgl_default(schema)["layers"][0]["getPosition"] == position
 
 
 @pytest.mark.parametrize("schema", [
@@ -376,6 +386,8 @@ def test_an_exact_name_wins_over_a_suffixed_one():
     {"lon": LON, "lat": {"type": "number", "inclusiveMaximum": 120}},
     {"x": LON, "y": LAT},
     {"longitude deg": LON, "lat": LAT},
+    {"origin_lng": LON, "dest_lat": LAT},
+    {"lon": {"type": "number", "inclusiveMinimum": float("nan"), "inclusiveMaximum": float("nan")}, "lat": LAT},
 ])
 def test_no_coordinates_make_no_default_map(schema):
     assert deckgl_default(schema) is None
