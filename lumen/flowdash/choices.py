@@ -58,4 +58,6 @@ def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, l
     source = inputs.get("source")
     if not isinstance(source, Source):
         return {}
-    return {"table": sorted(source.get_tables())}
+    from .nodes import listed_tables
+
+    return {"table": sorted(listed_tables(source))}
