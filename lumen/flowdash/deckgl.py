@@ -396,6 +396,53 @@ def _positions(spec: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
+LONGITUDE_NAMES = ("lon", "lng", "long", "longitude", "xlong", "x_long")
+
+LATITUDE_NAMES = ("lat", "latitude", "ylat", "y_lat")
+
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def _coordinate(schema: dict[str, Any], names: tuple[str, ...], bound: float) -> str | None:
+    """The first number column named like ``names``, e.g. ``lon`` or ``pickup_lon``, within +/- ``bound``."""
+    found = []
+    for column, spec in schema.items():
+        if column == "__len__" or not isinstance(spec, dict) or spec.get("type") not in ("number", "integer"):
+            continue
+        name = str(column).lower()
+        rank = 0 if name in names else 1 if any(name.endswith(f"_{n}") for n in names) else None
+        if rank is None or not _IDENTIFIER.fullmatch(str(column)):
+            continue
+        low, high = spec.get("inclusiveMinimum"), spec.get("inclusiveMaximum")
+        numbers = [v for v in (low, high) if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if any(abs(v) > bound for v in numbers):
+            continue
+        found.append((rank, str(column)))
+    return min(found)[1] if found else None
+
+
+def deckgl_default(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    """
+    A deck.gl spec for a pipeline with ``schema``: a scatter of its rows,
+    sized in pixels, at the columns named like a longitude and a latitude
+    whose values fit, or None without both.
+    """
+    schema = schema or {}
+    lon = _coordinate(schema, LONGITUDE_NAMES, 180)
+    lat = _coordinate(schema, LATITUDE_NAMES, 90)
+    if lon is None or lat is None or lon == lat:
+        return None
+    return {
+        "layers": [{
+            "@@type": "ScatterplotLayer",
+            "getPosition": f"@@=[{lon}, {lat}]",
+            "radiusUnits": "pixels",
+            "getRadius": 3,
+            "pickable": True,
+        }],
+    }
+
+
 def fit_view_state(spec: dict[str, Any], data: Any) -> dict[str, Any] | None:
     """
     An ``initialViewState`` showing the rows' positions, from the first
@@ -463,7 +510,9 @@ class DeckGLNode(LumenViewNode):
         "@@=value * 100"; a GeoJsonLayer reads them as properties.<column>.
         Leave out `mapStyle` for a basemap following the page's light or
         dark theme, `initialViewState` to fit the map to the rows, and layer
-        colours to take the dashboard's colour scheme. Example:
+        colours to take the dashboard's colour scheme. A new map of rows
+        with longitude and latitude columns starts as a scatter of them.
+        Example:
         {json.dumps(EXAMPLE)}""")
 
     view_type = "deckgl"
@@ -473,6 +522,10 @@ class DeckGLNode(LumenViewNode):
     check_spec = staticmethod(check_deckgl)
 
     spec_fields = staticmethod(deckgl_fields)
+
+    default_spec = staticmethod(deckgl_default)
+
+    _empty = "No map yet"
 
     def __init__(self, **params):
         # The page's theme once a drawn map has seen it, and the theme of the basemap drawn.

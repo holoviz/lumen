@@ -16,8 +16,8 @@ from lumen.flowdash import (
 )
 from lumen.flowdash.contracts import usages
 from lumen.flowdash.deckgl import (
-    BASEMAPS, SCHEME_COLORS, WORLD_VIEW, deckgl_fields, expression_names,
-    fit_view_state,
+    BASEMAPS, SCHEME_COLORS, WORLD_VIEW, deckgl_default, deckgl_fields,
+    expression_names, fit_view_state,
 )
 from lumen.views.base import DeckGLView
 
@@ -70,7 +70,7 @@ def test_the_node_is_a_registered_view_with_a_json_spec():
     assert meta.config == ["spec"]
     assert meta.extensions == ["deckgl"]
     assert meta.default_size == {"height": 420} and meta.min_size == {"height": 240}
-    assert DeckGLNode.param.spec.metadata == {"flowdash": {"widget": "spec", "settings": []}}
+    assert DeckGLNode.param.spec.metadata == {"flowdash": {"widget": "spec", "settings": [], "two_way": True}}
     assert DeckGLNode.requires_spec and DeckGLNode.themed
 
 
@@ -345,3 +345,58 @@ def test_only_the_columns_the_spec_reads_go_to_the_browser(turbines):
     assert list(node(ops)._object.pipeline.data.columns) == COLUMNS
     preview = node(ops).__flowdash_preview__()
     assert list(preview.columns) == COLUMNS
+
+
+LON = {"type": "number", "inclusiveMinimum": -120.0, "inclusiveMaximum": -70.0}
+LAT = {"type": "number", "inclusiveMinimum": 25.0, "inclusiveMaximum": 48.0}
+
+
+@pytest.mark.parametrize(("lon", "lat"), [
+    ("lon", "lat"), ("lng", "latitude"), ("longitude", "Latitude"), ("xlong", "ylat"), ("pickup_lon", "pickup_lat"),
+])
+def test_a_longitude_and_a_latitude_make_a_scatter_sized_in_pixels(lon, lat):
+    spec = deckgl_default({"name": {"type": "string"}, lon: LON, lat: LAT, "capacity": {"type": "number"}})
+    [layer] = spec["layers"]
+    assert layer["@@type"] == "ScatterplotLayer"
+    assert layer["getPosition"] == f"@@=[{lon}, {lat}]"
+    assert layer["radiusUnits"] == "pixels"
+    assert check_deckgl(spec, ["name", lon, lat, "capacity"])["layers"][0]["getPosition"] == layer["getPosition"]
+
+
+def test_an_exact_name_wins_over_a_suffixed_one():
+    spec = deckgl_default({"end_lon": LON, "lon": LON, "lat": LAT})
+    assert spec["layers"][0]["getPosition"] == "@@=[lon, lat]"
+
+
+@pytest.mark.parametrize("schema", [
+    {}, None,
+    {"lon": LON},
+    {"lon": {"type": "string"}, "lat": LAT},
+    {"lon": {"type": "number", "inclusiveMinimum": 0, "inclusiveMaximum": 500000}, "lat": LAT},
+    {"lon": LON, "lat": {"type": "number", "inclusiveMaximum": 120}},
+    {"x": LON, "y": LAT},
+    {"longitude deg": LON, "lat": LAT},
+])
+def test_no_coordinates_make_no_default_map(schema):
+    assert deckgl_default(schema) is None
+
+
+def test_a_new_map_of_turbines_starts_as_a_scatter(turbines):
+    ops = map_of(turbines, {})
+    ops.add_node(DECKGL_ID, {}, name="fresh")
+    ops.connect("turbines.pipeline", "fresh.pipeline")
+    fresh = node(ops, "fresh")
+    assert fresh.spec["layers"][0]["getPosition"] == "@@=[xlong, ylat]"
+    assert isinstance(fresh._object, DeckGLView) and fresh._error is None
+
+
+def test_a_new_map_without_coordinates_shows_its_empty_state():
+    from lumen.sources.duckdb import DuckDBSource
+
+    source = DuckDBSource(uri=":memory:", tables={"turbines": "SELECT * FROM (VALUES ('IA', 2.0)) AS t(state, capacity)"})
+    ops = map_of(source, {})
+    fresh = node(ops)
+    assert fresh.spec == {} and fresh._object is None and fresh._error is None
+    message, button = fresh._body().objects
+    assert message.object == "No map yet" and button.label == "Edit spec"
+    assert fresh.__flowdash_preview__() == "No map yet"
