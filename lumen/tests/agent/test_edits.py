@@ -555,3 +555,29 @@ async def test_a_recorded_session_plays_back_with_its_state_blocks(tmp_path):
         session.close()
     assert [turn.error for turn in played] == [None, None] and cassette.remaining == 0
     assert [turn.output for turn in played] == [turn.output for turn in recorded]
+
+
+def test_tools_that_change_the_graph_run_alone_and_lookups_in_parallel():
+    from lumen.agent.authoring import authoring_toolset
+    from lumen.agent.data import data_toolset
+
+    assert all(tool.sequential for tool in authoring_toolset().tools.values())
+    assert not any(tool.sequential for tool in data_toolset().tools.values())
+
+
+async def test_parallel_add_calls_in_one_response_place_every_node():
+    model, requests = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": f"quakes_{i}", "sql": MONTHLY}, tool_call_id=f"s{i}")
+         for i in range(4)]
+        + [ToolCallPart("add_chart", {"data": "quakes_0", "name": "quakes_0_chart", "spec": BAR}, tool_call_id="c0")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("Four queries and a chart")
+        nodes = _graph.nodes(session.ops)
+    finally:
+        session.close()
+    assert turn.error is None
+    assert {"quakes_0", "quakes_1", "quakes_2", "quakes_3", "quakes_0_chart"} <= set(nodes)
+    assert nodes.count("data") == 1

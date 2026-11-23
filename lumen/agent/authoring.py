@@ -10,9 +10,7 @@ from typing import Any, Literal
 import sqlglot
 
 from panel_flowdash.agent import FlowDashDeps, OperationError
-from pydantic_ai import (
-    FunctionToolset, ModelRetry, RunContext, Tool,
-)
+from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolReturn
 
@@ -723,10 +721,15 @@ def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[s
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map, add_text and update_chart."""
+    """
+    The authoring tools: add_sql, add_metric, add_chart, add_table, add_map,
+    add_text and update_chart. Each runs alone, as the calls of one response
+    change the same graph: e.g. update_chart waits for an add_sql adding the
+    column a new layer shows, and two add_sql calls do not place a source
+    node at once. The data tools, which only read, still run in parallel.
+    """
     return FunctionToolset[FlowDashDeps](
-        # update_chart waits for the calls before it, e.g. add_sql adding the column a new layer shows.
-        [add_sql, add_metric, add_chart, add_table, add_map, add_text, Tool(update_chart, sequential=True)], max_retries=3,
+        [add_sql, add_metric, add_chart, add_table, add_map, add_text, update_chart], max_retries=3, sequential=True,
     )
 
 
