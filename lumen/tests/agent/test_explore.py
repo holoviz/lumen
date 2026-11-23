@@ -484,3 +484,19 @@ async def test_explore_builds_on_a_dashboard_metric_and_copies_an_earlier_one(me
     assert ex.exploration().leaves(first) == ["orders"]
     assert metric_app.ops.node_config("by_category")["measures"] == ["total"]
     assert [node["name"] for node in metric_app.ops.nodes()] == ["by_category"]
+
+
+
+async def test_explore_places_text_in_the_feed_without_a_layout(explore_app):
+    explore_app.script(
+        ("add_text", {"kind": "heading", "name": "title", "text": "Sales", "size": "Title", "position": "top"}),
+        ("add_text", {"kind": "markdown", "name": "note", "text": "Paid only.", "before": "nowhere"}),
+        ("add_text", {"kind": "markdown", "name": "plain", "text": "No layout."}),
+        "Done.",
+    )
+    await explore_app.ask("Title it")
+    shown = results(explore_app.requests)
+    skipped = " Explore shows it in the feed, so position, before and after do not apply."
+    assert shown["call-1"] == "Placed heading 'title'." + skipped
+    assert shown["call-2"] == "Placed markdown 'note'." + skipped
+    assert shown["call-3"] == "Placed markdown 'plain'."
