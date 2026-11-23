@@ -11,6 +11,7 @@ from pydantic_ai.models.function import FunctionModel
 from lumen.agent import AgentSession, _graph
 from lumen.agent.authoring import add_chart, add_metric
 from lumen.agent.data import list_tables
+from lumen.agent.edits import dashboard_state
 from lumen.agent.evals import node_sql, snapshot
 from lumen.flowdash import METRIC_ID
 from lumen.flowdash.metrics import read_metrics
@@ -60,13 +61,35 @@ def ctx(session):
 
 async def test_list_tables_lists_the_metrics(ctx):
     text = await list_tables(ctx)
-    assert "Metrics, the app's agreed definitions; place one with add_metric." in text
+    assert text.startswith("Metrics, the app's agreed numbers: when one matches the question, answer with add_metric, not SQL.")
     assert "- capacity (source data, table turbines): Installed capacity." in text
     assert "  measures: capacity_mw (Rated capacity in MW; format ,.1f), turbines" in text
     assert "  dimensions: state (Two-letter state code), year" in text
     assert "  parameters: since (First year included; integer, filters p_year >=)" in text
     assert "- top_projects (source data, SQL)" in text
     assert "  parameters: n (integer, default 2, from 1 to 10)" in text
+
+
+async def test_list_tables_lists_the_metrics_before_the_nodes(ctx, session):
+    await add_metric(ctx, "capacity", "capacity_by_state", ["capacity_mw"], ["state"])
+    text = await list_tables(ctx)
+    assert text.index("Metrics, the app's agreed numbers") < text.index("Nodes on the dashboard")
+
+
+def test_the_dashboard_state_names_the_metrics(session):
+    state = dashboard_state(session.ops)
+    assert state.splitlines()[-1] == (
+        "The app's metrics, its agreed numbers (answer with add_metric when one matches; list_tables shows their "
+        "fields): capacity (Installed capacity.); top_projects."
+    )
+
+
+def test_the_dashboard_state_names_no_metrics_without_any():
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(lambda m, i: ModelResponse([TextPart("")])))
+    try:
+        assert "metrics" not in dashboard_state(session.ops)
+    finally:
+        session.close()
 
 
 async def test_add_metric_places_a_metric_node(ctx, session):

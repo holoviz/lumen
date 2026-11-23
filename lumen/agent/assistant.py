@@ -42,13 +42,15 @@ of a table, filter or SQL node for other components) and metric nodes (one of th
 agreed metrics); add_chart and add_table can show a SQL, metric, table or filter node.
 - Each user message comes with the dashboard as it is now: its title and each node's
   kind, contents and tile. Find the nodes a request is about there.
-- Look before you write SQL: list_tables names the sources, their SQL dialect, the
-  nodes already on the dashboard with their SQL, and the tables with column stats;
+- Look before you write SQL: list_tables names the app's metrics, the sources, their SQL
+  dialect, the nodes already on the dashboard with their SQL, and the tables with column stats;
   describe_table gives the full detail of the columns you use, and distinct_values the
   stored form of each text value you filter on. run_sql is for checks of your own; the
   user does not see its result.
-- When a metric in list_tables answers the question, place it with add_metric instead of
-  writing SQL: its definitions are the agreed numbers. Otherwise write SQL.
+- Metrics first: the app's metrics are its agreed numbers. When one matches the question by
+  its name, description, measures or dimensions, answer with add_metric and show that node
+  (e.g. add_chart or add_table), never with your own SQL or KPI. Write SQL only when no
+  metric fits or the user asks for something else.
 - Build on nodes already on the dashboard when the question is about them. Place each new
   result with add_sql and each chart with add_chart on a SQL node, or a table with
   add_table when the user asks to see rows. Change a node in place, which keeps its tile:

@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
 
 from ..flowdash import (
     DECKGL_ID, FILTER_ID, METRIC_ID, SOURCE_ID, SQL_ID, TABLE_ID,
-    TABLE_VIEW_ID, VIEW_ID,
+    TABLE_VIEW_ID, VIEW_ID, host_metrics,
 )
 from . import _graph
 
@@ -36,6 +36,9 @@ STATE_NODES = 60
 # Characters of a SQL node's query and of a text node's text in the state block.
 STATE_GIST_CHARS = 90
 STATE_TEXT_CHARS = 60
+# The most metrics the state block names, each with this many characters of its description.
+STATE_METRICS = 20
+STATE_METRIC_CHARS = 80
 # The most nodes each node's reads and read-by lists name, and the most characters of a node's line.
 STATE_LIST = 5
 STATE_LINE_CHARS = 240
@@ -169,8 +172,10 @@ def dashboard_state(ops) -> str | None:
     sidebar, then the nodes without a visible tile), each with its kind,
     what it holds or shows, the node it reads and where its tile is, or
     why it has none. It depends only on the dashboard, so it is the same
-    until the dashboard changes. At most ``STATE_NODES`` nodes are listed.
-    None when the dashboard's definition is hidden from the user.
+    until the dashboard changes. At most ``STATE_NODES`` nodes are listed,
+    then the app's metrics, if it has any, so the agent knows of them
+    before it looks at the data. None when the dashboard's definition is
+    hidden from the user.
     """
     try:
         doc = yaml.safe_load(ops.get_dashboard()) or {}
@@ -217,8 +222,21 @@ def dashboard_state(ops) -> str | None:
     if len(order) > STATE_NODES:
         lines.append(f"- and {len(order) - STATE_NODES} more nodes; list_tables lists them.")
     title = _cut(doc.get("title") or "Untitled", STATE_TEXT_CHARS)
-    return escape(f"Title {title!r}; {len(nodes)} node{'s' * (len(nodes) != 1)} in reading order "
+    text = escape(f"Title {title!r}; {len(nodes)} node{'s' * (len(nodes) != 1)} in reading order "
                   "(top bar, grid rows, sidebar, then nodes without a visible tile):") + "\n" + "\n".join(lines)
+    return text + (f"\n{metrics}" if (metrics := _metrics_line(ops)) else "")
+
+
+def _metrics_line(ops) -> str | None:
+    """The app's metrics for the state block, by name and description, or None without any."""
+    metrics = list(host_metrics(ops.editor.context).values())
+    if not metrics:
+        return None
+    named = [f"{m.name} ({_cut(m.description, STATE_METRIC_CHARS)})" if m.description else m.name
+             for m in metrics[:STATE_METRICS]]
+    more = f", and {len(metrics) - STATE_METRICS} more" if len(metrics) > STATE_METRICS else ""
+    return escape(f"The app's metrics, its agreed numbers (answer with add_metric when one matches; list_tables "
+                  f"shows their fields): {'; '.join(named)}{more}.")
 
 
 def fenced_state(state: str, prompt: str = "") -> str:
