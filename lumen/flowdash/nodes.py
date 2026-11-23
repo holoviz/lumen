@@ -1771,6 +1771,15 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return _pipeline_preview(self, self._object)
         return data
 
+    def __flowdash_provenance__(self) -> dict[str, str] | None:
+        """The "Ad hoc" label of the views reading the node, saying how its query computes their numbers."""
+        if not self.sql.strip():
+            return None
+        from .save_metric import describe_query
+
+        return {"label": "Ad hoc", "detail": describe_query(self.sql, _read(getattr(self._input, "dialect", None))),
+                "kind": "ad hoc"}
+
 
 class PipelineNode(GlobalFilterTarget, LumenNode):
     """A node whose output is a lazy pipeline, previewed only when its view is shown."""
@@ -2141,6 +2150,15 @@ class MetricNode(PipelineNode):
     def data(self):
         pipeline = self._value()
         return pipeline if pipeline is None or is_failure(pipeline) else fetch(pipeline, row_ceiling(self.editor))
+
+    def __flowdash_provenance__(self) -> dict[str, str] | None:
+        """The "Metric: <name>" label of the views reading the node, with the metric's description."""
+        if not self.metric:
+            return None
+        metric = host_metrics(self._context).get(self.metric)
+        detail = metric.description if metric is not None and metric.description else (
+            f"The {self.metric} metric the project defines.")
+        return {"label": f"Metric: {self.metric}", "detail": detail, "kind": "metric"}
 
 
 def check_parameter_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:

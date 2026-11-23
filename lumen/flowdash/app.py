@@ -26,6 +26,7 @@ from ..sources.data import PROVIDED_SOURCE_NAME
 from .metrics import METRICS_KEY, read_metrics
 from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
 from .project import Project, load_project
+from .save_metric import PROJECT_KEY
 
 LIBRARY = "lumen.flowdash"
 
@@ -386,6 +387,8 @@ def build_routes(
         if not isinstance(project, Project):
             project = load_project(project, context)
         context[METRICS_KEY] = read_metrics(project)
+        # Where an admin's "Save as metric…" writes, see lumen.flowdash.save_metric.
+        context[PROJECT_KEY] = project
     editor_options["context"] = context
     return FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),

@@ -539,6 +539,15 @@ class AggregateNode(TransformNode):
         step = SQLAggregate(by=self.by, columns=self.columns, method=self.method, write=step_dialect(pipeline))
         return step, aggregate_schema(pipeline.schema, self.by, self.columns, self.method)
 
+    def __flowdash_provenance__(self) -> dict[str, str] | None:
+        """The "Ad hoc" label of the views reading the node, saying how it aggregates their numbers."""
+        if not self.columns and self.method != "count":
+            return None
+        from .save_metric import describe_aggregate
+
+        return {"label": "Ad hoc", "detail": describe_aggregate(self.method, list(self.columns), list(self.by)),
+                "kind": "ad hoc"}
+
 
 @_pipeline_node(
     title="Lumen Sort", icon="sort",
