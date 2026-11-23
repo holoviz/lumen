@@ -385,8 +385,7 @@ async def add_metric(
 ) -> str:
     """Place one of the app's metrics, as list_tables lists them, and return a preview of its result.
 
-    Use it instead of add_sql whenever a metric matches the question: its numbers are the agreed
-    ones. It only places a metric the app defines and cannot create one.
+    It only places a metric the app defines and cannot create one: compute a new number with add_sql.
 
     Args:
         metric: Metric name from list_tables.
