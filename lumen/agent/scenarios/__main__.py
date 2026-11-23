@@ -141,7 +141,9 @@ def main(argv: list[str] | None = None):
     cassettes = Path(args.cassettes)
     head = commit()
     if args.live and args.record:
-        (cassettes / RECORDED).write_text(json.dumps({"commit": head, "model": args.model}, indent=1) + "\n")
+        import panel_flowdash
+        recorded = {"commit": head, "model": args.model, "panel_flowdash": panel_flowdash.__version__}
+        (cassettes / RECORDED).write_text(json.dumps(recorded, indent=1) + "\n")
     report = to_json(
         results, mode="live" if args.live else "replay", model=args.model if args.live else recorded_model(results),
         commit=head if args.live else recorded_commit(cassettes), replayed_on=None if args.live else head,

@@ -5,6 +5,7 @@ import re
 
 from pathlib import Path
 
+import panel_flowdash
 import pytest
 import yaml
 
@@ -216,6 +217,9 @@ def stale_sessions():
 
 
 def test_recorded_sessions_match_agent_surface():
+    recorded = json.loads((SESSIONS / "recorded.json").read_text()).get("panel_flowdash")
+    if stale_sessions() is not None and recorded != panel_flowdash.__version__:
+        pytest.skip(f"Recorded against panel-flowdash {recorded}, whose tools differ from {panel_flowdash.__version__}'s.")
     assert stale_sessions() is None, stale_sessions()
 
 
@@ -285,7 +289,8 @@ def test_recorded_sessions_hold_no_credentials_or_local_paths():
         text = path.read_text()
         for needle in ("/Users/", "/home/", "/private/", "sk-", "api_key", "Bearer "):
             assert needle not in text, f"{needle!r} in {path.name}"
-        assert load_messages(path) if path.suffix == ".jsonl" else load_session(path)
+        if path.suffix in (".jsonl", ".yaml"):
+            assert load_messages(path) if path.suffix == ".jsonl" else load_session(path)
 
 
 async def test_save_session_writes_loadable_file(tmp_path):

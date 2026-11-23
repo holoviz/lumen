@@ -1,4 +1,5 @@
 {
  "commit": "c8d3b2ecba05cd340faf8c34b24f0ae9365bba13",
- "model": "openai/gpt-6-luna"
+ "model": "openai/gpt-6-luna",
+ "panel_flowdash": "0.1.0rc8.post1.dev3+gd7b52f64e"
 }
