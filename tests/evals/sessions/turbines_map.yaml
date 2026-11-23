@@ -3,8 +3,8 @@ fixture: turbines
 turns:
 - question: Map the turbines, sized by capacity.
   nodes:
-  - turbines_by_capacity
-  - turbines_capacity_map
+  - turbine_locations_capacity
+  - turbines_sized_by_capacity
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -18,64 +18,64 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tf8b349d2
+      - id: t19cbded2
         actor: user
-        at: '2026-11-23T08:20:53Z'
+        at: '2026-11-23T09:09:01Z'
         summary: Added data.
-      - id: t147ea4b0
+      - id: tdbeb0d58
         actor: agent
-        at: '2026-11-23T08:20:55Z'
-        run: run-63480a68a69e
-        summary: Added turbines_by_capacity. Connected data to turbines_by_capacity. Added turbines_capacity_map.
-          Connected turbines_by_capacity to turbines_capacity_map.
+        at: '2026-11-23T09:09:04Z'
+        run: run-86ce1d0501d6
+        summary: Added turbine_locations_capacity. Connected data to turbine_locations_capacity. Added turbines_sized_by_capacity.
+          Connected turbine_locations_capacity to turbines_sized_by_capacity.
     nodes:
       data:
         component: Lumen/source
-        origin: tf8b349d2
+        origin: t19cbded2
         config:
           ref: data
         position: [0.0, 44.0]
-      turbines_by_capacity:
+      turbine_locations_capacity:
         component: Lumen/sql
-        origin: t147ea4b0
+        origin: tdbeb0d58
         config:
           sql: |-
             SELECT
               "p_name",
               "t_state",
-              "xlong" AS lon,
-              "ylat" AS lat,
+              "xlong",
+              "ylat",
               "t_cap"
             FROM turbines
             WHERE
               NOT "xlong" IS NULL AND NOT "ylat" IS NULL AND NOT "t_cap" IS NULL
-          table: turbines_by_capacity
+          table: turbine_locations_capacity
         position: [380.0, 0.0]
-      turbines_capacity_map:
+      turbines_sized_by_capacity:
         component: Lumen/deckgl
-        origin: t147ea4b0
+        origin: tdbeb0d58
         config:
           spec:
             layers:
               - '@@type': ScatterplotLayer
-                getPosition: '@@=[lon, lat]'
+                getPosition: '@@=[xlong, ylat]'
                 radiusUnits: pixels
                 getRadius: '@@=2 + t_cap / 200'
                 pickable: true
             tooltip:
-              text: '{p_name} ({t_state}): {t_cap} MW'
+              text: '{p_name} ({t_state}): {t_cap} capacity'
         position: [760.0, 44.0]
     edges:
       - from: data.source
-        to: turbines_by_capacity.source
-      - from: turbines_by_capacity.pipeline
-        to: turbines_capacity_map.pipeline
+        to: turbine_locations_capacity.source
+      - from: turbine_locations_capacity.pipeline
+        to: turbines_sized_by_capacity.pipeline
     layout:
       tiles:
-        - node: turbines_capacity_map
+        - node: turbines_sized_by_capacity
           width: 100.0
           height: 420
         - node: data
           visible: false
-        - node: turbines_by_capacity
+        - node: turbine_locations_capacity
           visible: false
