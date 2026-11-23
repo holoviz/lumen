@@ -130,7 +130,7 @@ def test_add_kpi_reuses_the_value_of_a_one_cell_sql_node(ctx, session):
     assert top_bar(session) == ["capacity_kpi"]
     config = _graph.config_of(session.ops, "capacity_kpi")
     assert config == {"label": "Installed capacity", "format": ",.2f", "prefix": "", "suffix": " MW",
-                      "caption": "capacity_mw from the one row of capacity, not an agreed metric"}
+                      "caption": "Value of capacity_mw from capacity, not an agreed metric"}
     assert instance(session.ops, "capacity_kpi").value == 8.5
 
 
@@ -226,6 +226,27 @@ def test_add_kpi_distinct_by_takes_the_largest_value_per_key(ctx, session):
     assert caption == "Sum of the largest p_cap per p_name, not an agreed metric"
 
 
+def test_a_count_with_distinct_by_counts_the_keys(ctx, session):
+    frame = _projects(session)
+    add_kpi(ctx, "project_rows", "projects", column="p_cap", aggregate="count", distinct_by="p_name")
+    assert instance(session.ops, "projects").value == frame.p_name.nunique()
+    assert _graph.config_of(session.ops, "projects")["caption"] == "Count of p_name values (one row per p_name), not an agreed metric"
+
+
+def test_an_ad_hoc_kpi_lists_at_most_ten_of_the_apps_metrics(monkeypatch):
+    from lumen.agent import controls
+
+    names = [f"m{i}" for i in range(12)]
+    monkeypatch.setattr(controls, "host_metrics", lambda context: dict.fromkeys(names))
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), _model())
+    try:
+        session.add_sql("total", "SELECT SUM(t_cap) AS total FROM turbines")
+        result = add_kpi(SimpleNamespace(deps=session.deps), "total", "kpi")
+    finally:
+        session.close()
+    assert f"This app defines metrics: {', '.join(names[:10])} and 2 more. None was used" in result
+
+
 def test_add_kpi_distinct_by_takes_a_composite_key(ctx, session):
     session.add_sql("composite_rows", "SELECT * FROM composite")
     add_kpi(ctx, "composite_rows", "total", column="v", aggregate="sum", distinct_by=["a", "b"])
@@ -256,7 +277,8 @@ def test_a_kpi_of_a_metric_says_which_metric_and_others_point_to_an_admin():
         session.close()
     assert captions == ["Metric capacity", "Sum of t_cap over all rows, not an agreed metric"]
     assert "ad hoc" not in from_metric
-    assert "No matching metric was used; consider asking an admin to define one." in ad_hoc
+    assert ("This app defines metrics: capacity. None was used for this number; use add_metric if one fits, or ask "
+            "an admin to define one.") in ad_hoc
 
 
 def test_add_kpi_aggregates_every_row_of_a_capped_sql_node():
@@ -315,7 +337,9 @@ def test_a_local_filter_cannot_narrow_a_kpi_of_a_capped_sql_node():
     try:
         session.add_sql("rows", "SELECT * FROM big")
         add_kpi(ctx, "rows", "fares", column="fare", aggregate="sum")
-        with pytest.raises(ModelRetry, match="'fares' does not read 'rows''s rows"):
+        with pytest.raises(ModelRetry, match=re.escape(
+                "'fares' does not read 'rows''s rows, so a filter on them cannot change it. No node reads 'rows''s rows "
+                "directly.")):
             add_filter_control(ctx, "rows", "g", "pick", views=["fares"])
     finally:
         session.close()

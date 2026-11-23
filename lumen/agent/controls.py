@@ -35,6 +35,8 @@ CONTROLS = {
     "select": "Widgets/Select", "multiselect": "Widgets/MultiChoice",
     "range": "Widgets/RangeSlider", "date_range": "Widgets/DateRange",
 }
+# The most metric names an ad hoc KPI's result lists.
+MAX_METRICS_LISTED = 10
 # The most options a select or multiselect offers; a column with more takes a range or a SQL node.
 MAX_OPTIONS = 200
 NUMERIC = ("integer", "number")
@@ -314,8 +316,10 @@ def add_kpi(
     adhoc = ""
     if component != METRIC_ID:
         adhoc = " The number is computed ad hoc, not an agreed metric; each card's caption says so."
-        if host_metrics(ops.editor.context):
-            adhoc += " No matching metric was used; consider asking an admin to define one."
+        if metrics := list(host_metrics(ops.editor.context)):
+            more = f" and {len(metrics) - MAX_METRICS_LISTED} more" if len(metrics) > MAX_METRICS_LISTED else ""
+            adhoc += (f" This app defines metrics: {', '.join(metrics[:MAX_METRICS_LISTED])}{more}. None was used for "
+                      "this number; use add_metric if one fits, or ask an admin to define one.")
     return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{per_key}{through}:\n"
             + "\n".join([*lines, *([adhoc.strip()] if adhoc else []), KPI_FILTERS]))
 
@@ -326,11 +330,14 @@ def _provenance(ops, data: str, component: str, column: str, aggregate: str | No
         return f"Metric {_graph.config_of(ops, data).get('metric')}"
     if aggregate == "count" and column == COUNT_COLUMN:
         what = "Count of rows"
+    elif aggregate == "count" and keys:
+        by = " and ".join(keys)
+        what = f"Count of {by} values (one row per {by})"
     elif aggregate:
         word = {"sum": "Sum", "mean": "Average", "min": "Lowest", "max": "Highest", "count": "Count"}[aggregate]
         what = f"{word} of the largest {column} per {' and '.join(keys)}" if keys else f"{word} of {column} over all rows"
     else:
-        what = f"{column} from the one row of {data}"
+        what = f"Value of {column} from {data.replace('_', ' ')}"
     return f"{what}, not an agreed metric"
 
 
@@ -479,9 +486,11 @@ def add_filter_control(
         if view not in _graph.nodes(ops):
             raise ModelRetry(f"No node {view!r}.")
         if (path := _reader_path(graph_edges, view, source)) is None:
-            readers_text = ", ".join(map(repr, _graph.reading(ops, source))) or "none"
+            readers = _graph.reading(ops, source)
+            readers_text = (f"The nodes reading {data!r} are: {', '.join(map(repr, readers))}." if readers
+                            else f"No node reads {data!r}'s rows directly.")
             raise ModelRetry(f"{view!r} does not read {data!r}'s rows, so a filter on them cannot change it. "
-                             f"The nodes reading {data!r} are: {readers_text}.")
+                             + readers_text)
         for _, to in path[:-1]:
             node = _node(to)
             if _graph.component_of(ops, node) == FILTER_ID and _graph.config_of(ops, node).get("field") == column:
