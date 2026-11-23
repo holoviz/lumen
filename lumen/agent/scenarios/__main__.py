@@ -26,7 +26,7 @@ from pathlib import Path
 
 from . import (
     agent_fingerprint, cassette_path, compress, diff, load_cassette,
-    run_scenario, table, to_json,
+    recorded_fingerprints, run_scenario, table, to_json,
 )
 from .catalog import BY_NAME, SCENARIOS
 
@@ -56,12 +56,21 @@ def commit() -> str | None:
         return None
 
 
-async def run(args) -> list:
+def stale_message(names: list[str], everything: bool) -> str:
+    command = "python -m lumen.agent.scenarios --live" + ("" if everything else "".join(f" --scenario {n}" for n in names))
+    return (
+        f"The agent's instructions or tools changed since {len(names)} cassette(s) were recorded "
+        f"({', '.join(names)}), so replaying them would score another agent. Re-record them with:\n  {command}"
+    )
+
+
+async def run(args) -> tuple[list, list[str]]:
     from ..evals import build_model
 
     names = args.scenario or [s.name for s in SCENARIOS]
     cassettes = Path(args.cassettes)
-    results = []
+    results, stale = [], []
+    current = None if args.live else agent_fingerprint()
     key = api_key(args.env_file) if args.live else None
     if args.live and not key:
         sys.exit("No OpenRouter key: set OPENROUTER_API_KEY or pass --env-file.")
@@ -80,11 +89,17 @@ async def run(args) -> list:
             if not path.exists():
                 echo(f"{name}: no cassette at {path}", err=True)
                 continue
+            if recorded_fingerprints(path) != {current}:
+                stale.append(name)
+                continue
             result = await run_scenario(scenario, load_cassette(path))
+            if result.stale:
+                stale.append(name)
+                continue
         results.append(result)
         verdicts = " ".join(t.verdict for t in result.turns)
         echo(f"{name}: {verdicts}{' ERROR ' + result.error[:200] if result.error else ''}", err=True)
-    return results
+    return results, stale
 
 
 def recorded_model(results: list) -> str | None:
@@ -108,7 +123,10 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--diff", help="A JSON report to compare the run with.")
     args = parser.parse_args(argv)
 
-    results = asyncio.run(run(args))
+    results, stale = asyncio.run(run(args))
+    if stale:
+        echo(stale_message(stale, everything=not args.scenario), err=True)
+        sys.exit(1)
     report = to_json(
         results, mode="live" if args.live else "replay", model=args.model if args.live else recorded_model(results),
         commit=commit(), fingerprint=agent_fingerprint(), date=datetime.now(UTC).isoformat(timespec="seconds"),

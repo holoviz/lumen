@@ -93,7 +93,9 @@ layout edits, edits in place, wrong-number traps, chart design, claims against t
 runaway turns. Each scenario runs on a small synthetic fixture generated in code, optionally from a
 seeded dashboard, and checks the dashboard every turn leaves (its YAML and the live node outputs,
 with numbers compared against SQL on the fixture), never the assistant's text. A turn did what was
-asked when all its checks pass, partly when some do.
+asked when all its functional checks pass (nodes, tiles, numbers, wiring, layout), partly when some
+do; chart titles, bar counts and the request budget are quality checks, reported in their own
+columns.
 
 ```bash
 pixi run -e evals python -m lumen.agent.scenarios --themes                        # replay the cassettes
@@ -101,10 +103,11 @@ pixi run -e evals python -m lumen.agent.scenarios --live --output run.json      
 pixi run -e evals python -m lumen.agent.scenarios --diff tests/evals/scenarios/baseline.json
 ```
 
-A live run reads `OPENROUTER_API_KEY` (or `--env-file`) and writes a gzipped model trace per
-scenario to `tests/evals/scenarios/`. `baseline.json` is the recorded baseline, and
+Replaying needs no key and takes about 30 seconds. A live run of all scenarios costs about 1.07M
+input tokens (96% of them cached), about $0.02 on gpt-6-luna; it reads `OPENROUTER_API_KEY` (or
+`--env-file`) and writes a gzipped model trace per scenario to `tests/evals/scenarios/`. `baseline.json` is the recorded baseline, and
 `EXPECTED_FAILURES` in `lumen/agent/scenarios/catalog.py` lists the checks that fail in it with
 the workstream of the improvement plan meant to fix each. `test_scenarios.py` replays the
 cassettes offline: those checks report xfail, and XPASS once they flip. When the agent's
-instructions or tools change, the replays are skipped as stale until the scenarios are recorded
-again.
+instructions or tools change, the tests skip the replays as stale, and the replay command exits
+with an error naming the `--live` command that records them again.

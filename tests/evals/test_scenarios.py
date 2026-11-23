@@ -19,8 +19,8 @@ from lumen.agent.scenarios import (
 )
 from lumen.agent.scenarios.__main__ import main
 from lumen.agent.scenarios.catalog import (
-    BY_NAME, CALIFORNIA, CAPACITY_BY_YEAR, CAPACITY_MW, PROJECTS, SCENARIOS,
-    TURBINES, WIND, WIND_KPIS_LAST,
+    BY_NAME, CALIFORNIA, CAPACITY_BY_YEAR, CAPACITY_MW, FEMALE_SHARE, PROJECTS,
+    SCENARIOS, TURBINES, WIND, WIND_KPIS_LAST,
 )
 from lumen.agent.scenarios.checks import (
     before_views, chart_mark, charts_titled, edited_in_place, filter_on,
@@ -92,6 +92,7 @@ def test_scenarios_have_unique_names_themes_and_check_ids():
             ids = [check.id for check in turn.checks]
             assert len(ids) == len(set(ids)), scenario.name
             assert all(check.workstream in {f"W{i}" for i in range(1, 9)} for check in turn.checks)
+            assert any(not check.quality for check in turn.checks), (scenario.name, turn.prompt)
         for key, workstream in scenario.xfail.items():
             index, check = key.split("/")
             assert check in [c.id for c in scenario.turns[int(index) - 1].checks], (scenario.name, key)
@@ -199,6 +200,31 @@ async def test_filter_check_reads_the_global_filter_bar():
         assert filter_on("t_state").run(state) == (True, "")
 
 
+DROPDOWN = {"mark": "bar", "encoding": {
+    "x": {"field": "species", "type": "nominal"}, "y": {"field": "body_mass_g", "type": "quantitative"}},
+    "params": [{"name": "pick", "select": {"type": "point", "fields": ["year"]},
+                "bind": {"input": "select", "options": [2007, 2008, 2009]}}],
+    "transform": [{"filter": {"param": "pick"}}]}
+
+
+async def test_a_bound_vega_dropdown_is_a_filter():
+    async with state_after("penguins", scripted([
+        ("set_config", {"name": "mass_chart", "config": {"spec": DROPDOWN}}),
+    ]), seed_yaml=BY_NAME["dropdown_year"].seed) as state:
+        assert filter_on("year").run(state) == (True, "")
+        assert not filter_on("island").run(state)[0]
+
+
+async def test_either_reading_of_an_ambiguous_kpi_counts():
+    async with state_after("penguins", scripted([
+        ("add_sql", {"source": "data", "name": "share", "sql":
+                     "SELECT COUNT(*) FILTER (WHERE sex = 'female') / COUNT(*) AS share FROM penguins"}),
+        ("add_table", {"data": "share", "name": "share_table"}),
+    ])) as state:
+        assert kpi_values(FEMALE_SHARE).run(state) == (True, "")
+        assert not kpi_values(FEMALE_SHARE[0]).run(state)[0]
+
+
 async def test_refusals_and_requests_are_counted():
     async with state_after("turbines", scripted([
         ("add_chart", {"data": "nope", "name": "x", "spec": {"mark": "bar"}}),
@@ -275,6 +301,21 @@ def test_cli_replays_cassettes_and_writes_json(tmp_path, capsys, monkeypatch):
     assert "No verdicts changed." in capsys.readouterr().out
 
 
+def test_cli_refuses_to_replay_a_stale_cassette(tmp_path, capsys, monkeypatch):
+    import lumen.agent.scenarios.__main__ as cli
+
+    for name in ("line_chart", "swap_axes"):
+        (tmp_path / cassette_path(tmp_path, name).name).write_bytes(cassette_path(BASELINE_DIR, name).read_bytes())
+    monkeypatch.setattr(cli, "agent_fingerprint", lambda: "changed")
+    with pytest.raises(SystemExit) as exit:
+        main(["--cassettes", str(tmp_path), "--scenario", "line_chart", "--scenario", "swap_axes"])
+    assert exit.value.code == 1
+    err = capsys.readouterr().err
+    assert "instructions or tools changed" in err
+    assert "python -m lumen.agent.scenarios --live --scenario line_chart --scenario swap_axes" in err
+    assert "check_fingerprint" not in err
+
+
 # -- the recorded baseline -------------------------------------------------------------------------
 
 RECORDED = sorted(path.name.split(".")[0] for path in BASELINE_DIR.glob("*.trace.jsonl.gz"))
@@ -319,7 +360,9 @@ async def test_recorded_baseline(request, name, turn, check):
     assert result.error is None, result.error
     outcome = next(c for c in result.turns[turn - 1].checks if c.id == check)
     if workstream := BY_NAME[name].xfail.get(f"{turn}/{check}"):
-        request.applymarker(pytest.mark.xfail(reason=f"fixed by {workstream}", strict=False))
+        request.applymarker(pytest.mark.xfail(strict=True, reason=(
+            f"expected to fail until {workstream} lands; if this passes, remove {name!r}: "
+            f"'{turn}/{check}' from EXPECTED_FAILURES in lumen/agent/scenarios/catalog.py")))
     assert outcome.passed, outcome.detail
 
 

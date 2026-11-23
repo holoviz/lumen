@@ -3,8 +3,10 @@ Scenarios of the dashboard assistant, drawn from its playtests: a fixture,
 a prompt per turn and checks on the dashboard each turn leaves, so every
 change to the assistant can be measured against a recorded baseline.
 
-A turn did what was asked when all its checks pass, partly when some do
-and not when none do. Checks a later workstream of the plan is meant to
+A turn did what was asked when all its functional checks pass (nodes,
+tiles, numbers, wiring, layout), partly when some do and not when none
+do; its quality checks (chart titles, bar counts, the request budget) are
+scored apart. Checks a later workstream of the plan is meant to
 fix are listed in a scenario's ``xfail`` with that workstream, so a replay
 of the recorded cassettes stays green and reports them as they flip.
 
@@ -58,6 +60,7 @@ class CheckOutcome:
     passed: bool
     detail: str = ""
     xfail: str | None = None
+    quality: bool = False
 
 
 @dataclass
@@ -79,10 +82,16 @@ class TurnOutcome:
 
     @property
     def verdict(self) -> str:
-        passed = [c.passed for c in self.checks]
+        """Whether the turn did what was asked, by its functional checks: nodes, tiles, numbers, wiring and layout."""
+        passed = [c.passed for c in self.checks if not c.quality]
         if all(passed):
             return "did"
         return "partly" if any(passed) else "not"
+
+    @property
+    def clean(self) -> bool:
+        """Whether the turn did what was asked and also passed its quality checks: titles, bar counts, request budget."""
+        return all(c.passed for c in self.checks)
 
 
 @dataclass
@@ -152,7 +161,7 @@ def evaluate(scenario: Scenario, index: int, state: TurnState) -> TurnOutcome:
     for check in scenario.turns[index].checks:
         passed, detail = check.run(state)
         outcomes.append(CheckOutcome(check.id, check.description, check.workstream, passed, detail,
-                                     scenario.xfail.get(f"{index + 1}/{check.id}")))
+                                     scenario.xfail.get(f"{index + 1}/{check.id}"), check.quality))
     return TurnOutcome(
         prompt=state.prompt, checks=outcomes, requests=state.requests, input_tokens=state.input_tokens,
         output_tokens=state.output_tokens, cached_tokens=state.cached_tokens, refusals=state.refusals,
@@ -268,9 +277,12 @@ def summarize(results: Iterable[ScenarioResult]) -> dict[str, Any]:
     def tally(turns: list[TurnOutcome]) -> dict[str, Any]:
         verdicts = [t.verdict for t in turns]
         checks = [c for t in turns for c in t.checks]
+        quality = [c for c in checks if c.quality]
         return {
             "turns": len(turns), "did": verdicts.count("did"), "partly": verdicts.count("partly"),
-            "not": verdicts.count("not"), "checks": len(checks), "checks_passed": sum(c.passed for c in checks),
+            "not": verdicts.count("not"), "did_with_quality": sum(t.clean for t in turns),
+            "checks": len(checks), "checks_passed": sum(c.passed for c in checks),
+            "quality_checks": len(quality), "quality_passed": sum(c.passed for c in quality),
             "refusals_per_turn": round(_per_turn(turns, "refusals"), 2),
             "requests_per_turn": round(_per_turn(turns, "requests"), 2),
             "tokens_per_turn": round(_per_turn(turns, "input_tokens") + _per_turn(turns, "output_tokens")),
@@ -293,13 +305,15 @@ def to_json(results: list[ScenarioResult], **meta: Any) -> dict[str, Any]:
         data = asdict(result)
         for turn, outcome in zip(data["turns"], result.turns, strict=True):
             turn["verdict"] = outcome.verdict
+            turn["did_with_quality"] = outcome.clean
         scenarios.append(data)
     return {**meta, "summary": summarize(results), "results": scenarios}
 
 
 def table(summary: dict[str, Any], group: str = "scenarios") -> str:
     """The summary as a plain text table, one row per scenario (or theme) and a total."""
-    header = ["", "turns", "did", "partly", "not", "refusals/turn", "requests/turn", "tokens/turn"]
+    header = ["", "turns", "did", "partly", "not", "did+quality", "quality", "refusals/turn", "requests/turn",
+              "tokens/turn"]
     rows = [[name, *(_cells(row))] for name, row in summary[group].items()]
     rows.append(["total", *_cells(summary["total"])])
     widths = [max(len(str(r[i])) for r in [header, *rows]) for i in range(len(header))]
@@ -310,7 +324,8 @@ def table(summary: dict[str, Any], group: str = "scenarios") -> str:
 
 
 def _cells(row: dict[str, Any]) -> list[Any]:
-    return [row["turns"], row["did"], row["partly"], row["not"], f"{row['refusals_per_turn']:.2f}",
+    return [row["turns"], row["did"], row["partly"], row["not"], row["did_with_quality"],
+            f"{row['quality_passed']}/{row['quality_checks']}", f"{row['refusals_per_turn']:.2f}",
             f"{row['requests_per_turn']:.1f}", f"{row['tokens_per_turn']:,}"]
 
 

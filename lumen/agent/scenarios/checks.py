@@ -173,6 +173,8 @@ class Check:
     test: Callable[[TurnState], str | None]
     workstream: str
     """The plan's workstream that addresses this kind of failure, e.g. ``"W1"``."""
+    quality: bool = False
+    """A design or cost check (titles, bar counts, request budget), scored apart from what was asked."""
 
     def run(self, state: TurnState) -> tuple[bool, str]:
         try:
@@ -304,19 +306,26 @@ def kpis(count: int, *, top: bool = True, workstream: str = "W1") -> Check:
     return Check("kpis", f"{count} labelled KPIs{' at the top' if top else ''}", test, workstream)
 
 
-def kpi_values(*sqls: str, workstream: str = "W4", scales: Sequence[float] = UNIT_SCALES) -> Check:
-    """Each reference scalar is the number of some KPI (or, without KPIs, of some shown one-row result)."""
+def kpi_values(*sqls: str | tuple[str, ...], workstream: str = "W4", scales: Sequence[float] = UNIT_SCALES) -> Check:
+    """
+    Each reference scalar is the number of some KPI (or, without KPIs, of
+    some shown one-row result). A tuple of queries gives the readings of an
+    ambiguous request, any of which counts, e.g. a share of all rows or of
+    the rows with a value.
+    """
     def test(state):
-        values = [_scalar(state, sql) for sql in sqls]
         shown = [state.kpi_value(n) for n in state.of_kind("kpi") if state.visible(n)]
         frames = [state.data(n) for n in _candidates(state, "shown")]
         missing = []
-        for sql, value in zip(sqls, values, strict=True):
-            if any(isinstance(v, (int, float)) and any(_close(float(v), value * s, 0.005) for s in scales) for v in shown):
+        for readings in sqls:
+            readings = (readings,) if isinstance(readings, str) else readings
+            values = [_scalar(state, sql) for sql in readings]
+            if any(isinstance(v, (int, float)) and any(_close(float(v), value * s, 0.005) for s in scales)
+                   for v in shown for value in values):
                 continue
-            if any(f is not None and len(f) == 1 and holds_value(f, value, scales) for f in frames):
+            if any(f is not None and len(f) == 1 and holds_value(f, value, scales) for f in frames for value in values):
                 continue
-            missing.append(f"{value:,.6g} ({sql})")
+            missing.append(" or ".join(f"{value:,.6g} ({sql})" for value, sql in zip(values, readings, strict=True)))
         return f"no KPI shows {', '.join(missing)}" if missing else None
     return Check("kpi_values", "KPI numbers match the reference", test, workstream)
 
@@ -392,7 +401,7 @@ def charts_titled(*, workstream: str = "W5") -> Check:
         if not charts:
             return "no visible chart"
         return f"charts without a title: {missing}" if missing else None
-    return Check("chart_titles", "every chart has a title", test, workstream)
+    return Check("chart_titles", "every chart has a title", test, workstream, quality=True)
 
 
 def _spec_title(spec: Any) -> str | None:
@@ -453,7 +462,7 @@ def legend(*, workstream: str = "W5") -> Check:
             elif layered and not color:
                 bad.append(f"{n}: layers without a colour legend")
         return "; ".join(bad) or None
-    return Check("legend", "series are named in a legend", test, workstream)
+    return Check("legend", "series are named in a legend", test, workstream, quality=True)
 
 
 def chart_mark(mark: str, name: str | None = None, *, workstream: str = "W2") -> Check:
@@ -501,7 +510,7 @@ def years_unformatted(*, workstream: str = "W5") -> Check:
                     if enc.get("type") == "quantitative" and not (isinstance(axis, dict) and axis.get("format") in ("d", "%Y", "")) and not enc.get("timeUnit"):
                         bad.append(f"{n}.{channel}")
         return f"years drawn as quantities: {bad}" if bad else None
-    return Check("years", "years are not drawn as 1,992", test, workstream)
+    return Check("years", "years are not drawn as 1,992", test, workstream, quality=True)
 
 
 def max_bars(limit: int = 20, *, workstream: str = "W5") -> Check:
@@ -517,7 +526,7 @@ def max_bars(limit: int = 20, *, workstream: str = "W5") -> Check:
             if frame is not None and len(frame) > limit:
                 bad[n] = len(frame)
         return f"bar charts with too many bars: {bad}" if bad else None
-    return Check("max_bars", f"at most {limit} bars", test, workstream)
+    return Check("max_bars", f"at most {limit} bars", test, workstream, quality=True)
 
 
 def tables_rounded(decimals: int = 2, *, workstream: str = "W5") -> Check:
@@ -537,7 +546,7 @@ def tables_rounded(decimals: int = 2, *, workstream: str = "W5") -> Check:
                 if ((series.dropna() * 10 ** decimals).round(6) % 1 != 0).any():
                     bad.append(f"{n}.{column}")
         return f"unrounded float columns: {bad}" if bad else None
-    return Check("rounded", f"table floats rounded to {decimals} places", test, workstream)
+    return Check("rounded", f"table floats rounded to {decimals} places", test, workstream, quality=True)
 
 
 def filter_on(column: str, *, workstream: str = "W1") -> Check:
@@ -557,9 +566,28 @@ def filter_on(column: str, *, workstream: str = "W1") -> Check:
             if wired and state.shown(n):
                 return None
             return f"filter node {n} on {column} is {'shown' if state.shown(n) else 'not shown'} and {'wired' if wired else 'has no widget'}"
+        for n in state.of_kind("chart"):
+            if state.visible(n) and _bound_filter(state.config(n).get("spec"), column):
+                return None
         text = [n for n in state.added if state.component(n) in (MARKDOWN_ID, HEADING_ID)]
         return f"no filter on {column}" + (f"; added text instead: {text}" if text else "")
     return Check("filter", f"a filter on {column}", test, workstream)
+
+
+def _bound_filter(spec: Any, column: str) -> bool:
+    """Whether a Vega-Lite spec filters by a selection on ``column`` bound to an input, e.g. a dropdown."""
+    for layer in _layers(spec):
+        bound = set()
+        for param in layer.get("params") or []:
+            select = param.get("select") if isinstance(param, dict) else None
+            if not isinstance(select, dict) or column not in str(select.get("fields", select.get("encodings", ""))):
+                continue
+            if param.get("bind") is not None or select.get("bind") is not None:
+                bound.add(param.get("name"))
+        filters = [t.get("filter") for t in layer.get("transform") or [] if isinstance(t, dict)]
+        if bound and any(isinstance(f, dict) and f.get("param") in bound for f in filters):
+            return True
+    return False
 
 
 def no_hidden_leftovers(*, workstream: str = "W6") -> Check:
@@ -759,7 +787,7 @@ def kept(name: str, *, workstream: str = "W6") -> Check:
 def max_requests(limit: int = 12, *, workstream: str = "W6") -> Check:
     def test(state):
         return None if state.requests <= limit else f"{state.requests} model requests, limit {limit}"
-    return Check("requests", f"at most {limit} requests", test, workstream)
+    return Check("requests", f"at most {limit} requests", test, workstream, quality=True)
 
 
 def no_error(*, workstream: str = "W6") -> Check:

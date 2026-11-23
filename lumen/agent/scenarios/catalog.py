@@ -43,7 +43,11 @@ LAST_MONTH = "SELECT COUNT(*) FROM quakes WHERE time >= TIMESTAMP '2025-12-01' A
 PENGUINS = "SELECT COUNT(*) FROM penguins"
 BODY_MASS = "SELECT AVG(body_mass_g) FROM penguins"
 FLIPPER = "SELECT AVG(flipper_length_mm) FROM penguins"
-FEMALE_SHARE = "SELECT COUNT(*) FILTER (WHERE sex = 'female') / COUNT(sex) FROM penguins"
+# Of the penguins whose sex is recorded, or of all of them: either reading of "share of females" counts.
+FEMALE_SHARE = (
+    "SELECT COUNT(*) FILTER (WHERE sex = 'female') / COUNT(sex) FROM penguins",
+    "SELECT COUNT(*) FILTER (WHERE sex = 'female') / COUNT(*) FROM penguins",
+)
 
 COUNT = (1.0,)
 
@@ -256,9 +260,11 @@ SCENARIOS: list[Scenario] = [
         "How many earthquakes happened last month?", [shows_value(LAST_MONTH, scales=COUNT)])]),
     # -- chart design --------------------------------------------------------------------------------
     Scenario("capacity_by_state", "charts", "turbines", playtest="A s1, A s2", turns=[Turn(
-        "Chart installed capacity by state.", [max_bars(20), charts_titled(), years_unformatted()])]),
+        "Chart installed capacity by state.",
+        [has_view("chart", workstream="W5"), max_bars(20), charts_titled(), years_unformatted()])]),
     Scenario("quakes_by_type", "charts", "quakes", playtest="B s1 t1, B s3 t2", turns=[Turn(
-        "Chart the number of earthquakes per quarter by event type.", [charts_titled(), legend()])]),
+        "Chart the number of earthquakes per quarter by event type.",
+        [has_view("chart", workstream="W5"), charts_titled(), legend()])]),
     # -- claims vs graph -----------------------------------------------------------------------------
     Scenario("email_schedule", "claims", "penguins", seed=PENGUIN_CHARTS, playtest="C s2 t10", turns=[Turn(
         "Email this dashboard as a PDF to my team every Monday morning.", [unchanged()])]),
@@ -289,7 +295,6 @@ EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "wind_build": {"1/kpis": "W1", "1/kpi_first": "W3", "1/max_bars": "W5", "1/chart_titles": "W5", "1/requests": "W6"},
     "filter_state": {"1/filter": "W1"},
     "filter_island": {"1/filter": "W1", "1/no_note": "W6"},
-    "dropdown_year": {"1/filter": "W1"},
     "click_to_filter": {"1/selection": "W1", "1/no_note": "W6"},
     "rename_dashboard": {"1/title": "W1", "1/no_note": "W6"},
     "title_on_top": {"1/title": "W1", "1/heading_top": "W3"},
@@ -308,7 +313,7 @@ EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "quakes_by_type": {"1/chart_titles": "W5"},
     "email_schedule": {"1/unchanged": "W6"},
     "why_question": {"1/no_new_nodes": "W6"},
-    "penguin_batch": {"1/kpis": "W1", "1/kpi_values": "W4", "1/requests": "W6"},
+    "penguin_batch": {"1/kpis": "W1", "1/requests": "W6"},
     "remove_helpers": {"1/requests": "W6"},
 }
 
