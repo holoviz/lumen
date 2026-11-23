@@ -18,51 +18,53 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: te9cfa28a
+      - id: t4c9c3811
         actor: user
-        at: '2026-11-23T08:20:41Z'
+        at: '2026-11-23T09:08:46Z'
         summary: Added data.
-      - id: t911d38e9
+      - id: tedce09e7
         actor: agent
-        at: '2026-11-23T08:20:46Z'
-        run: run-12de0ea4011e
+        at: '2026-11-23T09:08:54Z'
+        run: run-400289ae64a5
         summary: Added paid_orders_by_customer. Connected data to paid_orders_by_customer. Added top_customer_paid_orders.
           Connected paid_orders_by_customer to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: te9cfa28a
+        origin: t4c9c3811
         config:
           ref: data
         position: [0.0, 44.0]
       paid_orders_by_customer:
         component: Lumen/sql
-        origin: t911d38e9
+        origin: tedce09e7
         config:
           sql: |-
             SELECT
               c."customer",
-              COUNT(*) AS "paid_order_count"
+              COUNT(*) AS paid_orders
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid'
+              o."status" = 'paid' AND TRIM(c."customer") <> ''
             GROUP BY
               c."customer"
             ORDER BY
-              "paid_order_count" DESC
+              paid_orders DESC
             LIMIT 1
           table: paid_orders_by_customer
         position: [380.0, 0.0]
       top_customer_paid_orders:
         component: Lumen/table_view
-        origin: t911d38e9
+        origin: tedce09e7
         config:
           spec:
-            page_size: 10
+            page_size: 1
+            layout: fit_columns
+            show_index: false
             formatters:
-              paid_order_count: number
+              paid_orders: number
         position: [760.0, 44.0]
     edges:
       - from: data.source

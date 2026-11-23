@@ -1,5 +1,6 @@
 import inspect
 import itertools
+import re
 
 from types import SimpleNamespace
 
@@ -24,8 +25,8 @@ from lumen.agent.authoring import (
 from lumen.agent.data import list_tables
 from lumen.agent.edits import (
     STATE_FENCE, STATE_HEADER, STATE_LINE_CHARS, STATE_NODES, STATE_STUB,
-    add_dashboard_state, dashboard_state, fenced_state, merge_chart,
-    merge_patch, name_notes, similar,
+    add_dashboard_state, changed_layers, dashboard_state, fenced_state,
+    merge_chart, merge_chart_layers, merge_patch, name_notes, similar,
 )
 from lumen.flowdash import VIEW_ID
 from lumen.sources.duckdb import DuckDBSource
@@ -221,11 +222,13 @@ async def test_add_chart_with_a_taken_name_changes_the_chart_in_its_tile(ctx, se
     session.ops.place_tile("quakes_chart", width=70)
     session.ops.place_tile("magnitude_chart", width=30)
     before, width = grid(session), tiles(session)["quakes_chart"]["width"]
+    assert 50 < width <= 75
 
     text = add_chart(ctx, "monthly_quakes", "quakes_chart", {**BAR, "mark": "line"})
 
     assert text == "Changed chart 'quakes_chart' (line) of 'monthly_quakes'."
-    assert grid(session) == before and tiles(session)["quakes_chart"]["width"] == width > 50
+    # The width as the grid snapped it stays.
+    assert grid(session) == before and tiles(session)["quakes_chart"]["width"] == width
     assert _graph.config_of(session.ops, "quakes_chart")["spec"]["mark"] == "line"
     assert len(_graph.nodes(session.ops, VIEW_ID)) == 2
 
@@ -330,8 +333,10 @@ def test_merge_chart_changes_a_layered_chart_where_it_defines_a_channel():
 
     spec = merge_chart(layered, {"mark": "area", "encoding": {"color": {"value": "red"}, "x": {"title": "When"}}})
 
-    assert [layer["mark"] for layer in spec["layer"]] == [{"type": "area", "tooltip": True}, "rule", "area"]
-    assert spec["layer"][0]["encoding"]["color"] == {"value": "red"} == spec["layer"][2]["encoding"]["color"]
+    # The mark changes the main data layer only, not the rule or the line drawn over it.
+    assert [layer["mark"] for layer in spec["layer"]] == [{"type": "area", "tooltip": True}, {"type": "rule"}, {"type": "line"}]
+    assert spec["layer"][0]["encoding"]["color"] == {"value": "red"}
+    assert spec["layer"][2]["encoding"]["color"] == {"value": "orange"}
     assert spec["encoding"]["x"]["title"] == "When"
 
 
@@ -407,6 +412,7 @@ async def test_a_node_removed_and_placed_again_keeps_its_tile():
         add_chart(ctx, "monthly_quakes", "quakes_chart", BAR)
         add_table(ctx, "monthly_quakes", "quakes_table")
         session.ops.place_tile("quakes_chart", width=60)
+        width_before = tiles(session)["quakes_chart"]["width"]
         turn = await session.ask("Make it a line chart")
         order = grid(session)
         width = tiles(session)["quakes_chart_line"]["width"]
@@ -414,10 +420,10 @@ async def test_a_node_removed_and_placed_again_keeps_its_tile():
         session.close()
 
     removed = next(p for p in requests[1][-1].parts if isinstance(p, ToolReturnPart))
-    assert "Note: its tile (grid position 0, 60% wide) goes to the next chart with a similar name" in removed.model_response_str()
+    assert f"Note: its tile (grid, {width_before:g}% wide) goes to the next chart with a similar name" in removed.model_response_str()
     placed = next(p for p in requests[2][-1].parts if isinstance(p, ToolReturnPart))
-    assert placed.content.endswith("It took the tile of the removed 'quakes_chart' (grid position 0, 60% wide).")
-    assert turn.error is None and order[:2] == ["quakes_chart_line", "quakes_table"] and width == 60
+    assert placed.content.endswith(f"It took the tile of the removed 'quakes_chart' (grid, {width_before:g}% wide).")
+    assert turn.error is None and order[:2] == ["quakes_chart_line", "quakes_table"] and width == width_before
 
 
 
@@ -489,7 +495,8 @@ async def test_adding_a_rolling_average_to_that_chart_edits_its_nodes():
     # call's change lands before the second is checked.
     results = {p.tool_call_id: p.content for p in requests[1][-1].parts if isinstance(p, ToolReturnPart)}
     assert results["s1"].startswith("Changed SQL node 'monthly_quakes'")
-    assert results["u1"].startswith("Changed chart 'quakes_per_month_chart' of 'monthly_quakes': layers line + line y=quakes_3_month_avg")
+    assert results["u1"].startswith(
+        "Changed chart 'quakes_per_month_chart' of 'monthly_quakes' (layer 1 added): layers line + line y=quakes_3_month_avg")
     assert turn.error is None and turn.nodes == []
     assert sorted(turn.changed) == ["monthly_quakes", "quakes_per_month_chart"]
     assert [layer["mark"]["type"] for layer in spec["layer"]] == ["line", "line"]
@@ -549,8 +556,8 @@ async def test_update_chart_refuses_removing_every_layer_and_the_turn_goes_on():
 
 async def test_update_chart_checks_the_spec_of_a_view_without_data(ctx, session):
     session.ops.add_node(VIEW_ID, {"spec": BAR}, name="loose_chart")
-    with pytest.raises(ModelRetry, match="remove `data` and `datasets`"):
-        update_chart(ctx, "loose_chart", {"data": {"url": "https://example.com/data.csv"}})
+    assert update_chart(ctx, "loose_chart", {"data": {"url": "https://example.com/data.csv"}}).startswith(
+        "Refused: The changes may not set data")
     text = update_chart(ctx, "loose_chart", {"usermeta": {"embedOptions": {"actions": True}}, "title": "Loose"})
     assert text.startswith("Changed chart 'loose_chart' of None")
     assert "usermeta" not in _graph.config_of(session.ops, "loose_chart")["spec"]
@@ -624,3 +631,339 @@ async def test_parallel_add_calls_in_one_response_place_every_node():
     assert turn.error is None
     assert {"quakes_0", "quakes_1", "quakes_2", "quakes_3", "quakes_0_chart"} <= set(nodes)
     assert nodes.count("data") == 1
+
+
+def test_merge_chart_puts_background_layers_behind():
+    spec = merge_chart(BAR, None, [{"mark": "rect", "encoding": {"x": {"field": "month", "type": "temporal"}}}])
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["rect", "bar"]
+
+
+def test_swapping_axes_swaps_their_titles_and_a_new_field_drops_the_old_title():
+    spec = merge_chart(BAR, {"encoding": {"x": {"field": "quakes", "type": "quantitative"}, "y": {"field": "month", "type": "temporal"}}})
+    assert spec["encoding"]["x"] == {"field": "quakes", "type": "quantitative", "title": "Quakes"}
+    assert spec["encoding"]["y"] == {"field": "month", "type": "temporal", "title": "Month"}
+    spec = merge_chart(BAR, {"encoding": {"y": {"field": "magnitude", "axis": {"format": ".1f"}}}})
+    assert spec["encoding"]["y"] == {"field": "magnitude", "type": "quantitative", "axis": {"format": ".1f"}}
+
+
+AVERAGE = {"mark": {"type": "line", "strokeDash": [4, 2], "color": "orange"},
+           "encoding": {"y": {"field": "quakes_3_month_avg", "type": "quantitative", "title": "3-month average"}}}
+
+
+def test_swapping_axes_of_a_layered_chart_swaps_them_in_every_layer():
+    layered = merge_chart(BAR, None, [AVERAGE])
+
+    spec = merge_chart(layered, {"encoding": {"x": {"field": "quakes"}, "y": {"field": "month"}}})
+
+    assert spec["encoding"]["x"]["field"] == "quakes" and spec["encoding"]["y"]["field"] == "month"
+    assert spec["encoding"]["x"]["title"] == "Quakes" and spec["encoding"]["y"]["title"] == "Month"
+    # The average moves to x with the counts instead of plotting against them.
+    assert spec["layer"][1]["encoding"] == {"x": AVERAGE["encoding"]["y"]}
+
+
+def test_a_channel_patch_reaches_the_layers_with_the_same_field_and_one_layer_can_be_addressed():
+    layered = {"layer": [{"mark": "bar", "encoding": {"x": {"field": "month", "type": "temporal"}, "y": {"field": "quakes", "type": "quantitative"}}},
+                         {"mark": "point", "encoding": {"x": {"field": "month", "type": "temporal"}, "y": {"field": "quakes", "type": "quantitative"}}},
+                         {"mark": "line", "encoding": {"x": {"field": "month", "type": "temporal"}, "y": {"field": "quakes_3_month_avg", "type": "quantitative"}}}]}
+
+    spec = merge_chart(layered, {"encoding": {"y": {"title": "Quakes"}}})
+    assert [layer["encoding"]["y"].get("title") for layer in spec["layer"]] == ["Quakes", "Quakes", None]
+
+    spec = merge_chart(layered, {"mark": {"strokeWidth": 3}, "encoding": {"y": {"title": "Average"}}}, layer=2)
+    assert spec["layer"][2]["mark"] == {"type": "line", "strokeWidth": 3}
+    assert [layer["encoding"]["y"].get("title") for layer in spec["layer"]] == [None, None, "Average"]
+    with pytest.raises(ValueError, match="no layer 3"):
+        merge_chart(layered, {"mark": "line"}, layer=3)
+
+
+@pytest.mark.parametrize("attempt", range(5))
+async def test_tiles_removed_and_placed_again_in_parallel_come_back_in_order(attempt):
+    names = ["a_quakes_chart", "b_quakes_chart", "c_quakes_chart", "d_quakes_chart"]
+    removed, placed = ["b_quakes_chart", "c_quakes_chart"], ["b_quakes_chart_v2", "c_quakes_chart_v2"]
+    # The calls of one response run together; their order differs between attempts.
+    rotate = attempt % 2
+    model, _ = script(
+        [ToolCallPart("remove_node", {"name": n}, tool_call_id=f"r{i}") for i, n in enumerate(removed[rotate:] + removed[:rotate])],
+        [ToolCallPart("add_chart", {"data": "monthly_quakes", "name": n, "spec": BAR}, tool_call_id=f"a{i}")
+         for i, n in enumerate((placed[::-1] if attempt % 3 else placed))],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+        for name in names:
+            add_chart(ctx, "monthly_quakes", name, BAR)
+        for name, width in zip(names, (25, 30, 20, 25)):
+            session.ops.place_tile(name, width=width)
+        widths = {name: tiles(session)[name]["width"] for name in names}
+        turn = await session.ask("Redo the middle charts")
+        order, after = grid(session), tiles(session)
+    finally:
+        session.close()
+
+    assert turn.error is None
+    assert order[:4] == ["a_quakes_chart", "b_quakes_chart_v2", "c_quakes_chart_v2", "d_quakes_chart"]
+    # The grid may rebalance a row as its tiles come back, so widths stay close to the removed ones'.
+    assert abs(after["b_quakes_chart_v2"]["width"] - widths["b_quakes_chart"]) <= 10
+    assert abs(after["c_quakes_chart_v2"]["width"] - widths["c_quakes_chart"]) <= 10
+
+
+def compile_vega_lite(spec, rows):
+    vl_convert = pytest.importorskip("vl_convert")
+    return vl_convert.vegalite_to_vega({**spec, "data": {"values": rows}})
+
+
+ROWS = [{"month": "2024-01-01", "quakes": 10, "quakes_3_month_avg": 10.0},
+        {"month": "2024-02-01", "quakes": 14, "quakes_3_month_avg": 12.0}]
+
+
+def _marks_of(vega):
+    marks = []
+    stack = list(vega.get("marks", []))
+    while stack:
+        mark = stack.pop(0)
+        if mark.get("type") == "group":
+            stack.extend(mark.get("marks", []))
+        else:
+            marks.append(mark["type"])
+    return marks
+
+
+async def test_playtest_edits_of_a_chart_with_a_rolling_average_render_sensibly():
+    # Playtest C turns on one chart: add a rolling average, make it a bar chart, swap the axes.
+    model, requests = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "monthly_quakes", "sql": ROLLING}, tool_call_id="s1"),
+         ToolCallPart("update_chart", {"name": "quakes_per_month_chart", "add_layers": [AVERAGE]}, tool_call_id="u1")],
+        [TextPart("Added it.")],
+        [ToolCallPart("update_chart", {"name": "quakes_per_month_chart", "changes": {"mark": "bar"}}, tool_call_id="u2")],
+        [TextPart("Bars now.")],
+        [ToolCallPart("update_chart", {"name": "quakes_per_month_chart", "changes": {"encoding": {
+            "x": {"field": "quakes", "type": "quantitative"}, "y": {"field": "month", "type": "temporal"}}}}, tool_call_id="u3")],
+        [TextPart("Swapped.")],
+    )
+    session = await _rolling_dashboard(model)
+    specs = []
+    try:
+        for prompt in ("Add a 3-month rolling average line to that chart.", "Make it a bar chart.", "Swap the axes."):
+            turn = await session.ask(prompt)
+            assert turn.error is None and turn.nodes == []
+            specs.append(_graph.config_of(session.ops, "quakes_per_month_chart")["spec"])
+    finally:
+        session.close()
+
+    result = next(p for p in requests[3][-1].parts if isinstance(p, ToolReturnPart))
+    assert result.content.startswith("Changed chart 'quakes_per_month_chart' of 'monthly_quakes' (layer 0 changed)")
+    added, bars, swapped = specs
+    assert [layer["mark"]["type"] for layer in bars["layer"]] == ["bar", "line"]
+    assert bars["layer"][1] == added["layer"][1] == AVERAGE
+    assert swapped["encoding"]["x"]["title"] == "Quakes" and swapped["encoding"]["y"]["title"] == "Month"
+    assert swapped["layer"][1]["encoding"] == {"x": AVERAGE["encoding"]["y"]}
+    for spec in specs:
+        assert sorted(_marks_of(compile_vega_lite(spec, ROWS))) in (["line", "line"], ["line", "rect"])
+
+
+async def test_update_chart_refuses_what_it_cannot_check(ctx, session):
+    await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+    add_chart(ctx, "monthly_quakes", "quakes_chart", BAR)
+    assert update_chart(ctx, "quakes_chart", {"data": {"url": "https://example.com/x.csv"}}).startswith(
+        "Refused: The changes may not set data")
+    assert update_chart(ctx, "quakes_chart", add_layers=[{"mark": "line", "datasets": {"x": []}}]).startswith(
+        "Refused: The changes may not set datasets")
+    deep = {}
+    for _ in range(3000):
+        deep = {"a": deep}
+    assert update_chart(ctx, "quakes_chart", {"encoding": deep}).startswith("Refused: The changes nest more than 32")
+    assert update_chart(ctx, "quakes_chart", {"title": "x" * 60_000}).startswith("Refused: The changes have")
+    assert _graph.config_of(session.ops, "quakes_chart")["spec"] == BAR
+    # Without data to check its fields against, a chart still takes no data or URLs.
+    session.ops.disconnect("monthly_quakes.pipeline", "quakes_chart.pipeline")
+    assert update_chart(ctx, "quakes_chart", {"data": {"url": "https://example.com/x.csv"}}).startswith("Refused:")
+    assert _graph.config_of(session.ops, "quakes_chart")["spec"] == BAR
+
+
+async def test_deep_patches_through_the_agent_are_refused_not_raised():
+    deep = {}
+    for _ in range(100):
+        deep = {"a": deep}
+    model, requests = script(
+        [ToolCallPart("update_chart", {"name": "quakes_per_month_chart", "changes": {"encoding": deep}}, tool_call_id="u1"),
+         ToolCallPart("set_config", {"name": "quakes_per_month_chart", "config": {"spec": deep}}, tool_call_id="c1")],
+        [TextPart("Could not.")],
+    )
+    session = await _rolling_dashboard(model)
+    try:
+        turn = await session.ask("Nest it.")
+        spec = _graph.config_of(session.ops, "quakes_per_month_chart")["spec"]
+    finally:
+        session.close()
+    assert turn.error is None
+    results = {p.tool_call_id: str(p.content) for p in requests[1][-1].parts if isinstance(p, ToolReturnPart)}
+    assert results["u1"].startswith("Refused: The changes nest more than 32")
+    assert results["c1"].startswith("Refused: the config nests more than 32")
+    assert spec["mark"] == {"type": "line", "tooltip": True}
+
+
+async def test_set_config_refuses_a_config_too_deep_to_check():
+    from lumen.agent.authoring import CheckedConfig
+
+    deep = {}
+    for _ in range(3000):
+        deep = {"a": deep}
+    called = []
+
+    async def handler(args):
+        called.append(args)
+
+    result = await CheckedConfig().wrap_tool_execute(
+        SimpleNamespace(deps=None), call=None, tool_def=SimpleNamespace(name="set_config"),
+        args={"name": "x", "config": {"spec": deep}}, handler=handler)
+    assert result.startswith("Refused: the config nests more than 32") and called == []
+
+
+def rendered_marks(spec, rows):
+    """The marks vl-convert draws for ``spec`` on ``rows``, by their role, e.g. ["bar", "bar", "line"]."""
+    vl_convert = pytest.importorskip("vl_convert")
+    svg = vl_convert.vegalite_to_svg({**spec, "data": {"values": rows}})
+    assert "NaN" not in svg
+    roles = re.findall(r'aria-roledescription="([^"]+)"', svg)
+    roles = [role.removesuffix(" mark") for role in roles if not role.endswith("container")]
+    return [role for role in roles if role not in ("axis", "legend", "title")]
+
+
+PENGUINS = [{"species": s, "island": i, "penguin_count": c} for s, i, c in [
+    ("Adelie", "Torgersen", 152), ("Chinstrap", "Dream", 68), ("Gentoo", "Biscoe", 124), ("Adelie", "Biscoe", 44)]]
+QUAKES = [{"month": f"2024-{m:02d}-01", "quakes": q, "magnitude": g, "quakes_3_month_avg": a}
+          for m, q, g, a in [(1, 10, 4.1, 10), (2, 14, 4.3, 12), (3, 9, 4.0, 11), (4, 16, 4.6, 13)]]
+
+
+def test_a_field_moved_from_color_to_x_leaves_colors_scale_and_legend_behind():
+    colored = {"mark": "bar", "encoding": {
+        "color": {"field": "island", "type": "nominal", "legend": {"title": "Island"},
+                  "scale": {"domain": ["Torgersen", "Dream", "Biscoe"], "range": ["#1f77b4", "#ff7f0e", "#2ca02c"]}},
+        "x": {"field": "species", "type": "nominal", "title": "Species"},
+        "y": {"field": "penguin_count", "type": "quantitative", "aggregate": "sum"}}}
+
+    spec = merge_chart(colored, {"encoding": {"x": {"field": "island"}}})
+
+    assert spec["encoding"]["x"] == {"field": "island", "type": "nominal"}
+    assert spec["encoding"]["color"] == colored["encoding"]["color"]
+    # One bar per island, where the old colour range on x drew none.
+    assert rendered_marks(spec, PENGUINS).count("bar") == 3
+
+
+def test_a_new_field_keeps_the_aggregate_of_an_average_rule():
+    bar = {"mark": {"type": "bar"}, "encoding": {"x": {"field": "month", "type": "temporal", "title": "Month"},
+                                                 "y": {"field": "quakes", "type": "quantitative", "title": "Quakes"}}}
+    with_average = merge_chart(bar, None, [{"mark": {"type": "rule", "color": "red"},
+                                            "encoding": {"y": {"aggregate": "mean", "field": "quakes", "type": "quantitative"}}}])
+
+    spec = merge_chart(with_average, {"encoding": {"y": {"field": "magnitude"}}})
+
+    assert spec["encoding"]["y"] == {"field": "magnitude", "type": "quantitative"}
+    assert spec["layer"][1]["encoding"] == {"x": None, "y": {"aggregate": "mean", "field": "magnitude", "type": "quantitative"}}
+    # One average rule, not one per month.
+    assert rendered_marks(spec, QUAKES).count("rule") == 1
+
+
+def test_a_mark_change_goes_to_the_data_layer_not_a_band_behind_it():
+    line = {"mark": {"type": "line", "tooltip": True}, "encoding": {
+        "x": {"field": "month", "type": "temporal"}, "y": {"field": "quakes", "type": "quantitative"}}}
+    band = merge_chart(line, None, [{"mark": {"type": "area", "opacity": 0.2}, "encoding": {
+        "y": {"field": "quakes_3_month_avg", "type": "quantitative"}, "y2": {"field": "magnitude"}}}])
+    assert [layer["mark"]["type"] for layer in band["layer"]] == ["area", "line"]
+
+    spec = merge_chart(band, {"mark": "bar"})
+
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["area", "bar"]
+    assert changed_layers(band, spec) == "layer 1 changed"
+    assert sorted(set(rendered_marks(spec, QUAKES))) == ["area", "bar"]
+
+
+def test_swapping_axes_swaps_the_resolve_entries_too():
+    layered = {"encoding": {"x": {"field": "month", "type": "temporal"}}, "layer": [
+        {"mark": "bar", "encoding": {"y": {"field": "quakes", "type": "quantitative"}}},
+        {"mark": {"type": "line", "color": "red"}, "encoding": {"y": {"field": "magnitude", "type": "quantitative"}}}],
+        "resolve": {"scale": {"y": "independent"}}}
+
+    spec = merge_chart(layered, {"encoding": {"x": {"field": "quakes"}, "y": {"field": "month"}}})
+
+    assert spec["resolve"] == {"scale": {"x": "independent"}}
+    assert spec["layer"][1]["encoding"] == {"x": {"field": "magnitude", "type": "quantitative"}}
+    assert sorted(set(rendered_marks(spec, QUAKES))) == ["bar", "line"]
+    single = merge_chart({**BAR, "resolve": {"axis": {"x": "independent"}}},
+                         {"encoding": {"x": {"field": "quakes"}, "y": {"field": "month"}}})
+    assert single["resolve"] == {"axis": {"y": "independent"}}
+
+
+async def test_update_chart_refuses_when_the_chart_changed_while_it_was_checked(ctx, session, monkeypatch):
+    await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+    add_chart(ctx, "monthly_quakes", "quakes_chart", BAR)
+    view = _graph.view_class(VIEW_ID)
+    check = view.check_spec
+
+    def edited_meanwhile(spec, columns):
+        # The user retitles the chart while the agent's patch is checked.
+        monkeypatch.setattr(view, "check_spec", staticmethod(check))
+        session.ops.set_config("quakes_chart", {"spec": {**BAR, "title": "User's title"}})
+        return check(spec, columns)
+
+    monkeypatch.setattr(view, "check_spec", staticmethod(edited_meanwhile))
+    text = update_chart(ctx, "quakes_chart", {"encoding": {"y": {"title": "Count"}}})
+
+    assert text.startswith("Refused: 'quakes_chart' changed meanwhile")
+    assert _graph.config_of(session.ops, "quakes_chart")["spec"]["title"] == "User's title"
+    assert _graph.config_of(session.ops, "quakes_chart")["spec"]["encoding"]["y"].get("title") == "Quakes"
+
+
+async def test_a_tile_removed_and_placed_again_twice_in_one_turn_keeps_its_slot():
+    names = ["a_quakes_chart", "b_quakes_chart", "c_quakes_chart", "d_quakes_chart"]
+    model, _ = script(
+        [ToolCallPart("remove_node", {"name": "b_quakes_chart"}, tool_call_id="r1")],
+        [ToolCallPart("add_chart", {"data": "monthly_quakes", "name": "b_quakes_chart", "spec": BAR}, tool_call_id="a1")],
+        [ToolCallPart("remove_node", {"name": "b_quakes_chart"}, tool_call_id="r2")],
+        [ToolCallPart("add_chart", {"data": "monthly_quakes", "name": "b_quakes_chart", "spec": BAR}, tool_call_id="a2")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+        for name in names:
+            add_chart(ctx, "monthly_quakes", name, BAR)
+        for name in names:
+            session.ops.place_tile(name, width=25)
+        turn = await session.ask("Redo the second chart twice")
+        order = grid(session)
+    finally:
+        session.close()
+
+    assert turn.error is None
+    assert order[:4] == names
+
+
+def test_the_changed_layer_report_names_the_layers_a_change_added():
+    rule = {"mark": "rule", "encoding": {"y": {"datum": 12}}}
+
+    spec, added = merge_chart_layers(BAR, {"mark": "line"}, [rule])
+
+    assert added == [1]
+    assert changed_layers(BAR, spec, added) == "layer 0 changed, layer 1 added"
+    band = {"mark": {"type": "area", "opacity": 0.2}, "encoding": {"y": {"field": "quakes", "type": "quantitative"}}}
+    spec, added = merge_chart_layers(BAR, None, [band, rule])
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["area", "bar", "rule"]
+    assert changed_layers(BAR, spec, added) == "layers 0, 2 added"
+    spec, added = merge_chart_layers(BAR, {"layer": [{}, rule]})
+    assert changed_layers(BAR, spec, added) == "layer 1 added"
+
+
+def test_the_changed_layer_report_is_bounded():
+    rules = [{"mark": "rule", "encoding": {"y": {"datum": i}}} for i in range(2500)]
+
+    spec, added = merge_chart_layers(BAR, {"mark": "line"}, rules)
+    report = changed_layers(BAR, spec, added)
+
+    assert report == "layer 0 changed, layers 1-2500 added"
+    spread, added = merge_chart_layers(spec, {"layer": [{"mark": {"color": "red"}} if i % 2 else {} for i in range(2501)]})
+    report = changed_layers(spec, spread, added)
+    assert report.startswith("layers 1, 3, 5, 7, 9, 11, 13, 15 and 1242 more changed") and len(report) < 120
