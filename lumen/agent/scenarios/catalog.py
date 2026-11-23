@@ -14,13 +14,13 @@ from ...flowdash import SQL_ID, VIEW_ID
 from ...flowdash.table_view import TABLE_VIEW_ID
 from . import Scenario, Turn
 from .checks import (
-    KPI_ID, PERCENT_SCALES, answer_names, axes, before_views, chart_mark,
-    chart_title, charts_titled, color, dashboard_title, declines,
+    KPI_ID, PERCENT_SCALES, adhoc_label, answer_names, axes, before_views,
+    chart_mark, chart_title, charts_titled, color, dashboard_title, declines,
     edited_in_place, filter_on, has_view, heading_on_top, kept, kpi_units,
     kpi_values, kpis, legend, max_bars, max_requests, multi_series,
     no_duplicates, no_hidden_leftovers, no_new_nodes, no_unused, removed,
     same_height, same_row, selection_link, shows_row, shows_series,
-    shows_value, tables_rounded, titled_node, unchanged, width,
+    shows_value, tables_rounded, titled_node, unchanged, uses_metric, width,
     years_unformatted,
 )
 from .fixtures import STATES as STATE_ROWS
@@ -56,6 +56,11 @@ FEMALE_SHARE = (
 )
 
 COUNT = (1.0,)
+
+# The questions of the numbers scenarios that the metrics scenarios ask again.
+TEXAS_SHARE_PROMPT = "What percentage of national installed capacity is in Texas?"
+CAPACITY_BY_YEAR_PROMPT = "Chart installed wind capacity in MW by project year."
+CAPACITY_BY_REGION_PROMPT = "Chart total installed capacity by US census region, using the states table."
 
 # -- seeded dashboards ------------------------------------------------------------------------------
 
@@ -288,6 +293,27 @@ SCENARIOS: list[Scenario] = [
     Scenario("remove_helpers", "runaway", "turbines", seed=WIND_HELPERS, playtest="C s3 t4", turns=[Turn(
         "Remove the helper queries nothing uses anymore.",
         [no_unused(), kept("state_capacity_chart"), removed("helper_1", workstream="W6"), max_requests(4)])]),
+    # -- metrics first -------------------------------------------------------------------------------
+    # The numbers questions again in an app whose project file defines a metric for each: the turn
+    # must answer with that metric, and a hand-written query with the same numbers earns nothing.
+    Scenario("texas_share_metric", "metrics", "turbines_states", metrics="wind", playtest="B s5 t2", turns=[Turn(
+        TEXAS_SHARE_PROMPT, [uses_metric("capacity_share", TEXAS_SHARE, key="TX", scales=PERCENT_SCALES)])]),
+    Scenario("capacity_by_year_metric", "metrics", "turbines_states", metrics="wind", playtest="A s6 t1", turns=[Turn(
+        CAPACITY_BY_YEAR_PROMPT,
+        [uses_metric("capacity", CAPACITY_BY_YEAR, where="shown"), has_view("chart", workstream="W4"),
+         years_unformatted(), charts_titled()])]),
+    Scenario("capacity_by_region_metric", "metrics", "turbines_states", metrics="wind", playtest="B s5 t1", turns=[Turn(
+        CAPACITY_BY_REGION_PROMPT,
+        [uses_metric("regional_capacity", CAPACITY_BY_REGION, where="shown"), has_view("chart", workstream="W4")])]),
+    # And in an app without metrics: the answer is ad hoc, and says how it was computed and that no
+    # metric was used.
+    Scenario("texas_share_adhoc", "metrics", "turbines", playtest="B s5 t2", turns=[Turn(
+        TEXAS_SHARE_PROMPT, [shows_value(TEXAS_SHARE, scales=PERCENT_SCALES), adhoc_label()])]),
+    Scenario("capacity_by_year_adhoc", "metrics", "turbines", playtest="A s6 t1", turns=[Turn(
+        CAPACITY_BY_YEAR_PROMPT, [shows_series(CAPACITY_BY_YEAR), has_view("chart", workstream="W4"), adhoc_label()])]),
+    Scenario("capacity_by_region_adhoc", "metrics", "turbines_states", playtest="B s5 t1", turns=[Turn(
+        "Chart total installed capacity by US census region, using the states table.",
+        [shows_series(CAPACITY_BY_REGION), has_view("chart", workstream="W4"), adhoc_label()])]),
 ]
 
 
@@ -312,6 +338,10 @@ EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "why_question": {"1/no_new_nodes": "W6"},
     "penguin_batch": {"1/kpis": "W1", "1/requests": "W6"},
     "kpis_to_top": {"1/row_kpi_turbines": "W3"},
+    # The ad hoc label is lumen#2416's and M2's.
+    "texas_share_adhoc": {"1/adhoc_label": "M2/#2416"},
+    "capacity_by_year_adhoc": {"1/adhoc_label": "M2/#2416"},
+    "capacity_by_region_adhoc": {"1/adhoc_label": "M2/#2416"},
 }
 
 for _scenario in SCENARIOS:

@@ -411,6 +411,55 @@ def shows_series(sql: str, *, where: str = "shown", scales: Sequence[float] = UN
     return Check(id, f"numbers match {sql}", test, workstream)
 
 
+def _metric_nodes(state: TurnState, metric: str) -> list[str]:
+    return [n for n in state.of_kind("metric") if state.config(n).get("metric") == metric]
+
+
+def _metric_results(state: TurnState, metric: str, where: str) -> list[str]:
+    """The data nodes of ``where`` that are a node of ``metric`` or read one, directly or not."""
+    nodes = _metric_nodes(state, metric)
+    return [n for n in _candidates(state, where) if n in nodes or any(m in state.ancestors(n) for m in nodes)]
+
+
+def holds_keyed(frame: pd.DataFrame | None, key: str, value: float, scales: Sequence[float] = UNIT_SCALES,
+                rtol: float = 0.005) -> bool:
+    """Whether a row of ``frame`` holds ``key`` in some column and ``value`` at one of ``scales`` in a numeric one."""
+    if frame is None or frame.empty:
+        return False
+    rows = frame[frame.map(_norm).eq(_norm(key)).any(axis=1)]
+    return holds_value(rows, value, scales, rtol, max_rows=len(frame))
+
+
+def uses_metric(metric: str, sql: str, *, key: str | None = None, where: str = "turn",
+                scales: Sequence[float] = UNIT_SCALES, workstream: str = "W4", id: str = "metric") -> Check:
+    """
+    The turn answers with the app's metric ``metric``: a ``Lumen/metric``
+    node of it, or a node reading one, holds the reference numbers of
+    ``sql``, its keyed series (keys first, value last) or, with ``key``,
+    its scalar in the row of that key. A hand-written query with the same
+    numbers does not count.
+    """
+    def test(state):
+        names = _metric_results(state, metric, where)
+        if not names:
+            placed = _metric_nodes(state, metric)
+            queries = [n for n in _candidates(state, where) if state.component(n) == SQL_ID]
+            return (f"no {where} node reads metric {metric!r}"
+                    + (f" (its nodes {placed} are not)" if placed else "")
+                    + (f"; SQL nodes instead: {queries}" if queries else ""))
+        seen = "{" + ", ".join(f"{n}: {_preview(state.data(n))}" for n in names[:4]) + "}"
+        if key is not None:
+            value = _scalar(state, sql)
+            if any(holds_keyed(state.data(n), key, value, scales) for n in names):
+                return None
+            return f"no row {key!r} with {value:,.6g} in {metric!r} nodes {seen}"
+        expected = state.reference(sql)
+        if any(matches_series(state.data(n), expected, scales) for n in names):
+            return None
+        return f"{metric!r} nodes do not match {_preview(expected)}; saw {seen}"
+    return Check(id, f"answers with metric {metric}", test, workstream)
+
+
 def _preview(frame: pd.DataFrame | None) -> str:
     if frame is None:
         return "None"
@@ -958,3 +1007,34 @@ def answer_names(sql: str, aliases: dict[str, str] | None = None, *, workstream:
             return None
         return f"the reply does not give {' or '.join(words)} as the answer: {text[:160]!r}"
     return Check(id, f"the reply names the answer to {sql}", test, workstream)
+
+
+# An ad hoc number says how it was computed and that no metric was used, as lumen#2416 and the
+# 'Ad hoc' label of M2 word it; matched loosely while that wording is settled.
+COMPUTED = re.compile(
+    r"\b(computed|calculated|derived|aggregated|summ(ed|ing)|count(ed|ing)|divid(ed|ing))\b|\b(SUM|COUNT|AVG)\s*\(",
+    re.IGNORECASE,
+)
+NO_METRIC = re.compile(
+    rf"\bad[ -]hoc\b|\bno (app |agreed |defined |matching )?metrics?\b|\bwithout (an? |any )?metrics?\b|"
+    rf"\b(not|n{APOSTROPHE}t) (from |based on |computed from |using |use[sd]? )?(an? |any |the app{APOSTROPHE}s )?"
+    r"(agreed |defined )?metrics?\b",
+    re.IGNORECASE,
+)
+
+
+def adhoc_label(*, workstream: str = "M2") -> Check:
+    """
+    A number computed without one of the app's metrics says how it was
+    computed and that no metric was used, in the reply or on a node the
+    turn placed or changed, e.g. a KPI card's caption.
+    """
+    def test(state):
+        touched = set(state.added) | set(state.changed)
+        texts = [state.output or "", *(yaml.safe_dump(state.config(n)) for n in state.nodes if n in touched)]
+        if any(COMPUTED.search(text) and NO_METRIC.search(text) for text in texts):
+            return None
+        missing = [what for what, pattern in [("how it was computed", COMPUTED), ("that no metric was used", NO_METRIC)]
+                   if not any(pattern.search(text) for text in texts)]
+        return f"nothing says {' or '.join(missing) or 'both in one place'}; reply {(state.output or '')[:120]!r}"
+    return Check("adhoc_label", "says how it was computed and that no metric was used", test, workstream)

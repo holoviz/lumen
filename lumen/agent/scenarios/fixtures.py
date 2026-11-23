@@ -174,7 +174,26 @@ metrics:
       state: {column: t_state, description: Two-letter state code}
       year: {column: p_year, description: Year the project came online}
 """
-METRICS = {"turbines": TURBINE_METRICS}
+# The project file of the metrics scenarios: the share of capacity by state, capacity by year
+# (``capacity`` above) and capacity by census region, which joins the states table.
+CAPACITY_SHARE_SQL = (
+    "SELECT t_state AS state, SUM(t_cap) / SUM(SUM(t_cap)) OVER () AS capacity_share FROM turbines GROUP BY t_state"
+)
+REGIONAL_CAPACITY_SQL = (
+    "SELECT region, SUM(t_cap) / 1000.0 AS capacity_mw FROM turbines JOIN states ON turbines.t_state = states.state "
+    "GROUP BY region"
+)
+WIND_METRICS = TURBINE_METRICS + f"""\
+  capacity_share:
+    description: Each state's share of the national installed wind capacity, as a fraction of 1.
+    source: data
+    sql: {CAPACITY_SHARE_SQL}
+  regional_capacity:
+    description: Installed wind capacity in MW by US census region.
+    source: data
+    sql: {REGIONAL_CAPACITY_SQL}
+"""
+METRICS = {"turbines": TURBINE_METRICS, "wind": WIND_METRICS}
 
 
 def fixture_source(name: str) -> DuckDBSource:

@@ -20,18 +20,20 @@ from lumen.agent.scenarios import (
 )
 from lumen.agent.scenarios.__main__ import main, stale_message
 from lumen.agent.scenarios.catalog import (
-    BY_NAME, CALIFORNIA, CALIFORNIA_STRONGEST, CAPACITY_BY_YEAR, CAPACITY_MW,
-    FEMALE_SHARE, LAST_MONTH, PROJECTS, SCENARIOS, TURBINES, WIND,
-    WIND_KPIS_LAST,
+    BY_NAME, CALIFORNIA, CALIFORNIA_STRONGEST, CAPACITY_BY_REGION,
+    CAPACITY_BY_YEAR, CAPACITY_MW, FEMALE_SHARE, LAST_MONTH, PROJECTS,
+    SCENARIOS, TEXAS_SHARE, TURBINES, WIND, WIND_KPIS_LAST,
 )
 from lumen.agent.scenarios.checks import (
-    Tile, TurnState, answer_names, before_views, chart_mark, charts_titled,
-    color, declines, edited_in_place, filter_on, holds_value, kpi_values, kpis,
-    matches_series, max_requests, no_hidden_leftovers, same_height, same_row,
-    shows_row, shows_series, shows_value, width,
+    PERCENT_SCALES, Tile, TurnState, adhoc_label, answer_names, before_views,
+    chart_mark, charts_titled, color, declines, edited_in_place, filter_on,
+    holds_value, kpi_values, kpis, matches_series, max_requests,
+    no_hidden_leftovers, same_height, same_row, shows_row, shows_series,
+    shows_value, uses_metric, width,
 )
 from lumen.agent.scenarios.fixtures import (
-    fixture_source, penguins, quakes, states, turbines,
+    CAPACITY_SHARE_SQL, REGIONAL_CAPACITY_SQL, fixture_metrics, fixture_source,
+    penguins, quakes, states, turbines,
 )
 from lumen.flowdash import FILTER_ID, VIEW_ID
 
@@ -60,9 +62,9 @@ def scripted(*turns):
 
 
 @asynccontextmanager
-async def state_after(fixture, model, prompt="x", seed_yaml=None):
+async def state_after(fixture, model, prompt="x", seed_yaml=None, metrics=None):
     """The state of one turn of ``model``, checked while its session is still open."""
-    session = AgentSession(fixture_source(fixture), model, agent=scenario_agent(model))
+    session = AgentSession(fixture_source(fixture), model, agent=scenario_agent(model), metrics=fixture_metrics(metrics))
     try:
         if seed_yaml:
             seed(session, seed_yaml)
@@ -90,17 +92,17 @@ def test_fixtures_are_deterministic_and_keep_their_traps():
 def test_scenarios_have_unique_names_themes_and_check_ids():
     assert len(SCENARIOS) == len(BY_NAME) >= 25
     assert {s.theme for s in SCENARIOS} == {
-        "kpis", "filters", "titles", "layout", "edits", "numbers", "charts", "claims", "runaway"}
+        "kpis", "filters", "titles", "layout", "edits", "numbers", "charts", "claims", "runaway", "metrics"}
     for scenario in SCENARIOS:
         for turn in scenario.turns:
             ids = [check.id for check in turn.checks]
             assert len(ids) == len(set(ids)), scenario.name
-            assert all(check.workstream in {f"W{i}" for i in range(1, 9)} for check in turn.checks)
+            assert all(check.workstream in {*(f"W{i}" for i in range(1, 9)), "M2"} for check in turn.checks)
             assert any(not check.quality and not check.guard for check in turn.checks), (scenario.name, turn.prompt)
         for key, workstream in scenario.xfail.items():
             index, check = key.split("/")
             assert check in [c.id for c in scenario.turns[int(index) - 1].checks], (scenario.name, key)
-            assert workstream.startswith("W")
+            assert workstream.startswith(("W", "M2"))
 
 
 @pytest.mark.parametrize("name", sorted(s.name for s in SCENARIOS if s.seed))
@@ -173,6 +175,75 @@ async def test_text_mark_charts_are_not_kpis():
     ])) as state:
         passed, detail = kpis(1, top=False).run(state)
         assert not passed and "kpi_card" in detail
+
+
+def test_the_metrics_hold_the_reference_numbers():
+    """The wind project file's metrics answer the numbers scenarios with the catalog's reference queries."""
+    source = fixture_source("turbines_states")
+    shares = source.execute(CAPACITY_SHARE_SQL).set_index("state")["capacity_share"]
+    assert shares["TX"] == pytest.approx(source.execute(TEXAS_SHARE).iloc[0, 0])
+    assert shares.sum() == pytest.approx(1.0)
+    regions = source.execute(REGIONAL_CAPACITY_SQL)
+    assert matches_series(regions, source.execute(CAPACITY_BY_REGION), scales=(1.0,))
+    assert sorted(fixture_metrics("wind")) == ["capacity", "capacity_share", "regional_capacity"]
+
+
+TEXAS_SQL = "SELECT SUM(CASE WHEN t_state = 'TX' THEN t_cap ELSE 0 END) / SUM(t_cap) AS share FROM turbines"
+YEAR_CHART = {"title": "Capacity by year", "mark": "bar", "encoding": {
+    "x": {"field": "year", "type": "ordinal"}, "y": {"field": "capacity_mw", "type": "quantitative"}}}
+REGION_CHART = {"title": "Capacity by region", "mark": "bar", "encoding": {
+    "x": {"field": "region", "type": "nominal"}, "y": {"field": "capacity_mw", "type": "quantitative"}}}
+
+
+@pytest.mark.parametrize(("calls", "expected"), [
+    ([("add_metric", {"metric": "capacity_share", "name": "state_capacity_share"})], True),
+    ([("add_metric", {"metric": "capacity", "name": "state_capacity", "measures": ["capacity_mw"],
+                      "dimensions": ["state"]})], False),
+    ([("add_sql", {"source": "data", "name": "texas_share", "sql": TEXAS_SQL})], False),
+], ids=["metric", "other_metric", "own_sql"])
+async def test_a_share_must_come_from_the_metric(calls, expected):
+    async with state_after("turbines_states", scripted(calls), metrics="wind") as state:
+        assert state.error is None
+        passed, detail = uses_metric("capacity_share", TEXAS_SHARE, key="TX", scales=PERCENT_SCALES).run(state)
+        assert passed is expected, detail
+        if calls[0][0] == "add_sql":
+            # The hand-written query holds the right number all the same.
+            assert shows_value(TEXAS_SHARE, scales=PERCENT_SCALES).run(state)[0]
+            assert "SQL nodes instead: ['texas_share']" in detail
+
+
+@pytest.mark.parametrize(("metric", "calls", "reference", "expected"), [
+    ("capacity", [("add_metric", {"metric": "capacity", "name": "capacity_by_year", "measures": ["capacity_mw"],
+                                  "dimensions": ["year"]}),
+                  ("add_chart", {"data": "capacity_by_year", "name": "capacity_chart", "spec": YEAR_CHART})],
+     CAPACITY_BY_YEAR, True),
+    ("capacity", [("add_metric", {"metric": "capacity", "name": "capacity_by_year", "measures": ["capacity_mw"],
+                                  "dimensions": ["year"]})], CAPACITY_BY_YEAR, False),
+    ("capacity", [("add_sql", {"source": "data", "name": "capacity_by_year", "sql": GOOD_SQL}),
+                  ("add_chart", {"data": "capacity_by_year", "name": "capacity_chart", "spec": LINE})],
+     CAPACITY_BY_YEAR, False),
+    ("regional_capacity", [("add_metric", {"metric": "regional_capacity", "name": "capacity_by_region"}),
+                           ("add_chart", {"data": "capacity_by_region", "name": "region_chart", "spec": REGION_CHART})],
+     CAPACITY_BY_REGION, True),
+], ids=["metric_chart", "metric_hidden", "own_sql_chart", "region_metric_chart"])
+async def test_a_charted_series_must_come_from_the_metric(metric, calls, reference, expected):
+    async with state_after("turbines_states", scripted(calls), metrics="wind") as state:
+        assert state.error is None
+        passed, detail = uses_metric(metric, reference, where="shown").run(state)
+        assert passed is expected, detail
+
+
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("Texas holds 9.97% of capacity, computed as SUM(t_cap) for TX over the national total. No metric was used.", True),
+    ("Texas holds 9.97%. Ad hoc: calculated from the turbines table.", True),
+    ("Texas holds 9.97% of national capacity, computed from the turbines table.", False),
+    ("Texas holds 9.97% of national capacity; no metric was used.", False),
+    ("Texas holds 9.97% of national capacity.", False),
+], ids=["both", "ad_hoc", "no_metric_missing", "how_missing", "neither"])
+def test_the_ad_hoc_label_says_how_and_that_no_metric_was_used(reply, expected):
+    state = TurnState(prompt="x", graph={}, before={}, output=reply)
+    passed, detail = adhoc_label().run(state)
+    assert passed is expected, detail
 
 
 LINE_BY_STATE = {"mark": {"type": "line"}, "encoding": {
