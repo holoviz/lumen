@@ -254,7 +254,7 @@ export const providers = {
     },
     {
       title: 'Gateways',
-      names: ['OpenRouter', 'Kilo', 'LiteLLM', 'AI Catalyst'],
+      names: ['OpenRouter', 'OrcaRouter', 'Kilo', 'LiteLLM', 'AI Catalyst'],
     },
     {
       title: 'Coding CLIs, no API key',

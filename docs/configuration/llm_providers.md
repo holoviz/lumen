@@ -24,6 +24,7 @@ To use a specific provider, pass the `--provider` flag:
 lumen-ai serve penguins.csv --provider anthropic
 lumen-ai serve penguins.csv --provider google --model 'gemini-3.8-flash'
 lumen-ai serve penguins.csv --provider kilo --model 'openai/gpt-5.4-mini'
+lumen-ai serve penguins.csv --provider orcarouter --model 'orcarouter/auto'
 lumen-ai serve penguins.csv --provider ollama --model 'qwen3.6:35b-a3b'
 lumen-ai serve penguins.csv --provider mlx
 ```
@@ -283,6 +284,7 @@ compared with about 90 seconds using Antigravity's own default. Run
 |----------|---------------|-------------|
 | **Kilo** | `kilo-auto/free` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
 | **OpenRouter** | `openai/gpt-6-luna` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, Meta, Mistral, and more through a single API key. |
+| **OrcaRouter** | `orcarouter/auto` | OpenAI-compatible gateway providing access to models from OpenAI, Anthropic, Google, DeepSeek, and more through a single API key, with automatic routing and failover. |
 | **AWS Bedrock** | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Enterprise gateway providing access to models from Anthropic, Amazon, Qwen, DeepSeek, and more. |
 | **LiteLLM** | `gpt-5.4-mini` | Unified router to access 100+ models across all supported LLM providers. |
 | **AI Catalyst** | `ai_catalyst` | Enterprise model server; provides access to validated, governed open-source models. |
@@ -323,6 +325,25 @@ llm = lmai.llm.OpenRouter(
         "default": {"model": "openai/gpt-6-luna"},
         "sql": {"model": "deepseek/deepseek-v4-pro-0813"},
         "vega_lite": {"model": "qwen/qwen3.8-flash"},
+    }
+)
+
+ui = lmai.ExplorerUI(data='penguins.csv', llm=llm)
+ui.servable()
+```
+
+### OrcaRouter
+
+OrcaRouter provides an OpenAI-compatible API for routing requests to models from multiple providers. Use `orcarouter/auto` to let OrcaRouter pick the cheapest live model, or name a specific model.
+
+``` py title="OrcaRouter configuration"
+import lumen.ai as lmai
+
+llm = lmai.llm.OrcaRouter(
+    model_kwargs={
+        "default": {"model": "orcarouter/auto"},
+        "sql": {"model": "anthropic/claude-sonnet-5.5"},
+        "vega_lite": {"model": "google/gemini-3.1-pro-preview"},
     }
 )
 
@@ -385,6 +406,7 @@ The default values for each provider are:
 |----------|---------------------------|
 | `OpenAI` | `OPENAI_API_KEY` |
 | `OpenRouter` | `OPENROUTER_API_KEY` |
+| `OrcaRouter` | `ORCAROUTER_API_KEY` |
 | `Anthropic` | `ANTHROPIC_API_KEY` |
 | `Google` | `GEMINI_API_KEY` |
 | `MistralAI` | `MISTRAL_API_KEY` |
@@ -624,13 +646,14 @@ Different providers use different model string formats:
 - **OpenAI**: `"gpt-6-luna"`, `"gpt-5.6-luna"`, `"gpt-6-sol"`, `"gpt-5.4-nano"`
 - **Anthropic**: `"claude-haiku-4-5"`, `"claude-sonnet-4-6"`, `"claude-opus-4-6"`
 - **OpenRouter**: `"openai/gpt-6-luna"`, `"qwen/qwen3.8-flash"`, `"z-ai/glm-5.3-flash"`, `"deepseek/deepseek-v4.1-flash"`
+- **OrcaRouter**: `"orcarouter/auto"`, `"openai/gpt-6.1-sol"`, `"anthropic/claude-sonnet-5.5"`, `"deepseek/deepseek-v4.1-flash"`
 - **Google**: `"gemini-3.8-flash"`, `"gemini-3.1-flash-lite"`
 - **Mistral**: `"mistral-large-latest"`, `"mistral-small-latest"`
 - **Azure**: `"your-deployment-name"` (use your Azure deployment name)
 - **Bedrock**: `"us.anthropic.claude-haiku-4-5-20251001-v1:0"`, `"us.anthropic.claude-sonnet-4-6"`, `"us.amazon.nova-2-lite-v1:0"`
 - **LiteLLM**: `"gpt-5.4-mini"` (OpenAI), `"anthropic/claude-sonnet-4-6"` (Anthropic), `"gemini/gemini-3.8-flash"` (Google)
 
-For OpenRouter and LiteLLM, use the `provider/model` format for routed models.
+For OpenRouter, OrcaRouter and LiteLLM, use the `provider/model` format for routed models.
 
 ## Troubleshooting
 

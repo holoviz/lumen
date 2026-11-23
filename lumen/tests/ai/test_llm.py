@@ -22,7 +22,7 @@ try:
         MLX, Anthropic, AnthropicBedrock, AntigravityCli, AzureOpenAI, Bedrock,
         ClaudeCode, CodexCli, CopilotCli, Google, Groq, Kilo, LiteLLM,
         LlamaCpp, Llm, LlmCli, Message, MistralAI, Ollama, OpenAI, OpenRouter,
-        WebLLM, is_image_rejection,
+        OrcaRouter, WebLLM, is_image_rejection,
     )
     from lumen.ai.llm_dialog import DEFAULT_TEMPERATURE, LLMConfigDialog
     from lumen.ai.tools import FunctionTool
@@ -556,6 +556,71 @@ async def test_azure_open_ai_get_model_kwargs_individual_models():
     assert llm._get_model_kwargs("other") == model_kwargs["other"]
 
 
+def test_orcarouter_registered_in_llm_providers():
+    """The OrcaRouter provider can be selected with --provider orcarouter."""
+    assert lmai.llm.LLM_PROVIDERS["orcarouter"] == "OrcaRouter"
+
+
+def test_orcarouter_registered_in_provider_env_vars():
+    """OrcaRouter is auto-detected from its API key environment variable."""
+    assert lmai.llm.PROVIDER_ENV_VARS["orcarouter"] == "ORCAROUTER_API_KEY"
+
+
+def test_orcarouter_api_key_env_var():
+    assert OrcaRouter.api_key_env_var == "ORCAROUTER_API_KEY"
+
+
+def test_orcarouter_endpoint():
+    orcarouter = OrcaRouter(api_key="test-key")
+    assert orcarouter.endpoint == "https://api.orcarouter.ai/v1"
+
+
+def test_get_available_llm_selects_orcarouter(monkeypatch):
+    """OrcaRouter is selected when only ORCAROUTER_API_KEY is set."""
+    for env_var in lmai.llm.PROVIDER_ENV_VARS.values():
+        monkeypatch.delenv(env_var, raising=False)
+    monkeypatch.setenv("ORCAROUTER_API_KEY", "test-key")
+    assert lmai.llm.get_available_llm() is OrcaRouter
+
+
+def test_orcarouter_models_lists_models(monkeypatch):
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "data": [
+            {"id": "orcarouter/auto"},
+            {"id": "openai/gpt-6.1-sol"},
+            {"id": ""},
+            {},
+        ],
+    }
+    get = MagicMock(return_value=response)
+    monkeypatch.setattr(lmai.llm.requests, "get", get)
+
+    assert OrcaRouter(api_key="test-key").models() == {
+        "orcarouter/auto", "openai/gpt-6.1-sol",
+    }
+    assert get.call_args.args[0] == "https://api.orcarouter.ai/v1/models"
+    assert get.call_args.kwargs["headers"] == {"Authorization": "Bearer test-key"}
+    assert get.call_args.kwargs["timeout"] == 5
+
+
+def test_orcarouter_models_reads_api_key_from_env(monkeypatch):
+    monkeypatch.setenv("ORCAROUTER_API_KEY", "env-key")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"data": []}
+    get = MagicMock(return_value=response)
+    monkeypatch.setattr(lmai.llm.requests, "get", get)
+
+    assert OrcaRouter().models() == set()
+    assert get.call_args.kwargs["headers"] == {"Authorization": "Bearer env-key"}
+
+
+def test_orcarouter_models_returns_empty_on_error(monkeypatch):
+    response = MagicMock(status_code=500)
+    monkeypatch.setattr(lmai.llm.requests, "get", MagicMock(return_value=response))
+    assert OrcaRouter(api_key="test-key").models() == set()
+
+
 def test_groq_registered_in_llm_providers():
     """Test that the Groq provider is registered in LLM_PROVIDERS."""
     assert "groq" in lmai.llm.LLM_PROVIDERS
@@ -831,8 +896,8 @@ def _capture_sends(monkeypatch, reject: list[str]) -> list[dict]:
 
 
 @pytest.mark.parametrize("provider", [
-    OpenAI, OpenRouter, AzureOpenAI, MistralAI, Anthropic, AnthropicBedrock,
-    Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
+    OpenAI, OpenRouter, OrcaRouter, AzureOpenAI, MistralAI, Anthropic,
+    AnthropicBedrock, Bedrock, Google, Groq, Ollama, MLX, LiteLLM,
 ], ids=lambda cls: cls.__name__)
 def test_default_model_is_selectable(provider):
     """Opening the settings dialog rewrites model_kwargs to select_models[0]
