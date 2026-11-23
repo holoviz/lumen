@@ -126,6 +126,7 @@ async def test_add_metric_takes_sql_metric_parameters(ctx, session):
     ({"metric": "capacity", "measures": ["turbines"], "parameters": {"since": "2000; DROP TABLE x"}}, "expected an integer"),
     ({"metric": "top_projects", "parameters": {"n": 100}}, r"outside the bounds \[1, 10\]"),
     ({"metric": "capacity", "measures": ["turbines"], "parameters": {"t_cap": 1}}, "has no parameter 't_cap'"),
+    ({"metric": "top_projects", "dimensions": ["p_name"]}, "has no dimensions to pick. Place it with only its metric"),
 ])
 async def test_add_metric_refuses_what_the_metric_does_not_take(ctx, session, kwargs, message):
     with pytest.raises(ModelRetry, match=message):

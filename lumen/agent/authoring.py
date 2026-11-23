@@ -410,6 +410,9 @@ async def add_metric(
         query = metric_query(config, parameters)
         prepare(metrics[metric], query)
     except MetricError as exc:
+        if metrics[metric].form == "sql" and exc.field in ("measures", "dimensions", "grain"):
+            raise ModelRetry(f"{exc} Place it with only its metric, name and parameters: its query already "
+                             "returns its columns, e.g. one per group.") from exc
         raise ModelRetry(str(exc)) from exc
     existing = name in _graph.nodes(ops)
     if existing and _graph.component_of(ops, name) != METRIC_ID:
