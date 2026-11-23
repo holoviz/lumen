@@ -20,11 +20,12 @@ except ImportError:
 # Runs whose placed nodes are remembered at once; older runs have ended.
 RUNS_REMEMBERED = 64
 
-# The tools that place a node named by their ``name`` argument: each of Lumen's authoring tools.
-PLACING_TOOLS = tuple(authoring_toolset().tools)
+# The tools that place a node named by their ``name`` argument: each of Lumen's authoring tools but update_chart.
+PLACING_TOOLS = tuple(name for name in authoring_toolset().tools if name != "update_chart")
 
-# The tools that change an existing node named by their ``name`` argument.
-CHANGING_TOOLS = ("set_config", "add_metric")
+# The tools that change an existing node named by their ``name`` argument: an add tool changes
+# the node of its kind already called that.
+CHANGING_TOOLS = ("set_config", "update_chart", *PLACING_TOOLS)
 
 
 class _Placed:
@@ -48,8 +49,8 @@ class _Placed:
 
 class OwnNodesOnly(AbstractCapability[FlowDashDeps]):
     """
-    Allows ``set_config``, and ``add_metric`` naming a metric node that is
-    already there, only on a node the current run placed with one of
+    Allows ``set_config``, ``update_chart``, and an add tool naming a node
+    that is already there, only on a node the current run placed with one of
     ``PLACING_TOOLS``, so a node of the dashboard, an earlier
     answer or a node someone else adds while the run goes on stays as it is,
     as Explore's answers do. Nodes are told apart by their live component,

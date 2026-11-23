@@ -129,9 +129,9 @@ async def test_add_sql_retries_with_engine_error(ctx, session, sql, error):
     assert [node["name"] for node in session.ops.nodes()] == ["data"]
 
 
-async def test_add_sql_refuses_taken_name(ctx, session):
-    await add_sql(ctx, "data", "result", BY_REGION)
-    with pytest.raises(ModelRetry, match="result"):
+async def test_add_sql_refuses_a_name_taken_by_another_kind(ctx, session):
+    add_text(ctx, "heading", "result", "Results")
+    with pytest.raises(ModelRetry, match="'result' is already a heading node, so no SQL can take its name"):
         await add_sql(ctx, "data", "result", BY_REGION)
     assert [node["name"] for node in session.ops.nodes()] == ["data", "result"]
 
@@ -202,7 +202,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
+    assert tools == ["add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config", "update_chart"]
 
 
 async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
@@ -787,7 +787,7 @@ async def test_add_sql_reuses_the_source_node_of_an_apps_source(ctx, empty):
 async def test_add_sql_places_no_source_node_when_placing_fails(ctx, empty):
     with pytest.raises(ModelRetry, match="Binder Error"):
         await add_sql(ctx, "energy", "broken", "SELECT watts FROM plants")
-    empty.ops.add_node(SQL_ID, {}, name="taken")
+    empty.ops.add_node(_graph.MARKDOWN_ID, {"text": "Notes"}, name="taken")
     with pytest.raises(ModelRetry):
         await add_sql(ctx, "energy", "taken", "SELECT COUNT(*) AS n FROM plants")
     assert [node["name"] for node in empty.ops.nodes()] == ["taken"]
