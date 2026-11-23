@@ -59,8 +59,10 @@ HELP = "Numbers defined here are the agreed definitions; the assistant uses them
 PREVIEW_ROWS = 10
 PREVIEW_TIMEOUT = 5
 
-# The longest YAML the editor reads.
+# The longest YAML the editor reads, and how deeply its values may nest.
 YAML_LIMIT = 20_000
+YAML_DEPTH = 20
+TOO_DEEP = f"The YAML nests deeper than {YAML_DEPTH} levels; a metric needs a few."
 
 # The keys of a metric the form edits; the YAML field holds the others.
 FORM_KEYS = ("description", "source", "table")
@@ -350,17 +352,21 @@ def _yaml_refusal(text: str) -> str | None:
         root = YAML(typ="safe", pure=True).compose(text)
     except YAMLError:
         return None
+    except RecursionError:
+        return TOO_DEEP
     seen: set[int] = set()
-    stack = [root] if root is not None else []
+    stack = [(root, 0)] if root is not None else []
     while stack:
-        node = stack.pop()
+        node, depth = stack.pop()
         if id(node) in seen or node.anchor:
             return "Anchors and aliases (&name, *name) are not supported; write the values out."
+        if depth > YAML_DEPTH:
+            return TOO_DEEP
         seen.add(id(node))
         if isinstance(node, MappingNode):
-            stack.extend(item for pair in node.value for item in pair)
+            stack.extend((item, depth + 1) for pair in node.value for item in pair)
         elif isinstance(node, SequenceNode):
-            stack.extend(node.value)
+            stack.extend((item, depth + 1) for item in node.value)
     return None
 
 

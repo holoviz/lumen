@@ -334,3 +334,9 @@ def test_only_a_lumen_app_shows_the_metrics_admin_and_key_numbers(tmp_path, monk
         steps = wizard_steps(plain_app._settings_project(), plain_app)
         assert isinstance(steps[1], DataStep)
         assert not any(isinstance(step, KeyNumbersStep) for step in steps)
+
+
+@pytest.mark.parametrize("text", ["measures: " + "[" * 1000 + "]" * 1000, "measures: " + "{a: " * 1000 + "1" + "}" * 1000])
+def test_deeply_nested_yaml_is_a_field_error(text):
+    _, problems, _ = join_spec({"source": "turbines"}, text)
+    assert problems[0].keys == ("", "yaml") and "nests deeper" in problems[0].message
