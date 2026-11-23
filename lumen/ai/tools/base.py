@@ -1,5 +1,6 @@
 import asyncio
 
+from dataclasses import dataclass
 from types import FunctionType
 from typing import Any, TypedDict
 
@@ -16,6 +17,21 @@ from ..llm import Message
 from ..translate import function_to_model
 
 _TOOL_ANNOTATIONS_ATTR = "__lumen_tool_annotations__"
+
+
+@dataclass
+class FunctionCall:
+    """
+    Internal metadata for reproducing an executed FunctionTool call.
+    """
+
+    function: Any
+    arguments: dict[str, Any]
+    context_arguments: set[str]
+    provides: list[str]
+    result_is_dict: bool
+    is_async: bool = False
+    rendered_output: bool = False
 
 
 def define_tool(
@@ -142,6 +158,7 @@ class FunctionTool(Tool):
             **params
         )
         self._model = model
+        self._function_call: FunctionCall | None = None
 
     @property
     def inputs(self):
@@ -150,6 +167,7 @@ class FunctionTool(Tool):
     async def respond(
         self, messages: list[Message], context: TContext, **kwargs: dict[str, Any]
     ) -> tuple[list[Any], ContextModel]:
+        self._function_call = None
         # step_title is passed to every actor in a plan; only forward it
         # if the wrapped function actually accepts it
         if "step_title" not in self._model.model_fields:
@@ -157,19 +175,33 @@ class FunctionTool(Tool):
         model_kwargs = {}
         if any(field not in self.requires and field not in kwargs for field in self._model.model_fields):
             model_kwargs = await self._invoke_prompt("main", messages, context, response_model=self._model, max_retries=3)
+        context_arguments = set(self.requires)
         arguments = dict(model_kwargs, **{k: context[k] for k in self.requires}, **kwargs)
-        if param.parameterized.iscoroutinefunction(self.function):
+        is_async = param.parameterized.iscoroutinefunction(self.function)
+        if is_async:
             result = await self.function(**arguments)
         elif self.run_in_thread:
             result = await asyncio.to_thread(self.function, **arguments)
         else:
             result = self.function(**arguments)
+        rendered_output = isinstance(result, (View, Viewable)) or self.render_output
+        function_call = FunctionCall(
+            self.function,
+            arguments,
+            context_arguments,
+            [] if rendered_output else list(self.provides),
+            isinstance(result, dict),
+            is_async=is_async,
+            rendered_output=rendered_output,
+        )
         if isinstance(result, (View, Viewable)):
+            self._function_call = function_call
             return [result], {}
         elif self.render_output:
             p = as_panel(result)
             if isinstance(p, HoloViewsPanel):
                 p = HoloViews(object=p.object)
+            self._function_call = function_call
             return [p], {}
         out_model = {}
         if self.provides:
@@ -177,11 +209,18 @@ class FunctionTool(Tool):
                 out_model[self.provides[0]] = result
             else:
                 out_model.update({key: result[key] for key in self.provides})
-        return [self.formatter.format(
+        output = self.formatter.format(
             function=self.function.__name__,
             arguments=', '.join(f'{k}={v!r}' for k, v in arguments.items()),
             output=result
-        )], out_model
+        )
+        self._function_call = function_call
+        return [output], out_model
+
+    def _take_function_call(self) -> FunctionCall | None:
+        """Transfer the last call record to its executing ActorTask."""
+        function_call, self._function_call = self._function_call, None
+        return function_call
 
 
 class ToolUser(Actor):
@@ -271,6 +310,8 @@ class ToolUser(Actor):
         for tool in self._tools.get(prompt_name, []) or self.tools:
             if all(requirement in context for requirement in tool.input_schema.__required_keys__):
                 tool_context = await tool.respond(messages, context)
+                if isinstance(tool, FunctionTool):
+                    tool._take_function_call()
                 if tool_context:
                     tools_context += f"\n{tool_context}"
         return tools_context
