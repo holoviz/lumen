@@ -1772,8 +1772,12 @@ class SQLNode(GlobalFilterTarget, LumenNode):
         return data
 
     def __flowdash_provenance__(self) -> dict[str, str] | None:
-        """The "Ad hoc" label of the views reading the node, saying how its query computes their numbers."""
-        if not self.sql.strip():
+        """The "Ad hoc" label of a number read from the node's one-row result, saying how its query computes it."""
+        # Only a single number is labelled; on rows a chart or table reads the label is noise.
+        if not self.sql.strip() or self._error is not None or self._object is None:
+            return None
+        data = self._object.data
+        if not isinstance(data, pd.DataFrame) or len(data) != 1:
             return None
         from .save_metric import describe_query
 

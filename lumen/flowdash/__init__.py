@@ -36,7 +36,7 @@ from .nodes import (
     selection_conditions, set_row_ceiling, spec_param, table_pipeline,
     unbind_source,
 )
-from .save_metric import PROJECT_KEY, register_action
+from .save_metric import register_action
 from .table_view import TABLE_VIEW_ID, TableViewNode
 from .transforms import (
     AGGREGATE_ID, DERIVE_ID, SELECT_ID, SORT_ID, TRANSFORM_COMPONENTS,
@@ -69,7 +69,6 @@ __all__ = [
     "PIPELINE_TYPE",
     "PREVIEW_ROWS",
     "PROBE_TIMEOUT",
-    "PROJECT_KEY",
     "QUERY_TIMEOUT",
     "RESULT_LIMIT",
     "SELECT_ID",

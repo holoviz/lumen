@@ -540,8 +540,9 @@ class AggregateNode(TransformNode):
         return step, aggregate_schema(pipeline.schema, self.by, self.columns, self.method)
 
     def __flowdash_provenance__(self) -> dict[str, str] | None:
-        """The "Ad hoc" label of the views reading the node, saying how it aggregates their numbers."""
-        if not self.columns and self.method != "count":
+        """The "Ad hoc" label of a number aggregated by the node, saying how it is computed."""
+        # Grouped rows are not a number; only a single aggregate is labelled.
+        if self.by or (not self.columns and self.method != "count"):
             return None
         from .save_metric import describe_aggregate
 

@@ -8,8 +8,9 @@ dialog starts from a definition derived from the node's query
 where the query maps onto it cleanly, else the SQL form with a note on what
 to adjust. Before saving it shows what the node shows now beside what the
 metric gives (``preview_metric``) and the SQL the metric runs, so the two
-can be compared. ``save_metric`` writes the metric with ``Project.set``,
-which checks the whole section against the sources before writing the file
+can be compared. ``save_metric`` writes the metric as the admin Metrics
+section does, under the project file's lock with ``Project.set``, which
+checks the whole section against the sources before writing the file
 atomically, and refuses anyone who is no admin. ``point_at_metric`` then
 replaces the node's query by a ``Lumen/metric`` node wired the same, keeping
 its tile, as one edit that undo reverts.
@@ -48,9 +49,6 @@ from .transforms import (
 )
 
 logger = logging.getLogger(__name__)
-
-# The key of the editor context the host puts its loaded project file in, which metrics are saved to.
-PROJECT_KEY = "lumen.project"
 
 ACTION_KEY = "lumen.save_as_metric"
 
@@ -132,6 +130,9 @@ def describe_aggregate(method: str, columns: list[str], by: list[str]) -> str:
 
 # ---------------------------------------------------------------------------
 # Deriving a definition from a node
+#
+# Everything below reads and changes the dashboard through panel-flowdash's
+# NodeActionContext (``ctx``), with nodes named as in the dashboard YAML.
 
 @dataclass
 class MetricDraft:
@@ -140,9 +141,9 @@ class MetricDraft:
     name: str
     definition: dict[str, Any]
     node: str
-    """The instance id of the SQL or aggregate node the definition is derived from."""
+    """The SQL or aggregate node the definition is derived from."""
     target: str
-    """The instance id of the node the action was opened on, e.g. a KPI reading ``node``."""
+    """The node the action was opened on, e.g. a KPI reading ``node``."""
     measure: str | None = None
     """The column the target shows, e.g. the KPI's; None shows them all."""
     dimensions: list[str] = field(default_factory=list)
@@ -152,52 +153,50 @@ class MetricDraft:
     """What the target shows now: a number, or rows."""
 
 
-def _component(editor: Any, instance_id: str) -> str | None:
-    item = next((i for i in editor._tile_items if i["instance_id"] == instance_id), None)
-    return None if item is None or "placeholder" in item else editor._resolve_component_id(item["component_id"])
+def _node(ref: str) -> str:
+    return ref.rsplit(".", 1)[0]
 
 
-def _instance(editor: Any, instance_id: str) -> Any:
-    return editor._component_instances.get(instance_id)
-
-
-def _inputs(editor: Any, instance_id: str) -> list[dict[str, Any]]:
-    return [e for e in editor._dataflow_graph.edges if e["target"] == instance_id]
-
-
-def _outputs(editor: Any, instance_id: str) -> list[dict[str, Any]]:
-    return [e for e in editor._dataflow_graph.edges if e["source"] == instance_id]
+def _port(ref: str) -> str:
+    return ref.rsplit(".", 1)[1]
 
 
 def _column_of(transform: list[dict[str, Any]] | None) -> str | None:
     return next((step.get("column") for step in transform or [] if step.get("op") == "column"), None)
 
 
-def query_node(editor: Any, instance_id: str) -> tuple[str, str | None, dict[str, Any] | None] | None:
+def _output(ctx: Any, ref: str) -> Any:
+    try:
+        return ctx.output(_port(ref), _node(ref))
+    except Exception:
+        return None
+
+
+def query_node(ctx: Any, name: str | None = None) -> tuple[str, str | None] | None:
     """
     The SQL or aggregate node a node's numbers come from: the node itself,
     or the nearest one up its inputs through data nodes, with the column
-    the edge into the node picks and that edge; None when there is none or
-    a metric node comes first.
+    the edge into the node picks; None when there is none or a metric node
+    comes first.
     """
-    component = _component(editor, instance_id)
+    name = name or ctx.node
+    component = ctx.component(name)
     if component in QUERY_NODES:
-        return instance_id, None, None
+        return name, None
     if component in (METRIC_ID, None):
         return None
-    frontier: list[tuple[str, str | None, dict[str, Any] | None]] = [(instance_id, None, None)]
+    frontier: list[tuple[str, str | None]] = [(name, None)]
     for _ in range(DEPTH):
         nxt = []
-        for node, column, first in frontier:
-            for edge in _inputs(editor, node):
-                upstream = edge["source"]
-                kind = _component(editor, upstream)
-                picked = column or _column_of(edge.get("transform"))
-                entry = first or edge
+        for node, column in frontier:
+            for edge in ctx.inputs(node):
+                upstream = _node(edge["from"])
+                kind = ctx.component(upstream)
+                picked = column or _column_of(edge["transform"])
                 if kind in QUERY_NODES:
-                    return upstream, picked, entry
+                    return upstream, picked
                 if kind == DATA_ID:
-                    nxt.append((upstream, picked, entry))
+                    nxt.append((upstream, picked))
         frontier = nxt
     return None
 
@@ -208,52 +207,61 @@ def _ref_of(source: Any, context: Mapping[str, Any]) -> str | None:
     return next((ref for ref, s in host_sources(context).items() if s is source), None)
 
 
-def _base(editor: Any, instance_id: str, context: Mapping[str, Any]) -> tuple[str, str | None, str, list[str]]:
+def _dialect(source: Any) -> str | None:
+    dialect = getattr(source, "dialect", None)
+    return None if dialect in (None, "any") else dialect
+
+
+def _statement(ctx: Any, name: str) -> tuple[BaseSQLSource, str]:
+    """The root source of a SQL node and its query as one statement on it, see ``results.expand``."""
+    from .results import expand, merge
+
+    sql = ctx.config(name).get("sql") or ""
+    inputs = [_output(ctx, e["from"]) for e in ctx.inputs(name) if _port(e["to"]) == "source"]
+    try:
+        source = merge(inputs[0] if len(inputs) == 1 else inputs)
+    except ValueError:
+        source = None
+    if not isinstance(source, BaseSQLSource) or not sql.strip():
+        raise ValueError("the SQL node has no source or query yet")
+    return expand(sql, source)
+
+
+def _base(ctx: Any, name: str) -> tuple[str, str | None, str, list[str]]:
     """
     What a pipeline input reads, as ``(ref, table, sql, notes)``: the source
     ref, the table when it is a plain table node, else None, and the full
     query on the source. Raises ``ValueError`` for an input a metric cannot
-    say, e.g. a filter fed by a control.
+    say.
     """
-    from .nodes import FilterNode, SQLNode, TableNode
+    from .contracts import FILTER_ID, TABLE_ID
+    from .nodes import lookup_source
 
-    node = _instance(editor, instance_id)
-    if isinstance(node, TableNode):
-        source = node.source if node.source is not None else node._read_source()
-        ref = _ref_of(source, context)
-        if ref is None or not node.table:
+    component, config = ctx.component(name), ctx.config(name)
+    if component == TABLE_ID:
+        wired = [_output(ctx, e["from"]) for e in ctx.inputs(name) if _port(e["to"]) == "source"]
+        source = wired[0] if wired else lookup_source(config.get("ref") or "", ctx.context)
+        ref, table = _ref_of(source, ctx.context), config.get("table")
+        if ref is None or not table:
             raise ValueError("its table node reads no source the app serves")
-        dialect = _dialect(source)
-        sql = exp.select("*").from_(exp.Table(this=exp.Identifier(this=node.table, quoted=True))).sql(dialect=dialect)
-        return ref, node.table, sql, []
-    if isinstance(node, SQLNode):
-        root, statement = _statement(node)
-        ref = _ref_of(root, context)
+        sql = exp.select("*").from_(exp.Table(this=exp.Identifier(this=table, quoted=True))).sql(
+            dialect=_dialect(source))
+        return ref, table, sql, []
+    if component == SQL_ID:
+        root, statement = _statement(ctx, name)
+        ref = _ref_of(root, ctx.context)
         if ref is None:
             raise ValueError("its SQL node reads no source the app serves")
         return ref, None, statement, []
-    if isinstance(node, FilterNode):
-        upstream = next((e["source"] for e in _inputs(editor, instance_id) if e["target_port"] == "pipeline"), None)
+    if component == FILTER_ID:
+        upstream = next((_node(e["from"]) for e in ctx.inputs(name) if _port(e["to"]) == "pipeline"), None)
         if upstream is None:
             raise ValueError("its filter node has no input")
-        ref, table, sql, notes = _base(editor, upstream, context)
-        notes = [*notes, f"The filter on {node.field!r} is left out; add it as a parameter or a dimension to filter by."]
-        return ref, table, sql, notes
-    raise ValueError(f"it reads a {type(node).__name__}, which a metric cannot say")
-
-
-def _statement(node: Any) -> tuple[BaseSQLSource, str]:
-    from .results import expand
-
-    source = node._input
-    if not isinstance(source, BaseSQLSource) or not node.sql.strip():
-        raise ValueError("the SQL node has no source or query yet")
-    return expand(node.sql, source)
-
-
-def _dialect(source: Any) -> str | None:
-    dialect = getattr(source, "dialect", None)
-    return None if dialect in (None, "any") else dialect
+        ref, table, sql, notes = _base(ctx, upstream)
+        field_ = config.get("field")
+        return ref, table, sql, [*notes, f"The filter on {field_!r} is left out; add it as a parameter or a "
+                                         "dimension to filter by."]
+    raise ValueError(f"it reads a {component} node, which a metric cannot say")
 
 
 def structured_form(sql: str, dialect: str | None = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -315,59 +323,55 @@ def _slug(text: str) -> str:
     return slug[:64]
 
 
-def _title(editor: Any, instance_id: str) -> str:
-    state = editor._dataflow_graph.get_config_state(instance_id)
+def _title(ctx: Any, name: str) -> str:
+    config = ctx.config(name)
     for key in ("label", "title"):
-        value = getattr(state, key, None) if state is not None and key in state.param else None
-        if isinstance(value, str) and value.strip():
-            return value
-    return editor._node_name(instance_id)
+        if isinstance(config.get(key), str) and config[key].strip():
+            return config[key]
+    return name
 
 
-def current_value(editor: Any, instance_id: str) -> Any:
+def current_value(ctx: Any, name: str | None = None) -> Any:
     """What a node shows now: a KPI's number, a SQL node's one value, or its rows."""
-    from .nodes import SQLNode, single_number
+    from .nodes import single_number
 
-    state = editor._dataflow_graph.get_state(instance_id)
-    if _component(editor, instance_id) == KPI_ID and state is not None and "value" in state.param:
-        return state.value
-    node = _instance(editor, instance_id)
-    if isinstance(node, SQLNode):
-        data = node.data()
+    name = name or ctx.node
+    component = ctx.component(name)
+    if component == KPI_ID:
+        return ctx.input_value("value", name)
+    if component == SQL_ID:
+        data = _output(ctx, f"{name}.data")
         if isinstance(data, pd.DataFrame):
             try:
                 return single_number(data)
             except ValueError:
                 return data
         return None
-    result = getattr(node, "result", None)
-    pipeline = result() if callable(result) else None
+    pipeline = _output(ctx, f"{name}.result")
     data = getattr(pipeline, "data", None)
     return data if isinstance(data, pd.DataFrame) else None
 
 
-def derive_draft(editor: Any, instance_id: str) -> MetricDraft:
+def derive_draft(ctx: Any) -> MetricDraft:
     """
-    A metric definition derived from the query behind a node, see the
-    module docstring. Raises ``ValueError`` when there is no query to
-    derive one from.
+    A metric definition derived from the query behind the context's node,
+    see the module docstring. Raises ``ValueError`` when there is no query
+    to derive one from.
     """
-    from .nodes import SQLNode
-    from .transforms import AggregateNode
-
-    found = query_node(editor, instance_id)
+    found = query_node(ctx)
     if found is None:
         raise ValueError("Its numbers do not come from a Lumen SQL or aggregate node.")
-    node_id, column, _ = found
-    context = editor.context
-    node = _instance(editor, node_id)
+    node, column = found
     notes: list[str] = []
     definition: dict[str, Any]
     dimensions: list[str] = []
     structured = False
-    if isinstance(node, SQLNode):
-        root, statement = _statement(node)
-        ref = _ref_of(root, context)
+    if ctx.component(node) == SQL_ID:
+        try:
+            root, statement = _statement(ctx, node)
+        except ValueError as exc:
+            raise ValueError(f"Its SQL node cannot be saved as a metric: {exc}.") from None
+        ref = _ref_of(root, ctx.context)
         if ref is None:
             raise ValueError("Its SQL node reads no source the app serves.")
         shape, why = structured_form(statement, _dialect(root))
@@ -378,41 +382,34 @@ def derive_draft(editor: Any, instance_id: str) -> MetricDraft:
             definition = {"source": ref, "sql": statement}
             notes.append(f"The query does not map to measures and dimensions: {why}. It is kept as a SQL "
                          "metric; adjust its query here, e.g. to count each entity once.")
-    elif isinstance(node, AggregateNode):
-        upstream = next((e["source"] for e in _inputs(editor, node_id) if e["target_port"] == "pipeline"), None)
+    else:
+        config = ctx.config(node)
+        upstream = next((_node(e["from"]) for e in ctx.inputs(node) if _port(e["to"]) == "pipeline"), None)
         if upstream is None:
             raise ValueError("Its aggregate node has no input.")
         try:
-            ref, table, sql, notes = _base(editor, upstream, context)
+            ref, table, sql, notes = _base(ctx, upstream)
         except ValueError as exc:
             raise ValueError(f"Its aggregate node cannot be saved as a metric: {exc}.") from None
-        function = METHODS[node.method]
-        columns = list(node.columns) or [COUNT_COLUMN]
-        dimensions = list(node.by)
+        method, by, columns = config.get("method") or "sum", list(config.get("by") or []), list(config.get("columns") or [])
+        dimensions = by
         if table is not None:
             measures = {
-                c: "COUNT(*)" if not node.columns else exp.func(function, exp.column(c, quoted=True)).sql()
-                for c in columns
+                c: "COUNT(*)" if not columns else exp.func(METHODS[method], exp.column(c, quoted=True)).sql()
+                for c in columns or [COUNT_COLUMN]
             }
             definition = {"source": ref, "table": table, "measures": measures}
-            if dimensions:
-                definition["dimensions"] = {d: d for d in dimensions}
+            if by:
+                definition["dimensions"] = {d: d for d in by}
             structured = True
         else:
-            dialect = _dialect(getattr(_instance(editor, upstream), "_input", None))
-            definition = {
-                "source": ref,
-                "sql": SQLAggregate(by=node.by, columns=node.columns, method=node.method, write=dialect).apply(sql),
-            }
+            definition = {"source": ref, "sql": SQLAggregate(by=by, columns=columns, method=method).apply(sql)}
             notes.append("It aggregates the result of a SQL node, so it is kept as a SQL metric over that query.")
-    else:
-        raise ValueError("Its numbers do not come from a Lumen SQL or aggregate node.")
     if structured and column is None and len(definition.get("measures", {})) == 1:
         column = next(iter(definition["measures"]))
     return MetricDraft(
-        name=_slug(_title(editor, instance_id)), definition=definition, node=node_id, target=instance_id,
-        measure=column, dimensions=dimensions, structured=structured, notes=notes,
-        current=current_value(editor, instance_id),
+        name=_slug(_title(ctx, ctx.node)), definition=definition, node=node, target=ctx.node,
+        measure=column, dimensions=dimensions, structured=structured, notes=notes, current=current_value(ctx),
     )
 
 
@@ -518,62 +515,57 @@ def agree(current: Any, metric: Any) -> bool | None:
     return abs(current - metric) / scale < 1e-6
 
 
-def project_of(editor: Any) -> Project | None:
-    """The project file metrics are saved to: the context's, or the one a live metric set reads."""
-    project = editor.context.get(PROJECT_KEY) or getattr(editor.context.get(METRICS_KEY), "project", None)
+def project_of(ctx: Any) -> Project | None:
+    """The project file metrics are saved to: the app's, or the one the app's metrics are read from."""
+    project = ctx.project or getattr(ctx.context.get(METRICS_KEY), "project", None)
     return project if isinstance(project, Project) and project.path is not None else None
 
 
-def save_metric(editor: Any, name: str, definition: Mapping[str, Any], *, replace: bool = False) -> MetricSet:
-    """
-    Write the metric ``name`` of ``definition`` to the project file's
-    ``metrics:`` section with ``Project.set`` and return the app's metrics,
-    which every session's metric nodes then read.
+class _Admin:
+    """The admin check ``metrics_admin.save_metric`` asks before writing, answered by the node action's context."""
 
-    ``Project.set`` loads the section with the new metric, checking every
-    metric against the sources, before it writes the file atomically; any
-    problem raises ``ProjectError`` and leaves the file as it was.
+    def __init__(self, ctx: Any):
+        self._ctx = ctx
+        self._identity = None
+
+    def _still_admin(self) -> bool:
+        return self._ctx.is_admin()
+
+
+def save_metric(ctx: Any, name: str, definition: Mapping[str, Any]) -> None:
+    """
+    Write the metric ``name`` of ``definition`` to the project file, as the
+    admin Metrics section saves one (``metrics_admin.save_metric``): under
+    the project file's lock, keeping every other metric as the file has it
+    now, checked against the sources before the file is written atomically,
+    and only for someone still admin. Its SQL is written as a block.
 
     Raises
     ------
     PermissionError
-        Unless the editor's session administers the project.
+        Unless the person is still an admin of the project.
     ValueError
-        Without a project file, or for a name taken while ``replace`` is off.
+        Without a project file.
+    ProjectError
+        With the problems that stopped it, e.g. a taken name or a column the table lacks.
     """
-    is_admin = getattr(editor, "is_admin", None)
-    if is_admin is None or not is_admin():
-        raise PermissionError("Only an admin of the project may save a metric.")
-    project = project_of(editor)
+    from . import metrics_admin
+
+    project = project_of(ctx)
     if project is None:
-        raise ValueError("The app has no project file to save metrics to; serve it with --project flowdash.yaml.")
-    check_definition(name, definition, editor.context)
-    section = dict(project.raw(SECTION) or {})
-    if name in section and not replace:
-        raise ValueError(f"The project already has a metric {name!r}; pick another name.")
-    section[name] = dict(definition)
-    project.set(SECTION, section)
-    metrics = read_metrics(project)
-    shared = editor.context.get(METRICS_KEY)
-    if getattr(shared, "project", None) is project:
-        # A metric set that reads the project file as it is now has the metric already.
-        return shared
-    if isinstance(shared, MetricSet):
-        shared.replace_with(metrics)
-    else:
-        editor.context[METRICS_KEY] = metrics
-    return editor.context[METRICS_KEY]
+        raise ValueError("The app has no project file to save metrics to.")
+    problems = metrics_admin.save_metric(project, name, metrics_admin._literal(dict(definition)), app=_Admin(ctx))
+    if problems and problems[0].message == metrics_admin.NOT_ADMIN:
+        raise PermissionError("Only an admin of the project may save a metric.")
+    if problems:
+        raise ProjectError(problems)
 
 
 # ---------------------------------------------------------------------------
 # Pointing the node at the metric
 
-def _taken(editor: Any) -> set[str]:
-    return {editor._node_name(i["instance_id"]) for i in editor._tile_items}
-
-
-def _free_name(editor: Any, stem: str) -> str:
-    taken = _taken(editor)
+def _free_name(ctx: Any, stem: str) -> str:
+    taken = set(ctx.nodes())
     name, n = stem[:60], 2
     while name in taken:
         name, n = f"{stem[:56]}_{n}", n + 1
@@ -600,111 +592,68 @@ def _reading(transform: list[dict[str, Any]] | None, column: str | None) -> list
     return steps
 
 
-def _tile_slot(editor: Any, instance_id: str) -> dict[str, Any] | None:
-    from panel_flowdash.ui import tile_layout
-
-    item = next((i for i in editor._tile_items if i["instance_id"] == instance_id), None)
-    area = tile_layout.area_of(editor, item) if item is not None else None
-    entry = tile_layout.tile_entry(editor, instance_id)
-    if area is None or entry.get("visible") is False:
-        return None
-    ids = [i["instance_id"] for i in tile_layout.area_items(editor, area)]
-    return {"area": area, "index": ids.index(instance_id), "width": entry.get("width"), "height": entry.get("height")}
-
-
-def point_at_metric(editor: Any, draft: MetricDraft, metric_name: str, column: str | None = None) -> str:
-    """
-    Replace the query ``draft`` was derived from by a ``Lumen/metric``
-    node of ``metric_name``, wired to what it fed, and return the new
-    node's name. A view the action was opened on, e.g. a KPI, keeps its
-    tile and reads the metric's ``column``; a SQL or aggregate node opened
-    on itself gives its tile to the metric node. The helper nodes the query
-    went through are removed when nothing else reads them. One edit, which
-    undo reverts.
-
-    Raises ``ValueError`` when the metric is unknown or a node it fed takes
-    an output a metric node has none of, e.g. a SQL node's ``result``.
-    """
-    from panel_flowdash.agent import DashboardOps, OperationError
-
-    from .nodes import host_metrics
-
-    metric = host_metrics(editor.context).get(metric_name)
-    if metric is None:
-        raise ValueError(f"No metric {metric_name!r}.")
-    ops = DashboardOps(editor)
-    name_of = editor._node_name
-    node, target = draft.node, draft.target
-    if target == node:
-        feeding = _outputs(editor, node)
-    else:
-        feeding = [e for e in _inputs(editor, target) if _feeds_from(editor, e["source"], node)]
-    for edge in feeding:
-        if edge["source_port"] == "result" and _component(editor, edge["source"]) == SQL_ID:
-            raise ValueError(f"{name_of(edge['target'])!r} reads the SQL node as a source, which a metric node is not.")
-    slot = _tile_slot(editor, node) if target == node else None
-    chain = _chain(editor, target, node) if target != node else [node]
-    name = _free_name(editor, f"{metric_name}_metric")
-    ops.add_node(METRIC_ID, _metric_config(metric, draft, column), name=name)
-    try:
-        for edge in feeding:
-            source = f"{name_of(edge['source'])}.{edge['source_port']}"
-            to = f"{name_of(edge['target'])}.{edge['target_port']}"
-            ops.disconnect(source, to)
-            if edge["source_port"] in ("value",) or edge["target_port"] == "value":
-                ops.connect(f"{name}.data", to, _reading(edge.get("transform"), column))
-            elif edge["source_port"] == "data":
-                ops.connect(f"{name}.data", to, edge.get("transform") or None)
-            else:
-                ops.connect(f"{name}.pipeline", to, edge.get("transform") or None)
-        if slot is not None:
-            if slot["area"] == "grid":
-                ops.place_tile(name, index=slot["index"], width=slot["width"], height=slot["height"])
-            else:
-                ops.place_tile(name, area=slot["area"], index=slot["index"])
-        else:
-            ops.place_tile(name, visible=False)
-        for instance_id in chain:
-            if instance_id in editor._component_instances and not _outputs(editor, instance_id) and (
-                    instance_id == node or _tile_slot(editor, instance_id) is None):
-                editor.remove_component(instance_id)
-    except (OperationError, ValueError, PermissionError):
-        editor.undo()
-        raise
-    return name
-
-
-def _feeds_from(editor: Any, start: str, node: str) -> bool:
-    """Whether ``start`` is ``node`` or reads it through data nodes."""
-    frontier = [start]
-    for _ in range(DEPTH):
-        if node in frontier:
-            return True
-        frontier = [e["source"] for f in frontier for e in _inputs(editor, f) if _component(editor, f) == DATA_ID]
-    return node in frontier
-
-
-def _chain(editor: Any, target: str, node: str) -> list[str]:
-    """The nodes from ``target``'s input up to ``node``, nearest first: the helpers a KPI's number goes through."""
-    chain, frontier = [], [e["source"] for e in _inputs(editor, target)]
+def _chain(ctx: Any, target: str, node: str) -> list[str]:
+    """The nodes from ``target``'s inputs up to ``node``, nearest first: the helpers a KPI's number goes through."""
+    chain, frontier = [], [_node(e["from"]) for e in ctx.inputs(target)]
     for _ in range(DEPTH):
         nxt = []
-        for f in frontier:
-            if f == node:
-                chain.append(f)
-            elif _component(editor, f) == DATA_ID and _feeds_from(editor, f, node):
-                chain.append(f)
-                nxt += [e["source"] for e in _inputs(editor, f)]
+        for upstream in frontier:
+            if upstream == node:
+                chain.append(upstream)
+            elif ctx.component(upstream) == DATA_ID and (query_node(ctx, upstream) or (None,))[0] == node:
+                chain.append(upstream)
+                nxt += [_node(e["from"]) for e in ctx.inputs(upstream)]
         frontier = nxt
     return chain
+
+
+def point_at_metric(ctx: Any, draft: MetricDraft, metric_name: str, column: str | None = None) -> str:
+    """
+    Replace the query ``draft`` was derived from by a ``Lumen/metric``
+    node of ``metric_name`` and return its name. The node nearest the
+    target on the way to the query (the query itself, or the data node a
+    KPI reads) is replaced, wired to everything it fed, in its tile slot; a
+    KPI then reads the metric's ``column``. The helper nodes left reading
+    nothing are removed. One step of the edit history, which one undo
+    reverts; the metric stays saved.
+
+    Raises ``ValueError`` when the metric is unknown or a node reads the
+    SQL node as a source, which a metric node is not.
+    """
+    from .nodes import host_metrics
+
+    metric = host_metrics(ctx.context).get(metric_name)
+    if metric is None:
+        raise ValueError(f"No metric {metric_name!r}.")
+    chain = [draft.node] if draft.target == draft.node else _chain(ctx, draft.target, draft.node)
+    if not chain:
+        raise ValueError(f"{draft.target!r} no longer reads {draft.node!r}.")
+
+    def rewire(edge: dict[str, Any]) -> tuple[str, list[dict[str, Any]] | None]:
+        port = _port(edge["from"])
+        if port == "result" and ctx.component(_node(edge["from"])) == SQL_ID:
+            raise ValueError(f"{_node(edge['to'])!r} reads the SQL node as a source, which a metric node is not.")
+        if port == "value" or _column_of(edge["transform"]) is not None:
+            return "data", _reading(edge["transform"], column)
+        if port == "data":
+            return "data", edge["transform"]
+        return "pipeline", edge["transform"]
+
+    with ctx.edit():
+        name = ctx.replace_node(chain[0], METRIC_ID, _metric_config(metric, draft, column),
+                                new_name=_free_name(ctx, f"{metric_name}_metric"), rewire=rewire)
+        for helper in chain[1:]:
+            if helper in ctx.nodes() and not ctx.outputs(helper) and ctx.tile(helper) is None:
+                ctx.ops.remove_node(helper)
+    return name
 
 
 # ---------------------------------------------------------------------------
 # The node action and its dialog
 
-def can_save_from(editor: Any, instance_id: str) -> bool:
+def can_save_from(ctx: Any) -> bool:
     """Whether "Save as metric…" applies to a node: its numbers come from a SQL or aggregate node."""
-    return project_of(editor) is not None and query_node(editor, instance_id) is not None
+    return project_of(ctx) is not None and query_node(ctx) is not None
 
 
 def _shown(value: Any) -> str:
@@ -732,13 +681,13 @@ class SaveMetricDialog(Viewer):
 
     definition = param.String(default="", doc="The metric's definition as YAML, without its description.")
 
-    def __init__(self, editor: Any, draft: MetricDraft, **params):
+    def __init__(self, ctx: Any, draft: MetricDraft, **params):
         import panel_material_ui as pmui
 
         definition = dict(draft.definition)
         super().__init__(metric_name=draft.name, description=definition.pop("description", ""),
                          definition=yaml.safe_dump(definition, sort_keys=False), **params)
-        self.editor, self.draft = editor, draft
+        self.ctx, self.draft = ctx, draft
         self.preview: MetricPreview | None = None
         self.saved: str | None = None
         self._name = pmui.TextInput.from_param(
@@ -811,7 +760,7 @@ class SaveMetricDialog(Viewer):
             self._fail(str(exc))
             return MetricPreview(problems=[str(exc)])
         preview = self.preview = preview_metric(
-            self.metric_name, definition, self.editor.context, self.draft.measure, self.draft.dimensions)
+            self.metric_name, definition, self.ctx.context, self.draft.measure, self.draft.dimensions)
         if not preview.ok:
             self._fail(" ".join(preview.problems))
             return preview
@@ -836,7 +785,7 @@ class SaveMetricDialog(Viewer):
 
     def save(self) -> bool:
         try:
-            save_metric(self.editor, self.metric_name, self._definition())
+            save_metric(self.ctx, self.metric_name, self._definition())
         except PermissionError as exc:
             self._fail(str(exc))
             return False
@@ -853,7 +802,7 @@ class SaveMetricDialog(Viewer):
         self._save.visible = False
         self._preview_button.visible = False
         self._close.label = "Done"
-        self._point.visible = not self.editor.read_only
+        self._point.visible = self.ctx.mode == "edit"
         return True
 
     def point(self) -> str | None:
@@ -861,18 +810,19 @@ class SaveMetricDialog(Viewer):
             return None
         column = self.preview.column if self.preview is not None else self.draft.measure
         try:
-            name = point_at_metric(self.editor, self.draft, self.saved, column)
-        except (ValueError, PermissionError) as exc:
+            name = point_at_metric(self.ctx, self.draft, self.saved, column)
+        except Exception as exc:
             self._fail(scrub(exc))
             return None
         self.close()
-        _notify(self.editor, f"The node now reads the metric {self.saved} ({name}); undo reverts it.")
+        self.ctx.notify("success", (
+            f"{self.draft.target} now reads the metric {self.saved}. Undo points it back as before; "
+            f"the metric {self.saved} stays saved in Admin, Metrics."
+        ))
         return name
 
     def close(self):
-        from panel_flowdash.util import close_dialog
-
-        close_dialog()
+        self.ctx.close_dialog()
 
     def __panel__(self):
         return self._layout
@@ -902,35 +852,28 @@ def _dark() -> bool:
         return False
 
 
-def _notify(editor: Any, message: str) -> None:
+def open_save_dialog(ctx: Any) -> SaveMetricDialog | None:
+    """Open "Save as metric…" for the context's node, or say why its query cannot be saved."""
     try:
-        editor._notify("success", message)
-    except Exception:
-        logger.info(message)
-
-
-def open_save_dialog(editor: Any, instance_id: str) -> SaveMetricDialog | None:
-    """Open "Save as metric…" for a node, or say why its query cannot be saved."""
-    from panel_flowdash.util import open_dialog
-
-    try:
-        draft = derive_draft(editor, instance_id)
+        draft = derive_draft(ctx)
     except ValueError as exc:
-        editor._notify("error", f"Cannot save this as a metric: {exc}")
+        ctx.notify("error", f"Cannot save this as a metric: {exc}")
         return None
-    dialog = SaveMetricDialog(editor, draft)
-    open_dialog("Save as metric", dialog, width="md", full_width=True)
+    dialog = SaveMetricDialog(ctx, draft)
+    ctx.open_dialog("Save as metric", dialog, width="md")
     return dialog
 
 
 def register_action() -> None:
-    """Offer "Save as metric…" in FlowDash's node menus, to admins only."""
+    """Offer "Save as metric…" in FlowDash's node menus, to admins only, in edit mode."""
     try:
         from panel_flowdash.node_actions import (
-            NodeAction, register_node_action,
+            NodeAction, NodeActionContext, register_node_action,
         )
     except ImportError:
         # A panel-flowdash without node actions offers no menu entry.
+        return
+    if not hasattr(NodeActionContext, "replace_node"):
         return
     register_node_action(NodeAction(
         ACTION_KEY, "Save as metric…", run=open_save_dialog, applies=can_save_from, icon="functions",

@@ -6,7 +6,9 @@ import pytest
 
 pytest.importorskip("duckdb")
 pytest.importorskip("pytest_playwright")
-pytest.importorskip("panel_flowdash.node_actions")
+node_actions = pytest.importorskip("panel_flowdash.node_actions")
+if not hasattr(node_actions, "NodeActionContext"):
+    pytest.skip("panel-flowdash without node action contexts", allow_module_level=True)
 
 import yaml
 
@@ -15,10 +17,8 @@ from panel_flowdash import FlowDash
 from panel_flowdash.agent import DashboardOps
 from playwright.sync_api import expect
 
-from lumen.flowdash import (
-    COMPONENTS, METRICS_KEY, PROJECT_KEY, bind_source,
-)
-from lumen.flowdash.metrics import read_metrics
+from lumen.flowdash import COMPONENTS, METRICS_KEY, bind_source
+from lumen.flowdash.metrics import ProjectMetrics
 from lumen.flowdash.project import load_project
 from lumen.sources.duckdb import DuckDBSource
 
@@ -49,11 +49,11 @@ def _serve(page, tmp_path, admin: bool):
     built = {}
 
     def app():
-        editor = FlowDash(components=COMPONENTS, notifications=False, authorize_admin=lambda: admin)
+        editor = FlowDash(components=COMPONENTS, notifications=False, authorize_admin=lambda fresh=False: admin)
         ref = bind_source(editor, DuckDBSource(uri=":memory:", tables={"turbines": turbines_sql()}))
         project = load_project(project_file, editor.context)
-        editor.context[METRICS_KEY] = read_metrics(project)
-        editor.context[PROJECT_KEY] = project
+        editor.context[METRICS_KEY] = ProjectMetrics(project)
+        editor.project = project
         editor.new_dashboard("Wind")
         ops = DashboardOps(editor)
         ops.ref = ref

@@ -406,15 +406,6 @@ class MetricSet(Mapping[str, Metric]):
     def problem(self, path: tuple, message: str) -> Problem:
         return Problem(message) if self.section is None else self.section.problem(path, message)
 
-    def replace_with(self, other: MetricSet) -> None:
-        """
-        Take the metrics of ``other`` in place, e.g. after a metric was saved
-        to the project file, so the editors and sessions that share this set
-        read them at once.
-        """
-        self._metrics = dict(other._metrics)
-        self.section = other.section
-
 
 @functools.lru_cache(maxsize=512)
 def _parse(text: str, dialect: str | None) -> exp.Expression:
