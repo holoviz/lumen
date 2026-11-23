@@ -511,10 +511,8 @@ def _pipeline_node(**options: Any):
 @_pipeline_node(
     title="Lumen Aggregate", icon="functions",
     description=(
-        "Groups the rows of a Lumen pipeline by the columns in by and aggregates the columns in "
-        "columns with one method (count, sum, mean, min or max), each keeping its name. Without "
-        "by the whole table is one row; a count without columns counts rows into a count column. "
-        "On a table read from a SQL source the source runs it in its query."
+        "Groups by `by` and aggregates `columns` with one method (count, sum, mean, min, max), keeping "
+        "names; no by gives one row, a count without columns counts rows. Runs in a SQL source's query."
     ),
     config=["by", "columns", "method"],
     check_config=check_aggregate_config,
@@ -545,9 +543,7 @@ class AggregateNode(TransformNode):
 @_pipeline_node(
     title="Lumen Sort", icon="sort",
     description=(
-        "Sorts the rows of a Lumen pipeline by the columns in by, ascending or descending, and "
-        "keeps the first limit rows if a limit is set, e.g. for a top ten. On a table read from "
-        "a SQL source the source runs it in its query."
+        "Sorts by `by` and keeps the first limit rows, e.g. a top ten. Runs in a SQL source's query."
     ),
     config=["by", "descending", "limit"],
     check_config=check_sort_config,
@@ -581,8 +577,7 @@ class SortNode(TransformNode):
 @_pipeline_node(
     title="Lumen Select", icon="view_column",
     description=(
-        "Keeps the columns of a Lumen pipeline named in columns, in that order. On a table read "
-        "from a SQL source the source only returns those columns."
+        "Keeps the columns named in columns, in that order."
     ),
     config=["columns"],
     check_config=check_select_config,
@@ -611,10 +606,8 @@ class SelectNode(TransformNode):
 @_pipeline_node(
     title="Lumen Derived column", icon="calculate",
     description=(
-        "Adds a column, named by column, computed per row by a SQL expression over the columns of "
-        "a Lumen pipeline, e.g. \"amount\" / 1000 or CASE WHEN \"amount\" > 10 THEN 'high' ELSE 'low' END, or "
-        "replaces the column of that name. The expression is in the source's SQL dialect, or "
-        "DuckDB's for a source that does not run SQL; it reads no tables and aggregates nothing."
+        "Adds or replaces `column`, computed per row by a SQL expression in the source's dialect "
+        "(DuckDB's for non-SQL sources), e.g. \"amount\" / 1000 or CASE WHEN; no tables or aggregates."
     ),
     config=["column", "expression"],
     check_config=check_derive_config,

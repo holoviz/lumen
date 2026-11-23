@@ -837,6 +837,20 @@ async def test_a_source_node_named_like_another_apps_source_does_not_hide_it(ctx
     assert _graph.config_of(empty.ops, "energy_source") == {"ref": "energy"}
 
 
+
+def test_the_component_catalogue_fits_flowdash_budget_with_room_to_spare():
+    from panel_flowdash.agent.assistant import CATALOGUE_LIMIT, catalogue
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(lambda m, i: ModelResponse([TextPart("")])))
+    try:
+        text = catalogue(session.ops)
+    finally:
+        session.close()
+    # Past the limit FlowDash lists only ids and titles, so leave room for a few more components.
+    assert "picked by the source's ref" in text
+    assert len(text) <= CATALOGUE_LIMIT - 1500, len(text)
+
+
 async def test_the_dashboard_assistant_reads_a_table_with_one_node():
     seen = {}
     responses = [

@@ -1473,9 +1473,8 @@ def _ref_source(ref: str, context: Mapping[str, Any]) -> Source | None:
 @register(
     component=True, page=False, title="Lumen Source", icon="storage",
     description=(
-        "A Lumen data source the app provides, named by its ref, for SQL nodes and for several "
-        "table nodes that share one connection. A table node names a source by ref itself, so "
-        "reading one table needs no source node."
+        "An app data source, named by its ref, for SQL nodes or tables sharing one connection; a table "
+        "node can name the ref itself."
     ),
     config=["ref"],
     check_config=check_source_config,
@@ -1586,12 +1585,10 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
 @register(
     component=True, page=False, title="Lumen SQL", icon="code",
     description=(
-        "A read-only SQL query run by the source's engine. Outputs a Lumen pipeline "
-        "over the result, the result as a DataFrame, as `result` the source with the "
-        "result added as a table named by `table`, which another SQL node can query, and, for a "
-        "result of one row and one numeric column such as SELECT SUM(x) FROM t, that cell as a "
-        "number for a KPI; for any other result the value output is empty. Connect several "
-        "results of one source to `source` to join them."
+        "A read-only SQL query run by the source. Outputs the result as a pipeline, as a DataFrame, as "
+        "`result` (the source plus the result as table `table`, for another SQL node) and, for one row "
+        "of one number such as SELECT SUM(x) FROM t, as `value` for a KPI. Connect several results of "
+        "one source to `source` to join them."
     ),
     config=["sql", "table", "limit"],
     check_config=check_sql_config,
@@ -1796,11 +1793,9 @@ class PipelineNode(GlobalFilterTarget, LumenNode):
 @register(
     component=True, page=False, title="Lumen Table", icon="table_chart",
     description=(
-        "A table of a source the app provides, picked by the source's ref and the table's name. "
-        "Outputs a Lumen pipeline that fetches nothing by itself: filter nodes and the row limit "
-        "become part of the source's query. Connect a Lumen Source node to the source input "
-        "instead of setting ref to share one source node between several tables; a connected "
-        "source is read instead of ref."
+        "A table of an app source, picked by the source's ref and the table's name. Its pipeline "
+        "fetches nothing itself: filters and the limit join the source's query. A connected source node "
+        "is read instead of ref, to share one."
     ),
     config=["ref", "table", "limit"],
     check_config=check_table_config,
@@ -1859,12 +1854,9 @@ class TableNode(PipelineNode):
 @register(
     component=True, page=False, title="Lumen Filter", icon="filter_alt",
     description=(
-        "Keeps the rows of a Lumen pipeline whose field matches the value input: equal to a "
-        "single value, one of a list, or within a (start, end) range of numbers or dates. An "
-        "empty value keeps every row, and a value of another shape is refused. The selection "
-        "input takes a chart's selection output and keeps the rows matching it; the field is "
-        "then optional. On a table read from a SQL source the source applies the filter in its "
-        "query, before the table's limit."
+        "Keeps a pipeline's rows whose field matches value: one value, a list or a (start, end) range; "
+        "empty keeps all. Or the selection input takes a chart's selection, field optional. A SQL "
+        "source filters in its query, before the limit."
     ),
     config=["field"],
     check_config=check_filter_config,
@@ -2069,11 +2061,9 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
 @register(
     component=True, page=False, title="Lumen Metric", icon="functions", tags=["transform"],
     description=(
-        "A metric the app defines: a named, described query over one of its sources. Pick the "
-        "measures and the dimensions to group by, and a grain for a time dimension; the parameters "
-        "input takes a mapping of parameter values, e.g. {\"n\": 5}, and of dimensions to filter "
-        "by. Outputs a Lumen pipeline that fetches nothing by itself: a filter node downstream "
-        "filters the rows before they are aggregated."
+        "An app metric, a named query over a source: pick measures, dimensions and a time grain; "
+        "parameters takes parameter values and dimension filters, e.g. {\"n\": 5}. A filter downstream "
+        "applies before aggregation."
     ),
     config=["metric", "measures", "dimensions", "grain", "order_by", "limit"],
     check_config=check_metric_config,
@@ -2174,9 +2164,8 @@ def metric_parameter_names(metrics: Mapping[str, Metric]) -> list[str]:
 @register(
     component=True, page=False, title="Lumen Parameter", icon="tune", tags=["transform"],
     description=(
-        "Names a value as a parameter of a metric, e.g. a slider's value as the metric's n: wire the "
-        "value in and the parameters output to a Lumen Metric node's parameters input, which takes "
-        "several. An empty value takes the metric's default."
+        "Names a value as a metric parameter, e.g. a slider's as n, for Lumen Metric parameters inputs; "
+        "empty takes the default."
     ),
     config=["parameter"],
     check_config=check_parameter_config,
@@ -2216,8 +2205,7 @@ class ParameterNode(LumenNode):
 @register(
     component=True, page=False, title="Lumen Data", icon="table_rows",
     description=(
-        "Fetches the rows of a Lumen pipeline, at most the host's row ceiling, and outputs "
-        "them as a DataFrame for components that take one."
+        "A pipeline's rows as a DataFrame, up to the host's row ceiling."
     ),
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
     provides=[{"key": "data", "type": "DataFrame"}],
@@ -2661,10 +2649,9 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 @register_view(
     title="Lumen Vega-Lite view", icon="bar_chart",
     description=(
-        "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
-        "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
-        "selection output gives what is selected: wire it to a filter's selection input that "
-        "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
+        "A Vega-Lite chart of a pipeline, its spec naming columns, no data or URLs. A selection param "
+        "feeds the selection output: wire it to a filter on the same unfiltered pipeline and feed other "
+        "views from that."
     ),
     config=["debounce"],
     provides=[{"key": "selection", "type": SELECTION_TYPE}],
