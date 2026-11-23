@@ -251,7 +251,9 @@ async def add_metric(
     dimensions: list[str] | None = None, grain: str | None = None, parameters: dict[str, Any] | None = None,
     order_by: list[str] | None = None, limit: int | None = None,
 ) -> str:
-    """Place a metric node, one of the app's agreed definitions, and return a preview of its result.
+    """Place one of the app's metrics, as list_tables lists them, and return a preview of its result.
+
+    It only places a metric the app defines and cannot create one: compute a new number with add_sql.
 
     Args:
         metric: Metric name from list_tables.
@@ -265,8 +267,10 @@ async def add_metric(
     """
     ops = ctx.deps.ops
     metrics = host_metrics(ops.editor.context)
+    if not metrics:
+        return "Refused: this app defines no metrics, so there is none to place. Compute the number with add_sql."
     if metric not in metrics:
-        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics) or 'none'}.")
+        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics)}; compute anything else with add_sql.")
     config = {"metric": metric, "measures": measures or [], "dimensions": dimensions or [], "grain": grain or "",
               "order_by": order_by or [], "limit": limit}
     try:
@@ -321,17 +325,27 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     return placed + "".join(f"\nNote: {note}" for note in notes)
 
 
-def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None) -> str:
+TableFormatter = Literal["number", "money", "plaintext", "textarea", "progress", "star", "tickCross", "traffic", "color"]
+
+
+def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None,
+              formatters: dict[str, TableFormatter | dict[str, Any]] | None = None) -> str:
     """Place a table showing a SQL, table or filter node's rows, when the user asks to see rows rather than a chart.
 
     Args:
-        data: SQL, table or filter node to show.
+        data: Name of the SQL, table or filter node to show (a node name, not a source table).
         name: Descriptive snake_case node name.
         spec: Optional table options naming the node's columns: page_size, layout,
             show_index, header_filters, frozen_columns, hidden_columns, sorters
-            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles, widths and formatters
-            ({column: "money" | "progress" | "star" | "tickCross" | ...}).
+            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles and widths.
+        formatters: How to draw a column's cells, a name or {"type": name, ...params}:
+            "number" with thousands separators and "decimals" (default 0 for whole numbers,
+            else 2), "money" ("symbol", "decimals"), "progress" ("min", "max"), "star",
+            "tickCross", "traffic", "color", "plaintext" or "textarea" (no params). Leave a year
+            column unformatted. E.g. {"capacity_mw": {"type": "number", "decimals": 1}}.
     """
+    if formatters:
+        spec = {**(spec or {}), "formatters": {**((spec or {}).get("formatters") or {}), **formatters}}
     config = place_view(ctx, TABLE_VIEW_ID, data, name, {"spec": spec or {}})
     options = ", ".join(sorted(config["spec"])) or "default options"
     return f"Placed table {name!r} of {data!r} ({options})."

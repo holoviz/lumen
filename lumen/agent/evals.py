@@ -262,7 +262,9 @@ def agent_fingerprint(instructions: str = "", dashboard_tools: str = "data") -> 
     """
     The hash of the instructions and tool schemas the agent offers, as
     ``AgentRunner`` stamps it on every response it records. Neither depends
-    on the data, so it is the same for every source; extra ``instructions``,
+    on the data or on the app: the tools are the same with or without
+    metrics (add_metric refuses in an app without them), so it is the same
+    for every source and every recorded session; extra ``instructions``,
     e.g. a suite's, are part of it, and so is the set of ``dashboard_tools``
     given to ``create_agent``. It is computed from the first request of
     a run on a model that only captures it, in a thread of its own so it can

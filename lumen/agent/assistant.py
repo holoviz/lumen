@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import weakref
 
 from collections.abc import Collection
 from typing import Any
 
 from panel_flowdash.agent import (
     FlowDashDeps, create_agent as create_flowdash_agent,
+    tools as _flowdash_tools,
 )
 from panel_flowdash.agent.tools import TOOLS as FLOWDASH_TOOLS
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -19,6 +21,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelResponse
 
 from .authoring import CheckedConfig, authoring_toolset
+from .controls import controls_toolset
 from .data import data_toolset
 from .explore import OwnNodesOnly
 from .history import stub_superseded_lookups
@@ -175,7 +178,7 @@ class ReasoningRequired(AbstractCapability[Any]):
         raise error
 
 
-# Added for an agent that can wire nodes, i.e. with the connect tool.
+# Added for an agent that can place filter nodes and wire them, i.e. with the add_node tool.
 SELECTION_INSTRUCTIONS = """
 ## Linking a chart's selection to other views
 To let a brush or click on a chart filter the rest of the dashboard:
@@ -199,15 +202,44 @@ Place a Lumen/source node only when several tables or SQL nodes need the same so
 and then connect it to their source inputs instead of setting ref.
 """
 
-# Added for an agent that places tiles, i.e. with the place_tile tool.
+# Added for an agent that places tiles, i.e. with the place_tile tool, which also gets add_kpi
+# and add_filter_control.
 LAYOUT_INSTRUCTIONS = """
 ## Laying out the dashboard
-Put KPIs (single numbers) first in a row, charts two to a row and tables below them.{arrange}
-Check the layout each tool returns.
+Show each headline number with add_kpi, which puts it in the top bar; a SQL node is not a view.
+Put charts two to a row and tables below them.{arrange} Check the layout each tool returns.
+{filters}
 """
+# FlowDash's instructions send filters to the global filter bar where add_filter is offered.
+GLOBAL_FILTER = 'Build a filter with add_filter_control only when the user asks for one on particular views, e.g. "only for this chart".'
+LOCAL_FILTER = ("Add a filter, dropdown or slider the user asks for with add_filter_control on the node the views read; "
+                "it filters the views you list, or every view reading that node.")
 
+_FLOWDASH_TOOL_NAMES = {tool.__name__ for tool in FLOWDASH_TOOLS}
 # FlowDash releases before arrange_tiles have no tool to lay all tiles out again.
-HAS_ARRANGE_TILES = any(tool.__name__ == "arrange_tiles" for tool in FLOWDASH_TOOLS)
+HAS_ARRANGE_TILES = "arrange_tiles" in _FLOWDASH_TOOL_NAMES
+# FlowDash releases before add_filter have no tool for the global filter bar.
+HAS_ADD_FILTER = "add_filter" in _FLOWDASH_TOOL_NAMES
+# FlowDash's own set for an assistant that lays out a dashboard, with its report, title and filter
+# tools, where FlowDash has one.
+FLOWDASH_LAYOUT_TOOLS: tuple[str, ...] | None = getattr(_flowdash_tools, "LAYOUT_TOOLS", None)
+# Where FlowDash has it, add_filter(scope="local") points the model to add_filter_control, in the
+# runs of the agents create_agent gave that tool; FlowDash's hook is the same for the whole process.
+register_local_filter = getattr(_flowdash_tools, "register_local_filter", None)
+_LOCAL_FILTER_AGENTS: set[int] = set()
+
+
+def _local_filter(ctx: RunContext[FlowDashDeps], **_: Any) -> str:
+    """add_filter(scope="local"): point an agent with add_filter_control to it, and refuse it for any other."""
+    instead = (
+        "Build a local filter with add_filter_control instead." if id(getattr(ctx, "agent", None)) in _LOCAL_FILTER_AGENTS
+        else "No tool here builds one: tell the user, and offer the filter bar instead."
+    )
+    return (
+        "Refused: add_filter only adds filters to the dashboard's filter bar (scope='global'), which filters "
+        f"every view with the column. A local filter, a control linked to some views through a Filter node, "
+        f"is not built by it. {instead}"
+    )
 
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
@@ -254,9 +286,10 @@ DASHBOARD_TOOLS = {
     # Answering questions: change or remove a node the agent can see in list_tables.
     "data": ("set_config", "remove_node"),
     # Also arranging what it placed: wiring nodes and placing them as tiles.
-    "layout": (
+    "layout": tuple(FLOWDASH_LAYOUT_TOOLS) if FLOWDASH_LAYOUT_TOOLS is not None else (
         "set_config", "remove_node", "connect", "disconnect", "place_tile",
         *(("arrange_tiles",) if HAS_ARRANGE_TILES else ()),
+        *(("add_filter",) if HAS_ADD_FILTER else ()),
     ),
 }
 DATA_DASHBOARD_TOOLS = DASHBOARD_TOOLS["data"]
@@ -307,10 +340,15 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
     settings: Any = (lambda ctx: model_settings_for(ctx.model)) if model_settings is None else dict(model_settings)
+    if isinstance(dashboard_tools, str):
+        dashboard_tools = DASHBOARD_TOOLS[dashboard_tools]
+    lays_out = dashboard_tools is None or "place_tile" in dashboard_tools
     data, authoring = data_toolset(), authoring_toolset()
-    toolsets = [data, authoring, *kwargs.pop("toolsets", [])]
+    own = [data, authoring, *([controls_toolset()] if lays_out else [])]
+    toolsets = [*own, *kwargs.pop("toolsets", [])]
     text = base_instructions + (f"\n{instructions}" if instructions else "")
-    calls = FlowDashToolCalls([*data.tools, *authoring.tools], editing=authoring.tools)
+    editing = [name for toolset in own[1:] for name in toolset.tools]
+    calls = FlowDashToolCalls([*data.tools, *editing], editing=editing)
     # Capabilities given here wrap the tools outside CheckedConfig, so e.g. a refusal comes before a test run.
     capabilities = [
         ProcessHistory(stub_superseded_lookups), calls, *kwargs.pop("capabilities", []), CheckedConfig(),
@@ -319,22 +357,23 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     # set_config now runs the SQL it is given, so fixing a query may take a few tries, and a
     # second cut-off answer in a run would otherwise end it.
     kwargs.setdefault("retries", {"tools": 3, "output": 2})
-    if isinstance(dashboard_tools, str):
-        dashboard_tools = DASHBOARD_TOOLS[dashboard_tools]
     if dashboard_instructions is None:
         dashboard_instructions = dashboard_tools is None
-    if dashboard_tools is None or "connect" in dashboard_tools:
-        text += SELECTION_INSTRUCTIONS
     if dashboard_tools is None or "add_node" in dashboard_tools:
-        text += TABLE_INSTRUCTIONS
+        text += SELECTION_INSTRUCTIONS + TABLE_INSTRUCTIONS
     if dashboard_tools is not None and "place_tile" in dashboard_tools:
         arrange = " arrange_tiles does that, keeping place_tile sizes." if "arrange_tiles" in dashboard_tools else ""
-        text += LAYOUT_INSTRUCTIONS.format(arrange=arrange)
+        filters = GLOBAL_FILTER if "add_filter" in dashboard_tools else LOCAL_FILTER
+        text += LAYOUT_INSTRUCTIONS.format(arrange=arrange, filters=filters)
     agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=settings,
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",
         capabilities=capabilities, **kwargs,
     )
+    if lays_out and register_local_filter is not None:
+        register_local_filter(_local_filter)
+        _LOCAL_FILTER_AGENTS.add(id(agent))
+        weakref.finalize(agent, _LOCAL_FILTER_AGENTS.discard, id(agent))
 
     # A tool call cut off at the output limit fails its argument validation and is retried by
     # pydantic-ai; a cut-off final answer would otherwise pass as complete.
