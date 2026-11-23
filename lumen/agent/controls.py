@@ -22,8 +22,13 @@ from ..flowdash import (
     pipeline_columns,
 )
 from ..flowdash.choices import pipeline_column_types
-from ..flowdash.nodes import column_values, execute, pipeline_sql
-from ..flowdash.transforms import AGGREGATE_ID, COUNT_COLUMN
+from ..flowdash.nodes import (
+    column_values, execute, pipeline_sql, row_ceiling,
+)
+from ..flowdash.transforms import (
+    AGGREGATE_ID, COUNT_COLUMN, SQLAggregate, aggregate_schema, step_dialect,
+    transformed_pipeline,
+)
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource
 from . import _graph
@@ -246,6 +251,11 @@ def add_kpi(
                 f"{col!r} holds {types.get(col) or 'non-numeric'} values; a KPI shows a number. Pick a numeric "
                 "column, or aggregate='count' to count rows."
             )
+    if aggregate and (capped := _capped_at(ops, pipeline)):
+        raise ModelRetry(
+            f"{data!r} was capped at {capped:,} rows, so an aggregate over it would only cover those rows. "
+            "Aggregate in a SQL node first, e.g. SELECT SUM(x) AS total FROM ..., and show that node's number."
+        )
     if aggregate in ("sum", "mean") and (repeat := _repeated_per(pipeline, column, types)):
         key, n, keys = repeat
         raise ModelRetry(
@@ -305,6 +315,23 @@ def add_kpi(
     through = f" through {', '.join(map(repr, helpers))}" if helpers else ""
     return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{through}:\n"
             + "\n".join(lines) + f"\n{KPI_FILTERS}")
+
+
+def _capped_at(ops, pipeline: Pipeline) -> int | None:
+    """
+    The row ceiling when an aggregate over ``pipeline`` would only read its
+    first rows, e.g. a SQL node's result kept in memory at the ceiling. A
+    pipeline whose source runs the aggregate in its query counts every row.
+    """
+    ceiling = row_ceiling(getattr(ops, "editor", None))
+    step = SQLAggregate(method="count", write=step_dialect(pipeline))
+    try:
+        counted = transformed_pipeline(pipeline, step, aggregate_schema(pipeline.schema, [], [], "count"), ceiling)
+        rows = int(fetch(counted, 1)[COUNT_COLUMN].iloc[0])
+    except Exception:
+        return None
+    # Capped rows number exactly the ceiling; a count past it ran over every row.
+    return ceiling if rows == ceiling else None
 
 
 def _outputs(ops, name: str) -> list[str]:

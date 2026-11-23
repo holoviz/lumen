@@ -26,6 +26,7 @@ from lumen.agent.controls import (
 from lumen.agent.data import data_toolset
 from lumen.flowdash import FILTER_ID, TABLE_ID
 from lumen.flowdash.metrics import read_metrics
+from lumen.flowdash.nodes import set_row_ceiling
 from lumen.flowdash.project import parse_project
 from lumen.sources.duckdb import DuckDBSource
 
@@ -147,6 +148,26 @@ def test_add_kpi_aggregates_a_column_over_the_rows_of_a_node(ctx, session):
     assert instance(session.ops, "turbines").value == 5
     hidden = {t["node"] for t in graph(session)["layout"]["tiles"] if t.get("visible") is False}
     assert {"capacity_agg", "capacity_value", "turbines_agg", "turbines_value"} <= hidden
+
+
+
+@pytest.mark.parametrize("aggregate", ["sum", "count"])
+def test_add_kpi_refuses_to_aggregate_a_capped_result(aggregate):
+    tables = {"big": "SELECT range AS id, 1 AS one FROM range(2500)"}
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=tables), _model())
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        set_row_ceiling(session.ops.editor, 1000)
+        session.add_sql("big_rows", "SELECT * FROM big")
+        column = "one" if aggregate == "sum" else None
+        with pytest.raises(ModelRetry, match="'big_rows' was capped at 1,000 rows.*Aggregate in a SQL node first"):
+            add_kpi(ctx, "big_rows", "total", column=column, aggregate=aggregate)
+        assert "total" not in _graph.nodes(session.ops) and "total_agg" not in _graph.nodes(session.ops)
+        session.ops.add_node(TABLE_ID, {"ref": "data", "table": "big"}, name="big_table")
+        pushed = add_kpi(ctx, "big_table", "table_total", column=column, aggregate=aggregate)
+    finally:
+        session.close()
+    assert "= 2,500." in pushed
 
 
 def test_add_kpi_on_table_and_metric_nodes():
