@@ -474,11 +474,7 @@ def test_recorded_cassettes_are_current():
 
 
 # Replays that send the model something other than the recording, by scenario, each with why.
-ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {
-    "filter_state": ([{"request": 7, "kind": "tool_return", "tool": "add_sql"}], (
-        "recorded before the fixtures ran DuckDB on one thread: the agent's projects_by_state query has two "
-        "projects tied at 39 MW, which the recording sampled in another order; recording it again clears this")),
-}
+ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {}
 
 
 def group(name: str):

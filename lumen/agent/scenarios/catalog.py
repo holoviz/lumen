@@ -291,37 +291,27 @@ SCENARIOS: list[Scenario] = [
 ]
 
 
-# The checks that failed in the recorded baseline (gpt-6-luna on the integration branch at
-# af7b4355), each with the workstream of the improvement plan expected to fix it. Replaying
-# the cassettes reports them as xfail, and as XPASS once a change makes them pass.
+# The checks that failed in the recorded baseline (gpt-6-luna on the integration branch with the
+# assistant plan's W1, W2 and W3), each with the workstream of the improvement plan expected to
+# fix it. Replaying the cassettes reports them as xfail, and as XPASS once a change makes them pass.
 EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "kpi_turbine_row": {"1/kpis": "W1"},
-    "kpi_penguin_units": {"1/kpis": "W1", "1/kpi_values": "W4", "2/units": "W1", "2/in_place": "W2"},
+    "kpi_penguin_units": {"1/kpis": "W1", "2/units": "W1"},
     "kpi_quakes_row": {"1/kpis": "W1"},
-    "kpi_top_bar": {"1/kpis": "W1", "1/kpi_values": "W4", "1/no_leftovers": "W6", "1/requests": "W6"},
-    "wind_build": {"1/kpis": "W1", "1/kpi_first": "W3", "1/max_bars": "W5", "1/chart_titles": "W5", "1/requests": "W6"},
-    "filter_state": {"1/filter": "W1"},
-    "filter_island": {"1/filter": "W1", "1/no_note": "W6"},
-    "click_to_filter": {"1/selection": "W1", "1/no_note": "W6"},
-    "rename_dashboard": {"1/title": "W1", "1/no_note": "W6"},
-    "title_on_top": {"1/title": "W1", "1/heading_top": "W3"},
+    "kpi_top_bar": {"1/kpis": "W1"},
+    "wind_build": {"1/kpis": "W1", "1/chart_titles": "W5"},
+    "click_to_filter": {"1/selection": "W1"},
     "rename_table": {"1/node_title": "W1", "1/in_place": "W2"},
-    "two_columns": {"1/row_top_manufacturers": "W3", "1/width_largest_projects": "W3"},
-    "line_chart": {"1/requests": "W2"},
-    "swap_axes": {"1/requests": "W2"},
-    "rolling_average": {"1/series": "W2", "1/in_place": "W2"},
-    "make_green": {"1/requests": "W2"},
-    "capacity_by_year": {"1/numbers": "W4", "1/chart_titles": "W5"},
-    "texas_share": {"1/value": "W4"},
+    "rolling_average": {"1/legend": "W5"},
+    "capacity_by_year": {"1/chart_titles": "W5"},
     "largest_projects": {"1/numbers": "W4"},
     "california_quakes": {"1/value": "W4", "1/strongest": "W4"},
     "last_month": {"1/value": "W4"},
     "capacity_by_state": {"1/max_bars": "W5", "1/chart_titles": "W5"},
     "quakes_by_type": {"1/chart_titles": "W5"},
-    "email_schedule": {"1/unchanged": "W6"},
     "why_question": {"1/no_new_nodes": "W6"},
     "penguin_batch": {"1/kpis": "W1", "1/requests": "W6"},
-    "remove_helpers": {"1/requests": "W6"},
+    "kpis_to_top": {"1/row_kpi_turbines": "W3"},
 }
 
 for _scenario in SCENARIOS:
