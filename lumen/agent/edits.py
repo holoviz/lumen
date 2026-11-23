@@ -320,8 +320,13 @@ _DELETE = object()
 
 # Keys of an encoding channel that describe its field, which go when the channel gets another field,
 # and the keys of its axis, legend or header that do.
-FIELD_KEYS = ("title", "format", "formatType", "timeUnit", "bin", "aggregate", "sort")
+FIELD_KEYS = ("title", "format", "formatType", "timeUnit", "bin", "sort")
 GUIDE_KEYS = ("title", "format", "formatType")
+# The position channels, whose definitions move whole when a field moves between them, and the keys
+# that move when a field comes from another kind of channel: the rest, e.g. a colour's scale range or
+# legend, only means something on the channel it was given for.
+POSITION_CHANNELS = frozenset({"x", "y", "x2", "y2", "theta", "radius"})
+MOVING_KEYS = ("field", "type", "title", "aggregate", "timeUnit", "bin")
 # Marks drawn behind the others when added as layers.
 BACKGROUND_MARKS = frozenset({"rect", "area"})
 
@@ -365,7 +370,11 @@ def _field(definition: Any) -> str | None:
 
 
 def _unfielded(definition: dict[str, Any]) -> dict[str, Any]:
-    """A channel definition without what describes its field: its title, format, time unit and the like."""
+    """
+    A channel definition without what describes its field: its title,
+    format, time unit and the like. Its aggregate stays, so e.g. an average
+    rule still averages the field it now shows.
+    """
     result = {k: copy.deepcopy(v) for k, v in definition.items() if k not in FIELD_KEYS}
     for guide in ("axis", "legend", "header"):
         if isinstance(result.get(guide), dict):
@@ -377,8 +386,10 @@ def _patch_channel(holder: dict[str, Any], channel: str, value: Any, before: dic
     """
     Patch ``channel`` of the encoding ``holder``. A new field takes the
     definition the encoding gave that field on another channel
-    (``before``, as it was), so swapping axes swaps their titles too, or
-    else drops what described the old field.
+    (``before``, as it was), so swapping axes swaps their titles too: all
+    of it between position channels, else only what describes the field
+    (``MOVING_KEYS``). A field the encoding did not show drops what
+    described the old field but keeps its aggregate.
     """
     if value is None:
         holder.pop(channel, None)
@@ -386,8 +397,13 @@ def _patch_channel(holder: dict[str, Any], channel: str, value: Any, before: dic
     old = holder.get(channel)
     field = _field(value)
     if isinstance(old, dict) and isinstance(value, dict) and field is not None and field != _field(old):
-        spare = next((d for c, d in before.items() if c != channel and _field(d) == field), None)
-        old = copy.deepcopy(spare) if spare is not None else _unfielded(old)
+        source = next((c for c, d in before.items() if c != channel and _field(d) == field), None)
+        if source is None:
+            old = _unfielded(old)
+        elif source in POSITION_CHANNELS and channel in POSITION_CHANNELS:
+            old = {k: copy.deepcopy(v) for k, v in before[source].items() if k != "sort"}
+        else:
+            old = {k: copy.deepcopy(before[source][k]) for k in MOVING_KEYS if k in before[source]}
     holder[channel] = merge_patch(old, value)
 
 
@@ -428,15 +444,65 @@ def _layered(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalized_layer(layer: Any) -> Any:
-    layer = merge_patch({}, layer) if isinstance(layer, dict) else layer
-    if isinstance(layer, dict) and isinstance(layer.get("mark"), str):
+    """
+    A layer to add, its mark as an object. A null channel stays, as it keeps
+    the layer from taking the chart's channel, and an average rule (a rule
+    aggregating one position and not giving the other) gets a null for the
+    other one, so it draws one line across the chart instead of one per x.
+    """
+    layer = copy.deepcopy(layer)
+    if not isinstance(layer, dict):
+        return layer
+    if isinstance(layer.get("mark"), str):
         layer["mark"] = {"type": layer["mark"]}
+    encoding = layer.get("encoding")
+    if _mark(layer) == "rule" and isinstance(encoding, dict):
+        for channel, other in (("y", "x"), ("x", "y")):
+            value = encoding.get(channel)
+            if isinstance(value, dict) and "aggregate" in value and other not in encoding:
+                encoding[other] = None
     return layer
 
 
+def _is_band(layer: Any) -> bool:
+    """Whether a layer is a band drawn behind the data: an area or rect spanning two values or see-through."""
+    if _mark(layer) not in BACKGROUND_MARKS or not isinstance(layer, dict):
+        return False
+    encoding = layer.get("encoding") if isinstance(layer.get("encoding"), dict) else {}
+    mark = layer.get("mark") if isinstance(layer.get("mark"), dict) else {}
+    opacity = mark.get("opacity", mark.get("fillOpacity", 1))
+    return bool({"x2", "y2"} & set(encoding)) or (isinstance(opacity, (int, float)) and opacity < 1)
+
+
 def primary_layer(layers: list[Any]) -> int:
-    """The index of a layered chart's main data layer: the first one that is not an annotation (rule or text)."""
-    return next((i for i, layer in enumerate(layers) if _mark(layer) not in ANNOTATION_MARKS), 0)
+    """
+    The index of a layered chart's main data layer: the first one that is
+    neither an annotation (rule or text) nor a band behind the data, else
+    the first that is not an annotation.
+    """
+    data = [i for i, layer in enumerate(layers) if _mark(layer) not in ANNOTATION_MARKS]
+    return next((i for i in data if not _is_band(layers[i])), data[0] if data else 0)
+
+
+def _swap_resolve(spec: dict[str, Any]) -> None:
+    """Swap the x and y entries of a chart's ``resolve``, as its x and y were swapped."""
+    resolve = spec.get("resolve")
+    if not isinstance(resolve, dict):
+        return
+    for entries in resolve.values():
+        if isinstance(entries, dict):
+            x, y = entries.pop("x", None), entries.pop("y", None)
+            if y is not None:
+                entries["x"] = y
+            if x is not None:
+                entries["y"] = x
+
+
+def _is_swap(patch: dict[str, Any], x: Any, y: Any) -> bool:
+    """Whether an encoding patch gives x the field y had and y the field x had."""
+    px, py = patch.get("x"), patch.get("y")
+    return (_field(px) is not None and _field(py) is not None and _field(px) == _field(y)
+            and _field(py) == _field(x))
 
 
 def _patch_layered_encoding(spec: dict[str, Any], layers: list[dict[str, Any]], patch: dict[str, Any]) -> None:
@@ -455,8 +521,8 @@ def _patch_layered_encoding(spec: dict[str, Any], layers: list[dict[str, Any]], 
 
     holders = [h for h in [shared, *(l.get("encoding") for l in layers)] if isinstance(h, dict)]
     x, y = patch.get("x"), patch.get("y")
-    if (_field(x) is not None and _field(y) is not None and _field(x) == _field(primary("y"))
-            and _field(y) == _field(primary("x"))):
+    if _is_swap(patch, primary("x"), primary("y")):
+        _swap_resolve(spec)
         for holder in holders:
             old_x, old_y = holder.pop("x", None), holder.pop("y", None)
             if old_y is not None:
@@ -546,7 +612,10 @@ def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers
         encoding = changes.pop("encoding", None)
         spec = merge_patch(spec, changes)
         if encoding:
-            _patch_encoding(_encoding_of(spec), encoding)
+            current = _encoding_of(spec)
+            if _is_swap(encoding, current.get("x"), current.get("y")):
+                _swap_resolve(spec)
+            _patch_encoding(current, encoding)
     if add_layers:
         added = [_normalized_layer(item) for item in add_layers]
         behind = [item for item in added if _mark(item) in BACKGROUND_MARKS]

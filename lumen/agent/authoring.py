@@ -698,6 +698,10 @@ def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, An
     except ValueError as exc:
         hint = " To show another node's columns, call add_chart with this name and that node as data." if component == VIEW_ID else ""
         raise ModelRetry(f"{exc}{hint} The spec after your changes: {json.dumps(spec)}") from exc
+    # Someone may have edited the node while the patched spec was checked; their edit wins.
+    if (_graph.config_of(ops, name).get("spec") or {}) != before:
+        return (f"Refused: {name!r} changed meanwhile, e.g. by the user, so nothing was changed. "
+                "Read it again in the dashboard state or with list_tables and retry the change.")
     existing = set(_graph.nodes(ops))
     try:
         ops.set_config(name, {"spec": spec})

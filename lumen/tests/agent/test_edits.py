@@ -1,5 +1,6 @@
 import inspect
 import itertools
+import re
 
 from types import SimpleNamespace
 
@@ -24,8 +25,8 @@ from lumen.agent.authoring import (
 from lumen.agent.data import list_tables
 from lumen.agent.edits import (
     STATE_FENCE, STATE_HEADER, STATE_LINE_CHARS, STATE_NODES, STATE_STUB,
-    add_dashboard_state, dashboard_state, fenced_state, merge_chart,
-    merge_patch, name_notes, similar,
+    add_dashboard_state, changed_layers, dashboard_state, fenced_state,
+    merge_chart, merge_patch, name_notes, similar,
 )
 from lumen.flowdash import VIEW_ID
 from lumen.sources.duckdb import DuckDBSource
@@ -775,3 +776,98 @@ async def test_set_config_refuses_a_config_too_deep_to_check():
         SimpleNamespace(deps=None), call=None, tool_def=SimpleNamespace(name="set_config"),
         args={"name": "x", "config": {"spec": deep}}, handler=handler)
     assert result.startswith("Refused: the config nests more than 32") and called == []
+
+
+def rendered_marks(spec, rows):
+    """The marks vl-convert draws for ``spec`` on ``rows``, by their role, e.g. ["bar", "bar", "line"]."""
+    vl_convert = pytest.importorskip("vl_convert")
+    svg = vl_convert.vegalite_to_svg({**spec, "data": {"values": rows}})
+    assert "NaN" not in svg
+    roles = re.findall(r'aria-roledescription="([^"]+)"', svg)
+    roles = [role.removesuffix(" mark") for role in roles if not role.endswith("container")]
+    return [role for role in roles if role not in ("axis", "legend", "title")]
+
+
+PENGUINS = [{"species": s, "island": i, "penguin_count": c} for s, i, c in [
+    ("Adelie", "Torgersen", 152), ("Chinstrap", "Dream", 68), ("Gentoo", "Biscoe", 124), ("Adelie", "Biscoe", 44)]]
+QUAKES = [{"month": f"2024-{m:02d}-01", "quakes": q, "magnitude": g, "quakes_3_month_avg": a}
+          for m, q, g, a in [(1, 10, 4.1, 10), (2, 14, 4.3, 12), (3, 9, 4.0, 11), (4, 16, 4.6, 13)]]
+
+
+def test_a_field_moved_from_color_to_x_leaves_colors_scale_and_legend_behind():
+    colored = {"mark": "bar", "encoding": {
+        "color": {"field": "island", "type": "nominal", "legend": {"title": "Island"},
+                  "scale": {"domain": ["Torgersen", "Dream", "Biscoe"], "range": ["#1f77b4", "#ff7f0e", "#2ca02c"]}},
+        "x": {"field": "species", "type": "nominal", "title": "Species"},
+        "y": {"field": "penguin_count", "type": "quantitative", "aggregate": "sum"}}}
+
+    spec = merge_chart(colored, {"encoding": {"x": {"field": "island"}}})
+
+    assert spec["encoding"]["x"] == {"field": "island", "type": "nominal"}
+    assert spec["encoding"]["color"] == colored["encoding"]["color"]
+    # One bar per island, where the old colour range on x drew none.
+    assert rendered_marks(spec, PENGUINS).count("bar") == 3
+
+
+def test_a_new_field_keeps_the_aggregate_of_an_average_rule():
+    bar = {"mark": {"type": "bar"}, "encoding": {"x": {"field": "month", "type": "temporal", "title": "Month"},
+                                                 "y": {"field": "quakes", "type": "quantitative", "title": "Quakes"}}}
+    with_average = merge_chart(bar, None, [{"mark": {"type": "rule", "color": "red"},
+                                            "encoding": {"y": {"aggregate": "mean", "field": "quakes", "type": "quantitative"}}}])
+
+    spec = merge_chart(with_average, {"encoding": {"y": {"field": "magnitude"}}})
+
+    assert spec["encoding"]["y"] == {"field": "magnitude", "type": "quantitative"}
+    assert spec["layer"][1]["encoding"] == {"x": None, "y": {"aggregate": "mean", "field": "magnitude", "type": "quantitative"}}
+    # One average rule, not one per month.
+    assert rendered_marks(spec, QUAKES).count("rule") == 1
+
+
+def test_a_mark_change_goes_to_the_data_layer_not_a_band_behind_it():
+    line = {"mark": {"type": "line", "tooltip": True}, "encoding": {
+        "x": {"field": "month", "type": "temporal"}, "y": {"field": "quakes", "type": "quantitative"}}}
+    band = merge_chart(line, None, [{"mark": {"type": "area", "opacity": 0.2}, "encoding": {
+        "y": {"field": "quakes_3_month_avg", "type": "quantitative"}, "y2": {"field": "magnitude"}}}])
+    assert [layer["mark"]["type"] for layer in band["layer"]] == ["area", "line"]
+
+    spec = merge_chart(band, {"mark": "bar"})
+
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["area", "bar"]
+    assert changed_layers(band, spec) == "layer 1 changed"
+    assert sorted(set(rendered_marks(spec, QUAKES))) == ["area", "bar"]
+
+
+def test_swapping_axes_swaps_the_resolve_entries_too():
+    layered = {"encoding": {"x": {"field": "month", "type": "temporal"}}, "layer": [
+        {"mark": "bar", "encoding": {"y": {"field": "quakes", "type": "quantitative"}}},
+        {"mark": {"type": "line", "color": "red"}, "encoding": {"y": {"field": "magnitude", "type": "quantitative"}}}],
+        "resolve": {"scale": {"y": "independent"}}}
+
+    spec = merge_chart(layered, {"encoding": {"x": {"field": "quakes"}, "y": {"field": "month"}}})
+
+    assert spec["resolve"] == {"scale": {"x": "independent"}}
+    assert spec["layer"][1]["encoding"] == {"x": {"field": "magnitude", "type": "quantitative"}}
+    assert sorted(set(rendered_marks(spec, QUAKES))) == ["bar", "line"]
+    single = merge_chart({**BAR, "resolve": {"axis": {"x": "independent"}}},
+                         {"encoding": {"x": {"field": "quakes"}, "y": {"field": "month"}}})
+    assert single["resolve"] == {"axis": {"y": "independent"}}
+
+
+async def test_update_chart_refuses_when_the_chart_changed_while_it_was_checked(ctx, session, monkeypatch):
+    await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+    add_chart(ctx, "monthly_quakes", "quakes_chart", BAR)
+    view = _graph.view_class(VIEW_ID)
+    check = view.check_spec
+
+    def edited_meanwhile(spec, columns):
+        # The user retitles the chart while the agent's patch is checked.
+        monkeypatch.setattr(view, "check_spec", staticmethod(check))
+        session.ops.set_config("quakes_chart", {"spec": {**BAR, "title": "User's title"}})
+        return check(spec, columns)
+
+    monkeypatch.setattr(view, "check_spec", staticmethod(edited_meanwhile))
+    text = update_chart(ctx, "quakes_chart", {"encoding": {"y": {"title": "Count"}}})
+
+    assert text.startswith("Refused: 'quakes_chart' changed meanwhile")
+    assert _graph.config_of(session.ops, "quakes_chart")["spec"]["title"] == "User's title"
+    assert _graph.config_of(session.ops, "quakes_chart")["spec"]["encoding"]["y"].get("title") == "Quakes"
