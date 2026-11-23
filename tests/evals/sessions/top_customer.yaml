@@ -18,53 +18,51 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t4c9c3811
+      - id: te82cf56a
         actor: user
-        at: '2026-11-23T09:08:46Z'
+        at: '2026-11-23T09:43:56Z'
         summary: Added data.
-      - id: tedce09e7
+      - id: t1627e659
         actor: agent
-        at: '2026-11-23T09:08:54Z'
-        run: run-400289ae64a5
+        at: '2026-11-23T09:44:01Z'
+        run: run-2ceb4ed951c6
         summary: Added paid_orders_by_customer. Connected data to paid_orders_by_customer. Added top_customer_paid_orders.
           Connected paid_orders_by_customer to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: t4c9c3811
+        origin: te82cf56a
         config:
           ref: data
         position: [0.0, 44.0]
       paid_orders_by_customer:
         component: Lumen/sql
-        origin: tedce09e7
+        origin: t1627e659
         config:
           sql: |-
             SELECT
               c."customer",
-              COUNT(*) AS paid_orders
+              COUNT(*) AS paid_order_count
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND TRIM(c."customer") <> ''
+              o."status" = 'paid'
             GROUP BY
               c."customer"
             ORDER BY
-              paid_orders DESC
+              paid_order_count DESC
             LIMIT 1
           table: paid_orders_by_customer
         position: [380.0, 0.0]
       top_customer_paid_orders:
         component: Lumen/table_view
-        origin: tedce09e7
+        origin: t1627e659
         config:
           spec:
             page_size: 1
-            layout: fit_columns
-            show_index: false
             formatters:
-              paid_orders: number
+              paid_order_count: number
         position: [760.0, 44.0]
     edges:
       - from: data.source

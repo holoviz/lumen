@@ -1,10 +1,10 @@
 {
  "mode": "live",
  "model": "openai/gpt-6-luna",
- "commit": "7854b9f0fd769a67aa45fae9cc2a351fc755d4ec",
+ "commit": "a0357d004baeab100a02a4a92fa3a27939bf5295",
  "replayed_on": null,
- "fingerprint": "7245e8da1beea743",
- "date": "2026-11-23T09:12:30+00:00",
+ "fingerprint": "97eca05af44cfd71",
+ "date": "2026-11-23T09:48:06+00:00",
  "summary": {
   "scenarios": {
    "kpi_turbine_row": {
@@ -23,9 +23,9 @@
     "quality_passed": 1,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 5.0,
-    "tokens_per_turn": 37760,
-    "max_requests": 5
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 30384,
+    "max_requests": 4
    },
    "kpi_penguin_units": {
     "turns": 2,
@@ -44,8 +44,8 @@
     "divergences": 0,
     "refusals_per_turn": 1.0,
     "requests_per_turn": 4.0,
-    "tokens_per_turn": 30682,
-    "max_requests": 5
+    "tokens_per_turn": 31230,
+    "max_requests": 4
    },
    "kpi_quakes_row": {
     "turns": 1,
@@ -63,9 +63,9 @@
     "quality_passed": 1,
     "divergences": 0,
     "refusals_per_turn": 1.0,
-    "requests_per_turn": 5.0,
-    "tokens_per_turn": 37409,
-    "max_requests": 5
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 30114,
+    "max_requests": 4
    },
    "kpi_top_bar": {
     "turns": 1,
@@ -83,9 +83,9 @@
     "quality_passed": 1,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 4.0,
-    "tokens_per_turn": 31287,
-    "max_requests": 4
+    "requests_per_turn": 5.0,
+    "tokens_per_turn": 39905,
+    "max_requests": 5
    },
    "wind_build": {
     "turns": 1,
@@ -94,18 +94,18 @@
     "not": 0,
     "did_with_quality": 0,
     "checks": 7,
-    "checks_passed": 3,
+    "checks_passed": 5,
     "goal_checks": 4,
     "goal_passed": 3,
     "guard_checks": 0,
     "guard_passed": 0,
     "quality_checks": 3,
-    "quality_passed": 0,
+    "quality_passed": 2,
     "divergences": 0,
-    "refusals_per_turn": 1.0,
-    "requests_per_turn": 16.0,
-    "tokens_per_turn": 138795,
-    "max_requests": 16
+    "refusals_per_turn": 2.0,
+    "requests_per_turn": 11.0,
+    "tokens_per_turn": 96694,
+    "max_requests": 11
    },
    "filter_state": {
     "turns": 1,
@@ -124,7 +124,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14455,
+    "tokens_per_turn": 14575,
     "max_requests": 2
    },
    "filter_island": {
@@ -144,7 +144,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14686,
+    "tokens_per_turn": 14812,
     "max_requests": 2
    },
    "dropdown_year": {
@@ -164,7 +164,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14317,
+    "tokens_per_turn": 14434,
     "max_requests": 2
    },
    "click_to_filter": {
@@ -182,10 +182,10 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 0.0,
-    "requests_per_turn": 4.0,
-    "tokens_per_turn": 30769,
-    "max_requests": 4
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 3.0,
+    "tokens_per_turn": 22172,
+    "max_requests": 3
    },
    "rename_dashboard": {
     "turns": 1,
@@ -204,7 +204,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14411,
+    "tokens_per_turn": 14537,
     "max_requests": 2
    },
    "title_on_top": {
@@ -224,7 +224,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14696,
+    "tokens_per_turn": 14834,
     "max_requests": 2
    },
    "retitle_chart": {
@@ -244,7 +244,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14519,
+    "tokens_per_turn": 14645,
     "max_requests": 2
    },
    "rename_table": {
@@ -262,30 +262,30 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 2.0,
-    "requests_per_turn": 4.0,
-    "tokens_per_turn": 29581,
-    "max_requests": 4
+    "refusals_per_turn": 0.0,
+    "requests_per_turn": 2.0,
+    "tokens_per_turn": 14555,
+    "max_requests": 2
    },
    "two_columns": {
     "turns": 1,
-    "did": 1,
-    "partly": 0,
+    "did": 0,
+    "partly": 1,
     "not": 0,
-    "did_with_quality": 1,
+    "did_with_quality": 0,
     "checks": 4,
-    "checks_passed": 4,
+    "checks_passed": 3,
     "goal_checks": 4,
-    "goal_passed": 4,
+    "goal_passed": 3,
     "guard_checks": 0,
     "guard_passed": 0,
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 5.0,
-    "tokens_per_turn": 37944,
-    "max_requests": 5
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 30462,
+    "max_requests": 4
    },
    "kpis_to_top": {
     "turns": 1,
@@ -303,9 +303,9 @@
     "quality_passed": 0,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 4.0,
-    "tokens_per_turn": 29903,
-    "max_requests": 4
+    "requests_per_turn": 3.0,
+    "tokens_per_turn": 22608,
+    "max_requests": 3
    },
    "table_left_chart_right": {
     "turns": 1,
@@ -324,7 +324,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 3.0,
-    "tokens_per_turn": 21915,
+    "tokens_per_turn": 22091,
     "max_requests": 3
    },
    "wider_scatter": {
@@ -344,7 +344,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 3.0,
-    "tokens_per_turn": 22100,
+    "tokens_per_turn": 22456,
     "max_requests": 3
    },
    "line_chart": {
@@ -364,7 +364,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14389,
+    "tokens_per_turn": 14515,
     "max_requests": 2
    },
    "swap_axes": {
@@ -384,7 +384,7 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14735,
+    "tokens_per_turn": 14861,
     "max_requests": 2
    },
    "rolling_average": {
@@ -402,30 +402,30 @@
     "quality_checks": 1,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 2.0,
-    "requests_per_turn": 6.0,
-    "tokens_per_turn": 47471,
-    "max_requests": 6
+    "refusals_per_turn": 0.0,
+    "requests_per_turn": 3.0,
+    "tokens_per_turn": 22209,
+    "max_requests": 3
    },
    "units_gw": {
     "turns": 1,
-    "did": 0,
-    "partly": 1,
+    "did": 1,
+    "partly": 0,
     "not": 0,
-    "did_with_quality": 0,
+    "did_with_quality": 1,
     "checks": 3,
-    "checks_passed": 2,
+    "checks_passed": 3,
     "goal_checks": 2,
-    "goal_passed": 1,
+    "goal_passed": 2,
     "guard_checks": 1,
     "guard_passed": 1,
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 3.0,
-    "tokens_per_turn": 21951,
-    "max_requests": 3
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 31185,
+    "max_requests": 4
    },
    "make_green": {
     "turns": 1,
@@ -444,79 +444,79 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14515,
+    "tokens_per_turn": 14648,
     "max_requests": 2
    },
    "capacity_by_year": {
     "turns": 1,
-    "did": 1,
+    "did": 0,
     "partly": 0,
-    "not": 0,
+    "not": 1,
     "did_with_quality": 0,
     "checks": 3,
-    "checks_passed": 2,
+    "checks_passed": 1,
     "goal_checks": 1,
-    "goal_passed": 1,
+    "goal_passed": 0,
     "guard_checks": 0,
     "guard_passed": 0,
     "quality_checks": 2,
     "quality_passed": 1,
     "divergences": 0,
     "refusals_per_turn": 1.0,
-    "requests_per_turn": 6.0,
-    "tokens_per_turn": 45367,
-    "max_requests": 6
+    "requests_per_turn": 5.0,
+    "tokens_per_turn": 37946,
+    "max_requests": 5
    },
    "capacity_by_region": {
+    "turns": 1,
+    "did": 1,
+    "partly": 0,
+    "not": 0,
+    "did_with_quality": 1,
+    "checks": 2,
+    "checks_passed": 2,
+    "goal_checks": 2,
+    "goal_passed": 2,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 7.0,
+    "tokens_per_turn": 55718,
+    "max_requests": 7
+   },
+   "texas_share": {
+    "turns": 1,
+    "did": 0,
+    "partly": 0,
+    "not": 1,
+    "did_with_quality": 0,
+    "checks": 1,
+    "checks_passed": 0,
+    "goal_checks": 1,
+    "goal_passed": 0,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 2.0,
+    "requests_per_turn": 12.0,
+    "tokens_per_turn": 96456,
+    "max_requests": 12
+   },
+   "largest_projects": {
     "turns": 1,
     "did": 0,
     "partly": 1,
     "not": 0,
     "did_with_quality": 0,
-    "checks": 2,
-    "checks_passed": 1,
-    "goal_checks": 2,
-    "goal_passed": 1,
-    "guard_checks": 0,
-    "guard_passed": 0,
-    "quality_checks": 0,
-    "quality_passed": 0,
-    "divergences": 0,
-    "refusals_per_turn": 1.0,
-    "requests_per_turn": 6.0,
-    "tokens_per_turn": 46333,
-    "max_requests": 6
-   },
-   "texas_share": {
-    "turns": 1,
-    "did": 1,
-    "partly": 0,
-    "not": 0,
-    "did_with_quality": 1,
-    "checks": 1,
-    "checks_passed": 1,
-    "goal_checks": 1,
-    "goal_passed": 1,
-    "guard_checks": 0,
-    "guard_passed": 0,
-    "quality_checks": 0,
-    "quality_passed": 0,
-    "divergences": 0,
-    "refusals_per_turn": 1.0,
-    "requests_per_turn": 8.0,
-    "tokens_per_turn": 63264,
-    "max_requests": 8
-   },
-   "largest_projects": {
-    "turns": 1,
-    "did": 1,
-    "partly": 0,
-    "not": 0,
-    "did_with_quality": 1,
     "checks": 3,
-    "checks_passed": 3,
+    "checks_passed": 2,
     "goal_checks": 2,
-    "goal_passed": 2,
+    "goal_passed": 1,
     "guard_checks": 0,
     "guard_passed": 0,
     "quality_checks": 1,
@@ -524,7 +524,7 @@
     "divergences": 0,
     "refusals_per_turn": 1.0,
     "requests_per_turn": 6.0,
-    "tokens_per_turn": 45966,
+    "tokens_per_turn": 47096,
     "max_requests": 6
    },
    "california_quakes": {
@@ -542,10 +542,10 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 0.0,
-    "requests_per_turn": 10.0,
-    "tokens_per_turn": 80910,
-    "max_requests": 10
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 8.0,
+    "tokens_per_turn": 62362,
+    "max_requests": 8
    },
    "last_month": {
     "turns": 1,
@@ -563,9 +563,9 @@
     "quality_passed": 0,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 5.0,
-    "tokens_per_turn": 36902,
-    "max_requests": 5
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 29608,
+    "max_requests": 4
    },
    "capacity_by_state": {
     "turns": 1,
@@ -584,7 +584,7 @@
     "divergences": 0,
     "refusals_per_turn": 1.0,
     "requests_per_turn": 6.0,
-    "tokens_per_turn": 45343,
+    "tokens_per_turn": 45727,
     "max_requests": 6
    },
    "quakes_by_type": {
@@ -604,7 +604,7 @@
     "divergences": 0,
     "refusals_per_turn": 1.0,
     "requests_per_turn": 5.0,
-    "tokens_per_turn": 37703,
+    "tokens_per_turn": 38078,
     "max_requests": 5
    },
    "email_schedule": {
@@ -623,9 +623,9 @@
     "quality_passed": 0,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 3.0,
-    "tokens_per_turn": 22844,
-    "max_requests": 3
+    "requests_per_turn": 2.0,
+    "tokens_per_turn": 14779,
+    "max_requests": 2
    },
    "why_question": {
     "turns": 1,
@@ -642,10 +642,10 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 0.0,
-    "requests_per_turn": 7.0,
-    "tokens_per_turn": 57660,
-    "max_requests": 7
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 8.0,
+    "tokens_per_turn": 67564,
+    "max_requests": 8
    },
    "penguin_batch": {
     "turns": 1,
@@ -664,7 +664,7 @@
     "divergences": 0,
     "refusals_per_turn": 2.0,
     "requests_per_turn": 21.0,
-    "tokens_per_turn": 188227,
+    "tokens_per_turn": 186447,
     "max_requests": 21
    },
    "remove_helpers": {
@@ -684,8 +684,128 @@
     "divergences": 0,
     "refusals_per_turn": 0.0,
     "requests_per_turn": 2.0,
-    "tokens_per_turn": 14941,
+    "tokens_per_turn": 15068,
     "max_requests": 2
+   },
+   "texas_share_metric": {
+    "turns": 1,
+    "did": 1,
+    "partly": 0,
+    "not": 0,
+    "did_with_quality": 1,
+    "checks": 1,
+    "checks_passed": 1,
+    "goal_checks": 1,
+    "goal_passed": 1,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 0.0,
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 31105,
+    "max_requests": 4
+   },
+   "capacity_by_year_metric": {
+    "turns": 1,
+    "did": 1,
+    "partly": 0,
+    "not": 0,
+    "did_with_quality": 0,
+    "checks": 4,
+    "checks_passed": 3,
+    "goal_checks": 2,
+    "goal_passed": 2,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 2,
+    "quality_passed": 1,
+    "divergences": 0,
+    "refusals_per_turn": 2.0,
+    "requests_per_turn": 7.0,
+    "tokens_per_turn": 56286,
+    "max_requests": 7
+   },
+   "capacity_by_region_metric": {
+    "turns": 1,
+    "did": 1,
+    "partly": 0,
+    "not": 0,
+    "did_with_quality": 1,
+    "checks": 2,
+    "checks_passed": 2,
+    "goal_checks": 2,
+    "goal_passed": 2,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 5.0,
+    "tokens_per_turn": 39552,
+    "max_requests": 5
+   },
+   "texas_share_adhoc": {
+    "turns": 1,
+    "did": 0,
+    "partly": 0,
+    "not": 1,
+    "did_with_quality": 0,
+    "checks": 2,
+    "checks_passed": 0,
+    "goal_checks": 2,
+    "goal_passed": 0,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 0.0,
+    "requests_per_turn": 4.0,
+    "tokens_per_turn": 29855,
+    "max_requests": 4
+   },
+   "capacity_by_year_adhoc": {
+    "turns": 1,
+    "did": 0,
+    "partly": 1,
+    "not": 0,
+    "did_with_quality": 0,
+    "checks": 3,
+    "checks_passed": 2,
+    "goal_checks": 3,
+    "goal_passed": 2,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 6.0,
+    "tokens_per_turn": 45918,
+    "max_requests": 6
+   },
+   "capacity_by_region_adhoc": {
+    "turns": 1,
+    "did": 0,
+    "partly": 1,
+    "not": 0,
+    "did_with_quality": 0,
+    "checks": 3,
+    "checks_passed": 1,
+    "goal_checks": 3,
+    "goal_passed": 1,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 0,
+    "quality_passed": 0,
+    "divergences": 0,
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 7.0,
+    "tokens_per_turn": 55080,
+    "max_requests": 7
    }
   },
   "themes": {
@@ -696,18 +816,18 @@
     "not": 0,
     "did_with_quality": 0,
     "checks": 25,
-    "checks_passed": 16,
+    "checks_passed": 18,
     "goal_checks": 14,
     "goal_passed": 8,
     "guard_checks": 4,
     "guard_passed": 4,
     "quality_checks": 7,
-    "quality_passed": 4,
+    "quality_passed": 6,
     "divergences": 0,
-    "refusals_per_turn": 0.67,
-    "requests_per_turn": 6.33,
-    "tokens_per_turn": 51102,
-    "max_requests": 16
+    "refusals_per_turn": 0.83,
+    "requests_per_turn": 5.33,
+    "tokens_per_turn": 43259,
+    "max_requests": 11
    },
    "filters": {
     "turns": 4,
@@ -724,10 +844,10 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 0.0,
-    "requests_per_turn": 2.5,
-    "tokens_per_turn": 18557,
-    "max_requests": 4
+    "refusals_per_turn": 0.25,
+    "requests_per_turn": 2.25,
+    "tokens_per_turn": 16498,
+    "max_requests": 3
    },
    "titles": {
     "turns": 4,
@@ -744,70 +864,70 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 0.5,
-    "requests_per_turn": 2.5,
-    "tokens_per_turn": 18302,
-    "max_requests": 4
+    "refusals_per_turn": 0.0,
+    "requests_per_turn": 2.0,
+    "tokens_per_turn": 14643,
+    "max_requests": 2
    },
    "layout": {
     "turns": 4,
-    "did": 3,
-    "partly": 1,
+    "did": 2,
+    "partly": 2,
     "not": 0,
-    "did_with_quality": 3,
+    "did_with_quality": 2,
     "checks": 12,
-    "checks_passed": 11,
+    "checks_passed": 10,
     "goal_checks": 9,
-    "goal_passed": 8,
+    "goal_passed": 7,
     "guard_checks": 3,
     "guard_passed": 3,
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
     "refusals_per_turn": 0.0,
-    "requests_per_turn": 3.75,
-    "tokens_per_turn": 27966,
-    "max_requests": 5
+    "requests_per_turn": 3.25,
+    "tokens_per_turn": 24404,
+    "max_requests": 4
    },
    "edits": {
     "turns": 5,
-    "did": 4,
-    "partly": 1,
+    "did": 5,
+    "partly": 0,
     "not": 0,
-    "did_with_quality": 3,
+    "did_with_quality": 4,
     "checks": 15,
-    "checks_passed": 13,
+    "checks_passed": 14,
     "goal_checks": 10,
-    "goal_passed": 9,
+    "goal_passed": 10,
     "guard_checks": 1,
     "guard_passed": 1,
     "quality_checks": 4,
     "quality_passed": 3,
     "divergences": 0,
-    "refusals_per_turn": 0.4,
-    "requests_per_turn": 3.0,
-    "tokens_per_turn": 22612,
-    "max_requests": 6
+    "refusals_per_turn": 0.0,
+    "requests_per_turn": 2.6,
+    "tokens_per_turn": 19484,
+    "max_requests": 4
    },
    "numbers": {
     "turns": 6,
-    "did": 3,
+    "did": 1,
     "partly": 2,
-    "not": 1,
-    "did_with_quality": 2,
+    "not": 3,
+    "did_with_quality": 1,
     "checks": 13,
-    "checks_passed": 8,
+    "checks_passed": 6,
     "goal_checks": 10,
-    "goal_passed": 6,
+    "goal_passed": 4,
     "guard_checks": 0,
     "guard_passed": 0,
     "quality_checks": 3,
     "quality_passed": 2,
     "divergences": 0,
-    "refusals_per_turn": 0.67,
-    "requests_per_turn": 6.83,
-    "tokens_per_turn": 53124,
-    "max_requests": 10
+    "refusals_per_turn": 1.0,
+    "requests_per_turn": 7.0,
+    "tokens_per_turn": 54864,
+    "max_requests": 12
    },
    "charts": {
     "turns": 2,
@@ -826,7 +946,7 @@
     "divergences": 0,
     "refusals_per_turn": 1.0,
     "requests_per_turn": 5.5,
-    "tokens_per_turn": 41523,
+    "tokens_per_turn": 41902,
     "max_requests": 6
    },
    "claims": {
@@ -844,10 +964,10 @@
     "quality_checks": 0,
     "quality_passed": 0,
     "divergences": 0,
-    "refusals_per_turn": 0.0,
+    "refusals_per_turn": 0.5,
     "requests_per_turn": 5.0,
-    "tokens_per_turn": 40252,
-    "max_requests": 7
+    "tokens_per_turn": 41172,
+    "max_requests": 8
    },
    "runaway": {
     "turns": 2,
@@ -866,28 +986,48 @@
     "divergences": 0,
     "refusals_per_turn": 1.0,
     "requests_per_turn": 11.5,
-    "tokens_per_turn": 101584,
+    "tokens_per_turn": 100758,
     "max_requests": 21
+   },
+   "metrics": {
+    "turns": 6,
+    "did": 3,
+    "partly": 2,
+    "not": 1,
+    "did_with_quality": 2,
+    "checks": 15,
+    "checks_passed": 9,
+    "goal_checks": 13,
+    "goal_passed": 8,
+    "guard_checks": 0,
+    "guard_passed": 0,
+    "quality_checks": 2,
+    "quality_passed": 1,
+    "divergences": 0,
+    "refusals_per_turn": 0.83,
+    "requests_per_turn": 5.5,
+    "tokens_per_turn": 42966,
+    "max_requests": 7
    }
   },
   "total": {
-   "turns": 35,
-   "did": 20,
-   "partly": 12,
-   "not": 3,
-   "did_with_quality": 16,
-   "checks": 101,
-   "checks_passed": 75,
-   "goal_checks": 64,
-   "goal_passed": 48,
+   "turns": 41,
+   "did": 21,
+   "partly": 14,
+   "not": 6,
+   "did_with_quality": 17,
+   "checks": 116,
+   "checks_passed": 84,
+   "goal_checks": 77,
+   "goal_passed": 54,
    "guard_checks": 16,
    "guard_passed": 15,
-   "quality_checks": 21,
-   "quality_passed": 12,
+   "quality_checks": 23,
+   "quality_passed": 15,
    "divergences": 0,
-   "refusals_per_turn": 0.46,
-   "requests_per_turn": 4.94,
-   "tokens_per_turn": 38984,
+   "refusals_per_turn": 0.54,
+   "requests_per_turn": 4.73,
+   "tokens_per_turn": 37410,
    "max_requests": 21
   }
  },
@@ -905,7 +1045,7 @@
        "description": "3 labelled KPIs at the top",
        "workstream": "W1",
        "passed": false,
-       "detail": "KPIs without a number: ['total_turbines_kpi', 'installed_capacity_kpi', 'average_hub_height_kpi']",
+       "detail": "KPIs without a number: ['total_turbines_kpi', 'total_capacity_kpi', 'average_hub_height_kpi']",
        "xfail": "W1",
        "quality": false,
        "guard": false
@@ -941,14 +1081,13 @@
        "guard": false
       }
      ],
-     "requests": 5,
-     "input_tokens": 37450,
-     "output_tokens": 310,
-     "cached_tokens": 29414,
+     "requests": 4,
+     "input_tokens": 30086,
+     "output_tokens": 298,
+     "cached_tokens": 29475,
      "refusals": 0,
      "tools": [
       "list_tables",
-      "describe_table",
       "add_sql",
       "add_kpi",
       "add_kpi",
@@ -957,12 +1096,12 @@
      "added": [
       "turbine_kpis",
       "total_turbines_kpi",
-      "installed_capacity_kpi",
+      "total_capacity_kpi",
       "average_hub_height_kpi"
      ],
      "changed": [],
      "removed": [],
-     "output": "Added a row of three top-bar KPIs: total turbines, total installed capacity (MW), and average hub height (m).",
+     "output": "Added three KPI cards in a row at the top: total turbines, total installed capacity (MW), and average hub height (m).",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1012,10 +1151,10 @@
        "guard": false
       }
      ],
-     "requests": 5,
-     "input_tokens": 36991,
-     "output_tokens": 299,
-     "cached_tokens": 36018,
+     "requests": 4,
+     "input_tokens": 29765,
+     "output_tokens": 312,
+     "cached_tokens": 29139,
      "refusals": 1,
      "tools": [
       "list_tables",
@@ -1023,7 +1162,7 @@
       "add_kpi",
       "add_kpi",
       "add_kpi",
-      "add_kpi"
+      "set_title"
      ],
      "added": [
       "penguin_kpis",
@@ -1033,7 +1172,7 @@
      ],
      "changed": [],
      "removed": [],
-     "output": "Added the three KPI cards: penguin count, average body mass (g), and average flipper length (mm).",
+     "output": "Added three KPI cards: **Number of penguins**, **Average body mass (g)**, and **Average flipper length (mm)**. I couldn\u2019t title the dashboard because no dashboard is currently open.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1073,10 +1212,10 @@
        "guard": true
       }
      ],
-     "requests": 3,
-     "input_tokens": 23952,
-     "output_tokens": 122,
-     "cached_tokens": 22751,
+     "requests": 4,
+     "input_tokens": 32271,
+     "output_tokens": 111,
+     "cached_tokens": 31063,
      "refusals": 1,
      "tools": [
       "set_config",
@@ -1089,7 +1228,7 @@
       "average_flipper_length"
      ],
      "removed": [],
-     "output": "Updated the KPI units to **grams** for average body mass and **millimetres** for average flipper length.",
+     "output": "Updated the KPI suffixes to show **grams** for average body mass and **millimetres** for average flipper length.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1139,10 +1278,10 @@
        "guard": false
       }
      ],
-     "requests": 5,
-     "input_tokens": 37120,
-     "output_tokens": 289,
-     "cached_tokens": 36122,
+     "requests": 4,
+     "input_tokens": 29816,
+     "output_tokens": 298,
+     "cached_tokens": 29402,
      "refusals": 1,
      "tools": [
       "list_tables",
@@ -1150,17 +1289,17 @@
       "add_kpi",
       "add_kpi",
       "add_kpi",
-      "add_kpi"
+      "set_title"
      ],
      "added": [
-      "quake_magnitude_summary",
+      "quake_summary",
       "total_quakes_kpi",
       "average_magnitude_kpi",
       "largest_magnitude_kpi"
      ],
      "changed": [],
      "removed": [],
-     "output": "Added a row of three KPIs: total quakes, average magnitude, and largest magnitude.",
+     "output": "Added a row of KPI cards: **Total quakes: 901**, **Average magnitude: 4.43**, and **Largest magnitude: 6.61**. I couldn\u2019t set the dashboard title because no dashboard was open.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1184,7 +1323,7 @@
        "description": "3 labelled KPIs at the top",
        "workstream": "W1",
        "passed": false,
-       "detail": "KPIs without a number: ['number_of_turbines_kpi', 'number_of_projects_kpi', 'number_of_states_kpi']",
+       "detail": "KPIs without a number: ['turbine_count', 'project_count', 'state_count']",
        "xfail": "W1",
        "quality": false,
        "guard": false
@@ -1230,27 +1369,28 @@
        "guard": false
       }
      ],
-     "requests": 4,
-     "input_tokens": 31040,
-     "output_tokens": 247,
-     "cached_tokens": 29657,
+     "requests": 5,
+     "input_tokens": 39619,
+     "output_tokens": 286,
+     "cached_tokens": 38861,
      "refusals": 0,
      "tools": [
       "list_tables",
+      "describe_table",
       "add_sql",
       "add_kpi",
       "add_kpi",
       "add_kpi"
      ],
      "added": [
-      "turbine_project_state_counts",
-      "number_of_turbines_kpi",
-      "number_of_projects_kpi",
-      "number_of_states_kpi"
+      "dashboard_counts",
+      "turbine_count",
+      "project_count",
+      "state_count"
      ],
      "changed": [],
      "removed": [],
-     "output": "Added three number cards to the top bar: Turbines, Projects, and States.",
+     "output": "Added three top-bar number cards: Turbines, Projects, and States.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1274,7 +1414,7 @@
        "description": "2 labelled KPIs at the top",
        "workstream": "W1",
        "passed": false,
-       "detail": "KPIs without a number: ['us_wind_turbine_count', 'us_wind_state_count', 'us_wind_manufacturer_count', 'us_wind_capacity_mw']",
+       "detail": "KPIs without a number: ['wind_turbines', 'wind_installed_capacity', 'wind_states', 'wind_manufacturers']",
        "xfail": "W1",
        "quality": false,
        "guard": false
@@ -1313,9 +1453,9 @@
        "id": "max_bars",
        "description": "at most 20 bars",
        "workstream": "W5",
-       "passed": false,
-       "detail": "bar charts with too many bars: {'top_states_by_capacity': 22}",
-       "xfail": null,
+       "passed": true,
+       "detail": "",
+       "xfail": "W5",
        "quality": true,
        "guard": false
       },
@@ -1324,7 +1464,7 @@
        "description": "every chart has a title",
        "workstream": "W5",
        "passed": false,
-       "detail": "charts without a title: ['installed_capacity_over_time', 'top_states_by_capacity', 'top_manufacturers_by_capacity']",
+       "detail": "charts without a title: ['installed_capacity_over_time', 'top_states_capacity', 'top_manufacturers_capacity']",
        "xfail": "W5",
        "quality": true,
        "guard": false
@@ -1333,21 +1473,24 @@
        "id": "requests",
        "description": "at most 12 requests",
        "workstream": "W6",
-       "passed": false,
-       "detail": "16 model requests, limit 12",
-       "xfail": null,
+       "passed": true,
+       "detail": "",
+       "xfail": "W6",
        "quality": true,
        "guard": false
       }
      ],
-     "requests": 16,
-     "input_tokens": 137643,
-     "output_tokens": 1152,
-     "cached_tokens": 134756,
-     "refusals": 1,
+     "requests": 11,
+     "input_tokens": 95514,
+     "output_tokens": 1180,
+     "cached_tokens": 92751,
+     "refusals": 2,
      "tools": [
       "list_tables",
       "describe_table",
+      "distinct_values",
+      "distinct_values",
+      "set_title",
       "add_sql",
       "add_sql",
       "add_sql",
@@ -1363,21 +1506,21 @@
       "arrange_tiles"
      ],
      "added": [
-      "wind_headlines",
+      "headline_wind_stats",
       "capacity_by_year",
       "capacity_by_state",
       "capacity_by_manufacturer",
-      "us_wind_turbine_count",
-      "us_wind_state_count",
-      "us_wind_manufacturer_count",
-      "us_wind_capacity_mw",
+      "wind_turbines",
+      "wind_installed_capacity",
+      "wind_states",
+      "wind_manufacturers",
       "installed_capacity_over_time",
-      "top_states_by_capacity",
-      "top_manufacturers_by_capacity"
+      "top_states_capacity",
+      "top_manufacturers_capacity"
      ],
      "changed": [],
      "removed": [],
-     "output": "Built the dashboard with headline KPIs for turbine count, states, manufacturers, and installed capacity, plus charts for capacity over time and the state and manufacturer rankings. Capacity is summed from turbine nameplate capacity and converted from kW to MW.\n\nI couldn\u2019t set the dashboard title because the dashboard was no longer open when I tried.",
+     "output": "I created the dashboard with headline counts for turbines, installed capacity, states, and manufacturers, plus charts for capacity by year and the top states and manufacturers by installed capacity.\n\nThe dashboard title could not be set because no dashboard was open, so it may still show as \u201cUntitled.\u201d",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1418,9 +1561,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14402,
-     "output_tokens": 53,
-     "cached_tokens": 14051,
+     "input_tokens": 14528,
+     "output_tokens": 47,
+     "cached_tokens": 14522,
      "refusals": 0,
      "tools": [
       "add_filter"
@@ -1428,7 +1571,7 @@
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Added a **State** dropdown filter for `t_state`. It applies to both the chart and the table.",
+     "output": "Added a State dropdown filter. It applies to both the chart and the table.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -1469,9 +1612,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14620,
+     "input_tokens": 14746,
      "output_tokens": 66,
-     "cached_tokens": 14147,
+     "cached_tokens": 14740,
      "refusals": 0,
      "tools": [
       "add_filter"
@@ -1479,7 +1622,7 @@
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Added an Island dropdown filter. It filters the bill scatter plot; the species count and body mass charts don\u2019t include an island column, so they won\u2019t respond to it.",
+     "output": "Added an Island picker. It filters the bill scatter chart; the species-count and body-mass charts don\u2019t include an island column, so they won\u2019t respond to it.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -1520,9 +1663,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14266,
-     "output_tokens": 51,
-     "cached_tokens": 13986,
+     "input_tokens": 14392,
+     "output_tokens": 42,
+     "cached_tokens": 14386,
      "refusals": 0,
      "tools": [
       "add_filter"
@@ -1530,7 +1673,7 @@
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Added a Year dropdown to the global filter bar. It filters the body-mass-by-species chart.",
+     "output": "Added a Year dropdown that filters the body-mass chart.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -1570,25 +1713,22 @@
        "guard": true
       }
      ],
-     "requests": 4,
-     "input_tokens": 30623,
-     "output_tokens": 146,
-     "cached_tokens": 29544,
-     "refusals": 0,
+     "requests": 3,
+     "input_tokens": 22025,
+     "output_tokens": 147,
+     "cached_tokens": 21797,
+     "refusals": 1,
      "tools": [
-      "list_tables",
       "add_filter_control",
-      "update_chart"
+      "add_filter_control"
      ],
      "added": [
-      "projects_state_click_filter",
-      "projects_state_click_filter_filter"
+      "projects_state_filter",
+      "projects_state_filter_filter"
      ],
-     "changed": [
-      "state_capacity_chart"
-     ],
+     "changed": [],
      "removed": [],
-     "output": "Added a State filter for the projects table and configured the state-capacity bars for selection. The table filter is currently a separate control, though\u2014clicking a bar does not automatically drive it.",
+     "output": "Added a State selector that filters the projects table. It isn\u2019t linked to clicking a bar in the chart, so selecting a bar won\u2019t update the table. The chart and table use separate data, and the available filter controls can\u2019t create that cross-chart click interaction.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "not",
@@ -1629,9 +1769,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14376,
+     "input_tokens": 14502,
      "output_tokens": 35,
-     "cached_tokens": 14049,
+     "cached_tokens": 14496,
      "refusals": 0,
      "tools": [
       "set_title"
@@ -1680,9 +1820,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14628,
-     "output_tokens": 68,
-     "cached_tokens": 14160,
+     "input_tokens": 14755,
+     "output_tokens": 79,
+     "cached_tokens": 14749,
      "refusals": 0,
      "tools": [
       "set_title"
@@ -1690,7 +1830,7 @@
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Added the title **Penguin Species and Measurements** and a short explanation of the dashboard at the top.",
+     "output": "Added the title **Penguin Species and Measurements** and a short description of the species counts, bill measurements, and average body mass shown on the dashboard.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -1731,9 +1871,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14473,
+     "input_tokens": 14599,
      "output_tokens": 46,
-     "cached_tokens": 14057,
+     "cached_tokens": 14593,
      "refusals": 0,
      "tools": [
       "update_chart"
@@ -1783,20 +1923,18 @@
        "guard": false
       }
      ],
-     "requests": 4,
-     "input_tokens": 29478,
-     "output_tokens": 103,
-     "cached_tokens": 28796,
-     "refusals": 2,
+     "requests": 2,
+     "input_tokens": 14518,
+     "output_tokens": 37,
+     "cached_tokens": 14464,
+     "refusals": 0,
      "tools": [
-      "set_config",
-      "update_chart",
-      "set_title"
+      "add_table"
      ],
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Renamed the dashboard to **Largest projects**. I couldn\u2019t rename just the table: its title isn\u2019t a supported table option.",
+     "output": "Renamed the table to **Largest projects**.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "not",
@@ -1829,8 +1967,8 @@
        "id": "row_top_manufacturers",
        "description": "top_manufacturers | largest_projects in one row",
        "workstream": "W3",
-       "passed": true,
-       "detail": "",
+       "passed": false,
+       "detail": "('top_manufacturers', 'largest_projects') in one row but in the order ['largest_projects', 'top_manufacturers']",
        "xfail": null,
        "quality": false,
        "guard": false
@@ -1856,25 +1994,24 @@
        "guard": false
       }
      ],
-     "requests": 5,
-     "input_tokens": 37810,
-     "output_tokens": 134,
-     "cached_tokens": 36917,
+     "requests": 4,
+     "input_tokens": 30343,
+     "output_tokens": 119,
+     "cached_tokens": 30007,
      "refusals": 0,
      "tools": [
-      "place_tile",
-      "place_tile",
+      "arrange_tiles",
       "place_tile",
       "place_tile"
      ],
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Done. The layout now has capacity over time beside top states, and top manufacturers beside the largest projects table.",
+     "output": "Done. Capacity over time is beside Top states, and Top manufacturers is beside the Largest projects table.",
      "error": null,
      "model": "openai/gpt-6-luna",
-     "verdict": "did",
-     "did_with_quality": true
+     "verdict": "partly",
+     "did_with_quality": false
     }
    ],
    "error": null,
@@ -1920,10 +2057,10 @@
        "guard": true
       }
      ],
-     "requests": 4,
-     "input_tokens": 29794,
-     "output_tokens": 109,
-     "cached_tokens": 29071,
+     "requests": 3,
+     "input_tokens": 22490,
+     "output_tokens": 118,
+     "cached_tokens": 22275,
      "refusals": 0,
      "tools": [
       "place_tile",
@@ -1933,7 +2070,7 @@
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Moved all three KPIs into one row at the top of the dashboard, above the chart.",
+     "output": "Moved all three KPIs into one row at the top, above the chart.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -1974,9 +2111,9 @@
       }
      ],
      "requests": 3,
-     "input_tokens": 21825,
-     "output_tokens": 90,
-     "cached_tokens": 21340,
+     "input_tokens": 22006,
+     "output_tokens": 85,
+     "cached_tokens": 21826,
      "refusals": 0,
      "tools": [
       "place_tile",
@@ -1985,7 +2122,7 @@
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Done \u2014 the table is on the left and the chart is on the right, both 400 px high.",
+     "output": "Done \u2014 the table is on the left and the chart on the right, both 400 px high.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2036,18 +2173,18 @@
       }
      ],
      "requests": 3,
-     "input_tokens": 22026,
-     "output_tokens": 74,
-     "cached_tokens": 21505,
+     "input_tokens": 22370,
+     "output_tokens": 86,
+     "cached_tokens": 22122,
      "refusals": 0,
      "tools": [
       "place_tile",
-      "set_title"
+      "place_tile"
      ],
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "Done. The bill scatter plot is now twice as wide as the species count chart, and they remain side by side.",
+     "output": "Done. The scatter plot and species count chart are side by side, with the scatter plot twice as wide.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2098,9 +2235,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14342,
+     "input_tokens": 14468,
      "output_tokens": 47,
-     "cached_tokens": 13991,
+     "cached_tokens": 14462,
      "refusals": 0,
      "tools": [
       "update_chart"
@@ -2161,9 +2298,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14666,
+     "input_tokens": 14792,
      "output_tokens": 69,
-     "cached_tokens": 14140,
+     "cached_tokens": 14786,
      "refusals": 0,
      "tools": [
       "update_chart"
@@ -2173,7 +2310,7 @@
       "bill_scatter"
      ],
      "removed": [],
-     "output": "Swapped the scatter plot axes: bill depth is now on the x-axis and bill length on the y-axis.",
+     "output": "Swapped the scatter\u2019s axes: bill depth is now on the x-axis and bill length on the y-axis.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2223,26 +2360,21 @@
        "guard": false
       }
      ],
-     "requests": 6,
-     "input_tokens": 46979,
-     "output_tokens": 492,
-     "cached_tokens": 45448,
-     "refusals": 2,
+     "requests": 3,
+     "input_tokens": 22035,
+     "output_tokens": 174,
+     "cached_tokens": 21603,
+     "refusals": 0,
      "tools": [
       "list_tables",
-      "add_sql",
-      "update_chart",
-      "add_chart",
-      "add_chart"
+      "update_chart"
      ],
-     "added": [
-      "quakes_monthly_rolling"
-     ],
+     "added": [],
      "changed": [
       "quakes_monthly_chart"
      ],
      "removed": [],
-     "output": "Added a dashed 3-month rolling average line to the existing monthly earthquakes chart. The average includes the current month and up to the two preceding months.",
+     "output": "Added a dashed 3-month rolling average line to the earthquakes-per-month chart.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2265,9 +2397,9 @@
        "id": "numbers",
        "description": "numbers match SELECT t_state, SUM(t_cap) / 1e6 FROM turbines GROUP BY 1",
        "workstream": "W2",
-       "passed": false,
-       "detail": "no shown node matches t_state,(sum(t_cap) / 1e6) | WA,0.168 | IA,0.1347 | OK,0.1061; saw {state_capacity: t_state,capacity_mw | CA,235.8 | TX,192.85 | WA,168.0, projects: p_name,t_state,p_year,capacity_mw | High Ridge,NM,2015,45.0 | East Ridge,OK,2020,42.0 | East Valley,PA,2013,40.0}",
-       "xfail": null,
+       "passed": true,
+       "detail": "",
+       "xfail": "W2",
        "quality": false,
        "guard": false
       },
@@ -2292,25 +2424,28 @@
        "guard": true
       }
      ],
-     "requests": 3,
-     "input_tokens": 21842,
-     "output_tokens": 109,
-     "cached_tokens": 21314,
+     "requests": 4,
+     "input_tokens": 31005,
+     "output_tokens": 180,
+     "cached_tokens": 30694,
      "refusals": 0,
      "tools": [
       "list_tables",
-      "update_chart"
+      "add_sql",
+      "add_chart"
      ],
-     "added": [],
+     "added": [
+      "state_capacity_gw"
+     ],
      "changed": [
       "state_capacity_chart"
      ],
      "removed": [],
-     "output": "The chart\u2019s values were already in GW\u2014the query divides MW by 1,000. I updated the y-axis label to **Capacity (GW)**.",
+     "output": "Updated the chart to show capacity in GW, labeled **Capacity (GW)**. The existing MW-based SQL result remains unchanged; the chart now uses a converted result.",
      "error": null,
      "model": "openai/gpt-6-luna",
-     "verdict": "partly",
-     "did_with_quality": false
+     "verdict": "did",
+     "did_with_quality": true
     }
    ],
    "error": null,
@@ -2357,9 +2492,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14475,
-     "output_tokens": 40,
-     "cached_tokens": 14063,
+     "input_tokens": 14606,
+     "output_tokens": 42,
+     "cached_tokens": 14600,
      "refusals": 0,
      "tools": [
       "update_chart"
@@ -2392,8 +2527,8 @@
        "id": "numbers",
        "description": "numbers match SELECT p_year, SUM(t_cap) / 1000.0 FROM turbines GROUP BY 1",
        "workstream": "W4",
-       "passed": true,
-       "detail": "",
+       "passed": false,
+       "detail": "no shown node matches p_year,(sum(t_cap) / 1000.0) | 2015,140.3 | 2004,128.3 | 2020,186.95; saw {installed_wind_capacity_by_project_year: p_year,installed_capacity_mw | 1999,1534.2000000000012 | 2000,193.04999999999995 | 2001,1770.5}",
        "xfail": null,
        "quality": false,
        "guard": false
@@ -2413,34 +2548,33 @@
        "description": "every chart has a title",
        "workstream": "W5",
        "passed": false,
-       "detail": "charts without a title: ['installed_capacity_by_year_chart']",
+       "detail": "charts without a title: ['installed_wind_capacity_by_project_year_chart']",
        "xfail": "W5",
        "quality": true,
        "guard": false
       }
      ],
-     "requests": 6,
-     "input_tokens": 45049,
-     "output_tokens": 318,
-     "cached_tokens": 44077,
+     "requests": 5,
+     "input_tokens": 37678,
+     "output_tokens": 268,
+     "cached_tokens": 37234,
      "refusals": 1,
      "tools": [
       "list_tables",
-      "describe_table",
       "add_sql",
       "add_chart",
       "set_title"
      ],
      "added": [
-      "installed_wind_capacity_by_year",
-      "installed_capacity_by_year_chart"
+      "installed_wind_capacity_by_project_year",
+      "installed_wind_capacity_by_project_year_chart"
      ],
      "changed": [],
      "removed": [],
-     "output": "Charted installed wind capacity (summed turbine capacity in MW) by project year. The chart and its SQL result are on the dashboard. I couldn\u2019t set the dashboard title because no dashboard was open.",
+     "output": "Created a bar chart of total installed wind capacity (MW) by project year. The chart is on the dashboard; I couldn\u2019t set its title because no dashboard was open.",
      "error": null,
      "model": "openai/gpt-6-luna",
-     "verdict": "did",
+     "verdict": "not",
      "did_with_quality": false
     }
    ],
@@ -2460,9 +2594,9 @@
        "id": "numbers",
        "description": "numbers match SELECT region, SUM(t_cap) / 1000.0 FROM turbines JOIN states ON turbines.t_state = states.state GROUP BY 1",
        "workstream": "W4",
-       "passed": false,
-       "detail": "no shown node matches region,(sum(t_cap) / 1000.0) | West,835.55 | Midwest,597.25 | South,298.95; saw {installed_capacity_by_census_region: region,installed_capacity | West,10133.750000000015 | Midwest,7127.84999999999 | South,3922.750000000001}",
-       "xfail": null,
+       "passed": true,
+       "detail": "",
+       "xfail": "W4",
        "quality": false,
        "guard": false
       },
@@ -2477,13 +2611,14 @@
        "guard": false
       }
      ],
-     "requests": 6,
-     "input_tokens": 46019,
-     "output_tokens": 314,
-     "cached_tokens": 44835,
+     "requests": 7,
+     "input_tokens": 55376,
+     "output_tokens": 342,
+     "cached_tokens": 54767,
      "refusals": 1,
      "tools": [
       "list_tables",
+      "describe_table",
       "describe_table",
       "add_sql",
       "add_chart",
@@ -2491,15 +2626,15 @@
      ],
      "added": [
       "installed_capacity_by_census_region",
-      "installed_capacity_by_region_chart"
+      "installed_capacity_by_census_region_chart"
      ],
      "changed": [],
      "removed": [],
-     "output": "I charted total installed capacity by US Census region using the states table. The chart is on the dashboard; I couldn\u2019t title it because no dashboard was open for titling.",
+     "output": "I charted total installed capacity by census region from the turbines and states tables, in kW. The dashboard title couldn\u2019t be set because no dashboard is open.",
      "error": null,
      "model": "openai/gpt-6-luna",
-     "verdict": "partly",
-     "did_with_quality": false
+     "verdict": "did",
+     "did_with_quality": true
     }
    ],
    "error": null,
@@ -2518,39 +2653,47 @@
        "id": "value",
        "description": "shows SELECT SUM(CASE WHEN t_state = 'TX' THEN t_cap ELSE 0 END) / SUM(t_cap) FROM turbines",
        "workstream": "W4",
-       "passed": true,
-       "detail": "",
+       "passed": false,
+       "detail": "0.0997182 not in turn nodes {'capacity_in_texas': 'capacity_mw | 192.85', 'national_capacity': 'capacity_mw | 1933.95', 'state_capacity_share': 'state,capacity_mw | WA,168.0 | IA,134.7 | OK,106.1', 'tx_capacity': 'state,capacity_mw | TX,192.85'}",
        "xfail": null,
        "quality": false,
        "guard": false
       }
      ],
-     "requests": 8,
-     "input_tokens": 62915,
-     "output_tokens": 349,
-     "cached_tokens": 61249,
-     "refusals": 1,
+     "requests": 12,
+     "input_tokens": 95950,
+     "output_tokens": 506,
+     "cached_tokens": 94697,
+     "refusals": 2,
      "tools": [
       "list_tables",
+      "distinct_values",
+      "add_metric",
       "add_metric",
       "add_sql",
-      "list_tables",
-      "describe_table",
+      "add_metric",
+      "add_sql",
+      "add_metric",
+      "add_metric",
       "add_sql",
       "add_kpi"
      ],
      "added": [
-      "installed_capacity_by_state",
-      "texas_capacity_percentage",
+      "capacity_in_texas",
+      "national_capacity",
+      "state_capacity_share",
+      "tx_capacity",
+      "capacity_by_state",
+      "texas_capacity_share",
       "texas_capacity_share_kpi"
      ],
      "changed": [],
      "removed": [],
-     "output": "Texas accounts for **9.97%** of national installed capacity. I added the percentage as a KPI.",
+     "output": "Texas accounts for **10.59%** of national installed capacity.",
      "error": null,
      "model": "openai/gpt-6-luna",
-     "verdict": "did",
-     "did_with_quality": true
+     "verdict": "not",
+     "did_with_quality": false
     }
    ],
    "error": null,
@@ -2569,9 +2712,9 @@
        "id": "numbers",
        "description": "numbers match SELECT p_name, MAX(p_cap) FROM turbines GROUP BY 1 ORDER BY 2 DESC LIMIT 10",
        "workstream": "W4",
-       "passed": true,
-       "detail": "",
-       "xfail": "W4",
+       "passed": false,
+       "detail": "no shown node matches p_name,max(p_cap) | High Ridge,45.0 | East Ridge,42.0 | East Valley,40.0; saw {largest_wind_projects: p_name,t_state,capacity_mw | High Ridge,NM,675.0 | High Prairie,CA,664.7000000000002 | East Valley,PA,640.0}",
+       "xfail": null,
        "quality": false,
        "guard": false
       },
@@ -2597,28 +2740,28 @@
       }
      ],
      "requests": 6,
-     "input_tokens": 45618,
-     "output_tokens": 348,
-     "cached_tokens": 44484,
+     "input_tokens": 46707,
+     "output_tokens": 389,
+     "cached_tokens": 46073,
      "refusals": 1,
      "tools": [
       "list_tables",
       "describe_table",
       "add_sql",
       "add_table",
-      "set_title"
+      "add_table"
      ],
      "added": [
       "largest_wind_projects",
-      "top_10_wind_projects"
+      "largest_wind_projects_table"
      ],
      "changed": [],
      "removed": [],
-     "output": "The table of the 10 largest wind projects is on the dashboard, with project, state, and capacity (MW). I couldn\u2019t set a dashboard title because no dashboard is currently open.",
+     "output": "Added a table of the 10 largest wind projects, showing project, state, and capacity in MW, sorted by capacity.",
      "error": null,
      "model": "openai/gpt-6-luna",
-     "verdict": "did",
-     "did_with_quality": true
+     "verdict": "partly",
+     "did_with_quality": false
     }
    ],
    "error": null,
@@ -2638,7 +2781,7 @@
        "description": "shows SELECT COUNT(*) FROM quakes WHERE place LIKE '%, CA' OR place ILIKE '%california%'",
        "workstream": "W4",
        "passed": false,
-       "detail": "242 not in turn nodes {'california_earthquakes': 'time,latitude,longitude,depth,mag,net,place,type,id | 2024-01-16 11:27:20,46.72,-165.574,22.03,4.71,nc,offshore Northern California,earthquake,nc70000544 | 2024', 'strongest_california_earthquakes': 'time,latitude,longitude,depth,mag,net,place,type,id | 2024-04-29 00:16:46,41.273,-79.139,12.28,6.45,nc,Northern California,earthquake,nc70000157 | 2024-03-03 05', 'california_earthquake_count': 'earthquake_count | 20'}",
+       "detail": "242 not in turn nodes {'california_earthquake_count': 'earthquake_count | 20', 'california_strongest_earthquakes': 'time,place,mag,depth,latitude,longitude | 2024-04-29 00:16:46,Northern California,6.45,12.28,41.273,-79.139 | 2024-03-03 05:10:29,offshore Northern California,5'}",
        "xfail": "W4",
        "quality": false,
        "guard": false
@@ -2648,7 +2791,7 @@
        "description": "shows the row of SELECT place, mag FROM quakes WHERE place LIKE '%, CA' OR place ILIKE '%california%' ORDER BY mag DESC LIMIT 1",
        "workstream": "W4",
        "passed": false,
-       "detail": "no shown node has the row ['40 km W of Petrolia, CA', np.float64(6.6)]; saw {'california_earthquakes': 'time,latitude,longitude,depth,mag,net,place,type,id | 2024-01-16 11:27:20,46.72,-165.574,22.03,4.71,nc,offshore Northern California,earthquake,nc70000544 | 2024', 'strongest_california_earthquakes': 'time,latitude,longitude,depth,mag,net,place,type,id | 2024-04-29 00:16:46,41.273,-79.139,12.28,6.45,nc,Northern California,earthquake,nc70000157 | 2024-03-03 05', 'california_earthquake_count': 'earthquake_count | 20'}",
+       "detail": "no shown node has the row ['40 km W of Petrolia, CA', np.float64(6.6)]; saw {'california_earthquake_count': 'earthquake_count | 20', 'california_strongest_earthquakes': 'time,place,mag,depth,latitude,longitude | 2024-04-29 00:16:46,Northern California,6.45,12.28,41.273,-79.139 | 2024-03-03 05:10:29,offshore Northern California,5'}",
        "xfail": "W4",
        "quality": false,
        "guard": false
@@ -2664,32 +2807,29 @@
        "guard": false
       }
      ],
-     "requests": 10,
-     "input_tokens": 80490,
-     "output_tokens": 420,
-     "cached_tokens": 78434,
-     "refusals": 0,
+     "requests": 8,
+     "input_tokens": 61940,
+     "output_tokens": 422,
+     "cached_tokens": 61156,
+     "refusals": 1,
      "tools": [
       "list_tables",
-      "describe_table",
       "distinct_values",
-      "add_sql",
       "add_sql",
       "add_sql",
       "add_kpi",
       "add_table",
-      "arrange_tiles"
+      "set_title"
      ],
      "added": [
-      "california_earthquakes",
-      "strongest_california_earthquakes",
       "california_earthquake_count",
-      "california_earthquake_total",
-      "top_10_california_earthquakes"
+      "california_strongest_earthquakes",
+      "california_earthquake_count_kpi",
+      "california_top_10_earthquakes"
      ],
      "changed": [],
      "removed": [],
-     "output": "There are **20 California earthquakes** in the data. I\u2019ve added the **10 strongest** to a table, sorted by magnitude. Note: the location match uses \u201cCalifornia\u201d in the place name.",
+     "output": "The data shows **20 earthquakes** labeled California. I\u2019ve added the count as a KPI and a table of the 10 strongest by magnitude. I couldn\u2019t title the dashboard because no dashboard is open.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -2719,14 +2859,13 @@
        "guard": false
       }
      ],
-     "requests": 5,
-     "input_tokens": 36697,
-     "output_tokens": 205,
-     "cached_tokens": 35964,
+     "requests": 4,
+     "input_tokens": 29426,
+     "output_tokens": 182,
+     "cached_tokens": 29294,
      "refusals": 0,
      "tools": [
       "list_tables",
-      "describe_table",
       "add_sql",
       "add_kpi"
      ],
@@ -2736,7 +2875,7 @@
      ],
      "changed": [],
      "removed": [],
-     "output": "The dataset shows **0 earthquakes last month**. It contains records only through December 31, 2025, so it has no events for the previous calendar month.",
+     "output": "There were **0 earthquakes last month** in the available data. The dataset ends on December 31, 2025, so it contains no records for last month relative to today.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "not",
@@ -2770,7 +2909,7 @@
        "description": "at most 20 bars",
        "workstream": "W5",
        "passed": false,
-       "detail": "bar charts with too many bars: {'capacity_by_state_chart': 22}",
+       "detail": "bar charts with too many bars: {'installed_capacity_by_state_chart': 22}",
        "xfail": "W5",
        "quality": true,
        "guard": false
@@ -2780,7 +2919,7 @@
        "description": "every chart has a title",
        "workstream": "W5",
        "passed": false,
-       "detail": "charts without a title: ['capacity_by_state_chart']",
+       "detail": "charts without a title: ['installed_capacity_by_state_chart']",
        "xfail": "W5",
        "quality": true,
        "guard": false
@@ -2797,9 +2936,9 @@
       }
      ],
      "requests": 6,
-     "input_tokens": 45017,
-     "output_tokens": 326,
-     "cached_tokens": 44045,
+     "input_tokens": 45410,
+     "output_tokens": 317,
+     "cached_tokens": 44966,
      "refusals": 1,
      "tools": [
       "list_tables",
@@ -2810,11 +2949,11 @@
      ],
      "added": [
       "installed_capacity_by_state",
-      "capacity_by_state_chart"
+      "installed_capacity_by_state_chart"
      ],
      "changed": [],
      "removed": [],
-     "output": "I created a bar chart of total installed turbine capacity by state, summed from the turbine-level capacity data. The chart is on the dashboard; I couldn\u2019t set its title because the dashboard wasn\u2019t open for titling.",
+     "output": "Created a bar chart of installed turbine capacity by state, using the sum of `t_cap` (kW).",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2848,7 +2987,7 @@
        "description": "every chart has a title",
        "workstream": "W5",
        "passed": false,
-       "detail": "charts without a title: ['earthquakes_by_quarter_and_type']",
+       "detail": "charts without a title: ['earthquakes_per_quarter_by_type_chart']",
        "xfail": "W5",
        "quality": true,
        "guard": false
@@ -2865,9 +3004,9 @@
       }
      ],
      "requests": 5,
-     "input_tokens": 37375,
-     "output_tokens": 328,
-     "cached_tokens": 36797,
+     "input_tokens": 37734,
+     "output_tokens": 344,
+     "cached_tokens": 37448,
      "refusals": 1,
      "tools": [
       "list_tables",
@@ -2877,11 +3016,11 @@
      ],
      "added": [
       "earthquakes_per_quarter_by_type",
-      "earthquakes_by_quarter_and_type"
+      "earthquakes_per_quarter_by_type_chart"
      ],
      "changed": [],
      "removed": [],
-     "output": "Created a quarterly line chart of event counts by event type. The chart is on the dashboard; I couldn\u2019t set its title because the dashboard was no longer open.",
+     "output": "Added a line chart of quarterly event counts by type. I couldn\u2019t set the dashboard title because no dashboard is currently open.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2921,19 +3060,18 @@
        "guard": true
       }
      ],
-     "requests": 3,
-     "input_tokens": 22760,
-     "output_tokens": 84,
-     "cached_tokens": 21871,
+     "requests": 2,
+     "input_tokens": 14709,
+     "output_tokens": 70,
+     "cached_tokens": 14703,
      "refusals": 0,
      "tools": [
-      "list_tables",
       "export_report"
      ],
      "added": [],
      "changed": [],
      "removed": [],
-     "output": "I can\u2019t set up a recurring email from here. The PDF export was also blocked because this session can\u2019t approve exports. You can export the dashboard as a PDF and schedule a Monday morning email through your team\u2019s email or automation tool.",
+     "output": "I can\u2019t schedule recurring emails from this dashboard. I also couldn\u2019t export the PDF because the export needs your approval in the browser. You can export it there, then share it with your team on Monday mornings.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
@@ -2967,31 +3105,35 @@
        "description": "no new nodes",
        "workstream": "W6",
        "passed": false,
-       "detail": "added ['capacity_unit_check']",
+       "detail": "added ['state_capacity_validation', 'state_capacity_validation_table']",
        "xfail": "W6",
        "quality": false,
        "guard": true
       }
      ],
-     "requests": 7,
-     "input_tokens": 57183,
-     "output_tokens": 477,
-     "cached_tokens": 55177,
-     "refusals": 0,
+     "requests": 8,
+     "input_tokens": 66882,
+     "output_tokens": 682,
+     "cached_tokens": 65422,
+     "refusals": 1,
      "tools": [
       "list_tables",
+      "describe_table",
       "run_sql",
-      "run_sql",
-      "set_title",
       "add_sql",
-      "update_chart"
+      "add_table",
+      "update_chart",
+      "add_chart"
      ],
      "added": [
-      "capacity_unit_check"
+      "state_capacity_validation",
+      "state_capacity_validation_table"
      ],
-     "changed": [],
+     "changed": [
+      "state_capacity_chart"
+     ],
      "removed": [],
-     "output": "Texas isn\u2019t the state with the most capacity in the data. The chart\u2019s bar order was misleading: the query sorts its rows by capacity, but the chart wasn\u2019t explicitly using that order. I updated it to sort the bars by capacity. California is highest at **235.8 MW**, followed by Texas at **192.85 MW**.\n\nThe underlying query sums turbine capacity (`t_cap`) and divides by 1,000 to convert to MW. The dashboard is now titled **Wind Turbine Capacity by State**.",
+     "output": "The chart was misleading because the query sums **`t_cap`** across turbine records. On that measure, **Texas is not first**: California ranks first at **235.8 MW**, while Texas has **192.85 MW**.\n\nI\u2019ve updated the chart to use that turbine-capacity measure and added a state-by-state comparison table. The table also includes summed `p_cap` for context, but that is a project-level field repeated across turbine rows, so summing it by state would overcount project capacity.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -3062,52 +3204,52 @@
       }
      ],
      "requests": 21,
-     "input_tokens": 186767,
-     "output_tokens": 1460,
-     "cached_tokens": 183058,
+     "input_tokens": 185065,
+     "output_tokens": 1382,
+     "cached_tokens": 181937,
      "refusals": 2,
      "tools": [
       "list_tables",
       "describe_table",
       "set_title",
       "add_sql",
-      "add_sql",
-      "add_sql",
-      "add_sql",
-      "add_sql",
-      "add_sql",
       "add_kpi",
       "add_kpi",
       "add_kpi",
       "add_kpi",
+      "add_sql",
+      "add_sql",
+      "add_sql",
+      "add_sql",
       "add_chart",
       "add_chart",
       "add_chart",
       "add_chart",
+      "add_sql",
       "add_table",
       "add_table",
       "arrange_tiles"
      ],
      "added": [
-      "penguin_summary",
-      "species_counts",
-      "body_mass_by_species",
-      "flipper_body_mass",
-      "island_year_counts",
-      "penguin_records",
+      "penguin_overview",
       "penguin_count_kpi",
       "mean_body_mass_kg_kpi",
       "mean_flipper_length_kpi",
       "female_share_kpi",
-      "species_count_chart",
+      "species_counts",
+      "body_mass_by_species",
+      "flipper_body_mass",
+      "island_year_counts",
+      "species_counts_chart",
       "body_mass_distribution_chart",
       "flipper_body_mass_scatter",
-      "island_year_count_chart",
-      "all_penguin_records"
+      "island_year_counts_chart",
+      "all_penguin_records",
+      "all_penguin_records_table"
      ],
      "changed": [],
      "removed": [],
-     "output": "Built the penguin dashboard with four KPI cards, four charts, and a table of all records. The table includes all 120 rows and is paginated. I couldn\u2019t set a dashboard title because the app reported that no dashboard was open.",
+     "output": "Built the penguin dashboard with four KPI cards, four charts, and a table of all records. Body mass is shown in kilograms; the table retains the source columns and units. The dashboard title couldn\u2019t be set because no dashboard was open.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "partly",
@@ -3168,9 +3310,9 @@
       }
      ],
      "requests": 2,
-     "input_tokens": 14806,
-     "output_tokens": 135,
-     "cached_tokens": 14180,
+     "input_tokens": 14932,
+     "output_tokens": 136,
+     "cached_tokens": 14926,
      "refusals": 0,
      "tools": [
       "remove_node",
@@ -3190,11 +3332,386 @@
       "helper_5",
       "helper_6"
      ],
-     "output": "Removed the six unused helper queries. The queries feeding the capacity chart remain.",
+     "output": "Removed the six unused helper queries. The source and state capacity chart are unchanged.",
      "error": null,
      "model": "openai/gpt-6-luna",
      "verdict": "did",
      "did_with_quality": true
+    }
+   ],
+   "error": null,
+   "stale": false,
+   "divergences": []
+  },
+  {
+   "name": "texas_share_metric",
+   "theme": "metrics",
+   "playtest": "B s5 t2",
+   "turns": [
+    {
+     "prompt": "What percentage of national installed capacity is in Texas?",
+     "checks": [
+      {
+       "id": "metric",
+       "description": "answers with metric capacity_share",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      }
+     ],
+     "requests": 4,
+     "input_tokens": 30988,
+     "output_tokens": 117,
+     "cached_tokens": 30778,
+     "refusals": 0,
+     "tools": [
+      "list_tables",
+      "add_metric",
+      "add_table"
+     ],
+     "added": [
+      "texas_capacity_share",
+      "texas_capacity_share_table"
+     ],
+     "changed": [],
+     "removed": [],
+     "output": "Texas has **10.0%** of national installed wind capacity.",
+     "error": null,
+     "model": "openai/gpt-6-luna",
+     "verdict": "did",
+     "did_with_quality": true
+    }
+   ],
+   "error": null,
+   "stale": false,
+   "divergences": []
+  },
+  {
+   "name": "capacity_by_year_metric",
+   "theme": "metrics",
+   "playtest": "A s6 t1",
+   "turns": [
+    {
+     "prompt": "Chart installed wind capacity in MW by project year.",
+     "checks": [
+      {
+       "id": "metric",
+       "description": "answers with metric capacity",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "chart_visible",
+       "description": "1+ visible chart",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "years",
+       "description": "years are not drawn as 1,992",
+       "workstream": "W5",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": true,
+       "guard": false
+      },
+      {
+       "id": "chart_titles",
+       "description": "every chart has a title",
+       "workstream": "W5",
+       "passed": false,
+       "detail": "charts without a title: ['wind_capacity_by_project_year']",
+       "xfail": null,
+       "quality": true,
+       "guard": false
+      }
+     ],
+     "requests": 7,
+     "input_tokens": 55990,
+     "output_tokens": 296,
+     "cached_tokens": 55696,
+     "refusals": 2,
+     "tools": [
+      "list_tables",
+      "add_metric",
+      "add_metric",
+      "add_chart",
+      "set_title",
+      "arrange_tiles"
+     ],
+     "added": [
+      "capacity_by_year",
+      "wind_capacity_by_project_year"
+     ],
+     "changed": [],
+     "removed": [],
+     "output": "Charted installed wind capacity in MW by project year.",
+     "error": null,
+     "model": "openai/gpt-6-luna",
+     "verdict": "did",
+     "did_with_quality": false
+    }
+   ],
+   "error": null,
+   "stale": false,
+   "divergences": []
+  },
+  {
+   "name": "capacity_by_region_metric",
+   "theme": "metrics",
+   "playtest": "B s5 t1",
+   "turns": [
+    {
+     "prompt": "Chart total installed capacity by US census region, using the states table.",
+     "checks": [
+      {
+       "id": "metric",
+       "description": "answers with metric regional_capacity",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "chart_visible",
+       "description": "1+ visible chart",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      }
+     ],
+     "requests": 5,
+     "input_tokens": 39317,
+     "output_tokens": 235,
+     "cached_tokens": 38943,
+     "refusals": 1,
+     "tools": [
+      "list_tables",
+      "add_metric",
+      "add_chart",
+      "set_title"
+     ],
+     "added": [
+      "installed_capacity_by_census_region",
+      "capacity_by_census_region_chart"
+     ],
+     "changed": [],
+     "removed": [],
+     "output": "Charted installed wind capacity by US census region using the regional capacity metric and states table. The dashboard title couldn\u2019t be set because no dashboard is open.",
+     "error": null,
+     "model": "openai/gpt-6-luna",
+     "verdict": "did",
+     "did_with_quality": true
+    }
+   ],
+   "error": null,
+   "stale": false,
+   "divergences": []
+  },
+  {
+   "name": "texas_share_adhoc",
+   "theme": "metrics",
+   "playtest": "B s5 t2",
+   "turns": [
+    {
+     "prompt": "What percentage of national installed capacity is in Texas?",
+     "checks": [
+      {
+       "id": "value",
+       "description": "shows SELECT SUM(CASE WHEN t_state = 'TX' THEN t_cap ELSE 0 END) / SUM(t_cap) FROM turbines",
+       "workstream": "W4",
+       "passed": false,
+       "detail": "0.0997182 not in turn nodes {'texas_capacity_share': 'texas_capacity_percentage | 10.587227101579161'}",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "adhoc_label",
+       "description": "says how it was computed and that no metric was used",
+       "workstream": "M2",
+       "passed": false,
+       "detail": "nothing says that no metric was used; reply 'Texas accounts for **10.59%** of national installed capacity. I added the percentage as a KPI on the dashboard.'",
+       "xfail": "M2/#2416",
+       "quality": false,
+       "guard": false
+      }
+     ],
+     "requests": 4,
+     "input_tokens": 29670,
+     "output_tokens": 185,
+     "cached_tokens": 29369,
+     "refusals": 0,
+     "tools": [
+      "list_tables",
+      "add_sql",
+      "add_kpi"
+     ],
+     "added": [
+      "texas_capacity_share",
+      "texas_capacity_share_kpi"
+     ],
+     "changed": [],
+     "removed": [],
+     "output": "Texas accounts for **10.59%** of national installed capacity. I added the percentage as a KPI on the dashboard.",
+     "error": null,
+     "model": "openai/gpt-6-luna",
+     "verdict": "not",
+     "did_with_quality": false
+    }
+   ],
+   "error": null,
+   "stale": false,
+   "divergences": []
+  },
+  {
+   "name": "capacity_by_year_adhoc",
+   "theme": "metrics",
+   "playtest": "A s6 t1",
+   "turns": [
+    {
+     "prompt": "Chart installed wind capacity in MW by project year.",
+     "checks": [
+      {
+       "id": "numbers",
+       "description": "numbers match SELECT p_year, SUM(t_cap) / 1000.0 FROM turbines GROUP BY 1",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "chart_visible",
+       "description": "1+ visible chart",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "adhoc_label",
+       "description": "says how it was computed and that no metric was used",
+       "workstream": "M2",
+       "passed": false,
+       "detail": "nothing says that no metric was used; reply 'Added a bar chart of total installed wind capacity (MW) by project year. I couldn\u2019t title the dashboard because no dashb'",
+       "xfail": "M2/#2416",
+       "quality": false,
+       "guard": false
+      }
+     ],
+     "requests": 6,
+     "input_tokens": 45574,
+     "output_tokens": 344,
+     "cached_tokens": 44981,
+     "refusals": 1,
+     "tools": [
+      "list_tables",
+      "describe_table",
+      "add_sql",
+      "add_chart",
+      "set_title"
+     ],
+     "added": [
+      "installed_wind_capacity_by_project_year",
+      "installed_wind_capacity_by_project_year_chart"
+     ],
+     "changed": [],
+     "removed": [],
+     "output": "Added a bar chart of total installed wind capacity (MW) by project year. I couldn\u2019t title the dashboard because no dashboard is open for that change.",
+     "error": null,
+     "model": "openai/gpt-6-luna",
+     "verdict": "partly",
+     "did_with_quality": false
+    }
+   ],
+   "error": null,
+   "stale": false,
+   "divergences": []
+  },
+  {
+   "name": "capacity_by_region_adhoc",
+   "theme": "metrics",
+   "playtest": "B s5 t1",
+   "turns": [
+    {
+     "prompt": "Chart total installed capacity by US census region, using the states table.",
+     "checks": [
+      {
+       "id": "numbers",
+       "description": "numbers match SELECT region, SUM(t_cap) / 1000.0 FROM turbines JOIN states ON turbines.t_state = states.state GROUP BY 1",
+       "workstream": "W4",
+       "passed": false,
+       "detail": "no shown node matches region,(sum(t_cap) / 1000.0) | West,835.55 | Midwest,597.25 | South,298.95; saw {capacity_by_census_region: region,total_installed_capacity | West,10133.750000000015 | Midwest,7127.84999999999 | South,3922.750000000001}",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "chart_visible",
+       "description": "1+ visible chart",
+       "workstream": "W4",
+       "passed": true,
+       "detail": "",
+       "xfail": null,
+       "quality": false,
+       "guard": false
+      },
+      {
+       "id": "adhoc_label",
+       "description": "says how it was computed and that no metric was used",
+       "workstream": "M2",
+       "passed": false,
+       "detail": "nothing says that no metric was used; reply 'Charted total installed capacity by US census region using the states table. The chart and query are on the dashboard; I'",
+       "xfail": "M2/#2416",
+       "quality": false,
+       "guard": false
+      }
+     ],
+     "requests": 7,
+     "input_tokens": 54714,
+     "output_tokens": 366,
+     "cached_tokens": 54116,
+     "refusals": 1,
+     "tools": [
+      "list_tables",
+      "describe_table",
+      "describe_table",
+      "add_sql",
+      "add_chart",
+      "set_title"
+     ],
+     "added": [
+      "capacity_by_census_region",
+      "installed_capacity_by_region_chart"
+     ],
+     "changed": [],
+     "removed": [],
+     "output": "Charted total installed capacity by US census region using the states table. The chart and query are on the dashboard; I couldn\u2019t set the dashboard title because no dashboard is open.",
+     "error": null,
+     "model": "openai/gpt-6-luna",
+     "verdict": "partly",
+     "did_with_quality": false
     }
    ],
    "error": null,

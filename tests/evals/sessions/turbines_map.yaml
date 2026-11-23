@@ -4,7 +4,7 @@ turns:
 - question: Map the turbines, sized by capacity.
   nodes:
   - turbine_locations_capacity
-  - turbines_sized_by_capacity
+  - turbines_by_capacity_map
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -18,26 +18,26 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t19cbded2
+      - id: t5f710ca4
         actor: user
-        at: '2026-11-23T09:09:01Z'
+        at: '2026-11-23T09:44:10Z'
         summary: Added data.
-      - id: tdbeb0d58
+      - id: t005cd033
         actor: agent
-        at: '2026-11-23T09:09:04Z'
-        run: run-86ce1d0501d6
-        summary: Added turbine_locations_capacity. Connected data to turbine_locations_capacity. Added turbines_sized_by_capacity.
-          Connected turbine_locations_capacity to turbines_sized_by_capacity.
+        at: '2026-11-23T09:44:13Z'
+        run: run-59012064f6d7
+        summary: Added turbine_locations_capacity. Connected data to turbine_locations_capacity. Added turbines_by_capacity_map.
+          Connected turbine_locations_capacity to turbines_by_capacity_map.
     nodes:
       data:
         component: Lumen/source
-        origin: t19cbded2
+        origin: t5f710ca4
         config:
           ref: data
         position: [0.0, 44.0]
       turbine_locations_capacity:
         component: Lumen/sql
-        origin: tdbeb0d58
+        origin: t005cd033
         config:
           sql: |-
             SELECT
@@ -48,12 +48,17 @@ turns:
               "t_cap"
             FROM turbines
             WHERE
-              NOT "xlong" IS NULL AND NOT "ylat" IS NULL AND NOT "t_cap" IS NULL
+              NOT "xlong" IS NULL
+              AND NOT "ylat" IS NULL
+              AND NOT "t_cap" IS NULL
+              AND "t_cap" <> -9999
+              AND TRIM("p_name") <> ''
+              AND TRIM("t_state") <> ''
           table: turbine_locations_capacity
         position: [380.0, 0.0]
-      turbines_sized_by_capacity:
+      turbines_by_capacity_map:
         component: Lumen/deckgl
-        origin: tdbeb0d58
+        origin: t005cd033
         config:
           spec:
             layers:
@@ -63,16 +68,16 @@ turns:
                 getRadius: '@@=2 + t_cap / 200'
                 pickable: true
             tooltip:
-              text: '{p_name} ({t_state}): {t_cap} capacity'
+              text: '{p_name}, {t_state}: {t_cap} MW'
         position: [760.0, 44.0]
     edges:
       - from: data.source
         to: turbine_locations_capacity.source
       - from: turbine_locations_capacity.pipeline
-        to: turbines_sized_by_capacity.pipeline
+        to: turbines_by_capacity_map.pipeline
     layout:
       tiles:
-        - node: turbines_sized_by_capacity
+        - node: turbines_by_capacity_map
           width: 100.0
           height: 420
         - node: data

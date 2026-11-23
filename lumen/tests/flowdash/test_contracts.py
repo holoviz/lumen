@@ -10,10 +10,11 @@ from panel_flowdash.agent import DashboardOps, OperationError
 from panel_flowdash.parameters import ContractError
 
 from lumen.data.contracts import FULL, PARTIAL, source_schema
-from lumen.flowdash import COMPONENTS, bind_source
+from lumen.flowdash import COMPONENTS, VIEW_ID, bind_source
 from lumen.flowdash.contracts import (
     check, check_unrecorded, expects, source_contract, usages,
 )
+from lumen.flowdash.table_view import TABLE_VIEW_ID
 from lumen.sources.duckdb import DuckDBSource
 
 SESSIONS = Path(__file__).parents[3] / "tests" / "evals" / "sessions"
@@ -150,9 +151,10 @@ def test_recorded_sessions_are_fully_covered(path):
     for turn in session["turns"]:
         doc = yaml.safe_load(turn["dashboard"])
         found = usages(doc, "data", source_schema(data), "duckdb")
-        components = {node["component"] for node in doc["nodes"].values()} - {"Lumen/source"}
+        components = {node["component"] for node in doc["nodes"].values()} - {"Lumen/source", VIEW_ID, TABLE_VIEW_ID}
         if components == {"Lumen/metric"}:
-            # A metric node reads its source by the metric's ref, not through an edge, so no contract covers it yet.
+            # A metric node reads its source by the metric's ref, not through an edge, so no contract covers it
+            # or the views that show it yet.
             assert found == []
             continue
         assert found and all(u.coverage == FULL for u in found)

@@ -3,7 +3,8 @@ fixture: turbine_metrics
 turns:
 - question: What is the installed capacity in MW by state, counting projects since 2005?
   nodes:
-  - installed_capacity_mw_by_state_since_2005
+  - capacity_mw_by_state_since_2005
+  - capacity_mw_by_state_since_2005_chart
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,25 +18,26 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t87ab6479
+      - id: tca1a2041
         actor: user
-        at: '2026-11-23T09:08:57Z'
+        at: '2026-11-23T09:44:04Z'
         summary: Added data.
-      - id: t4fbbedab
+      - id: t81b7553f
         actor: agent
-        at: '2026-11-23T09:08:59Z'
-        run: run-1c2ff3ec8ab1
-        summary: Added installed_capacity_mw_by_state_since_2005. Set Parameters of installed_capacity_mw_by_state_since_2005.
+        at: '2026-11-23T09:44:07Z'
+        run: run-111046f776ef
+        summary: Added capacity_mw_by_state_since_2005. Set Parameters of capacity_mw_by_state_since_2005.
+          Added capacity_mw_by_state_since_2005_chart. Connected capacity_mw_by_state_since_2005 to capacity_mw_by_state_since_2005_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: t87ab6479
+        origin: tca1a2041
         config:
           ref: data
-        position: [0.0, 22.0]
-      installed_capacity_mw_by_state_since_2005:
+        position: [0.0, 272.0]
+      capacity_mw_by_state_since_2005:
         component: Lumen/metric
-        origin: t4fbbedab
+        origin: t81b7553f
         config:
           metric: capacity
           measures:
@@ -44,15 +46,42 @@ turns:
             - state
           grain: ''
           order_by:
-            - -capacity_mw
+            - state
           limit: null
         inputs:
           parameters:
             since: 2005
-        position: [380.0, 0.0]
+        position: [0.0, 0.0]
+      capacity_mw_by_state_since_2005_chart:
+        component: Lumen/view
+        origin: t81b7553f
+        config:
+          spec:
+            mark: bar
+            encoding:
+              x:
+                field: state
+                type: nominal
+                title: State
+              y:
+                field: capacity_mw
+                type: quantitative
+                title: Installed capacity (MW)
+              tooltip:
+                - field: state
+                  type: nominal
+                - field: capacity_mw
+                  type: quantitative
+                  format: .1f
+        position: [380.0, 11.0]
+    edges:
+      - from: capacity_mw_by_state_since_2005.pipeline
+        to: capacity_mw_by_state_since_2005_chart.pipeline
     layout:
       tiles:
+        - node: capacity_mw_by_state_since_2005_chart
+          width: 100.0
         - node: data
           visible: false
-        - node: installed_capacity_mw_by_state_since_2005
+        - node: capacity_mw_by_state_since_2005
           visible: false

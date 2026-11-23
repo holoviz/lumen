@@ -4,6 +4,7 @@ turns:
 - question: What is the total amount by category?
   nodes:
   - total_amount_by_category
+  - total_amount_by_category_table
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,54 +18,64 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tb3293e26
+      - id: t1b2bae94
         actor: user
-        at: '2026-11-23T09:08:28Z'
+        at: '2026-11-23T09:43:37Z'
         summary: Added data.
-      - id: tb88bcafa
+      - id: t0461774f
         actor: agent
-        at: '2026-11-23T09:08:31Z'
-        run: run-b1bb09e63c07
-        summary: Added total_amount_by_category. Connected data to total_amount_by_category.
+        at: '2026-11-23T09:43:41Z'
+        run: run-5ff21fb3c5c2
+        summary: Added total_amount_by_category. Connected data to total_amount_by_category. Added total_amount_by_category_table.
+          Connected total_amount_by_category to total_amount_by_category_table.
     nodes:
       data:
         component: Lumen/source
-        origin: tb3293e26
+        origin: t1b2bae94
         config:
           ref: data
         position: [0.0, 44.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: tb88bcafa
+        origin: t0461774f
         config:
           sql: |-
             SELECT
               "category",
-              SUM("amount") AS "total_amount"
+              SUM("amount") AS "total amount"
             FROM sales
             WHERE
-              NOT "category" IS NULL
-              AND TRIM("category") <> ''
-              AND NOT "amount" IS NULL
-              AND "amount" <> -9999
+              NOT "category" IS NULL AND TRIM("category") <> '' AND NOT "amount" IS NULL
             GROUP BY
-              "category"
-            ORDER BY
               "category"
           table: total_amount_by_category
         position: [380.0, 0.0]
+      total_amount_by_category_table:
+        component: Lumen/table_view
+        origin: t0461774f
+        config:
+          spec:
+            formatters:
+              total amount:
+                type: number
+        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
+      - from: total_amount_by_category.pipeline
+        to: total_amount_by_category_table.pipeline
     layout:
       tiles:
+        - node: total_amount_by_category_table
+          width: 100.0
+          height: 400
         - node: data
           visible: false
         - node: total_amount_by_category
           visible: false
 - question: Show that as a bar chart.
   nodes:
-  - total_amount_by_category_bar_chart
+  - total_amount_by_category_chart
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -78,50 +89,55 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tb3293e26
+      - id: t1b2bae94
         actor: user
-        at: '2026-11-23T09:08:28Z'
+        at: '2026-11-23T09:43:37Z'
         summary: Added data.
-      - id: tb88bcafa
+      - id: t0461774f
         actor: agent
-        at: '2026-11-23T09:08:31Z'
-        run: run-b1bb09e63c07
-        summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: teec23f4c
+        at: '2026-11-23T09:43:41Z'
+        run: run-5ff21fb3c5c2
+        summary: Added total_amount_by_category. Connected data to total_amount_by_category. Added total_amount_by_category_table.
+          Connected total_amount_by_category to total_amount_by_category_table.
+      - id: t9c4feda5
         actor: agent
-        at: '2026-11-23T09:08:34Z'
-        run: run-2b1141539471
-        summary: Added total_amount_by_category_bar_chart. Connected total_amount_by_category to total_amount_by_category_bar_chart.
+        at: '2026-11-23T09:43:45Z'
+        run: run-da87790ca25e
+        summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: tb3293e26
+        origin: t1b2bae94
         config:
           ref: data
-        position: [0.0, 44.0]
+        position: [0.0, 79.5]
       total_amount_by_category:
         component: Lumen/sql
-        origin: tb88bcafa
+        origin: t0461774f
         config:
           sql: |-
             SELECT
               "category",
-              SUM("amount") AS "total_amount"
+              SUM("amount") AS "total amount"
             FROM sales
             WHERE
-              NOT "category" IS NULL
-              AND TRIM("category") <> ''
-              AND NOT "amount" IS NULL
-              AND "amount" <> -9999
+              NOT "category" IS NULL AND TRIM("category") <> '' AND NOT "amount" IS NULL
             GROUP BY
               "category"
-            ORDER BY
-              "category"
           table: total_amount_by_category
-        position: [380.0, 0.0]
-      total_amount_by_category_bar_chart:
+        position: [380.0, 35.5]
+      total_amount_by_category_table:
+        component: Lumen/table_view
+        origin: t0461774f
+        config:
+          spec:
+            formatters:
+              total amount:
+                type: number
+        position: [760.0, 0.0]
+      total_amount_by_category_chart:
         component: Lumen/view
-        origin: teec23f4c
+        origin: t9c4feda5
         config:
           spec:
             mark: bar
@@ -130,26 +146,25 @@ turns:
                 field: category
                 type: nominal
                 title: Category
-                sort: null
               y:
-                field: total_amount
+                field: total amount
                 type: quantitative
                 title: Total amount
-              tooltip:
-                - field: category
-                  type: nominal
-                - field: total_amount
-                  type: quantitative
-        position: [760.0, 33.0]
+        position: [760.0, 148.0]
     edges:
       - from: data.source
         to: total_amount_by_category.source
       - from: total_amount_by_category.pipeline
-        to: total_amount_by_category_bar_chart.pipeline
+        to: total_amount_by_category_table.pipeline
+      - from: total_amount_by_category.pipeline
+        to: total_amount_by_category_chart.pipeline
     layout:
       tiles:
-        - node: total_amount_by_category_bar_chart
+        - node: total_amount_by_category_chart
           width: 100.0
+        - node: total_amount_by_category_table
+          width: 100.0
+          height: 400
         - node: data
           visible: false
         - node: total_amount_by_category
