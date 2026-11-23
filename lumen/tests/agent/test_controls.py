@@ -43,7 +43,18 @@ PENGUINS = (
     "SELECT * FROM (VALUES ('Adelie', 'Torgersen', 3750, 181), ('Adelie', 'Biscoe', 3800, 186), "
     "('Gentoo', 'Biscoe', 5400, 217), ('Chinstrap', 'Dream', 3500, 192)) AS t(species, island, body_mass_g, flipper_length_mm)"
 )
-TABLES = {"turbines": TURBINES, "penguins": PENGUINS}
+# 40 projects of 2 to 11 turbines each: p_cap, the project's capacity in MW, grows with its turbines and
+# repeats on each of their rows (one project in 17 has a stray value, as in the wind data); t_cap, a
+# turbine's capacity in kW, is constant within each model and project but does not grow with them;
+# t_hh varies per turbine.
+PROJECTS = (
+    "SELECT 'P' || p.i AS p_name, 'M' || (p.i % 4) AS t_model, ['TX', 'IA', 'PA'][p.i % 3 + 1] AS t_state, "
+    "1500 + 500 * (p.i % 4) AS t_cap, "
+    "(2 + p.i % 10) * (1500 + 500 * (p.i % 4)) / 1000.0 + CASE WHEN p.i % 17 = 0 AND t.j = 0 THEN 1 ELSE 0 END AS p_cap, "
+    "80.0 + (p.i * 7 + t.j * 3) % 50 AS t_hh "
+    "FROM range(40) AS p(i), range(12) AS t(j) WHERE t.j < 2 + p.i % 10"
+)
+TABLES = {"turbines": TURBINES, "penguins": PENGUINS, "projects": PROJECTS}
 BAR = {"mark": "bar", "encoding": {"x": {"field": "t_state", "type": "nominal"},
                                    "y": {"aggregate": "sum", "field": "t_cap", "type": "quantitative"}}}
 PROJECT = """\
@@ -165,8 +176,6 @@ def test_add_kpi_on_table_and_metric_nodes():
 
 
 @pytest.mark.parametrize(("kwargs", "message"), [
-    ({"data": "rows", "column": "p_cap", "aggregate": "sum"},
-     "sum of 'p_cap' over 'rows' would double count: 'p_cap' repeats on every row of each 'p_name' (5 rows, 3"),
     ({"data": "rows", "column": "t_state", "aggregate": "sum"}, "'t_state' holds string values; a KPI shows a number"),
     ({"data": "rows", "column": "t_cap"}, "'rows' has more than one row; pass aggregate"),
     ({"data": "rows", "column": "missing", "aggregate": "sum"}, "'rows' has no column 'missing'"),
@@ -184,9 +193,63 @@ def test_add_kpi_refusals(ctx, session, kwargs, message):
     assert structure(session) == before
 
 
-def test_add_kpi_sums_a_project_column_once_per_project(ctx, session):
-    session.add_sql("projects", "SELECT DISTINCT p_name, p_cap FROM turbines")
-    assert "Total p cap = 600." in add_kpi(ctx, "projects", "project_capacity", column="p_cap", aggregate="sum")
+def _projects(session):
+    frame = session.source.execute(PROJECTS)
+    session.add_sql("project_rows", "SELECT * FROM projects")
+    return frame
+
+
+@pytest.mark.parametrize("aggregate", ["sum", "count"])
+def test_add_kpi_refuses_to_aggregate_a_property_of_an_entity_over_its_rows(ctx, session, aggregate):
+    frame = _projects(session)
+    keys = frame.p_name.nunique()
+    single = int((frame.groupby("p_name").p_cap.nunique() == 1).sum())
+    with pytest.raises(ModelRetry) as info:
+        add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate=aggregate)
+    assert str(info.value) == (
+        f"p_cap looks like a property of p_name ({single:,} of {keys:,} p_name values have one p_cap; each "
+        f"p_name appears about {len(frame) / keys:,.0f} times), so a {aggregate} over the rows counts it once per "
+        f"row: pass distinct_by='p_name' to {aggregate} one value per p_name."
+    )
+    assert single < keys
+
+
+def test_add_kpi_distinct_by_takes_one_value_per_entity(ctx, session):
+    frame = _projects(session)
+    result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum", distinct_by="p_name")
+    expected = frame.groupby("p_name").p_cap.max().sum()
+    assert instance(session.ops, "capacity").value == pytest.approx(expected)
+    assert f"Total p cap = {expected:,.0f}." in result
+    assert "one value per 'p_name' of 'project_rows' through 'capacity_per_key', 'capacity_agg'" in result
+    assert _graph.config_of(session.ops, "capacity")["caption"] == "one p_cap per p_name"
+
+
+@pytest.mark.parametrize(("column", "aggregate"), [("t_cap", "sum"), ("t_hh", "sum"), ("p_cap", "mean")])
+def test_add_kpi_aggregates_per_row_measures_and_averages_without_refusing(ctx, session, column, aggregate):
+    frame = _projects(session)
+    add_kpi(ctx, "project_rows", "kpi", column=column, aggregate=aggregate)
+    assert instance(session.ops, "kpi").value == pytest.approx(getattr(frame[column], aggregate)())
+
+
+def test_grain_probe_cost_is_bounded(ctx, session, monkeypatch):
+    from lumen.agent import controls
+
+    _projects(session)
+    probes = []
+    real = controls.execute
+    monkeypatch.setattr(controls, "execute", lambda source, sql, timeout: probes.append((sql, timeout)) or real(source, sql, timeout))
+    monkeypatch.setattr(controls, "GRAIN_SAMPLE", 1000)
+    add_kpi(ctx, "project_rows", "kpi", column="t_hh", aggregate="sum")
+    assert 0 < len(probes) <= controls.GRAIN_KEYS
+    assert all("LIMIT 1000" in sql and timeout == controls.GRAIN_TIMEOUT for sql, timeout in probes)
+
+
+def test_add_kpi_refuses_absurd_formats(ctx, session):
+    session.add_sql("total", "SELECT SUM(t_cap) AS total FROM turbines")
+    for kwargs, message in [({"format": ".999999999f"}, "at most 10 decimals"), ({"format": "x" * 30}, "short format spec"),
+                            ({"format": "{}"}, "not a Python format spec")]:
+        with pytest.raises(ModelRetry, match=re.escape(message)):
+            add_kpi(ctx, "total", "kpi", **kwargs)
 
 
 def test_add_kpi_says_when_the_value_is_empty(ctx, session):
@@ -477,14 +540,44 @@ TOOL_NAMES = {tool.__name__ for tool in FLOWDASH_TOOLS} | {
 } | {"add_filter", "set_title", "arrange_tiles", "add_node"}
 
 
+# The command palette actions a served FlowDash app adds to its agent, which FlowDash's own
+# instructions for an agent with every dashboard tool name; a headless run has no palette.
+APP_ACTIONS = {"list_commands", "run_command"}
+# Words shaped like a tool name: a verb the tools start with, then snake_case.
+TOOL_LIKE = re.compile(
+    r"\b(?:add|set|remove|place|arrange|list|describe|distinct|run|get|edit|report|connect|disconnect|"
+    r"declare|bind|open|ask|group|ungroup|replace|validate|preview|save)_[a-z_]*[a-z]\b"
+)
+
+
+def prompt_tool_problems(instructions: str, tools: set[str]) -> list[str]:
+    """What the instructions name that the agent cannot call: unknown tool-like names and tools it lacks."""
+    problems = []
+    for word in sorted(set(TOOL_LIKE.findall(instructions)) | (set(re.findall(r"\b\w+\b", instructions)) & TOOL_NAMES)):
+        if word in APP_ACTIONS:
+            continue
+        if word not in TOOL_NAMES:
+            problems.append(f"{word} (no such tool)")
+        elif word not in tools:
+            problems.append(f"{word} (not offered)")
+    return problems
+
+
+def test_prompt_lint_catches_typos_and_tools_the_agent_lacks():
+    tools = {"add_sql", "add_kpi"}
+    assert prompt_tool_problems("Show it with add_kpis.", tools) == ["add_kpis (no such tool)"]
+    assert prompt_tool_problems("Show it with add_kpi.", {"add_sql"}) == ["add_kpi (not offered)"]
+    assert prompt_tool_problems("Write SQL with add_sql; use snake_case names.", tools) == []
+
+
 @pytest.mark.parametrize("kwargs", [
     {}, {"dashboard_tools": "data"}, {"dashboard_tools": "layout"}, {"dashboard_tools": None},
     {"explore": True},
 ], ids=["default", "data", "layout", "all", "explore"])
 def test_instructions_name_only_tools_the_agent_has(monkeypatch, kwargs):
     text, offered = _surface(monkeypatch, **kwargs)
-    named = set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", text)) & TOOL_NAMES
-    assert named <= offered, f"named but not offered: {sorted(named - offered)}"
+    problems = prompt_tool_problems(text, offered)
+    assert not problems, f"The instructions name tools the agent cannot call: {', '.join(problems)}"
 
 
 def test_layout_agent_gets_kpi_and_filter_tools_and_a_shorter_prompt(monkeypatch):
@@ -551,18 +644,21 @@ async def test_playtest_kpis_requested_by_name_show_in_the_top_bar():
 async def test_playtest_summed_project_capacity_is_refused_and_fixed():
     # Playtest A s6 and B s5: SUM(p_cap) over turbine rows counted each project once per turbine.
     session, requests = _layout_session(
-        ("add_sql", {"source": "data", "name": "turbine_rows", "sql": "SELECT * FROM turbines"}),
+        ("add_sql", {"source": "data", "name": "turbine_rows", "sql": "SELECT * FROM projects"}),
         ("add_kpi", {"data": "turbine_rows", "name": "capacity", "column": "p_cap", "aggregate": "sum", "unit": "MW"}),
-        ("add_sql", {"source": "data", "name": "projects", "sql": "SELECT DISTINCT p_name, p_cap FROM turbines"}),
-        ("add_kpi", {"data": "projects", "name": "capacity", "column": "p_cap", "aggregate": "sum", "unit": "MW"}),
-        "Total capacity is 600 MW.",
+        ("add_kpi", {"data": "turbine_rows", "name": "capacity", "column": "p_cap", "aggregate": "sum", "unit": "MW",
+                     "distinct_by": "p_name"}),
+        "Done.",
     )
     try:
         turn = await session.ask("Add a KPI of total project capacity")
     finally:
         session.close()
-    assert retried(requests[2].parts[0], "would double count")
-    assert "Total p cap = 600 MW." in turn.tool_results["call-4"]
+    assert retried(requests[2].parts[0], "pass distinct_by='p_name'")
+    import duckdb
+
+    expected = duckdb.sql(f"SELECT SUM(c) FROM (SELECT MAX(p_cap) AS c FROM ({PROJECTS}) GROUP BY p_name)").fetchall()[0][0]
+    assert f"Total p cap = {expected:,.0f} MW." in turn.tool_results["call-3"]
 
 
 async def test_playtest_local_filter_for_one_chart():

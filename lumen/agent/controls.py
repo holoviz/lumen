@@ -4,9 +4,11 @@ node's rows, for an agent that lays out the dashboard.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 
+from builtins import format as builtins_format
 from typing import Annotated, Any, Literal
 
 import pandas as pd
@@ -18,8 +20,7 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..flowdash import (
-    FILTER_ID, NODE_TIMEOUT, SQL_ID, fetch, filterable_columns,
-    pipeline_columns,
+    FILTER_ID, SQL_ID, fetch, filterable_columns, pipeline_columns,
 )
 from ..flowdash.choices import pipeline_column_types
 from ..flowdash.nodes import column_values, execute, pipeline_sql
@@ -42,11 +43,21 @@ TEMPORAL = ("date", "datetime")
 CURRENCIES = ("$", "€", "£", "¥")
 # Column names of a share or rate, shown as a percentage when their value lies in 0..1.
 RATIO_NAME = re.compile(r"(share|ratio|rate|pct|percent|fraction|proportion)", re.IGNORECASE)
-# Column names of an entity a row belongs to, whose attributes repeat on each of its rows.
+# Column names of an entity a row belongs to, which the grain probe tries first.
 KEY_NAME = re.compile(r"(^|_)(id|name|key|code)$", re.IGNORECASE)
+# The grain probe: key columns tried, rows read, seconds per query and its thresholds, see ``property_of``.
+GRAIN_KEYS = 8
+GRAIN_SAMPLE = 200_000
+GRAIN_TIMEOUT = 5
+GRAIN_SINGLE = 0.85
+GRAIN_REPEAT = 2
+GRAIN_CORRELATION = 0.6
+# The longest format spec and the most decimals a KPI takes.
+FORMAT_CHARS = 20
+MAX_DECIMALS = 10
 
 Aggregate = Literal["sum", "mean", "min", "max", "count"]
-Decimals = Annotated[int, Field(ge=0, le=10)]
+Decimals = Annotated[int, Field(ge=0, le=MAX_DECIMALS)]
 # How a KPI card relates to the filter bar: FlowDash's global filters filter what a view shows,
 # not the value a card is given, so a card keeps its number whatever the bar picks.
 KPI_FILTERS = "KPI cards do not follow the global filter bar's filters; tell the user if the dashboard has one."
@@ -116,34 +127,60 @@ def _quote(name: str, dialect: str) -> str:
     return sqlglot.exp.to_identifier(name, quoted=True).sql(dialect=dialect)
 
 
-def _repeated_per(pipeline: Pipeline, column: str, types: dict[str, str | None]) -> tuple[str, int, int] | None:
+@dataclasses.dataclass
+class Grain:
+    """A key ``column`` is a property of: ``single`` of its ``keys`` values hold one value, each on ``rows / keys`` rows."""
+
+    key: str
+    keys: int
+    single: int
+    rows: int
+
+
+def _key_columns(types: dict[str, str | None], column: str) -> list[str]:
+    """The columns a row could belong to an entity by: text, dates, booleans and whole numbers."""
+    keys = [c for c, kind in types.items() if c != column and kind in ("string", "boolean", "integer", *TEMPORAL)]
+    # Columns named like an entity come first, as the probe stops at GRAIN_KEYS of them.
+    return sorted(keys, key=lambda c: (not KEY_NAME.search(c), types[c] == "integer"))[:GRAIN_KEYS]
+
+
+def property_of(pipeline: Pipeline, column: str, types: dict[str, str | None]) -> Grain | None:
     """
-    A column naming the entity each row belongs to, e.g. a project, that
-    ``column`` is constant within while the entity has several rows, so a
-    sum over the rows counts its value once per row; with that entity's
-    rows and distinct values. None when no such column is found or the
-    rows cannot be queried.
+    The entity, e.g. a project, whose property ``column`` is, so that a sum
+    over the rows counts each entity's value once per row; None if none is
+    found or the rows cannot be queried.
+
+    For each key column it measures, on at most ``GRAIN_SAMPLE`` rows, the
+    share of the key's values whose rows hold one value of ``column``, how
+    many rows each key value has, and whether that value grows with the
+    number of rows, as a total of the entity does: ``column`` is the key's
+    property when at least ``GRAIN_SINGLE`` of its values hold one value,
+    each value has at least ``GRAIN_REPEAT`` rows on average, and the value
+    correlates by at least ``GRAIN_CORRELATION`` with the rows. A per-row
+    value that is constant within a group, e.g. a turbine's capacity within
+    its model, does not grow with the group's size, so it is not one.
     """
     sql, source = pipeline_sql(pipeline, limits=False), pipeline.source
     if sql is None or not isinstance(source, BaseSQLSource):
         return None
     dialect = source.dialect if source.dialect != "any" else None
     value = _quote(column, dialect)
-    keys = [c for c in types if c != column and types[c] == "string" and KEY_NAME.search(c)]
-    for key in keys[:5]:
+    for key in _key_columns(types, column):
         k = _quote(key, dialect)
         probe = (
-            f"SELECT COUNT(*) AS n, COUNT(DISTINCT {k}) AS keys, "
-            f"(SELECT COUNT(*) FROM (SELECT {k} FROM ({sql}) AS r GROUP BY {k} "
-            f"HAVING COUNT(DISTINCT {value}) > 1) AS v) AS varying FROM ({sql}) AS t"
+            f"SELECT COUNT(*), SUM(n), SUM(CASE WHEN d = 1 THEN 1 ELSE 0 END), "
+            f"CORR(CASE WHEN d = 1 THEN v END, CASE WHEN d = 1 THEN n END) FROM ("
+            f"SELECT {k} AS k, COUNT(*) AS n, COUNT(DISTINCT {value}) AS d, MAX({value}) AS v "
+            f"FROM (SELECT * FROM ({sql}) AS r LIMIT {GRAIN_SAMPLE}) AS s WHERE {value} IS NOT NULL GROUP BY {k}) AS g"
         )
         try:
-            frame = execute(source, probe, NODE_TIMEOUT)
+            keys, rows, single, corr = (None if pd.isna(v) else v for v in execute(source, probe, GRAIN_TIMEOUT).iloc[0])
         except Exception:
-            return None
-        rows, distinct, varying = (int(v) for v in frame.iloc[0])
-        if distinct >= 2 and varying == 0 and rows >= 1.5 * distinct:
-            return key, rows, distinct
+            continue
+        if not keys or keys < 2 or corr is None:
+            continue
+        if single >= GRAIN_SINGLE * keys and rows >= GRAIN_REPEAT * keys and corr >= GRAIN_CORRELATION:
+            return Grain(key, int(keys), int(single), int(rows))
     return None
 
 
@@ -195,7 +232,7 @@ def _scalar(frame: Any, column: str) -> Any:
 def add_kpi(
     ctx: RunContext[FlowDashDeps], data: str, name: str, column: str | None = None,
     aggregate: Aggregate | None = None, label: str = "", unit: str = "", decimals: Decimals | None = None,
-    format: str = "",
+    format: str = "", distinct_by: str | None = None,
 ) -> str:
     """Show a headline number as a KPI card in the dashboard's top bar.
 
@@ -213,6 +250,8 @@ def add_kpi(
         unit: Unit shown with the number, e.g. "MW", "$" or "%"; a share in 0..1 with "%" shows as a percentage.
         decimals: Digits after the decimal point, 0 to 10; by default 0 for whole or large numbers, at most 2 otherwise.
         format: A Python format spec instead of unit and decimals' choice, e.g. ",.1f".
+        distinct_by: A column the aggregated one is a property of, e.g. a project's capacity on each
+            of its turbines' rows: the aggregate then takes one value per value of distinct_by.
     """
     ops = ctx.deps.ops
     port = _upstream_port(ctx.deps, data)
@@ -246,19 +285,32 @@ def add_kpi(
                 f"{col!r} holds {types.get(col) or 'non-numeric'} values; a KPI shows a number. Pick a numeric "
                 "column, or aggregate='count' to count rows."
             )
-    if aggregate in ("sum", "mean") and (repeat := _repeated_per(pipeline, column, types)):
-        key, n, keys = repeat
+    if format:
+        precision = re.search(r"\.(\d+)", format)
+        if len(format) > FORMAT_CHARS or (precision and int(precision.group(1)) > MAX_DECIMALS):
+            raise ModelRetry(f"format {format[:40]!r} is not a short format spec with at most {MAX_DECIMALS} "
+                             'decimals, e.g. ",.1f" or ".1%".')
+        try:
+            builtins_format(1234.5, format)
+        except (TypeError, ValueError) as exc:
+            raise ModelRetry(f"format {format!r} is not a Python format spec for a number: {exc}") from exc
+    if distinct_by is not None:
+        if aggregate is None or column is None:
+            raise ModelRetry("distinct_by goes with an aggregate of a column; pass both.")
+        if distinct_by not in columns or distinct_by == column:
+            raise ModelRetry(f"distinct_by names another column of {data!r}; its columns are {', '.join(columns)}.")
+    elif aggregate in ("sum", "count") and column is not None and (grain := property_of(pipeline, column, types)):
+        each = grain.rows / grain.keys
         raise ModelRetry(
-            f"{aggregate} of {column!r} over {data!r} would double count: {column!r} repeats on every row of each "
-            f"{key!r} ({n:,} rows, {keys:,} {key!r} values). Place a SQL node that takes it once per {key!r}, e.g. "
-            f"SELECT {aggregate.upper().replace('MEAN', 'AVG')}(v) FROM (SELECT DISTINCT {key}, {column} AS v FROM ...), "
-            "and show that node's number."
+            f"{column} looks like a property of {grain.key} ({grain.single:,} of {grain.keys:,} {grain.key} values "
+            f"have one {column}; each {grain.key} appears about {each:,.0f} times), so a {aggregate} over the rows "
+            f"counts it once per row: pass distinct_by={grain.key!r} to {aggregate} one value per {grain.key}."
         )
     if label and len(picked) > 1:
         raise ModelRetry("label names one KPI; leave it out for one KPI per column, or pass column.")
     names = [name] if len(picked) == 1 else [f"{name}_{col}" for col in picked]
     component = _graph.component_of(ops, data)
-    helpers = [f"{name}_agg", f"{name}_value"] if aggregate else (
+    helpers = [*([f"{name}_per_key"] if distinct_by else []), f"{name}_agg", f"{name}_value"] if aggregate else (
         [] if component == SQL_ID or "data" in _outputs(ops, data) else [f"{name}_rows"]
     )
     _free(ops, *names, *helpers)
@@ -266,11 +318,19 @@ def add_kpi(
     placed = _Placed(ops)
     try:
         if aggregate:
-            placed.node(AGGREGATE_ID, {"columns": [] if column is None else [column], "method": aggregate}, helpers[0])
-            placed.connect(f"{data}.{port}", f"{helpers[0]}.pipeline")
-            placed.node(DATA_ID, {}, helpers[1])
-            placed.connect(f"{helpers[0]}.result", f"{helpers[1]}.pipeline")
-            frame_port = f"{helpers[1]}.data"
+            upstream = f"{data}.{port}"
+            if distinct_by:
+                # One row per key, with the key's value; the aggregate then reads those.
+                placed.node(AGGREGATE_ID, {"by": [distinct_by], "columns": [column], "method": "max"}, helpers[0])
+                placed.connect(upstream, f"{helpers[0]}.pipeline")
+                upstream = f"{helpers[0]}.result"
+            agg, rows_node = helpers[-2:]
+            placed.node(AGGREGATE_ID, {"columns": [] if column is None else [column], "method": aggregate}, agg)
+            placed.connect(upstream, f"{agg}.pipeline")
+            placed.node(DATA_ID, {}, rows_node)
+            placed.connect(f"{agg}.result", f"{rows_node}.pipeline")
+            frame_port = f"{rows_node}.data"
+
         elif helpers:
             placed.node(DATA_ID, {}, helpers[0])
             placed.connect(f"{data}.{port}", f"{helpers[0]}.pipeline")
@@ -284,7 +344,10 @@ def add_kpi(
             spec, prefix, suffix = _number_format(value, col, unit, decimals)
             spec = format or spec
             text = label or _label(col, aggregate)
-            placed.node(KPI_ID, {"label": text, "format": spec, "prefix": prefix, "suffix": suffix}, kpi)
+            config = {"label": text, "format": spec, "prefix": prefix, "suffix": suffix}
+            if distinct_by:
+                config["caption"] = f"one {col} per {distinct_by}"
+            placed.node(KPI_ID, config, kpi)
             single = component == SQL_ID and not aggregate and len(columns) == 1
             if single:
                 placed.connect(f"{data}.value", f"{kpi}.value")
@@ -302,6 +365,8 @@ def add_kpi(
         placed.rollback()
         raise
     how = f"the {aggregate} of {column!r}" if aggregate and column else "its row count" if aggregate else "its one row"
+    if distinct_by:
+        how += f", one value per {distinct_by!r}"
     through = f" through {', '.join(map(repr, helpers))}" if helpers else ""
     return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{through}:\n"
             + "\n".join(lines) + f"\n{KPI_FILTERS}")
