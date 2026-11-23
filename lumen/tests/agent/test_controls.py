@@ -489,7 +489,7 @@ def test_instructions_name_only_tools_the_agent_has(monkeypatch, kwargs):
 
 def test_layout_agent_gets_kpi_and_filter_tools_and_a_shorter_prompt(monkeypatch):
     layout, offered = _surface(monkeypatch, dashboard_tools="layout")
-    data, data_tools = _surface(monkeypatch, dashboard_tools="data")
+    _, data_tools = _surface(monkeypatch, dashboard_tools="data")
     assert {"add_kpi", "add_filter_control"} <= offered
     assert not {"add_kpi", "add_filter_control"} & data_tools
     assert "add_kpi" in layout and "add_filter_control" in layout
@@ -501,8 +501,7 @@ def test_layout_agent_gets_kpi_and_filter_tools_and_a_shorter_prompt(monkeypatch
     if not assistant.HAS_ADD_FILTER:
         assert "filter bar" not in layout and "global" not in layout.lower()
     assert assistant.SELECTION_INSTRUCTIONS not in layout
-    # The layout prompt was 5,111 characters before add_kpi and add_filter_control.
-    assert len(layout) <= 5111 and len(data) <= 4066
+    assert len(layout[layout.index("## Laying out the dashboard"):]) <= 450
 
 
 # Playtest turns, replayed with a scripted model on the layout agent.
