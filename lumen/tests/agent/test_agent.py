@@ -905,8 +905,8 @@ async def test_add_text_places_a_title_at_the_top_and_text_where_asked(ctx, sess
     assert shown == ["title", "paid_chart", "section", "other_chart", "notes"]
 
 
-def _saved_rows(session):
-    """The grid's tile names, row by row, after a save/load round trip of the dashboard."""
+def _saved_rows(session, widths=False):
+    """The grid's tile names, with their widths if asked, row by row, after a save/load round trip."""
     from panel_flowdash import FlowDash
     from panel_flowdash.agent import DashboardOps
 
@@ -919,27 +919,48 @@ def _saved_rows(session):
         rows = DashboardOps(editor).describe_layout().splitlines()
     finally:
         editor.dispose()
-    return [[t.split()[0] for t in line.split(": ", 1)[1].split(" | ")] for line in rows if line.startswith("Row")]
+    keep = 2 if widths else 1
+    return [
+        [" ".join(t.split()[:keep]) for t in line.split(": ", 1)[1].split(" | ")]
+        for line in rows if line.startswith("Row")
+    ]
 
 
 @pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
 @pytest.mark.parametrize("arrange", [False, True])
-@pytest.mark.parametrize("title_first", [True, False])
-async def test_a_title_stays_at_the_top_through_the_request(ctx, session, arrange, title_first):
+@pytest.mark.parametrize("when", ["before", "between", "after"])
+async def test_a_title_stays_at_the_top_through_the_request(ctx, session, arrange, when):
     session.deps.start_request("Build it")
     await add_sql(ctx, "data", "paid_by_region", BY_REGION)
-    if title_first:
-        assert add_text(ctx, "heading", "title", "Paid orders", size="Title").startswith("Placed heading 'title'.\n")
-    for name in ("one", "two", "three"):
-        add_chart(ctx, "paid_by_region", name, BAR)
-    if not title_first:
-        add_text(ctx, "heading", "title", "Paid orders", size="Title")
+    charts = ["one", "two", "three", "four"]
+    at = {"before": 0, "between": 2, "after": 4}[when]
+    for name in [*charts[:at], None, *charts[at:]]:
+        if name is None:
+            assert add_text(ctx, "heading", "title", "Paid orders", size="Title").startswith("Placed heading 'title'.\n")
+        else:
+            add_chart(ctx, "paid_by_region", name, BAR)
     if arrange:
         session.deps.ops.arrange_tiles()
     session.deps.end_request()
-    rows = _saved_rows(session)
-    assert rows[0] == ["title"]
-    assert [n for row in rows for n in row] == ["title", "one", "two", "three"]
+    assert _saved_rows(session, widths=True) == [["title 100%"], ["one 50%", "two 50%"], ["three 50%", "four 50%"]]
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+@pytest.mark.parametrize("arrange", [False, True])
+async def test_a_title_added_in_parallel_with_its_charts_stays_at_the_top(arrange):
+    calls = [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="s")]
+    parallel = [ToolCallPart("add_text", {"kind": "heading", "name": "title", "text": "Paid", "size": "Title"}, tool_call_id="t")]
+    parallel += [ToolCallPart("add_chart", {"data": "paid_by_region", "name": n, "spec": BAR}, tool_call_id=n) for n in ("one", "two")]
+    steps = [calls, parallel] + ([[ToolCallPart("arrange_tiles", {}, tool_call_id="a")]] if arrange else []) + [[TextPart("Done.")]]
+    model, _ = script(*steps)
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=create_agent(model, dashboard_tools="layout"))
+    try:
+        await session.ask("Build it")
+        # Parallel calls may place the charts in either order.
+        rows = [sorted(row) for row in _saved_rows(session, widths=True)]
+        assert rows == [["title 100%"], ["one 50%", "two 50%"]]
+    finally:
+        session.close()
 
 
 @pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
