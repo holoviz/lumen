@@ -1,6 +1,7 @@
 """Reading nodes, their config, live outputs and wiring through ``DashboardOps``."""
 from __future__ import annotations
 
+import logging
 import re
 import weakref
 
@@ -17,17 +18,33 @@ from ..flowdash import (
     COMPONENTS, LumenViewNode, bound_sources, host_metrics,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def metrics(ops: DashboardOps) -> dict[str, Any]:
     """
-    The app's metrics by name, copied once into a plain dict, or none when
-    they cannot be read. The host's mapping may re-read its project file on
-    every access, so a caller reads one snapshot instead of the live view.
+    The app's metrics by name, copied once into a plain dict. The host's
+    mapping may re-read its project file on every access, so a caller reads
+    this snapshot instead of the live view: a metric removed while it is
+    read is left out, and when the mapping cannot be read at all there are
+    none. A failure is logged by its type only, as its message may quote
+    the project file.
     """
+    snapshot: dict[str, Any] = {}
     try:
-        return dict(host_metrics(ops.editor.context).items())
-    except Exception:
-        return {}
+        live = host_metrics(ops.editor.context)
+        names = list(live)
+    except Exception as exc:
+        logger.warning("Could not read the app's metrics (%s).", type(exc).__name__)
+        return snapshot
+    for name in names:
+        try:
+            snapshot[name] = live[name]
+        except KeyError:
+            continue
+        except Exception as exc:
+            logger.warning("Could not read the app's metric %r (%s).", name, type(exc).__name__)
+    return snapshot
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
