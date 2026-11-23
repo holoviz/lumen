@@ -63,7 +63,7 @@ def ctx(session):
 
 async def test_list_tables_lists_the_metrics(ctx):
     text = await list_tables(ctx)
-    assert text.startswith("Metrics, the app's agreed numbers: when one matches the question, answer with add_metric, not SQL.")
+    assert text.startswith("Metrics, the app's agreed definitions; place one with add_metric.")
     assert "- capacity (source data, table turbines): Installed capacity." in text
     assert "  measures: capacity_mw (Rated capacity in MW; format ,.1f), turbines" in text
     assert "  dimensions: state (Two-letter state code), year" in text
@@ -75,15 +75,12 @@ async def test_list_tables_lists_the_metrics(ctx):
 async def test_list_tables_lists_the_metrics_before_the_nodes(ctx, session):
     await add_metric(ctx, "capacity", "capacity_by_state", ["capacity_mw"], ["state"])
     text = await list_tables(ctx)
-    assert text.index("Metrics, the app's agreed numbers") < text.index("Nodes on the dashboard")
+    assert text.index("Metrics, the app's agreed definitions") < text.index("Nodes on the dashboard")
 
 
 def test_the_dashboard_state_names_the_metrics(session):
     state = dashboard_state(session.ops)
-    assert state.splitlines()[-1] == (
-        "The app's metrics, its agreed numbers (answer with add_metric when one matches; list_tables shows their "
-        "fields): capacity (Installed capacity.); top_projects."
-    )
+    assert state.splitlines()[-1] == "The app's metrics, which list_tables describes: capacity (Installed capacity.); top_projects."
 
 
 def test_the_dashboard_state_names_no_metrics_without_any():
@@ -224,7 +221,7 @@ def test_the_metrics_are_read_as_one_snapshot(session, caplog):
     session.ops.editor.context[METRICS_KEY] = Vanishing(metrics)
     snapshot = _graph.metrics(session.ops)
     assert type(snapshot) is dict and list(snapshot) == ["capacity"]
-    assert dashboard_state(session.ops).endswith("fields): capacity (Installed capacity.).")
+    assert dashboard_state(session.ops).endswith("describes: capacity (Installed capacity.).")
     session.ops.editor.context[METRICS_KEY] = Unreadable(metrics)
     assert _graph.metrics(session.ops) == {}
     assert "Could not read the app's metrics (OSError)." in caplog.text and "/srv/app" not in caplog.text

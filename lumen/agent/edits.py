@@ -236,8 +236,7 @@ def _metrics_line(ops) -> str | None:
     named = [f"{m.name} ({_cut(m.description, STATE_METRIC_CHARS)})" if m.description else m.name
              for m in metrics[:STATE_METRICS]]
     more = f", and {len(metrics) - STATE_METRICS} more" if len(metrics) > STATE_METRICS else ""
-    return escape(f"The app's metrics, its agreed numbers (answer with add_metric when one matches; list_tables "
-                  f"shows their fields): {'; '.join(named)}{more}.")
+    return escape(f"The app's metrics, which list_tables describes: {'; '.join(named)}{more}.")
 
 
 def fenced_state(state: str, prompt: str = "") -> str:

@@ -394,8 +394,8 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
         return _node_line(ops, node, None) or f"{node!r} is not a SQL, view, table, filter or data node."
     text = ""
     if metrics := metrics_listing(ops):
-        text += ("Metrics, the app's agreed numbers: when one matches the question, answer with add_metric, "
-                 "not SQL. Column dimensions can be filtered by name through parameters:\n" + metrics + "\n\n")
+        text += ("Metrics, the app's agreed definitions; place one with add_metric. Column dimensions "
+                 "can be filtered by name through parameters:\n" + metrics + "\n\n")
     if placed := placed_nodes(ops):
         text += "Nodes on the dashboard, most recent first:\n" + placed + "\n\n"
     found = _sources_by_name(ctx.deps)
