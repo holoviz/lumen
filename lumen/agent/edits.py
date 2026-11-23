@@ -268,7 +268,62 @@ def add_dashboard_state(ctx: RunContext[FlowDashDeps], messages: list[ModelMessa
     return [*history, dataclasses.replace(last, parts=parts)]
 
 
+# The deepest and largest patch or config the tools take; specs are a few levels deep.
+PATCH_DEPTH = 32
+PATCH_CHARS = 50_000
+# Keys a patch may not hold at any depth: a view's data comes from its data node.
+DATA_KEYS = frozenset({"data", "datasets", "url", "href", "baseURL"})
+
+
+def depth(value: Any) -> int:
+    """How deeply ``value`` nests lists and objects, counted without recursion."""
+    deepest, stack = 0, [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, dict):
+            children = item.values()
+        elif isinstance(item, list):
+            children = item
+        else:
+            continue
+        deepest = max(deepest, level)
+        if deepest > PATCH_DEPTH:
+            return deepest
+        stack.extend((child, level + 1) for child in children)
+    return deepest
+
+
+def patch_problem(value: Any, what: str = "The changes") -> str | None:
+    """Why a patch or config cannot be taken: too deep, too large or naming data or URLs; None if it can."""
+    if depth(value) > PATCH_DEPTH:
+        return f"{what} nest more than {PATCH_DEPTH} levels deep; a spec needs only a few."
+    try:
+        size = len(json.dumps(value, default=str))
+    except (TypeError, ValueError, RecursionError):
+        return f"{what} must be JSON."
+    if size > PATCH_CHARS:
+        return f"{what} have {size} characters; keep them under {PATCH_CHARS}."
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if keys := DATA_KEYS & set(item):
+                return (f"{what} may not set {', '.join(sorted(keys))}: the view's data comes from its data node, "
+                        "and views may not load or link to URLs.")
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return None
+
+
 _DELETE = object()
+
+# Keys of an encoding channel that describe its field, which go when the channel gets another field,
+# and the keys of its axis, legend or header that do.
+FIELD_KEYS = ("title", "format", "formatType", "timeUnit", "bin", "aggregate", "sort")
+GUIDE_KEYS = ("title", "format", "formatType")
+# Marks drawn behind the others when added as layers.
+BACKGROUND_MARKS = frozenset({"rect", "area"})
 
 
 def _merge_mark(old: Any, new: Any) -> Any:
@@ -304,6 +359,51 @@ def merge_patch(base: Any, patch: Any) -> Any:
     return result
 
 
+def _field(definition: Any) -> str | None:
+    field = definition.get("field") if isinstance(definition, dict) else None
+    return field if isinstance(field, str) else None
+
+
+def _unfielded(definition: dict[str, Any]) -> dict[str, Any]:
+    """A channel definition without what describes its field: its title, format, time unit and the like."""
+    result = {k: copy.deepcopy(v) for k, v in definition.items() if k not in FIELD_KEYS}
+    for guide in ("axis", "legend", "header"):
+        if isinstance(result.get(guide), dict):
+            result[guide] = {k: v for k, v in result[guide].items() if k not in GUIDE_KEYS}
+    return result
+
+
+def _patch_channel(holder: dict[str, Any], channel: str, value: Any, before: dict[str, Any]) -> None:
+    """
+    Patch ``channel`` of the encoding ``holder``. A new field takes the
+    definition the encoding gave that field on another channel
+    (``before``, as it was), so swapping axes swaps their titles too, or
+    else drops what described the old field.
+    """
+    if value is None:
+        holder.pop(channel, None)
+        return
+    old = holder.get(channel)
+    field = _field(value)
+    if isinstance(old, dict) and isinstance(value, dict) and field is not None and field != _field(old):
+        spare = next((d for c, d in before.items() if c != channel and _field(d) == field), None)
+        old = copy.deepcopy(spare) if spare is not None else _unfielded(old)
+    holder[channel] = merge_patch(old, value)
+
+
+def _encoding_of(item: dict[str, Any]) -> dict[str, Any]:
+    """The encoding of a spec or layer, made an object if it holds anything else."""
+    if not isinstance(item.get("encoding"), dict):
+        item["encoding"] = {}
+    return item["encoding"]
+
+
+def _patch_encoding(holder: dict[str, Any], patch: dict[str, Any]) -> None:
+    before = copy.deepcopy(holder)
+    for channel, value in patch.items():
+        _patch_channel(holder, channel, value, before)
+
+
 def _layered(spec: dict[str, Any]) -> dict[str, Any]:
     """
     A single-view chart as a layered one with its mark as the first layer.
@@ -325,6 +425,55 @@ def _layered(spec: dict[str, Any]) -> dict[str, Any]:
         layer["params"] = spec.pop("params")
     spec["layer"] = [layer]
     return spec
+
+
+def _normalized_layer(layer: Any) -> Any:
+    layer = merge_patch({}, layer) if isinstance(layer, dict) else layer
+    if isinstance(layer, dict) and isinstance(layer.get("mark"), str):
+        layer["mark"] = {"type": layer["mark"]}
+    return layer
+
+
+def primary_layer(layers: list[Any]) -> int:
+    """The index of a layered chart's main data layer: the first one that is not an annotation (rule or text)."""
+    return next((i for i, layer in enumerate(layers) if _mark(layer) not in ANNOTATION_MARKS), 0)
+
+
+def _patch_layered_encoding(spec: dict[str, Any], layers: list[dict[str, Any]], patch: dict[str, Any]) -> None:
+    """
+    Patch the encoding of a layered chart: a channel changes in the shared
+    encoding and in each layer that gives it the same field, so layers
+    plotting another field there, e.g. a rolling average's y, keep it.
+    Swapping x and y swaps them in every layer.
+    """
+    shared = spec.get("encoding") if isinstance(spec.get("encoding"), dict) else None
+    main = layers[primary_layer(layers)] if layers else {}
+    main_encoding = main.get("encoding") if isinstance(main.get("encoding"), dict) else {}
+
+    def primary(channel):
+        return shared[channel] if shared is not None and channel in shared else main_encoding.get(channel)
+
+    holders = [h for h in [shared, *(l.get("encoding") for l in layers)] if isinstance(h, dict)]
+    x, y = patch.get("x"), patch.get("y")
+    if (_field(x) is not None and _field(y) is not None and _field(x) == _field(primary("y"))
+            and _field(y) == _field(primary("x"))):
+        for holder in holders:
+            old_x, old_y = holder.pop("x", None), holder.pop("y", None)
+            if old_y is not None:
+                holder["x"] = old_y
+            if old_x is not None:
+                holder["y"] = old_x
+        patch = {**patch, "x": {k: v for k, v in x.items() if k != "field"},
+                 "y": {k: v for k, v in y.items() if k != "field"}}
+    for channel, value in patch.items():
+        field = _field(primary(channel))
+        # A channel holding a value, e.g. a fixed colour, changes where the main layer takes it from.
+        targets = [h for h in holders if channel in h and (h is shared or h is main_encoding if field is None
+                                                           else _field(h[channel]) == field)]
+        if not targets:
+            targets = [_encoding_of(spec)]
+        for holder in targets:
+            _patch_channel(holder, channel, value, copy.deepcopy(holder))
 
 
 def check_chart_changes(changes: Any, add_layers: Any = None) -> None:
@@ -354,46 +503,71 @@ def check_chart_changes(changes: Any, add_layers: Any = None) -> None:
         raise ValueError('add_layers is a list of Vega-Lite layer objects, e.g. [{"mark": "rule", ...}].')
 
 
-def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers: list[dict] | None = None) -> dict[str, Any]:
+def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers: list[dict] | None = None,
+                layer: int | None = None) -> dict[str, Any]:
     """
     A Vega-Lite spec with ``changes`` merged in (see ``merge_patch``) and
-    ``add_layers`` drawn over it. A single-view chart counts as one layer,
-    so ``changes["layer"]`` merges its first item into the chart's own mark
-    and encoding and adds the others. On a layered chart, a ``mark`` given
-    at the top changes the mark of each layer that plots data, and an
-    encoding channel changes where the chart defines it: in the shared
-    encoding, else in each layer that has it. A patch it cannot apply
-    raises ``ValueError`` (see ``check_chart_changes``).
+    ``add_layers`` drawn over it, ``rect`` and ``area`` layers behind the
+    rest. An encoding channel given another field takes that field's
+    definition from another channel (a swap) or drops what described the
+    old field. A single-view chart counts as one layer, so
+    ``changes["layer"]`` merges its first item into the chart's own mark
+    and encoding and adds the others. On a layered chart a ``mark`` given
+    at the top changes the main data layer only (see ``primary_layer``),
+    and a channel changes as ``_patch_layered_encoding`` says. With
+    ``layer``, ``changes`` apply to that layer alone. A patch it cannot
+    apply raises ``ValueError`` (see ``check_chart_changes``).
     """
     check_chart_changes(changes, add_layers)
     changes = copy.deepcopy(changes or {})
     spec = copy.deepcopy(base)
-    if ("layer" in changes or add_layers) and not isinstance(spec.get("layer"), list):
+    if ("layer" in changes or add_layers or layer) and not isinstance(spec.get("layer"), list):
         spec = _layered(spec)
-    if isinstance(spec.get("layer"), list):
+    if layer is not None and isinstance(spec.get("layer"), list):
+        if not 0 <= layer < len(spec["layer"]):
+            raise ValueError(f"The chart has {len(spec['layer'])} layer(s), numbered from 0; there is no layer {layer}.")
+        target = spec["layer"][layer]
+        encoding = changes.pop("encoding", None)
+        target = merge_patch(target, changes)
+        if encoding:
+            _patch_encoding(_encoding_of(target), encoding)
+        spec["layer"][layer] = target
+    elif isinstance(spec.get("layer"), list):
         mark = changes.pop("mark", _DELETE)
         encoding = changes.pop("encoding", None)
         spec = merge_patch(spec, changes)
-        layers = [layer for layer in spec["layer"] if isinstance(layer, dict)]
-        if mark is not _DELETE:
-            for layer in layers:
-                if _mark(layer) not in ANNOTATION_MARKS:
-                    layer["mark"] = _merge_mark(layer.get("mark"), mark)
-        for channel, value in (encoding or {}).items():
-            shared = spec.get("encoding") if isinstance(spec.get("encoding"), dict) else None
-            holders = [layer["encoding"] for layer in layers if isinstance(layer.get("encoding"), dict) and channel in layer["encoding"]]
-            if (shared is not None and channel in shared) or not holders:
-                holders = [spec.setdefault("encoding", {})]
-            for holder in holders:
-                if value is None:
-                    holder.pop(channel, None)
-                else:
-                    holder[channel] = merge_patch(holder.get(channel), value)
+        layers = [item for item in spec["layer"] if isinstance(item, dict)]
+        if mark is not _DELETE and layers:
+            main = layers[primary_layer(layers)]
+            main["mark"] = _merge_mark(main.get("mark"), mark)
+        if encoding:
+            _patch_layered_encoding(spec, layers, encoding)
     else:
+        encoding = changes.pop("encoding", None)
         spec = merge_patch(spec, changes)
+        if encoding:
+            _patch_encoding(_encoding_of(spec), encoding)
     if add_layers:
-        spec["layer"] = [*spec["layer"], *(merge_patch({}, layer) for layer in add_layers)]
+        added = [_normalized_layer(item) for item in add_layers]
+        behind = [item for item in added if _mark(item) in BACKGROUND_MARKS]
+        spec["layer"] = [*behind, *spec["layer"], *(item for item in added if item not in behind)]
     return spec
+
+
+def changed_layers(before: dict[str, Any], after: dict[str, Any]) -> str:
+    """Which layers of a chart a change reached, e.g. "layer 0 changed, layer 2 added"; empty for a single view."""
+    if not isinstance(after.get("layer"), list):
+        return ""
+    was = before if isinstance(before.get("layer"), list) else _layered(before)
+    old, new = was["layer"], after["layer"]
+    extra = len(new) - len(old)
+    added = [i for i, layer in enumerate(new) if layer not in old][:extra] if extra > 0 else []
+    kept = [i for i in range(len(new)) if i not in added]
+    parts = [f"layer {i} changed" for i, j in zip(kept, range(len(old)), strict=False) if new[i] != old[j]]
+    parts += [f"layer {i} added" for i in added]
+    if was.get("encoding") != after.get("encoding"):
+        parts.append("shared encoding changed")
+    return ", ".join(parts) or "no layer changed"
 
 
 # Words a node name may use without saying what the node holds.
@@ -462,18 +636,30 @@ def similar(a: str, b: str) -> bool:
     return len(shared) * 2 >= min(len(wa), len(wb))
 
 
+def likeness(a: str, b: str) -> float:
+    """How much two node names share: the share of their words alike, 1 for the same words."""
+    wa, wb = set(a.lower().split("_")) - {""}, set(b.lower().split("_")) - {""}
+    shared = {w for w in wa if any(w == v or (min(len(w), len(v)) >= 3 and _alike(w, v)) for v in wb)}
+    return len(shared) / max(len(wa | wb), 1)
+
+
 @dataclasses.dataclass
 class _Slot:
     component: str
     area: str
-    index: int
     width: float | None
     height: float | None
 
     def describe(self) -> str:
-        if self.area != "grid":
-            return f"{'top bar' if self.area == 'top' else self.area} position {self.index}"
-        return f"grid position {self.index}" + (f", {self.width:g}% wide" if self.width else "")
+        where = "top bar" if self.area == "top" else self.area
+        return where + (f", {self.width:g}% wide" if self.area == "grid" and self.width else "")
+
+
+def _area_names(ops, area: str) -> list[str]:
+    """The nodes of ``area`` in their order there, hidden tiles included."""
+    from panel_flowdash.ui import tile_layout
+    names = {node_id: name for name, node_id in ((n, ops._instance(n)) for n in _graph.nodes(ops))}
+    return [names[i["instance_id"]] for i in tile_layout.area_items(ops.editor, area) if i["instance_id"] in names]
 
 
 def _slot(ops, name: str) -> _Slot | None:
@@ -481,13 +667,11 @@ def _slot(ops, name: str) -> _Slot | None:
     try:
         from panel_flowdash.ui import tile_layout
         instance = ops._instance(name)
-        item = ops._item(instance)
-        area = tile_layout.area_of(ops.editor, item)
+        area = tile_layout.area_of(ops.editor, ops._item(instance))
         entry = tile_layout.tile_entry(ops.editor, instance)
         if area is None or entry.get("visible") is False:
             return None
-        ids = [i["instance_id"] for i in tile_layout.area_items(ops.editor, area)]
-        return _Slot(_graph.component_of(ops, name), area, ids.index(instance), entry.get("width"), entry.get("height"))
+        return _Slot(_graph.component_of(ops, name), area, entry.get("width"), entry.get("height"))
     except Exception:
         return None
 
@@ -506,6 +690,25 @@ def _undefer(ops, name: str) -> None:
         pending.discard(instance)
 
 
+def _merged_order(old: list[str], current: list[str], removed: set[str]) -> list[str]:
+    """``current`` with the ``removed`` names of ``old`` back after the name that came before them there."""
+    order = list(current)
+    for index, name in enumerate(old):
+        if name in removed and name not in order:
+            before = next((n for n in reversed(old[:index]) if n in order), None)
+            order.insert(order.index(before) + 1 if before is not None else 0, name)
+    return order
+
+
+class _Removed:
+    """The tiles one run removed: their slots, and each area's order of names with the removed ones in place."""
+
+    def __init__(self):
+        self.slots: dict[str, _Slot] = {}
+        self.orders: dict[str, list[str]] = {}
+        self.replaced: dict[str, str] = {}
+
+
 # Runs whose removed tiles are remembered at once; older runs have ended.
 RUNS_REMEMBERED = 64
 
@@ -518,6 +721,11 @@ class KeepTileSlots(AbstractCapability[FlowDashDeps]):
     not drop its tile to the bottom of the grid. ``remove_node``'s result
     says so, and that changing the node in place keeps it anyway.
 
+    Slots are kept by the names around them, not by position, so several
+    tiles removed and placed again in parallel calls come back in their
+    order whichever call ends first: a tile goes after the nearest tile
+    that came before it and is still there, or has been placed again.
+
     Parameters
     ----------
     placing
@@ -526,52 +734,74 @@ class KeepTileSlots(AbstractCapability[FlowDashDeps]):
 
     def __init__(self, placing):
         self.placing = frozenset(placing)
-        self._removed: OrderedDict[str, dict[str, _Slot]] = OrderedDict()
+        self._runs: OrderedDict[str, _Removed] = OrderedDict()
 
-    def _run(self, ctx) -> dict[str, _Slot]:
+    def _run(self, ctx) -> _Removed:
         run = ctx.run_id or ""
-        if run not in self._removed:
-            self._removed[run] = {}
-            while len(self._removed) > RUNS_REMEMBERED:
-                self._removed.popitem(last=False)
-        return self._removed[run]
+        if run not in self._runs:
+            self._runs[run] = _Removed()
+            while len(self._runs) > RUNS_REMEMBERED:
+                self._runs.popitem(last=False)
+        return self._runs[run]
 
     async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
         name = args.get("name") if isinstance(args, dict) else None
         if tool_def.name == "remove_node" and isinstance(name, str):
-            slot = _slot(ctx.deps.ops, name)
-            result = await handler(args)
-            if slot is None or name in _graph.nodes(ctx.deps.ops):
-                return result
-            self._run(ctx)[name] = slot
-            return append(result, (
-                f"\nNote: its tile ({slot.describe()}) goes to the next {kind(slot.component)} with a similar name "
-                "you add in this turn, and is lost otherwise. To change a node, call its add_* tool with its name "
-                "or update_chart instead of removing it."
-            ))
+            return await self._remove(ctx, name, args, handler)
         if tool_def.name not in self.placing or not isinstance(name, str):
             return await handler(args)
         result = await handler(args)
         text = result.return_value if isinstance(result, ToolReturn) else result
-        removed = self._run(ctx)
-        if not (isinstance(text, str) and text.startswith("Placed") and removed):
+        if not (isinstance(text, str) and text.startswith("Placed")):
             return result
+        return self._restore(ctx, name, result)
+
+    async def _remove(self, ctx, name, args, handler):
+        ops = ctx.deps.ops
+        slot = _slot(ops, name)
+        try:
+            order = _area_names(ops, slot.area) if slot is not None else None
+        except Exception:
+            order = None
+        result = await handler(args)
+        if slot is None or order is None or name in _graph.nodes(ops):
+            return result
+        run = self._run(ctx)
+        run.slots[name] = slot
+        run.orders[slot.area] = _merged_order(run.orders.get(slot.area, []), order, set(run.slots))
+        return append(result, (
+            f"\nNote: its tile ({slot.describe()}) goes to the next {kind(slot.component)} with a similar name "
+            "you add in this turn, and is lost otherwise. To change a node, call its add_* tool with its name "
+            "or update_chart instead of removing it."
+        ))
+
+    def _restore(self, ctx, name, result):
+        run = self._run(ctx)
         ops = ctx.deps.ops
         try:
             component = _graph.component_of(ops, name)
         except StopIteration:
             return result
-        old = next((o for o, slot in removed.items() if slot.component == component and similar(o, name)), None)
-        if old is None:
+        waiting = [o for o, slot in run.slots.items() if o not in run.replaced and slot.component == component
+                   and similar(o, name)]
+        if not waiting:
             return result
-        slot = removed.pop(old)
+        old = max(waiting, key=lambda o: likeness(o, name))
+        slot = run.slots[old]
+        run.replaced[old] = name
+        order = run.orders.get(slot.area, [])
         try:
+            current = [n for n in _area_names(ops, slot.area) if n != name]
+            here = {**{n: n for n in current}, **{o: r for o, r in run.replaced.items() if r in current}}
+            position = order.index(old)
+            before = next((here[n] for n in reversed(order[:position]) if n in here), None)
+            index = current.index(before) + 1 if before is not None else 0
             if slot.area == "grid":
-                ops.place_tile(name, index=slot.index, width=slot.width, height=slot.height)
+                ops.place_tile(name, index=index, width=slot.width, height=slot.height)
             else:
-                ops.place_tile(name, area=slot.area, index=slot.index)
+                ops.place_tile(name, area=slot.area, index=index)
             _undefer(ops, name)
-        except (OperationError, PermissionError):
+        except (OperationError, PermissionError, ValueError):
             return result
         return append(result, f" It took the tile of the removed {old!r} ({slot.describe()}).")
 

@@ -38,7 +38,8 @@ from .data import (
     _sources_by_name, lint, resolve_source, source_output,
 )
 from .edits import (
-    kind, merge_chart, merge_patch, name_notes, unrelated, view_summary,
+    PATCH_DEPTH, changed_layers, depth, kind, merge_chart, merge_patch,
+    name_notes, patch_problem, unrelated, view_summary,
 )
 
 
@@ -647,19 +648,22 @@ def add_text(
 
 
 def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, Any] | None = None,
-                 add_layers: list[dict[str, Any]] | None = None) -> str:
+                 add_layers: list[dict[str, Any]] | None = None, layer: int | None = None) -> str:
     """Change part of a chart's Vega-Lite spec, or of a table's options or a map's spec, keeping the rest and its tile.
 
     changes merges into the spec: a key you give replaces that key, an object merges key by key and
     null removes a key, e.g. {"mark": "line"}, {"encoding": {"y": {"title": "GW"}}},
     {"encoding": {"color": null}}, {"title": "Sales by region"} or a table's {"formatters": {...}}.
-    Layers merge by position, a single chart counting as the first.
+    A channel given another field drops the old field's title and format; swapping x and y swaps
+    them. On a layered chart a mark changes its main data layer, and a channel changes in the
+    layers that show the same field there.
 
     Args:
         name: The chart, table or map node.
         changes: Part of a spec to merge into the node's spec.
         add_layers: Vega-Lite layers to draw over a chart, e.g. a rolling average line or a rule;
             they share the chart's x and y unless they set their own.
+        layer: Apply changes to this layer of the chart only, numbered from 0.
     """
     ops = ctx.deps.ops
     if name not in _graph.nodes(ops):
@@ -668,15 +672,19 @@ def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, An
     component = _graph.component_of(ops, name)
     if (view := _graph.view_class(component)) is None:
         raise ModelRetry(f"{name!r} is a {kind(component)} node; update_chart changes charts, tables and maps.")
-    if add_layers and component != VIEW_ID:
-        raise ModelRetry("Only a chart takes add_layers.")
+    if (add_layers or layer is not None) and component != VIEW_ID:
+        raise ModelRetry("Only a chart takes add_layers or layer.")
     if not changes and not add_layers:
         raise ModelRetry("Pass the changes to make, or add_layers.")
+    if problem := patch_problem({"changes": changes, "add_layers": add_layers}):
+        return f"Refused: {problem} Nothing was changed."
     before = _graph.config_of(ops, name).get("spec") or {}
     try:
-        spec = merge_chart(before, changes, add_layers) if component == VIEW_ID else merge_patch(before, changes)
+        spec = merge_chart(before, changes, add_layers, layer) if component == VIEW_ID else merge_patch(before, changes)
     except ValueError as exc:
         raise ModelRetry(f"{exc} Nothing was changed.") from exc
+    except RecursionError:
+        return "Refused: the changes nest too deeply to merge. Nothing was changed."
     data = _graph.upstream(ops, name)
     port = _graph.pipeline_port(ops, data) if data else None
     try:
@@ -697,7 +705,9 @@ def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, An
         raise ModelRetry(str(exc)) from exc
     target = _graph.edited(ops, name, existing)
     notes = selection_warnings(spec) if component == VIEW_ID else []
-    return f"Changed {kind(component)} {target!r} of {data!r}: {view_summary(component, spec)}" + _notes(notes)
+    layers = changed_layers(before, spec) if component == VIEW_ID else ""
+    return (f"Changed {kind(component)} {target!r} of {data!r}{f' ({layers})' if layers else ''}: "
+            f"{view_summary(component, spec)}" + _notes(notes))
 
 
 def _source_tables(deps: FlowDashDeps, source: str) -> list[str]:
@@ -754,6 +764,8 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
         config = args.get("config") if tool_def.name == "set_config" else None
         if not isinstance(config, dict):
             return await handler(args)
+        if depth(config) > PATCH_DEPTH:
+            return f"Refused: the config nests more than {PATCH_DEPTH} levels deep; a config needs only a few."
         ops, name = ctx.deps.ops, args.get("name")
         component = next((node["component"] for node in ops.nodes() if node["name"] == name), None)
         if component in TEXT_FIELDS:
