@@ -244,7 +244,6 @@ async def _follower_problems(ops, name: str) -> list[str]:
 async def add_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: str, sql: str) -> str:
     """Place a SQL node with a read-only query and return a preview of its result; errors come back to fix.
 
-    When one of the app's metrics answers the question, use add_metric instead.
     To build on an earlier answer, pass its SQL node as source: the query then reads that
     result by its table name, as list_tables shows it, and runs again when that node changes.
     To join earlier answers, pass their SQL nodes as a list.

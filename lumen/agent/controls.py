@@ -210,7 +210,7 @@ def add_kpi(
     A card does not follow the global filter bar's filters, only filter nodes upstream of it.
 
     Args:
-        data: Name of the SQL, metric, table or filter node holding the number (a node name, not a source table); a metric node when an app metric holds it.
+        data: Name of the SQL, metric, table or filter node holding the number (a node name, not a source table).
         name: Descriptive snake_case node name; with one KPI per column, each is named <name>_<column>.
         column: The numeric column to show; leave out for every numeric column of a one-row node, or to count rows.
         aggregate: How to reduce the column over the node's rows; leave out when the node has one row.
