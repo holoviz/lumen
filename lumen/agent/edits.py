@@ -569,8 +569,8 @@ def check_chart_changes(changes: Any, add_layers: Any = None) -> None:
         raise ValueError('add_layers is a list of Vega-Lite layer objects, e.g. [{"mark": "rule", ...}].')
 
 
-def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers: list[dict] | None = None,
-                layer: int | None = None) -> dict[str, Any]:
+def merge_chart_layers(base: dict[str, Any], changes: dict[str, Any] | None, add_layers: list[dict] | None = None,
+                layer: int | None = None) -> tuple[dict[str, Any], list[int]]:
     """
     A Vega-Lite spec with ``changes`` merged in (see ``merge_patch``) and
     ``add_layers`` drawn over it, ``rect`` and ``area`` layers behind the
@@ -582,7 +582,8 @@ def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers
     at the top changes the main data layer only (see ``primary_layer``),
     and a channel changes as ``_patch_layered_encoding`` says. With
     ``layer``, ``changes`` apply to that layer alone. A patch it cannot
-    apply raises ``ValueError`` (see ``check_chart_changes``).
+    apply raises ``ValueError`` (see ``check_chart_changes``). Also
+    returns the indices of the layers the change added.
     """
     check_chart_changes(changes, add_layers)
     changes = copy.deepcopy(changes or {})
@@ -616,24 +617,63 @@ def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers
             if _is_swap(encoding, current.get("x"), current.get("y")):
                 _swap_resolve(spec)
             _patch_encoding(current, encoding)
-    if add_layers:
-        added = [_normalized_layer(item) for item in add_layers]
-        behind = [item for item in added if _mark(item) in BACKGROUND_MARKS]
-        spec["layer"] = [*behind, *spec["layer"], *(item for item in added if item not in behind)]
-    return spec
+    # Items of changes["layer"] past the chart's own layers, a single view counting as one, are new.
+    own = len(base["layer"]) if isinstance(base.get("layer"), list) else 1
+    count = len(spec["layer"]) if isinstance(spec.get("layer"), list) else 1
+    new = list(range(own, count))
+    if not add_layers:
+        return spec, new
+    added = [_normalized_layer(item) for item in add_layers]
+    behind = [item for item in added if _mark(item) in BACKGROUND_MARKS]
+    front = [item for item in added if item not in behind]
+    spec["layer"] = [*behind, *spec["layer"], *front]
+    shift = len(behind)
+    return spec, [*range(shift), *(i + shift for i in new), *range(shift + count, shift + count + len(front))]
 
 
-def changed_layers(before: dict[str, Any], after: dict[str, Any]) -> str:
-    """Which layers of a chart a change reached, e.g. "layer 0 changed, layer 2 added"; empty for a single view."""
+def merge_chart(base: dict[str, Any], changes: dict[str, Any] | None, add_layers: list[dict] | None = None,
+                layer: int | None = None) -> dict[str, Any]:
+    """The spec ``merge_chart_layers`` returns."""
+    return merge_chart_layers(base, changes, add_layers, layer)[0]
+
+
+# The most index ranges the changed-layer report names in each list.
+REPORT_RANGES = 8
+
+
+def _ranges(indices: list[int]) -> str:
+    """Indices as ranges, e.g. "0, 2-5", at most ``REPORT_RANGES`` of them and a count of the rest."""
+    spans: list[list[int]] = []
+    for i in sorted(indices):
+        if spans and i == spans[-1][1] + 1:
+            spans[-1][1] = i
+        else:
+            spans.append([i, i])
+    text = ", ".join(f"{a}" if a == b else f"{a}-{b}" for a, b in spans[:REPORT_RANGES])
+    if rest := sum(b - a + 1 for a, b in spans[REPORT_RANGES:]):
+        text += f" and {rest} more"
+    return text
+
+
+def changed_layers(before: dict[str, Any], after: dict[str, Any], added: list[int] | None = None) -> str:
+    """
+    Which layers of a chart a change reached, e.g. "layer 0 changed,
+    layer 2 added", from the indices of the layers it ``added`` (as
+    ``merge_chart_layers`` returns them); empty for a single view. The
+    layers that were there keep their order around the added ones.
+    """
     if not isinstance(after.get("layer"), list):
         return ""
     was = before if isinstance(before.get("layer"), list) else _layered(before)
     old, new = was["layer"], after["layer"]
-    extra = len(new) - len(old)
-    added = [i for i, layer in enumerate(new) if layer not in old][:extra] if extra > 0 else []
+    added = sorted(set(added or []))
     kept = [i for i in range(len(new)) if i not in added]
-    parts = [f"layer {i} changed" for i, j in zip(kept, range(len(old)), strict=False) if new[i] != old[j]]
-    parts += [f"layer {i} added" for i in added]
+    changed = [i for i, j in zip(kept, range(len(old)), strict=False) if new[i] != old[j]]
+    parts = []
+    if changed:
+        parts.append(f"layer{'s' * (len(changed) > 1)} {_ranges(changed)} changed")
+    if added:
+        parts.append(f"layer{'s' * (len(added) > 1)} {_ranges(added)} added")
     if was.get("encoding") != after.get("encoding"):
         parts.append("shared encoding changed")
     return ", ".join(parts) or "no layer changed"
@@ -837,6 +877,8 @@ class KeepTileSlots(AbstractCapability[FlowDashDeps]):
             return result
         run = self._run(ctx)
         run.slots[name] = slot
+        # A node removed again after it came back waits for its next replacement.
+        run.replaced.pop(name, None)
         run.orders[slot.area] = _merged_order(run.orders.get(slot.area, []), order, set(run.slots))
         return append(result, (
             f"\nNote: its tile ({slot.describe()}) goes to the next {kind(slot.component)} with a similar name "

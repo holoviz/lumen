@@ -26,7 +26,7 @@ from lumen.agent.data import list_tables
 from lumen.agent.edits import (
     STATE_FENCE, STATE_HEADER, STATE_LINE_CHARS, STATE_NODES, STATE_STUB,
     add_dashboard_state, changed_layers, dashboard_state, fenced_state,
-    merge_chart, merge_patch, name_notes, similar,
+    merge_chart, merge_chart_layers, merge_patch, name_notes, similar,
 )
 from lumen.flowdash import VIEW_ID
 from lumen.sources.duckdb import DuckDBSource
@@ -871,3 +871,56 @@ async def test_update_chart_refuses_when_the_chart_changed_while_it_was_checked(
     assert text.startswith("Refused: 'quakes_chart' changed meanwhile")
     assert _graph.config_of(session.ops, "quakes_chart")["spec"]["title"] == "User's title"
     assert _graph.config_of(session.ops, "quakes_chart")["spec"]["encoding"]["y"].get("title") == "Quakes"
+
+
+async def test_a_tile_removed_and_placed_again_twice_in_one_turn_keeps_its_slot():
+    names = ["a_quakes_chart", "b_quakes_chart", "c_quakes_chart", "d_quakes_chart"]
+    model, _ = script(
+        [ToolCallPart("remove_node", {"name": "b_quakes_chart"}, tool_call_id="r1")],
+        [ToolCallPart("add_chart", {"data": "monthly_quakes", "name": "b_quakes_chart", "spec": BAR}, tool_call_id="a1")],
+        [ToolCallPart("remove_node", {"name": "b_quakes_chart"}, tool_call_id="r2")],
+        [ToolCallPart("add_chart", {"data": "monthly_quakes", "name": "b_quakes_chart", "spec": BAR}, tool_call_id="a2")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+        for name in names:
+            add_chart(ctx, "monthly_quakes", name, BAR)
+        for name in names:
+            session.ops.place_tile(name, width=25)
+        turn = await session.ask("Redo the second chart twice")
+        order = grid(session)
+    finally:
+        session.close()
+
+    assert turn.error is None
+    assert order[:4] == names
+
+
+def test_the_changed_layer_report_names_the_layers_a_change_added():
+    rule = {"mark": "rule", "encoding": {"y": {"datum": 12}}}
+
+    spec, added = merge_chart_layers(BAR, {"mark": "line"}, [rule])
+
+    assert added == [1]
+    assert changed_layers(BAR, spec, added) == "layer 0 changed, layer 1 added"
+    band = {"mark": {"type": "area", "opacity": 0.2}, "encoding": {"y": {"field": "quakes", "type": "quantitative"}}}
+    spec, added = merge_chart_layers(BAR, None, [band, rule])
+    assert [layer["mark"]["type"] for layer in spec["layer"]] == ["area", "bar", "rule"]
+    assert changed_layers(BAR, spec, added) == "layers 0, 2 added"
+    spec, added = merge_chart_layers(BAR, {"layer": [{}, rule]})
+    assert changed_layers(BAR, spec, added) == "layer 1 added"
+
+
+def test_the_changed_layer_report_is_bounded():
+    rules = [{"mark": "rule", "encoding": {"y": {"datum": i}}} for i in range(2500)]
+
+    spec, added = merge_chart_layers(BAR, {"mark": "line"}, rules)
+    report = changed_layers(BAR, spec, added)
+
+    assert report == "layer 0 changed, layers 1-2500 added"
+    spread, added = merge_chart_layers(spec, {"layer": [{"mark": {"color": "red"}} if i % 2 else {} for i in range(2501)]})
+    report = changed_layers(spec, spread, added)
+    assert report.startswith("layers 1, 3, 5, 7, 9, 11, 13, 15 and 1242 more changed") and len(report) < 120

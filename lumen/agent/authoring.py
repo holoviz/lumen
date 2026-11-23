@@ -38,7 +38,7 @@ from .data import (
     _sources_by_name, lint, resolve_source, source_output,
 )
 from .edits import (
-    PATCH_DEPTH, changed_layers, depth, kind, merge_chart, merge_patch,
+    PATCH_DEPTH, changed_layers, depth, kind, merge_chart_layers, merge_patch,
     name_notes, patch_problem, unrelated, view_summary,
 )
 
@@ -680,7 +680,10 @@ def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, An
         return f"Refused: {problem} Nothing was changed."
     before = _graph.config_of(ops, name).get("spec") or {}
     try:
-        spec = merge_chart(before, changes, add_layers, layer) if component == VIEW_ID else merge_patch(before, changes)
+        if component == VIEW_ID:
+            spec, added = merge_chart_layers(before, changes, add_layers, layer)
+        else:
+            spec, added = merge_patch(before, changes), []
     except ValueError as exc:
         raise ModelRetry(f"{exc} Nothing was changed.") from exc
     except RecursionError:
@@ -709,7 +712,7 @@ def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, An
         raise ModelRetry(str(exc)) from exc
     target = _graph.edited(ops, name, existing)
     notes = selection_warnings(spec) if component == VIEW_ID else []
-    layers = changed_layers(before, spec) if component == VIEW_ID else ""
+    layers = changed_layers(before, spec, added) if component == VIEW_ID else ""
     return (f"Changed {kind(component)} {target!r} of {data!r}{f' ({layers})' if layers else ''}: "
             f"{view_summary(component, spec)}" + _notes(notes))
 
