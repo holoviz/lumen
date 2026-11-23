@@ -296,7 +296,9 @@ async def test_add_table_and_add_text_with_a_taken_name_change_the_node(ctx, ses
 
     assert add_table(ctx, "monthly_quakes", "quakes_table", {"page_size": 5}) == (
         "Changed table 'quakes_table' of 'monthly_quakes' (page_size).")
-    assert add_text(ctx, "heading", "quakes_title", "Earthquakes per month") == "Changed heading 'quakes_title'."
+    changed = add_text(ctx, "heading", "quakes_title", "Earthquakes per month")
+    assert changed.split("\n")[0] == "Changed heading 'quakes_title'."
+    assert ("\nLayout now:\n" in changed) == hasattr(session.ops, "describe_layout")
     assert _graph.config_of(session.ops, "quakes_title")["text"] == "Earthquakes per month"
     assert len(_graph.nodes(session.ops)) == 4
 
@@ -424,10 +426,39 @@ async def test_add_text_with_a_taken_name_moves_it_where_asked(ctx, session):
     await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
     add_chart(ctx, "monthly_quakes", "quakes_chart", BAR)
     add_text(ctx, "markdown", "note", "First")
-    assert add_text(ctx, "markdown", "note", "Second") == "Changed markdown 'note'."
+    assert add_text(ctx, "markdown", "note", "Second").startswith("Changed markdown 'note'.\nLayout now:")
     moved = add_text(ctx, "markdown", "note", "Third", before="quakes_chart")
     assert moved.startswith("Changed markdown 'note' before 'quakes_chart'.\nLayout now:")
     assert grid(session)[:2] == ["note", "quakes_chart"]
+
+
+
+async def test_a_text_placed_at_the_top_does_not_take_a_removed_nodes_tile():
+    model, requests = script(
+        [ToolCallPart("remove_node", {"name": "quakes_note"}, tool_call_id="r1")],
+        [ToolCallPart("add_text", {"kind": "markdown", "name": "quakes_notes", "text": "Notes", "position": "top"},
+                      tool_call_id="a1")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        await add_sql(ctx, "data", "monthly_quakes", MONTHLY)
+        add_chart(ctx, "monthly_quakes", "quakes_chart", BAR)
+        add_text(ctx, "markdown", "quakes_note", "A note")
+        assert grid(session)[-1] == "quakes_note"
+        turn = await session.ask("Put the notes at the top")
+        order = grid(session)
+    finally:
+        session.close()
+
+    placed = next(p for p in requests[2][-1].parts if isinstance(p, ToolReturnPart))
+    assert turn.error is None and "took the tile" not in placed.content
+    # FlowDash releases before place_tile(before=, after=) do not move a tile to index 0 reliably.
+    assert order[0] == "quakes_notes" or not authoring.PLACES_BESIDE
+    if hasattr(session.ops, "describe_layout"):
+        layout = placed.content.split("Layout now:\n", 1)[1]
+        assert layout.index("quakes_notes") < layout.index("quakes_chart")
 
 
 async def _rolling_dashboard(model):

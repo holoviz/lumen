@@ -515,7 +515,8 @@ class KeepTileSlots(AbstractCapability[FlowDashDeps]):
     Keeps the tile slot of a node the agent removes for the node of the
     same kind and a similar name it adds in the same run, e.g. a chart
     removed and placed again under a new name, so replacing a node does
-    not drop its tile to the bottom of the grid. ``remove_node``'s result
+    not drop its tile to the bottom of the grid, unless the new node is
+    placed with a ``position``, ``before`` or ``after``. ``remove_node``'s result
     says so, and that changing the node in place keeps it anyway.
 
     Parameters
@@ -550,6 +551,9 @@ class KeepTileSlots(AbstractCapability[FlowDashDeps]):
                 "or update_chart instead of removing it."
             ))
         if tool_def.name not in self.placing or not isinstance(name, str):
+            return await handler(args)
+        # A tile placed where the agent asks, e.g. add_text(position="top"), stays there.
+        if any(args.get(key) is not None for key in ("position", "before", "after")):
             return await handler(args)
         result = await handler(args)
         text = result.return_value if isinstance(result, ToolReturn) else result
