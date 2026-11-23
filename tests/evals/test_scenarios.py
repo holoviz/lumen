@@ -180,7 +180,7 @@ async def test_text_mark_charts_are_not_kpis():
 def test_the_metrics_hold_the_reference_numbers():
     """The wind project file's metrics answer the numbers scenarios with the catalog's reference queries."""
     source = fixture_source("turbines_states")
-    shares = source.execute(CAPACITY_SHARE_SQL).set_index("state")["capacity_share"]
+    shares = source.execute(CAPACITY_SHARE_SQL.replace(":state", "''")).set_index("state")["capacity_share"]
     assert shares["TX"] == pytest.approx(source.execute(TEXAS_SHARE).iloc[0, 0])
     assert shares.sum() == pytest.approx(1.0)
     regions = source.execute(REGIONAL_CAPACITY_SQL)
@@ -197,10 +197,12 @@ REGION_CHART = {"title": "Capacity by region", "mark": "bar", "encoding": {
 
 @pytest.mark.parametrize(("calls", "expected"), [
     ([("add_metric", {"metric": "capacity_share", "name": "state_capacity_share"})], True),
+    ([("add_metric", {"metric": "capacity_share", "name": "texas_capacity_share", "parameters": {"state": "TX"}}),
+      ("add_kpi", {"data": "texas_capacity_share", "name": "texas_share_kpi", "column": "capacity_share", "unit": "%"})], True),
     ([("add_metric", {"metric": "capacity", "name": "state_capacity", "measures": ["capacity_mw"],
                       "dimensions": ["state"]})], False),
     ([("add_sql", {"source": "data", "name": "texas_share", "sql": TEXAS_SQL})], False),
-], ids=["metric", "other_metric", "own_sql"])
+], ids=["metric", "metric_for_texas", "other_metric", "own_sql"])
 async def test_a_share_must_come_from_the_metric(calls, expected):
     async with state_after("turbines_states", scripted(calls), metrics="wind") as state:
         assert state.error is None

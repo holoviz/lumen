@@ -177,7 +177,8 @@ metrics:
 # The project file of the metrics scenarios: the share of capacity by state, capacity by year
 # (``capacity`` above) and capacity by census region, which joins the states table.
 CAPACITY_SHARE_SQL = (
-    "SELECT t_state AS state, SUM(t_cap) / SUM(SUM(t_cap)) OVER () AS capacity_share FROM turbines GROUP BY t_state"
+    "SELECT state, capacity_share FROM (SELECT t_state AS state, SUM(t_cap) / SUM(SUM(t_cap)) OVER () AS capacity_share "
+    "FROM turbines GROUP BY t_state) AS shares WHERE :state = '' OR state = :state"
 )
 REGIONAL_CAPACITY_SQL = (
     "SELECT region, SUM(t_cap) / 1000.0 AS capacity_mw FROM turbines JOIN states ON turbines.t_state = states.state "
@@ -188,6 +189,8 @@ WIND_METRICS = TURBINE_METRICS + f"""\
     description: Each state's share of the national installed wind capacity, as a fraction of 1.
     source: data
     sql: {CAPACITY_SHARE_SQL}
+    parameters:
+      state: {{type: string, default: "", description: Two-letter state code; empty for every state}}
   regional_capacity:
     description: Installed wind capacity in MW by US census region.
     source: data
