@@ -20,7 +20,7 @@ from ..config import SOURCE_TABLE_SEPARATOR
 from ..flowdash import (
     AGGREGATE_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SELECT_ID,
     SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, bound_sources, check_query,
-    host_metrics, listed_tables, lookup_source,
+    listed_tables, lookup_source,
 )
 from ..flowdash.metrics import Metric
 from ..flowdash.nodes import effective_limit
@@ -321,7 +321,7 @@ def metric_line(metric: Metric) -> str:
 
 def metrics_listing(ops) -> str | None:
     """The metrics the app defines, for list_tables, or None without any."""
-    metrics = host_metrics(ops.editor.context)
+    metrics = _graph.metrics(ops)
     if not metrics:
         return None
     return "\n".join(metric_line(metric) for metric in metrics.values())

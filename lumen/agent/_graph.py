@@ -13,7 +13,21 @@ from panel_flowdash.agent import (
     DashboardOps, OperationError, OutputUnavailable,
 )
 
-from ..flowdash import COMPONENTS, LumenViewNode, bound_sources
+from ..flowdash import (
+    COMPONENTS, LumenViewNode, bound_sources, host_metrics,
+)
+
+
+def metrics(ops: DashboardOps) -> dict[str, Any]:
+    """
+    The app's metrics by name, copied once into a plain dict, or none when
+    they cannot be read. The host's mapping may re-read its project file on
+    every access, so a caller reads one snapshot instead of the live view.
+    """
+    try:
+        return dict(host_metrics(ops.editor.context).items())
+    except Exception:
+        return {}
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:

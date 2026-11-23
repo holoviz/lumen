@@ -20,7 +20,7 @@ from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
     DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID,
     CheckDiagnostic, check_query, check_sql_config, effective_limit, fetch,
-    host_metrics, pipeline_columns, primed_result, result_sql, row_ceiling,
+    pipeline_columns, primed_result, result_sql, row_ceiling,
     selection_warnings,
 )
 from ..flowdash.deckgl import (
@@ -399,7 +399,7 @@ async def add_metric(
         limit: Rows at most, e.g. 10 for a top 10.
     """
     ops = ctx.deps.ops
-    metrics = host_metrics(ops.editor.context)
+    metrics = _graph.metrics(ops)
     if not metrics:
         return "Refused: this app defines no metrics, so there is none to place. Compute the number with add_sql."
     if metric not in metrics:

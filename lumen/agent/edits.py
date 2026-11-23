@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
 
 from ..flowdash import (
     DECKGL_ID, FILTER_ID, METRIC_ID, SOURCE_ID, SQL_ID, TABLE_ID,
-    TABLE_VIEW_ID, VIEW_ID, host_metrics,
+    TABLE_VIEW_ID, VIEW_ID,
 )
 from . import _graph
 
@@ -229,7 +229,7 @@ def dashboard_state(ops) -> str | None:
 
 def _metrics_line(ops) -> str | None:
     """The app's metrics for the state block, by name and description, or None without any."""
-    metrics = list(host_metrics(ops.editor.context).values())
+    metrics = list(_graph.metrics(ops).values())
     if not metrics:
         return None
     named = [f"{m.name} ({_cut(m.description, STATE_METRIC_CHARS)})" if m.description else m.name

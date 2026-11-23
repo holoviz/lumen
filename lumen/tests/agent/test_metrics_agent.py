@@ -199,3 +199,25 @@ async def test_add_metric_in_explore_changes_and_reports_the_copy_of_an_earlier_
     assert changed.startswith("Changed metric node 'mine_2'") and again.startswith("Changed metric node 'mine_2'")
     assert configs["mine"]["measures"] == ["capacity_mw"] and configs["mine_2"]["dimensions"] == ["year"]
     assert "year" in frame.columns and "year" in again
+
+
+class Vanishing(dict):
+    """A live view of the metrics whose second metric is deleted while it is read."""
+
+    def items(self):
+        for i, (name, metric) in enumerate(super().items()):
+            if i == 1:
+                raise KeyError(name)
+            yield name, metric
+
+
+def test_the_metrics_are_read_as_one_snapshot(session):
+    from lumen.flowdash import METRICS_KEY
+
+    metrics = dict(session.ops.editor.context[METRICS_KEY])
+    session.ops.editor.context[METRICS_KEY] = Vanishing(metrics)
+    assert _graph.metrics(session.ops) == {}
+    assert "metrics" not in dashboard_state(session.ops)
+    session.ops.editor.context[METRICS_KEY] = metrics
+    snapshot = _graph.metrics(session.ops)
+    assert type(snapshot) is dict and list(snapshot) == ["capacity", "top_projects"]
