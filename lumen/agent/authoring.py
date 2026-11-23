@@ -654,8 +654,7 @@ def add_text(
         raise ModelRetry(f"Write the {kind}'s text.")
     # Explore shows each answer in its feed, which has no layout to place text in.
     explore = ExplorationOps is not None and isinstance(ops, ExplorationOps)
-    placing = not explore and any(p is not None for p in (position, before, after))
-    if placing:
+    if not explore and any(p is not None for p in (position, before, after)):
         _check_placement(ops, kind, position, before, after)
     config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
     if kind == "heading":
@@ -684,11 +683,9 @@ def add_text(
     if explore:
         return f"{placed}." + (" Explore shows it in the feed, so position, before and after do not apply."
                                if any(p is not None for p in (position, before, after)) else "")
-    # A changed text stays where it is unless it is moved.
-    if changed and not placing:
-        return f"{placed}."
-    # Only a position asked for moves the tile: moving one turns off FlowDash's automatic
-    # arrangement of the tiles placed after it, which already puts a Title first.
+    # A changed text stays where it is unless it is moved, and only a position asked for moves a tile:
+    # moving one turns off FlowDash's automatic arrangement of the tiles placed after it, which
+    # already puts a Title first.
     try:
         if before is not None or after is not None:
             ops.place_tile(name, before=before, after=after)
