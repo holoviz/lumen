@@ -1,0 +1,278 @@
+"""The admin view's Metrics section and the setup wizard's Key numbers step, without a browser."""
+import pytest
+
+pytest.importorskip("duckdb")
+pytest.importorskip("panel_flowdash.admin.wizard")
+
+from panel_flowdash import MemoryDashboardStore
+from panel_flowdash.admin.form import using_app
+from panel_flowdash.dashboard_store import DashboardItem
+
+from lumen.flowdash import METRICS_KEY, SOURCES_KEY
+from lumen.flowdash.app import build_routes
+from lumen.flowdash.contracts import METRIC_ID
+from lumen.flowdash.metrics import ProjectMetrics, read_metrics
+from lumen.flowdash.metrics_admin import (
+    NAME_KEY, KeyNumbersStep, MetricsSettings, check_metric, delete_metric,
+    join_spec, metric_usage, preview_metric, raw_section, save_metric,
+    split_spec,
+)
+from lumen.flowdash.project import PROJECT_FILE, load_project
+from lumen.sources.duckdb import DuckDBSource
+
+# Two projects of two and three turbines: p_cap, the project's capacity in MW, repeats on each turbine row.
+ROWS = [
+    ("Alta", "CA", 2010, 6.0, 3000),
+    ("Alta", "CA", 2010, 6.0, 3000),
+    ("Roscoe", "TX", 2012, 4.5, 1500),
+    ("Roscoe", "TX", 2012, 4.5, 1500),
+    ("Roscoe", "TX", 2012, 4.5, 1500),
+]
+
+CAPACITY = {
+    "description": "Installed capacity, each project's p_cap counted once.",
+    "source": "turbines",
+    "sql": "SELECT SUM(p_cap) AS capacity_mw, COUNT(*) AS projects "
+           "FROM (SELECT p_name, MAX(p_cap) AS p_cap FROM turbines GROUP BY p_name)",
+}
+
+FLEET = {
+    "source": "turbines",
+    "table": "turbines",
+    "measures": {"turbines": "COUNT(*)", "turbine_mw": "SUM(t_cap) / 1000.0"},
+    "dimensions": {"state": "t_state"},
+}
+
+YAML = """\
+general:
+  admins: [ana]
+metrics:
+  fleet:
+    source: turbines
+    table: turbines
+    measures:
+      turbines: COUNT(*)
+      turbine_mw: SUM(t_cap) / 1000.0
+    dimensions:
+      state: t_state
+"""
+
+
+class Admin:
+    def __init__(self, admin=True, store=None):
+        self.admin = admin
+        self.store = store
+        self.notified = []
+
+    def _still_admin(self):
+        return self.admin
+
+    def _notify(self, severity, message, duration=3000):
+        self.notified.append((severity, message))
+
+
+@pytest.fixture
+def source(tmp_path):
+    data = tmp_path / "turbines.csv"
+    data.write_text("p_name,t_state,p_year,p_cap,t_cap\n" + "".join(f"{n},{s},{y},{p},{c}\n" for n, s, y, p, c in ROWS))
+    return DuckDBSource(uri=":memory:", tables={"turbines": f"SELECT * FROM read_csv_auto('{data}')"})
+
+
+@pytest.fixture
+def project(tmp_path, source):
+    path = tmp_path / PROJECT_FILE
+    path.write_text(YAML)
+    return load_project(path, {SOURCES_KEY: {"turbines": source}})
+
+
+def test_a_valid_metric_has_no_problems(project):
+    assert check_metric(project, "capacity", CAPACITY) == []
+
+
+@pytest.mark.parametrize(("name", "spec", "keys", "message"), [
+    ("bad name", CAPACITY, ("bad name", NAME_KEY), "letters, digits and underscores"),
+    ("fleet", CAPACITY, ("fleet", NAME_KEY), "exists already"),
+    ("m", {**FLEET, "measures": {"x": "SUM(nope)"}}, ("m", "measures", "x", "expr"), "Unknown column 'nope'"),
+    ("m", {**FLEET, "measures": {"x": "t_cap"}}, ("m", "measures", "x", "expr"), "must aggregate"),
+    ("m", {**FLEET, "table": "nope"}, ("m", "table"), "has no table 'nope'"),
+    ("m", {**FLEET, "source": "nope"}, ("m", "source"), "serves no source 'nope'"),
+    ("m", {**FLEET, "colour": "red"}, ("m", "colour"), "Unknown key 'colour'"),
+    ("m", {"source": "turbines", "sql": "DELETE FROM turbines"}, ("m", "sql"), ""),
+])
+def test_problems_name_the_field_they_concern(project, name, spec, keys, message):
+    problems = check_metric(project, name, spec)
+    assert problems
+    assert problems[0].keys[:len(keys)] == keys
+    assert message in problems[0].message
+
+
+def test_an_admin_saves_a_metric_and_keeps_the_others(project):
+    assert save_metric(project, "capacity", CAPACITY, app=Admin()) == []
+    section = raw_section(project)
+    assert list(section) == ["fleet", "capacity"]
+    assert section["capacity"] == CAPACITY
+    assert load_project(project.path).get("general") == {"admins": ["ana"]}
+    assert list(read_metrics(project)) == ["fleet", "capacity"]
+
+
+def test_renaming_keeps_the_metric_in_its_place(project):
+    assert save_metric(project, "capacity", CAPACITY, app=Admin()) == []
+    base = raw_section(project)["fleet"]
+    assert save_metric(project, "turbine_fleet", base, app=Admin(), original="fleet", base=base) == []
+    assert list(raw_section(project)) == ["turbine_fleet", "capacity"]
+
+
+@pytest.mark.parametrize("app", [None, Admin(admin=False)], ids=["no app", "no longer admin"])
+def test_only_an_admin_saves_or_deletes(project, app):
+    before = open(project.path).read()
+    assert "Only admins" in save_metric(project, "capacity", CAPACITY, app=app)[0].message
+    assert "Only admins" in delete_metric(project, "fleet", app=app)[0].message
+    assert open(project.path).read() == before
+
+
+def test_an_invalid_metric_is_not_written(project):
+    before = open(project.path).read()
+    problems = save_metric(project, "m", {**FLEET, "measures": {"x": "SUM(nope)"}}, app=Admin())
+    assert problems[0].keys == ("m", "measures", "x", "expr")
+    assert open(project.path).read() == before
+
+
+def test_a_metric_changed_since_the_editor_opened_is_not_overwritten(project):
+    base = raw_section(project)["fleet"]
+    changed = {**base, "description": "Another admin's edit."}
+    assert save_metric(project, "fleet", changed, app=Admin(), original="fleet", base=base) == []
+    mine = {**base, "description": "Mine."}
+    problems = save_metric(project, "fleet", mine, app=Admin(), original="fleet", base=base)
+    assert "changed since you opened it" in problems[0].message
+    assert raw_section(project)["fleet"]["description"] == "Another admin's edit."
+    assert "changed since you opened it" in delete_metric(project, "fleet", app=Admin(), base=base)[0].message
+
+
+def test_delete_removes_only_that_metric(project):
+    save_metric(project, "capacity", CAPACITY, app=Admin())
+    assert delete_metric(project, "fleet", app=Admin()) == []
+    assert list(raw_section(project)) == ["capacity"]
+    assert "not in the project file" in delete_metric(project, "fleet", app=Admin())[0].message
+
+
+def _dashboard(store, title, *metrics):
+    model = store.create_dashboard("ana", title)
+    model.items = [DashboardItem(f"m{i}", METRIC_ID, config={"metric": m}) for i, m in enumerate(metrics)]
+    store.save_dashboard(model)
+    return model
+
+
+def test_usage_lists_the_dashboards_reading_each_metric():
+    store = MemoryDashboardStore()
+    fleet = _dashboard(store, "Fleet", "fleet", "fleet")
+    both = _dashboard(store, "Both", "fleet", "capacity")
+    _dashboard(store, "None")
+    usage = metric_usage(store._all_dashboards())
+    assert sorted(r.title for r in usage["fleet"]) == ["Both", "Fleet"]
+    assert [r.dashboard_id for r in usage["capacity"]] == [both.dashboard_id]
+    assert fleet.dashboard_id not in [r.dashboard_id for r in usage["capacity"]]
+
+
+def test_the_preview_runs_the_measures_alone_and_by_a_dimension(project):
+    problems, (total, by_state) = preview_metric(project, "fleet", FLEET)
+    assert problems == []
+    assert total.columns == ["turbines", "turbine_mw"] and total.rows == [[5, 10.5]]
+    assert by_state.label == "By state" and by_state.rows == [["TX", 3, 4.5], ["CA", 2, 6.0]]
+    assert "LIMIT 10" in by_state.sql
+
+
+def test_the_preview_counts_each_projects_capacity_once(project):
+    problems, (result,) = preview_metric(project, "capacity", CAPACITY)
+    assert problems == [] and result.rows == [[10.5, 2]]
+
+
+def test_the_preview_is_capped_and_read_only(project):
+    problems, (result,) = preview_metric(project, "rows", {"source": "turbines", "sql": "SELECT * FROM turbines"}, limit=2)
+    assert len(result.rows) == 2 and "LIMIT 2" in result.sql
+    problems, _ = preview_metric(project, "drop", {"source": "turbines", "sql": "DROP TABLE turbines"})
+    assert problems and problems[0].keys[:2] == ("drop", "sql")
+
+
+def test_a_preview_error_masks_credentials(project, monkeypatch):
+    from lumen.flowdash import nodes
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("could not connect to postgresql://ana:hunter2@db.example.com/fleet")
+
+    monkeypatch.setattr(nodes, "execute", fail)
+    _, (result, _) = preview_metric(project, "fleet", FLEET)
+    assert "hunter2" not in result.error and "***" in result.error
+
+
+def test_the_form_and_the_yaml_make_one_definition():
+    form, text = split_spec(FLEET)
+    assert form == {"description": None, "source": "turbines", "table": "turbines"}
+    spec, problems, positions = join_spec(form, text)
+    assert spec == FLEET and problems == []
+    assert positions[("measures", "turbines")][0] == 2
+    _, problems, _ = join_spec(form, "source: other\n")
+    assert "in the form above" in problems[0].message
+    _, problems, _ = join_spec(form, "measures: [\n")
+    assert problems[0].keys == ("", "yaml")
+
+
+def test_the_app_uses_what_an_admin_saves(project):
+    metrics = ProjectMetrics(project)
+    assert list(metrics) == ["fleet"]
+    save_metric(project, "capacity", CAPACITY, app=Admin())
+    assert list(metrics) == ["fleet", "capacity"]
+
+
+def test_build_routes_gives_the_admin_view_the_project_it_reads(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "turbines.csv").write_text("p_name,t_state,p_year,p_cap,t_cap\nAlta,CA,2010,6.0,3000\n")
+    (tmp_path / PROJECT_FILE).write_text(YAML)
+    app = build_routes(["turbines.csv"], db_path=tmp_path / "dash.db", project=tmp_path / PROJECT_FILE)["/"]()
+    project = app._settings_project()
+    assert project.path == str(tmp_path / PROJECT_FILE)
+    assert save_metric(project, "capacity", CAPACITY, app=Admin()) == []
+    assert list(app._editor.context[METRICS_KEY]) == ["fleet", "capacity"]
+
+
+def test_without_a_project_file_the_admin_view_writes_one_in_the_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "turbines.csv").write_text("p_name,t_state,p_year,p_cap,t_cap\nAlta,CA,2010,6.0,3000\n")
+    app = build_routes(["turbines.csv"], db_path=tmp_path / "dash.db")["/"]()
+    project = app._settings_project()
+    assert project.path == str(tmp_path / PROJECT_FILE)
+    assert save_metric(project, "capacity", CAPACITY, app=Admin()) == []
+    assert list(load_project(tmp_path / PROJECT_FILE).raw("metrics")) == ["capacity"]
+    assert list(app._editor.context[METRICS_KEY]) == ["capacity"]
+
+
+def test_the_section_escapes_what_the_file_says(project):
+    hostile = {**FLEET, "description": "<img src=x onerror=alert(1)>"}
+    assert save_metric(project, "fleet", hostile, app=Admin(), original="fleet") == []
+    with using_app(Admin(store=MemoryDashboardStore())):
+        view = MetricsSettings(project)
+    html = "".join(str(getattr(c, "object", "")) for c in view._table._rows[0].select())
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html and "<img" not in html
+
+
+def test_the_section_refuses_to_save_for_someone_no_longer_admin(project):
+    app = Admin(store=MemoryDashboardStore())
+    with using_app(app):
+        view = MetricsSettings(project)
+    view.open_metric(None)
+    view._editor.load("capacity", CAPACITY)
+    app.admin = False
+    assert not view.save()
+    assert "Only admins" in view._drawer_alert.object
+    assert "capacity" not in raw_section(project)
+
+
+def test_the_wizard_step_writes_nothing_when_left_blank(project):
+    step = KeyNumbersStep(project)
+    assert step.changes() == {}
+    assert step.summary() == ["No metric defined"]
+    step.editor.load("capacity", CAPACITY)
+    assert step.changes() == {"metrics": {"fleet": raw_section(project)["fleet"], "capacity": CAPACITY}}
+    assert step.summary() == ["capacity: a SQL query on turbines"]
+    step.editor.load("bad name", CAPACITY)
+    with pytest.raises(ValueError, match="letters, digits"):
+        step.changes()
