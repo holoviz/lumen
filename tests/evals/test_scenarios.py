@@ -195,22 +195,35 @@ REGION_CHART = {"title": "Capacity by region", "mark": "bar", "encoding": {
     "x": {"field": "region", "type": "nominal"}, "y": {"field": "capacity_mw", "type": "quantitative"}}}
 
 
-@pytest.mark.parametrize(("calls", "expected"), [
-    ([("add_metric", {"metric": "capacity_share", "name": "state_capacity_share"})], True),
+CA_SQL = "SELECT SUM(CASE WHEN t_state = 'CA' THEN t_cap ELSE 0 END) / SUM(t_cap) AS share FROM turbines"
+SHARE_METRIC = ("add_metric", {"metric": "capacity_share", "name": "state_capacity_share"})
+
+
+@pytest.mark.parametrize(("calls", "metric", "value"), [
+    ([SHARE_METRIC], False, False),
+    ([SHARE_METRIC, ("add_table", {"data": "state_capacity_share", "name": "share_table"})], True, False),
+    ([SHARE_METRIC, ("add_sql", {"source": "data", "name": "share", "sql": CA_SQL}),
+      ("add_kpi", {"data": "share", "name": "share_kpi", "column": "share", "unit": "%"})], False, False),
     ([("add_metric", {"metric": "capacity_share", "name": "texas_capacity_share", "parameters": {"state": "TX"}}),
-      ("add_kpi", {"data": "texas_capacity_share", "name": "texas_share_kpi", "column": "capacity_share", "unit": "%"})], True),
+      ("add_kpi", {"data": "texas_capacity_share", "name": "texas_share_kpi", "column": "capacity_share", "unit": "%"})],
+     True, True),
     ([("add_metric", {"metric": "capacity", "name": "state_capacity", "measures": ["capacity_mw"],
-                      "dimensions": ["state"]})], False),
-    ([("add_sql", {"source": "data", "name": "texas_share", "sql": TEXAS_SQL})], False),
-], ids=["metric", "metric_for_texas", "other_metric", "own_sql"])
-async def test_a_share_must_come_from_the_metric(calls, expected):
+                      "dimensions": ["state"]})], False, False),
+    ([("add_sql", {"source": "data", "name": "texas_share", "sql": TEXAS_SQL})], False, True),
+], ids=["hidden_metric_table", "shown_metric_table", "hidden_metric_and_own_ca_share", "metric_for_texas",
+        "other_metric", "own_sql"])
+async def test_a_share_must_come_from_the_metric(calls, metric, value):
+    """
+    Only a small or shown result of the share metric holding Texas' row
+    answers with the metric, and only a small result with Texas' share
+    shows the answer: a hand-written query earns the value alone.
+    """
     async with state_after("turbines_states", scripted(calls), metrics="wind") as state:
         assert state.error is None
         passed, detail = uses_metric("capacity_share", TEXAS_SHARE, key="TX", scales=PERCENT_SCALES).run(state)
-        assert passed is expected, detail
+        assert passed is metric, detail
+        assert shows_value(TEXAS_SHARE, scales=PERCENT_SCALES).run(state)[0] is value
         if calls[0][0] == "add_sql":
-            # The hand-written query holds the right number all the same.
-            assert shows_value(TEXAS_SHARE, scales=PERCENT_SCALES).run(state)[0]
             assert "SQL nodes instead: ['texas_share']" in detail
 
 

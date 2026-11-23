@@ -297,7 +297,8 @@ SCENARIOS: list[Scenario] = [
     # The numbers questions again in an app whose project file defines a metric for each: the turn
     # must answer with that metric, and a hand-written query with the same numbers earns nothing.
     Scenario("texas_share_metric", "metrics", "turbines_states", metrics="wind", playtest="B s5 t2", turns=[Turn(
-        TEXAS_SHARE_PROMPT, [uses_metric("capacity_share", TEXAS_SHARE, key="TX", scales=PERCENT_SCALES)])]),
+        TEXAS_SHARE_PROMPT, [uses_metric("capacity_share", TEXAS_SHARE, key="TX", scales=PERCENT_SCALES),
+                             shows_value(TEXAS_SHARE, scales=PERCENT_SCALES)])]),
     Scenario("capacity_by_year_metric", "metrics", "turbines_states", metrics="wind", playtest="A s6 t1", turns=[Turn(
         CAPACITY_BY_YEAR_PROMPT,
         [uses_metric("capacity", CAPACITY_BY_YEAR, where="shown"), has_view("chart", workstream="W4"),

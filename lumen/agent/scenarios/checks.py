@@ -436,8 +436,9 @@ def uses_metric(metric: str, sql: str, *, key: str | None = None, where: str = "
     The turn answers with the app's metric ``metric``: a ``Lumen/metric``
     node of it, or a node reading one, holds the reference numbers of
     ``sql``, its keyed series (keys first, value last) or, with ``key``,
-    its scalar in the row of that key. A hand-written query with the same
-    numbers does not count.
+    its scalar in the row of that key, in a result of at most
+    ``MAX_ANSWER_ROWS`` rows or one the dashboard shows. A hand-written
+    query with the same numbers does not count.
     """
     def test(state):
         names = _metric_results(state, metric, where)
@@ -450,9 +451,12 @@ def uses_metric(metric: str, sql: str, *, key: str | None = None, where: str = "
         seen = "{" + ", ".join(f"{n}: {_preview(state.data(n))}" for n in names[:4]) + "}"
         if key is not None:
             value = _scalar(state, sql)
-            if any(holds_keyed(state.data(n), key, value, scales) for n in names):
+            frames = {n: state.data(n) for n in names}
+            answers = [n for n, frame in frames.items()
+                       if state.shown(n) or (frame is not None and len(frame) <= MAX_ANSWER_ROWS)]
+            if any(holds_keyed(frames[n], key, value, scales) for n in answers):
                 return None
-            return f"no row {key!r} with {value:,.6g} in {metric!r} nodes {seen}"
+            return f"no row {key!r} with {value:,.6g} in a small or shown {metric!r} node {seen}"
         expected = state.reference(sql)
         if any(matches_series(state.data(n), expected, scales) for n in names):
             return None
