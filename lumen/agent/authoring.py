@@ -196,14 +196,35 @@ async def _add_follower(ops, upstreams: list[str], src: Any, name: str, sql: str
     )
 
 
+def _view_problems(ops, name: str) -> list[str]:
+    """What the charts, tables and maps reading node ``name``'s rows now refuse, checked against its new columns."""
+    try:
+        columns = pipeline_columns(_graph.output(ops, name, "pipeline"))
+    except (OperationError, AttributeError):
+        return []
+    readers = list(dict.fromkeys(
+        reader for port in ("pipeline", "data") for reader in _graph.reading(ops, f"{name}.{port}")
+    ))
+    problems = []
+    for reader in readers:
+        if (view := _graph.view_class(_graph.component_of(ops, reader))) is None:
+            continue
+        try:
+            view.check_spec(_graph.config_of(ops, reader).get("spec") or {}, columns)
+        except ValueError as exc:
+            problems.append(f"View {reader!r} now fails: {exc} Change it with update_chart, or the query back.")
+    return problems
+
+
 async def _follower_problems(ops, name: str) -> list[str]:
     """
-    What the SQL nodes reading ``name``'s result directly now refuse,
-    checked against its new result. A node reading one of those in turn is
-    not checked: it fails, and reports it, once that one does.
+    What the SQL nodes reading ``name``'s result directly and the views
+    showing its rows now refuse, checked against its new result. A node
+    reading one of those in turn is not checked: it fails, and reports it,
+    once that one does.
     """
     followers = [f for f in _graph.reading(ops, f"{name}.result") if _graph.component_of(ops, f) == SQL_ID]
-    problems = []
+    problems = _view_problems(ops, name)
     for follower in followers:
         try:
             result = _merged_input(ops, follower)
@@ -654,19 +675,23 @@ def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, An
     if not changes and not add_layers:
         raise ModelRetry("Pass the changes to make, or add_layers.")
     before = _graph.config_of(ops, name).get("spec") or {}
-    spec = merge_chart(before, changes, add_layers) if component == VIEW_ID else merge_patch(before, changes)
+    try:
+        spec = merge_chart(before, changes, add_layers) if component == VIEW_ID else merge_patch(before, changes)
+    except ValueError as exc:
+        raise ModelRetry(f"{exc} Nothing was changed.") from exc
     data = _graph.upstream(ops, name)
     port = _graph.pipeline_port(ops, data) if data else None
     try:
         pipeline = _graph.output(ops, data, port) if port else None
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
-    if isinstance(pipeline, Pipeline):
-        try:
-            spec = view.check_spec(spec, pipeline_columns(pipeline))
-        except ValueError as exc:
-            hint = " To show another node's columns, call add_chart with this name and that node as data." if component == VIEW_ID else ""
-            raise ModelRetry(f"{exc}{hint} The spec after your changes: {json.dumps(spec)}") from exc
+    # Without data to read, the spec's fields cannot be checked, but what it may hold still is.
+    columns = pipeline_columns(pipeline) if isinstance(pipeline, Pipeline) else sorted(view.spec_fields(spec))
+    try:
+        spec = view.check_spec(spec, columns)
+    except ValueError as exc:
+        hint = " To show another node's columns, call add_chart with this name and that node as data." if component == VIEW_ID else ""
+        raise ModelRetry(f"{exc}{hint} The spec after your changes: {json.dumps(spec)}") from exc
     existing = set(_graph.nodes(ops))
     try:
         ops.set_config(name, {"spec": spec})
