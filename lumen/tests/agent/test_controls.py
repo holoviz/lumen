@@ -660,3 +660,7 @@ async def test_playtest_local_add_filter_in_a_run_points_to_add_filter_control()
     finally:
         session.close()
     assert "Build a local filter with add_filter_control instead." in str(turn.tool_results["call-1"])
+
+
+def test_kpi_and_filter_tools_run_alone():
+    assert all(tool.sequential for tool in controls_toolset().tools.values())

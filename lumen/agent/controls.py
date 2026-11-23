@@ -539,5 +539,8 @@ def add_filter_control(
 
 
 def controls_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The tools of an agent that lays out the dashboard: add_kpi and add_filter_control."""
-    return FunctionToolset[FlowDashDeps]([add_kpi, add_filter_control], max_retries=3)
+    """
+    The tools of an agent that lays out the dashboard: add_kpi and
+    add_filter_control, each run alone, as they change the graph.
+    """
+    return FunctionToolset[FlowDashDeps]([add_kpi, add_filter_control], max_retries=3, sequential=True)
