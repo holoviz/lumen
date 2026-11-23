@@ -3,7 +3,7 @@ fixture: turbine_metrics
 turns:
 - question: What is the installed capacity in MW by state, counting projects since 2005?
   nodes:
-  - installed_capacity_mw_by_state
+  - installed_capacity_by_state_since_2005
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: ta5d873f0
+      - id: t91ef42c1
         actor: user
-        at: '2026-11-22T23:48:33Z'
+        at: '2026-11-23T08:20:49Z'
         summary: Added data.
-      - id: t7280ff77
+      - id: tb793542d
         actor: agent
-        at: '2026-11-22T23:48:35Z'
-        run: run-e5acb113b8b1
-        summary: Added installed_capacity_mw_by_state. Set Parameters of installed_capacity_mw_by_state.
+        at: '2026-11-23T08:20:52Z'
+        run: run-ab1e6ee89d88
+        summary: Added installed_capacity_by_state_since_2005. Set Parameters of installed_capacity_by_state_since_2005.
     nodes:
       data:
         component: Lumen/source
-        origin: ta5d873f0
+        origin: t91ef42c1
         config:
           ref: data
         position: [0.0, 22.0]
-      installed_capacity_mw_by_state:
+      installed_capacity_by_state_since_2005:
         component: Lumen/metric
-        origin: t7280ff77
+        origin: tb793542d
         config:
           metric: capacity
           measures:
@@ -44,7 +44,7 @@ turns:
             - state
           grain: ''
           order_by:
-            - -capacity_mw
+            - state
           limit: null
         inputs:
           parameters:
@@ -54,5 +54,5 @@ turns:
       tiles:
         - node: data
           visible: false
-        - node: installed_capacity_mw_by_state
+        - node: installed_capacity_by_state_since_2005
           visible: false

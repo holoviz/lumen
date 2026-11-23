@@ -3,8 +3,8 @@ fixture: commerce
 turns:
 - question: Which customer has the most paid orders? Show only that customer and the count.
   nodes:
-  - customer_with_most_paid_orders
-  - most_paid_orders_customer
+  - paid_orders_by_customer
+  - top_customer_paid_orders
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -18,61 +18,63 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tdfd6b10c
+      - id: te9cfa28a
         actor: user
-        at: '2026-11-22T23:48:25Z'
+        at: '2026-11-23T08:20:41Z'
         summary: Added data.
-      - id: tcd10ec17
+      - id: t911d38e9
         actor: agent
-        at: '2026-11-22T23:48:30Z'
-        run: run-27ecfc3f0bbb
-        summary: Added customer_with_most_paid_orders. Connected data to customer_with_most_paid_orders. Added
-          most_paid_orders_customer. Connected customer_with_most_paid_orders to most_paid_orders_customer.
+        at: '2026-11-23T08:20:46Z'
+        run: run-12de0ea4011e
+        summary: Added paid_orders_by_customer. Connected data to paid_orders_by_customer. Added top_customer_paid_orders.
+          Connected paid_orders_by_customer to top_customer_paid_orders.
     nodes:
       data:
         component: Lumen/source
-        origin: tdfd6b10c
+        origin: te9cfa28a
         config:
           ref: data
         position: [0.0, 44.0]
-      customer_with_most_paid_orders:
+      paid_orders_by_customer:
         component: Lumen/sql
-        origin: tcd10ec17
+        origin: t911d38e9
         config:
           sql: |-
             SELECT
               c."customer",
-              COUNT(o."order_id") AS paid_order_count
-            FROM customers AS c
-            JOIN orders AS o
-              ON c."customer_id" = o."customer_id"
+              COUNT(*) AS "paid_order_count"
+            FROM orders AS o
+            JOIN customers AS c
+              ON o."customer_id" = c."customer_id"
             WHERE
               o."status" = 'paid'
             GROUP BY
               c."customer"
             ORDER BY
-              paid_order_count DESC
+              "paid_order_count" DESC
             LIMIT 1
-          table: customer_with_most_paid_orders
+          table: paid_orders_by_customer
         position: [380.0, 0.0]
-      most_paid_orders_customer:
+      top_customer_paid_orders:
         component: Lumen/table_view
-        origin: tcd10ec17
+        origin: t911d38e9
         config:
           spec:
-            page_size: 5
+            page_size: 10
+            formatters:
+              paid_order_count: number
         position: [760.0, 44.0]
     edges:
       - from: data.source
-        to: customer_with_most_paid_orders.source
-      - from: customer_with_most_paid_orders.pipeline
-        to: most_paid_orders_customer.pipeline
+        to: paid_orders_by_customer.source
+      - from: paid_orders_by_customer.pipeline
+        to: top_customer_paid_orders.pipeline
     layout:
       tiles:
-        - node: most_paid_orders_customer
+        - node: top_customer_paid_orders
           width: 100.0
           height: 400
         - node: data
           visible: false
-        - node: customer_with_most_paid_orders
+        - node: paid_orders_by_customer
           visible: false

@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tc55fa8e6
+      - id: t0681091b
         actor: user
-        at: '2026-11-22T23:48:06Z'
+        at: '2026-11-23T08:20:21Z'
         summary: Added data.
-      - id: tb8859eae
+      - id: tee3d7730
         actor: agent
-        at: '2026-11-22T23:48:11Z'
-        run: run-6fe22ad4138d
+        at: '2026-11-23T08:20:25Z'
+        run: run-58a7049e46a2
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
     nodes:
       data:
         component: Lumen/source
-        origin: tc55fa8e6
+        origin: t0681091b
         config:
           ref: data
         position: [0.0, 44.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: tb8859eae
+        origin: tee3d7730
         config:
           sql: |-
             SELECT
@@ -43,7 +43,10 @@ turns:
               SUM("amount") AS "total_amount"
             FROM sales
             WHERE
-              TRIM("category") <> '' AND NOT "category" IS NULL AND NOT "amount" IS NULL
+              NOT "category" IS NULL
+              AND TRIM("category") <> ''
+              AND NOT "amount" IS NULL
+              AND "amount" <> -9999
             GROUP BY
               "category"
             ORDER BY
@@ -75,30 +78,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tc55fa8e6
+      - id: t0681091b
         actor: user
-        at: '2026-11-22T23:48:06Z'
+        at: '2026-11-23T08:20:21Z'
         summary: Added data.
-      - id: tb8859eae
+      - id: tee3d7730
         actor: agent
-        at: '2026-11-22T23:48:11Z'
-        run: run-6fe22ad4138d
+        at: '2026-11-23T08:20:25Z'
+        run: run-58a7049e46a2
         summary: Added total_amount_by_category. Connected data to total_amount_by_category.
-      - id: t848e1806
+      - id: t3ae19c92
         actor: agent
-        at: '2026-11-22T23:48:14Z'
-        run: run-3b91320c23ec
+        at: '2026-11-23T08:20:28Z'
+        run: run-0ff86ec64028
         summary: Added total_amount_by_category_chart. Connected total_amount_by_category to total_amount_by_category_chart.
     nodes:
       data:
         component: Lumen/source
-        origin: tc55fa8e6
+        origin: t0681091b
         config:
           ref: data
         position: [0.0, 44.0]
       total_amount_by_category:
         component: Lumen/sql
-        origin: tb8859eae
+        origin: tee3d7730
         config:
           sql: |-
             SELECT
@@ -106,7 +109,10 @@ turns:
               SUM("amount") AS "total_amount"
             FROM sales
             WHERE
-              TRIM("category") <> '' AND NOT "category" IS NULL AND NOT "amount" IS NULL
+              NOT "category" IS NULL
+              AND TRIM("category") <> ''
+              AND NOT "amount" IS NULL
+              AND "amount" <> -9999
             GROUP BY
               "category"
             ORDER BY
@@ -115,7 +121,7 @@ turns:
         position: [380.0, 0.0]
       total_amount_by_category_chart:
         component: Lumen/view
-        origin: t848e1806
+        origin: t3ae19c92
         config:
           spec:
             mark: bar

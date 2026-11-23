@@ -1,6 +1,7 @@
 """The FlowDash agent as an eval subject, recorded sessions as cases, and cassette playback."""
 
 import json
+import re
 
 from pathlib import Path
 
@@ -184,8 +185,12 @@ def test_map_session_places_a_deckgl_map_of_its_query():
     dashboard = yaml.safe_load(session.turns[-1].dashboard)
     (name,) = [name for name, node in dashboard["nodes"].items() if node["component"] == DECKGL_ID]
     (edge,) = [edge for edge in dashboard["edges"] if edge["to"] == f"{name}.pipeline"]
-    assert dashboard["nodes"][edge["from"].split(".")[0]]["component"] == SQL_ID
-    assert "@@=[xlong, ylat]" in str(dashboard["nodes"][name]["config"]["spec"])
+    sql = dashboard["nodes"][edge["from"].split(".")[0]]
+    assert sql["component"] == SQL_ID and "xlong" in sql["config"]["sql"] and "ylat" in sql["config"]["sql"]
+    # The map reads the coordinates the query returns, under their own names or aliases.
+    (layer,) = dashboard["nodes"][name]["config"]["spec"]["layers"]
+    x, y = re.fullmatch(r"@@=\[(\w+), *(\w+)\]", layer["getPosition"]).groups()
+    assert re.search(rf"\b{x}\b", sql["config"]["sql"]) and re.search(rf"\b{y}\b", sql["config"]["sql"])
     expected = session_case(SESSIONS / "turbines_map.yaml", source).metadata
     assert len(expected.rows) == 5 and expected.chart_mark is None
 

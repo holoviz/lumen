@@ -17,30 +17,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taaa08fbb
+      - id: t9a8ba7aa
         actor: user
-        at: '2026-11-22T23:48:15Z'
+        at: '2026-11-23T08:20:29Z'
         summary: Added data.
-      - id: t00d73a29
+      - id: t0d763456
         actor: agent
-        at: '2026-11-22T23:48:20Z'
-        run: run-df31abcef0d4
+        at: '2026-11-23T08:20:34Z'
+        run: run-29392179ab7f
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taaa08fbb
+        origin: t9a8ba7aa
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t00d73a29
+        origin: t0d763456
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
+              SUM(o."amount") AS total_paid_order_amount
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
@@ -77,35 +77,35 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: taaa08fbb
+      - id: t9a8ba7aa
         actor: user
-        at: '2026-11-22T23:48:15Z'
+        at: '2026-11-23T08:20:29Z'
         summary: Added data.
-      - id: t00d73a29
+      - id: t0d763456
         actor: agent
-        at: '2026-11-22T23:48:20Z'
-        run: run-df31abcef0d4
+        at: '2026-11-23T08:20:34Z'
+        run: run-29392179ab7f
         summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: t9e985901
+      - id: t6437224f
         actor: agent
-        at: '2026-11-22T23:48:23Z'
-        run: run-34a151cf6b9b
+        at: '2026-11-23T08:20:40Z'
+        run: run-7c47aa94545b
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: taaa08fbb
+        origin: t9a8ba7aa
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t00d73a29
+        origin: t0d763456
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
+              SUM(o."amount") AS total_paid_order_amount
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
