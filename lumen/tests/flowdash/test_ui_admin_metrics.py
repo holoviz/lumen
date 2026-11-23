@@ -193,3 +193,14 @@ def test_a_skipped_key_numbers_step_writes_no_metric(page, tmp_path, monkeypatch
     page.locator(".flowdash-wizard-metrics .flowdash-metric-name input").fill("capacity")
     footer.get_by_role("button", name="Skip this step").click()
     expect(page.locator(".flowdash-wizard-content")).not_to_contain_text("Define your key numbers")
+
+
+def test_escape_closes_the_editor_and_returns_focus_to_its_row(page, tmp_path, monkeypatch):
+    _serve(page, tmp_path, monkeypatch)
+    page.locator(".flowdash-admin-row-fleet").get_by_text("fleet", exact=True).click()
+    drawer = _drawer(page)
+    expect(drawer).to_contain_text("Edit fleet", timeout=15000)
+    drawer.locator(".flowdash-metric-name input").focus()
+    page.keyboard.press("Escape")
+    expect(drawer).to_be_hidden()
+    expect(page.locator(".flowdash-admin-row-fleet .flowdash-admin-metric-menu button")).to_be_focused()

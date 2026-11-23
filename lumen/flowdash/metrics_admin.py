@@ -39,7 +39,9 @@ from panel_flowdash.project import (
     _FILE_LOCK, Problem, Project, ProjectError, Section, _dump, _parse, _read,
 )
 from panel_flowdash.value_text import error_text
+from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from ruamel.yaml.nodes import MappingNode, SequenceNode
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from ..sources.base import BaseSQLSource
@@ -57,12 +59,16 @@ HELP = "Numbers defined here are the agreed definitions; the assistant uses them
 PREVIEW_ROWS = 10
 PREVIEW_TIMEOUT = 5
 
+# The longest YAML the editor reads.
+YAML_LIMIT = 20_000
+
 # The keys of a metric the form edits; the YAML field holds the others.
 FORM_KEYS = ("description", "source", "table")
 # The pseudo key of a metric's name, for problems with the name itself.
 NAME_KEY = "name"
 
 NOT_ADMIN = "Only admins can change metrics, so this was not saved."
+NOT_ADMIN_PREVIEW = "Only admins can preview metrics."
 
 _UNSET = object()
 
@@ -314,6 +320,8 @@ def join_spec(form: Mapping[str, t.Any], text: str) -> tuple[dict[str, t.Any], l
             spec[key] = value
     if not text.strip():
         return spec, [], {}
+    if (refusal := _yaml_refusal(text)) is not None:
+        return spec, [Problem(refusal, section=SECTION, keys=("", "yaml"))], {}
     try:
         data, positions = _parse(text, None)
     except ProjectError as exc:
@@ -328,6 +336,32 @@ def join_spec(form: Mapping[str, t.Any], text: str) -> tuple[dict[str, t.Any], l
                                     keys=("", "yaml")))
     spec.update({key: value for key, value in data.items() if key not in FORM_KEYS})
     return spec, problems, positions
+
+
+def _yaml_refusal(text: str) -> str | None:
+    """
+    Why the YAML field's ``text`` is not read: too long, or using anchors and
+    aliases, which a metric never needs and which can expand to far more
+    than the text, e.g. a billion laughs. Composing does not expand them.
+    """
+    if len(text) > YAML_LIMIT:
+        return f"The YAML is longer than {YAML_LIMIT:,} characters."
+    try:
+        root = YAML(typ="safe", pure=True).compose(text)
+    except YAMLError:
+        return None
+    seen: set[int] = set()
+    stack = [root] if root is not None else []
+    while stack:
+        node = stack.pop()
+        if id(node) in seen or node.anchor:
+            return "Anchors and aliases (&name, *name) are not supported; write the values out."
+        seen.add(id(node))
+        if isinstance(node, MappingNode):
+            stack.extend(item for pair in node.value for item in pair)
+        elif isinstance(node, SequenceNode):
+            stack.extend(node.value)
+    return None
 
 
 def template(columns: Sequence[str] = (), sql_table: str | None = None) -> str:
@@ -536,6 +570,7 @@ class MetricEditor(Viewer):
     def __init__(self, project: Project, **params):
         super().__init__(**params)
         self.project = project
+        self._app = current_app()
         self._name = pmui.TextInput(
             label="Name", placeholder="capacity", sizing_mode="stretch_width", margin=0,
             css_classes=["flowdash-metric-name"],
@@ -735,7 +770,10 @@ class MetricEditor(Viewer):
         return general
 
     def preview(self) -> list[PreviewResult]:
-        """Run the preview of the form's definition and show it."""
+        """Run the preview of the form's definition and show it; only for an admin."""
+        if not _admin(self._app):
+            self._preview.object = f'<div class="k"><span class="error-text">{esc(NOT_ADMIN_PREVIEW)}</span></div>'
+            return []
         spec, problems = self.spec()
         if problems:
             self.show_problems(problems)
@@ -839,6 +877,7 @@ class MetricsSettings(Viewer):
             empty="No metrics yet. Define the numbers people ask for most, e.g. installed capacity.",
             css_classes=["flowdash-admin-metrics"],
         )
+        self._menus: dict[str, pmui.MenuButton] = {}
         self._editor = MetricEditor(project)
         self._build_drawer()
         self._build_dialog()
@@ -886,6 +925,7 @@ class MetricsSettings(Viewer):
 
     def refresh(self):
         """Draw the table from the project file."""
+        self._menus = {}
         section = self.section()
         usage = self.usage()
         where = Path(self.project.path).name if self.project.path else "the project file"
@@ -927,6 +967,7 @@ class MetricsSettings(Viewer):
             css_classes=["flowdash-admin-metric-menu"],
         )
         menu.on_click(lambda item, name=name: self.run(item.get("action"), name))
+        self._menus[name] = menu
         sql_note = '<span class="muted">Its query\'s columns</span>'
         return [
             open_editor,
@@ -1006,6 +1047,17 @@ class MetricsSettings(Viewer):
             body, anchor="right", variant="temporary", size=600, open=False,
             sx={"maxWidth": "100vw"},
         )
+        self._drawer.param.watch(self._on_drawer_open, "open")
+
+    def _on_drawer_open(self, event):
+        if event.new:
+            return
+        # Closed with Escape, the backdrop or a button: focus goes back to what opened it.
+        opener = self._menus.get(self.selected) if self.selected is not None else self._new
+        self.selected = None
+        self._base = _UNSET
+        if opener is not None:
+            opener.focus()
 
     def open_metric(self, name: str | None, spec: Mapping[str, t.Any] | None = None, title: str | None = None):
         """Open the editor on metric ``name``, or on a new one (defined as ``spec``, if given)."""
@@ -1022,7 +1074,8 @@ class MetricsSettings(Viewer):
 
     def close_metric(self):
         """Close the editor without saving."""
-        self._drawer.open = False
+        if self._drawer.open:
+            self._drawer.open = False
         self.selected = None
         self._base = _UNSET
 

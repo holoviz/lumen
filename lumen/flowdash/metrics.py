@@ -56,6 +56,7 @@ import functools
 import logging
 import math
 import re
+import weakref
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
@@ -1274,6 +1275,39 @@ def _wizard_view(project: Project) -> Any:
     return metrics_wizard_step(project)
 
 
+# The Bokeh documents of the sessions of apps that serve Lumen sources, see ``serve_lumen``.
+_LUMEN_DOCS: weakref.WeakSet = weakref.WeakSet()
+
+
+def serve_lumen(doc: Any) -> None:
+    """Mark ``doc``, a session's document, as one of an app that serves Lumen sources."""
+    if doc is not None:
+        _LUMEN_DOCS.add(doc)
+
+
+def serves_lumen() -> bool:
+    """Whether the current session is one of an app that serves Lumen sources."""
+    import panel as pn
+
+    doc = pn.state.curdoc
+    return doc is not None and doc in _LUMEN_DOCS
+
+
+class _LumenSection(ProjectSection):
+    """
+    The ``metrics:`` section, whose admin view and setup step exist only in
+    the sessions of an app serving Lumen sources: registering a section is
+    process-wide, and another FlowDash app in the process keeps its own
+    Data step and has no Metrics section.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        value = object.__getattribute__(self, name)
+        if name in ("settings_view", "wizard_view") and value is not None and not serves_lumen():
+            return None
+        return value
+
+
 # The admin view and the setup wizard, on a panel-flowdash whose sections have them.
 _ADMIN = {
     key: value for key, value in {
@@ -1281,7 +1315,7 @@ _ADMIN = {
     }.items() if key in getattr(ProjectSection, "__dataclass_fields__", {})
 }
 
-register_section(ProjectSection(
+register_section((_LumenSection if _ADMIN else ProjectSection)(
     SECTION, load_section, title="Metrics", icon="functions",
     description="Numbers defined here are the agreed definitions; the assistant uses them instead of "
     "writing its own SQL.",

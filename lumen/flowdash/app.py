@@ -24,7 +24,7 @@ from panel_flowdash.project import _parse
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
-from .metrics import METRICS_KEY, ProjectMetrics
+from .metrics import METRICS_KEY, ProjectMetrics, serve_lumen
 from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
 from .project import (
     PROJECT_FILE, Project, ProjectError, load_project,
@@ -392,7 +392,7 @@ def build_routes(
     # The admin view edits this project, so what it saves is what the app reads.
     context[METRICS_KEY] = ProjectMetrics(project)
     editor_options["context"] = context
-    return FlowDashApp.build_routes(
+    routes = FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
         registry={},
         store=DashboardStore(str(db_path)),
@@ -404,6 +404,21 @@ def build_routes(
         project=project,
         **params,
     )
+    return {path: _lumen_session(factory) for path, factory in routes.items()}
+
+
+def _lumen_session(factory: Any) -> Any:
+    """``factory`` marking each session it serves as a Lumen app's, which shows the Metrics admin."""
+    if not callable(factory):
+        return factory
+
+    def lumen_factory(*args: Any, **kwargs: Any) -> Any:
+        import panel as pn
+
+        serve_lumen(pn.state.curdoc)
+        return factory(*args, **kwargs)
+
+    return lumen_factory
 
 
 def _working_project(context: Mapping[str, Any]) -> Project:

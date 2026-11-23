@@ -276,3 +276,61 @@ def test_the_wizard_step_writes_nothing_when_left_blank(project):
     step.editor.load("bad name", CAPACITY)
     with pytest.raises(ValueError, match="letters, digits"):
         step.changes()
+
+
+def test_a_demoted_admin_cannot_preview(project):
+    from lumen.flowdash.metrics_admin import MetricEditor
+
+    app = Admin()
+    with using_app(app):
+        editor = MetricEditor(project)
+    editor.load("fleet", FLEET)
+    assert editor.preview()
+    app.admin = False
+    assert editor.preview() == []
+    assert "Only admins can preview" in editor._preview.object
+    with using_app(None):
+        assert MetricEditor(project).preview() == []
+
+
+def test_the_yaml_field_refuses_aliases_and_long_text():
+    import time
+
+    from lumen.flowdash.metrics_admin import YAML_LIMIT
+
+    laughs = 'a: &a ["lol","lol","lol","lol","lol","lol","lol","lol","lol"]\n' + "".join(
+        f"{chr(98 + i)}: &{chr(98 + i)} [{', '.join(['*' + chr(97 + i)] * 9)}]\n" for i in range(9)
+    )
+    start = time.monotonic()
+    _, problems, _ = join_spec({}, laughs)
+    assert time.monotonic() - start < 1
+    assert "Anchors and aliases" in problems[0].message
+    _, problems, _ = join_spec({}, "measures:\n  n: COUNT(*)\n" + "#" * YAML_LIMIT)
+    assert "longer than" in problems[0].message
+
+
+def test_only_a_lumen_app_shows_the_metrics_admin_and_key_numbers(tmp_path, monkeypatch):
+    from bokeh.document import Document
+    from panel.io.state import set_curdoc
+    from panel_flowdash.admin.page import admin_sections
+    from panel_flowdash.admin.wizard import DataStep, wizard_steps
+    from panel_flowdash.app import FlowDashApp
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "turbines.csv").write_text("p_name,t_state,p_year,p_cap,t_cap\nAlta,CA,2010,6.0,3000\n")
+    routes = build_routes(["turbines.csv"], db_path=tmp_path / "dash.db")
+    with set_curdoc(Document()):
+        lumen_app = routes["/"]()
+        assert "metrics" in [s.name for s in admin_sections()]
+        steps = wizard_steps(lumen_app._settings_project(), lumen_app)
+        assert isinstance(steps[1], KeyNumbersStep)
+        assert not any(isinstance(step, DataStep) for step in steps)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with set_curdoc(Document()):
+        plain_app = FlowDashApp(registry={}, project_dir=plain, store=MemoryDashboardStore(),
+                                notifications=False, include_builtin_components=False)
+        assert "metrics" not in [s.name for s in admin_sections()]
+        steps = wizard_steps(plain_app._settings_project(), plain_app)
+        assert isinstance(steps[1], DataStep)
+        assert not any(isinstance(step, KeyNumbersStep) for step in steps)
