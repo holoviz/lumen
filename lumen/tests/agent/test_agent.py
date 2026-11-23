@@ -877,7 +877,7 @@ def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_n
 
 async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ctx, session):
     assert add_text(ctx, "heading", "title", "Paid orders", subtitle="By region", size="Title").startswith(
-        "Placed heading 'title' at the top"
+        "Placed heading 'title'."
     )
     add_text(ctx, "markdown", "intro", "This dashboard shows **paid** orders per region.")
     add_text(ctx, "divider", "rule")
@@ -898,7 +898,7 @@ async def test_add_text_places_a_title_at_the_top_and_text_where_asked(ctx, sess
     add_chart(ctx, "paid_by_region", "paid_chart", BAR)
     add_chart(ctx, "paid_by_region", "other_chart", BAR)
     result = add_text(ctx, "heading", "title", "Paid orders", size="Title")
-    assert result.splitlines()[:3] == ["Placed heading 'title' at the top.", "Layout now:", "Row 1: title 100% 96px"]
+    assert result.splitlines()[:3] == ["Placed heading 'title'.", "Layout now:", "Row 1: title 100% 96px"]
     add_text(ctx, "heading", "section", "Regions", size="Section", before="other_chart")
     add_text(ctx, "markdown", "notes", "Paid orders only.", position="bottom")
     shown = [line.split(": ", 1)[1].split()[0] for line in session.ops.describe_layout().splitlines() if line.startswith("Row")]
@@ -929,7 +929,7 @@ async def test_a_title_stays_at_the_top_through_the_request(ctx, session, arrang
     session.deps.start_request("Build it")
     await add_sql(ctx, "data", "paid_by_region", BY_REGION)
     if title_first:
-        assert add_text(ctx, "heading", "title", "Paid orders", size="Title").startswith("Placed heading 'title' at the top.")
+        assert add_text(ctx, "heading", "title", "Paid orders", size="Title").startswith("Placed heading 'title'.\n")
     for name in ("one", "two", "three"):
         add_chart(ctx, "paid_by_region", name, BAR)
     if not title_first:
@@ -958,6 +958,31 @@ async def test_text_beside_a_shown_tile_stays_there_and_beside_a_hidden_one_is_r
     session.deps.end_request()
     order = [n for row in _saved_rows(session) for n in row]
     assert order == ["one", "note", "section", "two"]
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+@pytest.mark.parametrize("title_first", [True, False])
+async def test_a_title_leads_charts_placed_in_the_same_turn(title_first):
+    title = [ToolCallPart("add_text", {"kind": "heading", "name": "title", "text": "Paid orders", "size": "Title"},
+                          tool_call_id="t1")]
+    charts = [
+        [ToolCallPart("add_chart", {"data": "paid_by_region", "name": name, "spec": BAR}, tool_call_id=name)]
+        for name in ("one", "two")
+    ]
+    steps = [title, *charts] if title_first else [*charts, title]
+    model, _ = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="s1")],
+        *steps, [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           agent=create_agent(model, dashboard_tools="layout"))
+    try:
+        turn = await session.ask("A dashboard of paid orders with a title")
+        rows = _saved_rows(session)
+    finally:
+        session.close()
+    assert turn.error is None
+    assert rows == [["title"], ["one", "two"]]
 
 
 def test_add_text_retries_a_position_beside_a_missing_node(ctx, session):

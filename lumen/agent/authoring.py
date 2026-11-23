@@ -39,6 +39,11 @@ from .data import (
     _sources_by_name, lint, resolve_source, source_output,
 )
 
+try:
+    from panel_flowdash.agent import ExplorationOps
+except ImportError:
+    ExplorationOps = None
+
 
 def _place(ops, component: str, name: str, config: dict[str, Any], source: str, target: str) -> None:
     try:
@@ -461,7 +466,7 @@ def add_text(
 ) -> str:
     """Place a heading, Markdown prose or a divider with the text you write for it.
 
-    Returns the layout as it is now, row by row.
+    Returns the layout as it is now, row by row. A "Title" heading leads the dashboard by itself.
 
     Args:
         kind: "heading" for a title, "markdown" for prose, "divider" for a rule between groups of tiles.
@@ -469,8 +474,8 @@ def add_text(
         text: The heading's text, the Markdown (at most 4000 characters) or the divider's optional label.
         subtitle: Smaller text below a heading.
         size: A heading's size; "Title" for the dashboard's title.
-        position: "top" or "bottom" of the dashboard. A "Title" heading goes to the top, other text
-            to the bottom, unless you pass before or after.
+        position: "top" or "bottom" of the dashboard; without it, before or after, the text goes
+            where the layout puts it.
         before: Put the text in front of this node's tile, e.g. a section heading above its chart.
         after: Put the text after this node's tile.
     """
@@ -478,6 +483,45 @@ def add_text(
     component = TEXT_IDS[kind]
     if kind != "divider" and not text.strip():
         raise ModelRetry(f"Write the {kind}'s text.")
+    # Explore shows each answer in its feed, which has no layout to place text in.
+    explore = ExplorationOps is not None and isinstance(ops, ExplorationOps)
+    placing = not explore and any(p is not None for p in (position, before, after))
+    if placing:
+        _check_placement(ops, kind, position, before, after)
+    config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
+    if kind == "heading":
+        if subtitle:
+            config["subtitle"] = subtitle
+        if size:
+            config["size"] = size
+    elif subtitle or size:
+        raise ModelRetry("Only a heading takes a subtitle or a size.")
+    check_text(ops, component, config)
+    try:
+        ops.add_node(component, config, name=name)
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    placed = f"Placed {kind} {name!r}"
+    if explore:
+        return f"{placed}." + (" Explore shows it in the feed, so position, before and after do not apply."
+                               if any(p is not None for p in (position, before, after)) else "")
+    # Only a position asked for moves the tile: moving one turns off FlowDash's automatic
+    # arrangement of the tiles placed after it, which already puts a Title first.
+    try:
+        if before is not None or after is not None:
+            ops.place_tile(name, before=before, after=after)
+            placed += f" {'before' if before else 'after'} {before or after!r}"
+        elif position is not None:
+            ops.place_tile(name, index=0 if position == "top" else len(_graph.nodes(ops)))
+            placed += f" at the {position}"
+    except OperationError as exc:
+        placed += f", but not moved: {exc}"
+    describe = getattr(ops, "describe_layout", None)
+    return f"{placed}." + (f"\nLayout now:\n{describe()}" if describe is not None else "")
+
+
+def _check_placement(ops, kind: str, position: str | None, before: str | None, after: str | None) -> None:
+    """Retry a position, before or after that cannot apply, before the text is placed."""
     if sum(p is not None for p in (position, before, after)) > 1:
         raise ModelRetry("Pass one of position, before and after.")
     for other in (before, after):
@@ -492,33 +536,6 @@ def add_text(
                 f"{other!r} has no tile on the dashboard (it is hidden, e.g. a SQL node), so "
                 f"nothing can go beside it; place the {kind} beside a tile that is shown."
             )
-    config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
-    if kind == "heading":
-        if subtitle:
-            config["subtitle"] = subtitle
-        if size:
-            config["size"] = size
-    elif subtitle or size:
-        raise ModelRetry("Only a heading takes a subtitle or a size.")
-    check_text(ops, component, config)
-    try:
-        ops.add_node(component, config, name=name)
-    except OperationError as exc:
-        raise ModelRetry(str(exc)) from exc
-    if position is None and before is None and after is None and size == "Title":
-        position = "top"
-    placed = f"Placed {kind} {name!r}"
-    try:
-        if before is not None or after is not None:
-            ops.place_tile(name, before=before, after=after)
-            placed += f" {'before' if before else 'after'} {before or after!r}"
-        elif position is not None:
-            ops.place_tile(name, index=0 if position == "top" else len(_graph.nodes(ops)))
-            placed += f" at the {position}"
-    except OperationError as exc:
-        placed += f", but not moved: {exc}"
-    describe = getattr(ops, "describe_layout", None)
-    return f"{placed}." + (f"\nLayout now:\n{describe()}" if describe is not None else "")
 
 
 def _source_tables(deps: FlowDashDeps, source: str) -> list[str]:
