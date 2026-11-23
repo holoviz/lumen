@@ -19,13 +19,14 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..flowdash import (
-    FILTER_ID, SQL_ID, fetch, filterable_columns, pipeline_columns,
+    FILTER_ID, METRIC_ID, SQL_ID, fetch, filterable_columns, host_metrics,
+    pipeline_columns,
 )
 from ..flowdash.choices import pipeline_column_types
 from ..flowdash.nodes import column_values, default_table, effective_limit
 from ..flowdash.transforms import AGGREGATE_ID, COUNT_COLUMN
 from ..pipeline import Pipeline
-from . import _graph, grain
+from . import _graph
 from .authoring import _upstream_port
 
 KPI_ID = "Widgets/KPI"
@@ -182,9 +183,9 @@ def add_kpi(
         unit: Unit shown with the number, e.g. "MW", "$" or "%"; a share in 0..1 with "%" shows as a percentage.
         decimals: Digits after the decimal point, 0 to 10; by default 0 for whole or large numbers, at most 2 otherwise.
         format: A Python format spec instead of unit and decimals' choice, e.g. ",.1f".
-        distinct_by: The column, or columns, the aggregated one is a property of, e.g. a project's
-            capacity on each of its turbines' rows: the aggregate then takes the largest value of
-            each, once.
+        distinct_by: Only when you know the column repeats per entity, e.g. a project's capacity on
+            each of its turbines' rows: the column, or columns, naming the entity. The aggregate then
+            takes the largest value of each entity once; nothing checks the choice.
     """
     ops = ctx.deps.ops
     port = _upstream_port(ctx.deps, data)
@@ -228,16 +229,12 @@ def add_kpi(
         except (TypeError, ValueError) as exc:
             raise ModelRetry(f"format {format!r} is not a Python format spec for a number: {exc}") from exc
     keys = [distinct_by] if isinstance(distinct_by, str) else list(distinct_by or [])
-    note = ""
     if keys:
         if aggregate is None or column is None:
             raise ModelRetry("distinct_by goes with an aggregate of a column; pass both.")
         if missing := [k for k in keys if k not in columns or k == column]:
             raise ModelRetry(f"distinct_by names other columns of {data!r}, not {', '.join(map(repr, missing))}; "
                              f"its columns are {', '.join(columns)}.")
-        note = _check_distinct_by(pipeline, column, tuple(keys))
-    elif aggregate in ("sum", "count") and column is not None and types.get(column) in NUMERIC:
-        note = _check_grain(pipeline, column, aggregate)
     if label and len(picked) > 1:
         raise ModelRetry("label names one KPI; leave it out for one KPI per column, or pass column.")
     names = [name] if len(picked) == 1 else [f"{name}_{col}" for col in picked]
@@ -288,9 +285,8 @@ def add_kpi(
             spec, prefix, suffix = _number_format(value, col, unit, decimals)
             spec = format or spec
             text = label or _label(col, aggregate)
-            config = {"label": text, "format": spec, "prefix": prefix, "suffix": suffix}
-            if keys:
-                config["caption"] = f"largest {col} per {' and '.join(keys)}"
+            config = {"label": text, "format": spec, "prefix": prefix, "suffix": suffix,
+                      "caption": _provenance(ops, data, component, col, aggregate, keys)}
             placed.node(KPI_ID, config, kpi)
             if component == SQL_ID and not aggregate and len(columns) == 1:
                 value_port = f"{data}.value"
@@ -315,50 +311,27 @@ def add_kpi(
     if capped:
         through += (f" ({data!r} keeps only part of its rows, so {helpers[0]!r} queries all of them; a local filter "
                     "cannot narrow it)")
+    adhoc = ""
+    if component != METRIC_ID:
+        adhoc = " The number is computed ad hoc, not an agreed metric; each card's caption says so."
+        if host_metrics(ops.editor.context):
+            adhoc += " No matching metric was used; consider asking an admin to define one."
     return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{per_key}{through}:\n"
-            + "\n".join(lines) + f"\n{KPI_FILTERS}{note}")
+            + "\n".join([*lines, *([adhoc.strip()] if adhoc else []), KPI_FILTERS]))
 
 
-def _check_grain(pipeline: Pipeline, column: str, aggregate: str) -> str:
-    """
-    Refuse a sum or count of a column that is a property of an entity its
-    rows belong to, decided on the table the column comes from; a note for
-    the result when that could not be checked.
-    """
-    try:
-        base = grain.base_table(pipeline, column)
-        found = None if base is None else grain.column_grain(*base, column)
-    except grain.Unchecked:
-        return f"\nI could not check whether {column!r} repeats per entity, e.g. a project's value on each of its rows."
-    if found is None:
-        return ""
-    hint = repr(found.key[0]) if len(found.key) == 1 else repr(list(found.key))
-    raise ModelRetry(
-        f"{column} looks like a property of {found.key_text} ({found.describe()}), so a {aggregate} over the rows "
-        f"counts it once per row: pass distinct_by={hint} to {aggregate} the largest {column} of each "
-        f"{found.key_text} once."
-    )
-
-
-def _check_distinct_by(pipeline: Pipeline, column: str, keys: tuple[str, ...]) -> str:
-    """Refuse ``keys`` that ``column`` is not a property of; a note when that could not be checked."""
-    text = " and ".join(keys)
-    try:
-        base = grain.base_table(pipeline, column)
-        if base is None:
-            return ""
-        source, table = base
-        if missing := [k for k in keys if k not in grain._columns(source, table)]:
-            return f"\nI could not check that {column!r} is a property of {', '.join(map(repr, missing))}."
-        found = grain.dependency(source, table, column, keys)
-    except grain.Unchecked:
-        return f"\nI could not check that {column!r} is a property of {text}."
-    if not found.is_property:
-        raise ModelRetry(
-            f"{column} is not a property of {text}: {found.describe()}, so taking the largest {column} of each "
-            f"{text} drops values. Pass the key {column} repeats per, as a refusal names it, or leave distinct_by out."
-        )
-    return ""
+def _provenance(ops, data: str, component: str, column: str, aggregate: str | None, keys: list[str]) -> str:
+    """How a card's number is computed, for its caption: the aggregate and whether it is an agreed metric."""
+    if component == METRIC_ID:
+        return f"Metric {_graph.config_of(ops, data).get('metric')}"
+    if aggregate == "count" and column == COUNT_COLUMN:
+        what = "Count of rows"
+    elif aggregate:
+        word = {"sum": "Sum", "mean": "Average", "min": "Lowest", "max": "Highest", "count": "Count"}[aggregate]
+        what = f"{word} of the largest {column} per {' and '.join(keys)}" if keys else f"{word} of {column} over all rows"
+    else:
+        what = f"{column} from the one row of {data}"
+    return f"{what}, not an agreed metric"
 
 
 def _capped(ops, data: str) -> bool:

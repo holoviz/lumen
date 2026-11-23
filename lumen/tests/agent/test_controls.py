@@ -15,9 +15,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from lumen.agent import (
-    AgentSession, _graph, assistant, grain,
-)
+from lumen.agent import AgentSession, _graph, assistant
 from lumen.agent.assistant import create_agent, create_explore_agent
 from lumen.agent.authoring import (
     add_chart, add_metric, add_table, authoring_toolset,
@@ -131,7 +129,8 @@ def test_add_kpi_reuses_the_value_of_a_one_cell_sql_node(ctx, session):
     assert ("capacity.value", "capacity_kpi.value") in edges(session)
     assert top_bar(session) == ["capacity_kpi"]
     config = _graph.config_of(session.ops, "capacity_kpi")
-    assert config == {"label": "Installed capacity", "format": ",.2f", "prefix": "", "suffix": " MW"}
+    assert config == {"label": "Installed capacity", "format": ",.2f", "prefix": "", "suffix": " MW",
+                      "caption": "capacity_mw from the one row of capacity, not an agreed metric"}
     assert instance(session.ops, "capacity_kpi").value == 8.5
 
 
@@ -200,50 +199,22 @@ def test_add_kpi_refusals(ctx, session, kwargs, message):
     assert structure(session) == before
 
 
-@pytest.fixture(autouse=True)
-def _fresh_grain():
-    grain._CACHE.clear()
-    yield
-    grain._CACHE.clear()
-
-
 def _projects(session, sql="SELECT * FROM projects", name="project_rows"):
     frame = session.source.execute(PROJECTS)
     session.add_sql(name, sql)
     return frame
 
 
-def _share(frame, column, key):
-    """The share of the rows of repeated key values holding one value of ``column``, as pandas counts it."""
-    groups = frame.groupby(key)[column].agg(["size", "nunique"])
-    multi = groups[groups["size"] > 1]
-    return multi.loc[multi["nunique"] == 1, "size"].sum() / multi["size"].sum()
-
-
-@pytest.mark.parametrize("aggregate", ["sum", "count"])
-def test_add_kpi_refuses_to_aggregate_a_property_of_an_entity_over_its_rows(ctx, session, aggregate):
+def test_add_kpi_aggregates_the_rows_as_they_are_and_says_how(ctx, session):
     frame = _projects(session)
-    keys = frame.p_name.nunique()
-    with pytest.raises(ModelRetry) as info:
-        add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate=aggregate)
-    assert str(info.value) == (
-        f"p_cap looks like a property of p_name ({_share(frame, 'p_cap', 'p_name'):.0%} of the rows of projects hold "
-        f"one p_cap per p_name, which has {keys:,} values on about {len(frame) / keys:,.0f} rows each), so a "
-        f"{aggregate} over the rows counts it once per row: pass distinct_by='p_name' to {aggregate} the largest "
-        "p_cap of each p_name once."
-    )
-    assert _share(frame, "p_cap", "p_name") < 1
+    result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum")
+    assert instance(session.ops, "capacity").value == pytest.approx(frame.p_cap.sum())
+    assert _graph.config_of(session.ops, "capacity")["caption"] == "Sum of p_cap over all rows, not an agreed metric"
+    assert "The number is computed ad hoc, not an agreed metric; each card's caption says so." in result
+    assert "asking an admin" not in result
 
 
-@pytest.mark.parametrize("where", ["t_state = 'TX'", "p_name = 'P5'", "p_name = 'P5' AND t_hh < 0"])
-def test_the_grain_of_a_column_is_decided_on_its_table_for_every_slice(ctx, session, where):
-    # A slice of one project, or of no rows, would show no repetition by itself.
-    _projects(session, f"SELECT * FROM projects WHERE {where}", "slice")
-    with pytest.raises(ModelRetry, match="p_cap looks like a property of p_name"):
-        add_kpi(ctx, "slice", "capacity", column="p_cap", aggregate="sum")
-
-
-def test_add_kpi_distinct_by_takes_the_largest_value_per_entity(ctx, session):
+def test_add_kpi_distinct_by_takes_the_largest_value_per_key(ctx, session):
     frame = _projects(session)
     result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum", distinct_by="p_name")
     expected = frame.groupby("p_name").p_cap.max().sum()
@@ -251,70 +222,41 @@ def test_add_kpi_distinct_by_takes_the_largest_value_per_entity(ctx, session):
     assert f"Total p cap = {expected:,.0f}." in result
     assert ("of 'project_rows', taking the largest 'p_cap' of each p_name once through 'capacity_per_key', "
             "'capacity_agg', 'capacity_value'") in result
-    assert _graph.config_of(session.ops, "capacity")["caption"] == "largest p_cap per p_name"
+    caption = _graph.config_of(session.ops, "capacity")["caption"]
+    assert caption == "Sum of the largest p_cap per p_name, not an agreed metric"
 
 
-def test_add_kpi_refuses_distinct_by_a_column_the_value_is_no_property_of(ctx, session):
-    frame = _projects(session)
-    with pytest.raises(ModelRetry) as info:
-        add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum", distinct_by="t_state")
-    assert str(info.value).startswith(
-        f"p_cap is not a property of t_state: {_share(frame, 'p_cap', 't_state'):.0%} of the rows of projects hold one "
-        "p_cap per t_state, which has 3 values"
-    )
-
-
-def test_add_kpi_finds_a_composite_key(ctx, session):
+def test_add_kpi_distinct_by_takes_a_composite_key(ctx, session):
     session.add_sql("composite_rows", "SELECT * FROM composite")
-    with pytest.raises(ModelRetry, match=re.escape("v looks like a property of a and b (100% of the rows")) as info:
-        add_kpi(ctx, "composite_rows", "total", column="v", aggregate="sum")
-    assert "pass distinct_by=['a', 'b']" in str(info.value)
     add_kpi(ctx, "composite_rows", "total", column="v", aggregate="sum", distinct_by=["a", "b"])
     assert instance(session.ops, "total").value == sum(10 * a + b for a in range(5) for b in range(5))
 
 
-@pytest.mark.parametrize(("sql", "column", "aggregate"), [
-    ("SELECT * FROM projects", "t_cap", "sum"),
-    ("SELECT * FROM projects", "t_hh", "sum"),
-    ("SELECT * FROM projects", "p_cap", "mean"),
-    ("SELECT * FROM projects", "one", "sum"),
-    ("SELECT DISTINCT p_name, p_cap FROM projects", "p_cap", "sum"),
-], ids=["fixed-by-model", "per-row", "mean", "constant", "deduplicated"])
-def test_add_kpi_aggregates_per_row_values_without_refusing(ctx, session, sql, column, aggregate):
-    _projects(session, sql)
-    frame = session.source.execute(sql.replace("projects", f"({PROJECTS})"))
-    add_kpi(ctx, "project_rows", "kpi", column=column, aggregate=aggregate)
-    assert instance(session.ops, "kpi").value == pytest.approx(getattr(frame[column], aggregate)())
-
-
-def test_the_grain_is_probed_once_per_table_and_column(ctx, session, monkeypatch):
-    probes = []
-    real = grain.execute
-    monkeypatch.setattr(grain, "execute", lambda source, sql, timeout: probes.append((sql, timeout)) or real(source, sql, timeout))
+@pytest.mark.parametrize(("kwargs", "message"), [
+    ({"distinct_by": "nope"}, "distinct_by names other columns of 'project_rows', not 'nope'"),
+    ({"distinct_by": "p_cap"}, "not 'p_cap'"),
+])
+def test_add_kpi_refuses_distinct_by_other_than_a_column_of_the_node(ctx, session, kwargs, message):
     _projects(session)
-    add_kpi(ctx, "project_rows", "first", column="t_hh", aggregate="sum")
-    first = len(probes)
-    assert 0 < first <= 3 + grain.GRAIN_KEYS + grain.GRAIN_PAIRS_OF * (grain.GRAIN_PAIRS_OF + 1) // 2
-    assert all(timeout == grain.GRAIN_TIMEOUT for _, timeout in probes)
-    _projects(session, "SELECT * FROM projects WHERE t_state = 'TX'", "tx_rows")
-    add_kpi(ctx, "tx_rows", "second", column="t_hh", aggregate="sum")
-    assert not [sql for sql, _ in probes[first:] if "GROUP BY" in sql or "COUNT(DISTINCT" in sql]
+    with pytest.raises(ModelRetry, match=re.escape(message)):
+        add_kpi(ctx, "project_rows", "capacity", **{"column": "p_cap", "aggregate": "sum", **kwargs})
 
 
-def test_the_grain_probe_samples_sources_whose_queries_a_timeout_may_not_stop():
-    other = SimpleNamespace(get_sql_expr=lambda table: "SELECT * FROM t")
-    assert grain._rows_sql(other, "t") == f"SELECT * FROM (SELECT * FROM t) AS s LIMIT {grain.GRAIN_SAMPLE}"
-
-
-def test_add_kpi_says_when_the_grain_could_not_be_checked(ctx, session, monkeypatch):
-    _projects(session)
-
-    def fail(source, sql, timeout):
-        raise TimeoutError("The query took too long.")
-
-    monkeypatch.setattr(grain, "execute", fail)
-    result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum")
-    assert result.endswith("I could not check whether 'p_cap' repeats per entity, e.g. a project's value on each of its rows.")
+def test_a_kpi_of_a_metric_says_which_metric_and_others_point_to_an_admin():
+    metrics = read_metrics(parse_project(PROJECT, "flowdash.yaml"))
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), _model(), metrics=metrics)
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        session.ops.add_node("Lumen/metric", {"metric": "capacity", "measures": ["capacity_mw"]}, name="total")
+        from_metric = add_kpi(ctx, "total", "total_kpi", column="capacity_mw")
+        session.add_sql("rows", "SELECT * FROM turbines")
+        ad_hoc = add_kpi(ctx, "rows", "rows_kpi", column="t_cap", aggregate="sum")
+        captions = [_graph.config_of(session.ops, n)["caption"] for n in ("total_kpi", "rows_kpi")]
+    finally:
+        session.close()
+    assert captions == ["Metric capacity", "Sum of t_cap over all rows, not an agreed metric"]
+    assert "ad hoc" not in from_metric
+    assert "No matching metric was used; consider asking an admin to define one." in ad_hoc
 
 
 def test_add_kpi_aggregates_every_row_of_a_capped_sql_node():
@@ -330,18 +272,53 @@ def test_add_kpi_aggregates_every_row_of_a_capped_sql_node():
     assert "through 'fares_value' ('rows' keeps only part of its rows, so 'fares_value' queries all of them" in result
 
 
+@pytest.mark.parametrize("node", ["filtered", "child", "table", "metric"])
+def test_add_kpi_aggregates_every_row_of_large_nodes(node):
+    metrics = read_metrics(parse_project(
+        "metrics:\n  fares:\n    source: data\n    table: big\n    measures:\n      fare: SUM(fare)\n", "flowdash.yaml"))
+    session = AgentSession(DuckDBSource(uri=":memory:", tables={"big": BIG}), _model(), metrics=metrics)
+    ctx = SimpleNamespace(deps=session.deps)
+    expected = {"filtered": 1.5 * sum(1 for i in range(1_000_000) if i % 7 < 3), "child": 1_500_000,
+                "table": 1_500_000, "metric": 1_500_000}[node]
+    try:
+        if node == "filtered":
+            session.add_sql("rows", "SELECT * FROM big WHERE g < 3")
+        elif node == "child":
+            session.add_sql("parent", "SELECT * FROM big")
+            session.add_sql("rows", "SELECT * FROM parent", source="parent")
+        elif node == "table":
+            session.ops.add_node(TABLE_ID, {"ref": "data", "table": "big"}, name="rows")
+        else:
+            session.ops.add_node("Lumen/metric", {"metric": "fares", "measures": ["fare"]}, name="rows")
+        add_kpi(ctx, "rows", "fares", column="fare", aggregate=None if node == "metric" else "sum")
+        value = instance(session.ops, "fares").value
+    finally:
+        session.close()
+    assert value == pytest.approx(expected)
+
+
 def test_add_kpi_takes_one_value_per_key_over_every_row_of_a_capped_sql_node():
     session = AgentSession(DuckDBSource(uri=":memory:", tables={"big": BIG}), _model())
     ctx = SimpleNamespace(deps=session.deps)
     try:
         session.add_sql("rows", "SELECT * FROM big")
-        with pytest.raises(ModelRetry, match="v looks like a property of k"):
-            add_kpi(ctx, "rows", "total", column="v", aggregate="sum")
         add_kpi(ctx, "rows", "total", column="v", aggregate="sum", distinct_by="k")
         value = instance(session.ops, "total").value
     finally:
         session.close()
     assert value == sum(range(1000))
+
+
+def test_a_local_filter_cannot_narrow_a_kpi_of_a_capped_sql_node():
+    session = AgentSession(DuckDBSource(uri=":memory:", tables={"big": BIG}), _model())
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        session.add_sql("rows", "SELECT * FROM big")
+        add_kpi(ctx, "rows", "fares", column="fare", aggregate="sum")
+        with pytest.raises(ModelRetry, match="'fares' does not read 'rows''s rows"):
+            add_filter_control(ctx, "rows", "g", "pick", views=["fares"])
+    finally:
+        session.close()
 
 
 def test_add_kpi_refuses_absurd_formats(ctx, session):
@@ -741,24 +718,23 @@ async def test_playtest_kpis_requested_by_name_show_in_the_top_bar():
     assert not any(node["component"] == "Lumen/view" for node in shown["nodes"].values())
 
 
-async def test_playtest_summed_project_capacity_is_refused_and_fixed():
-    # Playtest A s6 and B s5: SUM(p_cap) over turbine rows counted each project once per turbine.
-    session, requests = _layout_session(
+async def test_playtest_project_capacity_once_per_project():
+    # Playtest A s6 and B s5: SUM(p_cap) over turbine rows counted each project once per turbine; told
+    # that p_cap is a project's capacity, the model takes one value per project.
+    session, _ = _layout_session(
         ("add_sql", {"source": "data", "name": "turbine_rows", "sql": "SELECT * FROM projects"}),
-        ("add_kpi", {"data": "turbine_rows", "name": "capacity", "column": "p_cap", "aggregate": "sum", "unit": "MW"}),
         ("add_kpi", {"data": "turbine_rows", "name": "capacity", "column": "p_cap", "aggregate": "sum", "unit": "MW",
                      "distinct_by": "p_name"}),
         "Done.",
     )
     try:
-        turn = await session.ask("Add a KPI of total project capacity")
+        turn = await session.ask("Add a KPI of total project capacity; p_cap is the project's capacity on each turbine")
     finally:
         session.close()
-    assert retried(requests[2].parts[0], "pass distinct_by='p_name'")
     import duckdb
 
     expected = duckdb.sql(f"SELECT SUM(c) FROM (SELECT MAX(p_cap) AS c FROM ({PROJECTS}) GROUP BY p_name)").fetchall()[0][0]
-    assert f"Total p cap = {expected:,.0f} MW." in turn.tool_results["call-3"]
+    assert f"Total p cap = {expected:,.0f} MW." in turn.tool_results["call-2"]
 
 
 async def test_playtest_local_filter_for_one_chart():
