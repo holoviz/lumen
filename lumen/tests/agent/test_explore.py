@@ -232,7 +232,7 @@ async def test_the_guard_steps_aside_on_panel_flowdashs_exploration_ops(monkeypa
     assert await _step_aside(flowdash_agent.ExplorationOps, monkeypatch) == ("changed", [{"name": "frozen"}])
 
 
-async def test_explore_fixes_a_table_it_placed_and_is_not_offered_add_metric_without_metrics():
+async def test_explore_fixes_a_table_it_placed_but_cannot_rewrite_an_earlier_node_with_add_metric():
     session, requests = explore_session(
         [ToolCallPart("add_sql", {"source": "data", "name": "mine", "sql": "SELECT category FROM sales"}, tool_call_id="a1")],
         [ToolCallPart("add_table", {"data": "mine", "name": "rows"}, tool_call_id="a2")],
@@ -253,7 +253,7 @@ async def test_explore_fixes_a_table_it_placed_and_is_not_offered_add_metric_wit
     assert isinstance(fixed, ToolReturnPart) and fixed.outcome != "retried"
     assert spec == {"page_size": 5}
     (refused,) = requests[5].parts
-    assert refused.outcome == "retried" and "Unknown tool name: 'add_metric'" in str(refused.content)
+    assert refused.outcome == "retried" and "stay as they are in Explore" in str(refused.content)
 
 
 def _exploration_ops():

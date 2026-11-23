@@ -219,7 +219,7 @@ def test_add_filter_control_filters_only_the_listed_views(ctx, session):
     result = add_filter_control(ctx, "rows", "t_state", "state", control="multiselect", views=["by_state", "capacity"])
 
     assert result == (
-        "Placed multiselect 'state' (3 options from 't_state', starting with nothing picked, so every row shows) "
+        "Placed multi-select 'state' (3 options from 't_state', starting with nothing picked, so every row shows) "
         "and filter node 'state_filter' on 'rows'.t_state, "
         "fed by 'state'. Reading 'state_filter' now: 'by_state', 'capacity' (through 'capacity_agg'). "
         "Unfiltered: 'all_rows'."
@@ -249,9 +249,10 @@ def test_add_filter_control_select_range_and_date_range(ctx, session):
     dates = add_filter_control(ctx, "rows", "t_date", "dates", control="date_range", views=["table_c"])
 
     full = "starting on the full span, which leaves out only rows without a value"
-    assert "Placed select 'state' (3 options from 't_state', starting with nothing picked, so every row shows)" in picked
+    assert ("Placed multi-select of one pick 'state' (3 options from 't_state', starting with nothing picked, "
+            "so every row shows)") in picked
     assert f"Placed range 'years' (1999 to 2015 from 'p_year', {full})" in years
-    assert f"Placed date_range 'dates' (1999-05-01 to 2015-08-30 from 't_date', {full})" in dates
+    assert f"Placed date range 'dates' (1999-05-01 to 2015-08-30 from 't_date', {full})" in dates
     assert _graph.component_of(session.ops, "state") == "Widgets/MultiChoice"
     assert _graph.config_of(session.ops, "state")["max_items"] == 1
     assert _graph.config_of(session.ops, "years")["default_start"] == 1999
@@ -323,9 +324,74 @@ def test_add_filter_control_rolls_back_when_rewiring_fails(ctx, session, monkeyp
     assert structure(session)[:2] == before[:2]
 
 
+def test_a_second_local_filter_filters_only_its_own_views(ctx, session):
+    session.add_sql("rows", "SELECT * FROM turbines")
+    add_table(ctx, "rows", "table_a")
+    add_table(ctx, "rows", "table_b")
+    add_filter_control(ctx, "rows", "p_year", "years", control="range", views=["table_a", "table_b"])
+    result = add_filter_control(ctx, "rows", "t_state", "state", control="multiselect", views=["table_b"])
+
+    assert "Reading 'state_filter' now: 'table_b'." in result
+    wired = edges(session)
+    assert ("rows.pipeline", "years_filter.pipeline") in wired
+    assert {("years_filter.filtered", "state_filter.pipeline"), ("state_filter.filtered", "table_b.pipeline"),
+            ("years_filter.filtered", "table_a.pipeline")} <= wired
+    instance(session.ops, "state")._widget.value = ["TX"]
+    assert len(_graph.output(session.ops, "years_filter", "filtered").data) == 5
+    assert len(_graph.output(session.ops, "state_filter", "filtered").data) == 2
+
+
+def test_a_local_filter_on_views_that_read_different_inputs_gets_a_filter_node_for_each(ctx, session):
+    session.add_sql("rows", "SELECT * FROM turbines")
+    add_table(ctx, "rows", "table_a")
+    add_table(ctx, "rows", "table_b")
+    add_table(ctx, "rows", "table_c")
+    add_filter_control(ctx, "rows", "p_year", "years", control="range", views=["table_a", "table_b"])
+    result = add_filter_control(ctx, "rows", "t_state", "state", control="multiselect", views=["table_b", "table_c"])
+
+    assert "filter nodes 'state_filter', 'state_filter_2' (one per input the views read)" in result
+    wired = edges(session)
+    assert {("years_filter.filtered", "state_filter.pipeline"), ("rows.pipeline", "state_filter_2.pipeline"),
+            ("state_filter.filtered", "table_b.pipeline"), ("state_filter_2.filtered", "table_c.pipeline"),
+            ("years_filter.filtered", "table_a.pipeline"), ("state.selected", "state_filter_2.value")} <= wired
+
+
+def test_add_filter_control_refuses_a_second_filter_on_the_same_column(ctx, session):
+    session.add_sql("rows", "SELECT * FROM turbines")
+    add_table(ctx, "rows", "table_a")
+    add_filter_control(ctx, "rows", "t_state", "state", control="multiselect")
+    before = structure(session)
+    with pytest.raises(ModelRetry, match=re.escape("'table_a' is already filtered on 't_state' by 'state_filter'")):
+        add_filter_control(ctx, "rows", "t_state", "state_2", views=["table_a"])
+    assert structure(session) == before
+
+
+def test_add_filter_control_refuses_a_column_the_global_filter_bar_filters(ctx, session):
+    if not callable(getattr(session.ops, "add_filter", None)):
+        pytest.skip("panel-flowdash without global filters in DashboardOps")
+    session.add_sql("rows", "SELECT * FROM turbines")
+    add_table(ctx, "rows", "table_a")
+    session.ops.add_filter("t_state")
+    before = structure(session)
+    with pytest.raises(ModelRetry, match=re.escape("The global filter bar already filters on 't_state'")):
+        add_filter_control(ctx, "rows", "t_state", "state", views=["table_a"])
+    assert structure(session) == before
+    assert "years" in add_filter_control(ctx, "rows", "p_year", "years", control="range")
+
+
+def test_add_kpi_says_it_does_not_follow_the_global_filters(ctx, session):
+    session.add_sql("capacity", "SELECT SUM(t_cap) AS capacity FROM turbines")
+    assert add_kpi(ctx, "capacity", "capacity_kpi").endswith("KPI cards do not follow the global filter bar's filters; "
+                                                             "tell the user if the dashboard has one.")
+    doc = controls_toolset().tools["add_kpi"].tool_def
+    assert "does not follow the global filter bar" in doc.description
+    decimals = doc.parameters_json_schema["properties"]["decimals"]["anyOf"][0]
+    assert (decimals["minimum"], decimals["maximum"]) == (0, 10)
+
+
 # add_metric and add_table
 
-async def test_add_metric_is_offered_only_in_an_app_with_metrics():
+async def test_add_metric_is_offered_with_or_without_metrics():
     seen = []
 
     def respond(messages, info):
@@ -340,14 +406,26 @@ async def test_add_metric_is_offered_only_in_an_app_with_metrics():
             await session.ask("Hi")
         finally:
             session.close()
-    assert "add_metric" not in seen[0] and "add_metric" in seen[1]
+    assert "add_metric" in seen[0] and seen[0] == seen[1]
     doc = authoring_toolset().tools["add_metric"].tool_def.description
     assert "cannot create one" in doc and "add_sql" in doc
 
 
-async def test_add_metric_refuses_in_an_app_without_metrics(ctx):
-    with pytest.raises(ModelRetry, match=re.escape("This app defines no metrics; compute it with add_sql.")):
-        await add_metric(ctx, "capacity", "capacity")
+async def test_add_metric_refuses_in_an_app_without_metrics(ctx, session):
+    result = await add_metric(ctx, "capacity", "capacity")
+    assert result == "Refused: this app defines no metrics, so there is none to place. Compute the number with add_sql."
+    assert "capacity" not in _graph.nodes(session.ops)
+
+
+def test_the_agent_fingerprint_does_not_depend_on_the_apps_metrics(monkeypatch):
+    from lumen.agent import evals
+
+    metrics = read_metrics(parse_project(PROJECT, "flowdash.yaml"))
+    plain = evals.agent_fingerprint.__wrapped__()
+    monkeypatch.setattr(evals, "_reference_source", lambda: DuckDBSource(uri=":memory:", tables=TABLES))
+    real = evals.AgentSession
+    monkeypatch.setattr(evals, "AgentSession", lambda *a, **k: real(*a, metrics=metrics, **k))
+    assert evals.agent_fingerprint.__wrapped__() == plain
 
 
 def test_add_table_takes_number_formatters(ctx, session):
@@ -416,7 +494,12 @@ def test_layout_agent_gets_kpi_and_filter_tools_and_a_shorter_prompt(monkeypatch
     assert not {"add_kpi", "add_filter_control"} & data_tools
     assert "add_kpi" in layout and "add_filter_control" in layout
     assert ("add_filter" in offered) == assistant.HAS_ADD_FILTER
-    assert ("global filter bar with add_filter." in layout) == assistant.HAS_ADD_FILTER
+    assert (assistant.GLOBAL_FILTER in layout) == assistant.HAS_ADD_FILTER
+    assert (assistant.LOCAL_FILTER in layout) != assistant.HAS_ADD_FILTER
+    # FlowDash's own instructions send filters to add_filter; Lumen's only add the local case.
+    assert layout.count("filter bar") <= 1
+    if not assistant.HAS_ADD_FILTER:
+        assert "filter bar" not in layout and "global" not in layout.lower()
     assert assistant.SELECTION_INSTRUCTIONS not in layout
     # The layout prompt was 5,111 characters before add_kpi and add_filter_control.
     assert len(layout) <= 5111 and len(data) <= 4066
@@ -504,9 +587,9 @@ async def test_playtest_local_filter_for_one_chart():
     assert island["default_options"] == ["Biscoe", "Dream", "Torgersen"]
 
 
-async def test_playtest_metric_is_not_offered_without_metrics():
+async def test_playtest_metric_is_refused_without_metrics():
     # Playtest C s1 t2 and s3 t3: add_metric was called with invented metrics in an app that has none.
-    session, requests = _layout_session(
+    session, _ = _layout_session(
         ("add_metric", {"metric": "Turbines", "name": "turbines"}),
         ("add_sql", {"source": "data", "name": "turbine_count", "sql": "SELECT COUNT(*) AS turbines FROM turbines"}),
         ("add_kpi", {"data": "turbine_count", "name": "turbines_kpi", "label": "Turbines"}),
@@ -516,7 +599,7 @@ async def test_playtest_metric_is_not_offered_without_metrics():
         turn = await session.ask("Show the number of turbines")
     finally:
         session.close()
-    assert retried(requests[1].parts[0], "Unknown tool name: 'add_metric'")
+    assert turn.tool_results["call-1"].startswith("Refused: this app defines no metrics")
     assert "Turbines = 5." in turn.tool_results["call-3"]
 
 
@@ -553,10 +636,28 @@ async def test_local_add_filter_points_to_add_filter_control():
 
     if not hasattr(fd_tools, "register_local_filter"):
         pytest.skip("panel-flowdash without register_local_filter")
-    create_agent("test", dashboard_tools="layout")
+    layout = create_agent("test", dashboard_tools="layout")
+    data = create_agent("test")
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), _model())
     try:
-        result = await fd_tools.add_filter(SimpleNamespace(deps=session.deps), "t_state", scope="local")
+        local = await fd_tools.add_filter(SimpleNamespace(deps=session.deps, agent=layout), "t_state", scope="local")
+        other = await fd_tools.add_filter(SimpleNamespace(deps=session.deps, agent=data), "t_state", scope="local")
     finally:
         session.close()
-    assert "Build a local filter with add_filter_control instead." in str(result)
+    assert "Build a local filter with add_filter_control instead." in str(local)
+    # Another agent in the same process, e.g. FlowDash's own, has no add_filter_control.
+    assert "add_filter_control" not in str(other) and "No tool here builds one" in str(other)
+
+
+async def test_playtest_local_add_filter_in_a_run_points_to_add_filter_control():
+    if not assistant.HAS_ADD_FILTER:
+        pytest.skip("panel-flowdash without add_filter")
+    session, _ = _layout_session(
+        ("add_filter", {"column": "t_state", "scope": "local"}),
+        "Use add_filter_control.",
+    )
+    try:
+        turn = await session.ask("A state filter for one chart")
+    finally:
+        session.close()
+    assert "Build a local filter with add_filter_control instead." in str(turn.tool_results["call-1"])

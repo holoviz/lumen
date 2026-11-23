@@ -13,7 +13,6 @@ from panel_flowdash.agent import FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolReturn
-from pydantic_ai.tools import Tool, ToolDefinition
 
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
@@ -262,9 +261,9 @@ async def add_metric(
     """
     ops = ctx.deps.ops
     metrics = host_metrics(ops.editor.context)
+    if not metrics:
+        return "Refused: this app defines no metrics, so there is none to place. Compute the number with add_sql."
     if metric not in metrics:
-        if not metrics:
-            raise ModelRetry("This app defines no metrics; compute it with add_sql.")
         raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics)}; compute anything else with add_sql.")
     config = {"metric": metric, "measures": measures or [], "dimensions": dimensions or [], "grain": grain or "",
               "order_by": order_by or [], "limit": limit}
@@ -518,19 +517,14 @@ def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[s
     )
 
 
-async def _with_metrics(ctx: RunContext[FlowDashDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
-    """Offer add_metric only to an app that defines metrics."""
-    return tool_def if host_metrics(ctx.deps.ops.editor.context) else None
-
-
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
     """
     The authoring tools: add_sql, add_metric, add_chart, add_table, add_map
-    and add_text. add_metric is offered only in an app that defines metrics,
-    which each run checks, so an app's tools stay the same from run to run.
+    and add_text. add_metric is offered in every app, so the tools and the
+    agent's fingerprint do not depend on the app; in an app without metrics
+    it refuses.
     """
-    metric = Tool(add_metric, prepare=_with_metrics)
-    return FunctionToolset[FlowDashDeps]([add_sql, metric, add_chart, add_table, add_map, add_text], max_retries=3)
+    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
 
 
 def _refused(result: Any) -> bool:

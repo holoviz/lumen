@@ -7,13 +7,14 @@ from __future__ import annotations
 import math
 import re
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import pandas as pd
 import sqlglot
 import yaml
 
 from panel_flowdash.agent import FlowDashDeps, OperationError
+from pydantic import Field
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..flowdash import (
@@ -45,6 +46,10 @@ RATIO_NAME = re.compile(r"(share|ratio|rate|pct|percent|fraction|proportion)", r
 KEY_NAME = re.compile(r"(^|_)(id|name|key|code)$", re.IGNORECASE)
 
 Aggregate = Literal["sum", "mean", "min", "max", "count"]
+Decimals = Annotated[int, Field(ge=0, le=10)]
+# How a KPI card relates to the filter bar: FlowDash's global filters filter what a view shows,
+# not the value a card is given, so a card keeps its number whatever the bar picks.
+KPI_FILTERS = "KPI cards do not follow the global filter bar's filters; tell the user if the dashboard has one."
 
 
 class _Placed:
@@ -189,7 +194,7 @@ def _scalar(frame: Any, column: str) -> Any:
 
 def add_kpi(
     ctx: RunContext[FlowDashDeps], data: str, name: str, column: str | None = None,
-    aggregate: Aggregate | None = None, label: str = "", unit: str = "", decimals: int | None = None,
+    aggregate: Aggregate | None = None, label: str = "", unit: str = "", decimals: Decimals | None = None,
     format: str = "",
 ) -> str:
     """Show a headline number as a KPI card in the dashboard's top bar.
@@ -197,6 +202,7 @@ def add_kpi(
     The number is a cell of a node of one row, or the column aggregated over all of the
     node's rows by its source. A one-row node with several numeric columns and no column
     given gets one KPI per column. A SQL node is not a view: use this to show its number.
+    A card does not follow the global filter bar's filters, only filter nodes upstream of it.
 
     Args:
         data: Name of the SQL, metric, table or filter node holding the number (a node name, not a source table).
@@ -205,7 +211,7 @@ def add_kpi(
         aggregate: How to reduce the column over the node's rows; leave out when the node has one row.
         label: Short heading above the number, e.g. "Installed capacity"; defaults to the column in words.
         unit: Unit shown with the number, e.g. "MW", "$" or "%"; a share in 0..1 with "%" shows as a percentage.
-        decimals: Digits after the decimal point; by default 0 for whole or large numbers, at most 2 otherwise.
+        decimals: Digits after the decimal point, 0 to 10; by default 0 for whole or large numbers, at most 2 otherwise.
         format: A Python format spec instead of unit and decimals' choice, e.g. ",.1f".
     """
     ops = ctx.deps.ops
@@ -297,7 +303,8 @@ def add_kpi(
         raise
     how = f"the {aggregate} of {column!r}" if aggregate and column else "its row count" if aggregate else "its one row"
     through = f" through {', '.join(map(repr, helpers))}" if helpers else ""
-    return f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{through}:\n" + "\n".join(lines)
+    return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{through}:\n"
+            + "\n".join(lines) + f"\n{KPI_FILTERS}")
 
 
 def _outputs(ops, name: str) -> list[str]:
@@ -305,20 +312,69 @@ def _outputs(ops, name: str) -> list[str]:
     return [port["name"] for port in spec.get("outputs", [])]
 
 
-def _reader_edge(ops, view: str, source: str, depth: int = 3) -> tuple[str, str] | None:
-    """The edge, as (from, to) ports, through which ``view`` reads the output ``source``, directly or a few nodes up."""
-    edges = yaml.safe_load(ops.get_dashboard()).get("edges") or []
-    frontier = [view]
+def _node(port: str) -> str:
+    return port.split(".", maxsplit=1)[0]
+
+
+def _reader_path(edges: list[dict[str, Any]], view: str, source: str, depth: int = 4) -> list[tuple[str, str]] | None:
+    """
+    The edges, as (from, to) ports and the one from ``source`` first,
+    through which ``view`` reads the output ``source``, directly or a few
+    nodes up.
+    """
+    frontier: list[tuple[str, list[tuple[str, str]]]] = [(view, [])]
     for _ in range(depth):
         nxt = []
-        for node in frontier:
+        for node, below in frontier:
             for edge in edges:
-                if edge["to"].split(".")[0] != node:
+                if _node(edge["to"]) != node:
                     continue
+                path = [(edge["from"], edge["to"]), *below]
                 if edge["from"] == source:
-                    return edge["from"], edge["to"]
-                nxt.append(edge["from"].split(".")[0])
+                    return path
+                nxt.append((_node(edge["from"]), path))
         frontier = nxt
+    return None
+
+
+def _reach(edges: list[dict[str, Any]], node: str, stop: set[str]) -> set[str]:
+    """The nodes downstream of ``node``, not following the outputs of those in ``stop``."""
+    seen: set[str] = set()
+    todo = [node]
+    while todo:
+        current = todo.pop()
+        for edge in edges:
+            if _node(edge["from"]) == current and (target := _node(edge["to"])) not in seen:
+                seen.add(target)
+                if target not in stop:
+                    todo.append(target)
+    return seen
+
+
+def _filter_edges(edges: list[dict[str, Any]], paths: dict[str, list[tuple[str, str]]]) -> dict[str, tuple[str, str]]:
+    """
+    The edge of each view's path to rewire to a filter's rows: the one
+    nearest the source whose target feeds only the given views, so a node
+    shared with other views, e.g. an earlier filter, keeps its input and
+    only the given views read the new filter.
+    """
+    targets = set(paths)
+    allowed = targets | {_node(to) for path in paths.values() for _, to in path}
+    chosen = {}
+    for view, path in paths.items():
+        chosen[view] = next(
+            edge for edge in path
+            if _node(edge[1]) in targets or _reach(edges, _node(edge[1]), targets) <= allowed
+        )
+    return chosen
+
+
+def _global_filter(ops, column: str, views: list[str]) -> dict[str, Any] | None:
+    """The global filter on ``column`` that filters any of ``views``, if the dashboard has one."""
+    filters = ops.filters() if callable(getattr(ops, "filters", None)) else getattr(ops.editor, "filters", None)
+    for entry in filters or []:
+        if entry.get("column") == column and not set(views) <= set(entry.get("exclude") or ()):
+            return entry
     return None
 
 
@@ -340,10 +396,11 @@ def add_filter_control(
     control: Literal["select", "multiselect", "range", "date_range"] = "select", views: list[str] | None = None,
     label: str = "", value: str | int | float | None = None,
 ) -> str:
-    """Add a local filter: a control that filters only some views of a node, through a filter node.
+    """Add a local filter: a control shown with the views it filters, linked to them through a filter node.
 
-    Only when the user asks for a filter on particular charts or tables; otherwise filters go in
-    the global filter bar. The listed views then read the filtered rows; others are unchanged.
+    Where add_filter, the global filter bar, is offered, use this only when the user asks for a
+    filter on particular charts or tables. The listed views then read the filtered rows; others
+    are unchanged.
 
     Args:
         data: Name of the SQL, metric, table or filter node the views read (a node name, not a source table).
@@ -366,22 +423,37 @@ def add_filter_control(
     ]
     if not targets:
         raise ModelRetry(f"No view reads {data!r}; place the views first, or name them in views.")
-    edges = {}
+    graph_edges = yaml.safe_load(ops.get_dashboard()).get("edges") or []
+    paths = {}
     for view in targets:
         if view not in _graph.nodes(ops):
             raise ModelRetry(f"No node {view!r}.")
-        if (edge := _reader_edge(ops, view, source)) is None:
+        if (path := _reader_path(graph_edges, view, source)) is None:
             readers_text = ", ".join(map(repr, _graph.reading(ops, source))) or "none"
             raise ModelRetry(f"{view!r} does not read {data!r}'s rows, so a filter on them cannot change it. "
                              f"The nodes reading {data!r} are: {readers_text}.")
-        edges[view] = edge
-    filter_name = f"{name}_filter"
-    _free(ops, name, filter_name)
+        for _, to in path[:-1]:
+            node = _node(to)
+            if _graph.component_of(ops, node) == FILTER_ID and _graph.config_of(ops, node).get("field") == column:
+                raise ModelRetry(f"{view!r} is already filtered on {column!r} by {node!r}; change the control "
+                                 f"that feeds it, or list only views it does not filter.")
+        paths[view] = path
+    if (entry := _global_filter(ops, column, targets)) is not None:
+        raise ModelRetry(
+            f"The global filter bar already filters on {column!r} ({entry.get('label') or column}), and would apply "
+            "to these views as well as a local filter. Change that filter with add_filter, or remove it with "
+            "remove_filter first if the user wants these views filtered on their own."
+        )
+    edges = _filter_edges(graph_edges, paths)
+    feeds = list(dict.fromkeys(old for old, _ in edges.values()))
+    filters = {feed: f"{name}_filter" if i == 0 else f"{name}_filter_{i + 1}" for i, feed in enumerate(feeds)}
+    _free(ops, name, *filters.values())
     types = _column_types(pipeline, None)
     kind = types.get(column)
     text = label or column.replace("_", " ").strip().capitalize()
     config: dict[str, Any] = {"label": text}
     component = CONTROLS[control]
+    kind_text = {"select": "select", "multiselect": "multi-select", "range": "range", "date_range": "date range"}[control]
     if control in ("select", "multiselect"):
         options = column_values(pipeline, column, limit=MAX_OPTIONS + 1)
         if not options:
@@ -406,6 +478,7 @@ def add_filter_control(
                 # multiselect limited to one pick, which keeps every row while nothing is picked.
                 component = CONTROLS["multiselect"]
                 config.update(max_items=1, placeholder="All")
+                kind_text = "multi-select of one pick"
             start = "starting with nothing picked, so every row shows"
         summary = f"{len(options)} options from {column!r}, {start}"
     elif value is not None:
@@ -434,12 +507,14 @@ def add_filter_control(
     placed = _Placed(ops)
     try:
         placed.node(component, config, name)
-        placed.node(FILTER_ID, {"field": column}, filter_name)
-        placed.connect(source, f"{filter_name}.pipeline")
-        placed.connect(f"{name}.selected", f"{filter_name}.value")
+        for feed, filter_name in filters.items():
+            placed.node(FILTER_ID, {"field": column}, filter_name)
+            placed.connect(feed, f"{filter_name}.pipeline")
+            placed.connect(f"{name}.selected", f"{filter_name}.value")
         for old, target in edges.values():
-            placed.rewire(old, target, f"{filter_name}.filtered")
-        _graph.output(ops, filter_name, "filtered")
+            placed.rewire(old, target, f"{filters[old]}.filtered")
+        for filter_name in filters.values():
+            _graph.output(ops, filter_name, "filtered")
         _place_before(ops, name, list(edges))
     except (OperationError, ValueError) as exc:
         placed.rollback()
@@ -448,15 +523,18 @@ def add_filter_control(
         placed.rollback()
         raise
     wired = ", ".join(
-        repr(view) if target.split(".")[0] == view else f"{view!r} (through {target.split('.')[0]!r})"
+        repr(view) if _node(target) == view else f"{view!r} (through {_node(target)!r})"
         for view, (_, target) in edges.items()
     )
-    rewired = {target.split(".")[0] for _, target in edges.values()}
+    rewired = {_node(target) for _, target in edges.values()}
     others = [n for n in _graph.reading(ops, source) if n not in rewired and _graph.component_of(ops, n) != FILTER_ID]
     rest = f" Unfiltered: {', '.join(map(repr, others))}." if others else ""
+    names = ", ".join(map(repr, filters.values()))
+    nodes = f"filter node {names}" if len(filters) == 1 else f"filter nodes {names} (one per input the views read)"
+    reading = names if len(filters) == 1 else "them"
     return (
-        f"Placed {control} {name!r} ({summary}) and filter node {filter_name!r} on {data!r}.{column}, "
-        f"fed by {name!r}. Reading {filter_name!r} now: {wired}.{rest}"
+        f"Placed {kind_text} {name!r} ({summary}) and {nodes} on {data!r}.{column}, "
+        f"fed by {name!r}. Reading {reading} now: {wired}.{rest}"
     )
 
 
