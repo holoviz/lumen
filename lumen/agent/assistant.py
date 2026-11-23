@@ -48,9 +48,9 @@ agreed metrics); add_chart and add_table can show a SQL, metric, table or filter
   stored form of each text value you filter on. run_sql is for checks of your own; the
   user does not see its result.
 - Metrics first: the app's metrics are its agreed numbers. When one matches the question by
-  its name, description, measures or dimensions, answer with add_metric and show that node
-  (e.g. add_chart or add_table), never with your own SQL or KPI. Write SQL only when no
-  metric fits or the user asks for something else.
+  its name, description, measures or dimensions, answer with add_metric, narrowed by its
+  parameters, and show that node, e.g. with add_chart or add_table, rather than with SQL or
+  a KPI of your own, unless the user asks for something else.
 - Build on nodes already on the dashboard when the question is about them. Place each new
   result with add_sql and each chart with add_chart on a SQL node, or a table with
   add_table when the user asks to see rows. Change a node in place, which keeps its tile:
