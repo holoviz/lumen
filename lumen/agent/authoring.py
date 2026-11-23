@@ -422,7 +422,8 @@ def _upstream_port(deps: FlowDashDeps, data: str) -> str:
 
 
 TEXT_IDS = {"heading": HEADING_ID, "markdown": MARKDOWN_ID, "divider": DIVIDER_ID}
-# FlowDash releases before place_tile took before and after cannot put a tile beside another.
+# FlowDash releases before place_tile took before and after cannot put a tile beside another,
+# nor keep a title placed at the top in front of the tiles added after it.
 PLACES_BESIDE = "before" in inspect.signature(DashboardOps.place_tile).parameters
 # The most characters each text field may hold; prose longer than this belongs in several tiles.
 TEXT_LIMITS = {
@@ -484,6 +485,13 @@ def add_text(
             raise ModelRetry(f"No node {other!r} to place the {kind} beside.")
     if (before is not None or after is not None) and not PLACES_BESIDE:
         raise ModelRetry("This FlowDash version cannot place text beside a tile; use position.")
+    hidden = ops.hidden_tiles() if hasattr(ops, "hidden_tiles") else []
+    for other in (before, after):
+        if other in hidden:
+            raise ModelRetry(
+                f"{other!r} has no tile on the dashboard (it is hidden, e.g. a SQL node), so "
+                f"nothing can go beside it; place the {kind} beside a tile that is shown."
+            )
     config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
     if kind == "heading":
         if subtitle:
