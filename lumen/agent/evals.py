@@ -33,7 +33,9 @@ from ..sources.duckdb import DuckDBSource
 from ..transforms.sql import MetricAggregate
 from ..util import as_pandas
 from . import _graph
-from .assistant import MODEL_SETTINGS, OTHER_MODEL_SETTINGS, model_settings_for
+from .assistant import (
+    MODEL_SETTINGS, OTHER_MODEL_SETTINGS, create_agent, model_settings_for,
+)
 from .headless import AgentSession, TurnResult
 
 # Name of the SQL node a case's pre-seeded query is placed as.
@@ -256,12 +258,13 @@ def _reference_source() -> DuckDBSource:
 
 
 @functools.cache
-def agent_fingerprint(instructions: str = "") -> str:
+def agent_fingerprint(instructions: str = "", dashboard_tools: str = "data") -> str:
     """
     The hash of the instructions and tool schemas the agent offers, as
     ``AgentRunner`` stamps it on every response it records. Neither depends
     on the data, so it is the same for every source; extra ``instructions``,
-    e.g. a suite's, are part of it. It is computed from the first request of
+    e.g. a suite's, are part of it, and so is the set of ``dashboard_tools``
+    given to ``create_agent``. It is computed from the first request of
     a run on a model that only captures it, in a thread of its own so it can
     be called from a running event loop.
     """
@@ -274,7 +277,9 @@ def agent_fingerprint(instructions: str = "") -> str:
         return ModelResponse(parts=[TextPart("ok")])
 
     async def run():
-        session = AgentSession(_reference_source(), FunctionModel(capture), instructions=instructions)
+        model = FunctionModel(capture)
+        agent = create_agent(model, instructions=instructions or None, dashboard_tools=dashboard_tools)
+        session = AgentSession(_reference_source(), model, agent=agent)
         try:
             await session.ask("")
         finally:
