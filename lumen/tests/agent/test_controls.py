@@ -15,7 +15,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from lumen.agent import AgentSession, _graph, assistant
+from lumen.agent import (
+    AgentSession, _graph, assistant, grain,
+)
 from lumen.agent.assistant import create_agent, create_explore_agent
 from lumen.agent.authoring import (
     add_chart, add_metric, add_table, authoring_toolset,
@@ -43,18 +45,23 @@ PENGUINS = (
     "SELECT * FROM (VALUES ('Adelie', 'Torgersen', 3750, 181), ('Adelie', 'Biscoe', 3800, 186), "
     "('Gentoo', 'Biscoe', 5400, 217), ('Chinstrap', 'Dream', 3500, 192)) AS t(species, island, body_mass_g, flipper_length_mm)"
 )
-# 40 projects of 2 to 11 turbines each: p_cap, the project's capacity in MW, grows with its turbines and
-# repeats on each of their rows (one project in 17 has a stray value, as in the wind data); t_cap, a
-# turbine's capacity in kW, is constant within each model and project but does not grow with them;
-# t_hh varies per turbine.
+# 40 projects of 2 to 11 turbines each: p_cap, the project's capacity, repeats on each of its
+# turbines' rows (one project in 17 has a stray value, as in the wind data); t_cap, a turbine's
+# capacity, is fixed by its model but varies within a project; t_hh varies per turbine; one is a
+# constant. In COMPOSITE, v depends on a and b together, neither alone.
 PROJECTS = (
-    "SELECT 'P' || p.i AS p_name, 'M' || (p.i % 4) AS t_model, ['TX', 'IA', 'PA'][p.i % 3 + 1] AS t_state, "
-    "1500 + 500 * (p.i % 4) AS t_cap, "
-    "(2 + p.i % 10) * (1500 + 500 * (p.i % 4)) / 1000.0 + CASE WHEN p.i % 17 = 0 AND t.j = 0 THEN 1 ELSE 0 END AS p_cap, "
-    "80.0 + (p.i * 7 + t.j * 3) % 50 AS t_hh "
+    "SELECT 'P' || p.i AS p_name, 'M' || ((p.i + t.j) % 4) AS t_model, ['TX', 'IA', 'PA'][p.i % 3 + 1] AS t_state, "
+    "1500 + 500 * ((p.i + t.j) % 4) AS t_cap, "
+    "(2 + p.i % 10) * 2.25 + CASE WHEN p.i % 17 = 0 AND t.j = 0 THEN 1 ELSE 0 END AS p_cap, "
+    "80.0 + (p.i * 7 + t.j * 3) % 50 AS t_hh, 1.0 AS one "
     "FROM range(40) AS p(i), range(12) AS t(j) WHERE t.j < 2 + p.i % 10"
 )
-TABLES = {"turbines": TURBINES, "penguins": PENGUINS, "projects": PROJECTS}
+COMPOSITE = (
+    "SELECT a.i AS a, b.i AS b, 10.0 * a.i + b.i AS v, r.i AS r "
+    "FROM range(5) AS a(i), range(5) AS b(i), range(4) AS r(i)"
+)
+BIG = "SELECT range AS i, range % 7 AS g, 1.5 AS fare, range % 1000 AS k, (range % 1000) * 1.0 AS v FROM range(1000000)"
+TABLES = {"turbines": TURBINES, "penguins": PENGUINS, "projects": PROJECTS, "composite": COMPOSITE}
 BAR = {"mark": "bar", "encoding": {"x": {"field": "t_state", "type": "nominal"},
                                    "y": {"aggregate": "sum", "field": "t_cap", "type": "quantitative"}}}
 PROJECT = """\
@@ -193,55 +200,148 @@ def test_add_kpi_refusals(ctx, session, kwargs, message):
     assert structure(session) == before
 
 
-def _projects(session):
+@pytest.fixture(autouse=True)
+def _fresh_grain():
+    grain._CACHE.clear()
+    yield
+    grain._CACHE.clear()
+
+
+def _projects(session, sql="SELECT * FROM projects", name="project_rows"):
     frame = session.source.execute(PROJECTS)
-    session.add_sql("project_rows", "SELECT * FROM projects")
+    session.add_sql(name, sql)
     return frame
+
+
+def _share(frame, column, key):
+    """The share of the rows of repeated key values holding one value of ``column``, as pandas counts it."""
+    groups = frame.groupby(key)[column].agg(["size", "nunique"])
+    multi = groups[groups["size"] > 1]
+    return multi.loc[multi["nunique"] == 1, "size"].sum() / multi["size"].sum()
 
 
 @pytest.mark.parametrize("aggregate", ["sum", "count"])
 def test_add_kpi_refuses_to_aggregate_a_property_of_an_entity_over_its_rows(ctx, session, aggregate):
     frame = _projects(session)
     keys = frame.p_name.nunique()
-    single = int((frame.groupby("p_name").p_cap.nunique() == 1).sum())
     with pytest.raises(ModelRetry) as info:
         add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate=aggregate)
     assert str(info.value) == (
-        f"p_cap looks like a property of p_name ({single:,} of {keys:,} p_name values have one p_cap; each "
-        f"p_name appears about {len(frame) / keys:,.0f} times), so a {aggregate} over the rows counts it once per "
-        f"row: pass distinct_by='p_name' to {aggregate} one value per p_name."
+        f"p_cap looks like a property of p_name ({_share(frame, 'p_cap', 'p_name'):.0%} of the rows of projects hold "
+        f"one p_cap per p_name, which has {keys:,} values on about {len(frame) / keys:,.0f} rows each), so a "
+        f"{aggregate} over the rows counts it once per row: pass distinct_by='p_name' to {aggregate} the largest "
+        "p_cap of each p_name once."
     )
-    assert single < keys
+    assert _share(frame, "p_cap", "p_name") < 1
 
 
-def test_add_kpi_distinct_by_takes_one_value_per_entity(ctx, session):
+@pytest.mark.parametrize("where", ["t_state = 'TX'", "p_name = 'P5'", "p_name = 'P5' AND t_hh < 0"])
+def test_the_grain_of_a_column_is_decided_on_its_table_for_every_slice(ctx, session, where):
+    # A slice of one project, or of no rows, would show no repetition by itself.
+    _projects(session, f"SELECT * FROM projects WHERE {where}", "slice")
+    with pytest.raises(ModelRetry, match="p_cap looks like a property of p_name"):
+        add_kpi(ctx, "slice", "capacity", column="p_cap", aggregate="sum")
+
+
+def test_add_kpi_distinct_by_takes_the_largest_value_per_entity(ctx, session):
     frame = _projects(session)
     result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum", distinct_by="p_name")
     expected = frame.groupby("p_name").p_cap.max().sum()
     assert instance(session.ops, "capacity").value == pytest.approx(expected)
     assert f"Total p cap = {expected:,.0f}." in result
-    assert "one value per 'p_name' of 'project_rows' through 'capacity_per_key', 'capacity_agg'" in result
-    assert _graph.config_of(session.ops, "capacity")["caption"] == "one p_cap per p_name"
+    assert ("of 'project_rows', taking the largest 'p_cap' of each p_name once through 'capacity_per_key', "
+            "'capacity_agg', 'capacity_value'") in result
+    assert _graph.config_of(session.ops, "capacity")["caption"] == "largest p_cap per p_name"
 
 
-@pytest.mark.parametrize(("column", "aggregate"), [("t_cap", "sum"), ("t_hh", "sum"), ("p_cap", "mean")])
-def test_add_kpi_aggregates_per_row_measures_and_averages_without_refusing(ctx, session, column, aggregate):
+def test_add_kpi_refuses_distinct_by_a_column_the_value_is_no_property_of(ctx, session):
     frame = _projects(session)
+    with pytest.raises(ModelRetry) as info:
+        add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum", distinct_by="t_state")
+    assert str(info.value).startswith(
+        f"p_cap is not a property of t_state: {_share(frame, 'p_cap', 't_state'):.0%} of the rows of projects hold one "
+        "p_cap per t_state, which has 3 values"
+    )
+
+
+def test_add_kpi_finds_a_composite_key(ctx, session):
+    session.add_sql("composite_rows", "SELECT * FROM composite")
+    with pytest.raises(ModelRetry, match=re.escape("v looks like a property of a and b (100% of the rows")) as info:
+        add_kpi(ctx, "composite_rows", "total", column="v", aggregate="sum")
+    assert "pass distinct_by=['a', 'b']" in str(info.value)
+    add_kpi(ctx, "composite_rows", "total", column="v", aggregate="sum", distinct_by=["a", "b"])
+    assert instance(session.ops, "total").value == sum(10 * a + b for a in range(5) for b in range(5))
+
+
+@pytest.mark.parametrize(("sql", "column", "aggregate"), [
+    ("SELECT * FROM projects", "t_cap", "sum"),
+    ("SELECT * FROM projects", "t_hh", "sum"),
+    ("SELECT * FROM projects", "p_cap", "mean"),
+    ("SELECT * FROM projects", "one", "sum"),
+    ("SELECT DISTINCT p_name, p_cap FROM projects", "p_cap", "sum"),
+], ids=["fixed-by-model", "per-row", "mean", "constant", "deduplicated"])
+def test_add_kpi_aggregates_per_row_values_without_refusing(ctx, session, sql, column, aggregate):
+    _projects(session, sql)
+    frame = session.source.execute(sql.replace("projects", f"({PROJECTS})"))
     add_kpi(ctx, "project_rows", "kpi", column=column, aggregate=aggregate)
     assert instance(session.ops, "kpi").value == pytest.approx(getattr(frame[column], aggregate)())
 
 
-def test_grain_probe_cost_is_bounded(ctx, session, monkeypatch):
-    from lumen.agent import controls
-
-    _projects(session)
+def test_the_grain_is_probed_once_per_table_and_column(ctx, session, monkeypatch):
     probes = []
-    real = controls.execute
-    monkeypatch.setattr(controls, "execute", lambda source, sql, timeout: probes.append((sql, timeout)) or real(source, sql, timeout))
-    monkeypatch.setattr(controls, "GRAIN_SAMPLE", 1000)
-    add_kpi(ctx, "project_rows", "kpi", column="t_hh", aggregate="sum")
-    assert 0 < len(probes) <= controls.GRAIN_KEYS
-    assert all("LIMIT 1000" in sql and timeout == controls.GRAIN_TIMEOUT for sql, timeout in probes)
+    real = grain.execute
+    monkeypatch.setattr(grain, "execute", lambda source, sql, timeout: probes.append((sql, timeout)) or real(source, sql, timeout))
+    _projects(session)
+    add_kpi(ctx, "project_rows", "first", column="t_hh", aggregate="sum")
+    first = len(probes)
+    assert 0 < first <= 3 + grain.GRAIN_KEYS + grain.GRAIN_PAIRS_OF * (grain.GRAIN_PAIRS_OF + 1) // 2
+    assert all(timeout == grain.GRAIN_TIMEOUT for _, timeout in probes)
+    _projects(session, "SELECT * FROM projects WHERE t_state = 'TX'", "tx_rows")
+    add_kpi(ctx, "tx_rows", "second", column="t_hh", aggregate="sum")
+    assert not [sql for sql, _ in probes[first:] if "GROUP BY" in sql or "COUNT(DISTINCT" in sql]
+
+
+def test_the_grain_probe_samples_sources_whose_queries_a_timeout_may_not_stop():
+    other = SimpleNamespace(get_sql_expr=lambda table: "SELECT * FROM t")
+    assert grain._rows_sql(other, "t") == f"SELECT * FROM (SELECT * FROM t) AS s LIMIT {grain.GRAIN_SAMPLE}"
+
+
+def test_add_kpi_says_when_the_grain_could_not_be_checked(ctx, session, monkeypatch):
+    _projects(session)
+
+    def fail(source, sql, timeout):
+        raise TimeoutError("The query took too long.")
+
+    monkeypatch.setattr(grain, "execute", fail)
+    result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum")
+    assert result.endswith("I could not check whether 'p_cap' repeats per entity, e.g. a project's value on each of its rows.")
+
+
+def test_add_kpi_aggregates_every_row_of_a_capped_sql_node():
+    session = AgentSession(DuckDBSource(uri=":memory:", tables={"big": BIG}), _model())
+    try:
+        session.add_sql("rows", "SELECT * FROM big")
+        assert len(_graph.output(session.ops, "rows", "data")) < 1_000_000
+        result = add_kpi(SimpleNamespace(deps=session.deps), "rows", "fares", column="fare", aggregate="sum")
+        value = instance(session.ops, "fares").value
+    finally:
+        session.close()
+    assert value == 1_500_000 and "Total fare = 1,500,000." in result
+    assert "through 'fares_value' ('rows' keeps only part of its rows, so 'fares_value' queries all of them" in result
+
+
+def test_add_kpi_takes_one_value_per_key_over_every_row_of_a_capped_sql_node():
+    session = AgentSession(DuckDBSource(uri=":memory:", tables={"big": BIG}), _model())
+    ctx = SimpleNamespace(deps=session.deps)
+    try:
+        session.add_sql("rows", "SELECT * FROM big")
+        with pytest.raises(ModelRetry, match="v looks like a property of k"):
+            add_kpi(ctx, "rows", "total", column="v", aggregate="sum")
+        add_kpi(ctx, "rows", "total", column="v", aggregate="sum", distinct_by="k")
+        value = instance(session.ops, "total").value
+    finally:
+        session.close()
+    assert value == sum(range(1000))
 
 
 def test_add_kpi_refuses_absurd_formats(ctx, session):
