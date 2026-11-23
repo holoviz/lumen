@@ -101,6 +101,9 @@ async def run(args) -> tuple[list, list[str]]:
         results.append(result)
         verdicts = " ".join(t.verdict for t in result.turns)
         echo(f"{name}: {verdicts}{' ERROR ' + result.error[:200] if result.error else ''}", err=True)
+        for divergence in result.divergences:
+            echo(f"  replay diverged at request {divergence['request']}: {divergence['kind']}"
+                 + (f" of {divergence['tool']}" if divergence["tool"] else ""), err=True)
     return results, stale
 
 
@@ -123,8 +126,7 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--no-record", dest="record", action="store_false",
                         help="In a live run, keep the existing cassettes.")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="OpenRouter model id of a live run.")
-    parser.add_argument("--env-file", default="~/development/panel-agents/.env",
-                        help="Env file holding OPENROUTER_API_KEY, if it is not set.")
+    parser.add_argument("--env-file", help="Env file holding OPENROUTER_API_KEY, if it is not set.")
     parser.add_argument("--cassettes", default=str(CASSETTES), help="Directory of the recorded cassettes.")
     parser.add_argument("--scenario", action="append", choices=sorted(BY_NAME), help="Run only this scenario.")
     parser.add_argument("--themes", action="store_true", help="Print the table by theme as well.")

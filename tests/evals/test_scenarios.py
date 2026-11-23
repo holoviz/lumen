@@ -17,19 +17,22 @@ from lumen.agent.scenarios import (
     load_cassette, recorded_fingerprints, run_scenario, scenario_agent, seed,
     summarize, table, to_json, turn_state,
 )
-from lumen.agent.scenarios.__main__ import main
+from lumen.agent.scenarios.__main__ import main, stale_message
 from lumen.agent.scenarios.catalog import (
-    BY_NAME, CALIFORNIA, CAPACITY_BY_YEAR, CAPACITY_MW, FEMALE_SHARE, PROJECTS,
-    SCENARIOS, TURBINES, WIND, WIND_KPIS_LAST,
+    BY_NAME, CALIFORNIA, CALIFORNIA_STRONGEST, CAPACITY_BY_YEAR, CAPACITY_MW,
+    FEMALE_SHARE, LAST_MONTH, PROJECTS, SCENARIOS, TURBINES, WIND,
+    WIND_KPIS_LAST,
 )
 from lumen.agent.scenarios.checks import (
-    before_views, chart_mark, charts_titled, edited_in_place, filter_on,
-    holds_value, kpi_values, kpis, matches_series, max_requests,
-    no_hidden_leftovers, same_row, shows_series, shows_value, width,
+    Tile, TurnState, before_views, chart_mark, charts_titled, color,
+    edited_in_place, filter_on, holds_value, kpi_values, kpis, matches_series,
+    max_requests, no_hidden_leftovers, same_height, same_row, shows_row,
+    shows_series, shows_value, width,
 )
 from lumen.agent.scenarios.fixtures import (
     fixture_source, penguins, quakes, states, turbines,
 )
+from lumen.flowdash import FILTER_ID, VIEW_ID
 
 BASELINE_DIR = Path(__file__).parent / "scenarios"
 BASELINE = BASELINE_DIR / "baseline.json"
@@ -92,7 +95,7 @@ def test_scenarios_have_unique_names_themes_and_check_ids():
             ids = [check.id for check in turn.checks]
             assert len(ids) == len(set(ids)), scenario.name
             assert all(check.workstream in {f"W{i}" for i in range(1, 9)} for check in turn.checks)
-            assert any(not check.quality for check in turn.checks), (scenario.name, turn.prompt)
+            assert any(not check.quality and not check.guard for check in turn.checks), (scenario.name, turn.prompt)
         for key, workstream in scenario.xfail.items():
             index, check = key.split("/")
             assert check in [c.id for c in scenario.turns[int(index) - 1].checks], (scenario.name, key)
@@ -225,6 +228,89 @@ async def test_either_reading_of_an_ambiguous_kpi_counts():
         assert not kpi_values(FEMALE_SHARE[0]).run(state)[0]
 
 
+CA = "(place LIKE '%, CA' OR place ILIKE '%california%')"
+
+
+async def test_a_raw_table_does_not_answer_a_count():
+    async with state_after("quakes", scripted([
+        ("add_sql", {"source": "data", "name": "everything", "sql": "SELECT * FROM quakes"}),
+        ("add_table", {"data": "everything", "name": "everything_table"}),
+    ])) as state:
+        frame = state.data("everything")
+        assert holds_value(frame, 44, scales=(1.0,), max_rows=len(frame))
+        assert not shows_value(LAST_MONTH, scales=(1.0,)).run(state)[0]
+    async with state_after("quakes", scripted([
+        ("add_sql", {"source": "data", "name": "last_month", "sql":
+                     "SELECT COUNT(*) AS n FROM quakes WHERE time >= '2025-12-01'"}),
+    ])) as state:
+        assert shows_value(LAST_MONTH, scales=(1.0,)).run(state)[0]
+
+
+@pytest.mark.parametrize(("where", "expected"), [(f"NOT {CA}", False), (CA, True)], ids=["elsewhere", "california"])
+async def test_the_strongest_quakes_must_include_the_california_record(where, expected):
+    async with state_after("quakes", scripted([
+        ("add_sql", {"source": "data", "name": "strongest", "sql":
+                     f"SELECT time, place, mag FROM quakes WHERE {where} ORDER BY mag DESC LIMIT 10"}),
+        ("add_table", {"data": "strongest", "name": "strongest_table"}),
+    ])) as state:
+        # The strongest quake elsewhere, 6.61, is within the scalar tolerance of the Californian 6.6.
+        assert holds_value(state.data("strongest"), 6.6, scales=(1.0,))
+        assert shows_row(CALIFORNIA_STRONGEST).run(state)[0] is expected
+        assert not shows_value(CALIFORNIA, scales=(1.0,), where="shown").run(state)[0]
+
+
+def layout_state(tiles, nodes=None, edges=()):
+    return TurnState(prompt="x", graph={"nodes": nodes or {name: {"component": VIEW_ID} for name in tiles},
+                                         "edges": list(edges)}, before={}, tiles=tiles)
+
+
+def test_same_height_needs_visible_tiles_set_to_one_height():
+    check = same_height("a", "b")
+    assert not check.run(layout_state({}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True), "b": Tile("grid", True)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", False, height=400)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", True, height=300)}))[0]
+    assert check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", True, height=400)}))[0]
+
+
+def test_filter_check_looks_at_every_filter_node():
+    nodes = {
+        "unwired": {"component": FILTER_ID, "config": {"field": "t_state"}},
+        "wired": {"component": FILTER_ID, "config": {"field": "t_state"}},
+        "picker": {"component": "Widgets/Select"},
+        "chart": {"component": VIEW_ID},
+    }
+    edges = [{"from": "picker.value", "to": "wired.value"}, {"from": "wired.data", "to": "chart.pipeline"},
+             {"from": "unwired.data", "to": "chart.pipeline"}]
+    state = layout_state({"chart": Tile("grid", True)}, nodes, edges)
+    assert filter_on("t_state").run(state) == (True, "")
+    del state.graph["nodes"]["wired"]
+    passed, detail = filter_on("t_state").run(state)
+    assert not passed and "unwired" in detail
+
+
+@pytest.mark.parametrize(("spec", "expected"), [
+    ({"mark": "bar", "description": "a green chart"}, False),
+    ({"mark": {"type": "bar", "color": "red"}, "title": "green"}, False),
+    ({"mark": {"type": "bar", "color": "green"}}, True),
+    ({"mark": {"type": "bar", "color": "#2ca02c"}}, True),
+    ({"mark": "bar", "encoding": {"color": {"value": "seagreen"}}}, True),
+    ({"mark": "bar", "config": {"bar": {"fill": "#1f77b4"}}}, False),
+], ids=["text", "red", "name", "hex", "value", "blue-config"])
+def test_color_reads_the_marks_not_the_spec_text(spec, expected):
+    state = layout_state({"chart": Tile("grid", True)}, {"chart": {"component": VIEW_ID, "config": {"spec": spec}}})
+    assert color("chart", "green").run(state)[0] is expected
+
+
+@pytest.mark.parametrize("name", sorted(BY_NAME))
+async def test_an_agent_that_does_nothing_scores_nothing(name):
+    """Guards pass when nothing changes, so a turn that does nothing must not earn did or partly from them."""
+    result = await run_scenario(BY_NAME[name], scripted())
+    assert result.error is None, result.error
+    assert [t.verdict for t in result.turns] == ["not"] * len(BY_NAME[name].turns), [
+        [(c.id, c.passed) for c in t.checks] for t in result.turns]
+
+
 async def test_refusals_and_requests_are_counted():
     async with state_after("turbines", scripted([
         ("add_chart", {"data": "nope", "name": "x", "spec": {"mark": "bar"}}),
@@ -249,8 +335,10 @@ async def test_run_scenario_scores_turns_and_reports(tmp_path):
     assert result.error is None
     assert [t.verdict for t in result.turns] == ["did", "not"]
     assert result.turns[1].checks[0].xfail == "W4"
+    assert result.divergences == []
     summary = summarize([result])
-    assert summary["total"] == {**summary["total"], "turns": 2, "did": 1, "partly": 0, "not": 1}
+    assert summary["total"] == {**summary["total"], "turns": 2, "did": 1, "partly": 0, "not": 1, "goal_checks": 2,
+                                "goal_passed": 1, "guard_checks": 0, "quality_checks": 2, "divergences": 0}
     assert summary["themes"]["numbers"]["requests_per_turn"] == 2.5
     text = table(summary)
     assert "demo" in text and "total" in text.splitlines()[-1]
@@ -341,6 +429,40 @@ def test_every_scenario_has_a_recorded_baseline():
     assert sorted(r["name"] for r in report["results"]) == sorted(BY_NAME)
 
 
+def test_recorded_cassettes_are_current():
+    """
+    Fails while any cassette was recorded against other agent instructions
+    or tools, whose replays the tests below skip, so a change to the agent
+    cannot pass CI without recording the scenarios again.
+    """
+    outdated = [name for name in RECORDED if stale(name)]
+    if outdated:
+        pytest.fail(stale_message(outdated, everything=len(outdated) == len(RECORDED)), pytrace=False)
+
+
+# Replays that send the model something other than the recording, by scenario, each with why.
+ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {
+    "filter_state": ([{"request": 7, "kind": "tool_return", "tool": "add_sql"}], (
+        "recorded before the fixtures ran DuckDB on one thread: the agent's projects_by_state query has two "
+        "projects tied at 39 MW, which the recording sampled in another order; recording it again clears this")),
+}
+
+
+def group(name: str):
+    """Keep a scenario's replay tests on one xdist worker, so its cassette is replayed once."""
+    return pytest.mark.xdist_group(f"scenario-{name}")
+
+
+@pytest.mark.parametrize("name", [pytest.param(n, marks=group(n)) for n in RECORDED])
+async def test_recorded_replay_matches_the_recording(name):
+    if stale(name):
+        pytest.skip("Stale cassette: the agent's instructions or tools changed; record the scenarios again.")
+    result = await replay(name)
+    assert [t.error for t in result.turns] == [None] * len(result.turns)
+    expected, _ = ALLOWED_DIVERGENCES.get(name, ([], ""))
+    assert result.divergences == expected
+
+
 CHECKS = [
     (scenario.name, index, check.id)
     for scenario in SCENARIOS if scenario.name in RECORDED
@@ -348,7 +470,8 @@ CHECKS = [
 ]
 
 
-@pytest.mark.parametrize(("name", "turn", "check"), CHECKS, ids=[f"{n}-t{t}-{c}" for n, t, c in CHECKS])
+@pytest.mark.parametrize(("name", "turn", "check"), [pytest.param(*c, marks=group(c[0])) for c in CHECKS],
+                         ids=[f"{n}-t{t}-{c}" for n, t, c in CHECKS])
 async def test_recorded_baseline(request, name, turn, check):
     """
     Each check of the recorded baseline, replayed: it passes, or it is

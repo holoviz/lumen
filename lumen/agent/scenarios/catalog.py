@@ -14,14 +14,16 @@ from ...flowdash import SQL_ID, VIEW_ID
 from ...flowdash.table_view import TABLE_VIEW_ID
 from . import Scenario, Turn
 from .checks import (
-    KPI_ID, PERCENT_SCALES, axes, before_views, chart_mark, chart_title,
-    charts_titled, color, dashboard_title, edited_in_place, filter_on,
-    has_view, heading_on_top, kept, kpi_units, kpi_values, kpis, legend,
-    max_bars, max_requests, multi_series, no_duplicates, no_hidden_leftovers,
-    no_new_nodes, no_unused, removed, same_height, same_row, selection_link,
-    shows_series, shows_value, tables_rounded, titled_node, unchanged, width,
+    KPI_ID, PERCENT_SCALES, answer_names, axes, before_views, chart_mark,
+    chart_title, charts_titled, color, dashboard_title, declines,
+    edited_in_place, filter_on, has_view, heading_on_top, kept, kpi_units,
+    kpi_values, kpis, legend, max_bars, max_requests, multi_series,
+    no_duplicates, no_hidden_leftovers, no_new_nodes, no_unused, removed,
+    same_height, same_row, selection_link, shows_row, shows_series,
+    shows_value, tables_rounded, titled_node, unchanged, width,
     years_unformatted,
 )
+from .fixtures import STATES as STATE_ROWS
 
 # -- reference queries on the fixtures --------------------------------------------------------------
 
@@ -38,7 +40,11 @@ CAPACITY_BY_REGION = (
 TEXAS_SHARE = "SELECT SUM(CASE WHEN t_state = 'TX' THEN t_cap ELSE 0 END) / SUM(t_cap) FROM turbines"
 LARGEST_PROJECTS = "SELECT p_name, MAX(p_cap) FROM turbines GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
 CALIFORNIA = "SELECT COUNT(*) FROM quakes WHERE place LIKE '%, CA' OR place ILIKE '%california%'"
-CALIFORNIA_STRONGEST = "SELECT MAX(mag) FROM quakes WHERE place LIKE '%, CA' OR place ILIKE '%california%'"
+CALIFORNIA_STRONGEST = (
+    "SELECT place, mag FROM quakes WHERE place LIKE '%, CA' OR place ILIKE '%california%' ORDER BY mag DESC LIMIT 1"
+)
+TOP_STATE = "SELECT t_state FROM turbines GROUP BY 1 ORDER BY SUM(t_cap) DESC LIMIT 1"
+STATE_NAMES = {code: name for code, name, _ in STATE_ROWS}
 LAST_MONTH = "SELECT COUNT(*) FROM quakes WHERE time >= TIMESTAMP '2025-12-01' AND time < TIMESTAMP '2026-01-01'"
 PENGUINS = "SELECT COUNT(*) FROM penguins"
 BODY_MASS = "SELECT AVG(body_mass_g) FROM penguins"
@@ -221,7 +227,8 @@ SCENARIOS: list[Scenario] = [
         [same_row("projects_table", "state_capacity_chart"), same_height("projects_table", "state_capacity_chart")])]),
     Scenario("wider_scatter", "layout", "penguins", seed=PENGUIN_CHARTS, playtest="C s2 t4, C s3 t5", turns=[Turn(
         "Make the scatter plot twice as wide as the species count chart, keeping them side by side.",
-        [same_row("species_counts_chart", "bill_scatter", ordered=False), width("bill_scatter", 66.67), width("species_counts_chart", 33.33)])]),
+        [same_row("species_counts_chart", "bill_scatter", ordered=False, guard=True), width("bill_scatter", 66.67),
+         width("species_counts_chart", 33.33)])]),
     # -- edits ---------------------------------------------------------------------------------------
     Scenario("line_chart", "edits", "turbines", seed=WIND_YEARLY, playtest="A s3 t2, A s6 t2", turns=[Turn(
         "Change the turbines per year chart to a line chart.",
@@ -254,7 +261,7 @@ SCENARIOS: list[Scenario] = [
         [shows_series(LARGEST_PROJECTS, where="shown"), has_view("table", workstream="W4"), tables_rounded()])]),
     Scenario("california_quakes", "numbers", "quakes", playtest="B s2 t3", turns=[Turn(
         "How many earthquakes were in California? Show the 10 strongest in a table.",
-        [shows_value(CALIFORNIA, scales=COUNT), shows_value(CALIFORNIA_STRONGEST, where="shown", scales=COUNT, id="strongest"),
+        [shows_value(CALIFORNIA, scales=COUNT), shows_row(CALIFORNIA_STRONGEST, id="strongest"),
          has_view("table", workstream="W4")])]),
     Scenario("last_month", "numbers", "quakes", playtest="B s8 t1", turns=[Turn(
         "How many earthquakes happened last month?", [shows_value(LAST_MONTH, scales=COUNT)])]),
@@ -267,10 +274,10 @@ SCENARIOS: list[Scenario] = [
         [has_view("chart", workstream="W5"), charts_titled(), legend()])]),
     # -- claims vs graph -----------------------------------------------------------------------------
     Scenario("email_schedule", "claims", "penguins", seed=PENGUIN_CHARTS, playtest="C s2 t10", turns=[Turn(
-        "Email this dashboard as a PDF to my team every Monday morning.", [unchanged()])]),
+        "Email this dashboard as a PDF to my team every Monday morning.", [declines(), unchanged()])]),
     Scenario("why_question", "claims", "turbines", seed=WIND, playtest="C s3 t6, C s1 t4", turns=[Turn(
         "Why is Texas at the top of the capacity chart? Is it really the state with the most capacity?",
-        [no_new_nodes()])]),
+        [answer_names(TOP_STATE, STATE_NAMES), no_new_nodes()])]),
     # -- runaway turns -------------------------------------------------------------------------------
     Scenario("penguin_batch", "runaway", "penguins", playtest="A s9", turns=[Turn(
         "Build a complete penguin dashboard in one go: four KPI cards (count, mean body mass in kg, mean flipper "

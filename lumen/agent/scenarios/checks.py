@@ -1,7 +1,13 @@
 """
 Checks of a scenario turn, run on the dashboard the turn left (its graph
 YAML and the live outputs of its nodes) and the turn's model responses,
-never on what the assistant says it did.
+not on what the assistant says it did. Only the claims scenarios, whose
+answer is the reply, also check what it says.
+
+A goal check tests what the turn was asked to do. A guard (``guard=True``)
+tests that it did no harm, e.g. left no hidden nodes or notes behind, and
+passes for an agent that does nothing, so it never earns a turn credit on
+its own. A quality check (``quality=True``) tests design and cost.
 
 Each check constructor returns a ``Check`` whose test gets the
 ``TurnState`` and returns None when it passes, or why it failed.
@@ -175,6 +181,8 @@ class Check:
     """The plan's workstream that addresses this kind of failure, e.g. ``"W1"``."""
     quality: bool = False
     """A design or cost check (titles, bar counts, request budget), scored apart from what was asked."""
+    guard: bool = False
+    """A check that the turn did no harm, which an agent that does nothing passes too."""
 
     def run(self, state: TurnState) -> tuple[bool, str]:
         try:
@@ -200,10 +208,15 @@ def _close(a: float, b: float, rtol: float) -> bool:
     return math.isclose(a, b, rel_tol=rtol, abs_tol=1e-9)
 
 
+# The most rows a result may have for one of its cells to count as a scalar answer: an aggregate,
+# not a raw table where some cell matches by chance.
+MAX_ANSWER_ROWS = 10
+
+
 def holds_value(frame: pd.DataFrame | None, value: float, scales: Sequence[float] = UNIT_SCALES,
-                rtol: float = 0.005) -> bool:
-    """Whether any numeric cell of ``frame`` is ``value`` at one of ``scales``."""
-    if frame is None or frame.empty or len(frame) > 10_000:
+                rtol: float = 0.005, max_rows: int = MAX_ANSWER_ROWS) -> bool:
+    """Whether any numeric cell of ``frame``, a result of at most ``max_rows`` rows, is ``value`` at one of ``scales``."""
+    if frame is None or frame.empty or len(frame) > max_rows:
         return False
     targets = [value * scale for scale in scales]
     for column in _numbers(frame):
@@ -249,6 +262,24 @@ def matches_series(frame: pd.DataFrame | None, expected: pd.DataFrame, scales: S
             if hits and not misses:
                 return True
     return False
+
+
+def holds_row(frame: pd.DataFrame | None, expected: pd.Series, rtol: float = 1e-6,
+              max_rows: int = MAX_ANSWER_ROWS) -> bool:
+    """
+    Whether ``frame``, of at most ``max_rows`` rows, has a row holding each
+    of ``expected``'s values in some column: text by its text, numbers
+    within ``rtol``.
+    """
+    if frame is None or frame.empty or len(frame) > max_rows:
+        return False
+    numeric = {c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c]) and not pd.api.types.is_bool_dtype(frame[c])}
+    def found(row, value):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return any(not pd.isna(row[c]) and _close(float(row[c]), float(value), rtol) for c in numeric)
+        return any(_norm(row[c]) == _norm(value) for c in frame.columns)
+
+    return any(all(found(row, value) for value in expected.tolist()) for _, row in frame.iterrows())
 
 
 def _norm(value: Any) -> str:
@@ -338,8 +369,9 @@ def _scalar(state: TurnState, sql: str) -> float:
 def shows_value(sql: str, *, where: str = "turn", scales: Sequence[float] = UNIT_SCALES,
                 workstream: str = "W4", id: str = "value") -> Check:
     """
-    The reference scalar of ``sql`` is in a data node the turn added or
-    changed (``where="turn"``), shows (``"shown"``) or anywhere (``"any"``).
+    The reference scalar of ``sql`` is in a small result (at most
+    ``MAX_ANSWER_ROWS`` rows) of a data node the turn added or changed
+    (``where="turn"``), shows (``"shown"``) or anywhere (``"any"``).
     """
     def test(state):
         value = _scalar(state, sql)
@@ -349,6 +381,22 @@ def shows_value(sql: str, *, where: str = "turn", scales: Sequence[float] = UNIT
         seen = {n: _preview(state.data(n)) for n in names[:4]}
         return f"{value:,.6g} not in {where} nodes {seen}"
     return Check(id, f"shows {sql}", test, workstream)
+
+
+def shows_row(sql: str, *, where: str = "shown", workstream: str = "W4", id: str = "row") -> Check:
+    """
+    The first row of ``sql``, e.g. the record a top N must include, is a
+    row of a small result of some data node: each of its values in some
+    column, so a result that only holds its number by chance does not count.
+    """
+    def test(state):
+        expected = state.reference(sql).iloc[0]
+        names = _candidates(state, where)
+        if any(holds_row(state.data(n), expected) for n in names):
+            return None
+        seen = {n: _preview(state.data(n)) for n in names[:4]}
+        return f"no {where} node has the row {expected.tolist()}; saw {seen}"
+    return Check(id, f"shows the row of {sql}", test, workstream)
 
 
 def shows_series(sql: str, *, where: str = "shown", scales: Sequence[float] = UNIT_SCALES,
@@ -486,10 +534,64 @@ def axes(name: str, *, x: str, y: str, workstream: str = "W2") -> Check:
     return Check("axes", f"{name} plots {y} against {x}", test, workstream)
 
 
+# Hue ranges, in degrees, of the colour names a check may ask for.
+HUES = {"red": (-20, 15), "orange": (15, 45), "yellow": (45, 70), "green": (70, 170), "blue": (190, 250),
+        "purple": (250, 300)}
+
+
+def _colors(spec: Any) -> list[str]:
+    """The colours a Vega-Lite spec draws its marks in: mark properties, value encodings, scale ranges and the mark config."""
+    found = []
+    for layer in _layers(spec):
+        marks = [layer.get("mark")] + [(layer.get("config") or {}).get(key) for key in ("mark", _mark(layer) or "")]
+        for mark in marks:
+            if isinstance(mark, dict):
+                found += [mark[key] for key in ("color", "fill", "stroke") if isinstance(mark.get(key), str)]
+        for channel in ("color", "fill", "stroke"):
+            enc = (layer.get("encoding") or {}).get(channel)
+            if not isinstance(enc, dict):
+                continue
+            if isinstance(enc.get("value"), str):
+                found.append(enc["value"])
+            scale_range = (enc.get("scale") or {}).get("range")
+            if isinstance(scale_range, list):
+                found += [c for c in scale_range if isinstance(c, str)]
+    return found
+
+
+def _is_color(text: str, name: str) -> bool:
+    """Whether the CSS colour ``text`` is ``name``, by name (``seagreen`` is green) or by the hue of a hex colour."""
+    text = text.strip().lower()
+    if name in text:
+        return True
+    match = re.fullmatch(r"#([0-9a-f]{3}|[0-9a-f]{6})", text)
+    if not match or name not in HUES:
+        return False
+    digits = match.group(1)
+    if len(digits) == 3:
+        digits = "".join(d * 2 for d in digits)
+    r, g, b = (int(digits[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    high, low = max(r, g, b), min(r, g, b)
+    if high - low < 0.15:
+        return False
+    if high == r:
+        hue = 60 * ((g - b) / (high - low))
+    elif high == g:
+        hue = 60 * ((b - r) / (high - low) + 2)
+    else:
+        hue = 60 * ((r - g) / (high - low) + 4)
+    hue = hue - 360 if hue > 340 else hue
+    start, end = HUES[name]
+    return start <= hue < end
+
+
 def color(name: str, value: str, *, workstream: str = "W2") -> Check:
+    """Chart ``name`` draws its marks in ``value``, e.g. ``green``, by a mark colour, value encoding or colour scale."""
     def test(state):
-        text = str(state.config(name).get("spec", {})).lower()
-        return None if value.lower() in text else f"{name} spec has no {value!r}"
+        colors = _colors(state.config(name).get("spec"))
+        if colors and all(_is_color(c, value.lower()) for c in colors):
+            return None
+        return f"{name} draws in {colors or 'the default colour'}, wanted {value}"
     return Check("color", f"{name} is {value}", test, workstream)
 
 
@@ -559,16 +661,20 @@ def filter_on(column: str, *, workstream: str = "W1") -> Check:
         for entry in state.graph.get("filters") or []:
             if entry.get("column") == column:
                 return None
+        problems = []
         for n in state.of_kind("filter"):
             if state.config(n).get("field") != column:
                 continue
             wired = any(e["to"] in (f"{n}.value", f"{n}.selection") for e in state.edges)
             if wired and state.shown(n):
                 return None
-            return f"filter node {n} on {column} is {'shown' if state.shown(n) else 'not shown'} and {'wired' if wired else 'has no widget'}"
+            problems.append(f"filter node {n} on {column} is {'shown' if state.shown(n) else 'not shown'} "
+                            f"and {'wired' if wired else 'has no widget'}")
         for n in state.of_kind("chart"):
             if state.visible(n) and _bound_filter(state.config(n).get("spec"), column):
                 return None
+        if problems:
+            return "; ".join(problems)
         text = [n for n in state.added if state.component(n) in (MARKDOWN_ID, HEADING_ID)]
         return f"no filter on {column}" + (f"; added text instead: {text}" if text else "")
     return Check("filter", f"a filter on {column}", test, workstream)
@@ -595,7 +701,7 @@ def no_hidden_leftovers(*, workstream: str = "W6") -> Check:
     def test(state):
         left = [n for n in state.added if not state.shown(n)]
         return f"hidden nodes left behind: {left}" if left else None
-    return Check("no_leftovers", "no hidden nodes left behind", test, workstream)
+    return Check("no_leftovers", "no hidden nodes left behind", test, workstream, guard=True)
 
 
 def no_unused(*, workstream: str = "W6") -> Check:
@@ -624,7 +730,7 @@ def no_duplicates(*, workstream: str = "W2") -> Check:
                 dupes.append((seen[key], n))
             seen[key] = n
         return f"duplicate views: {dupes}" if dupes else None
-    return Check("no_duplicates", "no duplicate views", test, workstream)
+    return Check("no_duplicates", "no duplicate views", test, workstream, guard=True)
 
 
 def no_new_nodes(*, kinds: Sequence[str] | None = None, workstream: str = "W6", id: str = "no_new_nodes") -> Check:
@@ -633,7 +739,7 @@ def no_new_nodes(*, kinds: Sequence[str] | None = None, workstream: str = "W6", 
         added = state.added if kinds is None else [n for k in kinds for n in state.of_kind(k, state.added)]
         return f"added {added}" if added else None
     what = "/".join(kinds) if kinds else "nodes"
-    return Check(id, f"no new {what}", test, workstream)
+    return Check(id, f"no new {what}", test, workstream, guard=True)
 
 
 def edited_in_place(name: str | None = None, *, kind: str = "chart", workstream: str = "W2") -> Check:
@@ -677,8 +783,11 @@ def _rows(state: TurnState) -> list[list[str]]:
     return rows
 
 
-def same_row(*names: str, ordered: bool = True, workstream: str = "W3") -> Check:
-    """The tiles ``names`` are side by side in one grid row, in this order when ``ordered``."""
+def same_row(*names: str, ordered: bool = True, guard: bool = False, workstream: str = "W3") -> Check:
+    """
+    The tiles ``names`` are side by side in one grid row, in this order when
+    ``ordered``; a ``guard`` when the turn is asked to keep them so.
+    """
     def test(state):
         rows = _rows(state)
         for row in rows:
@@ -688,7 +797,7 @@ def same_row(*names: str, ordered: bool = True, workstream: str = "W3") -> Check
                     return f"{names} in one row but in the order {row}"
                 return None
         return f"not in one row: rows are {rows}"
-    return Check(f"row_{names[0]}", f"{' | '.join(names)} in one row", test, workstream)
+    return Check(f"row_{names[0]}", f"{' | '.join(names)} in one row", test, workstream, guard=guard)
 
 
 def width(name: str, percent: float, *, tolerance: float = 4.0, workstream: str = "W3") -> Check:
@@ -702,10 +811,16 @@ def width(name: str, percent: float, *, tolerance: float = 4.0, workstream: str 
 
 
 def same_height(*names: str, workstream: str = "W3") -> Check:
+    """The tiles ``names`` are visible and set to one height; tiles at their default height do not count as matched."""
     def test(state):
-        heights = {n: (state.tiles.get(n) or Tile(None, False)).height for n in names}
+        hidden = [n for n in names if not state.visible(n)]
+        if hidden:
+            return f"no visible tile for {hidden}"
+        heights = {n: state.tiles[n].height for n in names}
+        if None in heights.values():
+            return f"heights not set: {heights}"
         return None if len(set(heights.values())) == 1 else f"heights differ: {heights}"
-    return Check("same_height", f"{' and '.join(names)} equally tall", test, workstream)
+    return Check("same_height", f"{' and '.join(names)} equally tall", test, workstream, guard=True)
 
 
 def before_views(kind: str = "kpi", *, workstream: str = "W3") -> Check:
@@ -775,13 +890,13 @@ def unchanged(*, workstream: str = "W6") -> Check:
     def test(state):
         touched = state.added + state.changed + state.removed
         return f"changed the dashboard: {touched}" if touched else None
-    return Check("unchanged", "dashboard left as it was", test, workstream)
+    return Check("unchanged", "dashboard left as it was", test, workstream, guard=True)
 
 
 def kept(name: str, *, workstream: str = "W6") -> Check:
     def test(state):
         return None if name in state.nodes and state.visible(name) else f"{name} is gone or hidden"
-    return Check(f"kept_{name}", f"{name} still shown", test, workstream)
+    return Check(f"kept_{name}", f"{name} still shown", test, workstream, guard=True)
 
 
 def max_requests(limit: int = 12, *, workstream: str = "W6") -> Check:
@@ -793,4 +908,38 @@ def max_requests(limit: int = 12, *, workstream: str = "W6") -> Check:
 def no_error(*, workstream: str = "W6") -> Check:
     def test(state):
         return state.error
-    return Check("no_error", "the turn finished", test, workstream)
+    return Check("no_error", "the turn finished", test, workstream, guard=True)
+
+
+# Phrases of a reply that says the assistant cannot do what was asked.
+APOSTROPHE = "['\u2019]"
+DECLINES = re.compile(
+    rf"\b(can{APOSTROPHE}?t|cannot|can not|unable to|not able to|isn{APOSTROPHE}?t (possible|supported|available)|"
+    rf"not (possible|supported|available)|no way to|don{APOSTROPHE}?t (have|support)|"
+    rf"doesn{APOSTROPHE}?t (have|support))\b",
+    re.IGNORECASE,
+)
+
+
+def declines(*, workstream: str = "W6") -> Check:
+    """The reply says the assistant cannot do what was asked, for a request no tool can carry out."""
+    def test(state):
+        text = state.output or ""
+        return None if DECLINES.search(text) else f"the reply does not decline: {text[:160]!r}"
+    return Check("declines", "says it cannot do this", test, workstream)
+
+
+def answer_names(sql: str, aliases: dict[str, str] | None = None, *, workstream: str = "W6",
+                 id: str = "answer") -> Check:
+    """
+    The reply names the reference answer, the first cell of ``sql``, or its
+    alias, e.g. a state's name for its code, as a whole word.
+    """
+    def test(state):
+        value = str(state.reference(sql).iloc[0, 0])
+        words = [value, *([aliases[value]] if aliases and value in aliases else [])]
+        text = state.output or ""
+        if any(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE) for word in words):
+            return None
+        return f"the reply does not name {' or '.join(words)}: {text[:160]!r}"
+    return Check(id, f"the reply names the answer to {sql}", test, workstream)

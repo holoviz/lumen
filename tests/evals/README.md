@@ -92,10 +92,14 @@ that attempted it.
 layout edits, edits in place, wrong-number traps, chart design, claims against the dashboard and
 runaway turns. Each scenario runs on a small synthetic fixture generated in code, optionally from a
 seeded dashboard, and checks the dashboard every turn leaves (its YAML and the live node outputs,
-with numbers compared against SQL on the fixture), never the assistant's text. A turn did what was
-asked when all its functional checks pass (nodes, tiles, numbers, wiring, layout), partly when some
-do; chart titles, bar counts and the request budget are quality checks, reported in their own
-columns.
+with numbers compared against SQL on the fixture). Only the two claims scenarios, where the reply is
+the answer, also check the assistant's text. Goal checks test what was asked (nodes, tiles, numbers,
+wiring, layout); guards test that the turn did no harm (no hidden leftovers, notes, duplicates or
+other changes) and pass for an agent that does nothing, so they never earn credit alone. A turn did
+what was asked when every goal check and guard passes, partly when at least one goal check does, and
+not otherwise; an agent that does nothing scores 0 did and 0 partly. Chart titles, bar counts and the
+request budget are quality checks. Goals, guards and quality each get a column of their own, and a
+`diverged` column counts the places a replay sent the model something other than the recording.
 
 ```bash
 pixi run -e evals python -m lumen.agent.scenarios --themes                        # replay the cassettes
@@ -111,5 +115,7 @@ as `replayed_on`). `baseline.json` is the recorded baseline, and
 `EXPECTED_FAILURES` in `lumen/agent/scenarios/catalog.py` lists the checks that fail in it with
 the workstream of the improvement plan meant to fix each. `test_scenarios.py` replays the
 cassettes offline: those checks report xfail, and XPASS once they flip. When the agent's
-instructions or tools change, the tests skip the replays as stale, and the replay command exits
-with an error naming the `--live` command that records them again.
+instructions or tools change, the per-check replays skip as stale, `test_recorded_cassettes_are_current`
+fails naming the `--live` command that records them again, and so does the replay command. A replay
+that diverges from its recording fails the tests unless `ALLOWED_DIVERGENCES` in `test_scenarios.py`
+lists it.

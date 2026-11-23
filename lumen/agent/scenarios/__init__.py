@@ -3,10 +3,12 @@ Scenarios of the dashboard assistant, drawn from its playtests: a fixture,
 a prompt per turn and checks on the dashboard each turn leaves, so every
 change to the assistant can be measured against a recorded baseline.
 
-A turn did what was asked when all its functional checks pass (nodes,
-tiles, numbers, wiring, layout), partly when some do and not when none
-do; its quality checks (chart titles, bar counts, the request budget) are
-scored apart. Checks a later workstream of the plan is meant to
+A turn did what was asked when all its goal checks (nodes, tiles,
+numbers, wiring, layout) and guards (no hidden leftovers, notes or
+duplicates) pass, partly when some goal check does and not when none
+does: guards pass for an agent that does nothing, so they never earn
+credit alone. Its quality checks (chart titles, bar counts, the request
+budget) are scored apart. Checks a later workstream of the plan is meant to
 fix are listed in a scenario's ``xfail`` with that workstream, so a replay
 of the recorded cassettes stays green and reports them as they flip.
 
@@ -61,6 +63,7 @@ class CheckOutcome:
     detail: str = ""
     xfail: str | None = None
     quality: bool = False
+    guard: bool = False
 
 
 @dataclass
@@ -82,16 +85,20 @@ class TurnOutcome:
 
     @property
     def verdict(self) -> str:
-        """Whether the turn did what was asked, by its functional checks: nodes, tiles, numbers, wiring and layout."""
-        passed = [c.passed for c in self.checks if not c.quality]
-        if all(passed):
+        """
+        Whether the turn did what was asked: ``did`` when every goal check and
+        guard passes, ``partly`` when some goal check does, else ``not``.
+        """
+        goals = [c.passed for c in self.checks if not c.quality and not c.guard]
+        guards = [c.passed for c in self.checks if c.guard]
+        if goals and all(goals) and all(guards):
             return "did"
-        return "partly" if any(passed) else "not"
+        return "partly" if any(goals) else "not"
 
     @property
     def clean(self) -> bool:
         """Whether the turn did what was asked and also passed its quality checks: titles, bar counts, request budget."""
-        return all(c.passed for c in self.checks)
+        return self.verdict == "did" and all(c.passed for c in self.checks)
 
 
 @dataclass
@@ -103,6 +110,8 @@ class ScenarioResult:
     error: str | None = None
     stale: bool = False
     """Replay only: the cassette was recorded against another agent surface."""
+    divergences: list[dict[str, Any]] = field(default_factory=list)
+    """Replay only: where the agent sent the model something other than the recording, e.g. a tool return."""
 
 
 def scenario_agent(model: Any) -> Any:
@@ -161,7 +170,7 @@ def evaluate(scenario: Scenario, index: int, state: TurnState) -> TurnOutcome:
     for check in scenario.turns[index].checks:
         passed, detail = check.run(state)
         outcomes.append(CheckOutcome(check.id, check.description, check.workstream, passed, detail,
-                                     scenario.xfail.get(f"{index + 1}/{check.id}"), check.quality))
+                                     scenario.xfail.get(f"{index + 1}/{check.id}"), check.quality, check.guard))
     return TurnOutcome(
         prompt=state.prompt, checks=outcomes, requests=state.requests, input_tokens=state.input_tokens,
         output_tokens=state.output_tokens, cached_tokens=state.cached_tokens, refusals=state.refusals,
@@ -197,7 +206,13 @@ async def run_scenario(scenario: Scenario, model: Any, *, trace: str | os.PathLi
     Run every turn of ``scenario`` with ``model``, e.g. a live model or a
     ``Cassette``, checking the dashboard after each; ``trace`` records the
     model trace a cassette is played back from.
+
+    Tool calls run one at a time: several calls of one response edit the
+    same dashboard, and run in parallel they race on its graph, so a replay
+    could end its turn on an error the recording never had.
     """
+    from pydantic_ai.tool_manager import ToolManager
+
     from ..headless import AgentSession
     from .fixtures import fixture_metrics, fixture_source
 
@@ -210,7 +225,8 @@ async def run_scenario(scenario: Scenario, model: Any, *, trace: str | os.PathLi
             seed(session, scenario.seed)
         for index, turn in enumerate(scenario.turns):
             before = session.graph()
-            ran = await session.ask(turn.prompt)
+            with ToolManager.parallel_execution_mode("sequential"):
+                ran = await session.ask(turn.prompt)
             outcome = evaluate(scenario, index, turn_state(session, ran, before))
             played = sum(t.requests for t in result.turns)
             recorded_usage(outcome, getattr(model, "responses", None), played)
@@ -223,6 +239,9 @@ async def run_scenario(scenario: Scenario, model: Any, *, trace: str | os.PathLi
         result.error = f"{type(exc).__name__}: {exc}"
     finally:
         session.close()
+    result.divergences = [
+        {"request": d.request, "kind": d.kind, "tool": d.tool_name} for d in getattr(model, "divergences", None) or []
+    ]
     return result
 
 
@@ -274,28 +293,34 @@ def summarize(results: Iterable[ScenarioResult]) -> dict[str, Any]:
     """Counts of turns that did what was asked, partly or not, by scenario, theme and in total."""
     results = list(results)
 
-    def tally(turns: list[TurnOutcome]) -> dict[str, Any]:
+    def tally(group: list[ScenarioResult]) -> dict[str, Any]:
+        turns = [t for r in group for t in r.turns]
         verdicts = [t.verdict for t in turns]
         checks = [c for t in turns for c in t.checks]
         quality = [c for c in checks if c.quality]
+        guards = [c for c in checks if c.guard]
+        goals = [c for c in checks if not c.quality and not c.guard]
         return {
             "turns": len(turns), "did": verdicts.count("did"), "partly": verdicts.count("partly"),
             "not": verdicts.count("not"), "did_with_quality": sum(t.clean for t in turns),
             "checks": len(checks), "checks_passed": sum(c.passed for c in checks),
+            "goal_checks": len(goals), "goal_passed": sum(c.passed for c in goals),
+            "guard_checks": len(guards), "guard_passed": sum(c.passed for c in guards),
             "quality_checks": len(quality), "quality_passed": sum(c.passed for c in quality),
+            "divergences": sum(len(r.divergences) for r in group),
             "refusals_per_turn": round(_per_turn(turns, "refusals"), 2),
             "requests_per_turn": round(_per_turn(turns, "requests"), 2),
             "tokens_per_turn": round(_per_turn(turns, "input_tokens") + _per_turn(turns, "output_tokens")),
             "max_requests": max((t.requests for t in turns), default=0),
         }
 
-    themes: dict[str, list[TurnOutcome]] = {}
+    themes: dict[str, list[ScenarioResult]] = {}
     for result in results:
-        themes.setdefault(result.theme, []).extend(result.turns)
+        themes.setdefault(result.theme, []).append(result)
     return {
-        "scenarios": {r.name: tally(r.turns) for r in results},
-        "themes": {theme: tally(turns) for theme, turns in themes.items()},
-        "total": tally([t for r in results for t in r.turns]),
+        "scenarios": {r.name: tally([r]) for r in results},
+        "themes": {theme: tally(group) for theme, group in themes.items()},
+        "total": tally(results),
     }
 
 
@@ -312,8 +337,8 @@ def to_json(results: list[ScenarioResult], **meta: Any) -> dict[str, Any]:
 
 def table(summary: dict[str, Any], group: str = "scenarios") -> str:
     """The summary as a plain text table, one row per scenario (or theme) and a total."""
-    header = ["", "turns", "did", "partly", "not", "did+quality", "quality", "refusals/turn", "requests/turn",
-              "tokens/turn"]
+    header = ["", "turns", "did", "partly", "not", "did+quality", "goals", "guards", "quality", "refusals/turn",
+              "requests/turn", "tokens/turn", "diverged"]
     rows = [[name, *(_cells(row))] for name, row in summary[group].items()]
     rows.append(["total", *_cells(summary["total"])])
     widths = [max(len(str(r[i])) for r in [header, *rows]) for i in range(len(header))]
@@ -325,8 +350,9 @@ def table(summary: dict[str, Any], group: str = "scenarios") -> str:
 
 def _cells(row: dict[str, Any]) -> list[Any]:
     return [row["turns"], row["did"], row["partly"], row["not"], row["did_with_quality"],
+            f"{row['goal_passed']}/{row['goal_checks']}", f"{row['guard_passed']}/{row['guard_checks']}",
             f"{row['quality_passed']}/{row['quality_checks']}", f"{row['refusals_per_turn']:.2f}",
-            f"{row['requests_per_turn']:.1f}", f"{row['tokens_per_turn']:,}"]
+            f"{row['requests_per_turn']:.1f}", f"{row['tokens_per_turn']:,}", row["divergences"]]
 
 
 def diff(base: dict[str, Any], new: dict[str, Any]) -> list[str]:
