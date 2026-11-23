@@ -3,8 +3,8 @@ fixture: commerce
 turns:
 - question: Which customer has the most paid orders? Show only that customer and the count.
   nodes:
-  - paid_orders_by_customer
   - top_customer_paid_orders
+  - top_customer_paid_orders_table
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -18,26 +18,26 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: te82cf56a
+      - id: tb2057b4d
         actor: user
-        at: '2026-11-23T09:43:56Z'
+        at: '2026-11-23T10:13:48Z'
         summary: Added data.
-      - id: t1627e659
+      - id: t84d69fda
         actor: agent
-        at: '2026-11-23T09:44:01Z'
-        run: run-2ceb4ed951c6
-        summary: Added paid_orders_by_customer. Connected data to paid_orders_by_customer. Added top_customer_paid_orders.
-          Connected paid_orders_by_customer to top_customer_paid_orders.
+        at: '2026-11-23T10:13:51Z'
+        run: run-df7a1bd21134
+        summary: Added top_customer_paid_orders. Connected data to top_customer_paid_orders. Added top_customer_paid_orders_table.
+          Connected top_customer_paid_orders to top_customer_paid_orders_table.
     nodes:
       data:
         component: Lumen/source
-        origin: te82cf56a
+        origin: tb2057b4d
         config:
           ref: data
         position: [0.0, 44.0]
-      paid_orders_by_customer:
+      top_customer_paid_orders:
         component: Lumen/sql
-        origin: t1627e659
+        origin: t84d69fda
         config:
           sql: |-
             SELECT
@@ -53,28 +53,25 @@ turns:
             ORDER BY
               paid_order_count DESC
             LIMIT 1
-          table: paid_orders_by_customer
+          table: top_customer_paid_orders
         position: [380.0, 0.0]
-      top_customer_paid_orders:
+      top_customer_paid_orders_table:
         component: Lumen/table_view
-        origin: t1627e659
+        origin: t84d69fda
         config:
-          spec:
-            page_size: 1
-            formatters:
-              paid_order_count: number
+          spec: {}
         position: [760.0, 44.0]
     edges:
       - from: data.source
-        to: paid_orders_by_customer.source
-      - from: paid_orders_by_customer.pipeline
-        to: top_customer_paid_orders.pipeline
+        to: top_customer_paid_orders.source
+      - from: top_customer_paid_orders.pipeline
+        to: top_customer_paid_orders_table.pipeline
     layout:
       tiles:
-        - node: top_customer_paid_orders
+        - node: top_customer_paid_orders_table
           width: 100.0
           height: 400
         - node: data
           visible: false
-        - node: paid_orders_by_customer
+        - node: top_customer_paid_orders
           visible: false

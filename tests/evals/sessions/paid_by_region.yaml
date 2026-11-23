@@ -4,7 +4,6 @@ turns:
 - question: What is the total paid order amount per region?
   nodes:
   - paid_order_amount_by_region
-  - paid_order_amount_by_region_table
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -18,26 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t72f31787
+      - id: tdf5d8d56
         actor: user
-        at: '2026-11-23T09:43:46Z'
+        at: '2026-11-23T10:13:40Z'
         summary: Added data.
-      - id: t4bfc07d0
+      - id: t35a850a4
         actor: agent
-        at: '2026-11-23T09:43:51Z'
-        run: run-84d9c0dfeb56
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
-          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
+        at: '2026-11-23T10:13:44Z'
+        run: run-5cdb542ab4bb
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: t72f31787
+        origin: tdf5d8d56
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t4bfc07d0
+        origin: t35a850a4
         config:
           sql: |-
             SELECT
@@ -47,34 +45,18 @@ turns:
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND NOT c."region" IS NULL
+              o."status" = 'paid' AND NOT c."region" IS NULL AND TRIM(c."region") <> ''
             GROUP BY
               c."region"
             ORDER BY
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
-      paid_order_amount_by_region_table:
-        component: Lumen/table_view
-        origin: t4bfc07d0
-        config:
-          spec:
-            formatters:
-              total_paid_order_amount:
-                type: money
-                symbol: $
-                decimals: 0
-        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
-      - from: paid_order_amount_by_region.pipeline
-        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
-        - node: paid_order_amount_by_region_table
-          width: 100.0
-          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region
@@ -95,31 +77,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t72f31787
+      - id: tdf5d8d56
         actor: user
-        at: '2026-11-23T09:43:46Z'
+        at: '2026-11-23T10:13:40Z'
         summary: Added data.
-      - id: t4bfc07d0
+      - id: t35a850a4
         actor: agent
-        at: '2026-11-23T09:43:51Z'
-        run: run-84d9c0dfeb56
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
-          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
-      - id: t91617d54
+        at: '2026-11-23T10:13:44Z'
+        run: run-5cdb542ab4bb
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
+      - id: t1f01d266
         actor: agent
-        at: '2026-11-23T09:43:55Z'
-        run: run-cfe516329ee2
+        at: '2026-11-23T10:13:47Z'
+        run: run-d8b590c39719
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: t72f31787
+        origin: tdf5d8d56
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t4bfc07d0
+        origin: t35a850a4
         config:
           sql: |-
             SELECT
@@ -129,34 +110,21 @@ turns:
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND NOT c."region" IS NULL AND c."region" = 'west'
+              o."status" = 'paid'
+              AND NOT c."region" IS NULL
+              AND TRIM(c."region") <> ''
+              AND c."region" = 'west'
             GROUP BY
               c."region"
             ORDER BY
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
-      paid_order_amount_by_region_table:
-        component: Lumen/table_view
-        origin: t4bfc07d0
-        config:
-          spec:
-            formatters:
-              total_paid_order_amount:
-                type: money
-                symbol: $
-                decimals: 0
-        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
-      - from: paid_order_amount_by_region.pipeline
-        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
-        - node: paid_order_amount_by_region_table
-          width: 100.0
-          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region

@@ -18,57 +18,59 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t5f710ca4
+      - id: t2b863951
         actor: user
-        at: '2026-11-23T09:44:10Z'
+        at: '2026-11-23T10:13:57Z'
         summary: Added data.
-      - id: t005cd033
+      - id: t19bc2550
         actor: agent
-        at: '2026-11-23T09:44:13Z'
-        run: run-59012064f6d7
+        at: '2026-11-23T10:14:00Z'
+        run: run-33a9598d54d7
         summary: Added turbine_locations_capacity. Connected data to turbine_locations_capacity. Added turbines_by_capacity_map.
           Connected turbine_locations_capacity to turbines_by_capacity_map.
     nodes:
       data:
         component: Lumen/source
-        origin: t5f710ca4
+        origin: t2b863951
         config:
           ref: data
         position: [0.0, 44.0]
       turbine_locations_capacity:
         component: Lumen/sql
-        origin: t005cd033
+        origin: t19bc2550
         config:
           sql: |-
             SELECT
               "p_name",
               "t_state",
-              "xlong",
-              "ylat",
+              "xlong" AS lon,
+              "ylat" AS lat,
               "t_cap"
             FROM turbines
             WHERE
-              NOT "xlong" IS NULL
+              NOT "p_name" IS NULL
+              AND TRIM("p_name") <> ''
+              AND NOT "t_state" IS NULL
+              AND TRIM("t_state") <> ''
+              AND NOT "xlong" IS NULL
               AND NOT "ylat" IS NULL
               AND NOT "t_cap" IS NULL
               AND "t_cap" <> -9999
-              AND TRIM("p_name") <> ''
-              AND TRIM("t_state") <> ''
           table: turbine_locations_capacity
         position: [380.0, 0.0]
       turbines_by_capacity_map:
         component: Lumen/deckgl
-        origin: t005cd033
+        origin: t19bc2550
         config:
           spec:
             layers:
               - '@@type': ScatterplotLayer
-                getPosition: '@@=[xlong, ylat]'
+                getPosition: '@@=[lon, lat]'
                 radiusUnits: pixels
                 getRadius: '@@=2 + t_cap / 200'
                 pickable: true
             tooltip:
-              text: '{p_name}, {t_state}: {t_cap} MW'
+              text: '{p_name} ({t_state}) — capacity: {t_cap}'
         position: [760.0, 44.0]
     edges:
       - from: data.source
