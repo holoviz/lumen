@@ -24,10 +24,10 @@ from lumen.agent.scenarios.catalog import (
     WIND_KPIS_LAST,
 )
 from lumen.agent.scenarios.checks import (
-    Tile, TurnState, before_views, chart_mark, charts_titled, color,
-    edited_in_place, filter_on, holds_value, kpi_values, kpis, matches_series,
-    max_requests, no_hidden_leftovers, same_height, same_row, shows_row,
-    shows_series, shows_value, width,
+    Tile, TurnState, answer_names, before_views, chart_mark, charts_titled,
+    color, declines, edited_in_place, filter_on, holds_value, kpi_values, kpis,
+    matches_series, max_requests, no_hidden_leftovers, same_height, same_row,
+    shows_row, shows_series, shows_value, width,
 )
 from lumen.agent.scenarios.fixtures import (
     fixture_source, penguins, quakes, states, turbines,
@@ -302,6 +302,39 @@ def test_color_reads_the_marks_not_the_spec_text(spec, expected):
     assert color("chart", "green").run(state)[0] is expected
 
 
+@pytest.mark.parametrize(("reply", "expected"), [
+    ("California leads at 235.8 MW; Texas is **second**.", True),
+    ("No, CA has the most capacity.", True),
+    ("Texas, not California, has the most capacity.", False),
+    ("It is Texas; California is not the top state.", False),
+    ("Yes, Texas has the most capacity.", False),
+], ids=["named", "code", "not-before", "not-after", "missing"])
+def test_the_answer_must_be_named_and_not_negated(reply, expected):
+    state = TurnState(prompt="x", graph={}, before={}, output=reply,
+                      reference=lambda sql: pd.DataFrame({"t_state": ["CA"]}))
+    assert answer_names("SELECT ...", {"CA": "California"}).run(state)[0] is expected
+
+
+@pytest.mark.parametrize(("cassette", "mode"), [(True, "sequential"), (False, "parallel")], ids=["replay", "live"])
+async def test_only_replays_run_tool_calls_one_at_a_time(monkeypatch, cassette, mode):
+    from pydantic_ai import tool_manager
+
+    from lumen.agent import headless
+
+    seen = []
+    ask = headless.AgentSession.ask
+
+    async def spy(self, prompt):
+        seen.append(tool_manager._parallel_execution_mode_ctx_var.get())
+        return await ask(self, prompt)
+
+    monkeypatch.setattr(headless.AgentSession, "ask", spy)
+    scenario = Scenario("demo", "claims", "turbines", turns=[Turn("Hi.", [declines()])])
+    model = load_cassette(cassette_path(BASELINE_DIR, "email_schedule")) if cassette else scripted()
+    await run_scenario(scenario, model)
+    assert seen == [mode]
+
+
 @pytest.mark.parametrize("name", sorted(BY_NAME))
 async def test_an_agent_that_does_nothing_scores_nothing(name):
     """Guards pass when nothing changes, so a turn that does nothing must not earn did or partly from them."""
@@ -314,7 +347,7 @@ async def test_an_agent_that_does_nothing_scores_nothing(name):
 async def test_refusals_and_requests_are_counted():
     async with state_after("turbines", scripted([
         ("add_chart", {"data": "nope", "name": "x", "spec": {"mark": "bar"}}),
-        ("place_tile", {"name": "state_capacity_chart", "area": "top"}),
+        ("place_tile", {"name": "nope", "width": 50}),
     ]), seed_yaml=WIND) as state:
         assert state.requests == 3
         assert state.refusals == 2

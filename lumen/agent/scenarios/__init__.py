@@ -207,10 +207,13 @@ async def run_scenario(scenario: Scenario, model: Any, *, trace: str | os.PathLi
     ``Cassette``, checking the dashboard after each; ``trace`` records the
     model trace a cassette is played back from.
 
-    Tool calls run one at a time: several calls of one response edit the
-    same dashboard, and run in parallel they race on its graph, so a replay
-    could end its turn on an error the recording never had.
+    A cassette replays the tool calls of a response one at a time, so a
+    replay cannot end its turn on a race between them that the recording
+    never had; a live model runs them as the app does.
     """
+    from contextlib import nullcontext
+
+    from panel_agents.adapters.cassette import Cassette
     from pydantic_ai.tool_manager import ToolManager
 
     from ..headless import AgentSession
@@ -225,7 +228,8 @@ async def run_scenario(scenario: Scenario, model: Any, *, trace: str | os.PathLi
             seed(session, scenario.seed)
         for index, turn in enumerate(scenario.turns):
             before = session.graph()
-            with ToolManager.parallel_execution_mode("sequential"):
+            replaying = isinstance(model, Cassette)
+            with ToolManager.parallel_execution_mode("sequential") if replaying else nullcontext():
                 ran = await session.ask(turn.prompt)
             outcome = evaluate(scenario, index, turn_state(session, ran, before))
             played = sum(t.requests for t in result.turns)

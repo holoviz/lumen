@@ -929,17 +929,32 @@ def declines(*, workstream: str = "W6") -> Check:
     return Check("declines", "says it cannot do this", test, workstream)
 
 
+# A negation right before a name ("not California"), or after it within a word ("California is not").
+NEGATED_BEFORE = re.compile(r"\b(not|never|rather than|instead of)[\s,]+$", re.IGNORECASE)
+NEGATED_AFTER = re.compile(
+    rf"^\W*(\w+\W+)?(is not|was not|does not|isn{APOSTROPHE}t|wasn{APOSTROPHE}t|doesn{APOSTROPHE}t)\b", re.IGNORECASE)
+
+
+def _affirms(text: str, word: str) -> bool:
+    """Whether ``text`` names ``word`` at least once outside a negation, e.g. not in "Texas, not California"."""
+    for match in re.finditer(rf"\b{re.escape(word)}\b", text, re.IGNORECASE):
+        before, after = text[max(0, match.start() - 40):match.start()], text[match.end():match.end() + 40]
+        if not NEGATED_BEFORE.search(before) and not NEGATED_AFTER.match(after):
+            return True
+    return False
+
+
 def answer_names(sql: str, aliases: dict[str, str] | None = None, *, workstream: str = "W6",
                  id: str = "answer") -> Check:
     """
     The reply names the reference answer, the first cell of ``sql``, or its
-    alias, e.g. a state's name for its code, as a whole word.
+    alias, e.g. a state's name for its code, as a whole word and not negated.
     """
     def test(state):
         value = str(state.reference(sql).iloc[0, 0])
         words = [value, *([aliases[value]] if aliases and value in aliases else [])]
-        text = state.output or ""
-        if any(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE) for word in words):
+        text = (state.output or "").replace("*", "").replace("_", "")
+        if any(_affirms(text, word) for word in words):
             return None
-        return f"the reply does not name {' or '.join(words)}: {text[:160]!r}"
+        return f"the reply does not give {' or '.join(words)} as the answer: {text[:160]!r}"
     return Check(id, f"the reply names the answer to {sql}", test, workstream)
