@@ -518,12 +518,7 @@ def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[s
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """
-    The authoring tools: add_sql, add_metric, add_chart, add_table, add_map
-    and add_text. add_metric is offered in every app, so the tools and the
-    agent's fingerprint do not depend on the app; in an app without metrics
-    it refuses.
-    """
+    """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map and add_text."""
     return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
 
 
