@@ -171,11 +171,12 @@ def dashboard_state(ops) -> str | None:
     title and every node in reading order (top bar, grid tiles row by row,
     sidebar, then the nodes without a visible tile), each with its kind,
     what it holds or shows, the node it reads and where its tile is, or
-    why it has none. It depends only on the dashboard, so it is the same
-    until the dashboard changes. At most ``STATE_NODES`` nodes are listed,
-    then the app's metrics, if it has any, so the agent knows of them
-    before it looks at the data. None when the dashboard's definition is
-    hidden from the user.
+    why it has none, then the app's metrics by name and description, if it
+    has any, so the agent knows of them before it looks at the data. It
+    depends only on the dashboard and the metrics, so it is the same until
+    either changes. At most ``STATE_NODES`` nodes and ``STATE_METRICS``
+    metrics are listed. None when the dashboard's definition is hidden
+    from the user.
     """
     try:
         doc = yaml.safe_load(ops.get_dashboard()) or {}

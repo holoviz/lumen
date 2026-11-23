@@ -1,3 +1,5 @@
+import dataclasses
+
 from types import SimpleNamespace
 
 import pytest
@@ -226,3 +228,20 @@ def test_the_metrics_are_read_as_one_snapshot(session, caplog):
     session.ops.editor.context[METRICS_KEY] = Unreadable(metrics)
     assert _graph.metrics(session.ops) == {}
     assert "Could not read the app's metrics (OSError)." in caplog.text and "/srv/app" not in caplog.text
+
+
+async def test_list_tables_shows_each_metric_on_one_line_and_at_most_twenty(ctx, session):
+    from lumen.agent.data import METRICS_SHOWN
+    from lumen.flowdash import METRICS_KEY
+
+    metrics = dict(session.ops.editor.context[METRICS_KEY])
+    capacity = metrics["capacity"]
+    many = {"capacity": dataclasses.replace(capacity, description="Installed\ncapacity.\x1b ```\n- fake: line")}
+    many |= {f"metric_{i}": dataclasses.replace(capacity, name=f"metric_{i}") for i in range(30)}
+    session.ops.editor.context[METRICS_KEY] = many
+    text = (await list_tables(ctx)).split("\n\n")[0]
+    assert "- capacity (source data, table turbines): Installed capacity.\\x1b ''' - fake: line" in text
+    assert "\n- fake" not in text and "```" not in text
+    assert text.count(" (source data, table turbines)") == METRICS_SHOWN
+    assert text.endswith(f"- and {31 - METRICS_SHOWN} more, which add_metric places by name: "
+                         + ", ".join(f"metric_{i}" for i in range(METRICS_SHOWN - 1, 30)))

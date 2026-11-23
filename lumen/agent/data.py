@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import weakref
 
+from typing import Any
+
 import sqlglot
 
 from panel_flowdash.agent import FlowDashDeps, OperationError
@@ -29,6 +31,7 @@ from ..flowdash.transforms import TRANSFORM_COMPONENTS
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
 from . import _graph
+from .edits import escape
 
 STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
@@ -40,6 +43,12 @@ NODE_SQL_CHARS = 300
 # The characters of a heading's, Markdown's or divider's text it shows.
 NODE_TEXT_CHARS = 120
 NODE_COLUMNS = 12
+# The metrics list_tables describes in full, the rest by name, and the characters of a metric's
+# description and of each of its fields' descriptions it shows.
+METRICS_SHOWN = 20
+METRIC_TEXT_CHARS = 160
+METRIC_FIELD_CHARS = 80
+METRIC_NAMES_CHARS = 600
 
 _METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
 
@@ -293,17 +302,26 @@ def _transform_text(component: str, config: dict) -> str:
 LISTED = (SQL_ID, METRIC_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *TRANSFORM_COMPONENTS, *_graph.TEXT_FIELDS)
 
 
+def _line(text: Any, limit: int) -> str:
+    """
+    ``text`` from the project file as list_tables shows it: on one line,
+    escaped, with no code fence, and cut after ``limit`` characters.
+    """
+    text = escape(" ".join(str(text or "").split())).replace("`" * 3, "'" * 3)
+    return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
 def _field(name: str, description: str, *notes: str | None) -> str:
-    details = [description, *(note for note in notes if note)]
+    details = [_line(description, METRIC_FIELD_CHARS), *(note for note in notes if note)]
     return f"{name} ({'; '.join(d for d in details if d)})" if any(details) else name
 
 
 def metric_line(metric: Metric) -> str:
     """A metric as list_tables shows it: what it is, its fields with their descriptions and formats, and its parameters."""
     where = f"source {metric.source}, " + (f"table {metric.table}" if metric.table else "SQL")
-    lines = [f"- {metric.name} ({where}): {metric.description}".rstrip(": ")]
+    lines = [f"- {metric.name} ({where}): {_line(metric.description, METRIC_TEXT_CHARS)}".rstrip(": ")]
     if metric.form == "sql":
-        sql = " ".join(metric.sql.split())
+        sql = escape(" ".join(metric.sql.split())).replace("`" * 3, "'" * 3)
         if len(sql) > NODE_SQL_CHARS:
             sql = f"{sql[:NODE_SQL_CHARS]} [... {len(sql) - NODE_SQL_CHARS} more characters]"
         lines.append(f"  query: {sql}")
@@ -315,16 +333,24 @@ def metric_line(metric: Metric) -> str:
             _field(d.name, d.description, d.time and f"time, grains {'/'.join(d.grains)}") for d in metric.dimensions.values()))
     if metric.parameters:
         lines.append("  parameters: " + ", ".join(
-            f"{p.name} ({'; '.join(filter(None, [p.description, p.describe()]))})" for p in metric.parameters.values()))
+            f"{p.name} ({'; '.join(filter(None, [_line(p.description, METRIC_FIELD_CHARS), p.describe()]))})"
+            for p in metric.parameters.values()))
     return "\n".join(lines)
 
 
 def metrics_listing(ops) -> str | None:
-    """The metrics the app defines, for list_tables, or None without any."""
-    metrics = _graph.metrics(ops)
+    """
+    The metrics the app defines, for list_tables: the first ``METRICS_SHOWN``
+    in full and the rest by name, or None without any.
+    """
+    metrics = list(_graph.metrics(ops).values())
     if not metrics:
         return None
-    return "\n".join(metric_line(metric) for metric in metrics.values())
+    lines = [metric_line(metric) for metric in metrics[:METRICS_SHOWN]]
+    if rest := metrics[METRICS_SHOWN:]:
+        names = _line(", ".join(m.name for m in rest), METRIC_NAMES_CHARS)
+        lines.append(f"- and {len(rest)} more, which add_metric places by name: {names}")
+    return "\n".join(lines)
 
 
 def listed(component: str) -> bool:
