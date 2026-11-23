@@ -105,7 +105,9 @@ pixi run -e evals python -m lumen.agent.scenarios --diff tests/evals/scenarios/b
 
 Replaying needs no key and takes about 30 seconds. A live run of all scenarios costs about 1.07M
 input tokens (96% of them cached), about $0.02 on gpt-6-luna; it reads `OPENROUTER_API_KEY` (or
-`--env-file`) and writes a gzipped model trace per scenario to `tests/evals/scenarios/`. `baseline.json` is the recorded baseline, and
+`--env-file`) and writes a gzipped model trace per scenario to `tests/evals/scenarios/`. A live run also writes `recorded.json` there with the commit of the agent code the cassettes were
+recorded against, and a replay reports that commit as the run's `commit` (and the checkout it ran on
+as `replayed_on`). `baseline.json` is the recorded baseline, and
 `EXPECTED_FAILURES` in `lumen/agent/scenarios/catalog.py` lists the checks that fail in it with
 the workstream of the improvement plan meant to fix each. `test_scenarios.py` replays the
 cassettes offline: those checks report xfail, and XPASS once they flip. When the agent's

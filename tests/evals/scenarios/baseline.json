@@ -1,9 +1,10 @@
 {
  "mode": "replay",
  "model": "openai/gpt-6-luna",
- "commit": "a23c9df5131d3e20eeee1ec19420296413badca9",
+ "commit": "af7b4355970afae220345b2ae8e22fa9af2cbe3a",
+ "replayed_on": "57035359990e8256166082f1fda3186b2c1bb131",
  "fingerprint": "c3900e565d643eb4",
- "date": "2026-11-23T00:05:24+00:00",
+ "date": "2026-11-23T00:12:00+00:00",
  "summary": {
   "scenarios": {
    "kpi_turbine_row": {
@@ -1301,7 +1302,7 @@
        "workstream": "W1",
        "passed": true,
        "detail": "",
-       "xfail": "W1",
+       "xfail": null,
        "quality": false
       },
       {
@@ -1479,7 +1480,7 @@
        "description": "a title at the top",
        "workstream": "W3",
        "passed": false,
-       "detail": "heading ['dashboard_title'] is not at the top (grid order ['species_counts_chart', 'bill_scatter', 'mass_chart', 'dashboard_explanation']...)",
+       "detail": "heading ['dashboard_title'] is not at the top (grid order ['species_counts_chart', 'bill_scatter', 'mass_chart', 'dashboard_title']...)",
        "xfail": "W3",
        "quality": false
       }
@@ -2737,7 +2738,7 @@
        "description": "4 labelled KPIs at the top",
        "workstream": "W1",
        "passed": false,
-       "detail": "0 visible KPI node(s), wanted 4; text-mark charts instead: ['female_share_kpi', 'penguin_count_kpi', 'mean_flipper_length_kpi', 'mean_body_mass_kg_kpi']",
+       "detail": "0 visible KPI node(s), wanted 4; text-mark charts instead: ['mean_body_mass_kg_kpi', 'penguin_count_kpi', 'mean_flipper_length_kpi', 'female_share_kpi']",
        "xfail": "W1",
        "quality": false
       },
@@ -2747,7 +2748,7 @@
        "workstream": "W4",
        "passed": true,
        "detail": "",
-       "xfail": "W4",
+       "xfail": null,
        "quality": false
       },
       {
@@ -2819,12 +2820,12 @@
       "species_counts_chart",
       "island_year_counts_chart",
       "body_mass_distribution_chart",
-      "penguin_dashboard_title",
       "flipper_mass_scatter_chart",
-      "female_share_kpi",
+      "mean_body_mass_kg_kpi",
       "penguin_count_kpi",
       "mean_flipper_length_kpi",
-      "mean_body_mass_kg_kpi",
+      "penguin_dashboard_title",
+      "female_share_kpi",
       "penguin_records_table"
      ],
      "changed": [],

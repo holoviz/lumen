@@ -31,6 +31,8 @@ from . import (
 from .catalog import BY_NAME, SCENARIOS
 
 CASSETTES = Path("tests/evals/scenarios")
+# Next to the cassettes: the commit of the agent code they were recorded against.
+RECORDED = "recorded.json"
 DEFAULT_MODEL = "openai/gpt-6-luna"
 
 
@@ -102,6 +104,13 @@ async def run(args) -> tuple[list, list[str]]:
     return results, stale
 
 
+def recorded_commit(cassettes: Path) -> str | None:
+    try:
+        return json.loads((cassettes / RECORDED).read_text()).get("commit")
+    except (OSError, ValueError):
+        return None
+
+
 def recorded_model(results: list) -> str | None:
     """The model the replayed cassettes were recorded with."""
     return next((t.model for r in results for t in r.turns if t.model), None)
@@ -127,9 +136,14 @@ def main(argv: list[str] | None = None):
     if stale:
         echo(stale_message(stale, everything=not args.scenario), err=True)
         sys.exit(1)
+    cassettes = Path(args.cassettes)
+    head = commit()
+    if args.live and args.record:
+        (cassettes / RECORDED).write_text(json.dumps({"commit": head, "model": args.model}, indent=1) + "\n")
     report = to_json(
         results, mode="live" if args.live else "replay", model=args.model if args.live else recorded_model(results),
-        commit=commit(), fingerprint=agent_fingerprint(), date=datetime.now(UTC).isoformat(timespec="seconds"),
+        commit=head if args.live else recorded_commit(cassettes), replayed_on=None if args.live else head,
+        fingerprint=agent_fingerprint(), date=datetime.now(UTC).isoformat(timespec="seconds"),
     )
     echo(table(report["summary"]))
     if args.themes:
