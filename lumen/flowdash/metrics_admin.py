@@ -266,6 +266,9 @@ def save_metric(
         problems = _write(project, _replaced(current, original, name, spec))
     if not problems:
         logger.info("Admin: %s saved metric %r.", _who(app), name)
+        from .nodes import metrics_changed
+
+        metrics_changed()
     return problems
 
 
@@ -287,6 +290,9 @@ def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = _UNS
         problems = _write(project, rest)
     if not problems:
         logger.info("Admin: %s deleted metric %r.", _who(app), name)
+        from .nodes import metrics_changed
+
+        metrics_changed()
     return problems
 
 

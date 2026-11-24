@@ -937,6 +937,31 @@ def _watch_refresh(editor: Any, node: Any) -> None:
     _REFRESHED[editor].add(node)
 
 
+# The editors showing a Lumen metric node, with the document of their session, see ``metrics_changed``.
+_METRIC_EDITORS: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+
+
+def metrics_changed() -> None:
+    """
+    Have every open dashboard with a metric node offer its provenance
+    labels and node actions anew, e.g. "Missing metric" once an admin
+    deleted the metric, after the project's metrics were saved or deleted.
+    Each one runs on its own session's event loop.
+    """
+    for editor, doc in list(_METRIC_EDITORS.items()):
+        refresh = getattr(editor, "refresh_provenance", None)
+        if refresh is None:
+            continue
+
+        def run(refresh=refresh):
+            try:
+                refresh()
+            except Exception:
+                logger.exception("Could not refresh the provenance labels of a dashboard.")
+
+        _schedule(run, doc, None)
+
+
 def _refresh_dashboard(editor: Any) -> None:
     for node in list(_REFRESHED.get(editor, ())):
         node._on_dashboard_refresh()
@@ -2114,6 +2139,11 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
 class MetricNode(PipelineNode):
 
     _reads_source = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        if self.editor is not None:
+            _METRIC_EDITORS[self.editor] = pn.state.curdoc
 
     metric = param.String(default="", doc="Name of a metric the app defines.")
 

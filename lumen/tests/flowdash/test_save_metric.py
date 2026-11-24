@@ -587,3 +587,26 @@ def test_a_failed_point_changes_nothing_without_an_edit_history(duck, project_fi
     assert after["nodes"] == before["nodes"] and after.get("edges") == before.get("edges")
     assert output(ops, "total_capacity", "value") == INFLATED
     editor.dispose()
+
+
+def test_deleting_a_metric_relabels_the_open_dashboards_views(ops):
+    from lumen.flowdash import metrics_admin
+    from lumen.flowdash.save_metric import _Admin, project_of
+
+    editor = ops.editor
+    if not hasattr(editor, "refresh_provenance"):
+        pytest.skip("panel-flowdash without refresh_provenance")
+    state_mw_metric(ops)
+    ops.add_node("Lumen/view", {"spec": {"mark": "bar", "encoding": {
+        "x": {"field": "t_state", "type": "nominal"}, "y": {"field": "mw", "type": "quantitative"}}}}, name="chart")
+    ops.connect("state_mw_metric.pipeline", "chart.pipeline")
+    editor.editable = True
+    editor._rebuild_tile_grid()
+
+    def chips(name):
+        tile = editor._inspect_tiles[ops._instance(name)]
+        return [o.label for o in tile.filter_notes.objects if "flowdash-provenance-chip" in o.css_classes]
+
+    assert chips("chart") == ["Metric: state_mw"]
+    assert metrics_admin.delete_metric(project_of(ctx_of(ops)), "state_mw", app=_Admin(ctx_of(ops))) == []
+    assert chips("chart") == ["Missing metric: state_mw"]
