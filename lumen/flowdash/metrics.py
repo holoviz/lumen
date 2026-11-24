@@ -1271,7 +1271,14 @@ class ProjectMetrics(MetricSet):
 
     def snapshot(self) -> MetricSet:
         data = self.project.data
-        with self._lock:
+        if data is self._data and (self._failed_at is None or time.monotonic() - self._failed_at < self.retry):
+            return self._snapshot
+        # One thread reads at a time; while it does, e.g. waiting on a slow source, the others get the
+        # metrics read before. Only the very first read waits, as there is nothing to give before it.
+        if not self._lock.acquire(blocking=self._data is _UNREAD):
+            return self._snapshot
+        try:
+            data = self.project.data
             if data is not self._data:
                 raw = data.get(SECTION)
                 changed = self._raw is _UNREAD or raw != self._raw
@@ -1281,6 +1288,8 @@ class ProjectMetrics(MetricSet):
             if self._failed_at is not None and time.monotonic() - self._failed_at >= self.retry:
                 return self._read(log=False)
             return self._snapshot
+        finally:
+            self._lock.release()
 
     def _read(self, log: bool) -> MetricSet:
         try:
