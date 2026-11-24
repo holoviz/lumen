@@ -1309,6 +1309,42 @@ def _chart_summary(spec: dict[str, Any], data: Any) -> str:
     return text
 
 
+# The inputs of a Lumen node that carry the data it shows or transforms; its other inputs,
+# e.g. a filter's value or selection, only control which of that data it keeps.
+DATA_INPUTS = ("pipeline", "source")
+
+
+def reads_as_data(editor: Any, via: Sequence[Mapping[str, Any]]) -> bool:
+    """
+    Whether the edges ``via`` (see ``panel_flowdash.node_actions``) carry
+    the reporting node's data to the view asking, rather than a value
+    controlling a Lumen node on the way, e.g. a SQL node's distinct values
+    feeding a filter's ``value``, which labels nothing the filter passes on.
+    """
+    if not via or editor is None:
+        return True
+    names = editor._node_names() if hasattr(editor, "_node_names") else {
+        node: editor._node_name(node) for node in editor._component_instances}
+    instances = {name: editor._component_instances.get(node) for node, name in names.items()}
+    for edge in via:
+        name, port = edge["to"].rsplit(".", 1)
+        if isinstance(instances.get(name), LumenNode) and port not in DATA_INPUTS:
+            return False
+    return True
+
+
+def refresh_provenance(node: LumenNode) -> None:
+    """Have the dashboard of ``node`` offer the provenance labels of it and the nodes downstream anew."""
+    editor = node.editor
+    refresh = getattr(editor, "refresh_provenance", None)
+    if refresh is None or (node_id := node.node_id()) is None:
+        return
+    try:
+        refresh(nodes=[node_id])
+    except Exception:
+        logger.exception("Could not refresh the provenance labels of a dashboard.")
+
+
 class LumenNode(Viewer):
 
     _object = param.Parameter(default=None, precedence=-1)
@@ -1797,19 +1833,42 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return _pipeline_preview(self, self._object)
         return data
 
-    def __flowdash_provenance__(self) -> dict[str, str] | None:
-        """The "Ad hoc" label of a number read from the node's one-row result, saying how its query computes it."""
-        # Only a single number is labelled; on rows a chart or table reads the label is noise.
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
+        """
+        The "Ad hoc" label of the views reading the node's data, saying how
+        its query computes their numbers and that no metric was used, and
+        through an edge that aggregates its rows how it does so too. Rows a
+        query only picks are not labelled unless they are one row or an edge
+        aggregates them, nor data the node only controls, e.g. through a
+        filter's ``value``.
+        """
         if not self.sql.strip() or self._error is not None or self._object is None:
             return None
-        data = self._object.data
-        if not isinstance(data, pd.DataFrame) or len(data) != 1:
+        if not reads_as_data(self.editor, via):
             return None
-        from .save_metric import describe_query
+        from .save_metric import (
+            aggregating_step, describe_adhoc_reading, describe_query,
+            picks_rows,
+        )
 
-        return {"label": "Ad hoc", "detail": describe_query(self.sql, _read(getattr(self._input, "dialect", None))),
-                "kind": "ad hoc"}
+        dialect = _read(getattr(self._input, "dialect", None))
+        aggregated = any(step.get("op") == "aggregate" for edge in via for step in edge.get("transform") or [])
+        rows = None
+        if aggregated or picks_rows(self.sql, dialect):
+            data = self._object.data
+            rows = len(data) if isinstance(data, pd.DataFrame) else None
+        step = aggregating_step(via, rows) if aggregated else None
+        if picks_rows(self.sql, dialect) and step is None and rows != 1:
+            return None
+        detail = describe_query(self.sql, dialect)
+        if step is not None:
+            detail = describe_adhoc_reading(*step, detail)
+        return {"label": "Ad hoc", "detail": detail, "kind": "ad hoc"}
 
+    @param.depends("_object", "_error", watch=True)
+    def _provenance_changed(self):
+        # The label reads the result, which changes when the query runs rather than on an edit.
+        refresh_provenance(self)
 
 class PipelineNode(GlobalFilterTarget, LumenNode):
     """A node whose output is a lazy pipeline, previewed only when its view is shown."""
@@ -2190,7 +2249,7 @@ class MetricNode(PipelineNode):
         aggregation instead, and a metric the project no longer defines
         says so.
         """
-        if not self.metric:
+        if not self.metric or not reads_as_data(self.editor, via):
             return None
         metric = host_metrics(self._context).get(self.metric)
         if metric is None:

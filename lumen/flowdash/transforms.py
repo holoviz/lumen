@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -41,7 +41,7 @@ from .checks import (
 )
 from .choices import pipeline_column_types
 from .nodes import (
-    PIPELINE_TYPE, PipelineNode, _clone, row_ceiling,
+    PIPELINE_TYPE, PipelineNode, _clone, reads_as_data, row_ceiling,
 )
 
 AGGREGATE_ID = "Lumen/aggregate"
@@ -539,40 +539,63 @@ class AggregateNode(TransformNode):
         step = SQLAggregate(by=self.by, columns=self.columns, method=self.method, write=step_dialect(pipeline))
         return step, aggregate_schema(pipeline.schema, self.by, self.columns, self.method)
 
-    def __flowdash_provenance__(self) -> dict[str, str] | None:
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
         """
-        The "Ad hoc" label of a number aggregated by the node, saying how it
-        is computed, or "Derived" with the aggregation over a metric's rows.
+        The "Ad hoc" label of the numbers the node aggregates, saying how
+        they are computed from its input, or "Derived" with the aggregation
+        over a metric's rows; nothing for data it only controls, e.g.
+        through a filter's ``value``.
         """
         if not self.columns and self.method != "count":
+            return None
+        if not reads_as_data(self.editor, via):
             return None
         from .save_metric import derived_label, describe_aggregate
 
         columns, by = list(self.columns), list(self.by)
-        metric = self.derived_from()
+        found = self._input_provenance()
+        metric = self._metric_of(found)
         if metric is not None:
             return {"label": derived_label(self.method, metric), "kind": "derived",
                     "detail": describe_aggregate(self.method, columns, by, metric)}
-        # Grouped rows are not a number; only a single aggregate is labelled.
-        if by:
+        return {"label": "Ad hoc", "detail": describe_aggregate(self.method, columns, by, source=self._source_text(found)),
+                "kind": "ad hoc"}
+
+    def _input(self) -> str | None:
+        editor, node = self.editor, self.node_id()
+        if editor is None or node is None:
             return None
-        return {"label": "Ad hoc", "detail": describe_aggregate(self.method, columns, by), "kind": "ad hoc"}
+        return next((e["source"] for e in editor._dataflow_graph.edges
+                     if e["target"] == node and e["target_port"] == "pipeline"), None)
+
+    def _input_provenance(self) -> tuple[Any, str] | None:
+        source, editor = self._input(), self.editor
+        if source is None or not hasattr(editor, "node_provenance"):
+            return None
+        return editor.node_provenance(source)
+
+    def _source_text(self, found: tuple[Any, str] | None) -> str | None:
+        """The node the aggregate reads, by name, with how an ad hoc query computes its rows."""
+        source = self._input()
+        if source is None:
+            return None
+        name = self.editor._node_name(source)
+        if found is None or found[0].kind != "ad hoc" or not found[0].detail:
+            return name
+        how = found[0].detail.removesuffix("; no metric was used.")
+        return f"{name} ({how})"
 
     def derived_from(self) -> str | None:
         """The metric whose rows the node aggregates, directly or through other nodes, if any."""
-        editor, node = self.editor, self.node_id()
-        if editor is None or node is None or not hasattr(editor, "node_provenance"):
-            return None
-        source = next((e["source"] for e in editor._dataflow_graph.edges
-                       if e["target"] == node and e["target_port"] == "pipeline"), None)
-        found = editor.node_provenance(source) if source is not None else None
+        return self._metric_of(self._input_provenance())
+
+    def _metric_of(self, found: tuple[Any, str] | None) -> str | None:
         if found is None or found[0].kind not in ("metric", "derived"):
             return None
-        upstream = editor._component_instances.get(found[1])
+        upstream = self.editor._component_instances.get(found[1])
         if isinstance(upstream, AggregateNode):
             return upstream.derived_from()
         return getattr(upstream, "metric", None) or None
-
 
 @_pipeline_node(
     title="Lumen Sort", icon="sort",

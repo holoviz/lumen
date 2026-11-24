@@ -130,7 +130,8 @@ def test_add_kpi_reuses_the_value_of_a_one_cell_sql_node(ctx, session):
     assert top_bar(session) == ["capacity_kpi"]
     config = _graph.config_of(session.ops, "capacity_kpi")
     assert config == {"label": "Installed capacity", "format": ",.2f", "prefix": "", "suffix": " MW",
-                      "caption": "Value of capacity_mw from capacity, not an agreed metric"}
+                      "caption": ("Ad hoc: SUM(t_cap) / 1000.0 over all rows of turbines, computed by its own SQL "
+                                  "query; no metric was used.")}
     assert instance(session.ops, "capacity_kpi").value == 8.5
 
 
@@ -175,7 +176,8 @@ def test_add_kpi_aggregates_every_row_of_a_sql_node_with_a_limit_of_its_own(ctx,
     assert len(_graph.output(session.ops, "turbine_rows", "data")) == 2
     assert instance(session.ops, "capacity").value == 8500
     assert instance(session.ops, "turbines").value == 5
-    assert _graph.config_of(session.ops, "capacity")["caption"] == "Sum of t_cap over all rows, not an agreed metric"
+    assert _graph.config_of(session.ops, "capacity")["caption"] == (
+        "Ad hoc: Sum of t_cap over all rows of turbine_rows; no metric was used.")
 
 
 def test_add_kpi_on_table_and_metric_nodes():
@@ -221,7 +223,8 @@ def test_add_kpi_aggregates_the_rows_as_they_are_and_says_how(ctx, session):
     frame = _projects(session)
     result = add_kpi(ctx, "project_rows", "capacity", column="p_cap", aggregate="sum")
     assert instance(session.ops, "capacity").value == pytest.approx(frame.p_cap.sum())
-    assert _graph.config_of(session.ops, "capacity")["caption"] == "Sum of p_cap over all rows, not an agreed metric"
+    assert _graph.config_of(session.ops, "capacity")["caption"] == (
+        "Ad hoc: Sum of p_cap over all rows of project_rows; no metric was used.")
     assert "The number is computed ad hoc, not an agreed metric; each card's caption says so." in result
     assert "asking an admin" not in result
 
@@ -235,14 +238,15 @@ def test_add_kpi_distinct_by_takes_the_largest_value_per_key(ctx, session):
     assert ("of 'project_rows', taking the largest 'p_cap' of each p_name once through 'capacity_per_key', "
             "'capacity_agg', 'capacity_value'") in result
     caption = _graph.config_of(session.ops, "capacity")["caption"]
-    assert caption == "Sum of the largest p_cap per p_name, not an agreed metric"
+    assert caption == "Ad hoc: Sum of p_cap over project_rows, taking the largest per p_name; no metric was used."
 
 
 def test_a_count_with_distinct_by_counts_the_keys(ctx, session):
     frame = _projects(session)
     add_kpi(ctx, "project_rows", "projects", column="p_cap", aggregate="count", distinct_by="p_name")
     assert instance(session.ops, "projects").value == frame.p_name.nunique()
-    assert _graph.config_of(session.ops, "projects")["caption"] == "Count of p_name values with a p_cap, not an agreed metric"
+    assert _graph.config_of(session.ops, "projects")["caption"] == (
+        "Ad hoc: Count of p_name values with a p_cap in project_rows; no metric was used.")
 
 
 def test_an_ad_hoc_kpi_lists_at_most_ten_of_the_apps_metrics(monkeypatch):
@@ -287,7 +291,7 @@ def test_a_kpi_of_a_metric_says_which_metric_and_others_point_to_an_admin():
         captions = [_graph.config_of(session.ops, n)["caption"] for n in ("total_kpi", "rows_kpi")]
     finally:
         session.close()
-    assert captions == ["Metric capacity", "Sum of t_cap over all rows, not an agreed metric"]
+    assert captions == ["Metric capacity", "Ad hoc: Sum of t_cap over all rows of rows; no metric was used."]
     assert "ad hoc" not in from_metric
     assert ("This app defines metrics: capacity. None was used for this number; use add_metric if one fits, or ask "
             "an admin to define one.") in ad_hoc
@@ -408,7 +412,7 @@ def test_a_kpi_of_a_sql_node_follows_its_result_past_the_row_ceiling():
     finally:
         session.close()
     assert values == (pytest.approx(1_500_000), 1_000_000)
-    assert caption == "Sum of fare over all rows, not an agreed metric"
+    assert caption == "Ad hoc: Sum of fare over all rows of rows; no metric was used."
 
 
 @pytest.mark.parametrize("limit", [None, 70])
@@ -443,10 +447,13 @@ async def test_add_kpi_reads_its_number_at_once_in_a_served_session(monkeypatch)
     assert "Total fare = 1,500,000." in result
 
 
-def test_a_kpi_caption_names_its_node_as_it_is(ctx, session):
+def test_a_kpi_caption_of_a_sql_value_says_how_its_query_computes_it(ctx, session):
     session.add_sql("capacity_total", "SELECT SUM(t_cap) AS capacity_kw FROM turbines")
     add_kpi(ctx, "capacity_total", "kpi")
-    assert _graph.config_of(session.ops, "kpi")["caption"] == "Value of capacity_kw from capacity_total, not an agreed metric"
+    caption = _graph.config_of(session.ops, "kpi")["caption"]
+    assert caption == "Ad hoc: Sum of t_cap over all rows of turbines, computed by its own SQL query; no metric was used."
+    provenance = session.ops.editor.node_provenance(session.ops._instance("kpi"))[0]
+    assert caption == f"{provenance.label}: {provenance.detail}"
 
 
 def test_add_kpi_refuses_absurd_formats(ctx, session):

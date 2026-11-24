@@ -131,8 +131,10 @@ def tiles_of(editor: Any) -> tuple[dict[str, Tile], list[str]]:
         name = item["instance_id"]
         entry = entries.get(name, {})
         area = tile_layout.area_of(editor, item, entries)
+        height = entry.get("height")
+        shown = height if height is not None else getattr(editor, "_fill_heights", {}).get(name)
         tiles[name] = Tile(area, area is not None and entry.get("visible") is not False,
-                           entry.get("width"), entry.get("height"))
+                           entry.get("width"), height, shown)
     grid = [item["instance_id"] for item in tile_layout.area_items(editor, tile_layout.GRID, entries)
             if tiles[item["instance_id"]].visible]
     return tiles, grid
@@ -140,6 +142,7 @@ def tiles_of(editor: Any) -> tuple[dict[str, Tile], list[str]]:
 
 def turn_state(session: Any, result: Any, before: str) -> TurnState:
     """What the checks see of a turn ``session`` just ran, from its ``TurnResult``."""
+    from .. import _graph
     from ..evals import tool_calls
 
     tiles, grid = tiles_of(session.editor)
@@ -153,6 +156,13 @@ def turn_state(session: Any, result: Any, before: str) -> TurnState:
     def reference(sql: str):
         return session.source.execute(sql)
 
+    def provenance(name: str) -> str | None:
+        try:
+            found = _graph.provenance(session.ops, name)
+        except Exception:
+            return None
+        return None if found is None else f"{found.label}: {found.detail}" if found.detail else found.label
+
     usage = [r.usage for r in result.responses]
     return TurnState(
         prompt=result.prompt, graph=parse_graph(result.graph), before=parse_graph(before),
@@ -161,6 +171,7 @@ def turn_state(session: Any, result: Any, before: str) -> TurnState:
         requests=len(result.responses), input_tokens=sum(u.input_tokens for u in usage),
         output_tokens=sum(u.output_tokens for u in usage), cached_tokens=sum(u.cache_read_tokens for u in usage),
         output=result.output, error=result.error, model=next((r.model_name for r in result.responses), None), tiles=tiles, grid=grid, port=port, reference=reference,
+        provenance=provenance,
     )
 
 

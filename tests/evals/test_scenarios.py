@@ -261,6 +261,26 @@ def test_the_ad_hoc_label_says_how_and_that_no_metric_was_used(reply, expected):
     assert passed is expected, detail
 
 
+@pytest.mark.parametrize(("calls", "label"), [
+    ([("add_sql", {"source": "data", "name": "capacity_by_year", "sql": GOOD_SQL}),
+      ("add_chart", {"data": "capacity_by_year", "name": "capacity_chart", "spec": LINE})], "capacity_chart"),
+    ([("add_sql", {"source": "data", "name": "capacity_by_year", "sql": GOOD_SQL})], "capacity_by_year"),
+], ids=["chart", "sql_only"])
+async def test_the_ad_hoc_label_is_read_from_the_provenance_of_what_the_turn_placed(calls, label):
+    async with state_after("turbines", scripted(calls)) as state:
+        assert state.output == "done"
+        assert state.provenance(label) == (
+            "Ad hoc: SUM(t_cap) / 1000.0 by p_year of turbines, computed by its own SQL query; no metric was used.")
+        passed, detail = adhoc_label().run(state)
+        assert passed, detail
+
+
+def test_the_ad_hoc_label_ignores_nodes_the_turn_did_not_touch():
+    state = TurnState(prompt="x", graph={"nodes": {"chart": {"component": VIEW_ID}}}, before={}, output="done",
+                      provenance=lambda name: "Ad hoc: Sum of t_cap by p_year of turbines; no metric was used.")
+    assert adhoc_label().run(state)[0] is False
+
+
 LINE_BY_STATE = {"mark": {"type": "line"}, "encoding": {
     "x": {"field": "t_state", "type": "nominal"}, "y": {"field": "capacity_mw", "type": "quantitative"}}}
 
@@ -351,13 +371,29 @@ def layout_state(tiles, nodes=None, edges=()):
                                          "edges": list(edges)}, before={}, tiles=tiles)
 
 
-def test_same_height_needs_visible_tiles_set_to_one_height():
+def test_same_height_needs_visible_tiles_shown_at_one_height():
     check = same_height("a", "b")
     assert not check.run(layout_state({}))[0]
     assert not check.run(layout_state({"a": Tile("grid", True), "b": Tile("grid", True)}))[0]
-    assert not check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", False, height=400)}))[0]
-    assert not check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", True, height=300)}))[0]
-    assert check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", True, height=400)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, height=400, shown_height=400),
+                                       "b": Tile("grid", False, height=400, shown_height=400)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, height=400, shown_height=400),
+                                       "b": Tile("grid", True, height=300, shown_height=300)}))[0]
+    assert check.run(layout_state({"a": Tile("grid", True, height=400, shown_height=400),
+                                   "b": Tile("grid", True, height=400, shown_height=400)}))[0]
+    # Two views filling their tiles, without a height of their own, are shown at the fill height.
+    assert check.run(layout_state({"a": Tile("grid", True, shown_height=360), "b": Tile("grid", True, shown_height=360)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, shown_height=360), "b": Tile("grid", True)}))[0]
+
+
+@pytest.mark.parametrize("heights", [{}, {"height": 400}], ids=["fill", "set"])
+async def test_same_height_reads_the_height_tiles_are_shown_at(heights):
+    calls = [("place_tile", {"name": "projects_table", "width": 50, "index": 0, **heights}),
+             ("place_tile", {"name": "state_capacity_chart", "width": 50, "index": 1, **heights})]
+    scenario = BY_NAME["table_left_chart_right"]
+    async with state_after(scenario.fixture, scripted(calls), seed_yaml=scenario.seed) as state:
+        passed, detail = same_height("projects_table", "state_capacity_chart").run(state)
+        assert passed, detail
 
 
 def test_filter_check_looks_at_every_filter_node():

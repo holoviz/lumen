@@ -59,6 +59,8 @@ class Tile:
     visible: bool
     width: float | None = None
     height: float | None = None
+    shown_height: float | None = None
+    """The height the tile is shown at: its own, else the one the dashboard gives a view filling it."""
 
 
 @dataclass
@@ -91,6 +93,8 @@ class TurnState:
     """The current value of an output port, ``node.port``, or None when it has none."""
     reference: Callable[[str], pd.DataFrame] | None = None
     """Runs SQL on the fixture's own tables, for the numbers a check expects."""
+    provenance: Callable[[str], str | None] = lambda name: None
+    """A node's provenance label as the dashboard shows it, "<label>: <detail>", or None when it has none."""
 
     @property
     def nodes(self) -> dict[str, dict[str, Any]]:
@@ -864,12 +868,16 @@ def width(name: str, percent: float, *, tolerance: float = 4.0, workstream: str 
 
 
 def same_height(*names: str, workstream: str = "W3") -> Check:
-    """The tiles ``names`` are visible and set to one height; tiles at their default height do not count as matched."""
+    """
+    The tiles ``names`` are visible and shown at one height, their own or the
+    one the dashboard gives views that fill their tile; tiles sized by their
+    content do not count as matched.
+    """
     def test(state):
         hidden = [n for n in names if not state.visible(n)]
         if hidden:
             return f"no visible tile for {hidden}"
-        heights = {n: state.tiles[n].height for n in names}
+        heights = {n: state.tiles[n].shown_height for n in names}
         if None in heights.values():
             return f"heights not set: {heights}"
         return None if len(set(heights.values())) == 1 else f"heights differ: {heights}"
@@ -1013,8 +1021,8 @@ def answer_names(sql: str, aliases: dict[str, str] | None = None, *, workstream:
     return Check(id, f"the reply names the answer to {sql}", test, workstream)
 
 
-# An ad hoc number says how it was computed and that no metric was used, as lumen#2416 and the
-# 'Ad hoc' label of M2 word it; matched loosely while that wording is settled.
+# An ad hoc number says how it was computed and that no metric was used, as the "Ad hoc" provenance
+# label and KPI caption word it ("Ad hoc: <how>; no metric was used."); a reply is matched loosely.
 COMPUTED = re.compile(
     r"\b(computed|calculated|derived|aggregated|summ(ed|ing)|count(ed|ing)|divid(ed|ing))\b|\b(SUM|COUNT|AVG)\s*\(",
     re.IGNORECASE,
@@ -1025,20 +1033,25 @@ NO_METRIC = re.compile(
     r"(agreed |defined )?metrics?\b",
     re.IGNORECASE,
 )
+ADHOC_LABEL = re.compile(r"\bAd hoc: \S.*no metric was used", re.IGNORECASE | re.DOTALL)
 
 
 def adhoc_label(*, workstream: str = "M2") -> Check:
     """
     A number computed without one of the app's metrics says how it was
-    computed and that no metric was used, in the reply or on a node the
-    turn placed or changed, e.g. a KPI card's caption.
+    computed and that no metric was used: in the reply, in the config of a
+    node the turn placed or changed, e.g. a KPI card's caption, or in the
+    provenance label such a node shows, e.g. on a chart of a SQL node's rows.
     """
     def test(state):
-        touched = set(state.added) | set(state.changed)
-        texts = [state.output or "", *(yaml.safe_dump(state.config(n)) for n in state.nodes if n in touched)]
-        if any(COMPUTED.search(text) and NO_METRIC.search(text) for text in texts):
+        touched = [n for n in state.nodes if n in set(state.added) | set(state.changed)]
+        labels = [label for n in touched if (label := state.provenance(n))]
+        texts = [state.output or "", *(yaml.safe_dump(state.config(n)) for n in touched), *labels]
+        if any(ADHOC_LABEL.search(text) or (COMPUTED.search(text) and NO_METRIC.search(text)) for text in texts):
             return None
         missing = [what for what, pattern in [("how it was computed", COMPUTED), ("that no metric was used", NO_METRIC)]
                    if not any(pattern.search(text) for text in texts)]
-        return f"nothing says {' or '.join(missing) or 'both in one place'}; reply {(state.output or '')[:120]!r}"
+        shown = f"; labels {labels}" if labels else ""
+        return (f"nothing says {' or '.join(missing) or 'both in one place'}; reply {(state.output or '')[:120]!r}"
+                f"{shown}")
     return Check("adhoc_label", "says how it was computed and that no metric was used", test, workstream)

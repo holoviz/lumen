@@ -25,6 +25,7 @@ since the metric does not define it.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
 
@@ -77,6 +78,7 @@ _METHOD_WORDS = {"SUM": "Sum", "AVG": "Average", "MIN": "Lowest", "MAX": "Highes
 # ---------------------------------------------------------------------------
 # Describing a node's query, for the "Ad hoc" label
 
+@functools.lru_cache(maxsize=256)
 def describe_query(sql: str, dialect: str | None = None) -> str:
     """
     How a query computes its numbers in a few words, e.g. "Sum of p_cap
@@ -111,6 +113,21 @@ def describe_query(sql: str, dialect: str | None = None) -> str:
     return f"{text}, computed by its own SQL query; no metric was used."
 
 
+@functools.lru_cache(maxsize=256)
+def picks_rows(sql: str, dialect: str | None = None) -> bool:
+    """Whether a query only picks rows of a table, computing no aggregate, e.g. "SELECT * FROM turbines"."""
+    try:
+        parsed = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return False
+    return isinstance(parsed, exp.Select) and not any(a.find(exp.AggFunc) is not None for a in parsed.expressions)
+
+
+def adhoc_caption(detail: str) -> str:
+    """The caption of an ad hoc number, e.g. "Ad hoc: Sum of p_cap over all rows of turbines; no metric was used"."""
+    return f"Ad hoc: {detail}"
+
+
 def _describe_aggregate(expression: exp.Expression) -> str:
     inner = expression.this if isinstance(expression, exp.Alias) else expression
     if isinstance(inner, exp.AggFunc) and not inner.find(exp.Window):
@@ -124,18 +141,21 @@ def _describe_aggregate(expression: exp.Expression) -> str:
     return inner.sql()
 
 
-def describe_aggregate(method: str, columns: list[str], by: list[str], metric: str | None = None) -> str:
+def describe_aggregate(method: str, columns: list[str], by: list[str], metric: str | None = None,
+                       source: str | None = None) -> str:
     """
     How an aggregate node computes its numbers, e.g. "Sum of p_cap over all
-    rows", or with ``metric`` the metric whose rows it aggregates, e.g.
-    "Sum of mw over metric state_mw".
+    rows of its input", of ``source``, e.g. "Sum of mw by region of
+    state_capacity (Sum of t_cap by t_state of turbines, computed by its own
+    SQL query)", or with ``metric`` the metric whose rows it aggregates,
+    e.g. "Sum of mw over metric state_mw".
     """
     word = _METHOD_WORDS[METHODS[method]]
     what = "Count of rows" if not columns else f"{word} of {', '.join(columns)}"
     if metric is not None:
         return (f"{what} {'by ' + ', '.join(by) + ' ' if by else ''}over metric {metric}, aggregated on the "
                 f"dashboard; the metric itself does not define this number.")
-    return f"{what} {'by ' + ', '.join(by) if by else 'over all rows'} of its input; no metric was used."
+    return f"{what} {'by ' + ', '.join(by) if by else 'over all rows'} of {source or 'its input'}; no metric was used."
 
 
 # How an edge's ``aggregate`` step or an aggregate node reduces rows, in a label.
@@ -188,6 +208,21 @@ def describe_reading(how: str, column: str | None, metric: str) -> str:
     what = f"{word.capitalize()} of {column}" if column else word.capitalize()
     return (f"{what} over the rows of metric {metric}, aggregated on the dashboard; the metric itself does "
             "not define this number.")
+
+
+def describe_adhoc_reading(how: str, column: str | None, detail: str) -> str:
+    """
+    How a view's number is aggregated by an edge from the rows of an ad hoc
+    query described by ``detail``, e.g. "Average of mw over the rows of:
+    Sum of p_cap by t_state of turbines, computed by its own SQL query; no
+    metric was used."
+    """
+    word = _HOW_WORDS.get(how, how)
+    if how == "last":
+        what = f"The {column} of the last row" if column else "The last row"
+    else:
+        what = f"{word.capitalize()} of {column}" if column else word.capitalize()
+    return f"{what}, taken on the dashboard over the rows of: {detail}"
 
 
 # ---------------------------------------------------------------------------
