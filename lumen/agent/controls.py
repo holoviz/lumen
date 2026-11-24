@@ -320,18 +320,18 @@ def _provenance(ops, data: str, component: str, column: str, aggregate: str | No
     if component == METRIC_ID:
         return f"Metric {_graph.config_of(ops, data).get('metric')}"
     if aggregate == "count" and column == COUNT_COLUMN:
-        what = "Count of rows"
+        what = f"Count of rows of {data}"
     elif aggregate == "count" and keys:
-        what = f"Count of {' and '.join(keys)} values with a {column}"
+        what = f"Count of {' and '.join(keys)} values with a {column} in {data}"
     elif aggregate:
         word = {"sum": "Sum", "mean": "Average", "min": "Lowest", "max": "Highest", "count": "Count"}[aggregate]
-        what = f"{word} of the largest {column} per {' and '.join(keys)}" if keys else f"{word} of {column} over all rows"
+        what = (f"{word} of {column} over {data}, taking the largest per {' and '.join(keys)}" if keys
+                else f"{word} of {column} over all rows of {data}")
     elif component == SQL_ID and (found := _graph.provenance(ops, data)) is not None and found.kind == "ad hoc":
         return adhoc_caption(found.detail)
     else:
         what = f"Value of {column} from {data}"
-    of = f" of {data}" if aggregate else ""
-    return adhoc_caption(f"{what}{of}; no metric was used.")
+    return adhoc_caption(f"{what}; no metric was used.")
 
 
 def _outputs(ops, name: str) -> list[str]:

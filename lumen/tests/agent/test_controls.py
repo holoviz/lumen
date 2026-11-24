@@ -238,7 +238,7 @@ def test_add_kpi_distinct_by_takes_the_largest_value_per_key(ctx, session):
     assert ("of 'project_rows', taking the largest 'p_cap' of each p_name once through 'capacity_per_key', "
             "'capacity_agg', 'capacity_value'") in result
     caption = _graph.config_of(session.ops, "capacity")["caption"]
-    assert caption == "Ad hoc: Sum of the largest p_cap per p_name of project_rows; no metric was used."
+    assert caption == "Ad hoc: Sum of p_cap over project_rows, taking the largest per p_name; no metric was used."
 
 
 def test_a_count_with_distinct_by_counts_the_keys(ctx, session):
@@ -246,7 +246,7 @@ def test_a_count_with_distinct_by_counts_the_keys(ctx, session):
     add_kpi(ctx, "project_rows", "projects", column="p_cap", aggregate="count", distinct_by="p_name")
     assert instance(session.ops, "projects").value == frame.p_name.nunique()
     assert _graph.config_of(session.ops, "projects")["caption"] == (
-        "Ad hoc: Count of p_name values with a p_cap of project_rows; no metric was used.")
+        "Ad hoc: Count of p_name values with a p_cap in project_rows; no metric was used.")
 
 
 def test_an_ad_hoc_kpi_lists_at_most_ten_of_the_apps_metrics(monkeypatch):

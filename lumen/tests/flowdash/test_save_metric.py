@@ -13,8 +13,8 @@ from panel_flowdash.node_actions import NodeActionContext
 from panel_flowdash.ui import tile_layout
 
 from lumen.flowdash import (
-    AGGREGATE_ID, COMPONENTS, DATA_ID, METRIC_ID, METRICS_KEY, SQL_ID,
-    TABLE_ID, bind_source,
+    AGGREGATE_ID, COMPONENTS, DATA_ID, FILTER_ID, METRIC_ID, METRICS_KEY,
+    SQL_ID, TABLE_ID, bind_source,
 )
 from lumen.flowdash.metrics import MetricSet, ProjectMetrics
 from lumen.flowdash.project import ProjectError, load_project
@@ -429,12 +429,67 @@ def test_rows_from_ad_hoc_queries_are_labelled_ad_hoc(ops):
     assert by == ops._instance("by_state") and provenance.kind == "ad hoc"
     assert f"{provenance.label}: {provenance.detail}" == (
         "Ad hoc: Sum of t_cap by t_state of turbines, computed by its own SQL query; no metric was used.")
+    ops.add_node(AGGREGATE_ID, {"columns": ["mw"], "method": "sum", "by": ["t_state"]}, name="regrouped")
+    ops.connect("by_state.pipeline", "regrouped.pipeline")
+    assert ops.editor.node_provenance(ops._instance("regrouped"))[0].detail == (
+        "Sum of mw by t_state of by_state (Sum of t_cap by t_state of turbines, computed by its own SQL query); "
+        "no metric was used.")
     ops.add_node(TABLE_ID, {"ref": ops.ref, "table": "turbines"}, name="rows")
     ops.add_node(AGGREGATE_ID, {"columns": ["p_cap"], "method": "sum", "by": ["t_state"]}, name="per_state")
     ops.connect("rows.pipeline", "per_state.pipeline")
     provenance, _ = ops.editor.node_provenance(ops._instance("per_state"))
-    assert (provenance.label, provenance.detail) == ("Ad hoc", "Sum of p_cap by t_state of its input; no metric was used.")
+    assert (provenance.label, provenance.detail) == ("Ad hoc", "Sum of p_cap by t_state of rows; no metric was used.")
     assert ops.editor.node_provenance(ops._instance("rows")) is None
+
+
+def test_rows_a_query_only_picks_are_not_labelled(ops):
+    ops.add_node("Lumen/source", {"ref": ops.ref}, name="src")
+    ops.add_node(SQL_ID, {"sql": "SELECT p_name, t_state, t_cap FROM turbines"}, name="picked")
+    ops.connect("src.source", "picked.source")
+    ops.add_node("Lumen/table_view", {}, name="table")
+    ops.connect("picked.pipeline", "table.pipeline")
+    assert ops.editor.node_provenance(ops._instance("table")) is None
+    ops.add_node("Widgets/KPI", {"label": "Total"}, name="total")
+    ops.connect("picked.data", "total.value", [{"op": "column", "column": "t_cap"}, {"op": "aggregate", "how": "sum"}])
+    assert ops.editor.node_provenance(ops._instance("total"))[0].detail.startswith(
+        "Sum of t_cap, taken on the dashboard over the rows of: Rows of turbines picked by its own SQL query")
+    ops.add_node(SQL_ID, {"sql": "SELECT t_cap FROM turbines WHERE p_name = 'Story'"}, name="one")
+    ops.connect("src.source", "one.source")
+    ops.add_node("Widgets/KPI", {"label": "Story"}, name="story")
+    ops.connect("one.value", "story.value")
+    assert ops.editor.node_provenance(ops._instance("story"))[0].label == "Ad hoc"
+
+
+@pytest.mark.parametrize("port", ["value", "data"])
+def test_a_query_controlling_a_filter_does_not_label_what_it_passes_on(ops, port):
+    ops.add_node("Lumen/source", {"ref": ops.ref}, name="src")
+    ops.add_node(SQL_ID, {"sql": "SELECT DISTINCT t_state FROM turbines WHERE t_state = 'CA'"}, name="states")
+    ops.connect("src.source", "states.source")
+    ops.add_node(FILTER_ID, {"field": "t_state"}, name="pick")
+    # Wired first, so the walk meets the query before the metric.
+    ops.connect(f"states.{port}", "pick.value")
+    metric = state_mw_metric(ops)
+    ops.connect(f"{metric}.pipeline", "pick.pipeline")
+    ops.add_node("Lumen/view", {"spec": {"mark": "bar", "encoding": {
+        "x": {"field": "t_state", "type": "nominal"}, "y": {"field": "mw", "type": "quantitative"}}}}, name="chart")
+    ops.connect("pick.filtered", "chart.pipeline")
+    assert ops.editor.node_provenance(ops._instance("chart"))[0].label == "Metric: state_mw"
+    ops.add_node(AGGREGATE_ID, {"columns": ["mw"], "method": "mean"}, name="mean_mw")
+    ops.connect("pick.filtered", "mean_mw.pipeline")
+    provenance, _ = ops.editor.node_provenance(ops._instance("mean_mw"))
+    assert (provenance.kind, provenance.label) == ("derived", "Derived: average of state_mw")
+
+
+def test_a_query_that_ran_offers_its_label_anew(ops, monkeypatch):
+    refreshed = []
+    monkeypatch.setattr(type(ops.editor), "refresh_provenance", lambda self, nodes=None: refreshed.append(nodes),
+                        raising=False)
+    ops.add_node("Lumen/source", {"ref": ops.ref}, name="src")
+    ops.add_node(SQL_ID, {"sql": "SELECT t_state, SUM(t_cap) AS mw FROM turbines GROUP BY t_state"}, name="by_state")
+    ops.connect("src.source", "by_state.source")
+    refreshed.clear()
+    ops.set_config("by_state", {"sql": "SELECT t_state, SUM(p_cap) AS mw FROM turbines GROUP BY t_state"})
+    assert [ops._instance("by_state")] in refreshed
 
 
 def test_an_edge_aggregating_ad_hoc_rows_says_so(ops):

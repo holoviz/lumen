@@ -113,6 +113,16 @@ def describe_query(sql: str, dialect: str | None = None) -> str:
     return f"{text}, computed by its own SQL query; no metric was used."
 
 
+@functools.lru_cache(maxsize=256)
+def picks_rows(sql: str, dialect: str | None = None) -> bool:
+    """Whether a query only picks rows of a table, computing no aggregate, e.g. "SELECT * FROM turbines"."""
+    try:
+        parsed = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return False
+    return isinstance(parsed, exp.Select) and not any(a.find(exp.AggFunc) is not None for a in parsed.expressions)
+
+
 def adhoc_caption(detail: str) -> str:
     """The caption of an ad hoc number, e.g. "Ad hoc: Sum of p_cap over all rows of turbines; no metric was used"."""
     return f"Ad hoc: {detail}"
@@ -131,18 +141,21 @@ def _describe_aggregate(expression: exp.Expression) -> str:
     return inner.sql()
 
 
-def describe_aggregate(method: str, columns: list[str], by: list[str], metric: str | None = None) -> str:
+def describe_aggregate(method: str, columns: list[str], by: list[str], metric: str | None = None,
+                       source: str | None = None) -> str:
     """
     How an aggregate node computes its numbers, e.g. "Sum of p_cap over all
-    rows", or with ``metric`` the metric whose rows it aggregates, e.g.
-    "Sum of mw over metric state_mw".
+    rows of its input", of ``source``, e.g. "Sum of mw by region of
+    state_capacity (Sum of t_cap by t_state of turbines, computed by its own
+    SQL query)", or with ``metric`` the metric whose rows it aggregates,
+    e.g. "Sum of mw over metric state_mw".
     """
     word = _METHOD_WORDS[METHODS[method]]
     what = "Count of rows" if not columns else f"{word} of {', '.join(columns)}"
     if metric is not None:
         return (f"{what} {'by ' + ', '.join(by) + ' ' if by else ''}over metric {metric}, aggregated on the "
                 f"dashboard; the metric itself does not define this number.")
-    return f"{what} {'by ' + ', '.join(by) if by else 'over all rows'} of its input; no metric was used."
+    return f"{what} {'by ' + ', '.join(by) if by else 'over all rows'} of {source or 'its input'}; no metric was used."
 
 
 # How an edge's ``aggregate`` step or an aggregate node reduces rows, in a label.
