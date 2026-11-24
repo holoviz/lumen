@@ -1,6 +1,9 @@
 """The FlowDash agent with Lumen's data and authoring tools."""
 from __future__ import annotations
 
+import dataclasses
+import re
+
 from collections.abc import Collection
 from typing import Any
 
@@ -9,7 +12,10 @@ from panel_flowdash.agent import (
 )
 from panel_flowdash.agent.tools import TOOLS as FLOWDASH_TOOLS
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
+from pydantic_ai.exceptions import (
+    ModelAPIError, ModelRequestRejectedError, RetryModelRequest,
+)
 from pydantic_ai.messages import ModelResponse
 
 from .authoring import CheckedConfig, authoring_toolset
@@ -81,10 +87,82 @@ Use the dialect list_tables names for the source.
 # longest legitimate response seen in the evals (about 250 tokens). A response
 # cut off by it is retried, see ``create_agent``. A host that turns reasoning
 # back on must raise or drop the cap, since reasoning tokens count against it.
-# ``openai_reasoning_effort`` is only read by OpenAI models and is untested
-# with other providers. Model settings are recorded with the eval run
-# settings, not in the agent fingerprint a cassette checks.
+# These are the settings of models from the OpenAI and Azure providers
+# (OPENAI_SYSTEMS); other providers' models get OTHER_MODEL_SETTINGS. Model
+# settings are recorded with the eval run settings, not in the agent
+# fingerprint a cassette checks.
 MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 1000}
+
+# ``openai_reasoning_effort`` only reaches the OpenAI and Azure providers'
+# models, so the others turn reasoning off with pydantic-ai's provider-neutral
+# ``thinking``, including OpenAI's models through OpenRouter, which get the
+# same request this way. A model that cannot stop reasoning (e.g. Gemini Pro
+# or DeepSeek's reasoner) reasons at its lowest effort instead, and its
+# reasoning counts against ``max_tokens``. Anthropic models, directly or
+# through OpenRouter, cache a prompt only below explicit breakpoints, which
+# ``cache`` places after the instructions, the tool definitions and the last
+# message; models that cache by themselves or not at all ignore it. On the
+# OpenAI and Azure providers ``cache`` would change the requests to a longer,
+# priced retention, so their models keep MODEL_SETTINGS.
+OTHER_MODEL_SETTINGS = {"thinking": False, "max_tokens": 1000, "cache": True}
+OPENAI_SYSTEMS = frozenset({"openai", "azure"})
+
+
+def model_settings_for(model: Any) -> dict[str, Any]:
+    """The agent's default settings for requests to ``model``, a pydantic-ai model."""
+    return dict(MODEL_SETTINGS if getattr(model, "system", None) in OPENAI_SYSTEMS else OTHER_MODEL_SETTINGS)
+
+
+# How OpenRouter and other endpoints refuse a request that turns reasoning off.
+REASONING_REQUIRED = re.compile(r"reasoning\b.{0,40}\b(mandatory|required)", re.IGNORECASE)
+
+
+def _turns_reasoning_off(settings: dict[str, Any]) -> bool:
+    return settings.get("thinking") is False or settings.get("openai_reasoning_effort") == "none"
+
+
+def _model_key(model: Any) -> str:
+    return f"{getattr(model, 'system', '')}:{getattr(model, 'model_name', '')}"
+
+
+class ReasoningRequired(AbstractCapability[Any]):
+    """
+    Keeps reasoning low for models whose endpoint refuses a request that
+    turns it off. pydantic-ai's model profiles name most of them, and
+    ``thinking=False`` then asks for their lowest effort. A model the
+    profiles do not know is asked again at low effort after its first
+    refusal, so ``max_tokens`` is not spent on default-effort reasoning, and
+    without a reasoning setting if it refuses that too; every later request
+    of this agent to it is sent the same way.
+    """
+
+    def __init__(self):
+        # The reasoning level each refusing model is sent: "low", or None for the provider's default.
+        self.levels: dict[str, str | None] = {}
+
+    async def prepare_model_request(self, ctx, request_context):
+        key, settings = _model_key(request_context.model), request_context.model_settings or {}
+        if key not in self.levels or not _turns_reasoning_off(settings):
+            return request_context
+        level = self.levels[key]
+        settings = {k: v for k, v in settings.items() if k not in ("thinking", "openai_reasoning_effort")}
+        if level is not None:
+            settings["thinking"] = level
+        return dataclasses.replace(request_context, model_settings=settings)
+
+    async def on_model_request_error(self, ctx, *, request_context, error):
+        key = _model_key(request_context.model)
+        rejected = isinstance(error, ModelRequestRejectedError) or (
+            isinstance(error, ModelAPIError) and getattr(error, "status_code", None) == 400)
+        refused = rejected and REASONING_REQUIRED.search(f"{getattr(error, 'body', '')} {error}")
+        if refused and key not in self.levels and _turns_reasoning_off(request_context.model_settings or {}):
+            self.levels[key] = "low"
+            raise RetryModelRequest()
+        if refused and self.levels.get(key) == "low":
+            self.levels[key] = None
+            raise RetryModelRequest()
+        raise error
+
 
 # Added for an agent that can wire nodes, i.e. with the connect tool.
 SELECTION_INSTRUCTIONS = """
@@ -160,8 +238,10 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     instructions
         Extra instructions appended to Lumen's.
     model_settings
-        pydantic-ai model settings for every request; defaults to
-        ``MODEL_SETTINGS``. Settings a model does not know are ignored.
+        pydantic-ai model settings for every request. By default each
+        request gets ``model_settings_for`` the model it goes to, also when
+        a run picks another model than the agent's. Settings a model does
+        not know are ignored.
     dashboard_tools
         The FlowDash dashboard tools to offer: a name in ``DASHBOARD_TOOLS``
         (``"data"``, the default, or ``"layout"``), tool names, or None for
@@ -173,10 +253,12 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
-    model_settings = MODEL_SETTINGS if model_settings is None else model_settings
+    settings: Any = (lambda ctx: model_settings_for(ctx.model)) if model_settings is None else dict(model_settings)
     toolsets = [data_toolset(), authoring_toolset(), *kwargs.pop("toolsets", [])]
     text = INSTRUCTIONS + (f"\n{instructions}" if instructions else "")
-    capabilities = [ProcessHistory(stub_superseded_lookups), CheckedConfig(), *kwargs.pop("capabilities", [])]
+    capabilities = [
+        ProcessHistory(stub_superseded_lookups), CheckedConfig(), ReasoningRequired(), *kwargs.pop("capabilities", []),
+    ]
     # set_config now runs the SQL it is given, so fixing a query may take a few tries, and a
     # second cut-off answer in a run would otherwise end it.
     kwargs.setdefault("retries", {"tools": 3, "output": 2})
@@ -192,7 +274,7 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         arrange = " Call arrange_tiles once at the end to lay the tiles out." if "arrange_tiles" in dashboard_tools else ""
         text += LAYOUT_INSTRUCTIONS.format(arrange=arrange)
     agent = create_flowdash_agent(
-        model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
+        model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=settings,
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",
         capabilities=capabilities, **kwargs,
     )

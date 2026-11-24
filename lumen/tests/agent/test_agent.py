@@ -1,3 +1,5 @@
+import json
+
 from types import SimpleNamespace
 
 import pytest
@@ -12,7 +14,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 
 from lumen.agent import AgentSession, _graph, assistant
-from lumen.agent.assistant import INSTRUCTIONS, create_agent
+from lumen.agent.assistant import (
+    INSTRUCTIONS, MODEL_SETTINGS, OTHER_MODEL_SETTINGS, create_agent,
+    model_settings_for,
+)
 from lumen.agent.authoring import (
     add_chart, add_sql, add_text, check_text,
 )
@@ -312,21 +317,167 @@ async def test_failed_run_keeps_usage_of_its_responses():
     assert turn.messages == []
 
 
-async def test_requests_turn_reasoning_off_unless_the_host_overrides_it():
+class OpenAIFunctionModel(FunctionModel):
+    @property
+    def system(self) -> str:
+        return "openai"
+
+
+def test_openai_models_keep_openai_settings_and_others_get_neutral_ones():
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    openai = OpenAIProvider(api_key="x")
+    assert model_settings_for(OpenAIResponsesModel("gpt-6-luna", provider=openai)) == MODEL_SETTINGS
+    assert model_settings_for(OpenAIChatModel("gpt-6-luna", provider=openai)) == MODEL_SETTINGS
+    azure = OpenAIChatModel("gpt-6-luna", provider=AzureProvider(
+        azure_endpoint="https://x.openai.azure.com", api_version="2024-12-01-preview", api_key="x"))
+    assert azure.system == "azure" and model_settings_for(azure) == MODEL_SETTINGS
+    haiku = OpenRouterModel("anthropic/claude-haiku-5.5", provider=OpenRouterProvider(api_key="x"))
+    assert model_settings_for(haiku) == OTHER_MODEL_SETTINGS == {"thinking": False, "max_tokens": 1000, "cache": True}
+
+
+def openrouter(name, refuse=None):
+    """An OpenRouter model answering "ok" through a mock transport, refusing requests ``refuse`` returns an error for."""
+    import httpx
+
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+    bodies = []
+
+    def respond(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if refuse is not None and (message := refuse(body)):
+            return httpx.Response(400, json={"error": {"message": message, "code": 400}})
+        usage = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        if body.get("stream"):
+            chunk = {"id": "x", "object": "chat.completion.chunk", "created": 0, "provider": "Test", "model": name,
+                     "choices": [{"index": 0, "finish_reason": "stop", "delta": {"role": "assistant", "content": "ok"}}],
+                     "usage": usage}
+            return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                                  content=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n")
+        return httpx.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "provider": "Test", "model": name, "usage": usage,
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+        })
+
+    client = AsyncOpenAI(api_key="x", base_url="https://openrouter.test/api/v1", max_retries=0,
+                         http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    return OpenRouterModel(name, provider=OpenRouterProvider(openai_client=client)), bodies
+
+
+async def ask(model, *prompts):
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        return [await session.ask(prompt) for prompt in prompts]
+    finally:
+        session.close()
+
+
+async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_and_cache_the_prompt():
+    model, bodies = openrouter("anthropic/claude-haiku-5.5")
+    await ask(model, "Hi")
+
+    body = bodies[0]
+    assert body["reasoning"] == {"effort": "none"} and "reasoning_effort" not in body
+    assert body["max_tokens"] == 1000
+    breakpoints = {"type": "ephemeral", "ttl": "5m"}
+    assert body["messages"][0]["content"][-1]["cache_control"] == breakpoints
+    assert body["messages"][-1]["content"][-1]["cache_control"] == breakpoints
+    assert body["tools"][-1]["cache_control"] == breakpoints
+
+
+async def test_a_model_known_to_always_reason_gets_its_lowest_effort():
+    model, bodies = openrouter("google/gemini-3.8-flash")
+    await ask(model, "Hi")
+
+    assert bodies[0]["reasoning"] == {"effort": "minimal"}
+
+
+MANDATORY = "Reasoning is mandatory for this endpoint and cannot be disabled."
+
+
+def effort(body):
+    return body.get("reasoning", {}).get("effort")
+
+
+async def test_a_model_refusing_reasoning_off_is_asked_again_at_low_effort():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if effort(body) == "none" else None)
+    first, second = await ask(model, "Hi", "Again")
+
+    assert first.error is None and first.output == "ok" and second.error is None
+    assert [effort(body) for body in bodies] == ["none", "low", "low"]
+    assert bodies[2]["max_tokens"] == 1000
+
+
+async def test_a_model_refusing_low_effort_too_is_asked_again_with_its_default_reasoning():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if "reasoning" in body else None)
+    first, second = await ask(model, "Hi", "Again")
+
+    assert first.error is None and second.error is None
+    assert [effort(body) for body in bodies] == ["none", "low", None, None]
+
+
+async def test_a_rejected_request_without_an_http_status_is_asked_again_too():
+    from pydantic_ai.exceptions import (
+        ModelRequestRejectedError, RetryModelRequest,
+    )
+
+    from lumen.agent.assistant import ReasoningRequired
+
+    capability = ReasoningRequired()
+    request = SimpleNamespace(model=SimpleNamespace(system="grpc", model_name="m"), model_settings={"thinking": False})
+    with pytest.raises(RetryModelRequest):
+        await capability.on_model_request_error(None, request_context=request,
+                                                error=ModelRequestRejectedError(model_name="m", message=MANDATORY))
+    assert capability.levels == {"grpc:m": "low"}
+
+
+async def test_other_bad_requests_are_not_asked_again():
+    model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: "Invalid tool schema")
+    turn, = await ask(model, "Hi")
+
+    assert turn.error is not None and len(bodies) == 1
+
+
+async def test_a_model_picked_for_a_run_gets_its_own_settings_under_the_hosts():
     seen = []
 
     def respond(messages, info):
         seen.append(info.model_settings)
         return ModelResponse(parts=[TextPart("ok")])
 
-    for settings, expected in [(None, "none"), ({"openai_reasoning_effort": "low"}, "low")]:
-        session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond), model_settings=settings)
-        try:
-            await session.ask("Hi")
-        finally:
-            session.close()
-        assert seen[-1]["openai_reasoning_effort"] == expected
-    assert seen[0]["max_tokens"] == 1000
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(respond))
+    try:
+        await session.agent.run("Hi", deps=session.deps)
+        await session.agent.run("Hi", deps=session.deps, model=OpenAIFunctionModel(respond), model_settings={"temperature": 0})
+    finally:
+        session.close()
+
+    assert seen[0] == {"max_tokens": 1000}
+    assert seen[1] == {**MODEL_SETTINGS, "temperature": 0}
+
+
+async def test_host_model_settings_replace_the_defaults():
+    seen = []
+
+    def respond(messages, info):
+        seen.append(info.model_settings)
+        return ModelResponse(parts=[TextPart("ok")])
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), OpenAIFunctionModel(respond),
+                           model_settings={"openai_reasoning_effort": "low"})
+    try:
+        await session.ask("Hi")
+    finally:
+        session.close()
+    assert seen == [{"openai_reasoning_effort": "low"}]
 
 
 async def test_data_agent_leaves_out_flowdash_instructions_and_catalogue():

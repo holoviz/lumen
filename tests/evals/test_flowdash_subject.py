@@ -49,6 +49,19 @@ def test_flowdash_subject_is_registered_and_offline_with_a_model():
     assert resolve_subject("flowdash").requires_api_key is True
 
 
+def test_openrouter_models_are_built_as_the_app_builds_them():
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
+    subject = FlowDashSubject()
+    for name in ("anthropic/claude-haiku-5.5", "ibm-granite/granite-4.2-8b", "google/gemini-3.8-flash"):
+        assert isinstance(subject.build_model(name, provider="openrouter", api_key="x"), OpenRouterModel)
+    assert subject.settings == {"model_settings": {"thinking": False, "max_tokens": 1000, "cache": True}}
+    assert isinstance(subject.build_model("gpt-6-luna", api_key="x"), OpenAIResponsesModel)
+    assert subject.settings == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
+    assert "openai_azure" in FlowDashSubject().settings["model_settings"]
+
+
 def test_fingerprint_hashes_agent_surface_without_a_run():
     subject = FlowDashSubject()
     assert subject.fingerprint() == agent_fingerprint()
@@ -86,7 +99,8 @@ async def test_subject_scored_end_to_end_on_outcomes(tmp_path):
     assert saved["run"]["subject"] == "flowdash"
     assert saved["run"]["scoring"] == "outcome"
     assert saved["run"]["subject_fingerprint"] == agent_fingerprint()
-    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
+    # The scripted model is no OpenAI model, so it gets the other providers' settings.
+    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"thinking": False, "max_tokens": 1000, "cache": True}}
     turn = next(case for case in saved["cases"] if case["name"] == "sales_chart")["turns"][0]
     assert turn["chart_marks"] == ["bar"]
     assert turn["chart_encodings"] == [{"x": {"field": "category", "type": "nominal"},
