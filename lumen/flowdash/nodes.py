@@ -941,16 +941,24 @@ def _watch_refresh(editor: Any, node: Any) -> None:
 _METRIC_EDITORS: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
 
 
+def _session_doc() -> Any:
+    """The document of the session the code runs in, None outside one."""
+    return pn.state.curdoc
+
+
 def metrics_changed() -> None:
     """
     Have every open dashboard with a metric node offer its provenance
     labels and node actions anew, e.g. "Missing metric" once an admin
     deleted the metric, after the project's metrics were saved or deleted.
-    Each one runs on its own session's event loop.
+    Each one runs on its own session's event loop, never inline on the
+    caller's; one whose session is not known is refreshed only when the
+    caller is outside any session too, e.g. a script or a test.
     """
+    inside = _session_doc() is not None
     for editor, doc in list(_METRIC_EDITORS.items()):
         refresh = getattr(editor, "refresh_provenance", None)
-        if refresh is None:
+        if refresh is None or (doc is None and inside):
             continue
 
         def run(refresh=refresh):
@@ -2142,8 +2150,10 @@ class MetricNode(PipelineNode):
 
     def __init__(self, **params):
         super().__init__(**params)
-        if self.editor is not None:
-            _METRIC_EDITORS[self.editor] = pn.state.curdoc
+        editor, doc = self.editor, _session_doc()
+        # A node made outside a session, e.g. while a dashboard is loaded in a thread, keeps the editor's document.
+        if editor is not None and (doc is not None or editor not in _METRIC_EDITORS):
+            _METRIC_EDITORS[editor] = doc
 
     metric = param.String(default="", doc="Name of a metric the app defines.")
 

@@ -610,3 +610,63 @@ def test_deleting_a_metric_relabels_the_open_dashboards_views(ops):
     assert chips("chart") == ["Metric: state_mw"]
     assert metrics_admin.delete_metric(project_of(ctx_of(ops)), "state_mw", app=_Admin(ctx_of(ops))) == []
     assert chips("chart") == ["Missing metric: state_mw"]
+
+
+class _Doc:
+    """A document that only records the callbacks scheduled on it."""
+
+    def __init__(self):
+        self.callbacks = []
+
+    def add_next_tick_callback(self, callback):
+        self.callbacks.append(callback)
+
+
+def test_a_metric_change_is_scheduled_on_each_sessions_document(ops, monkeypatch):
+    from lumen.flowdash import metrics_admin, nodes
+    from lumen.flowdash.save_metric import _Admin, project_of
+
+    editor = ops.editor
+    if not hasattr(editor, "refresh_provenance"):
+        pytest.skip("panel-flowdash without refresh_provenance")
+    ran = []
+    monkeypatch.setattr(editor, "refresh_provenance", lambda nodes=None: ran.append(editor))
+    mine, theirs = _Doc(), _Doc()
+    monkeypatch.setattr(nodes, "_METRIC_EDITORS", type(nodes._METRIC_EDITORS)())
+    with monkeypatch.context() as m:
+        m.setattr(nodes, "_session_doc", lambda: theirs)
+        state_mw_metric(ops)
+    with monkeypatch.context() as m:
+        m.setattr(nodes, "_session_doc", lambda: None)
+        # A node made outside any session keeps the editor's document.
+        ops.add_node(METRIC_ID, {"metric": "state_mw"}, name="again")
+    assert dict(nodes._METRIC_EDITORS) == {editor: theirs}
+    with monkeypatch.context() as m:
+        m.setattr(nodes, "_session_doc", lambda: mine)
+        assert metrics_admin.delete_metric(project_of(ctx_of(ops)), "state_mw", app=_Admin(ctx_of(ops))) == []
+    assert ran == [] and len(theirs.callbacks) == 1 and mine.callbacks == []
+    theirs.callbacks[0]()
+    assert ran == [editor]
+
+
+def test_an_editor_of_no_known_session_is_refreshed_only_outside_sessions(ops, monkeypatch):
+    from lumen.flowdash import nodes
+
+    editor = ops.editor
+    if not hasattr(editor, "refresh_provenance"):
+        pytest.skip("panel-flowdash without refresh_provenance")
+    ran = []
+    monkeypatch.setattr(editor, "refresh_provenance", lambda nodes=None: ran.append(editor))
+    monkeypatch.setattr(nodes, "_METRIC_EDITORS", type(nodes._METRIC_EDITORS)())
+    with monkeypatch.context() as m:
+        m.setattr(nodes, "_session_doc", lambda: None)
+        state_mw_metric(ops)
+    assert dict(nodes._METRIC_EDITORS) == {editor: None}
+    with monkeypatch.context() as m:
+        m.setattr(nodes, "_session_doc", _Doc)
+        nodes.metrics_changed()
+    assert ran == []
+    with monkeypatch.context() as m:
+        m.setattr(nodes, "_session_doc", lambda: None)
+        nodes.metrics_changed()
+    assert ran == [editor]
