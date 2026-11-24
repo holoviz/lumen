@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from typing import Any
+from typing import Any, Literal
 
 import sqlglot
 
@@ -20,6 +20,9 @@ from ..flowdash import (
 )
 from ..pipeline import Pipeline
 from . import _graph
+from ._graph import (
+    DIVIDER_ID, HEADING_ID, MARKDOWN_ID, TEXT_FIELDS,
+)
 from .data import lint, resolve_source, source_output
 
 
@@ -130,16 +133,80 @@ def _upstream_port(ops, data: str) -> str:
     return port
 
 
+TEXT_IDS = {"heading": HEADING_ID, "markdown": MARKDOWN_ID, "divider": DIVIDER_ID}
+# The most characters each text field may hold; prose longer than this belongs in several tiles.
+TEXT_LIMITS = {
+    (HEADING_ID, "text"): 200, (HEADING_ID, "subtitle"): 400,
+    (MARKDOWN_ID, "text"): 4000, (DIVIDER_ID, "label"): 100,
+}
+_PLACEHOLDER = "{{"
+
+
+def check_text(ops, component: str, config: dict[str, Any], name: str | None = None) -> None:
+    """
+    Raise ``ModelRetry`` when a text component's ``config`` has a text
+    field that is not a string, is too long, or uses a placeholder while
+    nothing feeds the node's value input.
+    """
+    for (cid, field), limit in TEXT_LIMITS.items():
+        if cid != component or field not in config:
+            continue
+        value = config[field]
+        if not isinstance(value, str):
+            raise ModelRetry(f"{field} must be a string.")
+        if len(value) > limit:
+            raise ModelRetry(f"{field} has {len(value)} characters; keep it to {limit}.")
+        if _PLACEHOLDER in value and (name is None or _graph.upstream(ops, name) is None):
+            raise ModelRetry(
+                f"{field} uses a {{{{ value }}}} placeholder, but nothing is connected to the node's value "
+                "input; write the text itself, with numbers as a node shows them."
+            )
+
+
+def add_text(
+    ctx: RunContext[FlowDashDeps], kind: Literal["heading", "markdown", "divider"], name: str, text: str = "",
+    subtitle: str = "", size: Literal["Title", "Heading", "Subheading", "Section"] | None = None,
+) -> str:
+    """Place a heading, Markdown prose or a divider with the text you write for it.
+
+    Args:
+        kind: "heading" for a title, "markdown" for prose, "divider" for a rule between groups of tiles.
+        name: Descriptive snake_case node name.
+        text: The heading's text, the Markdown (at most 4000 characters) or the divider's optional label.
+        subtitle: Smaller text below a heading.
+        size: A heading's size; "Title" for the dashboard's title.
+    """
+    ops = ctx.deps.ops
+    component = TEXT_IDS[kind]
+    if kind != "divider" and not text.strip():
+        raise ModelRetry(f"Write the {kind}'s text.")
+    config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
+    if kind == "heading":
+        if subtitle:
+            config["subtitle"] = subtitle
+        if size:
+            config["size"] = size
+    elif subtitle or size:
+        raise ModelRetry("Only a heading takes a subtitle or a size.")
+    check_text(ops, component, config)
+    try:
+        ops.add_node(component, config, name=name)
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    return f"Placed {kind} {name!r}."
+
+
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql and add_chart."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_chart], max_retries=3)
+    """The authoring tools: add_sql, add_chart and add_text."""
+    return FunctionToolset[FlowDashDeps]([add_sql, add_chart, add_text], max_retries=3)
 
 
 class CheckedConfig(AbstractCapability[FlowDashDeps]):
     """
     Checks what ``set_config`` gives a Lumen SQL or chart node as add_sql and
     add_chart check it, before the node changes: SQL is cleaned, checked and
-    run, and a chart spec is checked against its data's columns. A problem
+    run, and a chart spec is checked against its data's columns, and the
+    text of a heading, Markdown or divider as add_text checks it. A problem
     comes back for the model to fix, and a changed query reports its result.
     """
 
@@ -149,6 +216,9 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             return await handler(args)
         ops, name = ctx.deps.ops, args.get("name")
         component = next((node["component"] for node in ops.nodes() if node["name"] == name), None)
+        if component in TEXT_FIELDS:
+            check_text(ops, component, config, name)
+            return await handler(args)
         if component == VIEW_ID and "spec" in config:
             data = _graph.upstream(ops, name)
             port = _graph.pipeline_port(ops, data) if data else None
