@@ -30,6 +30,9 @@ from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
 from .project import (
     PROJECT_FILE, Project, ProjectError, load_project,
 )
+from .uploads import (
+    UPLOAD_DIR, UPLOADS_KEY, Uploads, upload_formats,
+)
 
 LIBRARY = "lumen.flowdash"
 
@@ -328,6 +331,8 @@ def build_routes(
     agent_model: str | Sequence[str] | None = None,
     project: str | os.PathLike | Project | None = None,
     title: str = "Lumen",
+    upload_handlers: Mapping[str, Any] | None = None,
+    upload_dir: str | os.PathLike | None = None,
     **params: Any,
 ) -> dict[str, Any]:
     """
@@ -356,6 +361,17 @@ def build_routes(
         served is left out with a warning.
     title
         The app's title.
+    upload_handlers
+        Readers of further file types people may upload, by extension, e.g.
+        ``{"h5ad": upload_h5ad}``, each ``handler(context, file, alias,
+        filename)`` returning a Lumen source, as Lumen AI's
+        ``upload_handlers``; see ``lumen.flowdash.uploads``. They come
+        after Lumen's and those of the ``lumen.upload_handlers`` entry
+        points.
+    upload_dir
+        Where uploaded files are kept; an ``uploads`` folder next to the
+        project file by default. The uploads there are served again when
+        the app starts.
     **params
         Further ``FlowDashApp`` parameters.
     """
@@ -382,9 +398,17 @@ def build_routes(
     else:
         agent = False
     db_path = Path(db_path) if db_path else Path.cwd() / "dashboards.db"
+    if isinstance(project, Project):
+        project_dir = Path(project.path).resolve().parent if project.path else Path.cwd()
+    else:
+        project_dir = Path(project).resolve().parent if project is not None else Path.cwd()
+    uploads = Uploads(upload_dir or project_dir / UPLOAD_DIR, sources, upload_formats(upload_handlers))
+    # Uploads take the refs they were given, after the served sources took theirs.
+    uploads.restore()
     editor_options = dict(params.pop("editor_options", {}))
     context = {
         **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: aliases,
+        UPLOADS_KEY: uploads,
     }
     if project is None:
         project = _working_project(context)
@@ -393,6 +417,7 @@ def build_routes(
     # The admin view edits this project, so what it saves is what the app reads.
     context[METRICS_KEY] = ProjectMetrics(project)
     context[CATALOG_KEY] = ProjectCatalog(project)
+    uploads.project = project
     editor_options["context"] = context
     routes = FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
@@ -406,11 +431,14 @@ def build_routes(
         project=project,
         **params,
     )
-    return {path: _lumen_session(factory) for path, factory in routes.items()}
+    return {path: _lumen_session(factory, uploads) for path, factory in routes.items()}
 
 
-def _lumen_session(factory: Any) -> Any:
-    """``factory`` marking each session it serves as a Lumen app's, which shows the Metrics admin."""
+def _lumen_session(factory: Any, uploads: Uploads | None = None) -> Any:
+    """
+    ``factory`` marking each session it serves as a Lumen app's, which shows
+    the Lumen admin sections, and giving it the app's uploads.
+    """
     if not callable(factory):
         return factory
 
@@ -418,7 +446,10 @@ def _lumen_session(factory: Any) -> Any:
         import panel as pn
 
         serve_lumen(pn.state.curdoc)
-        return factory(*args, **kwargs)
+        app = factory(*args, **kwargs)
+        if uploads is not None:
+            uploads.attach(app)
+        return app
 
     return lumen_factory
 

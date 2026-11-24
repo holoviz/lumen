@@ -40,6 +40,7 @@ from panel_flowdash.value_text import error_text, redact_secrets
 from ..sources.base import BaseSQLSource, Source
 from ..transforms.sql import SQLLimit
 from .catalog import SECTION, raw_section
+from .uploads import UPLOADS_KEY, Upload, UploadDialog
 
 logger = logging.getLogger(__name__)
 
@@ -349,6 +350,13 @@ def hidden_by_source(section: Mapping[str, t.Any], context: Mapping[str, t.Any])
 # The view
 
 
+def uploaded_text(upload: Upload) -> str:
+    """Who uploaded ``upload`` and when, e.g. "Uploaded by ana on 24 Nov 2026"."""
+    when = upload.when
+    on = f" on {when.astimezone():%d %b %Y}" if when is not None else ""
+    return f"Uploaded by {upload.uploaded_by}{on}"
+
+
 def _key(ref: str, table: str) -> str:
     return f"{ref}--{table}"
 
@@ -451,9 +459,20 @@ class CatalogSettings(Viewer):
         self._search.param.watch(lambda event: setattr(self, "query", event.new or ""), "value_input")
         self._chips: dict[str, pmui.Chip] = {}
         self._chip_row = pn.Row(margin=0, styles={"gap": "8px", "flex-wrap": "wrap", "align-items": "center"})
+        self.uploads = (project.context or {}).get(UPLOADS_KEY)
+        self._upload_dialog = (
+            UploadDialog(self.uploads, self._app, on_added=self._on_uploaded) if self.uploads is not None else None
+        )
+        self._upload = pmui.Button(
+            label="Upload data", icon="upload_file", variant="contained", margin=0,
+            visible=self.uploads is not None, disabled=not editable, css_classes=["flowdash-catalog-upload"],
+        )
+        self._upload.on_click(lambda _event: self._upload_dialog.open())
         toolbar = pn.Row(
             self._search,
             self._chip_row,
+            pn.layout.HSpacer(),
+            self._upload,
             margin=0,
             sizing_mode="stretch_width",
             styles={
@@ -485,6 +504,8 @@ class CatalogSettings(Viewer):
             self._table,
             self._more,
             self._drawer,
+            self._confirm_dialog,
+            *([self._upload_dialog] if self._upload_dialog is not None else []),
             margin=0,
             sizing_mode="stretch_width",
             css_classes=["flowdash-admin-catalog-section"],
@@ -530,7 +551,7 @@ class CatalogSettings(Viewer):
                     info = self._infos[(ref, table)] = known
                 rows.append({
                     "ref": ref, "source": source, "table": table, "assistant": table not in off,
-                    "info": info or TableInfo(),
+                    "info": info or TableInfo(), "upload": self.uploads.get(ref) if self.uploads is not None else None,
                 })
         return rows
 
@@ -538,6 +559,8 @@ class CatalogSettings(Viewer):
         if self.filter == "off" and row["assistant"]:
             return False
         if self.filter.startswith("source:") and row["ref"] != self.filter[7:]:
+            return False
+        if self.filter == "uploaded" and row["upload"] is None:
             return False
         info = row["info"]
         haystack = " ".join([row["ref"], row["table"], info.description, *(info.columns or [])]).lower()
@@ -611,11 +634,18 @@ class CatalogSettings(Viewer):
         """Draw the chips and the table from the sources and the project file."""
         self._alert.visible = False
         rows = self.rows()
-        refs = list(self.sources())
-        counts = {"all": len(rows), "off": sum(not row["assistant"] for row in rows)}
+        # Each upload is a source of its own, so they share one chip rather than get one each.
+        refs = [ref for ref in self.sources() if self.uploads is None or self.uploads.get(ref) is None]
+        counts = {
+            "all": len(rows), "off": sum(not row["assistant"] for row in rows),
+            "uploaded": sum(row["upload"] is not None for row in rows),
+        }
         for ref in refs:
             counts[f"source:{ref}"] = sum(row["ref"] == ref for row in rows)
-        labels = {"all": "All", **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}), "off": "Off"}
+        labels = {
+            "all": "All", **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}),
+            "uploaded": "Uploaded", "off": "Off",
+        }
         if self.filter not in labels:
             self.filter = "all"
             return
@@ -623,7 +653,7 @@ class CatalogSettings(Viewer):
             chips = []
             for key, label in labels.items():
                 active = key == self.filter
-                if key == "off" and not counts["off"] and not active:
+                if key in ("off", "uploaded") and not counts[key] and not active:
                     continue
                 widget = self._chip(key)
                 widget.param.update(
@@ -659,11 +689,15 @@ class CatalogSettings(Viewer):
             value=row["assistant"], margin=0, disabled=not self.editable, css_classes=["flowdash-catalog-assistant"],
         )
         switch.param.watch(lambda event, ref=ref, table=table: self.set_assistant(ref, table, event.new), "value")
-        where = served_file(source, table)
-        second = info.description or where or ""
+        upload = row["upload"]
+        if info.description:
+            second = f'<span class="main muted small">{esc(info.description)}</span>'
+        elif upload is not None:
+            second = f'<span class="main muted small">{esc(uploaded_text(upload))}</span>'
+        else:
+            second = f'<span class="mono">{esc(served_file(source, table) or "") or "&nbsp;"}</span>'
         title = cell(
-            f'<div class="table{"" if row["assistant"] else " off"}"><span class="main">{esc(table)}</span>'
-            f'<span class="{"main muted small" if info.description else "mono"}">{esc(second) or "&nbsp;"}</span></div>',
+            f'<div class="table{"" if row["assistant"] else " off"}"><span class="main">{esc(table)}</span>{second}</div>',
             stylesheets=[_ROW_CSS],
         )
         open_drawer = pmui.Clickable(object=title, sizing_mode="stretch_width", margin=0)
@@ -686,7 +720,8 @@ class CatalogSettings(Viewer):
         return [
             switch,
             open_drawer,
-            cell(f'<span class="main">{esc(ref)}</span><span class="mono">{esc(_type_name(source))}</span>'),
+            cell(f'<span class="main">{esc(ref)}</span><span class="mono">'
+                 f'{"Upload, " if upload is not None else ""}{esc(_type_name(source))}</span>'),
             cell(rows_text),
             cell(columns_text),
         ]
@@ -729,6 +764,12 @@ class CatalogSettings(Viewer):
         self._loading = pmui.LoadingSpinner(value=True, size=28, margin=(24, 0), visible=False)
         done = pmui.Button(label="Done", variant="contained", margin=0)
         done.on_click(lambda _event: self.close_table())
+        self._delete = pmui.Button(
+            label="Delete upload", icon="delete", variant="outlined", color="error", margin=0, visible=False,
+            disabled=not self.editable, css_classes=["flowdash-catalog-delete"],
+        )
+        self._delete.on_click(lambda _event: self.ask_delete())
+        self._build_confirm()
         head = pn.Row(
             pn.Column(self._drawer_title, self._drawer_subtitle, margin=0, sizing_mode="stretch_width"),
             close,
@@ -751,6 +792,7 @@ class CatalogSettings(Viewer):
             },
         )
         foot = pn.Row(
+            self._delete,
             pn.layout.HSpacer(),
             done,
             margin=0,
@@ -772,6 +814,59 @@ class CatalogSettings(Viewer):
         )
         self._drawer.param.watch(self._on_drawer_open, "open")
         self._detail: TableDetail | None = None
+
+    def _build_confirm(self):
+        self._confirm_text = cell("")
+        cancel = pmui.Button(label="Cancel", variant="outlined", color="default", margin=0)
+        cancel.on_click(lambda _event: setattr(self._confirm_dialog, "open", False))
+        confirm = pmui.Button(
+            label="Delete upload", variant="contained", color="error", margin=0,
+            css_classes=["flowdash-catalog-confirm-delete"],
+        )
+        confirm.on_click(lambda _event: self.delete_upload())
+        self._confirm_dialog = pmui.Dialog(
+            pn.Column(
+                self._confirm_text,
+                pn.Row(pn.layout.HSpacer(), cancel, confirm, margin=0, sizing_mode="stretch_width",
+                       styles={"gap": "8px"}),
+                margin=0, sizing_mode="stretch_width", styles={"gap": "16px"},
+            ),
+            title="Delete upload?", open=False, show_close_button=True, width_option="sm",
+        )
+
+    def _on_uploaded(self, upload: Upload):
+        self.refresh()
+        self._read_infos()
+
+    def ask_delete(self):
+        """Ask before deleting the upload whose table the drawer shows."""
+        upload = self.uploads.get(self.selected[0]) if self.uploads is not None and self.selected else None
+        if upload is None:
+            return
+        tables = ", ".join(f"<code>{esc(t)}</code>" for t in upload.tables)
+        self._confirm_text.object = (
+            f'<div class="k">{esc(upload.filename)} and its tables {tables} are deleted for everyone. '
+            "Dashboards that read them stop working.</div>"
+        )
+        self._confirm_dialog.open = True
+
+    def delete_upload(self) -> bool:
+        """Delete the upload whose table the drawer shows, for everyone."""
+        if self.uploads is None or self.selected is None:
+            return False
+        ref = self.selected[0]
+        problems = self.uploads.delete(ref, app=self._app if self.editable else None)
+        self._confirm_dialog.open = False
+        if problems:
+            self._show_problems(problems)
+            return False
+        self.close_table()
+        for key in [key for key in self._infos if key[0] == ref]:
+            del self._infos[key]
+        self.refresh()
+        if self._app is not None and hasattr(self._app, "_notify"):
+            self._app._notify("success", f"Deleted the upload {ref}.")
+        return True
 
     def _on_drawer_open(self, event):
         if not event.new:
@@ -826,7 +921,9 @@ class CatalogSettings(Viewer):
         source, detail = row["source"], self._detail
         info = row["info"]
         self._drawer_title.object = table
-        self._drawer_subtitle.object = f"Table of {ref}, a {_type_name(source)} source"
+        kind = "an uploaded" if row["upload"] is not None else f"a {_type_name(source)}"
+        self._drawer_subtitle.object = f"Table of {ref}, {kind} source"
+        self._delete.visible = row["upload"] is not None
         assistant = chip("Uses it", "success") if row["assistant"] else chip("Turned off", "warning")
         rows = detail.rows if detail is not None else info.rows
         description = (detail.description if detail is not None else "") or info.description
@@ -834,7 +931,16 @@ class CatalogSettings(Viewer):
             ("Assistant", assistant),
             ("Rows", f"{rows:,}" if rows is not None else '<span class="muted">Reading…</span>'),
         ]
-        if where := served_file(source, table):
+        upload = row["upload"]
+        if upload is not None:
+            when = upload.when
+            details.append(("Uploaded by", esc(upload.uploaded_by)))
+            if when is not None:
+                details.append(("Uploaded", f"{when.astimezone():%d %b %Y, %H:%M}"))
+            details.append(("File", f"<code>{esc(upload.filename)}</code>" + (
+                f" (sheet {esc(upload.sheet)})" if upload.sheet else ""
+            )))
+        elif where := served_file(source, table):
             details.append(("File", f"<code>{esc(where)}</code>"))
         if description:
             details.append(("Description", esc(description)))

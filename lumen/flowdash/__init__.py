@@ -12,7 +12,8 @@ serve`` project sets ``editor_options = {"context": {"lumen.sources": {...}}}``
 in its ``__init__.py``. Without sources, source nodes say how to provide them.
 The tables of those sources an admin turned off for the assistant, in the
 project file's ``catalog:`` section, are read from ``CATALOG_KEY``
-(``"lumen.catalog"``), see ``lumen.flowdash.catalog``.
+(``"lumen.catalog"``), see ``lumen.flowdash.catalog``. Data files people
+upload are read by the handlers of ``lumen.flowdash.uploads``.
 
 Importing ``lumen`` does not import this package or panel-flowdash.
 """
@@ -48,6 +49,10 @@ from .transforms import (
     AGGREGATE_ID, DERIVE_ID, SELECT_ID, SORT_ID, TRANSFORM_COMPONENTS,
     AggregateNode, DeriveNode, SelectNode, SortNode, transformed_pipeline,
 )
+from .uploads import (
+    ENTRY_POINT_GROUP, UPLOADS_KEY, UploadFormat, Uploads,
+    register_upload_handler, upload_formats,
+)
 
 COMPONENTS.update(TRANSFORM_COMPONENTS)
 COMPONENTS[TABLE_VIEW_ID] = TableViewNode
@@ -67,6 +72,7 @@ __all__ = [
     "DATA_ID",
     "DECKGL_ID",
     "DERIVE_ID",
+    "ENTRY_POINT_GROUP",
     "FILTER_ID",
     "FILTER_OPTIONS",
     "METRICS_KEY",
@@ -87,6 +93,7 @@ __all__ = [
     "SQL_ID",
     "TABLE_ID",
     "TABLE_VIEW_ID",
+    "UPLOADS_KEY",
     "VIEW_ID",
     "AggregateNode",
     "Catalog",
@@ -107,6 +114,8 @@ __all__ = [
     "SourceNode",
     "TableNode",
     "TableViewNode",
+    "UploadFormat",
+    "Uploads",
     "ViewNode",
     "assistant_tables",
     "bind_source",
@@ -146,6 +155,7 @@ __all__ = [
     "primed_result",
     "probe_query",
     "python_value",
+    "register_upload_handler",
     "register_view",
     "result_sql",
     "row_ceiling",
@@ -156,4 +166,5 @@ __all__ = [
     "table_pipeline",
     "transformed_pipeline",
     "unbind_source",
+    "upload_formats",
 ]
