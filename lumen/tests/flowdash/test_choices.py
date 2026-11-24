@@ -78,10 +78,23 @@ async def test_table_node_offers_the_tables_of_its_source(source):
     assert choices["table"].values() == ["regions", "sales"]
 
 
-async def test_table_node_offers_nothing_without_a_source(source):
+async def test_table_node_offers_only_the_refs_without_a_source(source):
     ops = dashboard(source)
     ops.disconnect("data.source", "table.source")
-    assert await config_choices.node_choices(ops.editor, ops._instance("table")) == {}
+    choices = await config_choices.node_choices(ops.editor, ops._instance("table"))
+    assert list(choices) == ["ref"]
+    assert choices["ref"].values() == ["data"]
+
+
+async def test_table_node_offers_the_tables_of_the_source_its_ref_names(source):
+    other = DuckDBSource(uri=":memory:", tables={"plants": "SELECT 1 AS x"})
+    editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"shop": source, "energy": other}},
+                      notifications=False)
+    ops = DashboardOps(editor)
+    ops.add_node(TABLE_ID, {"ref": "energy"}, name="table")
+    choices = await config_choices.node_choices(editor, ops._instance("table"))
+    assert choices["ref"].values() == ["energy", "shop"]
+    assert choices["table"].values() == ["plants"]
 
 
 async def test_filter_node_offers_the_columns_of_its_pipeline(source):
@@ -124,22 +137,35 @@ def test_presets_list_each_source_and_table(source):
     assert source_presets(context)[0]["tooltip"] == "Source shop: regions, sales"
     tables = table_presets(context)
     assert [p["title"] for p in tables] == ["regions (shop)", "sales (shop)", "plants (energy)"]
-    assert tables[1]["config"] == {"table": "sales"} and tables[1]["tooltip"] == "Source shop, table sales"
+    assert tables[1]["config"] == {"ref": "shop", "table": "sales"}
+    assert tables[1]["tooltip"] == "Source shop, table sales"
     assert source_presets({}) == table_presets({}) == []
 
 
 @needs_presets
-def test_palette_presets_place_working_nodes(source):
+def test_a_table_preset_places_one_working_node(source):
     editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"shop": source}}, notifications=False)
     items = {item["label"]: item for group in editor._palette.items for item in group["items"]}
     assert items["sales (shop)"]["tooltip"] == "Source shop, table sales"
+
+    editor._on_palette_clicked(items["sales (shop)"])
+    ops = DashboardOps(editor)
+    (table_node,) = (node["name"] for node in ops.nodes())
+    assert ops.node_config(table_node) == {"ref": "shop", "table": "sales"}
+    pipeline = ops.node_output(f"{table_node}.pipeline")
+    assert pipeline.source is source and pipeline.table == "sales"
+
+
+@needs_presets
+def test_a_table_preset_wired_to_a_source_node_reads_it(source):
+    editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"shop": source}}, notifications=False)
+    items = {item["label"]: item for group in editor._palette.items for item in group["items"]}
 
     editor._on_palette_clicked(items["shop (source)"])
     editor._on_palette_clicked(items["sales (shop)"])
     ops = DashboardOps(editor)
     source_node, table_node = (node["name"] for node in ops.nodes())
     assert ops.node_config(source_node) == {"ref": "shop"}
-    assert ops.node_config(table_node) == {"table": "sales"}
     ops.connect(f"{source_node}.source", f"{table_node}.source")
     assert ops.node_output(f"{source_node}.source") is source
     assert ops.node_output(f"{table_node}.pipeline").table == "sales"
@@ -186,3 +212,13 @@ def test_table_presets_name_the_file_a_numbered_table_reads(tmp_path, monkeypatc
         "plants (local)": "Source local, table plants, file y/plants.csv",
         "plants_2 (local)": "Source local, table plants_2, file x/plants.csv",
     }
+
+
+async def test_table_node_shows_its_ref_as_ignored_while_a_source_is_connected(source):
+    ops = dashboard(source)
+    choices = await config_choices.node_choices(ops.editor, ops._instance("table"))
+    assert list(choices) == ["table"]
+    ops.editor._apply_config_patch(ops._instance("table"), {"ref": "data"})
+    choices = await config_choices.node_choices(ops.editor, ops._instance("table"))
+    assert choices["ref"].labelled() == {"data (ignored while a source is connected)": "data"}
+    assert choices["table"].values() == ["regions", "sales"]

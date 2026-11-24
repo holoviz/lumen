@@ -30,7 +30,7 @@ Lumen YAML dashboards are served without `--flowdash`, as before. The Lumen AI o
 
 ## Sources
 
-A dashboard cannot open connections of its own. The app hands the editor the data you served, and a **Lumen Source** node names it by `ref`, the source's name. All CSV, Parquet and JSON files, and those in a folder you serve, go into one DuckDB source named after the data: the file's stem for one file (`lumen serve turbines.csv --flowdash` gives `turbines`), the folder's name for a folder (`lumen serve data/ --flowdash` gives `data`), and `local` for several files (`data` when some are URLs). Each file's table is its stem without the extension: `turbines.csv` gives `turbines`, in any directory. A database file or connection is named by its file or database name (`shop.db` gives `shop`).
+A dashboard cannot open connections of its own. The app hands the editor the data you served, and a node names a source by `ref`, the source's name. A **Lumen Table** node picks a source by `ref` and one of its tables, so reading a table takes one node; the component list offers each table of each source as an entry such as "turbines (local)" with both filled in. A **Lumen Source** node is for SQL nodes, which query a source, and for several table nodes that share one source node through its output; a table node with a source connected reads that source instead of its `ref`. All CSV, Parquet and JSON files, and those in a folder you serve, go into one DuckDB source named after the data: the file's stem for one file (`lumen serve turbines.csv --flowdash` gives `turbines`), the folder's name for a folder (`lumen serve data/ --flowdash` gives `data`), and `local` for several files (`data` when some are URLs). Each file's table is its stem without the extension: `turbines.csv` gives `turbines`, in any directory. A database file or connection is named by its file or database name (`shop.db` gives `shop`).
 
 Names that clash get `_2`, `_3` and so on in the order you list the data, for tables and sources alike: `lumen serve 2025/sales.csv 2026/sales.csv --flowdash` gives the tables `sales` and `sales_2`, and `shop.db shop.csv` the sources `shop` and `shop_2`. The first one listed keeps the name, so add new data at the end: a file added later never takes over a name a saved dashboard reads. Listing a file of the same name before one a dashboard already reads does renumber them, and that dashboard then reads the new file; `lumen serve` logs which file each numbered table reads (`sales: y/sales.csv, sales_2: x/sales.csv`) whenever file names clash. Each source `lumen serve` reads is named by its ref, so a source node shows the name a dashboard uses; a source passed to `build_routes` from Python keeps its own name, and its node shows the ref.
 
@@ -41,7 +41,7 @@ Dashboards saved with earlier names keep working where the name is unambiguous. 
 | Node | Inputs | Config | Outputs |
 | --- | --- | --- | --- |
 | Lumen Source (`Lumen/source`) | | `ref` | `source` |
-| Lumen Table (`Lumen/table`) | `source` | `table`, `limit` | `pipeline` |
+| Lumen Table (`Lumen/table`) | `source` (optional) | `ref`, `table`, `limit` | `pipeline` |
 | Lumen Filter (`Lumen/filter`) | `pipeline`, `value`, `selection` | `field` | `filtered` |
 | Lumen SQL (`Lumen/sql`) | `source` | `sql`, `table`, `limit` | `pipeline`, `data` |
 | Lumen Data (`Lumen/data`) | `pipeline` | | `data` |
@@ -67,7 +67,7 @@ The chart's check warns about selections a filter cannot apply exactly: a brush 
 
 ### Checks
 
-Each node's config is checked before it is applied, whether it is typed in the editor's inspector or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
+Each node's config is checked before it is applied, whether it is typed in the editor's inspector or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source and table nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
 
 SQL nodes accept one read-only `SELECT` or `WITH` query, checked in steps:
 
@@ -95,10 +95,9 @@ In a `flowdash serve` project, set `component_libraries = ["lumen.flowdash"]` in
 from lumen.sources.duckdb import DuckDBSource
 
 component_libraries = ["lumen.flowdash"]
-agent_sensitive_components = ["Lumen/source"]
 editor_options = {"context": {"lumen.sources": {"data": DuckDBSource(uri="warehouse.duckdb")}}}
 ```
 
 Each session's editor copies the `lumen.sources` dict, so adding or removing a source in one session does not reach another; the source objects themselves are shared. Without sources, a source node says how to provide them.
 
-Lumen's agent reads every source the app provides by its ref, also on a dashboard with no source node yet, and its `add_sql` places a source node for a source when no node shows it. Placing or re-pointing a source node with the dashboard tools (`add_node`, `set_config`) still needs approval through `agent_sensitive_components`.
+Lumen's agent reads every source the app provides by its ref, also on a dashboard with no source node yet, and its `add_sql` places a source node for a source when no node shows it. Placing or re-pointing a source or table node with the dashboard tools (`add_node`, `set_config`) needs no approval, since a `ref` can only name a source the app already lets the agent read. A project that wants approval for them can still list them in `agent_sensitive_components`.

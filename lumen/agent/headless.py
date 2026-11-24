@@ -31,13 +31,12 @@ from .assistant import create_agent
 
 _GENERATED_NAME = re.compile(r"^[A-Za-z]*Source\d+$")
 
-# Components only the host places or configures; the agent's attempts need approval.
-SENSITIVE_COMPONENTS = (SOURCE_ID,)
+# Components only the host places or configures; the agent's attempts need approval. Lumen's
+# nodes need none: a source or table node can only name a source the app already lets the agent read.
+SENSITIVE_COMPONENTS: tuple[str, ...] = ()
 
-DENIED = (
-    "Refused: source nodes are placed and configured by the app, not by the assistant. "
-    "Use the source nodes already on the dashboard."
-)
+DENIED = "Refused: nobody can approve this in a headless session."
+
 
 
 def source_node_name(source: Source) -> str:
@@ -132,7 +131,7 @@ class AgentSession:
         A path the model trace of the conversation is appended to.
     approve
         Decides the tool calls FlowDash's approval policy holds back, e.g.
-        placing or configuring a source node, from the tool name and
+        saving the dashboard, from the tool name and
         arguments. Nobody is there to approve them headless, so by default
         they are refused.
     """

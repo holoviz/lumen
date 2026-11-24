@@ -20,6 +20,8 @@ from panel_flowdash.util import is_failure
 from ..sources.base import Source
 from .checks import pipeline_columns
 
+IGNORED_REF = "ignored while a source is connected"
+
 _TYPES = {"string": "string", "integer": "integer", "number": "number", "boolean": "boolean"}
 
 
@@ -60,13 +62,22 @@ def source_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, 
 
 
 def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, list[str]]:
-    """Offer the tables of the connected source for a ``Lumen/table`` node."""
-    source = inputs.get("source")
-    if not isinstance(source, Source):
-        return {}
-    from .nodes import listed_tables
+    """
+    Offer the refs of the host's sources for a ``Lumen/table`` node, and the
+    tables of its source: the connected one, or else the one its ref names.
+    With a source connected, a ref it still holds is only shown as ignored.
+    """
+    from .nodes import listed_tables, lookup_source
 
-    return {"table": sorted(listed_tables(source))}
+    source, ref = inputs.get("source"), config.get("ref")
+    if source is None:
+        choices: dict[str, Any] = dict(source_choices(config, inputs))
+        source = lookup_source(ref) if ref else None
+    else:
+        choices = {"ref": {f"{ref} ({IGNORED_REF})": ref}} if ref else {}
+    if isinstance(source, Source):
+        choices["table"] = sorted(listed_tables(source))
+    return choices
 
 
 # Tables per source, read once per reload: the palette asks for presets whenever it
@@ -107,7 +118,7 @@ def source_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [
         {
             "title": f"{ref} (source)",
-            "description": f"The source {ref} the app provides.",
+            "description": f"The source {ref} the app provides, for SQL nodes and tables that share it.",
             "tooltip": f"Source {ref}: {', '.join(tables) or 'no tables'}",
             "tags": [ref, *tables],
             "config": {"ref": ref},
@@ -126,16 +137,16 @@ def _served_file(source: Source, table: str) -> str | None:
 def table_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     """
     A ``Lumen/table`` palette entry per table of each source the host
-    provides, with the table filled in; dropped on the source node's output
-    it is wired to it.
+    provides, with its ref and the table filled in, so the node reads the
+    table by itself.
     """
     return [
         {
             "title": f"{table} ({ref})",
-            "description": f"Table {table} of the source {ref}; drop it on the {ref} source node's output.",
+            "description": f"Table {table} of the source {ref}.",
             "tooltip": f"Source {ref}, table {table}" + (f", file {path}" if (path := _served_file(source, table)) else ""),
             "tags": [ref, table],
-            "config": {"table": table},
+            "config": {"ref": ref, "table": table},
         }
         for ref, source in _host_sources(context).items()
         for table in _tables(source)

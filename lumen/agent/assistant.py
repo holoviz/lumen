@@ -95,6 +95,15 @@ To let a brush or click on a chart filter the rest of the dashboard:
   to the filter's selection input. Feed the KPIs, tables and other charts from the filter.
 """
 
+# Added for an agent that can place any component, i.e. with the add_node tool.
+TABLE_INSTRUCTIONS = """
+## Reading a table
+To show or filter a table of the app's data, place one Lumen/table node with the source's
+ref and the table, e.g. add_node("Lumen/table", {"ref": "<source>", "table": "<table>"}).
+Place a Lumen/source node only when several tables or SQL nodes need the same source,
+and then connect it to their source inputs instead of setting ref.
+"""
+
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
@@ -119,10 +128,10 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     tiles, and ``dashboard_tools=None`` gives it every FlowDash dashboard
     tool with FlowDash's instructions, as the dashboard assistant has.
 
-    A host running the agent in a ``FlowDashApp`` must make placing or
-    configuring a Lumen source node need approval, e.g.
-    ``FlowDashApp(agent_sensitive_components=["Lumen/source"])``;
-    ``AgentSession`` attaches that policy itself.
+    Placing or configuring Lumen's source and table nodes needs no
+    approval: their ``ref`` can only name a source the app already lets
+    the agent read. An agent that can place any component (``dashboard_tools=None``)
+    is told to read a table with one table node naming its source by ref.
 
     Parameters
     ----------
@@ -157,6 +166,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         dashboard_instructions = dashboard_tools is None
     if dashboard_tools is None or "connect" in dashboard_tools:
         text += SELECTION_INSTRUCTIONS
+    if dashboard_tools is None or "add_node" in dashboard_tools:
+        text += TABLE_INSTRUCTIONS
     agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",

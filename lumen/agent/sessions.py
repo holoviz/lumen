@@ -26,7 +26,9 @@ from panel_flowdash.agent import DashboardOps, dashboard_from_yaml
 from pydantic_evals import Case
 
 from ..ai.evals.harness import MAX_ROWS, Expected, Inputs
-from ..flowdash import COMPONENTS, SOURCE_ID, bind_source
+from ..flowdash import (
+    COMPONENTS, SOURCE_ID, TABLE_ID, bind_source,
+)
 from . import _graph
 from .evals import answer_nodes, chart_summary, result_rows
 from .headless import TurnResult
@@ -83,12 +85,12 @@ def load_session(path: str | os.PathLike) -> Session:
 
 
 def rerun(dashboard: str, source: Any) -> FlowDash:
-    """Load ``dashboard`` in a new editor with its source nodes bound to ``source``."""
+    """Load ``dashboard`` in a new editor with the refs of its source and table nodes bound to ``source``."""
     editor = FlowDash(components=COMPONENTS)
     doc = dashboard_from_yaml(dashboard)
     refs = [
         item["config"]["ref"] for item in doc["items"]
-        if item["component_id"] == SOURCE_ID and (item.get("config") or {}).get("ref")
+        if item["component_id"] in (SOURCE_ID, TABLE_ID) and (item.get("config") or {}).get("ref")
     ]
     for ref in refs:
         bind_source(editor, source, ref)
