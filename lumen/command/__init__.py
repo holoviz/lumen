@@ -22,6 +22,7 @@ from ..dashboard import Defaults, load_yaml
 from ..state import state
 from .builder import Builder
 from .precache import Precache
+from .run import Run
 from .validate import Validate
 
 YAML_SUFFIXES = ('.yml', '.yaml')
@@ -98,7 +99,7 @@ def main(args=None):
         sys.argv = sys.argv[:start] + sys.argv[end+1:]
         config.template_vars = ast.literal_eval(template_vars)
 
-    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'builder', 'validate', 'precache'):
+    if len(sys.argv) == 1 or sys.argv[1] not in ('-v', '--version', 'builder', 'validate', 'precache', 'run'):
         _pn_main()
         return
 
@@ -122,6 +123,10 @@ def main(args=None):
     precache_parser = subs.add_parser(Precache.name, help=Precache.help)
     precache_command = Precache(parser=precache_parser)
     precache_parser.set_defaults(invoke=precache_command.invoke)
+
+    run_parser = subs.add_parser(Run.name, help=Run.help)
+    run_command = Run(parser=run_parser)
+    run_parser.set_defaults(invoke=run_command.invoke)
 
     subparser = subs.add_parser(Builder.name, help=Builder.help)
     subcommand = Builder(parser=subparser, serve=serve_command)
