@@ -14,7 +14,17 @@ The data arguments are read as for Lumen AI (files, URLs, `duckdb://` and SQLAlc
 | --- | --- |
 | `--flowdash` | Serve the FlowDash app. Without it `lumen serve` is unchanged. |
 | `--db-path PATH` | The SQLite database dashboards are saved in; `dashboards.db` in the working directory by default. |
-| `--agent-model MODEL` | A pydantic-ai model, e.g. `openai:gpt-6-luna`, for Lumen's FlowDash agent. Without it the app has no agent. |
+| `--agent-model MODEL[=LABEL]` | A pydantic-ai model, e.g. `openai:gpt-6-luna`, for Lumen's FlowDash agent. Repeat it to let people pick the model below the chat's input; the first is the default and `=LABEL` names it in the picker. Without it the app has no agent. |
+
+With two models the assistant's chat shows a model picker, and the browser remembers the pick:
+
+``` bash
+lumen serve penguins.csv --flowdash \
+  --agent-model openrouter:openai/gpt-6-luna=Luna \
+  --agent-model anthropic:claude-haiku-4-5=Haiku
+```
+
+A model whose provider package or API key is missing is listed disabled. With one model there is no picker.
 
 Lumen YAML dashboards are served without `--flowdash`, as before. The Lumen AI options (`--provider`, `--api-key`, `--model`, `--temperature` and the like) configure the explorer and are refused with `--flowdash`.
 

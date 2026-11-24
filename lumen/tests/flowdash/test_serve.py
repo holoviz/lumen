@@ -107,5 +107,45 @@ def test_agent_model_gives_the_app_lumens_agent(csv):
     assert {"list_tables", "add_sql", "add_chart"} <= tools
 
 
+def test_repeated_agent_model_flags_reach_the_app(csv):
+    args = parse(
+        str(csv), "--flowdash", "--db-path", str(csv.parent / "dash.db"),
+        "--agent-model", "test=Test", "--agent-model", "openai:gpt-6-luna=Luna",
+    )
+    with patch.object(Serve, "invoke", return_value=True), \
+         patch("lumen.flowdash.app.build_routes", return_value={}) as routes:
+        LumenAIServe(argparse.ArgumentParser()).invoke(args)
+
+    assert routes.call_args.kwargs["agent_model"] == ["test=Test", "openai:gpt-6-luna=Luna"]
+
+
+def test_one_agent_model_has_no_picker(csv):
+    pytest.importorskip("pydantic_ai")
+    app = build_routes([str(csv)], db_path=csv.parent / "dash.db", agent_model=["test=Test"])["/"]()
+
+    assert app.agent.model.model_name == "test"
+    assert app.agent_model == "test"
+    assert app.agent_models == []
+    assert "models" not in app._agent_session.drawer.chat_params
+
+
+def test_several_agent_models_offer_a_picker(csv):
+    pytest.importorskip("pydantic_ai")
+    routes = build_routes(
+        [str(csv)], db_path=csv.parent / "dash.db", agent_model=["test=Test", "openai:gpt-6-luna=Luna"],
+    )
+    app = routes["/"]()
+    chat_params = app._agent_session.drawer.chat_params
+
+    assert app.agent_model == "test"
+    assert [(m.id, m.label) for m in chat_params["models"]] == [("test", "Test"), ("openai:gpt-6-luna", "Luna")]
+    assert chat_params["model_id"] == "test"
+
+
+def test_agent_model_without_an_id_is_refused(csv):
+    with pytest.raises(ValueError, match="names no model"):
+        build_routes([str(csv)], db_path=csv.parent / "dash.db", agent_model=["test", "=Luna"])
+
+
 def test_source_refs():
     assert list(source_refs(["a", "b", "c"])) == ["data", "data_2", "data_3"]
