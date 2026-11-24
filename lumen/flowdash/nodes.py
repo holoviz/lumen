@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import datetime as dt
+import decimal
 import hashlib
 import inspect
 import math
@@ -63,7 +64,9 @@ from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, QueryTimeoutError, Source
 from ..sources.duckdb import DuckDBSource
 from ..transforms.base import Filter as FilterTransform, Iloc, Range
-from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
+from ..transforms.sql import (
+    NO_BOOLEAN_LITERALS, SQLDistinct, SQLFilter, SQLLimit, SQLMinMax, SQLSort,
+)
 from ..util import get_dataframe_schema
 from .checks import (
     _engine_error, _read, check_chart, check_filter_config, check_query,
@@ -83,6 +86,12 @@ try:
     from panel_flowdash import Choices
 except ImportError:
     Choices = None
+
+try:
+    from panel_flowdash import request_filters
+except ImportError:
+    # A panel-flowdash without global filters never asks the nodes for their columns.
+    request_filters = None
 
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
@@ -460,11 +469,11 @@ def _clone(pipeline: Pipeline, **params) -> Pipeline:
     return type(pipeline)(**dict(values, **params))
 
 
-def pipeline_sql(pipeline: Pipeline) -> str | None:
+def pipeline_sql(pipeline: Pipeline, limits: bool = True) -> str | None:
     """
     The statement a SQL source runs for ``pipeline``, filters and limit
-    included, or None when the pipeline is not read straight from a SQL
-    source.
+    included (the limit left out with ``limits=False``), or None when the
+    pipeline is not read straight from a SQL source.
     """
     source = pipeline.source
     if pipeline.pipeline is not None or not isinstance(source, BaseSQLSource):
@@ -474,7 +483,8 @@ def pipeline_sql(pipeline: Pipeline) -> str | None:
     if conditions and getattr(source, "filter_in_sql", True):
         sql = SQLFilter(conditions=conditions, write=source.dialect).apply(sql)
     for transform in pipeline.sql_transforms:
-        sql = transform.apply(sql)
+        if limits or not isinstance(transform, SQLLimit):
+            sql = transform.apply(sql)
     return sql
 
 
@@ -506,6 +516,205 @@ def fetch(pipeline: Pipeline, limit: int = RESULT_LIMIT, timeout: float = NODE_T
     data = data if len(data) <= limit else data.head(limit)
     fetched[limit] = data
     return data
+
+
+# FlowDash's global filters (panel-flowdash releases after 0.1.0rc7) hand a view the
+# predicates of the filter bar, ``{column: Predicate}``, and ask it for its
+# columns and the values a filter offers. The nodes below add the predicates
+# to the query of what they show rather than filtering fetched rows.
+
+# The most distinct values a select filter offers, as panel-flowdash caps them.
+FILTER_OPTIONS = 1000
+
+
+class FilterMismatch(ValueError):
+    """A global filter's values cannot be compared with the column of that name, e.g. text with numbers."""
+
+
+def _number(value: Any) -> Any:
+    """
+    ``value`` as a number for a column of numbers. Strings are parsed
+    exactly, so an integral one stays an exact ``int`` however large;
+    others become floats, the precision of such a column. NaN, infinities
+    and values beyond a float's range are refused.
+    """
+    if isinstance(value, bool):
+        raise FilterMismatch(f"holds numbers, and {value!r} is not one")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        number = decimal.Decimal(value) if math.isfinite(value) else None
+    elif isinstance(value, str):
+        try:
+            number = decimal.Decimal(value.strip())
+        except decimal.InvalidOperation:
+            raise FilterMismatch(f"holds numbers, and {value!r} is not one") from None
+    else:
+        raise FilterMismatch(f"holds numbers, and {value!r} is not one")
+    if number is None or not number.is_finite() or not math.isfinite(float(number)):
+        raise FilterMismatch(f"holds numbers, and {value!r} is not a finite one")
+    if number == number.to_integral_value():
+        return int(number)
+    if isinstance(value, float):
+        return value
+    return float(number)
+
+
+def _moment(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return dt.datetime.fromisoformat(value)
+        except ValueError:
+            raise FilterMismatch(f"holds dates, and {value!r} is not one") from None
+    if isinstance(value, pd.Timestamp):
+        return value.to_pydatetime()
+    if isinstance(value, dt.date):
+        return value
+    raise FilterMismatch(f"holds dates, and {value!r} is not one")
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    return str(value)
+
+
+def _coerce(value: Any, kind: str | None) -> Any:
+    """``value`` made comparable with a column of ``kind``, see ``pipeline_column_types``."""
+    value = python_value(value)
+    if isinstance(value, str) and "\x00" in value:
+        raise FilterMismatch("cannot be compared with a value holding a NUL character")
+    if value is None or kind is None:
+        return value
+    if kind in ("integer", "number"):
+        return _number(value)
+    if kind in ("datetime", "date"):
+        return _moment(value)
+    if kind == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "false"):
+            return value.lower() == "true"
+        raise FilterMismatch(f"holds booleans, and {value!r} is not one")
+    return _text(value)
+
+
+def global_condition(predicate: Any, kind: str | None = None) -> Any:
+    """
+    The filter condition of a FlowDash global filter ``predicate`` on a
+    column of ``kind``, as ``filter_condition`` takes it: ``in`` is a list
+    of values, a range closed on both ends a ``(start, end)`` tuple and one
+    closed on the left a ``Range``. Values are converted where that is safe,
+    as panel-flowdash converts them for a DataFrame: numeric strings to
+    numbers, ISO strings to dates, numbers to text. Raises ``FilterMismatch``
+    for values the column cannot be compared with, including a range on a
+    column of text.
+    """
+    if predicate.op == "in" and len(predicate.values) > FILTER_OPTIONS:
+        raise FilterMismatch(
+            f"takes a selection of at most {FILTER_OPTIONS} values, and {len(predicate.values)} were selected"
+        )
+    if predicate.op != "in" and kind in ("string", "boolean"):
+        raise FilterMismatch(f"holds {'text' if kind == 'string' else 'booleans'}, which have no range")
+    values = [_coerce(v, kind) for v in predicate.values]
+    try:
+        if predicate.op == "in":
+            if kind == "integer" and any(isinstance(v, float) for v in values):
+                raise FilterMismatch("holds integers, which a fractional value never equals")
+            return filter_condition(values)
+        start, end = values
+        if predicate.closed == "left":
+            return filter_condition(Range(start, end, closed="left"))
+        return filter_condition((start, end))
+    except ValueError as exc:
+        raise FilterMismatch(str(exc)) from None
+
+
+def global_conditions(pipeline: Pipeline, filters: Mapping[str, Any]) -> tuple[list[tuple[str, Any]], dict[str, str]]:
+    """
+    The conditions the global ``filters`` (``{column: Predicate}``) put on
+    ``pipeline``, and why the others could not be applied, by column. A
+    filter on a column the pipeline does not have is left out, as is one
+    whose values its column cannot be compared with.
+    """
+    types = pipeline_column_types(pipeline) or {}
+    conditions, mismatched = [], {}
+    for column, predicate in filters.items():
+        if column not in types:
+            continue
+        try:
+            conditions.append((column, global_condition(predicate, types[column])))
+        except FilterMismatch as exc:
+            mismatched[column] = str(exc)
+    return conditions, mismatched
+
+
+def globally_filtered(pipeline: Any, filters: Mapping[str, Any], limit: int = RESULT_LIMIT) -> Any:
+    """
+    ``pipeline`` keeping the rows that match the global ``filters``, see
+    ``global_conditions``. As for a filter node, on a pipeline read from a
+    SQL source the conditions become part of the source's query, rendered
+    as quoted literals of its dialect, never by formatting values into SQL.
+    """
+    if not filters or not isinstance(pipeline, Pipeline):
+        return pipeline
+    conditions, _ = global_conditions(pipeline, filters)
+    return conditioned_pipeline(pipeline, conditions, limit) if conditions else pipeline
+
+
+def _plain(value: Any) -> Any:
+    value = python_value(value)
+    if isinstance(value, pd.Timestamp):
+        value = value.to_pydatetime()
+    if isinstance(value, (dt.datetime, dt.date)):
+        return value.isoformat()
+    return value
+
+
+def _bound(value: Any) -> Any:
+    value = python_value(value)
+    return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
+
+
+def column_values(pipeline: Any, column: str, limit: int = FILTER_OPTIONS, span: bool = False,
+                  timeout: float = NODE_TIMEOUT) -> list | tuple | None:
+    """
+    The distinct values of ``column`` in ``pipeline``, sorted and at most
+    ``limit`` of them, or with ``span`` its ``(min, max)``; None when the
+    pipeline has no such column or no values. On a SQL source the source
+    computes them, with the pipeline's filters and without its row limit,
+    so no rows are fetched; otherwise they come from the fetched rows.
+    Dates are given in ISO format, as panel-flowdash offers them.
+    """
+    if not isinstance(pipeline, Pipeline) or column not in pipeline_columns(pipeline):
+        return None
+    source = pipeline.source
+    sql = pipeline_sql(pipeline, limits=False)
+    if sql is not None and pipeline.table not in getattr(source, "table_params", {}) and not pipeline.transforms:
+        dialect = source.dialect
+        if span:
+            frame = execute(source, SQLMinMax(columns=[column], identify=True, write=dialect).apply(sql), timeout)
+            series = frame.iloc[0] if len(frame) else pd.Series(dtype=object)
+        else:
+            query = SQLDistinct(columns=[column], write=dialect).apply(sql)
+            query = SQLSort(by=[column], identify=True, write=dialect).apply(query)
+            # One more, in case NULL takes a place.
+            query = SQLLimit(limit=limit + 1, write=dialect).apply(query)
+            series = execute(source, query, timeout).iloc[:, 0]
+    else:
+        series = fetch(pipeline, RESULT_LIMIT, timeout)[column]
+    series = series.dropna()
+    if series.empty:
+        return None
+    if span:
+        return tuple(_bound(v) for v in (series.min(), series.max()))
+    values = list(dict.fromkeys(_plain(v) for v in series))[:limit]
+    try:
+        return sorted(values)
+    except TypeError:
+        return sorted(values, key=str)
 
 
 _REFRESHED: weakref.WeakKeyDictionary[Any, weakref.WeakSet] = weakref.WeakKeyDictionary()
@@ -806,6 +1015,9 @@ class LumenNode(Viewer):
     # Bumped when the rows a card previews arrive, so the card refreshes.
     _preview_rev = param.Integer(default=0, precedence=-1)
 
+    # The dashboard's global filters that reach the node as a view, by column, see GlobalFilterTarget.
+    _global_filters = param.Dict(default={}, precedence=-1)
+
     __abstract = True
 
     _preview_of: weakref.ref | None = None
@@ -870,7 +1082,7 @@ class LumenNode(Viewer):
             return param.ReactiveError(ValueError(self._error))
         return self._object
 
-    @param.depends("_object", "_error")
+    @param.depends("_object", "_error", "_global_filters")
     def _render(self):
         if self._error:
             return pn.pane.Alert(self._error, alert_type="danger")
@@ -888,6 +1100,76 @@ class LumenNode(Viewer):
 
     def __panel__(self):
         return pn.panel(self._render)
+
+
+class GlobalFilterTarget:
+    """
+    A node that applies FlowDash's global filters to what it shows, by
+    adding them to the query of its pipeline (panel-flowdash's
+    ``FilterTarget`` protocol). Only what the node shows is filtered, never
+    its outputs, so nodes downstream still see every row, as for any
+    component FlowDash filters. An older panel-flowdash never calls these
+    methods, and the node shows every row.
+    """
+
+    # The parameters whose change can change the columns of ``_filter_pipeline``.
+    _filter_inputs: ClassVar[tuple[str, ...]] = ("_object",)
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._declared = self.__flowdash_columns__()
+        self.param.watch(self._columns_changed, list(self._filter_inputs))
+
+    def _filter_pipeline(self) -> Any:
+        """The pipeline whose rows the node shows, before the global filters."""
+        return self._object
+
+    def _shown(self, pipeline: Any) -> Any:
+        """``pipeline`` with the global filters that reach the node."""
+        return globally_filtered(pipeline, self._global_filters, row_ceiling(self.editor))
+
+    def __flowdash_columns__(self) -> list[str] | None:
+        pipeline = self._filter_pipeline()
+        if not isinstance(pipeline, Pipeline):
+            return None
+        return pipeline_columns(pipeline)
+
+    def __flowdash_apply_filters__(self, filters: Mapping[str, Any]) -> dict[str, str]:
+        """Apply ``filters`` to what the node shows; return why it skips the others, by column."""
+        filters = dict(filters)
+        if filters != self._global_filters:
+            self._global_filters = filters
+        pipeline = self._filter_pipeline()
+        if not filters or not isinstance(pipeline, Pipeline):
+            return {}
+        return global_conditions(pipeline, filters)[1]
+
+    def __flowdash_column_values__(self, column: str) -> list | tuple | None:
+        span = _filter_widget(self.editor, column) == "range"
+        return column_values(self._filter_pipeline(), column, FILTER_OPTIONS, span=span)
+
+    def _columns_changed(self, *events):
+        """
+        Have FlowDash hand the node its filters again when its columns
+        change without an input changing, e.g. when a query run off the
+        event loop returns.
+        """
+        columns = self.__flowdash_columns__()
+        if columns == self._declared:
+            return
+        self._declared = columns
+        if request_filters is not None:
+            request_filters(self)
+
+
+def _filter_widget(editor: Any, column: str) -> str | None:
+    """The widget the editor's global filter on ``column`` names, if it names one."""
+    try:
+        filters = editor.filters
+    except Exception:
+        return None
+    entry = next((f for f in filters or () if isinstance(f, dict) and f.get("column") == column), None)
+    return entry.get("widget") if entry else None
 
 
 def _track_ref(node: LumenNode) -> None:
@@ -992,7 +1274,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
     config_completions=sql_completions,
 )
-class SQLNode(LumenNode):
+class SQLNode(GlobalFilterTarget, LumenNode):
 
     _reads_source = True
 
@@ -1089,7 +1371,8 @@ class SQLNode(LumenNode):
         pipeline = self._object
         if pipeline is None:
             return pn.pane.Markdown("Waiting for a source and a query")
-        return pn.widgets.Tabulator(pipeline.data, disabled=True, sizing_mode="stretch_both")
+        data = fetch(self._shown(pipeline), row_ceiling(self.editor)) if self._global_filters else pipeline.data
+        return pn.widgets.Tabulator(data, disabled=True, sizing_mode="stretch_both")
 
     def __flowdash_preview__(self, output: str | None = None) -> Any:
         if self._error is not None or self._object is None:
@@ -1100,7 +1383,7 @@ class SQLNode(LumenNode):
         return data
 
 
-class PipelineNode(LumenNode):
+class PipelineNode(GlobalFilterTarget, LumenNode):
     """A node whose output is a lazy pipeline, previewed only when its view is shown."""
 
     __abstract = True
@@ -1111,7 +1394,7 @@ class PipelineNode(LumenNode):
         pipeline = self._object
         if pipeline is None:
             return pn.pane.Markdown(self._waiting)
-        preview = fetch(pipeline, PREVIEW_ROWS)
+        preview = fetch(self._shown(pipeline), PREVIEW_ROWS)
         return pn.widgets.Tabulator(preview, disabled=True, sizing_mode="stretch_both")
 
     def __panel__(self):
@@ -1246,9 +1529,14 @@ class FilterNode(PipelineNode):
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
     provides=[{"key": "data", "type": "DataFrame"}],
 )
-class DataNode(LumenNode):
+class DataNode(GlobalFilterTarget, LumenNode):
 
     pipeline = param.Parameter(doc="The upstream pipeline.")
+
+    _filter_inputs = ("pipeline",)
+
+    def _filter_pipeline(self) -> Any:
+        return self.pipeline
 
     @param.depends("pipeline", watch=True, on_init=True)
     def _refresh(self, *events):
@@ -1269,7 +1557,8 @@ class DataNode(LumenNode):
     def _body(self):
         if self._object is None:
             return pn.pane.Markdown("Waiting for a pipeline")
-        return pn.widgets.Tabulator(self._object, disabled=True, sizing_mode="stretch_both")
+        data = fetch(self._shown(self.pipeline), row_ceiling(self.editor)) if self._global_filters else self._object
+        return pn.widgets.Tabulator(data, disabled=True, sizing_mode="stretch_both")
 
 
 _FIXED_AUTOSIZE = ("pad", "none")
@@ -1318,9 +1607,11 @@ def responsive_spec(spec: dict[str, Any]) -> dict[str, Any]:
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
     provides=[{"key": "selection", "type": SELECTION_TYPE}],
 )
-class ViewNode(LumenNode):
+class ViewNode(GlobalFilterTarget, LumenNode):
 
     pipeline = param.Parameter(doc="The upstream pipeline.")
+
+    _filter_inputs = ("pipeline",)
 
     spec = param.Dict(default={}, doc="""
         The Vega-Lite spec, without data. A width or height it leaves out
@@ -1349,9 +1640,12 @@ class ViewNode(LumenNode):
 
             settings.param.watch(follow, "color_scheme")
 
-    @param.depends("pipeline", "spec", watch=True, on_init=True)
+    @param.depends("pipeline", "spec", "_global_filters", watch=True, on_init=True)
     def _refresh(self, *events):
         super()._refresh()
+
+    def _filter_pipeline(self) -> Any:
+        return self.pipeline
 
     def _color_scheme(self) -> str | None:
         scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
@@ -1365,10 +1659,12 @@ class ViewNode(LumenNode):
         if is_failure(self.pipeline):
             raise ValueError(f"The input failed: {failure_text(self.pipeline)}")
         spec = check_chart(self.spec, pipeline_columns(self.pipeline))
-        # The rows come through fetch, so the chart shares one query with the pipeline's other readers.
-        rows = fetch(self.pipeline, row_ceiling(self.editor))
+        # The global filters become part of the query, and the rows come through fetch, so
+        # the chart shares one query with the pipeline's other readers.
+        pipeline = self._shown(self.pipeline)
+        rows = fetch(pipeline, row_ceiling(self.editor))
         spec = themed_spec(responsive_spec(spec), self._color_scheme())
-        view = VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=spec)
+        view = VegaLiteView(pipeline=_clone(pipeline, data=rows), spec=spec)
         view.update()
         if isinstance(view._panel, pn.pane.Vega):
             # A new chart starts with nothing selected; the link reports that.
