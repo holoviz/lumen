@@ -2490,7 +2490,7 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
         # The global filters become part of the query, and the rows come through fetch, so
         # the view shares one query with the pipeline's other readers.
         pipeline = self._shown(self.pipeline)
-        rows = fetch(pipeline, row_ceiling(self.editor))
+        rows = self._view_rows(fetch(pipeline, row_ceiling(self.editor)), spec)
         view_type = _view_class(self.view_type)
         view = view_type(pipeline=_clone(pipeline, data=rows), **self._view_params(spec))
         view.update()
@@ -2499,6 +2499,10 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 
     def _filter_pipeline(self) -> Any:
         return self.pipeline
+
+    def _view_rows(self, rows: Any, spec: dict[str, Any]) -> Any:
+        """The rows the view is drawn with, e.g. only the columns its spec reads."""
+        return rows
 
     def _built(self, view: Any) -> None:
         """Called with each view the node draws, before it is shown."""
