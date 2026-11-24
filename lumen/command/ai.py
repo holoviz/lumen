@@ -43,6 +43,13 @@ _ORIGINAL_BUILD_SINGLE_HANDLER_APPLICATIONS = (
 )
 
 
+# Options of the Lumen AI explorer that the FlowDash app does not use.
+_LUMEN_AI_OPTIONS = (
+    "provider", "api_key", "provider_endpoint", "validation_mode", "temperature", "agents",
+    "model", "model_kwargs", "llm_model_url", "logfire_tags",
+)
+
+
 class LumenAIServe(Serve):
     """Extended Serve command that handles both Panel/Bokeh and Lumen AI arguments"""
 
@@ -104,10 +111,35 @@ class LumenAIServe(Serve):
             or sensitive data.
             """,
         )
+        flowdash = parser.add_argument_group("FlowDash (experimental)")
+        flowdash.add_argument(
+            "--flowdash",
+            action="store_true",
+            help="""
+            Serve the data in a FlowDash app whose dashboards are built from Lumen's nodes,
+            instead of the Lumen AI explorer. Experimental.
+            """,
+        )
+        flowdash.add_argument(
+            "--db-path",
+            help="With --flowdash, the SQLite database dashboards are saved in (default: dashboards.db).",
+        )
+        flowdash.add_argument(
+            "--agent-model",
+            help="""
+            With --flowdash, a pydantic-ai model for Lumen's FlowDash agent, e.g.
+            'openai:gpt-6-luna'. Without it the app has no agent.
+            """,
+        )
 
     def invoke(self, args: argparse.Namespace) -> bool:
         """Override invoke to handle both sets of arguments"""
         paths = args.files or []
+        self._flowdash_apps = None
+        if getattr(args, "flowdash", False):
+            return self._invoke_flowdash(args, paths)
+        if getattr(args, "db_path", None) or getattr(args, "agent_model", None):
+            raise ValueError("--db-path and --agent-model only apply with --flowdash.")
         if paths and all(Path(path).suffix.lower() in YAML_SUFFIXES for path in paths):
             # A YAML dashboard spec needs no LLM provider; let Serve.invoke route it.
             # Restore the original builder in case a prior invoke() call in this
@@ -268,6 +300,55 @@ class LumenAIServe(Serve):
         )
 
         return super().invoke(args)
+
+
+    def _invoke_flowdash(self, args: argparse.Namespace, paths: list[str]) -> bool:
+        if any(Path(path).suffix.lower() in YAML_SUFFIXES for path in paths):
+            raise ValueError("--flowdash serves data files; serve a Lumen YAML dashboard without it.")
+        ignored = [
+            f"--{name.replace('_', '-')}" for name in _LUMEN_AI_OPTIONS if getattr(args, name, None) is not None
+        ]
+        if ignored:
+            raise ValueError(
+                f"{', '.join(ignored)} {'configures' if len(ignored) == 1 else 'configure'} the Lumen AI "
+                f"explorer and {'does' if len(ignored) == 1 else 'do'} not apply with --flowdash; "
+                "give the agent's model with --agent-model."
+            )
+        from panel.io.application import build_applications
+
+        from ..flowdash.app import build_routes
+
+        routes = build_routes(
+            [path for path in paths if path != "no_data"], db_path=args.db_path, agent_model=args.agent_model,
+        )
+        self._flowdash_apps = build_applications(routes, title="Lumen", location=True)
+        # The base command would read the data files as apps; the routes above serve them.
+        bokeh.command.subcommands.serve.build_single_handler_applications = (
+            _ORIGINAL_BUILD_SINGLE_HANDLER_APPLICATIONS
+        )
+        args.files = []
+        args.args = None
+        return super().invoke(args)
+
+    def customize_applications(self, args, applications):
+        if getattr(self, "_flowdash_apps", None):
+            return self._flowdash_apps
+        return super().customize_applications(args, applications)
+
+    def customize_kwargs(self, args, server_kwargs):
+        kwargs = super().customize_kwargs(args, server_kwargs)
+        if getattr(self, "_flowdash_apps", None):
+            from bokeh.embed.bundle import extension_dirs
+            from bokeh.server.views.multi_root_static_handler import (
+                MultiRootStaticHandler,
+            )
+
+            # Dashboard pages live below the root, e.g. /dash/<id>, and load
+            # extension resources relative to it.
+            kwargs["extra_patterns"].append(
+                (r"/.+/static/extensions/(.*)", MultiRootStaticHandler, dict(root=extension_dirs))
+            )
+        return kwargs
 
 
 def _warn_if_ollama_not_ready(endpoint: str | None, model_kwargs: dict | None) -> None:
