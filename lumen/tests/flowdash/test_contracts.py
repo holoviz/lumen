@@ -298,3 +298,21 @@ def test_rebinding_names_a_follower_of_a_node_reading_a_dropped_column():
         assert info.value.nodes == ["paid", "total"]
     finally:
         editor.dispose()
+
+
+def test_a_join_reads_the_base_columns_of_both_branches():
+    doc = chain(
+        ("paid", "Lumen/sql", {"sql": PAID, "table": "paid"}),
+        ("totals", "Lumen/sql", {"sql": "SELECT customer_id, SUM(amount) AS total FROM paid GROUP BY customer_id", "table": "totals"}),
+    )
+    doc["nodes"]["names"] = {"component": "Lumen/sql", "config": {"sql": "SELECT customer_id, customer FROM customers", "table": "names"}}
+    doc["edges"].append({"from": "data.source", "to": "names.source"})
+    doc["nodes"]["joined"] = {"component": "Lumen/sql", "config": {
+        "sql": "SELECT n.customer, t.total FROM totals t JOIN names n USING (customer_id)", "table": "joined"}}
+    doc["edges"] += [{"from": "totals.result", "to": "joined.source"}, {"from": "names.result", "to": "joined.source"}]
+
+    found = {u.node: (u.coverage, tables(u)) for u in usages(doc, "data", SCHEMA, "duckdb")}
+    assert found["joined"] == (FULL, {"orders": ["amount", "customer_id", "status"], "customers": ["customer", "customer_id"]})
+    schema = {**SCHEMA, "customers": {k: v for k, v in SCHEMA["customers"].items() if k != "customer"}}
+    problems = check(doc, "data", expects(doc, "data", SCHEMA, "duckdb"), schema, "duckdb")
+    assert [p.node for p in problems] == ["names", "joined"]

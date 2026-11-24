@@ -1334,13 +1334,15 @@ class LumenNode(Viewer):
         refresh runs each query once.
         """
         source = self._read_source()
+        inputs = source if isinstance(source, (list, tuple)) else [source]
         # A SQL node's result changes when that node runs again, which runs this node then.
-        if is_derived(source):
+        if any(is_derived(source) for source in inputs):
             return
-        if isinstance(source, Source):
-            source.clear_cache()
-        if isinstance(source, BaseSQLSource):
-            forget_probes(source)
+        for source in inputs:
+            if isinstance(source, Source):
+                source.clear_cache()
+            if isinstance(source, BaseSQLSource):
+                forget_probes(source)
         self._refresh()
 
     def _resolve(self) -> Any:
@@ -1556,7 +1558,10 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     field while typing. Columns come from the schemas the source stored, or
     are read once per table otherwise.
     """
-    source = inputs.get("source")
+    try:
+        source = merge(inputs.get("source"))
+    except ValueError:
+        return None
     if Choices is None or not isinstance(source, Source) or is_failure(source):
         return None
     tables = listed_tables(source)
@@ -1590,7 +1595,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     ),
     config=["sql", "table", "limit"],
     check_config=check_sql_config,
-    requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
+    requires=[{"key": "source", "type": SOURCE_TYPE, "required": True, "multiple": True}],
     provides=[
         {"key": "pipeline", "type": PIPELINE_TYPE},
         {"key": "data", "type": "DataFrame"},
@@ -1603,7 +1608,9 @@ class SQLNode(GlobalFilterTarget, LumenNode):
 
     _reads_source = True
 
-    source = param.Parameter(doc="The upstream source.")
+    source = param.Parameter(doc="""
+        The upstream source, or several sources or earlier results of one
+        source, whose result tables the query can join.""")
 
     sql = param.String(
         default="",
@@ -1625,7 +1632,7 @@ class SQLNode(GlobalFilterTarget, LumenNode):
     def _refresh(self, *events):
         self._run += 1
         # Headless sessions read a node's output right after changing it, so only a served one waits.
-        if self.source is None or not self.sql.strip() or not _in_served_session() or self._primed():
+        if self._input is None or not self.sql.strip() or not _in_served_session() or self._primed():
             super()._refresh()
             return
         # The previous error describes a query that is being replaced.
@@ -1650,36 +1657,67 @@ class SQLNode(GlobalFilterTarget, LumenNode):
         future = _preview_pool().submit(work)
         future.add_done_callback(lambda f: f.cancelled() or _schedule(lambda: apply(f.result()), doc, loop))
 
+    @property
+    def _input(self) -> Any:
+        """The node's inputs merged into one source, or None if they cannot be (``_resolve`` says why)."""
+        inputs = list(self.source) if isinstance(self.source, (list, tuple)) else [self.source]
+        cached, merged = getattr(self, "_merged", (None, None))
+        if cached is None or len(cached) != len(inputs) or any(a is not b for a, b in zip(cached, inputs, strict=True)):
+            try:
+                merged = merge(self.source)
+            except ValueError:
+                merged = None
+            self._merged = (inputs, merged)
+        return merged
+
+    def _source_edge(self, index: int) -> str | None:
+        """The output, as ``node.port``, connected to the node's ``index``-th source input, if the editor tells."""
+        try:
+            from panel_flowdash.agent.yaml_format import own_name
+
+            node = self.node_id()
+            edges = [e for e in self.editor._dataflow_graph.edges if e["target"] == node and e["target_port"] == "source"]
+            return f"{own_name(edges[index]['source'])}.{edges[index]['source_port']}"
+        except Exception:
+            return None
+
     def _primed(self) -> bool:
         """Whether the caller already ran the query, so resolving it is quick and its result is read at once."""
-        if not isinstance(self.source, BaseSQLSource):
+        if not isinstance(self._input, BaseSQLSource):
             return True
         limit = effective_limit(self.editor, self.limit)
         try:
-            root, statement = expand(self.sql, self.source)
+            root, statement = expand(self.sql, self._input)
             return (id(root), result_sql(root, statement, limit)) in _RESULTS
         except Exception:
             return True
 
     def _resolve(self) -> Pipeline | None:
-        if self.source is None or not self.sql.strip():
+        if not self.sql.strip():
+            return None
+        inputs = self.source if isinstance(self.source, (list, tuple)) else [self.source]
+        for index, value in enumerate(inputs):
+            if value is not None and not is_failure(value) and not isinstance(value, BaseSQLSource):
+                raise ValueError(not_a_source(value, self._source_edge(index)))
+        merge(self.source)
+        if self._input is None:
             return None
         limit = effective_limit(self.editor, self.limit)
-        return compile_sql(self.source, self.sql, self.table or default_table(self.sql), limit)
+        return compile_sql(self._input, self.sql, self.table or default_table(self.sql), limit)
 
     def _error_text(self, exc: Exception) -> str:
         """The error as one readable message, with the line and column of the query it concerns."""
         diagnostic = getattr(exc, "diagnostic", None)
-        if diagnostic is None and isinstance(self.source, BaseSQLSource) and not isinstance(
+        if diagnostic is None and isinstance(self._input, BaseSQLSource) and not isinstance(
             exc, (ValueError, QueryTimeoutError)
         ):
             limit = effective_limit(self.editor, self.limit)
             try:
-                root, statement = expand(self.sql, self.source)
+                root, statement = expand(self.sql, self._input)
             except Exception:
-                root, statement = self.source, self.sql
+                root, statement = self._input, self.sql
             diagnostic = _engine_error(
-                exc, result_sql(root, statement, limit), self.sql, dialect=_read(self.source.dialect)
+                exc, result_sql(root, statement, limit), self.sql, dialect=_read(self._input.dialect)
             )
         text = ANSI_ESCAPE.sub("", str(diagnostic if diagnostic is not None else exc)).strip()
         line, column = getattr(diagnostic, "line", None), getattr(diagnostic, "column", None)

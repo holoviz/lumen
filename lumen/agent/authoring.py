@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import math
 
 from typing import Any, Literal
@@ -26,7 +27,7 @@ from ..flowdash.deckgl import (
 )
 from ..flowdash.metrics import MetricError, prepare
 from ..flowdash.nodes import default_table, metric_query
-from ..flowdash.results import expand
+from ..flowdash.results import expand, merge
 from ..pipeline import Pipeline
 from ..util import as_pandas
 from . import _graph
@@ -79,13 +80,34 @@ async def _test_run(src, sql: str, limit: int) -> tuple[str, str, Any]:
     return sql, statement, frame
 
 
-def _result_input(ops, source: str) -> tuple[str, Any] | None:
-    """The upstream SQL node and its result source when ``source`` names an earlier SQL node."""
+def _result_input(ops, source: str | list[str]) -> tuple[list[str], Any] | None:
+    """
+    The upstream SQL nodes and their results merged into one source when
+    ``source`` names an earlier SQL node, or a list of them to join. Some
+    models write the list as a JSON string, which counts as the list.
+    """
+    if isinstance(source, str) and source.strip().startswith("["):
+        try:
+            source = [str(name) for name in json.loads(source)]
+        except (ValueError, TypeError):
+            pass
+    names = list(dict.fromkeys(source)) if isinstance(source, list) else [source]
+    if not names:
+        raise ModelRetry("Pass a source, an earlier SQL node, or a list of earlier SQL nodes to join.")
     try:
-        port = _graph.input_port(ops, source)
-        return None if port is None else (port.rsplit(".", 1)[0], _graph.output(ops, *port.rsplit(".", 1)))
-    except OperationError as exc:
+        ports = [_graph.input_port(ops, name) for name in names]
+        if not isinstance(source, list) and ports[0] is None:
+            return None
+        if missing := [name for name, port in zip(names, ports, strict=True) if port is None]:
+            raise ModelRetry(f"To join, pass earlier SQL nodes; {', '.join(map(repr, missing))} is not one.")
+        return names, merge([_graph.output(ops, *port.rsplit(".", 1)) for port in ports])
+    except (OperationError, ValueError) as exc:
         raise ModelRetry(str(exc)) from exc
+
+
+def _merged_input(ops, name: str) -> Any:
+    """The source the SQL node ``name`` queries: its inputs merged; ``OperationError`` if one has no value."""
+    return merge([_graph.output(ops, *port.rsplit(".", 1)) for port in _graph.feeding_all(ops, f"{name}.source")])
 
 
 async def _count(src: Any, table: str) -> int | None:
@@ -99,27 +121,40 @@ async def _count(src: Any, table: str) -> int | None:
         return None
 
 
-async def _add_follower(ops, upstream: str, src: Any, name: str, sql: str) -> str:
-    """Place a SQL node reading the result of ``upstream``, as ``add_sql`` places one on a source."""
+async def _capped_note(ops, src: Any, upstream: str) -> str:
+    """What a query reading ``upstream``'s result should know when its tile shows fewer rows than the result has."""
+    shown = _graph.output(ops, upstream, "data")
+    rows = _graph.config_of(ops, upstream).get("limit")
+    if shown is None or len(shown) < effective_limit(ops.editor, rows if isinstance(rows, int) else None):
+        return ""
+    total = await _count(src, _graph.output(ops, upstream, "pipeline").table)
+    if total is None or total <= len(shown):
+        return ""
+    return f" It reads all {total} rows of {upstream!r}; its tile shows the first {len(shown)}."
+
+
+async def _add_follower(ops, upstreams: list[str], src: Any, name: str, sql: str) -> str:
+    """Place a SQL node reading the results of ``upstreams``, joined if several, as ``add_sql`` places one on a source."""
     limit = effective_limit(ops.editor, None)
     sql, statement, frame = await _test_run(src, sql, limit)
     with primed_result(src, statement, frame):
-        _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{upstream}.result", f"{name}.source")
+        _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{upstreams[0]}.result", f"{name}.source")
+        try:
+            for upstream in upstreams[1:]:
+                ops.connect(f"{upstream}.result", f"{name}.source")
+        except OperationError as exc:
+            ops.remove_node(name)
+            raise ModelRetry(str(exc)) from exc
     try:
         frame = _graph.output(ops, name, "data")
-        shown = _graph.output(ops, upstream, "data")
+        notes = "".join([await _capped_note(ops, src, upstream) for upstream in upstreams])
     except OperationError as exc:
         ops.remove_node(name)
         raise ModelRetry(str(exc)) from exc
     capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
-    rows = _graph.config_of(ops, upstream).get("limit")
-    note = ""
-    if shown is not None and len(shown) >= effective_limit(ops.editor, rows if isinstance(rows, int) else None):
-        total = await _count(src, _graph.output(ops, upstream, "pipeline").table)
-        if total is not None and total > len(shown):
-            note = f" It reads all {total} rows of {upstream!r}; its tile shows the first {len(shown)}."
+    read = " and ".join(repr(upstream) for upstream in upstreams)
     return (
-        f"Placed SQL node {name!r} on the result of {upstream!r}{capped}.{note} "
+        f"Placed SQL node {name!r} on the result{'s' * (len(upstreams) > 1)} of {read}{capped}.{notes} "
         f"{format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
     )
 
@@ -131,25 +166,24 @@ async def _follower_problems(ops, name: str) -> list[str]:
     not checked: it fails, and reports it, once that one does.
     """
     followers = [f for f in _graph.reading(ops, f"{name}.result") if _graph.component_of(ops, f) == SQL_ID]
-    if not followers:
-        return []
-    try:
-        result = _graph.output(ops, name, "result")
-    except OperationError:
-        return []
     problems = []
     for follower in followers:
+        try:
+            result = _merged_input(ops, follower)
+        except (OperationError, ValueError):
+            continue
         problem = await check_sql_config({"sql": _graph.config_of(ops, follower).get("sql") or ""}, {"source": result})
         if isinstance(problem, CheckDiagnostic):
             problems.append(f"Follower {follower!r} now fails: {problem}")
     return problems
 
 
-async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
+async def add_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: str, sql: str) -> str:
     """Place a SQL node with a read-only query and return a preview of its result; errors come back to fix.
 
     To build on an earlier answer, pass its SQL node as source: the query then reads that
     result by its table name, as list_tables shows it, and runs again when that node changes.
+    To join earlier answers, pass their SQL nodes as a list.
 
     Args:
         source: Source name from list_tables.
@@ -509,11 +543,11 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             return await handler(args)
         before = _graph.config_of(ops, name)
         _keep_followers_table(ops, name, before, config)
-        if "sql" not in config or (upstream := _graph.feeding(ops, f"{name}.source")) is None:
+        if "sql" not in config or not _graph.feeding_all(ops, f"{name}.source"):
             return await handler(args)
         try:
-            src = _graph.output(ops, *upstream.rsplit(".", 1))
-        except OperationError as exc:
+            src = _merged_input(ops, name)
+        except (OperationError, ValueError) as exc:
             raise ModelRetry(str(exc)) from exc
         rows = config.get("limit", before.get("limit"))
         limit = effective_limit(ops.editor, int(rows) if isinstance(rows, int) else None)

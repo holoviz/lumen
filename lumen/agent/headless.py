@@ -174,13 +174,16 @@ class AgentSession:
         approved = bool(self.approve and self.approve(event.tool_name, dict(event.args)))
         self.runner.state.resolve_approval(event.tool_call_id, approved, reason=None if approved else DENIED)
 
-    def add_sql(self, name: str, sql: str, source: str | None = None) -> str:
+    def add_sql(self, name: str, sql: str, source: str | list[str] | None = None) -> str:
         """
         Place a SQL node without the agent, e.g. a query a case starts from:
-        on the source node, or on the result of the SQL node ``source``.
+        on the source node, or on the result of the SQL node ``source``, or
+        the results of several to join.
         """
         self.ops.add_node(SQL_ID, {"sql": sql, "table": name}, name=name)
-        self.ops.connect(f"{source}.result" if source else f"{self.source_node}.source", f"{name}.source")
+        upstreams = [source] if isinstance(source, str) else source or []
+        for port in [f"{upstream}.result" for upstream in upstreams] or [f"{self.source_node}.source"]:
+            self.ops.connect(port, f"{name}.source")
         return name
 
     def _configs(self) -> dict[str, dict[str, Any]]:
