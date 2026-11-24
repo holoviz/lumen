@@ -1,6 +1,6 @@
 """
 Lumen sources, tables, filters, SQL queries and Vega-Lite views as FlowDash
-nodes.
+nodes. View nodes share ``LumenViewNode``, registered with ``register_view``.
 
 Edges between these nodes carry a Lumen ``Source`` or ``Pipeline`` rather
 than a DataFrame, so a query placed on a SQL node runs in the source's
@@ -30,8 +30,10 @@ import asyncio
 import copy
 import datetime as dt
 import decimal
+import functools
 import hashlib
 import inspect
+import logging
 import math
 import threading
 import time
@@ -48,6 +50,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pandas as pd
 import panel as pn
+import panel_material_ui as pmui
 import param
 import sqlglot
 import yaml
@@ -76,7 +79,8 @@ from ..util import get_dataframe_schema
 from .checks import (
     CheckDiagnostic, _engine_error, _read, _unverified, check_chart,
     check_filter_config, check_query, check_source_config, check_sql_config,
-    check_table_config, check_view_config, forget_probes, pipeline_columns,
+    check_table_config, check_view_spec, forget_probes, pipeline_columns,
+    selection_warnings,
 )
 from .choices import (
     filter_choices, forget_distinct, metric_choices, metric_presets,
@@ -85,8 +89,9 @@ from .choices import (
 )
 from .contracts import (
     DATA_ID, FILTER_ID, METRIC_ID, PARAMETER_ID, SOURCE_ID, SQL_ID, TABLE_ID,
-    VIEW_ID, SourceContract,
+    VIEW_ID, SourceContract, spec_fields as contract_spec_fields,
 )
+from .defaults import vega_lite_default
 from .metrics import (
     METRICS_KEY, Metric, MetricError, MetricPreFilter, Query, aggregate,
     bind_sql, coerce_dimension_values, prepare, table_sql,
@@ -105,8 +110,16 @@ except ImportError:
     # A panel-flowdash without global filters never asks the nodes for their columns.
     request_filters = None
 
+try:
+    from panel_flowdash import placement_context
+except ImportError:
+    # panel-flowdash 0.1.0rc7 and earlier, where the ``_legacy_`` helpers and ``_next_tick`` stand in for it.
+    placement_context = None
+
 SOURCE_COLOR = "#6D4C41"
 PIPELINE_COLOR = "#0072B5"
+
+logger = logging.getLogger(__name__)
 
 
 def _register_port_type(name: str, **options: Any) -> str:
@@ -2193,30 +2206,393 @@ def responsive_spec(spec: dict[str, Any]) -> dict[str, Any]:
     return {**defaults, **spec}
 
 
-@register(
-    component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart", tags=["view"],
+def spec_param(doc: str, settings: list | None = None, **params: Any) -> param.Dict:
+    """
+    The ``spec`` param of a view node: a dict FlowDash edits as JSON, with
+    the curated ``settings`` (``panel_flowdash.SpecSetting``) its form shows
+    as another view of the same spec. Without settings the spec is edited as
+    JSON alone. It is synced back from the node, so a default spec the node
+    starts from is saved and undone like any other edit.
+    """
+    metadata = {"flowdash": {"widget": "spec", "settings": list(settings or []), "two_way": True}}
+    return param.Dict(default={}, doc=doc, metadata=metadata, **params)
+
+
+def register_view(
+    *, config: list[str] | None = None, provides: list[dict[str, Any]] | None = None,
+    check_config: Any = None, tags: list[str] | None = None, **options: Any,
+):
+    """
+    Register a ``LumenViewNode`` subclass as a FlowDash component that reads
+    a required ``pipeline`` input and is configured by its ``spec`` and the
+    other ``config`` params. It is tagged a view, so its tile shows even
+    when it has outputs, e.g. a selection. Without ``check_config`` the spec is checked by
+    the class's ``check_spec`` and ``spec_warnings`` and its declared
+    settings, see ``check_view_spec``.
+    """
+    def decorator(cls: type[LumenViewNode]) -> type[LumenViewNode]:
+        check = check_config if check_config is not None else _view_check(cls)
+        return register(
+            component=True, page=False, tags=["view", *(tags or [])], config=["spec", *(config or [])],
+            check_config=check,
+            requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
+            provides=list(provides or []), **options,
+        )(cls)
+    return decorator
+
+
+def _view_check(cls: type[LumenViewNode]) -> Any:
+    settings = (cls.param.spec.metadata or {}).get("flowdash", {}).get("settings") or []
+
+    def check_view(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
+        return check_view_spec(
+            config, inputs, settings=settings, check=cls.check_spec, warnings=cls.spec_warnings,
+            requires_spec=cls.requires_spec,
+        )
+
+    check_view.__doc__ = f"Check a {cls.__name__} config against its input's columns."
+    return check_view
+
+
+def _next_tick(callback: Any) -> None:
+    """Call ``callback`` once the session's current event is handled; outside a session, never."""
+    doc = pn.state.curdoc
+    if doc is not None and doc.session_context is not None:
+        doc.add_next_tick_callback(callback)
+
+
+def _legacy_new_view(editor: Any) -> bool:
+    """
+    Whether a view created now is one someone added, for a panel-flowdash
+    without ``placement_context``. A dashboard is loaded, or a version
+    restored, with the canvas muted; without the flag, in a FlowDash that
+    renamed it, no view can tell a new node from a loaded one, so none
+    takes a default.
+    """
+    return editor is not None and not getattr(editor, "_muted", True)
+
+
+def _legacy_store_default(node: LumenViewNode, default: dict[str, Any]) -> None:
+    """
+    Set the spec of ``node`` to ``default`` for a panel-flowdash without
+    ``FlowDash.set_default``, as part of the edit that gave the node its
+    pipeline, which FlowDash records right after the pipeline arrives. A
+    pipeline that arrives on its own, e.g. a query run off the event loop,
+    has no such edit, so the default is then recorded as a config edit on
+    the next tick.
+    """
+    editor = node.editor
+    history = getattr(editor, "_history", None)
+    if history is None or not hasattr(editor, "_hydrating"):
+        node.spec = default
+        return
+    head = getattr(history, "_head", None)
+    # FlowDash records no version while it hydrates; the spec is still synced back and marks the dashboard unsaved.
+    hydrating, editor._hydrating = editor._hydrating, True
+    try:
+        node.spec = default
+    finally:
+        editor._hydrating = hydrating
+    node_ref, editor_ref = weakref.ref(node), weakref.ref(editor)
+
+    def record():
+        owner, view = editor_ref(), node_ref()
+        if owner is None or view is None or getattr(getattr(owner, "_history", None), "_head", None) != head:
+            return
+        graph = getattr(owner, "_dataflow_graph", None)
+        name_of, record_edit = getattr(owner, "_node_name", None), getattr(owner, "_record_edit", None)
+        if graph is None or not callable(name_of) or not callable(record_edit):
+            return
+        try:
+            node_id = view.node_id()
+            if node_id is None or graph.get_config_state(node_id) is None:
+                return
+            name = name_of(node_id)
+            record_edit(f"Changed the config of {name}", op="set_config", args={"name": name, "keys": ["spec"]})
+        except Exception:
+            logger.warning("The default spec of a Lumen view could not be recorded", exc_info=True)
+
+    _next_tick(record)
+
+
+def _legacy_code_panel_node(editor: Any) -> Any:
+    """The id of the node the code panel shows, for a panel-flowdash without ``FlowDash.code_panel_node``."""
+    try:
+        return editor.code_panel.param.instance_id
+    except Exception:
+        return None
+
+
+@functools.cache
+def _view_class(view_type: str) -> type:
+    """The Lumen View class of ``view_type``, e.g. ``"vegalite"``, imported on first use."""
+    from ..views.base import View
+
+    return View._get_type(view_type)
+
+
+class LumenViewNode(GlobalFilterTarget, LumenNode):
+    """
+    A view of a Lumen pipeline drawn from a spec, e.g. a chart. The spec
+    names the pipeline's columns and brings no data: the view gets the
+    pipeline's rows, at most the host's row ceiling, through ``fetch``, so
+    it shares one query with the pipeline's other readers.
+
+    A subclass names the Lumen ``view_type`` it draws (e.g. ``"vegalite"``),
+    declares its ``spec`` with ``spec_param`` and is registered with
+    ``register_view``. It can override ``check_spec`` (refuse a spec before
+    it is drawn), ``spec_warnings``, ``spec_fields`` (the columns the
+    dashboard's schema contract records), ``default_spec`` (the spec a new
+    view starts from), ``_view_params`` (how the spec becomes the Lumen
+    view's params, filling the tile by default), ``_built``, ``_summary``
+    and ``_preview`` (the card and its pop-out).
+
+    A view the editor creates with an empty spec takes ``default_spec`` of
+    its pipeline's schema the first time it has one, as an edit of its
+    config that is saved and undone like any other. A view loaded with a
+    dashboard keeps the spec it was saved with, empty or not. Without a
+    spec, a view that needs one shows ``_empty`` and offers to edit it.
+    """
+
+    __abstract = True
+
+    pipeline = param.Parameter(doc="The upstream pipeline.")
+
+    spec = spec_param("The view's spec, without data.")
+
+    _filter_inputs = ("pipeline",)
+
+    # Whether a pipeline is connected, so the body says what the view waits for when nothing is drawn.
+    _connected = param.Boolean(default=False, precedence=-1)
+
+    # The type of the Lumen View the node draws, e.g. "vegalite".
+    view_type: ClassVar[str] = ""
+
+    # Whether the view needs a spec to draw; a table, say, draws its pipeline with an empty one.
+    requires_spec: ClassVar[bool] = True
+
+    # Whether the view takes the dashboard's colour scheme, so it is drawn again when that changes.
+    themed: ClassVar[bool] = False
+
+    _waiting: ClassVar[str] = "Waiting for a pipeline"
+
+    _empty: ClassVar[str] = "No chart yet"
+
+    def __init__(self, **params):
+        if placement_context is None:
+            self._may_default = _legacy_new_view(current_dashboard())
+        else:
+            # A view a dashboard load, an undo or a restored version brings back keeps its spec.
+            self._may_default = placement_context() == "new"
+        super().__init__(**params)
+        settings = getattr(self.editor, "settings", None)
+        if self.themed and settings is not None and "color_scheme" in settings.param:
+            node = weakref.ref(self)
+
+            def follow(*_events):
+                if (view := node()) is not None:
+                    view._refresh()
+
+            settings.param.watch(follow, "color_scheme")
+
+    @staticmethod
+    def check_spec(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
+        """The spec to draw for a pipeline with ``columns``, or ``ValueError`` saying what to fix."""
+        return spec
+
+    @staticmethod
+    def spec_warnings(spec: dict[str, Any]) -> list[str]:
+        """Problems of ``spec`` shown with the config without refusing it."""
+        return []
+
+    @staticmethod
+    def spec_fields(spec: Any) -> set[str]:
+        """The columns of its pipeline ``spec`` reads."""
+        return contract_spec_fields(spec)
+
+    @staticmethod
+    def default_spec(schema: dict[str, Any]) -> dict[str, Any] | None:
+        """The spec a new view of a pipeline with ``schema`` starts from, or None to start empty."""
+        return None
+
+    @param.depends("pipeline", "spec", "_global_filters", watch=True, on_init=True)
+    def _refresh(self, *events):
+        if self._may_default and self._apply_default():
+            return
+        with param.parameterized.batch_call_watchers(self):
+            super()._refresh()
+            self._connected = self.pipeline is not None
+
+    @param.depends("_object", "_error", "_connected")
+    def _render(self):
+        return super()._render()
+
+    def _apply_default(self) -> bool:
+        """Start from ``default_spec`` once the pipeline's schema is known; True if the spec changed."""
+        if self.spec:
+            self._may_default = False
+            return False
+        editor = self.editor
+        if editor is not None and (editor.preview or editor.read_only or not editor.editable):
+            return False
+        pipeline = self.pipeline
+        if pipeline is None or is_failure(pipeline):
+            return False
+        try:
+            schema = pipeline.schema
+        except Exception:
+            return False
+        if not schema:
+            return False
+        self._may_default = False
+        try:
+            default = self.default_spec(schema)
+        except Exception:
+            return False
+        if not default:
+            return False
+        return self._store_default(default)
+
+    def _store_default(self, default: dict[str, Any]) -> bool:
+        """
+        Give the node ``default`` as its spec through the editor's
+        ``set_default``, which records it as part of the edit that gave the
+        node its pipeline, e.g. connecting it, so one undo takes back both.
+        True if the spec changed; one set off the event loop changes later.
+        """
+        if placement_context is None:
+            _legacy_store_default(self, default)
+            return True
+        editor, node_id = self.editor, self.node_id()
+        if editor is None or node_id is None:
+            return False
+        editor.set_default(node_id, {"spec": default})
+        return bool(self.spec)
+
+    def _color_scheme(self) -> str | None:
+        scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
+        return scheme if isinstance(scheme, str) and scheme else None
+
+    def _view_params(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """
+        The params of the Lumen view besides its pipeline, from the checked
+        spec. The view fills its tile, which a view whose spec cannot size it
+        to its container does through its pane's sizing.
+        """
+        return {"spec": spec, "sizing_mode": "stretch_both"}
+
+    def _resolve(self):
+        if self.pipeline is None or (self.requires_spec and not self.spec):
+            return None
+        if is_failure(self.pipeline):
+            raise ValueError(f"The input failed: {failure_text(self.pipeline)}")
+        spec = self.check_spec(self.spec or {}, pipeline_columns(self.pipeline))
+        # The global filters become part of the query, and the rows come through fetch, so
+        # the view shares one query with the pipeline's other readers.
+        pipeline = self._shown(self.pipeline)
+        rows = fetch(pipeline, row_ceiling(self.editor))
+        view_type = _view_class(self.view_type)
+        view = view_type(pipeline=_clone(pipeline, data=rows), **self._view_params(spec))
+        view.update()
+        self._built(view)
+        return view
+
+    def _filter_pipeline(self) -> Any:
+        return self.pipeline
+
+    def _built(self, view: Any) -> None:
+        """Called with each view the node draws, before it is shown."""
+
+    def _body(self):
+        view = self._object
+        if view is not None:
+            return view.panel
+        if self.pipeline is None:
+            return pn.pane.Markdown(self._waiting)
+        return self._empty_state()
+
+    def _empty_state(self) -> pn.viewable.Viewable:
+        """What a view without a spec shows: ``_empty``, and a button opening the spec while it can be edited."""
+        message = pn.pane.Markdown(self._empty, margin=(0, 5))
+        editor = self.editor
+        if editor is None or not callable(getattr(editor, "edit_spec", None)):
+            return message
+        node_id = self.node_id()
+        shown = _legacy_code_panel_node(editor) if placement_context is None else editor.param.code_panel_node
+        # Hidden while the code panel shows this node, which may also be showing the view itself.
+        button = pmui.Button(
+            label="Edit spec", icon="data_object", variant="outlined", size="small",
+            css_classes=["lumen-edit-spec"],
+            visible=pn.bind(
+                lambda editable, read_only, preview, shown: (
+                    editable and not read_only and not preview and (shown is None or shown != node_id)
+                ),
+                editor.param.editable, editor.param.read_only, editor.param.preview,
+                shown,
+            ),
+        )
+        button.on_click(lambda _event: self.edit_spec())
+        return pn.Column(
+            message, button, sizing_mode="stretch_both",
+            styles={"align-items": "center", "justify-content": "center"},
+        )
+
+    def edit_spec(self) -> bool:
+        """Open the view's spec in the editor's code panel; False where it cannot be shown."""
+        editor, node_id = self.editor, self.node_id()
+        if editor is None or node_id is None:
+            return False
+        return bool(editor.edit_spec(node_id, "spec"))
+
+    def _summary(self, spec: dict[str, Any], data: Any) -> str:
+        """A line saying what the view shows, e.g. for hosts that draw no chart previews."""
+        title = getattr(getattr(type(self), "__panel_app_metadata__", None), "title", None) or "View"
+        if data is None or not hasattr(data, "__len__"):
+            return title
+        return f"{title}, {len(data):,} row{'' if len(data) == 1 else 's'}"
+
+    def _preview(self, spec: dict[str, Any], data: Any) -> Any:
+        """
+        What the node's card shows and pops out: by default the first rows
+        of the view's data and how many the pipeline has.
+        """
+        if isinstance(self.pipeline, Pipeline) and (rows := _fetched_preview(self.pipeline)) is not None:
+            return rows
+        if data is None or not hasattr(data, "head"):
+            return self._summary(spec, data)
+        return _preview_frame(data.head(PREVIEW_ROWS), len(data))
+
+    def __flowdash_preview__(self, output: str | None = None) -> Any:
+        if self._error is None and self._object is None and self.pipeline is not None:
+            return self._empty
+        if self._error is not None or self._object is None:
+            return None
+        spec = getattr(self._object, "spec", None)
+        spec = spec if isinstance(spec, dict) else self.spec
+        data = getattr(getattr(self._object, "pipeline", None), "data", None)
+        return self._preview(spec, data)
+
+
+@register_view(
+    title="Lumen Vega-Lite view", icon="bar_chart",
     description=(
         "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
         "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
         "selection output gives what is selected: wire it to a filter's selection input that "
         "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
     ),
-    config=["spec", "debounce"],
-    check_config=check_view_config,
-    requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
+    config=["debounce"],
     provides=[{"key": "selection", "type": SELECTION_TYPE}],
 )
-class ViewNode(GlobalFilterTarget, LumenNode):
+class ViewNode(LumenViewNode):
 
-    pipeline = param.Parameter(doc="The upstream pipeline.")
-
-    _filter_inputs = ("pipeline",)
-
-    spec = param.Dict(default={}, doc="""
+    spec = spec_param("""
         The Vega-Lite spec, without data. A width or height it leaves out
         follows the tile's, and colours it leaves out the dashboard's
-        ``color_scheme`` setting, if it has one.""",
-        metadata={"flowdash": {"widget": "spec", "settings": VEGA_LITE_SETTINGS}})
+        ``color_scheme`` setting, if it has one. A new chart starts from
+        one its pipeline's columns suggest: a line of a number over a date
+        or a year, the largest categories' sums as bars, a scatter of two
+        numbers or a histogram of one.""", settings=VEGA_LITE_SETTINGS)
 
     debounce = param.Integer(default=DEBOUNCE, bounds=(0, None), doc="""
         Milliseconds the chart waits after the last change of a selection
@@ -2226,51 +2602,30 @@ class ViewNode(GlobalFilterTarget, LumenNode):
     selection = param.ClassSelector(class_=Selection, default=EMPTY, doc="""
         What is selected on the chart, by the spec's selection params.""")
 
+    view_type = "vegalite"
+
+    themed = True
+
+    check_spec = staticmethod(check_chart)
+
+    spec_warnings = staticmethod(selection_warnings)
+
+    default_spec = staticmethod(vega_lite_default)
+
     def __init__(self, **params):
         self._link = None
         super().__init__(**params)
-        settings = getattr(self.editor, "settings", None)
-        if settings is not None and "color_scheme" in settings.param:
-            node = weakref.ref(self)
 
-            def follow(*_events):
-                if (view := node()) is not None:
-                    view._refresh()
+    def _view_params(self, spec: dict[str, Any]) -> dict[str, Any]:
+        # The spec fills the tile, so the pane keeps the sizing Vega gives a container size.
+        return {"spec": themed_spec(responsive_spec(spec), self._color_scheme())}
 
-            settings.param.watch(follow, "color_scheme")
-
-    @param.depends("pipeline", "spec", "_global_filters", watch=True, on_init=True)
-    def _refresh(self, *events):
-        super()._refresh()
-
-    def _filter_pipeline(self) -> Any:
-        return self.pipeline
-
-    def _color_scheme(self) -> str | None:
-        scheme = getattr(getattr(self.editor, "settings", None), "color_scheme", None)
-        return scheme if isinstance(scheme, str) and scheme else None
-
-    def _resolve(self):
-        if self.pipeline is None or not self.spec:
-            return None
-        from ..views.base import VegaLiteView
-
-        if is_failure(self.pipeline):
-            raise ValueError(f"The input failed: {failure_text(self.pipeline)}")
-        spec = check_chart(self.spec, pipeline_columns(self.pipeline))
-        # The global filters become part of the query, and the rows come through fetch, so
-        # the chart shares one query with the pipeline's other readers.
-        pipeline = self._shown(self.pipeline)
-        rows = fetch(pipeline, row_ceiling(self.editor))
-        spec = themed_spec(responsive_spec(spec), self._color_scheme())
-        view = VegaLiteView(pipeline=_clone(pipeline, data=rows), spec=spec)
-        view.update()
+    def _built(self, view: Any) -> None:
         if isinstance(view._panel, pn.pane.Vega):
             # A new chart starts with nothing selected; the link reports that.
             self._link = link_selection(
                 self, view._panel, debounce=self.debounce, link=self._link, source=self.node_id,
             )
-        return view
 
     @param.depends("debounce", watch=True)
     def _update_debounce(self):
@@ -2280,18 +2635,13 @@ class ViewNode(GlobalFilterTarget, LumenNode):
             if isinstance(pane, pn.pane.Vega):
                 pane.debounce = self.debounce
 
-    def _body(self):
-        view = self._object
-        return pn.pane.Markdown("Waiting for a pipeline") if view is None else view.panel
+    def _summary(self, spec: dict[str, Any], data: Any) -> str:
+        return _chart_summary(spec, data)
 
-    def __flowdash_preview__(self, output: str | None = None) -> Any:
-        if self._error is not None or self._object is None:
-            return None
-        spec = self._object.spec
-        data = getattr(getattr(self._object, "pipeline", None), "data", None)
+    def _preview(self, spec: dict[str, Any], data: Any) -> Any:
         # A host that does not draw charts would list the dict's keys, so it gets a line of text.
         if "chart" not in _preview_kinds():
-            return _chart_summary(spec, data)
+            return self._summary(spec, data)
         return {
             PREVIEW_KIND_KEY: "chart",
             "format": "vega-lite",

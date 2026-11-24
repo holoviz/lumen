@@ -33,6 +33,9 @@ FIELD_TYPES = ["nominal", "ordinal", "quantitative", "temporal", "geojson"]
 AGGREGATES = {"None": None, "Sum": "sum", "Mean": "mean", "Median": "median",
               "Min": "min", "Max": "max", "Count": "count"}
 
+SORT = {"Default": None, "Largest first": "-y", "Smallest first": "y",
+        "A to Z": "ascending", "Z to A": "descending"}
+
 LEGEND = {"Auto": "auto", "Top": "top", "Bottom": "bottom", "Left": "left",
           "Right": "right", "Off": "off"}
 
@@ -254,6 +257,8 @@ def _settings() -> list:
                     options=FIELD_TYPES, enabled=_single_view),
         SpecSetting("encoding.y.aggregate", label="Aggregate", widget="select", group="Chart",
                     options=AGGREGATES, enabled=_single_view),
+        SpecSetting("encoding.x.sort", label="Sort X", widget="select", group="Chart",
+                    options=SORT, restrict=False, enabled=_single_view),
         SpecSetting("encoding.color.field", label="Colour by", widget="select", group="Chart",
                     choices="columns", of="pipeline", restrict=False, enabled=_single_view),
         SpecSetting("size", label="Size", widget="radio", options=SIZE, default="fill",

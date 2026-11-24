@@ -23,6 +23,7 @@ from ..data.contracts import (
     source_schema,
 )
 from ..sources.base import Source
+from .defaults import field_column
 
 # The ids of Lumen's FlowDash components, which saved dashboards refer to.
 SOURCE_ID = "Lumen/source"
@@ -93,13 +94,28 @@ def _spec_fields(spec: Any) -> set[str]:
     if isinstance(spec, dict):
         for key, value in spec.items():
             if key == "field" and isinstance(value, str):
-                fields.add(value)
+                fields.add(field_column(value))
             else:
                 fields |= _spec_fields(value)
     elif isinstance(spec, list):
         for item in spec:
             fields |= _spec_fields(item)
     return fields
+
+
+def spec_fields(spec: Any) -> set[str]:
+    """The columns a view spec reads: every string under a ``field`` key, at any depth."""
+    return _spec_fields(spec)
+
+
+def _view_fields(component: Any) -> Callable[[Any], set[str]] | None:
+    """How the view node of ``component`` reads columns from its spec, or None if it is no view node."""
+    from .nodes import COMPONENTS, LumenViewNode
+
+    cls = COMPONENTS.get(component) if isinstance(component, str) else None
+    if isinstance(cls, type) and issubclass(cls, LumenViewNode):
+        return cls.spec_fields
+    return None
 
 
 def _view_reader(component: Any) -> Callable[[Any], set[str]] | None:

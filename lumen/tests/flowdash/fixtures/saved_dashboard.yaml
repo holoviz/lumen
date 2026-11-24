@@ -1,0 +1,104 @@
+flowdash: 1
+title: Untitled
+settings:
+  description: ''
+  refresh_period: 0.0
+  controls_position: top
+  header_layout: compact
+  node_previews: false
+  tile_cards: true
+  tile_titles: false
+  viewers_can_inspect: false
+turns:
+  - id: te8ddd796
+    actor: user
+    at: '2026-11-21T16:28:34Z'
+    summary: Added data. Added by_category. Connected data to by_category. Added chart. Connected by_category
+      to chart. Added sales. Connected data to sales. Added by_cat. And 4 more changes.
+nodes:
+  data:
+    component: Lumen/source
+    origin: te8ddd796
+    config:
+      ref: data
+    position: [0.0, 112.5]
+  by_category:
+    component: Lumen/sql
+    origin: te8ddd796
+    config:
+      sql: SELECT category, SUM(amount) AS total FROM sales GROUP BY category
+      table: by_category
+    position: [380.0, 0.0]
+  chart:
+    component: Lumen/view
+    origin: te8ddd796
+    config:
+      spec:
+        mark:
+          type: bar
+          tooltip: true
+        title: Totals
+        encoding:
+          x:
+            field: category
+            type: nominal
+          y:
+            field: total
+            type: quantitative
+      debounce: 250
+    position: [760.0, 101.5]
+  sales:
+    component: Lumen/table
+    origin: te8ddd796
+    config:
+      table: sales
+      limit: 100
+    position: [380.0, 192.0]
+  by_cat:
+    component: Lumen/filter
+    origin: te8ddd796
+    config:
+      field: category
+    position: [1140.0, 79.5]
+  points:
+    component: Lumen/view
+    origin: te8ddd796
+    config:
+      spec:
+        mark: point
+        width: 300
+        encoding:
+          x:
+            field: category
+            type: nominal
+          y:
+            field: amount
+            type: quantitative
+    position: [1520.0, 101.5]
+edges:
+  - from: data.source
+    to: by_category.source
+  - from: by_category.pipeline
+    to: chart.pipeline
+  - from: data.source
+    to: sales.source
+  - from: sales.pipeline
+    to: by_cat.pipeline
+  - from: chart.selection
+    to: by_cat.selection
+  - from: by_cat.filtered
+    to: points.pipeline
+layout:
+  tiles:
+    - node: data
+      visible: false
+    - node: by_category
+      visible: false
+    - node: chart
+      visible: false
+    - node: sales
+      visible: false
+    - node: by_cat
+      visible: false
+    - node: points
+      visible: false
