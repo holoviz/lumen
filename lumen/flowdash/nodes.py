@@ -39,7 +39,7 @@ import threading
 import time
 import weakref
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import (
     Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
@@ -256,10 +256,13 @@ def lookup_source(ref: str, context: Mapping[str, Any] | None = None) -> Source 
 def host_metrics(context: Mapping[str, Any] | None = None) -> Mapping[str, Metric]:
     """
     The metrics the host lets a dashboard use, by name, from ``context`` or
-    else ``dashboard_context()``: the ``MetricSet`` under ``METRICS_KEY``.
+    else ``dashboard_context()``: one snapshot of the ``MetricSet`` under
+    ``METRICS_KEY``, which an admin's save does not change while it is read.
     """
     context = dashboard_context() if context is None else context
-    return context.get(METRICS_KEY) or {}
+    metrics = context.get(METRICS_KEY)
+    snapshot = getattr(metrics, "snapshot", None)
+    return snapshot() if callable(snapshot) else (metrics or {})
 
 
 def missing_metric(name: str, metrics: Mapping[str, Metric]) -> str:
@@ -1771,6 +1774,19 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return _pipeline_preview(self, self._object)
         return data
 
+    def __flowdash_provenance__(self) -> dict[str, str] | None:
+        """The "Ad hoc" label of a number read from the node's one-row result, saying how its query computes it."""
+        # Only a single number is labelled; on rows a chart or table reads the label is noise.
+        if not self.sql.strip() or self._error is not None or self._object is None:
+            return None
+        data = self._object.data
+        if not isinstance(data, pd.DataFrame) or len(data) != 1:
+            return None
+        from .save_metric import describe_query
+
+        return {"label": "Ad hoc", "detail": describe_query(self.sql, _read(getattr(self._input, "dialect", None))),
+                "kind": "ad hoc"}
+
 
 class PipelineNode(GlobalFilterTarget, LumenNode):
     """A node whose output is a lazy pipeline, previewed only when its view is shown."""
@@ -2141,6 +2157,43 @@ class MetricNode(PipelineNode):
     def data(self):
         pipeline = self._value()
         return pipeline if pipeline is None or is_failure(pipeline) else fetch(pipeline, row_ceiling(self.editor))
+
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
+        """
+        The "Metric: <name>" label of the views reading the node, with the
+        metric's description. A view reading it through an edge that
+        aggregates its rows into another number, e.g. the mean of per-state
+        sums or the last of several groups, is labelled "Derived" with the
+        aggregation instead, and a metric the project no longer defines
+        says so.
+        """
+        if not self.metric:
+            return None
+        metric = host_metrics(self._context).get(self.metric)
+        if metric is None:
+            return {"label": f"Missing metric: {self.metric}", "kind": "missing", "icon": "error_outline",
+                    "detail": f"The project no longer defines the {self.metric} metric, so this number cannot "
+                              "be computed. Pick another metric or define it again in Admin, Metrics."}
+        from .save_metric import (
+            aggregating_step, derived_label, describe_reading,
+        )
+
+        step = aggregating_step(via, self._rows(metric))
+        if step is not None:
+            how, column = step
+            return {"label": derived_label(how, self.metric), "kind": "derived",
+                    "detail": describe_reading(how, column, self.metric)}
+        detail = metric.description or f"The {self.metric} metric the project defines."
+        return {"label": f"Metric: {self.metric}", "detail": detail, "kind": "metric"}
+
+    def _rows(self, metric: Metric) -> int | None:
+        """How many rows the node gives: as fetched, else one for a structured metric without dimensions."""
+        fetched = _FETCHED.get(self._object) if isinstance(self._object, Pipeline) else None
+        if fetched:
+            return len(next(iter(fetched.values())))
+        if metric.form == "structured" and not self.dimensions:
+            return 1
+        return None
 
 
 def check_parameter_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:

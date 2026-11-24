@@ -226,10 +226,10 @@ def parameter_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[st
 
 def metric_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     """A ``Lumen/metric`` palette entry per metric the host defines, with the metric filled in."""
-    from .nodes import METRICS_KEY
+    from .nodes import host_metrics
 
     presets = []
-    for name, metric in (context.get(METRICS_KEY) or {}).items():
+    for name, metric in host_metrics(context).items():
         config: dict[str, Any] = {"metric": name}
         if metric.form == "structured":
             config["measures"] = list(metric.measures)[:1]

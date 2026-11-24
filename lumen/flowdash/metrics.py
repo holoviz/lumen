@@ -49,12 +49,17 @@ room for them.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 import difflib
 import functools
+import logging
 import math
 import re
+import threading
+import time
+import weakref
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
@@ -72,6 +77,10 @@ from .project import (
 )
 
 SECTION = "metrics"
+
+_UNREAD = object()
+
+logger = logging.getLogger(__name__)
 
 # The key of the editor context the host puts its ``MetricSet`` in.
 METRICS_KEY = "lumen.metrics"
@@ -398,6 +407,10 @@ class MetricSet(Mapping[str, Metric]):
 
     def __repr__(self) -> str:
         return f"MetricSet({list(self._metrics)})"
+
+    def snapshot(self) -> MetricSet:
+        """These metrics as one set that does not change, to read several of them together."""
+        return self
 
     def problem(self, path: tuple, message: str) -> Problem:
         return Problem(message) if self.section is None else self.section.problem(path, message)
@@ -1234,7 +1247,147 @@ def _probe(source: BaseSQLSource, sql: str, metric: Metric, path: tuple = ()) ->
         raise MetricCheckError(f"Metric {metric.name!r}: the engine refused its query: {message}", path) from None
 
 
-register_section(ProjectSection(
+class ProjectMetrics(MetricSet):
+    """
+    The metrics of ``project`` as it is now, for an app's context: a metric
+    an admin saves with ``Project.set`` is used from then on, by every session.
+
+    Each change of the project's data is read once. A ``metrics:`` section
+    that fails to load is logged once, with credentials masked, and the
+    metrics read before it are kept; a failure is tried again at most every
+    ``retry`` seconds, e.g. for a source that was down. Read ``snapshot()``
+    to use several metrics together: the mapping methods each read the
+    current snapshot, which an admin's save may replace in between.
+    """
+
+    def __init__(self, project: Project, retry: float = 60.0):
+        self.project = project
+        self.retry = retry
+        self._lock = threading.Lock()
+        self._data: Any = _UNREAD
+        self._raw: Any = _UNREAD
+        self._snapshot = MetricSet()
+        self._failed_at: float | None = None
+
+    def snapshot(self) -> MetricSet:
+        data = self.project.data
+        if data is self._data and (self._failed_at is None or time.monotonic() - self._failed_at < self.retry):
+            return self._snapshot
+        # One thread reads at a time; while it does, e.g. waiting on a slow source, the others get the
+        # metrics read before. Only the very first read waits, as there is nothing to give before it.
+        if not self._lock.acquire(blocking=self._data is _UNREAD):
+            return self._snapshot
+        try:
+            data = self.project.data
+            if data is not self._data:
+                raw = data.get(SECTION)
+                changed = self._raw is _UNREAD or raw != self._raw
+                self._data, self._raw = data, copy.deepcopy(raw)
+                if changed:
+                    return self._read(log=True)
+            if self._failed_at is not None and time.monotonic() - self._failed_at >= self.retry:
+                return self._read(log=False)
+            return self._snapshot
+        finally:
+            self._lock.release()
+
+    def _read(self, log: bool) -> MetricSet:
+        try:
+            metrics = read_metrics(self.project)
+        except ProjectError as exc:
+            self._failed_at = time.monotonic()
+            if log:
+                from panel_flowdash.value_text import error_text
+
+                kept = len(self._snapshot)
+                logger.warning(
+                    "Not using the project file's metrics: %s%s", error_text(exc),
+                    f"\nKeeping the {kept} metric{'' if kept == 1 else 's'} read before." if kept else "",
+                )
+            return self._snapshot
+        self._failed_at = None
+        self._snapshot = metrics
+        return metrics
+
+    @property
+    def _metrics(self) -> dict[str, Metric]:  # type: ignore[override]
+        return self.snapshot()._metrics
+
+    @property
+    def section(self) -> Section | None:  # type: ignore[override]
+        return self.snapshot().section
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(list(self.snapshot()._metrics))
+
+    def keys(self):
+        return self.snapshot().keys()
+
+    def items(self):
+        return self.snapshot().items()
+
+    def values(self):
+        return self.snapshot().values()
+
+    def __repr__(self) -> str:
+        return f"ProjectMetrics({list(self.snapshot()._metrics)})"
+
+
+def _settings_view(project: Project, editable: bool) -> Any:
+    from .metrics_admin import metrics_settings
+
+    return metrics_settings(project, editable)
+
+
+def _wizard_view(project: Project) -> Any:
+    from .metrics_admin import metrics_wizard_step
+
+    return metrics_wizard_step(project)
+
+
+# The Bokeh documents of the sessions of apps that serve Lumen sources, see ``serve_lumen``.
+_LUMEN_DOCS: weakref.WeakSet = weakref.WeakSet()
+
+
+def serve_lumen(doc: Any) -> None:
+    """Mark ``doc``, a session's document, as one of an app that serves Lumen sources."""
+    if doc is not None:
+        _LUMEN_DOCS.add(doc)
+
+
+def serves_lumen() -> bool:
+    """Whether the current session is one of an app that serves Lumen sources."""
+    import panel as pn
+
+    doc = pn.state.curdoc
+    return doc is not None and doc in _LUMEN_DOCS
+
+
+class _LumenSection(ProjectSection):
+    """
+    The ``metrics:`` section, whose admin view and setup step exist only in
+    the sessions of an app serving Lumen sources: registering a section is
+    process-wide, and another FlowDash app in the process keeps its own
+    Data step and has no Metrics section.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        value = object.__getattribute__(self, name)
+        if name in ("settings_view", "wizard_view") and value is not None and not serves_lumen():
+            return None
+        return value
+
+
+# The admin view and the setup wizard, on a panel-flowdash whose sections have them.
+_ADMIN = {
+    key: value for key, value in {
+        "settings_view": _settings_view, "wizard_view": _wizard_view, "group": "Data",
+    }.items() if key in getattr(ProjectSection, "__dataclass_fields__", {})
+}
+
+register_section((_LumenSection if _ADMIN else ProjectSection)(
     SECTION, load_section, title="Metrics", icon="functions",
-    description="Named, described queries over the app's sources, see lumen.flowdash.metrics.",
+    description="Numbers defined here are the agreed definitions; the assistant uses them instead of "
+    "writing its own SQL.",
+    **_ADMIN,
 ))

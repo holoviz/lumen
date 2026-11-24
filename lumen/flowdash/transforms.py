@@ -539,6 +539,40 @@ class AggregateNode(TransformNode):
         step = SQLAggregate(by=self.by, columns=self.columns, method=self.method, write=step_dialect(pipeline))
         return step, aggregate_schema(pipeline.schema, self.by, self.columns, self.method)
 
+    def __flowdash_provenance__(self) -> dict[str, str] | None:
+        """
+        The "Ad hoc" label of a number aggregated by the node, saying how it
+        is computed, or "Derived" with the aggregation over a metric's rows.
+        """
+        if not self.columns and self.method != "count":
+            return None
+        from .save_metric import derived_label, describe_aggregate
+
+        columns, by = list(self.columns), list(self.by)
+        metric = self.derived_from()
+        if metric is not None:
+            return {"label": derived_label(self.method, metric), "kind": "derived",
+                    "detail": describe_aggregate(self.method, columns, by, metric)}
+        # Grouped rows are not a number; only a single aggregate is labelled.
+        if by:
+            return None
+        return {"label": "Ad hoc", "detail": describe_aggregate(self.method, columns, by), "kind": "ad hoc"}
+
+    def derived_from(self) -> str | None:
+        """The metric whose rows the node aggregates, directly or through other nodes, if any."""
+        editor, node = self.editor, self.node_id()
+        if editor is None or node is None or not hasattr(editor, "node_provenance"):
+            return None
+        source = next((e["source"] for e in editor._dataflow_graph.edges
+                       if e["target"] == node and e["target_port"] == "pipeline"), None)
+        found = editor.node_provenance(source) if source is not None else None
+        if found is None or found[0].kind not in ("metric", "derived"):
+            return None
+        upstream = editor._component_instances.get(found[1])
+        if isinstance(upstream, AggregateNode):
+            return upstream.derived_from()
+        return getattr(upstream, "metric", None) or None
+
 
 @_pipeline_node(
     title="Lumen Sort", icon="sort",
