@@ -204,3 +204,52 @@ def test_escape_closes_the_editor_and_returns_focus_to_its_row(page, tmp_path, m
     page.keyboard.press("Escape")
     expect(drawer).to_be_hidden()
     expect(page.locator(".flowdash-admin-row-fleet .flowdash-admin-metric-menu button")).to_be_focused()
+
+
+def test_renaming_a_metric_dashboards_use_asks_first_and_returns_focus_to_its_row(page, tmp_path, monkeypatch):
+    _serve(page, tmp_path, monkeypatch, dashboards=[("Fleet overview", "fleet")])
+    page.locator(".flowdash-admin-row-fleet").get_by_text("fleet", exact=True).click()
+    drawer = _drawer(page)
+    expect(drawer).to_contain_text("Edit fleet", timeout=15000)
+    drawer.locator(".flowdash-metric-name input").fill("fleet_v2")
+    drawer.get_by_role("button", name="Save").click()
+    dialog = page.get_by_role("dialog").filter(has_text="Rename metric fleet?")
+    expect(dialog).to_contain_text("1 dashboard uses fleet", timeout=15000)
+    expect(dialog).to_contain_text("Fleet overview")
+    assert list(_metrics(tmp_path)) == ["fleet"]
+
+    dialog.get_by_role("button", name="Rename metric").click()
+    expect(drawer).to_be_hidden()
+    menu = page.locator(".flowdash-admin-row-fleet-v2 .flowdash-admin-metric-menu button")
+    expect(menu).to_be_focused()
+    assert list(_metrics(tmp_path)) == ["fleet_v2"]
+
+
+def test_focus_returns_to_the_table_after_the_delete_dialog_closes(page, tmp_path, monkeypatch):
+    _serve(page, tmp_path, monkeypatch)
+    menu = page.locator(".flowdash-admin-row-fleet .flowdash-admin-metric-menu button")
+    menu.click()
+    page.get_by_role("menuitem", name="Delete").click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text("Delete metric fleet?", timeout=15000)
+    dialog.get_by_role("button", name="Cancel").click()
+    expect(dialog).to_be_hidden()
+    expect(menu).to_be_focused()
+
+    menu.click()
+    page.get_by_role("menuitem", name="Delete").click()
+    dialog.get_by_role("button", name="Delete metric").click()
+    expect(page.locator(".flowdash-admin-row-fleet")).to_have_count(0)
+    expect(page.get_by_role("button", name="New metric")).to_be_focused()
+
+
+def test_focus_returns_to_the_row_of_a_saved_metric(page, tmp_path, monkeypatch):
+    _serve(page, tmp_path, monkeypatch)
+    page.locator(".flowdash-admin-row-fleet").get_by_text("fleet", exact=True).click()
+    drawer = _drawer(page)
+    expect(drawer).to_contain_text("Edit fleet", timeout=15000)
+    drawer.locator(".flowdash-metric-description input").fill("Every turbine.")
+    drawer.get_by_role("button", name="Save").click()
+    expect(drawer).to_be_hidden()
+    expect(page.locator(".flowdash-admin-row-fleet")).to_contain_text("Every turbine.")
+    expect(page.locator(".flowdash-admin-row-fleet .flowdash-admin-metric-menu button")).to_be_focused()
