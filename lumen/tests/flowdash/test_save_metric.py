@@ -454,3 +454,130 @@ def test_pointing_says_undo_keeps_the_metric(ops):
                      "the metric capacity stays saved in Admin, Metrics."]
     assert ops.editor.undo()
     assert "capacity" in ops.editor.context[METRICS_KEY]
+
+
+STATE_MW_SQL = "SELECT t_state, SUM(t_cap) AS mw FROM turbines GROUP BY t_state"
+
+
+def state_mw_metric(ops):
+    """The grouped metric state_mw (CA 3, TX 2, IA 1) and a Lumen metric node reading it."""
+    save_metric(ctx_of(ops), "state_mw", {"source": ops.ref, "sql": STATE_MW_SQL})
+    ops.add_node(METRIC_ID, {"metric": "state_mw"}, name="state_mw_metric")
+    return "state_mw_metric"
+
+
+def test_an_aggregate_over_a_metric_is_labelled_derived_from_it(ops):
+    metric = state_mw_metric(ops)
+    ops.add_node(AGGREGATE_ID, {"columns": ["mw"], "method": "sum"}, name="total_mw")
+    ops.connect(f"{metric}.pipeline", "total_mw.pipeline")
+    ops.add_node(DATA_ID, {}, name="total_mw_value")
+    ops.connect("total_mw.result", "total_mw_value.pipeline")
+    ops.add_node("Widgets/KPI", {"label": "Total MW"}, name="total")
+    ops.connect("total_mw_value.data", "total.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "last"}])
+    provenance, by = ops.editor.node_provenance(ops._instance("total"))
+    assert by == ops._instance("total_mw")
+    assert provenance.label == "Derived: sum of state_mw" and provenance.kind == "derived"
+    assert provenance.detail.startswith("Sum of mw over metric state_mw")
+    assert "no metric was used" not in provenance.detail
+    ops.add_node(AGGREGATE_ID, {"columns": ["mw"], "method": "max"}, name="peak")
+    ops.connect("total_mw.result", "peak.pipeline")
+    assert ops.editor.node_provenance(ops._instance("peak"))[0].label == "Derived: highest of state_mw"
+    ops.add_node(AGGREGATE_ID, {"columns": ["mw"], "method": "sum", "by": ["t_state"]}, name="regrouped")
+    ops.connect(f"{metric}.pipeline", "regrouped.pipeline")
+    assert ops.editor.node_provenance(ops._instance("regrouped"))[0].kind == "derived"
+
+
+def test_a_kpi_aggregating_a_grouped_metric_on_its_edge_is_labelled_derived(ops):
+    metric = state_mw_metric(ops)
+    ops.add_node("Widgets/KPI", {"label": "Mean MW"}, name="mean_mw")
+    ops.connect(f"{metric}.data", "mean_mw.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "mean"}])
+    assert output(ops, "mean_mw", "value") == 2.0
+    provenance, _ = ops.editor.node_provenance(ops._instance("mean_mw"))
+    assert provenance.label == "Derived: average of state_mw" and provenance.kind == "derived"
+    assert provenance.detail.startswith("Average of mw over the rows of metric state_mw")
+    ops.add_node("Widgets/KPI", {"label": "Last MW"}, name="last_mw")
+    ops.connect(f"{metric}.data", "last_mw.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "last"}])
+    assert ops.editor.node_provenance(ops._instance("last_mw"))[0].label == "Metric: state_mw"
+
+
+def test_a_kpi_summing_a_one_row_metric_keeps_the_metric_label(ops):
+    save_metric(ctx_of(ops), "total_mw", {"source": ops.ref, "table": "turbines", "measures": {"mw": "SUM(t_cap)"}})
+    ops.add_node(METRIC_ID, {"metric": "total_mw", "measures": ["mw"]}, name="total_mw_metric")
+    ops.add_node("Widgets/KPI", {"label": "MW"}, name="mw")
+    ops.connect("total_mw_metric.data", "mw.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "sum"}])
+    assert ops.editor.node_provenance(ops._instance("mw"))[0].label == "Metric: total_mw"
+    ops.add_node("Widgets/KPI", {"label": "Rows"}, name="rows")
+    ops.connect("total_mw_metric.data", "rows.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "count"}])
+    assert ops.editor.node_provenance(ops._instance("rows"))[0].label == "Derived: count of total_mw"
+
+
+def test_a_deleted_metric_is_labelled_missing(ops):
+    from lumen.flowdash import metrics_admin
+    from lumen.flowdash.save_metric import _Admin, project_of
+
+    save_metric(ctx_of(ops), "gone", {"source": ops.ref, "sql": STATE_MW_SQL})
+    ops.add_node(METRIC_ID, {"metric": "gone"}, name="gone_metric")
+    assert ops.editor.node_provenance(ops._instance("gone_metric"))[0].label == "Metric: gone"
+    assert metrics_admin.delete_metric(project_of(ctx_of(ops)), "gone", app=_Admin(ctx_of(ops))) == []
+    provenance, _ = ops.editor.node_provenance(ops._instance("gone_metric"))
+    assert provenance.label == "Missing metric: gone" and provenance.kind == "missing"
+    assert "no longer defines the gone metric" in provenance.detail
+
+
+def test_a_table_nodes_limit_and_a_sql_nodes_global_filters_are_noted(ops):
+    ops.add_node(TABLE_ID, {"ref": ops.ref, "table": "turbines", "limit": 3}, name="some")
+    ops.add_node(AGGREGATE_ID, {"columns": ["p_cap"], "method": "sum"}, name="some_sum")
+    ops.connect("some.pipeline", "some_sum.pipeline")
+    notes = " ".join(derive_draft(ctx_of(ops, ops._instance("some_sum"))).notes)
+    assert "The table node's limit of 3 rows is left out" in notes
+    ops.add_node("Lumen/source", {"ref": ops.ref}, name="src")
+    ops.add_node(SQL_ID, {"sql": STATE_MW_SQL}, name="by_state")
+    ops.connect("src.source", "by_state.source")
+    ops.place_tile("by_state", visible=True)
+    output(ops, "by_state", "data")
+    ops.add_filter("t_state")
+    assert "by_state" in ops.filter_reach("t_state")[0]
+    notes = " ".join(derive_draft(ctx_of(ops, ops._instance("by_state"))).notes)
+    assert "The dashboard's global filter on t_state is left out" in notes
+
+
+def test_the_preview_checks_the_person_is_still_admin(ops, admin):
+    kpi = ad_hoc_kpi(ops)
+    dialog = SaveMetricDialog(ctx_of(ops, kpi), derive_draft(ctx_of(ops, kpi)))
+    admin["value"] = False
+    dialog.definition = yaml.safe_dump({"source": ops.ref, "sql": CAPACITY_SQL})
+    preview = dialog.run_preview()
+    assert not preview.ok and "Only an admin" in dialog._message.object
+    assert dialog._save.disabled
+
+
+def test_a_failed_point_changes_nothing_without_an_edit_history(duck, project_file, admin):
+    editor = FlowDash(components=COMPONENTS, notifications=False, history=False,
+                      authorize_admin=lambda fresh=False: admin["value"])
+    ref = bind_source(editor, duck)
+    project = load_project(project_file, editor.context)
+    editor.context[METRICS_KEY] = ProjectMetrics(project)
+    editor.project = project
+    editor.new_dashboard("No history")
+    ops = DashboardOps(editor)
+    ops.ref = ref
+    kpi = ad_hoc_kpi(ops)
+    ctx = ctx_of(ops, kpi)
+    draft = derive_draft(ctx)
+    save_metric(ctx, "capacity", {"source": ref, "sql": CAPACITY_SQL})
+    before = yaml.safe_load(dashboard_to_yaml(editor))
+    tile, calls = ctx.tile, []
+
+    def failing_tile(name=None):
+        calls.append(name)
+        if len(calls) > 1:
+            raise RuntimeError("boom")
+        return tile(name)
+
+    ctx.tile = failing_tile
+    with pytest.raises(RuntimeError, match="boom"):
+        point_at_metric(ctx, draft, "capacity", "capacity")
+    after = yaml.safe_load(dashboard_to_yaml(editor))
+    assert after["nodes"] == before["nodes"] and after.get("edges") == before.get("edges")
+    assert output(ops, "total_capacity", "value") == INFLATED
+    editor.dispose()

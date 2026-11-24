@@ -39,7 +39,7 @@ import threading
 import time
 import weakref
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import (
     Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
@@ -2158,14 +2158,41 @@ class MetricNode(PipelineNode):
         pipeline = self._value()
         return pipeline if pipeline is None or is_failure(pipeline) else fetch(pipeline, row_ceiling(self.editor))
 
-    def __flowdash_provenance__(self) -> dict[str, str] | None:
-        """The "Metric: <name>" label of the views reading the node, with the metric's description."""
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
+        """
+        The "Metric: <name>" label of the views reading the node, with the
+        metric's description. A view reading it through an edge that
+        aggregates its rows into another number, e.g. the mean of per-state
+        sums, is labelled "Derived" with the aggregation instead, and a
+        metric the project no longer defines says so.
+        """
         if not self.metric:
             return None
         metric = host_metrics(self._context).get(self.metric)
-        detail = metric.description if metric is not None and metric.description else (
-            f"The {self.metric} metric the project defines.")
+        if metric is None:
+            return {"label": f"Missing metric: {self.metric}", "kind": "missing", "icon": "error_outline",
+                    "detail": f"The project no longer defines the {self.metric} metric, so this number cannot "
+                              "be computed. Pick another metric or define it again in Admin, Metrics."}
+        from .save_metric import (
+            aggregating_step, derived_label, describe_reading,
+        )
+
+        step = aggregating_step(via, self._rows(metric))
+        if step is not None:
+            how, column = step
+            return {"label": derived_label(how, self.metric), "kind": "derived",
+                    "detail": describe_reading(how, column, self.metric)}
+        detail = metric.description or f"The {self.metric} metric the project defines."
         return {"label": f"Metric: {self.metric}", "detail": detail, "kind": "metric"}
+
+    def _rows(self, metric: Metric) -> int | None:
+        """How many rows the node gives: as fetched, else one for a structured metric without dimensions."""
+        fetched = _FETCHED.get(self._object) if isinstance(self._object, Pipeline) else None
+        if fetched:
+            return len(next(iter(fetched.values())))
+        if metric.form == "structured" and not self.dimensions:
+            return 1
+        return None
 
 
 def check_parameter_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:

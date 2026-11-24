@@ -18,14 +18,17 @@ its tile, as one edit that undo reverts.
 The provenance labels follow from the nodes: a metric node reports
 "Metric: <name>" and a SQL or aggregate node "Ad hoc" with how its number
 is computed (``describe_query``), which FlowDash shows on the views that read
-them, see ``panel_flowdash.node_actions``.
+them, see ``panel_flowdash.node_actions``. A number aggregated from a
+metric's rows on the dashboard, by an aggregate node or an edge's
+``aggregate`` step, is "Derived: <how> of <name>" instead (``derived_label``),
+since the metric does not define it.
 """
 from __future__ import annotations
 
 import logging
 import re
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -121,11 +124,63 @@ def _describe_aggregate(expression: exp.Expression) -> str:
     return inner.sql()
 
 
-def describe_aggregate(method: str, columns: list[str], by: list[str]) -> str:
-    """How an aggregate node computes its numbers, e.g. "Sum of p_cap over all rows"."""
+def describe_aggregate(method: str, columns: list[str], by: list[str], metric: str | None = None) -> str:
+    """
+    How an aggregate node computes its numbers, e.g. "Sum of p_cap over all
+    rows", or with ``metric`` the metric whose rows it aggregates, e.g.
+    "Sum of mw over metric state_mw".
+    """
     word = _METHOD_WORDS[METHODS[method]]
     what = "Count of rows" if not columns else f"{word} of {', '.join(columns)}"
+    if metric is not None:
+        return (f"{what} {'by ' + ', '.join(by) + ' ' if by else ''}over metric {metric}, aggregated on the "
+                f"dashboard; the metric itself does not define this number.")
     return f"{what} {'by ' + ', '.join(by) if by else 'over all rows'} of its input; no metric was used."
+
+
+# How an edge's ``aggregate`` step or an aggregate node reduces rows, in a label.
+_HOW_WORDS = {
+    "sum": "sum", "mean": "average", "min": "lowest", "max": "highest", "count": "count",
+    "nunique": "distinct count",
+}
+
+# The steps that give a one-row result's value unchanged.
+_SAME_ON_ONE_ROW = ("sum", "mean", "min", "max")
+
+
+def derived_label(how: str, metric: str) -> str:
+    """The label of a number aggregated from a metric's rows on the dashboard, e.g. "Derived: average of state_mw"."""
+    return f"Derived: {_HOW_WORDS.get(how, how)} of {metric}"
+
+
+def aggregating_step(via: Sequence[Mapping[str, Any]], rows: int | None) -> tuple[str, str | None] | None:
+    """
+    The first ``aggregate`` step on the edges ``via`` (see
+    ``panel_flowdash.node_actions``) that turns rows of a node giving
+    ``rows`` rows (None when not known) into another number, as ``(how,
+    column)``: any but ``last``, which picks one of them, and but those
+    that keep a single row's value. None when the edges show the rows'
+    own values.
+    """
+    for edge in via:
+        column = None
+        for step in edge.get("transform") or []:
+            if step.get("op") == "column":
+                column = step.get("column")
+            elif step.get("op") == "aggregate":
+                how = step.get("how") or "sum"
+                if how == "last" or (rows == 1 and how in _SAME_ON_ONE_ROW):
+                    continue
+                return how, column
+    return None
+
+
+def describe_reading(how: str, column: str | None, metric: str) -> str:
+    """How a view's number is aggregated from a metric's rows by an edge, e.g. "Average of mw over metric state_mw"."""
+    word = _HOW_WORDS.get(how, how)
+    what = f"{word.capitalize()} of {column}" if column else word.capitalize()
+    return (f"{what} over the rows of metric {metric}, aggregated on the dashboard; the metric itself does "
+            "not define this number.")
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +301,10 @@ def _base(ctx: Any, name: str) -> tuple[str, str | None, str, list[str]]:
             raise ValueError("its table node reads no source the app serves")
         sql = exp.select("*").from_(exp.Table(this=exp.Identifier(this=table, quoted=True))).sql(
             dialect=_dialect(source))
-        return ref, table, sql, []
+        limit = config.get("limit")
+        notes = [f"The table node's limit of {limit:,} rows is left out, so the metric reads every row of "
+                 f"{table}."] if isinstance(limit, int) and not isinstance(limit, bool) else []
+        return ref, table, sql, notes
     if component == SQL_ID:
         root, statement = _statement(ctx, name)
         ref = _ref_of(root, ctx.context)
@@ -262,6 +320,31 @@ def _base(ctx: Any, name: str) -> tuple[str, str | None, str, list[str]]:
         return ref, table, sql, [*notes, f"The filter on {field_!r} is left out; add it as a parameter or a "
                                          "dimension to filter by."]
     raise ValueError(f"it reads a {component} node, which a metric cannot say")
+
+
+def _filtered_by(ctx: Any, names: list[str]) -> list[str]:
+    """The columns of the dashboard's global filters that filter any of the nodes ``names``."""
+    try:
+        columns = [f["column"] for f in ctx.ops.filters() if f.get("column")]
+    except Exception:
+        return []
+    filtered = []
+    for column in columns:
+        try:
+            applies, _ = ctx.ops.filter_reach(column)
+        except Exception:
+            continue
+        if any(name in applies for name in names):
+            filtered.append(column)
+    return filtered
+
+
+def _filter_note(columns: list[str]) -> list[str]:
+    if not columns:
+        return []
+    many = len(columns) > 1
+    return [f"The dashboard's global filter{'s' * many} on {', '.join(columns)} {'are' if many else 'is'} left "
+            f"out; add {'them' if many else 'it'} as dimensions to filter by."]
 
 
 def structured_form(sql: str, dialect: str | None = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -366,6 +449,7 @@ def derive_draft(ctx: Any) -> MetricDraft:
     definition: dict[str, Any]
     dimensions: list[str] = []
     structured = False
+    upstream = None
     if ctx.component(node) == SQL_ID:
         try:
             root, statement = _statement(ctx, node)
@@ -405,6 +489,8 @@ def derive_draft(ctx: Any) -> MetricDraft:
         else:
             definition = {"source": ref, "sql": SQLAggregate(by=by, columns=columns, method=method).apply(sql)}
             notes.append("It aggregates the result of a SQL node, so it is kept as a SQL metric over that query.")
+    filtered = [node, *([upstream] if upstream else [])]
+    notes += _filter_note(_filtered_by(ctx, filtered))
     if structured and column is None and len(definition.get("measures", {})) == 1:
         column = next(iter(definition["measures"]))
     return MetricDraft(
@@ -754,6 +840,10 @@ class SaveMetricDialog(Viewer):
 
     def run_preview(self) -> MetricPreview:
         self._message.visible = False
+        if not self.ctx.is_admin():
+            message = "Only an admin of the project may preview a metric."
+            self._fail(message)
+            return MetricPreview(problems=[message])
         try:
             definition = self._definition()
         except ValueError as exc:

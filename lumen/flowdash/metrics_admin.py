@@ -246,9 +246,9 @@ def save_metric(
     Only an admin (``app._still_admin()``) may save. Returns the problems
     that stopped it; none when it was written.
     """
-    if not _admin(app):
-        return [Problem(NOT_ADMIN)]
     with _FILE_LOCK:
+        if not _admin(app):
+            return [Problem(NOT_ADMIN)]
         try:
             current = raw_section(project)
         except ProjectError as exc:
@@ -271,9 +271,9 @@ def save_metric(
 
 def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = _UNSET) -> list[Problem]:
     """Delete metric ``name`` from the project file; only an admin may. Returns the problems that stopped it."""
-    if not _admin(app):
-        return [Problem(NOT_ADMIN.replace("saved", "deleted"))]
     with _FILE_LOCK:
+        if not _admin(app):
+            return [Problem(NOT_ADMIN.replace("saved", "deleted"))]
         try:
             current = raw_section(project)
         except ProjectError as exc:
