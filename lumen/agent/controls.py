@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 import re
 
+from builtins import format as builtins_format
 from typing import Annotated, Any, Literal
 
 import pandas as pd
@@ -18,19 +19,13 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..flowdash import (
-    FILTER_ID, NODE_TIMEOUT, SQL_ID, fetch, filterable_columns,
+    FILTER_ID, METRIC_ID, SQL_ID, fetch, filterable_columns, host_metrics,
     pipeline_columns,
 )
 from ..flowdash.choices import pipeline_column_types
-from ..flowdash.nodes import (
-    column_values, execute, pipeline_sql, row_ceiling,
-)
-from ..flowdash.transforms import (
-    AGGREGATE_ID, COUNT_COLUMN, SQLAggregate, aggregate_schema, step_dialect,
-    transformed_pipeline,
-)
+from ..flowdash.nodes import column_values
+from ..flowdash.transforms import AGGREGATE_ID, COUNT_COLUMN
 from ..pipeline import Pipeline
-from ..sources.base import BaseSQLSource
 from . import _graph
 from .authoring import _upstream_port
 
@@ -40,6 +35,8 @@ CONTROLS = {
     "select": "Widgets/Select", "multiselect": "Widgets/MultiChoice",
     "range": "Widgets/RangeSlider", "date_range": "Widgets/DateRange",
 }
+# The most metric names an ad hoc KPI's result lists.
+MAX_METRICS_LISTED = 10
 # The most options a select or multiselect offers; a column with more takes a range or a SQL node.
 MAX_OPTIONS = 200
 NUMERIC = ("integer", "number")
@@ -47,11 +44,12 @@ TEMPORAL = ("date", "datetime")
 CURRENCIES = ("$", "€", "£", "¥")
 # Column names of a share or rate, shown as a percentage when their value lies in 0..1.
 RATIO_NAME = re.compile(r"(share|ratio|rate|pct|percent|fraction|proportion)", re.IGNORECASE)
-# Column names of an entity a row belongs to, whose attributes repeat on each of its rows.
-KEY_NAME = re.compile(r"(^|_)(id|name|key|code)$", re.IGNORECASE)
+# The longest format spec and the most decimals a KPI takes.
+FORMAT_CHARS = 20
+MAX_DECIMALS = 10
 
 Aggregate = Literal["sum", "mean", "min", "max", "count"]
-Decimals = Annotated[int, Field(ge=0, le=10)]
+Decimals = Annotated[int, Field(ge=0, le=MAX_DECIMALS)]
 # How a KPI card relates to the filter bar: FlowDash's global filters filter what a view shows,
 # not the value a card is given, so a card keeps its number whatever the bar picks.
 KPI_FILTERS = "KPI cards do not follow the global filter bar's filters; tell the user if the dashboard has one."
@@ -121,37 +119,6 @@ def _quote(name: str, dialect: str) -> str:
     return sqlglot.exp.to_identifier(name, quoted=True).sql(dialect=dialect)
 
 
-def _repeated_per(pipeline: Pipeline, column: str, types: dict[str, str | None]) -> tuple[str, int, int] | None:
-    """
-    A column naming the entity each row belongs to, e.g. a project, that
-    ``column`` is constant within while the entity has several rows, so a
-    sum over the rows counts its value once per row; with that entity's
-    rows and distinct values. None when no such column is found or the
-    rows cannot be queried.
-    """
-    sql, source = pipeline_sql(pipeline, limits=False), pipeline.source
-    if sql is None or not isinstance(source, BaseSQLSource):
-        return None
-    dialect = source.dialect if source.dialect != "any" else None
-    value = _quote(column, dialect)
-    keys = [c for c in types if c != column and types[c] == "string" and KEY_NAME.search(c)]
-    for key in keys[:5]:
-        k = _quote(key, dialect)
-        probe = (
-            f"SELECT COUNT(*) AS n, COUNT(DISTINCT {k}) AS keys, "
-            f"(SELECT COUNT(*) FROM (SELECT {k} FROM ({sql}) AS r GROUP BY {k} "
-            f"HAVING COUNT(DISTINCT {value}) > 1) AS v) AS varying FROM ({sql}) AS t"
-        )
-        try:
-            frame = execute(source, probe, NODE_TIMEOUT)
-        except Exception:
-            return None
-        rows, distinct, varying = (int(v) for v in frame.iloc[0])
-        if distinct >= 2 and varying == 0 and rows >= 1.5 * distinct:
-            return key, rows, distinct
-    return None
-
-
 def _number_format(value: Any, column: str, unit: str, decimals: int | None) -> tuple[str, str, str]:
     """The KPI's format spec, prefix and suffix for ``value`` of ``column`` in ``unit``."""
     unit = unit.strip()
@@ -200,7 +167,7 @@ def _scalar(frame: Any, column: str) -> Any:
 def add_kpi(
     ctx: RunContext[FlowDashDeps], data: str, name: str, column: str | None = None,
     aggregate: Aggregate | None = None, label: str = "", unit: str = "", decimals: Decimals | None = None,
-    format: str = "",
+    format: str = "", distinct_by: str | list[str] | None = None,
 ) -> str:
     """Show a headline number as a KPI card in the dashboard's top bar.
 
@@ -214,10 +181,14 @@ def add_kpi(
         name: Descriptive snake_case node name; with one KPI per column, each is named <name>_<column>.
         column: The numeric column to show; leave out for every numeric column of a one-row node, or to count rows.
         aggregate: How to reduce the column over the node's rows; leave out when the node has one row.
+            For a median or a count of distinct values, aggregate in a SQL node and show its number.
         label: Short heading above the number, e.g. "Installed capacity"; defaults to the column in words.
         unit: Unit shown with the number, e.g. "MW", "$" or "%"; a share in 0..1 with "%" shows as a percentage.
         decimals: Digits after the decimal point, 0 to 10; by default 0 for whole or large numbers, at most 2 otherwise.
         format: A Python format spec instead of unit and decimals' choice, e.g. ",.1f".
+        distinct_by: Only when you know the column repeats per entity, e.g. a project's capacity on
+            each of its turbines' rows: the column, or columns, naming the entity. The aggregate then
+            takes the largest value of each entity once; nothing checks the choice.
     """
     ops = ctx.deps.ops
     port = _upstream_port(ctx.deps, data)
@@ -251,36 +222,48 @@ def add_kpi(
                 f"{col!r} holds {types.get(col) or 'non-numeric'} values; a KPI shows a number. Pick a numeric "
                 "column, or aggregate='count' to count rows."
             )
-    if aggregate and (capped := _capped_at(ops, pipeline)):
-        raise ModelRetry(
-            f"{data!r} was capped at {capped:,} rows, so an aggregate over it would only cover those rows. "
-            "Aggregate in a SQL node first, e.g. SELECT SUM(x) AS total FROM ..., and show that node's number."
-        )
-    if aggregate in ("sum", "mean") and (repeat := _repeated_per(pipeline, column, types)):
-        key, n, keys = repeat
-        raise ModelRetry(
-            f"{aggregate} of {column!r} over {data!r} would double count: {column!r} repeats on every row of each "
-            f"{key!r} ({n:,} rows, {keys:,} {key!r} values). Place a SQL node that takes it once per {key!r}, e.g. "
-            f"SELECT {aggregate.upper().replace('MEAN', 'AVG')}(v) FROM (SELECT DISTINCT {key}, {column} AS v FROM ...), "
-            "and show that node's number."
-        )
+    if format:
+        precision = re.search(r"\.(\d+)", format)
+        if len(format) > FORMAT_CHARS or (precision and int(precision.group(1)) > MAX_DECIMALS):
+            raise ModelRetry(f"format {format[:40]!r} is not a short format spec with at most {MAX_DECIMALS} "
+                             'decimals, e.g. ",.1f" or ".1%".')
+        try:
+            builtins_format(1234.5, format)
+        except (TypeError, ValueError) as exc:
+            raise ModelRetry(f"format {format!r} is not a Python format spec for a number: {exc}") from exc
+    keys = [distinct_by] if isinstance(distinct_by, str) else list(distinct_by or [])
+    if keys:
+        if aggregate is None or column is None:
+            raise ModelRetry("distinct_by goes with an aggregate of a column; pass both.")
+        if missing := [k for k in keys if k not in columns or k == column]:
+            raise ModelRetry(f"distinct_by names other columns of {data!r}, not {', '.join(map(repr, missing))}; "
+                             f"its columns are {', '.join(columns)}.")
     if label and len(picked) > 1:
         raise ModelRetry("label names one KPI; leave it out for one KPI per column, or pass column.")
     names = [name] if len(picked) == 1 else [f"{name}_{col}" for col in picked]
     component = _graph.component_of(ops, data)
-    helpers = [f"{name}_agg", f"{name}_value"] if aggregate else (
-        [] if component == SQL_ID or "data" in _outputs(ops, data) else [f"{name}_rows"]
-    )
+    if aggregate:
+        helpers = [*([f"{name}_per_key"] if keys else []), f"{name}_agg", f"{name}_value"]
+    else:
+        helpers = [] if component == SQL_ID or "data" in _outputs(ops, data) else [f"{name}_rows"]
     _free(ops, *names, *helpers)
 
     placed = _Placed(ops)
     try:
+        value_port = None
         if aggregate:
-            placed.node(AGGREGATE_ID, {"columns": [] if column is None else [column], "method": aggregate}, helpers[0])
-            placed.connect(f"{data}.{port}", f"{helpers[0]}.pipeline")
-            placed.node(DATA_ID, {}, helpers[1])
-            placed.connect(f"{helpers[0]}.result", f"{helpers[1]}.pipeline")
-            frame_port = f"{helpers[1]}.data"
+            upstream = f"{data}.{port}"
+            if keys:
+                # One row per key, with the key's largest value; the aggregate then reads those.
+                placed.node(AGGREGATE_ID, {"by": keys, "columns": [column], "method": "max"}, helpers[0])
+                placed.connect(upstream, f"{helpers[0]}.pipeline")
+                upstream = f"{helpers[0]}.result"
+            agg, rows_node = helpers[-2:]
+            placed.node(AGGREGATE_ID, {"columns": [] if column is None else [column], "method": aggregate}, agg)
+            placed.connect(upstream, f"{agg}.pipeline")
+            placed.node(DATA_ID, {}, rows_node)
+            placed.connect(f"{agg}.result", f"{rows_node}.pipeline")
+            frame_port = f"{rows_node}.data"
         elif helpers:
             placed.node(DATA_ID, {}, helpers[0])
             placed.connect(f"{data}.{port}", f"{helpers[0]}.pipeline")
@@ -294,10 +277,13 @@ def add_kpi(
             spec, prefix, suffix = _number_format(value, col, unit, decimals)
             spec = format or spec
             text = label or _label(col, aggregate)
-            placed.node(KPI_ID, {"label": text, "format": spec, "prefix": prefix, "suffix": suffix}, kpi)
-            single = component == SQL_ID and not aggregate and len(columns) == 1
-            if single:
-                placed.connect(f"{data}.value", f"{kpi}.value")
+            config = {"label": text, "format": spec, "prefix": prefix, "suffix": suffix,
+                      "caption": _provenance(ops, data, component, col, aggregate, keys)}
+            placed.node(KPI_ID, config, kpi)
+            if component == SQL_ID and not aggregate and len(columns) == 1:
+                value_port = f"{data}.value"
+            if value_port is not None:
+                placed.connect(value_port, f"{kpi}.value")
             else:
                 placed.connect(frame_port, f"{kpi}.value", [{"op": "column", "column": col}, {"op": "aggregate", "how": "last"}])
             ops.place_tile(kpi, area="top")
@@ -312,26 +298,33 @@ def add_kpi(
         placed.rollback()
         raise
     how = f"the {aggregate} of {column!r}" if aggregate and column else "its row count" if aggregate else "its one row"
+    per_key = f", taking the largest {column!r} of each {' and '.join(keys)} once" if keys else ""
     through = f" through {', '.join(map(repr, helpers))}" if helpers else ""
-    return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{through}:\n"
-            + "\n".join(lines) + f"\n{KPI_FILTERS}")
+    adhoc = ""
+    if component != METRIC_ID:
+        adhoc = " The number is computed ad hoc, not an agreed metric; each card's caption says so."
+        if metrics := list(host_metrics(ops.editor.context)):
+            more = f" and {len(metrics) - MAX_METRICS_LISTED} more" if len(metrics) > MAX_METRICS_LISTED else ""
+            adhoc += (f" This app defines metrics: {', '.join(metrics[:MAX_METRICS_LISTED])}{more}. None was used for "
+                      "this number; use add_metric if one fits, or ask an admin to define one.")
+    return (f"Placed {len(names)} KPI card(s) in the top bar, showing {how} of {data!r}{per_key}{through}:\n"
+            + "\n".join([*lines, *([adhoc.strip()] if adhoc else []), KPI_FILTERS]))
 
 
-def _capped_at(ops, pipeline: Pipeline) -> int | None:
-    """
-    The row ceiling when an aggregate over ``pipeline`` would only read its
-    first rows, e.g. a SQL node's result kept in memory at the ceiling. A
-    pipeline whose source runs the aggregate in its query counts every row.
-    """
-    ceiling = row_ceiling(getattr(ops, "editor", None))
-    step = SQLAggregate(method="count", write=step_dialect(pipeline))
-    try:
-        counted = transformed_pipeline(pipeline, step, aggregate_schema(pipeline.schema, [], [], "count"), ceiling)
-        rows = int(fetch(counted, 1)[COUNT_COLUMN].iloc[0])
-    except Exception:
-        return None
-    # Capped rows number exactly the ceiling; a count past it ran over every row.
-    return ceiling if rows == ceiling else None
+def _provenance(ops, data: str, component: str, column: str, aggregate: str | None, keys: list[str]) -> str:
+    """How a card's number is computed, for its caption: the aggregate and whether it is an agreed metric."""
+    if component == METRIC_ID:
+        return f"Metric {_graph.config_of(ops, data).get('metric')}"
+    if aggregate == "count" and column == COUNT_COLUMN:
+        what = "Count of rows"
+    elif aggregate == "count" and keys:
+        what = f"Count of {' and '.join(keys)} values with a {column}"
+    elif aggregate:
+        word = {"sum": "Sum", "mean": "Average", "min": "Lowest", "max": "Highest", "count": "Count"}[aggregate]
+        what = f"{word} of the largest {column} per {' and '.join(keys)}" if keys else f"{word} of {column} over all rows"
+    else:
+        what = f"Value of {column} from {data}"
+    return f"{what}, not an agreed metric"
 
 
 def _outputs(ops, name: str) -> list[str]:
@@ -456,9 +449,11 @@ def add_filter_control(
         if view not in _graph.nodes(ops):
             raise ModelRetry(f"No node {view!r}.")
         if (path := _reader_path(graph_edges, view, source)) is None:
-            readers_text = ", ".join(map(repr, _graph.reading(ops, source))) or "none"
+            readers = _graph.reading(ops, source)
+            readers_text = (f"The nodes reading {data!r} are: {', '.join(map(repr, readers))}." if readers
+                            else f"No node reads {data!r}'s rows directly.")
             raise ModelRetry(f"{view!r} does not read {data!r}'s rows, so a filter on them cannot change it. "
-                             f"The nodes reading {data!r} are: {readers_text}.")
+                             + readers_text)
         for _, to in path[:-1]:
             node = _node(to)
             if _graph.component_of(ops, node) == FILTER_ID and _graph.config_of(ops, node).get("field") == column:

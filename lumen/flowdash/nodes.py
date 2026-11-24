@@ -66,6 +66,7 @@ from panel_flowdash.selection import (
 )
 from panel_flowdash.util import is_failure
 
+from ..data.sql import _legal_order
 from ..data.utils import ANSI_ESCAPE
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, QueryTimeoutError, Source
@@ -351,8 +352,10 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     A pipeline whose table is ``sql`` evaluated by ``source``'s engine, with
     its result fetched once under ``limit`` rows and ``timeout`` seconds.
 
-    Filters downstream wrap the capped statement in a subquery, so they
-    see exactly the rows the node outputs. SQL does not promise that the
+    The table is the full statement and the cap the pipeline's last SQL
+    transform, as on ``table_pipeline``: a filter or an aggregate downstream
+    goes into the query ahead of the cap, so it reads every row of the
+    result, not only the ones the node keeps. SQL does not promise that the
     outer query keeps the subquery's ORDER BY; DuckDB keeps it in practice.
 
     On another SQL node's result source, ``sql`` runs as one statement on
@@ -374,13 +377,33 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     while table.lower() in taken:
         table = f"{table}_result"
     kwargs = {"materialize": False} if isinstance(root, DuckDBSource) else {}
-    # The capped statement, so a filter downstream sees the rows the node outputs and no more.
-    query_source = root.create_sql_expr_source({table: result_sql(root, statement, limit)}, **kwargs)
+    # The full statement with the cap as the pipeline's last step, so a filter or an aggregate
+    # downstream goes into the query ahead of the cap and reads every row of the result.
+    query_source = root.create_sql_expr_source({table: _derived_table(statement, root.dialect)}, **kwargs)
     schema = get_dataframe_schema(frame)["items"]["properties"]
-    pipeline = Pipeline(source=query_source, table=table, schema=schema, data=frame, name=table)
+    pipeline = Pipeline(
+        source=query_source, table=table, schema=schema, data=frame, name=table,
+        sql_transforms=[SQLLimit(limit=limit, write=root.dialect)],
+    )
     _FETCHED[pipeline] = {math.inf: frame}
     _RESULT_SOURCES[pipeline] = (source, table, sql, schema)
     return pipeline
+
+
+def _derived_table(sql: str, dialect: str) -> str:
+    """
+    ``sql`` as the steps after it read it, from a derived table: on SQL
+    Server a top-level ORDER BY gets ``OFFSET 0 ROWS``, without which it
+    refuses one there; elsewhere ``sql`` is unchanged.
+    """
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return sql
+    if tree.args.get("offset") is not None:
+        return sql
+    _legal_order(tree, dialect)
+    return sql if tree.args.get("offset") is None else tree.sql(dialect=dialect)
 
 
 def result_source(pipeline: Pipeline) -> BaseSQLSource | None:
