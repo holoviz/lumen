@@ -34,6 +34,7 @@ import hashlib
 import inspect
 import math
 import threading
+import time
 import weakref
 
 from collections.abc import Iterator, Mapping
@@ -49,6 +50,7 @@ import pandas as pd
 import panel as pn
 import param
 import sqlglot
+import yaml
 
 from panel.viewable import Viewer
 from panel_flowdash import (
@@ -89,6 +91,7 @@ from .metrics import (
     METRICS_KEY, Metric, MetricError, MetricPreFilter, Query, aggregate,
     bind_sql, coerce_dimension_values, prepare, table_sql,
 )
+from .redact import redact_spec
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
 try:
@@ -898,43 +901,142 @@ def default_table(sql: str) -> str:
     return f"query_{hashlib.sha1(sql.encode()).hexdigest()[:8]}"
 
 
-def _source_summary(source: Source) -> pd.DataFrame | str:
-    """
-    Compact table summary for a SourceNode preview without triggering queries.
-    Without a stored size for any table it is a line naming the tables: a
-    one-column frame would be captioned as its own shape, e.g. "1 row, 1 column".
-    """
-    tables = listed_tables(source)
-    cached = source._get_schema_cache() or {}
+# Column names an overview row lists before saying how many more there are.
+_OVERVIEW_NAMES = 6
+# Tables of a source whose schema a source's overview reads; the others are listed by name only.
+_OVERVIEW_TABLES = 20
+# Tables whose schema FlowDash's preview worker reads straight away, while the inspector waits for it.
+_OVERVIEW_TABLES_INLINE = 5
+# Seconds a schema read for a source's overview is remembered, so a changed table shows up again.
+_SCHEMA_TTL = 120
+# FlowDash's preview worker threads, which run the inspector's and code panel's preview hooks.
+_FLOWDASH_PREVIEW_THREAD = "flowdash-preview"
+# The schema of each table read for a source's overview, or None if it failed, with when it was
+# read, so it is read once in a while even when the source does not store schemas itself.
+_SCHEMAS_READ: weakref.WeakKeyDictionary[Source, dict[str, tuple[float, dict | None]]] = weakref.WeakKeyDictionary()
+# The schema reads queued or running, and the source nodes to refresh once each is done.
+_SCHEMA_PENDING: weakref.WeakKeyDictionary[Source, tuple[Future, weakref.WeakSet]] = weakref.WeakKeyDictionary()
+
+
+def _table_metadata(source: Source, table: str, cached: Mapping[str, Any]) -> tuple[int | None, list[str] | None]:
+    """The row count and column names of ``table`` that are known without a query."""
+    schema = cached.get(table)
+    if not isinstance(schema, dict):
+        schema = _schemas_read(source).get(table)
+    if isinstance(schema, dict):
+        length = schema.get("__len__")
+        rows = length if isinstance(length, int) and not isinstance(length, bool) else None
+        return rows, [str(key) for key in schema if key != "__len__"]
     in_memory = source.tables if isinstance(getattr(source, "tables", None), Mapping) else {}
-    entries: list[tuple[str, int | None, int | None]] = []
-    for table in tables:
-        rows: int | None = None
-        cols: int | None = None
-        schema = cached.get(table)
-        if isinstance(schema, dict):
-            cols = sum(1 for key in schema if key != "__len__")
-            length = schema.get("__len__")
-            if isinstance(length, int) and not isinstance(length, bool):
-                rows = length
-        elif (frame := in_memory.get(table)) is not None:
-            shape = getattr(frame, "shape", None)
-            if isinstance(shape, tuple) and len(shape) == 2 and hasattr(frame, "columns"):
-                if isinstance(shape[0], int) and not isinstance(shape[0], bool):
-                    rows = shape[0]
-                if isinstance(shape[1], int) and not isinstance(shape[1], bool):
-                    cols = shape[1]
-        entries.append((table, rows, cols))
-    if all(rows is None and cols is None for _, rows, cols in entries):
+    frame = in_memory.get(table)
+    shape, columns = getattr(frame, "shape", None), getattr(frame, "columns", None)
+    if not isinstance(shape, tuple) or len(shape) != 2 or columns is None:
+        return None, None
+    # A lazy frame, e.g. a Dask one, has no row count until it is computed.
+    rows = shape[0] if isinstance(shape[0], int) and not isinstance(shape[0], bool) else None
+    return rows, [str(column) for column in columns]
+
+
+def _column_names(names: list[str]) -> str:
+    if len(names) <= _OVERVIEW_NAMES:
+        return ", ".join(names)
+    return f"{', '.join(names[:_OVERVIEW_NAMES])} +{len(names) - _OVERVIEW_NAMES} more"
+
+
+def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
+    """
+    An overview of ``source``'s tables from the schemas it stored or the
+    frames it holds, without a query, and the tables whose schema it does
+    not know yet. Without a known schema for any table the overview is a
+    line naming the tables: a one-column frame would be captioned as its
+    own shape, e.g. "1 row, 1 column".
+    """
+    tables = list(listed_tables(source))
+    cached = source._get_schema_cache() or {}
+    entries = [(table, *_table_metadata(source, table, cached)) for table in tables]
+    read = _schemas_read(source)
+    missing = [table for table, _, names in entries[:_OVERVIEW_TABLES] if names is None and table not in read]
+    if all(names is None for _, _, names in entries):
         count = len(entries)
-        names = ", ".join(table for table, _, _ in entries)
-        return f"{count:,} table{'' if count == 1 else 's'}: {names}" if entries else "No tables"
-    data: dict[str, list[Any]] = {"table": [table for table, _, _ in entries]}
-    if any(rows is not None for _, rows, _ in entries):
-        data["rows"] = [rows if rows is not None else "" for _, rows, _ in entries]
-    if any(cols is not None for _, _, cols in entries):
-        data["cols"] = [cols if cols is not None else "" for _, _, cols in entries]
-    return pd.DataFrame(data)
+        listed = ", ".join(tables)
+        return (f"{count:,} table{'' if count == 1 else 's'}: {listed}" if entries else "No tables"), missing
+    overview = pd.DataFrame({
+        "table": [table for table, _, _ in entries],
+        "rows": [rows if rows is not None else "" for _, rows, _ in entries],
+        "columns": [len(names) if names is not None else "" for _, _, names in entries],
+        "column names": [_column_names(names) if names is not None else "" for _, _, names in entries],
+    })
+    return overview, missing
+
+
+def _schemas_read(source: Source) -> dict[str, dict | None]:
+    """The schemas read for ``source``'s overview that have not expired, None for those that failed."""
+    now = time.monotonic()
+    with _PREVIEW_LOCK:
+        read = _SCHEMAS_READ.get(source, {})
+        for table in [table for table, (at, _) in read.items() if now - at > _SCHEMA_TTL]:
+            del read[table]
+        return {table: schema for table, (_, schema) in read.items()}
+
+
+def _read_schemas(source: Source, tables: list[str]) -> None:
+    """Read the schema of each of ``tables`` and remember it, or that it failed."""
+    for table in tables:
+        try:
+            schema = source.get_schema(table)
+        except Exception:
+            schema = None
+        with _PREVIEW_LOCK:
+            _SCHEMAS_READ.setdefault(source, {})[table] = (
+                time.monotonic(), schema if isinstance(schema, dict) else None
+            )
+
+
+def _source_summary(node: LumenNode, source: Source) -> pd.DataFrame | str:
+    """
+    The overview a source node previews: its tables with their row and
+    column counts and column names. Reading a schema counts the table's
+    rows, so on the event loop the schemas not known yet are read by a
+    worker and the node's previews refresh once the batch is done. On
+    FlowDash's preview worker, which runs the inspector's Data tab off the
+    loop, the first few are read straight away. Anywhere else, e.g. headless
+    or an agent's tool thread, only what is known is shown, so nothing is
+    queried.
+    """
+    overview, missing = _source_overview(source)
+    if not missing:
+        return overview
+    if not _blocks_event_loop():
+        if not threading.current_thread().name.startswith(_FLOWDASH_PREVIEW_THREAD):
+            return overview
+        _read_schemas(source, missing[:_OVERVIEW_TABLES_INLINE])
+        return _source_overview(source)[0]
+    with _PREVIEW_LOCK:
+        if (pending := _SCHEMA_PENDING.get(source)) is not None:
+            pending[1].add(node)
+            return overview
+        waiters = weakref.WeakSet([node])
+        doc = pn.state.curdoc if getattr(pn.state.curdoc, "session_context", None) else None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        def refresh():
+            for waiter in list(waiters):
+                if waiter._object is source:
+                    waiter._preview_rev += 1
+
+        def done(future: Future) -> None:
+            with _PREVIEW_LOCK:
+                _SCHEMA_PENDING.pop(source, None)
+            if not future.cancelled():
+                _schedule(refresh, doc, loop)
+
+        future = _preview_pool().submit(_read_schemas, source, missing)
+        _SCHEMA_PENDING[source] = (future, waiters)
+    future.add_done_callback(done)
+    return overview
 
 
 # The key naming the kind of a ``__flowdash_preview__`` dict, e.g. a chart.
@@ -1367,7 +1469,15 @@ class SourceNode(LumenNode):
     def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | str | None:
         if self._error is not None or self._object is None:
             return None
-        return _source_summary(self._object)
+        return _source_summary(self, self._object)
+
+    def __flowdash_definition__(self) -> tuple[str, str] | None:
+        """The source's spec as YAML, read only in FlowDash's code panel, with its credentials hidden."""
+        if self._error is not None or self._object is None:
+            return None
+        spec = self._object.to_spec()
+        spec = redact_spec({"type": spec.pop("type", None), **spec} if "type" in spec else spec)
+        return "yaml", yaml.safe_dump(spec, sort_keys=False, allow_unicode=True)
 
 
 def single_number(data: Any) -> float | int | None:
