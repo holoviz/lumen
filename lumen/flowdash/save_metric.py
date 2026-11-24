@@ -145,22 +145,25 @@ _HOW_WORDS = {
 }
 
 # The steps that give a one-row result's value unchanged.
-_SAME_ON_ONE_ROW = ("sum", "mean", "min", "max")
+_SAME_ON_ONE_ROW = ("sum", "mean", "min", "max", "last")
 
 
 def derived_label(how: str, metric: str) -> str:
     """The label of a number aggregated from a metric's rows on the dashboard, e.g. "Derived: average of state_mw"."""
+    if how == "last":
+        return f"Derived: last row of {metric}"
     return f"Derived: {_HOW_WORDS.get(how, how)} of {metric}"
 
 
 def aggregating_step(via: Sequence[Mapping[str, Any]], rows: int | None) -> tuple[str, str | None] | None:
     """
     The first ``aggregate`` step on the edges ``via`` (see
-    ``panel_flowdash.node_actions``) that turns rows of a node giving
-    ``rows`` rows (None when not known) into another number, as ``(how,
-    column)``: any but ``last``, which picks one of them, and but those
-    that keep a single row's value. None when the edges show the rows'
-    own values.
+    ``panel_flowdash.node_actions``) that turns the rows of a node giving
+    ``rows`` rows (None when not known) into a number the metric does not
+    give, as ``(how, column)``: any step over more than one row, ``last``
+    included, which shows one arbitrary row, and over one row those that
+    change its value; ``last`` over rows not counted yet is given the
+    benefit of the doubt. None when the edges show the metric's own value.
     """
     for edge in via:
         column = None
@@ -169,7 +172,7 @@ def aggregating_step(via: Sequence[Mapping[str, Any]], rows: int | None) -> tupl
                 column = step.get("column")
             elif step.get("op") == "aggregate":
                 how = step.get("how") or "sum"
-                if how == "last" or (rows == 1 and how in _SAME_ON_ONE_ROW):
+                if (rows == 1 and how in _SAME_ON_ONE_ROW) or (rows is None and how == "last"):
                     continue
                 return how, column
     return None
@@ -177,6 +180,10 @@ def aggregating_step(via: Sequence[Mapping[str, Any]], rows: int | None) -> tupl
 
 def describe_reading(how: str, column: str | None, metric: str) -> str:
     """How a view's number is aggregated from a metric's rows by an edge, e.g. "Average of mw over metric state_mw"."""
+    if how == "last":
+        what = f"The {column} of" if column else "One row of"
+        return (f"{what} the last row of metric {metric}, one group's value of several; the metric itself "
+                "does not define this number.")
     word = _HOW_WORDS.get(how, how)
     what = f"{word.capitalize()} of {column}" if column else word.capitalize()
     return (f"{what} over the rows of metric {metric}, aggregated on the dashboard; the metric itself does "

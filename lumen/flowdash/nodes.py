@@ -2163,8 +2163,9 @@ class MetricNode(PipelineNode):
         The "Metric: <name>" label of the views reading the node, with the
         metric's description. A view reading it through an edge that
         aggregates its rows into another number, e.g. the mean of per-state
-        sums, is labelled "Derived" with the aggregation instead, and a
-        metric the project no longer defines says so.
+        sums or the last of several groups, is labelled "Derived" with the
+        aggregation instead, and a metric the project no longer defines
+        says so.
         """
         if not self.metric:
             return None

@@ -497,7 +497,10 @@ def test_a_kpi_aggregating_a_grouped_metric_on_its_edge_is_labelled_derived(ops)
     assert provenance.detail.startswith("Average of mw over the rows of metric state_mw")
     ops.add_node("Widgets/KPI", {"label": "Last MW"}, name="last_mw")
     ops.connect(f"{metric}.data", "last_mw.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "last"}])
-    assert ops.editor.node_provenance(ops._instance("last_mw"))[0].label == "Metric: state_mw"
+    assert output(ops, "last_mw", "value") in (1.0, 2.0, 3.0)
+    provenance, _ = ops.editor.node_provenance(ops._instance("last_mw"))
+    assert provenance.label == "Derived: last row of state_mw" and provenance.kind == "derived"
+    assert "one group's value" in provenance.detail
 
 
 def test_a_kpi_summing_a_one_row_metric_keeps_the_metric_label(ops):
@@ -506,6 +509,9 @@ def test_a_kpi_summing_a_one_row_metric_keeps_the_metric_label(ops):
     ops.add_node("Widgets/KPI", {"label": "MW"}, name="mw")
     ops.connect("total_mw_metric.data", "mw.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "sum"}])
     assert ops.editor.node_provenance(ops._instance("mw"))[0].label == "Metric: total_mw"
+    ops.add_node("Widgets/KPI", {"label": "Last"}, name="last")
+    ops.connect("total_mw_metric.data", "last.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "last"}])
+    assert ops.editor.node_provenance(ops._instance("last"))[0].label == "Metric: total_mw"
     ops.add_node("Widgets/KPI", {"label": "Rows"}, name="rows")
     ops.connect("total_mw_metric.data", "rows.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "count"}])
     assert ops.editor.node_provenance(ops._instance("rows"))[0].label == "Derived: count of total_mw"
