@@ -131,8 +131,10 @@ def tiles_of(editor: Any) -> tuple[dict[str, Tile], list[str]]:
         name = item["instance_id"]
         entry = entries.get(name, {})
         area = tile_layout.area_of(editor, item, entries)
+        height = entry.get("height")
+        shown = height if height is not None else getattr(editor, "_fill_heights", {}).get(name)
         tiles[name] = Tile(area, area is not None and entry.get("visible") is not False,
-                           entry.get("width"), entry.get("height"))
+                           entry.get("width"), height, shown)
     grid = [item["instance_id"] for item in tile_layout.area_items(editor, tile_layout.GRID, entries)
             if tiles[item["instance_id"]].visible]
     return tiles, grid

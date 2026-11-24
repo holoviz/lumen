@@ -59,6 +59,8 @@ class Tile:
     visible: bool
     width: float | None = None
     height: float | None = None
+    shown_height: float | None = None
+    """The height the tile is shown at: its own, else the one the dashboard gives a view filling it."""
 
 
 @dataclass
@@ -866,12 +868,16 @@ def width(name: str, percent: float, *, tolerance: float = 4.0, workstream: str 
 
 
 def same_height(*names: str, workstream: str = "W3") -> Check:
-    """The tiles ``names`` are visible and set to one height; tiles at their default height do not count as matched."""
+    """
+    The tiles ``names`` are visible and shown at one height, their own or the
+    one the dashboard gives views that fill their tile; tiles sized by their
+    content do not count as matched.
+    """
     def test(state):
         hidden = [n for n in names if not state.visible(n)]
         if hidden:
             return f"no visible tile for {hidden}"
-        heights = {n: state.tiles[n].height for n in names}
+        heights = {n: state.tiles[n].shown_height for n in names}
         if None in heights.values():
             return f"heights not set: {heights}"
         return None if len(set(heights.values())) == 1 else f"heights differ: {heights}"

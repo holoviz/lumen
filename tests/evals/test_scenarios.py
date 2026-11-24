@@ -371,13 +371,29 @@ def layout_state(tiles, nodes=None, edges=()):
                                          "edges": list(edges)}, before={}, tiles=tiles)
 
 
-def test_same_height_needs_visible_tiles_set_to_one_height():
+def test_same_height_needs_visible_tiles_shown_at_one_height():
     check = same_height("a", "b")
     assert not check.run(layout_state({}))[0]
     assert not check.run(layout_state({"a": Tile("grid", True), "b": Tile("grid", True)}))[0]
-    assert not check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", False, height=400)}))[0]
-    assert not check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", True, height=300)}))[0]
-    assert check.run(layout_state({"a": Tile("grid", True, height=400), "b": Tile("grid", True, height=400)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, height=400, shown_height=400),
+                                       "b": Tile("grid", False, height=400, shown_height=400)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, height=400, shown_height=400),
+                                       "b": Tile("grid", True, height=300, shown_height=300)}))[0]
+    assert check.run(layout_state({"a": Tile("grid", True, height=400, shown_height=400),
+                                   "b": Tile("grid", True, height=400, shown_height=400)}))[0]
+    # Two views filling their tiles, without a height of their own, are shown at the fill height.
+    assert check.run(layout_state({"a": Tile("grid", True, shown_height=360), "b": Tile("grid", True, shown_height=360)}))[0]
+    assert not check.run(layout_state({"a": Tile("grid", True, shown_height=360), "b": Tile("grid", True)}))[0]
+
+
+@pytest.mark.parametrize("heights", [{}, {"height": 400}], ids=["fill", "set"])
+async def test_same_height_reads_the_height_tiles_are_shown_at(heights):
+    calls = [("place_tile", {"name": "projects_table", "width": 50, "index": 0, **heights}),
+             ("place_tile", {"name": "state_capacity_chart", "width": 50, "index": 1, **heights})]
+    scenario = BY_NAME["table_left_chart_right"]
+    async with state_after(scenario.fixture, scripted(calls), seed_yaml=scenario.seed) as state:
+        passed, detail = same_height("projects_table", "state_capacity_chart").run(state)
+        assert passed, detail
 
 
 def test_filter_check_looks_at_every_filter_node():
