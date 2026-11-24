@@ -14,7 +14,9 @@ from lumen.flowdash import (
     COMPONENTS, FILTER_ID, PIPELINE_TYPE, SOURCE_ALIASES_KEY, SOURCE_ID,
     SOURCES_KEY, TABLE_ID,
 )
-from lumen.flowdash.choices import pipeline_column_types
+from lumen.flowdash.choices import (
+    palette_presets, pipeline_column_types, source_presets, table_presets,
+)
 from lumen.flowdash.nodes import table_pipeline
 from lumen.sources.duckdb import DuckDBSource
 
@@ -107,3 +109,80 @@ async def test_inspector_shows_the_tables_as_a_dropdown(source):
     table.value = "sales"
     await settle()
     assert editor._component_instances[node].table == "sales"
+
+
+needs_presets = pytest.mark.skipif(
+    not palette_presets(source_presets), reason="panel-flowdash without palette_presets"
+)
+
+
+def test_presets_list_each_source_and_table(source):
+    other = DuckDBSource(uri=":memory:", tables={"plants": "SELECT 1 AS x"})
+    context = {SOURCES_KEY: {"shop": source, "energy": other}}
+    assert [p["title"] for p in source_presets(context)] == ["shop (source)", "energy (source)"]
+    assert source_presets(context)[0]["config"] == {"ref": "shop"}
+    assert source_presets(context)[0]["tooltip"] == "Source shop: regions, sales"
+    tables = table_presets(context)
+    assert [p["title"] for p in tables] == ["regions (shop)", "sales (shop)", "plants (energy)"]
+    assert tables[1]["config"] == {"table": "sales"} and tables[1]["tooltip"] == "Source shop, table sales"
+    assert source_presets({}) == table_presets({}) == []
+
+
+@needs_presets
+def test_palette_presets_place_working_nodes(source):
+    editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"shop": source}}, notifications=False)
+    items = {item["label"]: item for group in editor._palette.items for item in group["items"]}
+    assert items["sales (shop)"]["tooltip"] == "Source shop, table sales"
+
+    editor._on_palette_clicked(items["shop (source)"])
+    editor._on_palette_clicked(items["sales (shop)"])
+    ops = DashboardOps(editor)
+    source_node, table_node = (node["name"] for node in ops.nodes())
+    assert ops.node_config(source_node) == {"ref": "shop"}
+    assert ops.node_config(table_node) == {"table": "sales"}
+    ops.connect(f"{source_node}.source", f"{table_node}.source")
+    assert ops.node_output(f"{source_node}.source") is source
+    assert ops.node_output(f"{table_node}.pipeline").table == "sales"
+
+
+def test_presets_read_each_sources_tables_once_until_it_reloads(source, monkeypatch):
+    calls = []
+    get_tables = DuckDBSource.get_tables
+    monkeypatch.setattr(DuckDBSource, "get_tables", lambda self: calls.append(1) or get_tables(self))
+    context = {SOURCES_KEY: {"shop": source}}
+    for _ in range(3):
+        table_presets(context)
+        source_presets(context)
+    assert len(calls) == 1
+    source.clear_cache()
+    table_presets(context)
+    assert len(calls) == 2
+    source.tables = {**source.tables, "extra": "SELECT 1 AS x"}
+    assert "extra (shop)" in [p["title"] for p in table_presets(context)]
+
+
+def test_presets_name_tables_after_the_served_source(tmp_path, monkeypatch):
+    from lumen.flowdash.app import resolve_sources, source_refs
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "turbines.csv").write_text("turbine,mw\na,1\n")
+    (tmp_path / "plants.csv").write_text("plant,mw\nx,1\n")
+    context = {SOURCES_KEY: source_refs(resolve_sources(["turbines.csv", "plants.csv"]))}
+    assert [p["title"] for p in source_presets(context)] == ["local (source)"]
+    assert source_presets(context)[0]["tooltip"] == "Source local: plants, turbines"
+    assert [p["title"] for p in table_presets(context)] == ["plants (local)", "turbines (local)"]
+
+
+def test_table_presets_name_the_file_a_numbered_table_reads(tmp_path, monkeypatch):
+    from lumen.flowdash.app import resolve_sources, source_refs
+
+    monkeypatch.chdir(tmp_path)
+    for folder in ("x", "y"):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "plants.csv").write_text("plant\nq\n")
+    context = {SOURCES_KEY: source_refs(resolve_sources(["y/plants.csv", "x/plants.csv"]))}
+    tooltips = {p["title"]: p["tooltip"] for p in table_presets(context)}
+    assert tooltips == {
+        "plants (local)": "Source local, table plants, file y/plants.csv",
+        "plants_2 (local)": "Source local, table plants_2, file x/plants.csv",
+    }
