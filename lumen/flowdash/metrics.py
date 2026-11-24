@@ -49,6 +49,7 @@ room for them.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import datetime as dt
 import difflib
@@ -56,6 +57,8 @@ import functools
 import logging
 import math
 import re
+import threading
+import time
 import weakref
 
 from collections.abc import Iterator, Mapping
@@ -74,6 +77,8 @@ from .project import (
 )
 
 SECTION = "metrics"
+
+_UNREAD = object()
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +407,10 @@ class MetricSet(Mapping[str, Metric]):
 
     def __repr__(self) -> str:
         return f"MetricSet({list(self._metrics)})"
+
+    def snapshot(self) -> MetricSet:
+        """These metrics as one set that does not change, to read several of them together."""
+        return self
 
     def problem(self, path: tuple, message: str) -> Problem:
         return Problem(message) if self.section is None else self.section.problem(path, message)
@@ -1242,25 +1251,77 @@ class ProjectMetrics(MetricSet):
     """
     The metrics of ``project`` as it is now, for an app's context: a metric
     an admin saves with ``Project.set`` is used from then on, by every session.
+
+    Each change of the project's data is read once. A ``metrics:`` section
+    that fails to load is logged once, with credentials masked, and the
+    metrics read before it are kept; a failure is tried again at most every
+    ``retry`` seconds, e.g. for a source that was down. Read ``snapshot()``
+    to use several metrics together: the mapping methods each read the
+    current snapshot, which an admin's save may replace in between.
     """
 
-    def __init__(self, project: Project):
+    def __init__(self, project: Project, retry: float = 60.0):
         self.project = project
+        self.retry = retry
+        self._lock = threading.Lock()
+        self._data: Any = _UNREAD
+        self._raw: Any = _UNREAD
+        self._snapshot = MetricSet()
+        self._failed_at: float | None = None
 
-    def _current(self) -> MetricSet:
+    def snapshot(self) -> MetricSet:
+        data = self.project.data
+        with self._lock:
+            if data is not self._data:
+                raw = data.get(SECTION)
+                changed = self._raw is _UNREAD or raw != self._raw
+                self._data, self._raw = data, copy.deepcopy(raw)
+                if changed:
+                    return self._read(log=True)
+            if self._failed_at is not None and time.monotonic() - self._failed_at >= self.retry:
+                return self._read(log=False)
+            return self._snapshot
+
+    def _read(self, log: bool) -> MetricSet:
         try:
-            return read_metrics(self.project)
+            metrics = read_metrics(self.project)
         except ProjectError as exc:
-            logger.warning("Not using the project file's metrics: %s", exc)
-            return MetricSet()
+            self._failed_at = time.monotonic()
+            if log:
+                from panel_flowdash.value_text import error_text
+
+                kept = len(self._snapshot)
+                logger.warning(
+                    "Not using the project file's metrics: %s%s", error_text(exc),
+                    f"\nKeeping the {kept} metric{'' if kept == 1 else 's'} read before." if kept else "",
+                )
+            return self._snapshot
+        self._failed_at = None
+        self._snapshot = metrics
+        return metrics
 
     @property
     def _metrics(self) -> dict[str, Metric]:  # type: ignore[override]
-        return self._current()._metrics
+        return self.snapshot()._metrics
 
     @property
     def section(self) -> Section | None:  # type: ignore[override]
-        return self._current().section
+        return self.snapshot().section
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(list(self.snapshot()._metrics))
+
+    def keys(self):
+        return self.snapshot().keys()
+
+    def items(self):
+        return self.snapshot().items()
+
+    def values(self):
+        return self.snapshot().values()
+
+    def __repr__(self) -> str:
+        return f"ProjectMetrics({list(self.snapshot()._metrics)})"
 
 
 def _settings_view(project: Project, editable: bool) -> Any:

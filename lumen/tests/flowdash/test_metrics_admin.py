@@ -334,3 +334,155 @@ def test_only_a_lumen_app_shows_the_metrics_admin_and_key_numbers(tmp_path, monk
         steps = wizard_steps(plain_app._settings_project(), plain_app)
         assert isinstance(steps[1], DataStep)
         assert not any(isinstance(step, KeyNumbersStep) for step in steps)
+
+
+@pytest.mark.parametrize("text", ["measures: " + "[" * 1000 + "]" * 1000, "measures: " + "{a: " * 1000 + "1" + "}" * 1000])
+def test_deeply_nested_yaml_is_a_field_error(text):
+    _, problems, _ = join_spec({"source": "turbines"}, text)
+    assert problems[0].keys == ("", "yaml") and "nests deeper" in problems[0].message
+
+
+SECRET_URL = "postgresql://ana:hunter2@db.example.com/fleet"
+
+
+@pytest.fixture
+def source_down(monkeypatch):
+    """The engine refusing every metric with an error that quotes its connection URL."""
+    from lumen.flowdash import metrics
+
+    calls = []
+
+    def fail(metric, source):
+        calls.append(metric.name)
+        raise RuntimeError(f"could not connect to {SECRET_URL}")
+
+    monkeypatch.setattr(metrics, "check_metric", fail)
+    return calls
+
+
+def _reloaded(project, section):
+    """``project`` as a reload of its file with ``section`` as its metrics would leave it, nothing loaded yet."""
+    project.data = {**project.data, "metrics": section}
+    project._values.pop("metrics", None)
+
+
+def test_metrics_that_fail_to_load_are_logged_once_masked(project, source_down, caplog):
+    _reloaded(project, raw_section(project))
+    metrics = ProjectMetrics(project)
+    with caplog.at_level("WARNING", logger="lumen.flowdash.metrics"):
+        for _ in range(30):
+            assert list(metrics) == [] and len(metrics) == 0 and "fleet" not in metrics
+    assert source_down == ["fleet"]
+    warnings = [r.getMessage() for r in caplog.records if r.name == "lumen.flowdash.metrics"]
+    assert len(warnings) == 1
+    assert "hunter2" not in warnings[0] and "***" in warnings[0]
+
+
+def test_metrics_that_fail_to_reload_keep_the_last_good_set(project, monkeypatch, caplog):
+    metrics = ProjectMetrics(project, retry=0)
+    assert list(metrics) == ["fleet"]
+    from lumen.flowdash import metrics as module
+
+    checked = module.check_metric
+    calls = []
+
+    def fail(metric, source):
+        calls.append(metric.name)
+        raise RuntimeError(f"could not connect to {SECRET_URL}")
+
+    monkeypatch.setattr(module, "check_metric", fail)
+    _reloaded(project, {**raw_section(project), "capacity": CAPACITY})
+    with caplog.at_level("WARNING", logger="lumen.flowdash.metrics"):
+        for _ in range(5):
+            assert list(metrics) == ["fleet"]
+            assert metrics["fleet"].table == "turbines"
+    warnings = [r.getMessage() for r in caplog.records if r.name == "lumen.flowdash.metrics"]
+    assert len(warnings) == 1 and "Keeping the 1 metric read before" in warnings[0]
+    assert "hunter2" not in warnings[0]
+    # With the source back, the next retry reads the changed metrics.
+    monkeypatch.setattr(module, "check_metric", checked)
+    assert list(metrics) == ["fleet", "capacity"]
+
+
+def test_a_failed_load_is_not_retried_before_its_time(project, source_down):
+    _reloaded(project, raw_section(project))
+    metrics = ProjectMetrics(project, retry=3600)
+    for _ in range(10):
+        dict(metrics.items())
+    assert source_down == ["fleet"]
+
+
+def test_a_metric_deleted_while_the_metrics_are_read_does_not_break_the_reading(project):
+    from lumen.flowdash.nodes import host_metrics
+
+    save_metric(project, "capacity", CAPACITY, app=Admin())
+    metrics = ProjectMetrics(project)
+    for read in (lambda m: m.items(), lambda m: m.values(), lambda m: host_metrics({METRICS_KEY: m}).items()):
+        seen = []
+        for item in read(metrics):
+            seen.append(item)
+            if len(seen) == 1:
+                delete_metric(project, "capacity", app=Admin())
+        assert len(seen) == 2
+        assert list(metrics) == ["fleet"]
+        save_metric(project, "capacity", CAPACITY, app=Admin())
+    snapshot = metrics.snapshot()
+    delete_metric(project, "capacity", app=Admin())
+    assert list(snapshot) == ["fleet", "capacity"] and snapshot["capacity"].source == "turbines"
+    assert list(metrics.snapshot()) == ["fleet"]
+
+
+def test_check_problems_mask_credentials(project, source_down):
+    problems = check_metric(project, "capacity", FLEET)
+    assert problems and all("hunter2" not in p.message for p in problems)
+    assert "***" in problems[0].message
+    assert all("hunter2" not in p.message for p in save_metric(project, "capacity", FLEET, app=Admin()))
+
+
+def _settings(project, *dashboards):
+    from lumen.flowdash.metrics_admin import _set_text
+
+    store = MemoryDashboardStore()
+    for title, metric in dashboards:
+        _dashboard(store, title, metric)
+    with using_app(Admin(store=store)):
+        view = MetricsSettings(project)
+    return view, lambda name: _set_text(view._editor._name, name)
+
+
+def test_renaming_a_metric_dashboards_use_asks_first(project):
+    view, rename = _settings(project, ("Fleet overview", "fleet"), ("Other", "capacity"))
+    view.open_metric("fleet")
+    rename("fleet_v2")
+    assert not view.save()
+    assert view._dialog.open and view._dialog.title == "Rename metric fleet?"
+    assert "1 dashboard uses fleet" in view._dialog_text.object and "Fleet overview" in view._dialog_text.object
+    assert "Other" not in view._dialog_text.object and view._confirm.label == "Rename metric"
+    assert list(raw_section(project)) == ["fleet"]
+
+    view.cancel_delete()
+    assert not view._dialog.open and view._drawer.open
+    assert list(raw_section(project)) == ["fleet"]
+
+    assert not view.save()
+    assert view.confirm()
+    assert not view._dialog.open and not view._drawer.open
+    assert list(raw_section(project)) == ["fleet_v2"]
+
+
+def test_renaming_a_metric_no_dashboard_uses_saves_at_once(project):
+    view, rename = _settings(project, ("Other", "capacity"))
+    view.open_metric("fleet")
+    rename("fleet_v2")
+    assert view.save()
+    assert not view._dialog.open
+    assert list(raw_section(project)) == ["fleet_v2"]
+
+
+def test_an_invalid_rename_shows_its_problems_without_asking(project):
+    view, rename = _settings(project, ("Fleet overview", "fleet"))
+    view.open_metric("fleet")
+    rename("fleet v2")
+    assert not view.save()
+    assert not view._dialog.open
+    assert "letters, digits" in view._editor._name.helper_text

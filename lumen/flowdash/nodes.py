@@ -256,10 +256,13 @@ def lookup_source(ref: str, context: Mapping[str, Any] | None = None) -> Source 
 def host_metrics(context: Mapping[str, Any] | None = None) -> Mapping[str, Metric]:
     """
     The metrics the host lets a dashboard use, by name, from ``context`` or
-    else ``dashboard_context()``: the ``MetricSet`` under ``METRICS_KEY``.
+    else ``dashboard_context()``: one snapshot of the ``MetricSet`` under
+    ``METRICS_KEY``, which an admin's save does not change while it is read.
     """
     context = dashboard_context() if context is None else context
-    return context.get(METRICS_KEY) or {}
+    metrics = context.get(METRICS_KEY)
+    snapshot = getattr(metrics, "snapshot", None)
+    return snapshot() if callable(snapshot) else (metrics or {})
 
 
 def missing_metric(name: str, metrics: Mapping[str, Metric]) -> str:
