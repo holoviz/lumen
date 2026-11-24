@@ -15,8 +15,8 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query, primed_result,
-    result_sql, row_ceiling,
+    QUERY_TIMEOUT, SQL_ID, VIEW_ID, check_chart, check_query, effective_limit,
+    pipeline_columns, primed_result, result_sql,
 )
 from ..pipeline import Pipeline
 from . import _graph
@@ -74,7 +74,7 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
     """
     ops = ctx.deps.ops
     source_node, src = resolve_source(ctx.deps, source)
-    limit = row_ceiling(ops.editor)
+    limit = effective_limit(ops.editor, None)
     sql, statement, frame = await _test_run(src, sql, limit)
     with primed_result(src, statement, frame):
         _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{source_node}.source", f"{name}.source")
@@ -88,26 +88,36 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: st
 
 
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
-    """Place a Vega-Lite chart of a SQL node's result.
+    """Place a Vega-Lite chart of a SQL, table or filter node's rows.
 
     Args:
-        data: SQL node to chart.
+        data: SQL, table or filter node to chart.
         name: Descriptive snake_case node name.
         spec: Vega-Lite spec using the node's columns, without data or URLs.
     """
     ops = ctx.deps.ops
+    port = _upstream_port(ops, data)
     try:
-        pipeline = _graph.output(ops, data, "pipeline")
+        pipeline = _graph.output(ops, data, port)
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
     if not isinstance(pipeline, Pipeline):
-        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL node.")
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, table or filter node.")
     try:
-        spec = check_chart(spec, [str(c) for c in pipeline.data.columns])
+        spec = check_chart(spec, pipeline_columns(pipeline))
     except ValueError as exc:
         raise ModelRetry(str(exc)) from exc
-    _place(ops, VIEW_ID, name, {"spec": spec}, f"{data}.pipeline", f"{name}.pipeline")
+    _place(ops, VIEW_ID, name, {"spec": spec}, f"{data}.{port}", f"{name}.pipeline")
     return f"Placed chart {name!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
+
+
+def _upstream_port(ops, data: str) -> str:
+    if data not in _graph.nodes(ops):
+        raise ModelRetry(f"No node {data!r}.")
+    port = _graph.pipeline_port(ops, data)
+    if port is None:
+        raise ModelRetry(f"{data!r} has no Lumen pipeline output to chart; pass the name of a SQL, table or filter node.")
+    return port
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
@@ -131,13 +141,14 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
         component = next((node["component"] for node in ops.nodes() if node["name"] == name), None)
         if component == VIEW_ID and "spec" in config:
             data = _graph.upstream(ops, name)
+            port = _graph.pipeline_port(ops, data) if data else None
             try:
-                pipeline = _graph.output(ops, data, "pipeline") if data else None
+                pipeline = _graph.output(ops, data, port) if port else None
             except OperationError:
                 pipeline = None
             if isinstance(pipeline, Pipeline):
                 try:
-                    config = {**config, "spec": check_chart(config["spec"], [str(c) for c in pipeline.data.columns])}
+                    config = {**config, "spec": check_chart(config["spec"], pipeline_columns(pipeline))}
                 except ValueError as exc:
                     raise ModelRetry(str(exc)) from exc
             return await handler({**args, "config": config})
@@ -145,9 +156,8 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             return await handler(args)
         _, src = resolve_source(ctx.deps, upstream)
         before = _graph.config_of(ops, name)
-        ceiling = row_ceiling(ops.editor)
         rows = config.get("limit", before.get("limit"))
-        limit = min(int(rows), ceiling) if isinstance(rows, int) else ceiling
+        limit = effective_limit(ops.editor, int(rows) if isinstance(rows, int) else None)
         sql, statement, frame = await _test_run(src, config["sql"], limit)
         config = {**config, "sql": sql}
         with primed_result(src, statement, frame):

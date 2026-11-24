@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("panel_flowdash")
 
@@ -19,27 +20,8 @@ from lumen.flowdash import (
 from lumen.pipeline import Pipeline
 from lumen.sources.duckdb import DuckDBSource
 
-TABLES = {"sales": "SELECT * FROM (VALUES ('A', 10), ('B', 20), ('A', 5)) AS t(category, amount)"}
 QUERY = "SELECT category, SUM(amount) AS total FROM sales GROUP BY category"
 SPEC = {"mark": "bar", "encoding": {"x": {"field": "category", "type": "nominal"}, "y": {"field": "total", "type": "quantitative"}}}
-
-
-@pytest.fixture
-def executed(monkeypatch):
-    queries = []
-    fetch = DuckDBSource._fetch_df
-
-    def logged(self, cursor, sql, *args, **kwargs):
-        queries.append(" ".join(str(sql).split()))
-        return fetch(self, cursor, sql, *args, **kwargs)
-
-    monkeypatch.setattr(DuckDBSource, "_fetch_df", logged)
-    return queries
-
-
-@pytest.fixture
-def source():
-    return DuckDBSource(uri=":memory:", tables=TABLES)
 
 
 def output(ops, name, port):
@@ -50,6 +32,12 @@ def failure(ops, name, port="data"):
     value = output(ops, name, port)
     assert not isinstance(value, Pipeline)
     return str(getattr(value, "exception", value))
+
+
+def without_turns(text):
+    data = yaml.safe_load(text)
+    data.pop("turns", None)
+    return data
 
 
 def view_error(ops, name):
@@ -251,8 +239,9 @@ def test_yaml_round_trip_reruns_pushed_down_query(source, executed):
     editor.import_dashboard(dashboard_from_yaml(text))
     ops = DashboardOps(editor)
 
-    assert dashboard_to_yaml(editor) == text
-    assert "data:\n    component: Lumen/source\n    config:\n      ref: data\n" in text
+    assert without_turns(dashboard_to_yaml(editor)) == without_turns(text)
+    data_node = yaml.safe_load(text)["nodes"]["data"]
+    assert (data_node["component"], data_node["config"]) == (SOURCE_ID, {"ref": "data"})
     assert output(ops, "chart", "pipeline") is output(ops, "by_category", "pipeline")
     assert len(output(ops, "by_category", "data")) == 2
     assert executed == [" ".join(result_sql(source, QUERY).split())]

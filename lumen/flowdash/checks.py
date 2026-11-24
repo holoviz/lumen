@@ -180,3 +180,64 @@ def check_chart(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     except Exception as exc:
         raise ValueError(f"Invalid Vega-Lite spec: {exc}") from exc
     return spec
+
+
+def pipeline_columns(pipeline: Any) -> list[str]:
+    """The columns of a Lumen pipeline, from its schema, so nothing is fetched."""
+    return [str(column) for column in pipeline.schema if column != "__len__"]
+
+
+# SEAM(panel-flowdash#163): the functions below have the signature of the
+# ``check_config=`` hook in ``@register`` metadata, check(config, inputs),
+# where ``config`` is the node's merged config and ``inputs`` its live input
+# values without None and failures. Once the hook is released each is passed
+# to the ``@register`` call of its node, so a config that fails is refused
+# before it is applied instead of leaving the node in an error state. They
+# only inspect: none runs a query or fetches rows.
+
+def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
+    """Check a ``Lumen/table`` config: the table must be one of the source's."""
+    source, table = inputs.get("source"), config.get("table")
+    if source is None or not table:
+        return None
+    tables = source.get_tables()
+    if table not in tables:
+        return f"The source has no table {table!r}. Its tables are: {', '.join(sorted(tables))}."
+    return None
+
+
+def check_filter_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
+    """Check a ``Lumen/filter`` config: the field must be a column of the input pipeline."""
+    pipeline, field = inputs.get("pipeline"), config.get("field")
+    if pipeline is None or not field:
+        return None
+    columns = pipeline_columns(pipeline)
+    if field not in columns:
+        return f"The data has no column {field!r}. Its columns are: {', '.join(columns)}."
+    return None
+
+
+def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
+    """Check a ``Lumen/sql`` config with ``check_query``, without running the query."""
+    source, sql = inputs.get("source"), (config.get("sql") or "").strip()
+    if source is None or not sql:
+        return None
+    if not isinstance(source, BaseSQLSource):
+        return f"{type(source).__name__} does not run SQL."
+    try:
+        check_query(sql, source)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
+    """Check a ``Lumen/view`` config with ``check_chart`` against the input's columns."""
+    pipeline, spec = inputs.get("pipeline"), config.get("spec")
+    if pipeline is None or not spec:
+        return None
+    try:
+        check_chart(spec, pipeline_columns(pipeline))
+    except ValueError as exc:
+        return str(exc)
+    return None
