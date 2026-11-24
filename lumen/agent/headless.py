@@ -174,10 +174,13 @@ class AgentSession:
         approved = bool(self.approve and self.approve(event.tool_name, dict(event.args)))
         self.runner.state.resolve_approval(event.tool_call_id, approved, reason=None if approved else DENIED)
 
-    def add_sql(self, name: str, sql: str) -> str:
-        """Place a SQL node on the source node without the agent, e.g. a query a case starts from."""
+    def add_sql(self, name: str, sql: str, source: str | None = None) -> str:
+        """
+        Place a SQL node without the agent, e.g. a query a case starts from:
+        on the source node, or on the result of the SQL node ``source``.
+        """
         self.ops.add_node(SQL_ID, {"sql": sql, "table": name}, name=name)
-        self.ops.connect(f"{self.source_node}.source", f"{name}.source")
+        self.ops.connect(f"{source}.result" if source else f"{self.source_node}.source", f"{name}.source")
         return name
 
     def _configs(self) -> dict[str, dict[str, Any]]:

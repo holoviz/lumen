@@ -17,9 +17,9 @@ from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
     DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_VIEW_ID,
-    VIEW_ID, check_query, effective_limit, fetch, host_metrics,
-    pipeline_columns, primed_result, result_sql, row_ceiling,
-    selection_warnings,
+    VIEW_ID, CheckDiagnostic, check_query, check_sql_config, effective_limit,
+    fetch, host_metrics, pipeline_columns, primed_result, result_sql,
+    row_ceiling, selection_warnings,
 )
 from ..flowdash.deckgl import (
     fit_view_state, layer_type, map_summary, position_columns,
@@ -28,6 +28,7 @@ from ..flowdash.metrics import MetricError, prepare
 from ..flowdash.nodes import default_table, metric_query
 from ..flowdash.results import expand
 from ..pipeline import Pipeline
+from ..util import as_pandas
 from . import _graph
 from ._graph import (
     DIVIDER_ID, HEADING_ID, MARKDOWN_ID, TEXT_FIELDS,
@@ -57,12 +58,12 @@ def _marks(spec: dict[str, Any]) -> list[str]:
     return marks
 
 
-async def _test_run(src, sql: str, limit: int) -> tuple[str, Any, str, Any]:
+async def _test_run(src, sql: str, limit: int) -> tuple[str, str, Any]:
     """
     Clean, check and run ``sql`` as a SQL node with ``limit`` rows would,
-    returning the cleaned query, the source and statement run (on a result
-    source, the root and the expanded statement) and its result; any
-    problem is raised as ``ModelRetry`` with the engine's error.
+    returning the cleaned query, the statement run (on a result source, the
+    expanded statement, run on the root) and its result; any problem is
+    raised as ``ModelRetry`` with the engine's error.
     """
     try:
         sql = clean_sql(str(sql).strip(), src.dialect, prettify=True)
@@ -75,17 +76,88 @@ async def _test_run(src, sql: str, limit: int) -> tuple[str, Any, str, Any]:
         frame = await root.execute_with_timeout(statement, QUERY_TIMEOUT)
     except Exception as exc:
         raise ModelRetry(format_error(exc)) from exc
-    return sql, root, statement, frame
+    return sql, statement, frame
+
+
+def _result_input(ops, source: str) -> tuple[str, Any] | None:
+    """The upstream SQL node and its result source when ``source`` names an earlier SQL node."""
+    try:
+        port = _graph.input_port(ops, source)
+        return None if port is None else (port.rsplit(".", 1)[0], _graph.output(ops, *port.rsplit(".", 1)))
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+async def _count(src: Any, table: str) -> int | None:
+    """The rows of result table ``table`` of the result source ``src``, or None if counting fails."""
+    count = sqlglot.select("COUNT(*)").from_(sqlglot.exp.Table(this=sqlglot.exp.to_identifier(table)))
+    try:
+        root, statement = expand(count.sql(dialect=src.dialect), src)
+        frame = await root.execute_with_timeout(statement, QUERY_TIMEOUT)
+        return int(as_pandas(frame).iloc[0, 0])
+    except Exception:
+        return None
+
+
+async def _add_follower(ops, upstream: str, src: Any, name: str, sql: str) -> str:
+    """Place a SQL node reading the result of ``upstream``, as ``add_sql`` places one on a source."""
+    limit = effective_limit(ops.editor, None)
+    sql, statement, frame = await _test_run(src, sql, limit)
+    with primed_result(src, statement, frame):
+        _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{upstream}.result", f"{name}.source")
+    try:
+        frame = _graph.output(ops, name, "data")
+        shown = _graph.output(ops, upstream, "data")
+    except OperationError as exc:
+        ops.remove_node(name)
+        raise ModelRetry(str(exc)) from exc
+    capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
+    rows = _graph.config_of(ops, upstream).get("limit")
+    note = ""
+    if shown is not None and len(shown) >= effective_limit(ops.editor, rows if isinstance(rows, int) else None):
+        total = await _count(src, _graph.output(ops, upstream, "pipeline").table)
+        if total is not None and total > len(shown):
+            note = f" It reads all {total} rows of {upstream!r}; its tile shows the first {len(shown)}."
+    return (
+        f"Placed SQL node {name!r} on the result of {upstream!r}{capped}.{note} "
+        f"{format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+    )
+
+
+async def _follower_problems(ops, name: str) -> list[str]:
+    """
+    What the SQL nodes reading ``name``'s result directly now refuse,
+    checked against its new result. A node reading one of those in turn is
+    not checked: it fails, and reports it, once that one does.
+    """
+    followers = [f for f in _graph.reading(ops, f"{name}.result") if _graph.component_of(ops, f) == SQL_ID]
+    if not followers:
+        return []
+    try:
+        result = _graph.output(ops, name, "result")
+    except OperationError:
+        return []
+    problems = []
+    for follower in followers:
+        problem = await check_sql_config({"sql": _graph.config_of(ops, follower).get("sql") or ""}, {"source": result})
+        if isinstance(problem, CheckDiagnostic):
+            problems.append(f"Follower {follower!r} now fails: {problem}")
+    return problems
 
 
 async def add_sql(ctx: RunContext[FlowDashDeps], source: str, name: str, sql: str) -> str:
     """Place a SQL node with a read-only query and return a preview of its result; errors come back to fix.
+
+    To build on an earlier answer, pass its SQL node as source: the query then reads that
+    result by its table name, as list_tables shows it, and runs again when that node changes.
 
     Args:
         source: Source name from list_tables.
         name: Descriptive snake_case node name.
         sql: One SELECT or WITH query.
     """
+    if (upstream := _result_input(ctx.deps.ops, source)) is not None:
+        return await _add_follower(ctx.deps.ops, *upstream, name, sql)
     ops = ctx.deps.ops
     _, src = resolve_source(ctx.deps, source)
     limit = effective_limit(ops.editor, None)
@@ -404,10 +476,11 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
     """
     Checks what ``set_config`` gives a Lumen SQL or view node as add_sql and
     add_chart check it, before the node changes: SQL is cleaned, checked and
-    run, and a view's spec is checked by its ``check_spec`` against its
-    data's columns, and the text of a heading, Markdown or divider as
-    add_text checks it. A problem comes back for the model to fix, and a
-    changed query reports its result.
+    run, a view's spec is checked by its ``check_spec`` against its data's
+    columns, and the text of a heading, Markdown or divider as add_text
+    checks it. A problem comes back for the model to fix, and a changed
+    query reports its result and which SQL nodes reading its result
+    directly its change breaks.
     """
 
     async def wrap_tool_execute(self, ctx, *, call, tool_def, args, handler):
@@ -444,9 +517,9 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             raise ModelRetry(str(exc)) from exc
         rows = config.get("limit", before.get("limit"))
         limit = effective_limit(ops.editor, int(rows) if isinstance(rows, int) else None)
-        sql, root, statement, frame = await _test_run(src, config["sql"], limit)
+        sql, statement, frame = await _test_run(src, config["sql"], limit)
         config = {**config, "sql": sql}
-        with primed_result(root, statement, frame):
+        with primed_result(src, statement, frame):
             result = await handler({**args, "config": config})
         try:
             frame = _graph.output(ops, name, "data")
@@ -455,6 +528,7 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             raise ModelRetry(str(exc)) from exc
         capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
         preview = f"\n\nResult{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+        preview += "".join(f"\n\n{problem}" for problem in await _follower_problems(ops, name))
         if isinstance(result, str):
             return result + preview
         if isinstance(result, ToolReturn) and isinstance(result.return_value, str):
