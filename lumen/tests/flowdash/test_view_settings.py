@@ -199,16 +199,25 @@ def test_without_a_dashboard_scheme_the_chart_keeps_vega_colours(source):
     assert rendered(ops)["config"]["background"] == "transparent"
 
 
-async def test_the_inspector_edits_the_spec_through_the_form(source):
+def edit_spec_button(editor):
+    """The inspector's Edit spec button, in its body or, on later panel-flowdash, in its header."""
+    found = pn.Column(*editor._inspector._body, editor._inspector.__panel__()).select(
+        lambda obj: "fd-edit-spec" in (getattr(obj, "css_classes", None) or [])
+    )
+    return next(iter(found))
+
+
+async def test_the_code_panel_edits_the_spec_through_the_form(source):
     ops = dashboard(source, history_coalesce=0)
     editor = ops.editor
     node = ops._instance("chart")
     select_on_canvas(editor._flow, node_id=node)
-    fields = list(pn.Column(*editor._inspector._body).select(SpecEditor))
-    assert len(fields) == 1
-    field = fields[0]
+    assert not list(pn.Column(*editor._inspector._body).select(SpecEditor))
+    edit_spec_button(editor).clicks += 1
+    panel = editor.code_panel
+    assert (panel.instance_id, panel.field) == (node, "spec")
+    field = panel.spec_editor
     assert field.unknown == ["encoding.x.axis", "transform"]
-    await editor._inspector.settle()
     for _ in range(50):
         if field.choices.get("encoding.x.field"):
             break
@@ -216,7 +225,11 @@ async def test_the_inspector_edits_the_spec_through_the_form(source):
     assert field.choices["encoding.x.field"].values() == ["category", "total"]
     before = json.dumps(ops.node_config("chart")["spec"])
     field._controls["title"][1].value = "Sales by category"
-    await editor._inspector.settle()
+    panel.run()
+    for _ in range(50):
+        if ops.node_config("chart")["spec"].get("title"):
+            break
+        await asyncio.sleep(0.02)
     assert ops.node_config("chart")["spec"]["title"] == "Sales by category"
     assert rendered(ops)["title"] == "Sales by category"
     assert editor.undo()

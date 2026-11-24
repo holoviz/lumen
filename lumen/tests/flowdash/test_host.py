@@ -195,29 +195,26 @@ async def test_flowdash_agent_set_config_refuses_broken_sql(source):
     assert ops._item(ops._instance("by_category"))["config"]["sql"] == QUERY
 
 
-async def test_inspector_holds_back_sql_the_engine_rejects(source):
+async def test_the_code_panel_holds_back_sql_the_engine_rejects(source):
     editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"data": source}}, notifications=False)
     ops = query_dashboard(editor)
     node = ops._instance("by_category")
-    select_on_canvas(editor._flow, node_id=node)
-    form = next(iter(pn.Column(*editor._inspector._body).select(pn.Param)))
+    assert editor.edit_spec(node)
+    panel = editor.code_panel
+    assert (panel.instance_id, panel.field) == (node, "sql")
 
-    def alerts():
-        return [
-            a.object for a in pn.Column(*editor._inspector._body).select()
-            if "fd-config-check-alert" in getattr(a, "css_classes", [])
-        ]
-
-    form._widgets["sql"].value = BROKEN
+    panel.run(BROKEN)
     await settle()
     assert editor._component_instances[node].sql == QUERY
-    assert len(alerts()) == 1 and "price" in alerts()[0]
+    assert panel.dirty
+    [problem] = panel.tools.diagnostics
+    assert "price" in problem["text"] and BROKEN[problem["column"]:problem["end_column"]] == "price"
 
     fixed = QUERY.replace("SUM", "MAX")
-    form._widgets["sql"].value = fixed
+    panel.run(fixed)
     await settle()
     assert editor._component_instances[node].sql == fixed
-    assert alerts() == []
+    assert panel.tools.diagnostics == []
 
 
 def test_add_node_refuses_unsafe_sql_before_a_source_is_connected(source):
