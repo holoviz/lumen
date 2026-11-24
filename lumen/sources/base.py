@@ -1203,6 +1203,10 @@ class BaseSQLSource(Source):
 
     dialect = None
 
+    # Whether `execute_with_timeout` stops the statement in the engine when
+    # it times out, rather than leaving it running in a worker thread.
+    cancels_queries: ClassVar[bool] = False
+
     dataframe_backend = param.Selector(default=None, objects=[None, *DATAFRAME_BACKENDS], doc="""
         The dataframe library table data is returned as. Leave unset to get
         pandas, which is what every source has always produced. Only the data

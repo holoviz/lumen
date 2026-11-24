@@ -4,16 +4,37 @@ the agent, a person editing the node, an imported file or a replayed trace.
 """
 from __future__ import annotations
 
+import asyncio
 import copy
+import threading
+import time
+import weakref
 
+from collections import OrderedDict
 from typing import Any
 
 import sqlglot
 
 from sqlglot import exp
+from sqlglot.errors import OptimizeError
+from sqlglot.optimizer.qualify import qualify
 
-from ..ai.agents.sql import validate_read_only_sql
-from ..sources.base import BaseSQLSource
+from ..data.sql import validate_read_only_sql
+from ..data.utils import ANSI_ESCAPE, format_tool_error
+from ..sources.base import BaseSQLSource, QueryTimeoutError
+from ..transforms.sql import SQLLimit
+
+# Seconds the engine may take to plan a query in ``check_sql_config``, waiting
+# for the source's previous probe included.
+PROBE_TIMEOUT = 3
+
+# Queries the engine accepted, remembered per source, so a change of a SQL
+# node's limit or table does not ask the engine again about the same query.
+PROBE_CACHE_SIZE = 32
+
+_GUARD = threading.Lock()
+_PROBE_LOCKS: weakref.WeakKeyDictionary[BaseSQLSource, threading.Lock] = weakref.WeakKeyDictionary()
+_PROBED: weakref.WeakKeyDictionary[BaseSQLSource, OrderedDict[tuple[str, str], None]] = weakref.WeakKeyDictionary()
 
 # Keys whose value makes a Vega-Lite chart fetch or link to something.
 URL_KEYS = ("url", "href", "baseURL")
@@ -187,13 +208,11 @@ def pipeline_columns(pipeline: Any) -> list[str]:
     return [str(column) for column in pipeline.schema if column != "__len__"]
 
 
-# SEAM(panel-flowdash#163): the functions below have the signature of the
-# ``check_config=`` hook in ``@register`` metadata, check(config, inputs),
-# where ``config`` is the node's merged config and ``inputs`` its live input
-# values without None and failures. Once the hook is released each is passed
-# to the ``@register`` call of its node, so a config that fails is refused
-# before it is applied instead of leaving the node in an error state. They
-# only inspect: none runs a query or fetches rows.
+# The ``check_config=`` hooks of the nodes, see ``panel_flowdash.register``:
+# check(config, inputs), where ``config`` is the node's whole config with the
+# change applied and ``inputs`` its live input values that are set and not
+# failed. A config that fails is refused in the inspector and by the agent
+# tools before it is applied. None of them fetches rows.
 
 def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/table`` config: the table must be one of the source's."""
@@ -217,18 +236,186 @@ def check_filter_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
     return None
 
 
-def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
-    """Check a ``Lumen/sql`` config with ``check_query``, without running the query."""
-    source, sql = inputs.get("source"), (config.get("sql") or "").strip()
-    if source is None or not sql:
-        return None
-    if not isinstance(source, BaseSQLSource):
-        return f"{type(source).__name__} does not run SQL."
+def _folded(node: exp.Expression) -> exp.Expression:
+    if isinstance(node, exp.Identifier):
+        return exp.Identifier(this=node.this.lower(), quoted=node.quoted)
+    return node
+
+
+def check_columns(sql: str, source: BaseSQLSource) -> None:
+    """
+    Raise ``ValueError`` if ``sql`` names a column that none of the tables it
+    reads has, using the schemas ``source`` already stored. Nothing is asked
+    of the engine, so it checks only queries whose tables all have a stored
+    schema. Names are compared case-insensitively whatever the dialect's
+    rules, so a column is only refused when no column of that name exists
+    in any case; the engine reports a column of the wrong case when the
+    query runs.
+    """
+    stored = source._get_schema_cache() or {}
+    parsed = sqlglot.parse_one(sql, read=_read(source.dialect))
+    ctes = {cte.alias_or_name.lower() for cte in parsed.find_all(exp.CTE)}
+    schema = {}
+    for table in parsed.find_all(exp.Table):
+        if not isinstance(table.this, exp.Identifier) or table.db:
+            return
+        name = table.name.lower()
+        if name in ctes:
+            continue
+        columns = next((value for key, value in stored.items() if key.lower() == name), None)
+        if not isinstance(columns, dict):
+            return
+        schema[name] = {str(column).lower(): "UNKNOWN" for column in columns if column != "__len__"}
     try:
-        check_query(sql, source)
-    except ValueError as exc:
-        return str(exc)
-    return None
+        qualify(parsed.transform(_folded), schema=schema, validate_qualify_columns=True)
+    except OptimizeError as exc:
+        if "could not be resolved" in str(exc):
+            raise ValueError(f"{str(exc).split('. Line:')[0]}.") from exc
+
+
+def _engine_error(exc: Exception, probe: str, sql: str) -> str:
+    """The engine's error for ``probe``, as if ``sql`` itself had been run."""
+    text = format_tool_error(exc).replace(probe, sql)
+    return f"The engine refused the query: {text.split(chr(10) + 'LINE ')[0].strip()}"
+
+
+async def probe_query(sql: str, source: BaseSQLSource, timeout: float | None = None) -> str | None:
+    """
+    Ask ``source``'s engine to bind and plan ``sql`` without returning rows,
+    by running it with ``LIMIT 0``, and return the engine's error or None.
+
+    Probes of one source run one at a time. ``check_sql_config`` only
+    probes sources that stop a statement when it times out
+    (``cancels_queries``), so a probe never keeps running in a worker
+    thread. A probe that does not
+    finish within ``timeout`` seconds (``PROBE_TIMEOUT`` by default), waiting
+    for the source's previous probe included, raises ``QueryTimeoutError``.
+    Queries the engine accepted are remembered until the source's table
+    definitions change or ``forget_probes`` is called.
+    """
+    timeout = PROBE_TIMEOUT if timeout is None else timeout
+    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(sql)
+    # A table the host redefines makes the queries accepted before unknown again.
+    key = (sql, repr(source.tables))
+    with _GUARD:
+        probed = _PROBED.setdefault(source, OrderedDict())
+        lock = _PROBE_LOCKS.setdefault(source, threading.Lock())
+        if key in probed:
+            probed.move_to_end(key)
+            return None
+    deadline = time.monotonic() + timeout
+    while not lock.acquire(blocking=False):
+        if time.monotonic() >= deadline:
+            raise QueryTimeoutError(f"The engine did not get to the query within {timeout} seconds.")
+        await asyncio.sleep(0.02)
+    try:
+        await source.execute_with_timeout(probe, max(deadline - time.monotonic(), 0.01))
+    except QueryTimeoutError:
+        raise
+    except Exception as exc:
+        problem = _engine_error(exc, probe, sql)
+    else:
+        problem = None
+    finally:
+        lock.release()
+    if problem is None:
+        with _GUARD:
+            probed[key] = None
+            while len(probed) > PROBE_CACHE_SIZE:
+                probed.popitem(last=False)
+    return problem
+
+
+def forget_probes(source: BaseSQLSource) -> None:
+    """Forget the queries ``source``'s engine accepted, e.g. when the dashboard refreshes."""
+    with _GUARD:
+        _PROBED.pop(source, None)
+
+
+def check_unbound_sql(sql: str) -> None:
+    """
+    Raise ``ValueError`` unless ``sql`` is one read-only query in the
+    dialect of at least one source the host provides, for a SQL node no
+    source is connected to yet. Without host sources the dialect is unknown,
+    so SQL that does not parse generically is left to the check that runs
+    once a source is connected.
+    """
+    from .nodes import host_sources
+
+    dialects = sorted({
+        source.dialect or "any" for source in host_sources().values() if isinstance(source, BaseSQLSource)
+    })
+    errors: list[Exception] = []
+    for dialect in dialects or ["any"]:
+        try:
+            validate_read_only_sql(sql, dialect)
+        except ValueError:
+            raise
+        except sqlglot.errors.SqlglotError as exc:
+            errors.append(exc)
+        else:
+            return
+    if dialects:
+        raise ValueError(f"The query does not parse: {ANSI_ESCAPE.sub('', str(errors[0]))}")
+
+
+def _unverified(message: str) -> Any:
+    """A warning that does not refuse the config, on panel-flowdash versions that have one."""
+    try:
+        from panel_flowdash import CheckWarning
+    except ImportError:
+        return None
+    return CheckWarning(message)
+
+
+async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
+    """
+    Check a ``Lumen/sql`` config without running the full query.
+
+    Without a source only the SQL itself is checked: it must parse and be one
+    read-only query. With one, ``check_query`` checks it against the
+    source's tables. A source that can stop a statement (``cancels_queries``)
+    then binds it with ``probe_query``; if the engine does not answer in
+    time, the query could not be verified, which is a warning rather than
+    a problem. Other sources are never probed, since a slow probe would keep
+    running; there ``check_columns`` compares the columns with the stored
+    schemas instead.
+    """
+    source, sql = inputs.get("source"), (config.get("sql") or "").strip()
+    if not sql:
+        return None
+    try:
+        if source is None:
+            check_unbound_sql(sql)
+            return None
+        if not isinstance(source, BaseSQLSource):
+            return f"{type(source).__name__} does not run SQL."
+        await asyncio.to_thread(check_query, sql, source)
+        if not source.cancels_queries:
+            await asyncio.to_thread(check_columns, sql, source)
+            return None
+    except (ValueError, sqlglot.errors.SqlglotError) as exc:
+        return ANSI_ESCAPE.sub("", str(exc))
+    try:
+        return await probe_query(sql, source)
+    except (ValueError, sqlglot.errors.SqlglotError) as exc:
+        return ANSI_ESCAPE.sub("", str(exc))
+    except QueryTimeoutError:
+        return _unverified(
+            f"Could not verify the query: the engine did not answer within {PROBE_TIMEOUT} seconds. "
+            "The node reports any error when it runs the query."
+        )
+
+
+def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
+    """Check a ``Lumen/source`` config: the ref must name a source the host provides."""
+    from .nodes import host_sources, missing_source
+
+    ref = config.get("ref")
+    if not ref:
+        return None
+    sources = host_sources()
+    return None if ref in sources else missing_source(ref, sources)
 
 
 def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:

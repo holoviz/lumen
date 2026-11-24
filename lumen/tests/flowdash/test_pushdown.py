@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import gc
 import time
@@ -223,9 +224,13 @@ def test_view_node_charts_the_filtered_rows(source, executed):
 ])
 def test_nodes_report_unknown_tables_and_fields(source, node, config, port, error):
     ops = filtered_dashboard(source)
-    ops.set_config("sales" if node == TABLE_ID else "by_category", config)
     name = "sales" if node == TABLE_ID else "by_category"
+    with pytest.raises(OperationError, match="was not changed") as refused:
+        ops.set_config(name, config)
+    assert error in str(refused.value)
+    assert "failed" not in str(output(ops, "rows", "data"))
 
+    ops.editor._apply_config_patch(ops._instance(name), config)
     assert error in failure(ops, name, port)
     assert "failed" in failure(ops, "rows", "data")
 
@@ -253,7 +258,7 @@ def test_table_node_takes_no_sql(source):
         ops.set_config("sales", {"sql": "SELECT * FROM sales"})
 
 
-def test_config_checks_inspect_without_running_queries(source, executed):
+def test_config_checks_fetch_no_rows(source, executed):
     pipeline = table_pipeline(source, "sales")
     executed.clear()
 
@@ -261,12 +266,13 @@ def test_config_checks_inspect_without_running_queries(source, executed):
     assert "no table 'orders'" in check_table_config({"table": "orders"}, {"source": source})
     assert check_filter_config({"field": "amount"}, {"pipeline": pipeline}) is None
     assert "no column 'price'" in check_filter_config({"field": "price"}, {"pipeline": pipeline})
-    assert check_sql_config({"sql": "SELECT * FROM sales"}, {"source": source}) is None
-    assert "read-only" in check_sql_config({"sql": "DROP TABLE sales"}, {"source": source})
+    assert asyncio.run(check_sql_config({"sql": "SELECT * FROM sales"}, {"source": source})) is None
+    assert "read-only" in asyncio.run(check_sql_config({"sql": "DROP TABLE sales"}, {"source": source}))
+    assert "nope" in asyncio.run(check_sql_config({"sql": "SELECT nope FROM sales"}, {"source": source}))
     assert check_view_config({"spec": SPEC}, {"pipeline": pipeline}) is None
     assert "revenue" in check_view_config({"spec": {"mark": "bar", "encoding": {"x": {"field": "revenue"}}}}, {"pipeline": pipeline})
-    assert check_sql_config({"sql": "SELECT 1"}, {}) is None
-    assert data_queries(executed) == []
+    assert asyncio.run(check_sql_config({"sql": "SELECT 1"}, {})) is None
+    assert data_queries(executed) == ["SELECT * FROM sales LIMIT 0", "SELECT nope FROM sales LIMIT 0"]
 
 
 def test_preview_fetches_only_when_shown_and_only_a_few_rows(executed):

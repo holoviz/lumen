@@ -20,7 +20,7 @@ Lumen YAML dashboards are served without `--flowdash`, as before. The Lumen AI o
 
 ## Sources
 
-A dashboard cannot open connections of its own. The app binds the data you served, and a **Lumen Source** node names it by `ref`: the first source is `data`, further ones `data_2`, `data_3` and so on. All CSV, Parquet and JSON files go into one DuckDB source, so `lumen serve a.csv b.parquet --flowdash` gives one source `data` with two tables.
+A dashboard cannot open connections of its own. The app hands the editor the data you served, and a **Lumen Source** node names it by `ref`: the first source is `data`, further ones `data_2`, `data_3` and so on. All CSV, Parquet and JSON files go into one DuckDB source, so `lumen serve a.csv b.parquet --flowdash` gives one source `data` with two tables.
 
 ## Nodes
 
@@ -37,7 +37,18 @@ Edges between Lumen nodes carry a Lumen pipeline rather than a table of rows, so
 
 Rows are fetched where they are needed: by a **Lumen Data** node, which outputs a DataFrame for any FlowDash component that takes one, by a chart, or by a node's own preview when it is shown. Every query is capped at 100,000 rows; a table or SQL node's `limit` can lower that.
 
-SQL nodes accept one read-only `SELECT` or `WITH` query over the source's own tables, and chart specs may not load data or URLs. These checks apply however the config arrives: typed in the editor, set by the agent or imported from a file.
+### Checks
+
+Each node's config is checked before it is applied, whether it is typed in the editor's inspector or set by an agent, and again when a dashboard is validated. A change that fails is refused and the node keeps its last config. Source nodes may only name a source the app provides, table nodes a table of their source, filter nodes a column of their input, and charts only columns of their input, with no data or URLs of their own.
+
+SQL nodes accept one read-only `SELECT` or `WITH` query, checked in steps:
+
+- Before a source is connected, the query must parse in the dialect of one of the app's sources and be read-only.
+- Once a source is connected, it may only read the source's own tables.
+- On DuckDB and Snowflake, which can stop a running statement, the engine then binds the query with `LIMIT 0`, so a misspelled column is refused without running the query. If the engine does not answer within 3 seconds the change is applied with the warning "Could not verify the query" (panel-flowdash releases without check warnings apply it silently), and the node reports any error when it runs the query.
+- Other sources are never asked, since a slow check could not be stopped. There the query's columns are compared with the table schemas Lumen already read, when it has them, ignoring case, so a column is only refused when no column of that name exists.
+
+A query placed before its source is connected is checked against the source when the node runs; the node reports what the engine refused, and validating the dashboard lists it.
 
 ## In your own app
 
@@ -50,14 +61,14 @@ import panel as pn
 pn.serve(build_routes(["penguins.csv"], db_path="dashboards.db"))
 ```
 
-In a `flowdash serve` project, set `component_libraries = ["lumen.flowdash"]` in its `__init__.py` (or pass `--component-library lumen.flowdash`) and bind the sources with the editor class from `lumen.flowdash.app`:
+In a `flowdash serve` project, set `component_libraries = ["lumen.flowdash"]` in its `__init__.py` (or pass `--component-library lumen.flowdash`) and give the editor its sources under the `lumen.sources` key of its context:
 
 ``` python
-from lumen.flowdash.app import LumenFlowDash
 from lumen.sources.duckdb import DuckDBSource
 
 component_libraries = ["lumen.flowdash"]
 agent_sensitive_components = ["Lumen/source"]
-editor_class = LumenFlowDash
-editor_options = {"lumen_sources": {"data": DuckDBSource(uri="warehouse.duckdb")}}
+editor_options = {"context": {"lumen.sources": {"data": DuckDBSource(uri="warehouse.duckdb")}}}
 ```
+
+Each session's editor copies the `lumen.sources` dict, so adding or removing a source in one session does not reach another; the source objects themselves are shared. Without sources, a source node says how to provide them.

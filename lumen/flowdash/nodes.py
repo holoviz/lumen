@@ -11,12 +11,13 @@ needed, by a data node (the boundary to components that take a DataFrame),
 a view node or a tile preview. Each node resolves its Lumen object once per
 change and every output reads that object.
 
-Source nodes never build a source from their config: the host binds the
-sources an editor may use with ``bind_source``, and a source node only
-names one of them by ``ref``. Whoever edits a dashboard can therefore only
-point it at sources the host chose, never open a new connection. To load a
-saved dashboard, create the editor, bind its sources, then import the
-dashboard; a source node whose ref is bound later picks the source up then.
+Source nodes never build a source from their config: the host hands the
+editor the sources a dashboard may use, by ref, in the editor's context under
+``"lumen.sources"`` (``FlowDash(context={"lumen.sources": {...}})``, or
+``bind_source`` on an editor that exists), and a source node only names one
+of them by ``ref``. Whoever edits a dashboard can therefore only point it at
+sources the host chose, never open a new connection. A source node whose ref
+is bound later picks the source up then.
 
 The host also sets how many rows a query of these nodes may return
 (``set_row_ceiling``); a node's ``limit`` can lower that, never raise it.
@@ -29,7 +30,7 @@ import hashlib
 import math
 import weakref
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from concurrent.futures import (
     ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
@@ -42,7 +43,9 @@ import panel as pn
 import param
 
 from panel.viewable import Viewer
-from panel_flowdash import current_dashboard, register, register_port_type
+from panel_flowdash import (
+    current_dashboard, dashboard_context, register, register_port_type,
+)
 from panel_flowdash.dataflow_engine import failure_text
 from panel_flowdash.util import is_failure
 
@@ -52,7 +55,11 @@ from ..sources.duckdb import DuckDBSource
 from ..transforms.base import Filter as FilterTransform, Iloc
 from ..transforms.sql import NO_BOOLEAN_LITERALS, SQLFilter, SQLLimit
 from ..util import get_dataframe_schema
-from .checks import check_chart, check_query, pipeline_columns
+from .checks import (
+    check_chart, check_filter_config, check_query, check_source_config,
+    check_sql_config, check_table_config, check_view_config, forget_probes,
+    pipeline_columns,
+)
 
 SOURCE_TYPE = register_port_type("lumen.Source")
 PIPELINE_TYPE = register_port_type("lumen.Pipeline")
@@ -63,6 +70,9 @@ FILTER_ID = "Lumen/filter"
 SQL_ID = "Lumen/sql"
 DATA_ID = "Lumen/data"
 VIEW_ID = "Lumen/view"
+
+# The key of the editor context the host puts its sources in, by ref.
+SOURCES_KEY = "lumen.sources"
 
 # Rows a SQL node keeps in memory and a table, filter or data node lets the source
 # return, unless the host sets another ceiling.
@@ -75,7 +85,6 @@ PREVIEW_ROWS = 50
 # import: that happens in a synchronous watcher, which blocks the event loop meanwhile.
 NODE_TIMEOUT = 5
 
-_BOUND: weakref.WeakKeyDictionary[Any, dict[str, Source]] = weakref.WeakKeyDictionary()
 _CEILINGS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
 _SOURCE_NODES: weakref.WeakKeyDictionary[Any, weakref.WeakSet] = weakref.WeakKeyDictionary()
 _RESULTS: dict[tuple[int, str], Any] = {}
@@ -87,9 +96,10 @@ _FETCHED: weakref.WeakKeyDictionary[Pipeline, dict[float, Any]] = weakref.WeakKe
 def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
     """
     Let source nodes of ``editor`` whose ``ref`` is ``ref`` use ``source``,
-    including nodes already placed. Returns the ref.
+    including nodes already placed, by adding it to the editor's context.
+    Returns the ref.
     """
-    _BOUND.setdefault(editor, {})[ref] = source
+    editor.context.setdefault(SOURCES_KEY, {})[ref] = source
     for node in list(_SOURCE_NODES.get(editor, ())):
         if node.ref == ref:
             node._refresh()
@@ -98,25 +108,32 @@ def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
 
 def unbind_source(editor: Any, ref: str) -> None:
     """Forget a source bound with ``bind_source``."""
-    _BOUND.get(editor, {}).pop(ref, None)
+    editor.context.get(SOURCES_KEY, {}).pop(ref, None)
 
 
 def bound_sources(editor: Any) -> dict[str, Source]:
-    return dict(_BOUND.get(editor, {}))
+    return dict(editor.context.get(SOURCES_KEY) or {})
 
 
-def host_sources(editor: Any) -> dict[str, Source]:
+def host_sources(context: Mapping[str, Any] | None = None) -> dict[str, Source]:
     """
-    The sources the host lets the dashboard of ``editor`` use, by ref.
-
-    SEAM(panel-flowdash#166): once ``FlowDash.context`` and
-    ``panel_flowdash.dashboard_context()`` are released, hosts put their
-    sources in ``editor.context["lumen.sources"]`` and this reads
-    ``dashboard_context().get("lumen.sources", {})`` (falling back to
-    ``bind_source`` bindings during the transition). It is the only place
-    a node looks up a host source.
+    The sources the host lets a dashboard use, by ref, from ``context``
+    or else ``dashboard_context()``. It is the only place a node looks up a
+    host source.
     """
-    return bound_sources(editor) if editor is not None else {}
+    context = dashboard_context() if context is None else context
+    return dict(context.get(SOURCES_KEY) or {})
+
+
+def missing_source(ref: str, sources: Mapping[str, Source]) -> str:
+    """What a source node naming ``ref`` reports when the host provides only ``sources``."""
+    if sources:
+        return f"The app provides no source `{ref}`; its sources are: {', '.join(f'`{r}`' for r in sorted(sources))}."
+    return (
+        "The app provides no Lumen sources. Serve the data with `lumen serve <data> --flowdash`, "
+        "or set `editor_options = {\"context\": {\"lumen.sources\": {\"data\": source}}}` "
+        "in the FlowDash project's `__init__.py`."
+    )
 
 
 def set_row_ceiling(editor: Any, rows: int) -> None:
@@ -417,6 +434,8 @@ class LumenNode(Viewer):
     def __init__(self, **params):
         editor = current_dashboard()
         self._editor = weakref.ref(editor) if editor is not None else None
+        # Taken now, while the editor creating the node is known; it follows later bindings.
+        self._context = dashboard_context()
         super().__init__(**params)
         if editor is not None and self._reads_source:
             _watch_refresh(editor, self)
@@ -438,6 +457,8 @@ class LumenNode(Viewer):
         source = getattr(self, "source", None)
         if isinstance(source, Source):
             source.clear_cache()
+        if isinstance(source, BaseSQLSource):
+            forget_probes(source)
         self._refresh()
 
     def _resolve(self) -> Any:
@@ -473,11 +494,12 @@ class LumenNode(Viewer):
     component=True, page=False, title="Lumen Source", icon="storage",
     description="A Lumen data source the app provides, named by its ref.",
     config=["ref"],
+    check_config=check_source_config,
     provides=[{"key": "source", "type": SOURCE_TYPE}],
 )
 class SourceNode(LumenNode):
 
-    ref = param.String(default="", doc="Name of a source the host bound with bind_source.")
+    ref = param.String(default="", doc="Name of a source the host provides.")
 
     def __init__(self, **params):
         super().__init__(**params)
@@ -491,10 +513,10 @@ class SourceNode(LumenNode):
     def _resolve(self) -> Source | None:
         if not self.ref:
             return None
-        bound = host_sources(self.editor)
-        if self.ref not in bound:
-            raise ValueError(f"No source is bound as {self.ref!r}; the app binds the sources a dashboard may use.")
-        return bound[self.ref]
+        sources = host_sources(self._context)
+        if self.ref not in sources:
+            raise ValueError(missing_source(self.ref, sources))
+        return sources[self.ref]
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -515,6 +537,7 @@ class SourceNode(LumenNode):
         "over the result and the result as a DataFrame."
     ),
     config=["sql", "table", "limit"],
+    check_config=check_sql_config,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}, {"key": "data", "type": "DataFrame"}],
 )
@@ -585,6 +608,7 @@ class PipelineNode(LumenNode):
         "filter nodes and the row limit become part of the source's query."
     ),
     config=["table", "limit"],
+    check_config=check_table_config,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}],
 )
@@ -628,6 +652,7 @@ class TableNode(PipelineNode):
         "from a SQL source the source applies the filter in its query, before the table's limit."
     ),
     config=["field"],
+    check_config=check_filter_config,
     requires=[
         {"key": "pipeline", "type": PIPELINE_TYPE, "required": True},
         {"key": "value", "required": False, "blocking": False},
@@ -698,6 +723,7 @@ class DataNode(LumenNode):
     component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart",
     description="A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings no data or URLs.",
     config=["spec"],
+    check_config=check_view_config,
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
 )
 class ViewNode(LumenNode):
