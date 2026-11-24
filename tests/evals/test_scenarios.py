@@ -261,6 +261,26 @@ def test_the_ad_hoc_label_says_how_and_that_no_metric_was_used(reply, expected):
     assert passed is expected, detail
 
 
+@pytest.mark.parametrize(("calls", "label"), [
+    ([("add_sql", {"source": "data", "name": "capacity_by_year", "sql": GOOD_SQL}),
+      ("add_chart", {"data": "capacity_by_year", "name": "capacity_chart", "spec": LINE})], "capacity_chart"),
+    ([("add_sql", {"source": "data", "name": "capacity_by_year", "sql": GOOD_SQL})], "capacity_by_year"),
+], ids=["chart", "sql_only"])
+async def test_the_ad_hoc_label_is_read_from_the_provenance_of_what_the_turn_placed(calls, label):
+    async with state_after("turbines", scripted(calls)) as state:
+        assert state.output == "done"
+        assert state.provenance(label) == (
+            "Ad hoc: SUM(t_cap) / 1000.0 by p_year of turbines, computed by its own SQL query; no metric was used.")
+        passed, detail = adhoc_label().run(state)
+        assert passed, detail
+
+
+def test_the_ad_hoc_label_ignores_nodes_the_turn_did_not_touch():
+    state = TurnState(prompt="x", graph={"nodes": {"chart": {"component": VIEW_ID}}}, before={}, output="done",
+                      provenance=lambda name: "Ad hoc: Sum of t_cap by p_year of turbines; no metric was used.")
+    assert adhoc_label().run(state)[0] is False
+
+
 LINE_BY_STATE = {"mark": {"type": "line"}, "encoding": {
     "x": {"field": "t_state", "type": "nominal"}, "y": {"field": "capacity_mw", "type": "quantitative"}}}
 

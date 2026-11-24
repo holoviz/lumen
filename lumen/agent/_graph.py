@@ -72,6 +72,18 @@ def output(ops: DashboardOps, name: str, port: str) -> Any:
         raise OperationError(str(exc)) from exc
 
 
+def provenance(ops: DashboardOps, name: str) -> Any:
+    """
+    The provenance a node's numbers have, its own or the nearest upstream
+    node's, e.g. the "Ad hoc" label of a chart of a SQL node's rows, or None
+    when no node reports one or the editor has no provenance.
+    """
+    if not hasattr(ops.editor, "node_provenance"):
+        return None
+    found = ops.editor.node_provenance(ops._instance(name))
+    return found[0] if found else None
+
+
 def inputs_of(ops: DashboardOps, name: str) -> dict[str, Any]:
     """The literal values set on a node's unconnected inputs."""
     node = (yaml.safe_load(ops.get_dashboard()).get("nodes") or {}).get(name) or {}

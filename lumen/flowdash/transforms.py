@@ -541,8 +541,8 @@ class AggregateNode(TransformNode):
 
     def __flowdash_provenance__(self) -> dict[str, str] | None:
         """
-        The "Ad hoc" label of a number aggregated by the node, saying how it
-        is computed, or "Derived" with the aggregation over a metric's rows.
+        The "Ad hoc" label of the numbers the node aggregates, saying how
+        they are computed, or "Derived" with the aggregation over a metric's rows.
         """
         if not self.columns and self.method != "count":
             return None
@@ -553,9 +553,6 @@ class AggregateNode(TransformNode):
         if metric is not None:
             return {"label": derived_label(self.method, metric), "kind": "derived",
                     "detail": describe_aggregate(self.method, columns, by, metric)}
-        # Grouped rows are not a number; only a single aggregate is labelled.
-        if by:
-            return None
         return {"label": "Ad hoc", "detail": describe_aggregate(self.method, columns, by), "kind": "ad hoc"}
 
     def derived_from(self) -> str | None:

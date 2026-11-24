@@ -1797,18 +1797,25 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return _pipeline_preview(self, self._object)
         return data
 
-    def __flowdash_provenance__(self) -> dict[str, str] | None:
-        """The "Ad hoc" label of a number read from the node's one-row result, saying how its query computes it."""
-        # Only a single number is labelled; on rows a chart or table reads the label is noise.
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
+        """
+        The "Ad hoc" label of the views reading the node, its number or
+        its rows, saying how its query computes them and that no metric was
+        used; through an edge that aggregates the rows, how it does so too.
+        """
         if not self.sql.strip() or self._error is not None or self._object is None:
             return None
-        data = self._object.data
-        if not isinstance(data, pd.DataFrame) or len(data) != 1:
-            return None
-        from .save_metric import describe_query
+        from .save_metric import (
+            aggregating_step, describe_adhoc_reading, describe_query,
+        )
 
-        return {"label": "Ad hoc", "detail": describe_query(self.sql, _read(getattr(self._input, "dialect", None))),
-                "kind": "ad hoc"}
+        detail = describe_query(self.sql, _read(getattr(self._input, "dialect", None)))
+        if any(step.get("op") == "aggregate" for edge in via for step in edge.get("transform") or []):
+            data = self._object.data
+            step = aggregating_step(via, len(data) if isinstance(data, pd.DataFrame) else None)
+            if step is not None:
+                detail = describe_adhoc_reading(*step, detail)
+        return {"label": "Ad hoc", "detail": detail, "kind": "ad hoc"}
 
 
 class PipelineNode(GlobalFilterTarget, LumenNode):

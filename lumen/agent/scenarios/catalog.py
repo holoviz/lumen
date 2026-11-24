@@ -340,10 +340,8 @@ EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "why_question": {"1/no_new_nodes": "W6"},
     "penguin_batch": {"1/kpis": "W1"},
     "capacity_by_year_metric": {"1/chart_titles": "W5"},
-    # #2416 and #2419 label ad hoc KPIs; a chart still carries no ad hoc label.
-    "texas_share_adhoc": {"1/value": "W4", "1/adhoc_label": "M2/#2416"},
-    "capacity_by_year_adhoc": {"1/numbers": "W4", "1/adhoc_label": "M2/#2416"},
-    "capacity_by_region_adhoc": {"1/adhoc_label": "M2/#2416"},
+    "texas_share_adhoc": {"1/value": "W4"},
+    "capacity_by_year_adhoc": {"1/numbers": "W4"},
 }
 
 for _scenario in SCENARIOS:

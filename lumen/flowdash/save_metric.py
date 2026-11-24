@@ -25,6 +25,7 @@ since the metric does not define it.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import re
 
@@ -77,6 +78,7 @@ _METHOD_WORDS = {"SUM": "Sum", "AVG": "Average", "MIN": "Lowest", "MAX": "Highes
 # ---------------------------------------------------------------------------
 # Describing a node's query, for the "Ad hoc" label
 
+@functools.lru_cache(maxsize=256)
 def describe_query(sql: str, dialect: str | None = None) -> str:
     """
     How a query computes its numbers in a few words, e.g. "Sum of p_cap
@@ -109,6 +111,11 @@ def describe_query(sql: str, dialect: str | None = None) -> str:
     if parsed.args.get("joins"):
         text += " with joins"
     return f"{text}, computed by its own SQL query; no metric was used."
+
+
+def adhoc_caption(detail: str) -> str:
+    """The caption of an ad hoc number, e.g. "Ad hoc: Sum of p_cap over all rows of turbines; no metric was used"."""
+    return f"Ad hoc: {detail}"
 
 
 def _describe_aggregate(expression: exp.Expression) -> str:
@@ -188,6 +195,21 @@ def describe_reading(how: str, column: str | None, metric: str) -> str:
     what = f"{word.capitalize()} of {column}" if column else word.capitalize()
     return (f"{what} over the rows of metric {metric}, aggregated on the dashboard; the metric itself does "
             "not define this number.")
+
+
+def describe_adhoc_reading(how: str, column: str | None, detail: str) -> str:
+    """
+    How a view's number is aggregated by an edge from the rows of an ad hoc
+    query described by ``detail``, e.g. "Average of mw over the rows of:
+    Sum of p_cap by t_state of turbines, computed by its own SQL query; no
+    metric was used."
+    """
+    word = _HOW_WORDS.get(how, how)
+    if how == "last":
+        what = f"The {column} of the last row" if column else "The last row"
+    else:
+        what = f"{word.capitalize()} of {column}" if column else word.capitalize()
+    return f"{what}, taken on the dashboard over the rows of: {detail}"
 
 
 # ---------------------------------------------------------------------------

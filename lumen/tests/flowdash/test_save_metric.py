@@ -418,18 +418,35 @@ def test_saved_sql_is_written_as_a_block(ops, project_file):
     assert "sql: |" in text and "\\n" not in text
 
 
-def test_only_single_numbers_are_labelled_ad_hoc(ops):
+def test_rows_from_ad_hoc_queries_are_labelled_ad_hoc(ops):
     ops.add_node("Lumen/source", {"ref": ops.ref}, name="src")
     ops.add_node(SQL_ID, {"sql": "SELECT t_state, SUM(t_cap) AS mw FROM turbines GROUP BY t_state"}, name="by_state")
     ops.connect("src.source", "by_state.source")
     ops.add_node("Lumen/view", {"spec": {"mark": "bar", "encoding": {
         "x": {"field": "t_state", "type": "nominal"}, "y": {"field": "mw", "type": "quantitative"}}}}, name="chart")
     ops.connect("by_state.pipeline", "chart.pipeline")
-    assert ops.editor.node_provenance(ops._instance("chart")) is None
+    provenance, by = ops.editor.node_provenance(ops._instance("chart"))
+    assert by == ops._instance("by_state") and provenance.kind == "ad hoc"
+    assert f"{provenance.label}: {provenance.detail}" == (
+        "Ad hoc: Sum of t_cap by t_state of turbines, computed by its own SQL query; no metric was used.")
     ops.add_node(TABLE_ID, {"ref": ops.ref, "table": "turbines"}, name="rows")
     ops.add_node(AGGREGATE_ID, {"columns": ["p_cap"], "method": "sum", "by": ["t_state"]}, name="per_state")
     ops.connect("rows.pipeline", "per_state.pipeline")
-    assert ops.editor.node_provenance(ops._instance("per_state")) is None
+    provenance, _ = ops.editor.node_provenance(ops._instance("per_state"))
+    assert (provenance.label, provenance.detail) == ("Ad hoc", "Sum of p_cap by t_state of its input; no metric was used.")
+    assert ops.editor.node_provenance(ops._instance("rows")) is None
+
+
+def test_an_edge_aggregating_ad_hoc_rows_says_so(ops):
+    ops.add_node("Lumen/source", {"ref": ops.ref}, name="src")
+    ops.add_node(SQL_ID, {"sql": "SELECT t_state, SUM(t_cap) AS mw FROM turbines GROUP BY t_state"}, name="by_state")
+    ops.connect("src.source", "by_state.source")
+    ops.add_node("Widgets/KPI", {"label": "Mean MW"}, name="mean_mw")
+    ops.connect("by_state.data", "mean_mw.value", [{"op": "column", "column": "mw"}, {"op": "aggregate", "how": "mean"}])
+    provenance, _ = ops.editor.node_provenance(ops._instance("mean_mw"))
+    assert provenance.label == "Ad hoc"
+    assert provenance.detail == ("Average of mw, taken on the dashboard over the rows of: Sum of t_cap by t_state of "
+                                 "turbines, computed by its own SQL query; no metric was used.")
 
 
 def test_the_action_is_not_offered_in_view_mode(ops):
