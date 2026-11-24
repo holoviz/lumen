@@ -216,6 +216,12 @@ def test_filter_values_are_coerced():
     ("SELECT COUNT(*) FROM a UNION SELECT COUNT(*) FROM b", False),
     ("SELECT (SELECT MAX(b.v) FROM b WHERE b.id = a.id) FROM a", False),
     ("SELECT UNNEST(LIST(x)) FROM t", False),
+    ("SELECT 'Total' AS label, SUM(x) FROM t", True),
+    ("SELECT COUNT(*) AS n, CURRENT_DATE AS as_of FROM t", True),
+    ("SELECT 'Total' AS label, x FROM t", False),
+    ("SELECT 'Total' AS label FROM t", False),
+    ("SELECT 'Total' AS label, UNNEST(LIST(x)) FROM t", False),
+    ("SELECT 'Total' AS label, SUM(x) OVER () FROM t", False),
 ])
 def test_sql_is_scalar_aggregate(sql, expected):
     assert sql_is_scalar_aggregate(sql, "duckdb") is expected

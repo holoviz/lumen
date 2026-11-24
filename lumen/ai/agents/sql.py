@@ -506,7 +506,9 @@ def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
     Whether the outermost SELECT collapses everything into a single row.
 
     True for ``SELECT COUNT(*) FROM t`` or ``SELECT MAX(x) / MIN(x) FROM t``:
-    aggregates in every projection and no GROUP BY. Unparseable SQL returns False.
+    aggregates in every projection and no GROUP BY. Constants next to them,
+    as in ``SELECT 'Total' AS label, SUM(x) FROM t``, still give one row.
+    Unparseable SQL returns False.
 
     Aggregates inside a subquery or wrapped in a row-generating function do
     not count: ``SELECT (SELECT MAX(b.v) FROM b WHERE b.id = a.id) FROM a``
@@ -524,8 +526,16 @@ def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
             return False
         return any(agg.find_ancestor(sqlglot.exp.Select) is parsed for agg in proj.find_all(sqlglot.exp.AggFunc))
 
+    def constant(proj: sqlglot.exp.Expression) -> bool:
+        # A label or CURRENT_DATE reads no rows, so it adds none
+        return proj.find(
+            sqlglot.exp.Column, sqlglot.exp.Star, sqlglot.exp.Subquery, sqlglot.exp.Window, *ROW_GENERATING_FUNCTIONS
+        ) is None
+
     projections = parsed.expressions
-    return bool(projections) and all(collapses(proj) for proj in projections)
+    return any(collapses(proj) for proj in projections) and all(
+        collapses(proj) or constant(proj) for proj in projections
+    )
 
 
 def referenced_columns(sql_query: str, dialect: str | None = None) -> set[str] | None:
