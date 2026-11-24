@@ -1,6 +1,7 @@
 """Model-free tools over the Lumen sources and query results of the open dashboard."""
 from __future__ import annotations
 
+import asyncio
 import json
 import weakref
 
@@ -13,13 +14,17 @@ from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..ai.agents.sql import (
     PROMPT_OTHER_TABLES, SCHEMA_MAX_TOKENS, execute_distinct_values,
-    execute_exploration_sql,
 )
 from ..ai.data_quality import lint_data
 from ..ai.schemas import Metaset, get_metaset
 from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..data.catalog import DEGRADED_NOTE
+from ..data.sql import (
+    ExplorationError, fetch_exploration_result, format_exploration_result,
+)
+from ..data.stats import get_stats_store
+from ..data.utils import slug_to_table_name
 from ..flowdash import (
     AGGREGATE_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SELECT_ID,
     SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, bound_sources, check_query,
@@ -33,6 +38,7 @@ from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
 from . import _graph
 from .edits import escape
+from .facts import answer_notes, query_notes, table_notes
 
 STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
@@ -166,6 +172,34 @@ async def metaset(source: Source) -> Metaset:
         slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in listed_tables(source)]
         _METASETS[source] = await get_metaset([source], slugs, stats_timeout=STATS_TIMEOUT)
     return _METASETS[source]
+
+
+async def note_tables(source: Source, meta: Metaset, slugs: list[str]):
+    """Add the grain and dates of each of ``slugs`` under its header in ``meta``'s listings."""
+    notes = await asyncio.gather(*(
+        table_notes(source, slug_to_table_name(slug), meta.get_stats(slug)) for slug in slugs
+    ))
+    meta.notes.update(zip(slugs, notes, strict=True))
+
+
+def _stats_of(source: Source):
+    store = get_stats_store()
+    return lambda table: store.get(source, table)
+
+
+async def result_notes(source: BaseSQLSource, sql: str, frame) -> list[str]:
+    """
+    The facts a query's result is reported with: whether it answers
+    anything, where the dates it reads end when it reads today's date, and
+    which of its text filters miss stored values. ``source`` is the source
+    or earlier result the query ``sql`` runs on.
+    """
+    notes = answer_notes(frame)
+    try:
+        root, statement = expand(sql, source)
+    except (ValueError, sqlglot.errors.SqlglotError):
+        return notes
+    return notes + await query_notes(root, statement, frame, _stats_of(root))
 
 
 def _sources(source: BaseSQLSource) -> dict[tuple[str, str], BaseSQLSource]:
@@ -410,6 +444,7 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     name, src = resolve_source(ctx.deps, source)
     tables = listed_tables(src)
     meta = await metaset(src)
+    await note_tables(src, meta, meta.get_top_tables(SCHEMA_TABLES_SHOWN))
     others = ", ".join(n for n in found if n != name)
     text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
     text += f"; other sources: {others}):\n" if others else "):\n"
@@ -422,7 +457,7 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
 async def describe_table(
     ctx: RunContext[FlowDashDeps], table: str, source: str | None = None, columns: list[str] | None = None
 ) -> str:
-    """Describe a table's columns: type, keys, ranges or common values, null share.
+    """Describe a table: what one row is, its dates, and its columns' types, keys, ranges or common values and null shares.
 
     Args:
         table: Table name.
@@ -435,6 +470,7 @@ async def describe_table(
     if slug not in meta.catalog:
         raise ModelRetry(f"No table {table!r}. Tables: {', '.join(listed_tables(src))}.")
     await meta.ensure_stats([slug], timeout=STATS_TIMEOUT)
+    await note_tables(src, meta, [slug])
     wanted = {c.strip().strip('"').lower() for c in columns} if columns else None
     return meta.table_detail(slug, include_lineage=False, columns=wanted)
 
@@ -470,7 +506,13 @@ async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = 
         root, statement = expand(cleaned, src)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
         return f"SQL parse/clean error: {format_error(exc)}"
-    return await execute_exploration_sql(None, statement, sources=_sources(root), timeout=QUERY_TIMEOUT)
+    try:
+        frame, capped = await fetch_exploration_result(None, statement, sources=_sources(root), timeout=QUERY_TIMEOUT)
+    except ExplorationError as exc:
+        return str(exc)
+    notes = [] if capped else answer_notes(frame)
+    notes += await query_notes(root, statement, frame, _stats_of(root))
+    return format_exploration_result(frame, capped=capped) + "".join(f"\nNote: {note}" for note in notes)
 
 
 def lint(frame) -> str:
