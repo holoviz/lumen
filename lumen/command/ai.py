@@ -15,6 +15,7 @@ import bokeh.command.subcommands.serve
 
 from bokeh.application.handlers.code import CodeHandler
 from bokeh.command.util import die
+from bokeh.settings import settings
 from panel.command import Serve, transform_cmds
 from panel.io.application import Application
 
@@ -125,6 +126,15 @@ class LumenAIServe(Serve):
             help="With --flowdash, the SQLite database dashboards are saved in (default: dashboards.db).",
         )
         flowdash.add_argument(
+            "--project",
+            metavar="FILE",
+            help="""
+            With --flowdash, the project file whose metrics: section defines the metrics
+            dashboards and the agent may use. Defaults to flowdash.yaml next to the data
+            files, if there is one.
+            """,
+        )
+        flowdash.add_argument(
             "--agent-model",
             action="append",
             metavar="MODEL[=LABEL]",
@@ -143,8 +153,8 @@ class LumenAIServe(Serve):
         self._flowdash_apps = None
         if getattr(args, "flowdash", False):
             return self._invoke_flowdash(args, paths)
-        if getattr(args, "db_path", None) or getattr(args, "agent_model", None):
-            raise ValueError("--db-path and --agent-model only apply with --flowdash.")
+        if getattr(args, "db_path", None) or getattr(args, "agent_model", None) or getattr(args, "project", None):
+            raise ValueError("--db-path, --agent-model and --project only apply with --flowdash.")
         if paths and all(Path(path).suffix.lower() in YAML_SUFFIXES for path in paths):
             # A YAML dashboard spec needs no LLM provider; let Serve.invoke route it.
             # Restore the original builder in case a prior invoke() call in this
@@ -322,10 +332,16 @@ class LumenAIServe(Serve):
         from panel.io.application import build_applications
 
         from ..flowdash.app import build_routes
+        from ..flowdash.project import project_beside
 
-        routes = build_routes(
-            [path for path in paths if path != "no_data"], db_path=args.db_path, agent_model=args.agent_model,
-        )
+        data = [path for path in paths if path != "no_data"]
+        # Configured as the base command configures it later, so the project file is logged now.
+        logging.basicConfig(format=args.log_format, filename=args.log_file)
+        logging.getLogger("lumen").setLevel(settings.py_log_level(args.log_level) or logging.INFO)
+        project = getattr(args, "project", None) or project_beside(data)
+        if project is not None:
+            logging.getLogger("lumen.flowdash").info("Reading the project file %s", project)
+        routes = build_routes(data, db_path=args.db_path, agent_model=args.agent_model, project=project)
         self._flowdash_apps = build_applications(routes, title="Lumen", location=True)
         # The base command would read the data files as apps; the routes above serve them.
         bokeh.command.subcommands.serve.build_single_handler_applications = (
@@ -515,7 +531,7 @@ def main(args=None):
         levels = logging.getLevelNamesMapping()
         if levels.get((args.log_level or 'warn').upper(), 30) < 20:
             traceback.print_exc()
-        die("ERROR: " + str(e))
+        die(str(e))
 
     if ret is False:
         sys.exit(1)

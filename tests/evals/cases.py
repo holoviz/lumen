@@ -11,6 +11,8 @@ from lumen.ai.evals.harness import (
     CheckResult, Expected, Inputs, Output,
 )
 from lumen.data.catalog import DocumentChunk
+from lumen.flowdash.metrics import MetricSet, read_metrics
+from lumen.flowdash.project import parse_project
 from lumen.sources.duckdb import DuckDBSource
 
 SUITE_INSTRUCTIONS = {
@@ -46,11 +48,42 @@ def source(inputs: Inputs) -> DuckDBSource:
             "orders_csv": f"read_csv('{files / 'orders.csv'}')",
             "refunds_json": f"read_json_auto('{files / 'refunds.json'}')",
         }
+    elif fixture == "turbine_metrics":
+        tables = {"turbines": (
+            "SELECT * FROM (VALUES ('Alta', 'CA', 1999, 3000), ('Roscoe', 'TX', 2001, 1500), "
+            "('Roscoe', 'TX', 2010, 2000), ('Horse Hollow', 'TX', 2010, 2500), ('Story', 'IA', 2015, 1000), "
+            "('Fowler Ridge', 'IN', 2009, 1650)) AS t(p_name, t_state, p_year, t_cap)"
+        )}
     elif fixture == "documents":
         tables = {"document_index": "SELECT 1 AS indexed"}
     else:
         raise ValueError(f"Unknown eval fixture: {fixture}")
     return DuckDBSource(uri=":memory:", tables=tables)
+
+
+# The project file of the turbine_metrics fixture; a session's source node is named data.
+TURBINE_METRICS = """\
+metrics:
+  capacity:
+    description: Installed wind capacity, from the turbine table.
+    source: data
+    table: turbines
+    measures:
+      capacity_mw: {expr: "SUM(t_cap) / 1000.0", format: ",.1f", description: Rated capacity in MW}
+      turbines: {expr: "COUNT(*)", format: ",", description: Number of turbines}
+    dimensions:
+      state: {column: t_state, description: Two-letter state code}
+      year: {column: p_year, description: Year the project came online}
+    parameters:
+      since: {type: integer, column: p_year, op: ">=", description: First year included}
+"""
+
+
+def metrics(inputs: Inputs) -> MetricSet | None:
+    """The metrics of a fixture that has a project file."""
+    if inputs.fixture != "turbine_metrics":
+        return None
+    return read_metrics(parse_project(TURBINE_METRICS, "flowdash.yaml"))
 
 
 def documents(inputs: Inputs) -> list[DocumentChunk] | None:

@@ -150,6 +150,11 @@ def test_recorded_sessions_are_fully_covered(path):
     for turn in session["turns"]:
         doc = yaml.safe_load(turn["dashboard"])
         found = usages(doc, "data", source_schema(data), "duckdb")
+        components = {node["component"] for node in doc["nodes"].values()} - {"Lumen/source"}
+        if components == {"Lumen/metric"}:
+            # A metric node reads its source by the metric's ref, not through an edge, so no contract covers it yet.
+            assert found == []
+            continue
         assert found and all(u.coverage == FULL for u in found)
         contract = source_contract(doc, "data", data)
         assert check(doc, "data", contract, source_schema(data), "duckdb") == []

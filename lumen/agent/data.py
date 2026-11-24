@@ -17,9 +17,11 @@ from ..ai.schemas import Metaset, get_metaset
 from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..flowdash import (
-    DATA_ID, FILTER_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID,
-    bound_sources, check_query, listed_tables, lookup_source,
+    DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_ID,
+    VIEW_ID, bound_sources, check_query, host_metrics, listed_tables,
+    lookup_source,
 )
+from ..flowdash.metrics import Metric
 from ..sources.base import BaseSQLSource, Source
 from ..util import as_pandas
 from . import _graph
@@ -195,11 +197,57 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
             text = f"{text[:NODE_TEXT_CHARS]} [... {len(text) - NODE_TEXT_CHARS} more characters]"
         kind = component.split("/")[1].lower()
         return f"- {name} ({kind}; {field}): {text!r}"
+    if component == METRIC_ID:
+        picked = [f"{key} {', '.join(map(str, config[key]))}" for key in ("measures", "dimensions", "order_by")
+                  if config.get(key)]
+        picked += [f"{key} {config[key]}" for key in ("grain", "limit") if config.get(key)]
+        if parameters := _graph.inputs_of(ops, name).get("parameters"):
+            picked.append(f"parameters {parameters}")
+        try:
+            pipeline = _graph.output(ops, name, "pipeline")
+            columns = f"columns: {', '.join(c for c in pipeline.schema if c != '__len__')}"
+        except OperationError as exc:
+            columns = str(exc)
+        return f"- {name} (metric {config.get('metric')!r}; {'; '.join([*picked, columns])})"
     return None
 
 
 # The nodes list_tables shows besides the sources.
-LISTED = (SQL_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *_graph.TEXT_FIELDS)
+LISTED = (SQL_ID, METRIC_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *_graph.TEXT_FIELDS)
+
+
+def _field(name: str, description: str, *notes: str | None) -> str:
+    details = [description, *(note for note in notes if note)]
+    return f"{name} ({'; '.join(d for d in details if d)})" if any(details) else name
+
+
+def metric_line(metric: Metric) -> str:
+    """A metric as list_tables shows it: what it is, its fields with their descriptions and formats, and its parameters."""
+    where = f"source {metric.source}, " + (f"table {metric.table}" if metric.table else "SQL")
+    lines = [f"- {metric.name} ({where}): {metric.description}".rstrip(": ")]
+    if metric.form == "sql":
+        sql = " ".join(metric.sql.split())
+        if len(sql) > NODE_SQL_CHARS:
+            sql = f"{sql[:NODE_SQL_CHARS]} [... {len(sql) - NODE_SQL_CHARS} more characters]"
+        lines.append(f"  query: {sql}")
+    if metric.measures:
+        lines.append("  measures: " + ", ".join(
+            _field(m.name, m.description, m.format and f"format {m.format}") for m in metric.measures.values()))
+    if metric.dimensions:
+        lines.append("  dimensions: " + ", ".join(
+            _field(d.name, d.description, d.time and f"time, grains {'/'.join(d.grains)}") for d in metric.dimensions.values()))
+    if metric.parameters:
+        lines.append("  parameters: " + ", ".join(
+            f"{p.name} ({'; '.join(filter(None, [p.description, p.describe()]))})" for p in metric.parameters.values()))
+    return "\n".join(lines)
+
+
+def metrics_listing(ops) -> str | None:
+    """The metrics the app defines, for list_tables, or None without any."""
+    metrics = host_metrics(ops.editor.context)
+    if not metrics:
+        return None
+    return "\n".join(metric_line(metric) for metric in metrics.values())
 
 
 def placed_nodes(ops) -> str | None:
@@ -221,7 +269,7 @@ def placed_nodes(ops) -> str | None:
 
 
 async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, node: str | None = None) -> str:
-    """List a source's tables with column types and stats, its SQL dialect and the nodes already placed.
+    """List the app's metrics, a source's tables with column types and stats, its SQL dialect and the nodes already placed.
 
     Args:
         source: Source name; defaults to the only one.
@@ -235,6 +283,9 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     text = ""
     if placed := placed_nodes(ops):
         text += "Nodes on the dashboard, most recent first:\n" + placed + "\n\n"
+    if metrics := metrics_listing(ops):
+        text += ("Metrics, the app's agreed definitions; place one with add_metric. Column dimensions "
+                 "can be filtered by name through parameters:\n" + metrics + "\n\n")
     found = _sources_by_name(ctx.deps)
     if source is None and len(found) > 1:
         lines = [

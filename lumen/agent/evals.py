@@ -8,7 +8,7 @@ import json
 import os
 import re
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, ClassVar
@@ -26,8 +26,11 @@ from ..ai.evals.harness import (
 )
 from ..ai.tool_trace import ToolCall
 from ..ai.usage import _rates
-from ..flowdash import SQL_ID, VIEW_ID
+from ..flowdash import METRIC_ID, SQL_ID, VIEW_ID
+from ..flowdash.metrics import table_sql
+from ..pipeline import Pipeline
 from ..sources.duckdb import DuckDBSource
+from ..transforms.sql import MetricAggregate
 from ..util import as_pandas
 from . import _graph
 from .assistant import MODEL_SETTINGS
@@ -136,18 +139,41 @@ def result_rows(frame: Any) -> tuple[list[str], list[list[Any]], int]:
 
 def answer_nodes(ops: Any, names: Iterable[str]) -> tuple[str | None, list[str]]:
     """
-    Of the nodes ``names``, the SQL node whose result answers a turn (the last
-    one placed, or else the one the last chart shows) and the charts.
+    Of the nodes ``names``, the SQL or metric node whose result answers a
+    turn (the last one placed, or else the one the last chart shows) and
+    the charts.
     """
     names = set(names)
     touched = [(name, _graph.component_of(ops, name)) for name in _graph.nodes(ops) if name in names]
-    queries = [name for name, component in touched if component == SQL_ID]
+    queries = [name for name, component in touched if component in (SQL_ID, METRIC_ID)]
     views = [name for name, component in touched if component == VIEW_ID]
     if queries:
         return queries[-1], views
     if views:
         return _graph.upstream(ops, views[-1]), views
     return None, views
+
+
+def node_sql(ops: Any, name: str) -> str | None:
+    """
+    The SQL of a SQL node, or the query a metric node compiles to: over its
+    table by name for a structured metric, as a SQL node would write it.
+    """
+    config = _graph.config_of(ops, name)
+    if "sql" in config:
+        return config["sql"]
+    try:
+        pipeline = _graph.output(ops, name, "pipeline")
+    except Exception:
+        return None
+    if not isinstance(pipeline, Pipeline):
+        return None
+    structured = any(isinstance(t, MetricAggregate) for t in pipeline.sql_transforms)
+    dialect = None if pipeline.source.dialect == "any" else pipeline.source.dialect
+    sql = table_sql(pipeline.table, dialect) if structured else pipeline.source.get_sql_expr(pipeline.table)
+    for transform in pipeline.sql_transforms:
+        sql = transform.apply(sql)
+    return sql
 
 
 def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
@@ -157,7 +183,7 @@ def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
     sql = columns = rows = row_count = None
     errors = [turn.error] if turn.error else []
     if data is not None:
-        sql = _graph.config_of(ops, data).get("sql")
+        sql = node_sql(ops, data)
         try:
             frame = _graph.output(ops, data, "data")
         except Exception as exc:
@@ -227,14 +253,18 @@ class FlowDashSubject:
     given to ``build_model`` are appended to the agent's. ``fingerprint`` is
     the stamp of runs without them, since it may not depend on
     ``build_model``; the harness combines it with the suite instructions.
+    ``metrics`` gives the metrics of a case's fixture, e.g. from its
+    project file, or None for none.
     """
 
     name: ClassVar[str]
     supports_architecture = False
 
     def __init__(self, model: Any = None, cassette: str | os.PathLike | None = None,
-                 traces: str | os.PathLike | None = None, model_settings: dict[str, Any] | None = None):
+                 traces: str | os.PathLike | None = None, model_settings: dict[str, Any] | None = None,
+                 metrics: Callable[[Inputs], Any] | None = None):
         self.model = model
+        self.metrics = metrics
         self.model_settings = dict(MODEL_SETTINGS if model_settings is None else model_settings)
         self.cassette = cassette
         traces = traces if traces is not None else os.environ.get(TRACES_ENV)
@@ -278,8 +308,9 @@ class FlowDashSubject:
             digest = hashlib.sha1(json.dumps([inputs.fixture, inputs.prompts, inputs.query]).encode()).hexdigest()[:8]
             trace = self.traces / f"{first}-{digest}.jsonl"
         self._session = self._last_usage = None
+        metrics = self.metrics(inputs) if self.metrics is not None else None
         session = self._session = AgentSession(source, model, instructions=self.instructions, trace=trace,
-                                               model_settings=self.model_settings)
+                                               model_settings=self.model_settings, metrics=metrics)
         turns, artifacts = [], []
         try:
             if inputs.query:
