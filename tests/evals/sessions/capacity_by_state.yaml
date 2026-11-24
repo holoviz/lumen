@@ -17,25 +17,25 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t67546e42
+      - id: t62aa7c09
         actor: user
-        at: '2026-11-23T10:20:09Z'
+        at: '2026-11-24T01:58:19Z'
         summary: Added data.
-      - id: t7a7c8748
+      - id: tf65c8b88
         actor: agent
-        at: '2026-11-23T10:20:11Z'
-        run: run-84c6ba44fbd9
+        at: '2026-11-24T01:58:22Z'
+        run: run-9b640e45e540
         summary: Added installed_capacity_by_state_since_2005. Set Parameters of installed_capacity_by_state_since_2005.
     nodes:
       data:
         component: Lumen/source
-        origin: t67546e42
+        origin: t62aa7c09
         config:
           ref: data
         position: [0.0, 22.0]
       installed_capacity_by_state_since_2005:
         component: Lumen/metric
-        origin: t7a7c8748
+        origin: tf65c8b88
         config:
           metric: capacity
           measures:

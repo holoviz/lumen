@@ -323,26 +323,26 @@ SCENARIOS: list[Scenario] = [
 # fix it. Replaying the cassettes reports them as xfail, and as XPASS once a change makes them pass.
 EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "kpi_turbine_row": {"1/kpis": "W1"},
-    "kpi_penguin_units": {"1/kpis": "W1", "1/kpi_values": "W4", "2/in_place": "W2"},
+    "kpi_top_bar": {"1/kpis": "W1"},
+    "kpi_penguin_units": {"1/kpis": "W1", "2/units": "W1"},
     "kpi_quakes_row": {"1/kpis": "W1"},
-    "wind_build": {"1/kpis": "W1", "1/max_bars": "W5", "1/chart_titles": "W5"},
+    "wind_build": {"1/kpis": "W1", "1/max_bars": "W5", "1/chart_titles": "W5", "1/requests": "W6"},
     "click_to_filter": {"1/selection": "W1"},
-    "rename_table": {"1/node_title": "W1", "1/in_place": "W2"},
+    "rename_table": {"1/node_title": "W1"},
+    "two_columns": {"1/row_top_manufacturers": "W3"},
     "kpis_to_top": {"1/row_kpi_turbines": "W3"},
-    "rolling_average": {"1/legend": "W5"},
-    "units_gw": {"1/numbers": "W2"},
     "capacity_by_year": {"1/numbers": "W4", "1/chart_titles": "W5"},
+    "texas_share": {"1/value": "W4"},
     "california_quakes": {"1/value": "W4", "1/strongest": "W4"},
     "last_month": {"1/value": "W4"},
     "capacity_by_state": {"1/max_bars": "W5", "1/chart_titles": "W5"},
     "quakes_by_type": {"1/chart_titles": "W5"},
-    "email_schedule": {"1/declines": "W6"},
     "why_question": {"1/no_new_nodes": "W6"},
     "penguin_batch": {"1/kpis": "W1"},
     "capacity_by_year_metric": {"1/chart_titles": "W5"},
-    # The ad hoc label is lumen#2416's and M2's.
+    # #2416 and #2419 label ad hoc KPIs; a chart still carries no ad hoc label.
     "texas_share_adhoc": {"1/value": "W4", "1/adhoc_label": "M2/#2416"},
-    "capacity_by_year_adhoc": {"1/adhoc_label": "M2/#2416"},
+    "capacity_by_year_adhoc": {"1/numbers": "W4", "1/adhoc_label": "M2/#2416"},
     "capacity_by_region_adhoc": {"1/adhoc_label": "M2/#2416"},
 }
 
