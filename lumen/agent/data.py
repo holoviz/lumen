@@ -17,6 +17,7 @@ from ..ai.data_quality import lint_data
 from ..ai.schemas import Metaset, get_metaset
 from ..ai.utils import clean_sql, format_error
 from ..config import SOURCE_TABLE_SEPARATOR
+from ..data.catalog import DEGRADED_NOTE
 from ..flowdash import (
     AGGREGATE_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SELECT_ID,
     SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, bound_sources, check_query,
@@ -33,6 +34,7 @@ from . import _graph
 STATS_TIMEOUT = 30
 # Tables SQLAgent's data summary describes, as its schema_tables_shown default; PROMPT_OTHER_TABLES more are named.
 SCHEMA_TABLES_SHOWN = 25
+DESCRIBE_NOTE = "Some tables list names and types only; describe_table gives their statistics."
 # Placed nodes list_tables shows, and the characters of SQL it shows of each.
 NODES_SHOWN = 12
 # A node from a shared dashboard may hold any amount of SQL.
@@ -385,10 +387,10 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     others = ", ".join(n for n in found if n != name)
     text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
     text += f"; other sources: {others}):\n" if others else "):\n"
-    text += meta.compact_context(
+    listing = meta.compact_context(
         n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False, max_tokens=SCHEMA_MAX_TOKENS,
     )
-    return text
+    return text + listing.replace(DEGRADED_NOTE, DESCRIBE_NOTE)
 
 
 async def describe_table(

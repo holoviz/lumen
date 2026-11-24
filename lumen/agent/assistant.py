@@ -16,8 +16,11 @@ from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
 from pydantic_ai.exceptions import (
     ModelAPIError, ModelRequestRejectedError, RetryModelRequest,
 )
-from pydantic_ai.messages import ModelResponse
+from pydantic_ai.messages import (
+    ModelMessage, ModelRequest, ModelResponse, ToolCallPart, UserPromptPart,
+)
 
+from . import _graph
 from .authoring import CheckedConfig, authoring_toolset
 from .data import data_toolset
 from .explore import OwnNodesOnly
@@ -211,6 +214,69 @@ HAS_ARRANGE_TILES = any(tool.__name__ == "arrange_tiles" for tool in FLOWDASH_TO
 
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
+UNPLACED = ("The user only sees nodes on the dashboard, not run_sql results. Place the query your answer "
+            "is based on with add_sql, or change a node with set_config, then answer again.")
+# The tools that place or change a node: the authoring tools, and FlowDash's add_node and set_config.
+PLACING_TOOLS = frozenset({*authoring_toolset().tools, "add_node", "set_config"})
+
+
+def _feedback(part: UserPromptPart) -> bool:
+    return isinstance(part.content, str) and any(text in part.content for text in (CUT_OFF, UNPLACED, SHAPE_CHECK))
+
+
+def current_run(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """
+    The messages since the user's last prompt. pydantic-ai sends an output
+    validator's feedback as a user prompt too, so those are skipped.
+    """
+    start = max((i for i, m in enumerate(messages) if isinstance(m, ModelRequest) and any(
+        isinstance(p, UserPromptPart) and not _feedback(p) for p in m.parts)), default=0)
+    return messages[start:]
+
+
+def _calls(run: list[ModelMessage]) -> set[str]:
+    return {part.tool_name for m in run if isinstance(m, ModelResponse)
+            for part in m.parts if isinstance(part, ToolCallPart)}
+
+
+def answered_from_run_sql(messages: list[ModelMessage]) -> bool:
+    """
+    Whether the current run ran SQL with run_sql but placed or changed no
+    node: small models then state a result the dashboard does not hold.
+    """
+    calls = _calls(current_run(messages))
+    return "run_sql" in calls and not calls & PLACING_TOOLS
+
+
+SHAPE_CHECK = (
+    "Before you answer, check the result you placed against the question. It should have a column for "
+    "each thing the question asks for, including what it groups or lists by, and no others: no ids, "
+    "counts or parts of a ratio the question does not ask for. If a column is missing or extra, change the "
+    "node with set_config; otherwise give your answer again unchanged."
+)
+
+
+def needs_shape_check(messages: list[ModelMessage]) -> bool:
+    """Whether the current run placed or changed a node and has not been asked to check its shape yet."""
+    run = current_run(messages)
+    asked = any(SHAPE_CHECK in str(getattr(p, "content", "")) for m in run if isinstance(m, ModelRequest) for p in m.parts)
+    return bool(_calls(run) & {"add_sql", "set_config"}) and not asked
+
+
+def single_value(ops: Any, messages: list[ModelMessage]) -> bool:
+    """Whether the SQL node the current run placed or changed last holds a single value, which has no shape to check."""
+    names = [part.args_as_dict().get("name") for m in current_run(messages) if isinstance(m, ModelResponse)
+             for part in m.parts if isinstance(part, ToolCallPart) and part.tool_name in ("add_sql", "set_config")]
+    if not names:
+        return False
+    try:
+        frame = _graph.output(ops, names[-1], "data")
+    except Exception:
+        return False
+    return frame is not None and frame.shape == (1, 1)
+
+
+
 # How the drawer's agent treats a question about an answer already on the dashboard.
 FOLLOW_UPS = """\
 - When the user narrows or changes an answer already on the dashboard, e.g. "only show the
@@ -265,6 +331,7 @@ DATA_DASHBOARD_TOOLS = DASHBOARD_TOOLS["data"]
 def create_agent(model: Any = None, *, instructions: str | None = None, model_settings: dict[str, Any] | None = None,
                  dashboard_tools: str | Collection[str] | None = "data",
                  dashboard_instructions: bool | None = None, base_instructions: str = INSTRUCTIONS,
+                 shape_check: bool = False,
                  **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
     The FlowDash agent with Lumen's data and authoring toolsets.
@@ -303,6 +370,11 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     base_instructions
         Lumen's instructions, which ``instructions`` are appended to;
         ``create_explore_agent`` passes ``EXPLORE_INSTRUCTIONS``.
+    shape_check
+        Whether to send the first final answer of a run that placed or
+        changed a SQL node back once, asking the agent to check the
+        result's columns and rows against the question. Off by default
+        until a live comparison on the current agent supports it.
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
@@ -343,6 +415,10 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         last = next((m for m in reversed(ctx.messages) if isinstance(m, ModelResponse)), None)
         if last is not None and last.finish_reason == "length":
             raise ModelRetry(CUT_OFF)
+        if answered_from_run_sql(ctx.messages):
+            raise ModelRetry(UNPLACED)
+        if shape_check and needs_shape_check(ctx.messages) and not single_value(ctx.deps.ops, ctx.messages):
+            raise ModelRetry(SHAPE_CHECK)
         return output
 
     return agent

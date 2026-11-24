@@ -694,6 +694,49 @@ async def test_set_config_checks_and_runs_sql_and_chart_specs():
     assert "COUNT(*)" in config["sql"] and turn.error is None
 
 
+async def test_an_answer_from_run_sql_alone_is_sent_back_to_be_placed():
+    model, requests = script(
+        [ToolCallPart("run_sql", {"sql": "SELECT SUM(amount) AS total FROM orders"})],
+        [TextPart("The total is 90.")],
+        [ToolCallPart("add_sql", {"source": "data", "name": "total", "sql": "SELECT SUM(amount) AS total FROM orders"})],
+        [TextPart("The total is 90.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model)
+    try:
+        turn = await session.ask("What is the total amount?")
+    finally:
+        session.close()
+    assert "Place the query your answer is based on" in str(requests[2])
+    assert turn.nodes == ["total"] and turn.error is None
+
+
+async def test_list_tables_points_at_describe_table_for_unprofiled_tables(ctx, monkeypatch):
+    monkeypatch.setattr("lumen.agent.data.SCHEMA_MAX_TOKENS", 40)
+    text = await list_tables(ctx)
+    assert "describe_table gives their statistics" in text and "load_table_schemas" not in text
+
+
+@pytest.mark.parametrize(("shape_check", "sql", "requests_made"), [
+    (True, BY_REGION, 3),
+    (True, "SELECT SUM(amount) AS total FROM orders", 2),
+    (False, BY_REGION, 2),
+])
+async def test_shape_check_sends_the_answer_back_once_only_when_enabled(shape_check, sql, requests_made):
+    model, requests = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "result", "sql": sql})],
+        [TextPart("Done.")],
+        [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           agent=create_agent(model, shape_check=shape_check))
+    try:
+        turn = await session.ask("Totals")
+    finally:
+        session.close()
+    assert turn.error is None and len(requests) == requests_made
+    assert ("check the result you placed" in str(requests[-1])) == (requests_made == 3)
+
+
 def _filtered_customers(session):
     ops = session.ops
     ops.add_node(TABLE_ID, {"table": "customers"}, name="customers")
