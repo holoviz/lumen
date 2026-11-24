@@ -997,6 +997,39 @@ class DataNode(LumenNode):
         return pn.widgets.Tabulator(self._object, disabled=True, sizing_mode="stretch_both")
 
 
+_FIXED_AUTOSIZE = ("pad", "none")
+
+_VIEW_SIZES = {
+    "width": ("width", "continuousWidth", "discreteWidth"),
+    "height": ("height", "continuousHeight", "discreteHeight"),
+}
+
+
+def responsive_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """
+    ``spec`` with ``"container"`` for the width and height it leaves out, so
+    the chart fills its tile and follows resizes. A size the spec sets, at
+    the top level or in ``config.view``, is kept, as is a spec whose
+    ``autosize`` is ``"pad"`` or ``"none"``. A compound chart, which
+    Vega-Lite cannot size to a container, is returned as it is.
+    """
+    from ..ai.utils import is_compound_vegalite
+
+    autosize = spec.get("autosize")
+    if isinstance(autosize, dict):
+        autosize = autosize.get("type")
+    if autosize in _FIXED_AUTOSIZE or is_compound_vegalite(spec):
+        return spec
+    config = spec.get("config")
+    view = config.get("view") if isinstance(config, dict) else None
+    view = view if isinstance(view, dict) else {}
+    defaults = {
+        dimension: "container" for dimension, keys in _VIEW_SIZES.items()
+        if not any(key in view for key in keys)
+    }
+    return {**defaults, **spec}
+
+
 @register(
     component=True, page=False, title="Lumen Vega-Lite view", icon="bar_chart",
     description="A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings no data or URLs.",
@@ -1008,7 +1041,9 @@ class ViewNode(LumenNode):
 
     pipeline = param.Parameter(doc="The upstream pipeline.")
 
-    spec = param.Dict(default={}, doc="The Vega-Lite spec, without data.")
+    spec = param.Dict(default={}, doc="""
+        The Vega-Lite spec, without data. A width or height it leaves out
+        follows the tile's.""")
 
     @param.depends("pipeline", "spec", watch=True, on_init=True)
     def _refresh(self, *events):
@@ -1024,7 +1059,7 @@ class ViewNode(LumenNode):
         spec = check_chart(self.spec, pipeline_columns(self.pipeline))
         # The rows come through fetch, so the chart shares one query with the pipeline's other readers.
         rows = fetch(self.pipeline, row_ceiling(self.editor))
-        return VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=spec)
+        return VegaLiteView(pipeline=_clone(self.pipeline, data=rows), spec=responsive_spec(spec))
 
     def _body(self):
         view = self._object
