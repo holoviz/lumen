@@ -41,6 +41,9 @@ from .transforms import (
 )
 
 COMPONENTS.update(TRANSFORM_COMPONENTS)
+from .table_view import TABLE_VIEW_ID, TableViewNode
+
+COMPONENTS[TABLE_VIEW_ID] = TableViewNode
 
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.
@@ -70,6 +73,7 @@ __all__ = [
     "SOURCE_TYPE",
     "SQL_ID",
     "TABLE_ID",
+    "TABLE_VIEW_ID",
     "VIEW_ID",
     "AggregateNode",
     "CheckDiagnostic",
@@ -86,6 +90,7 @@ __all__ = [
     "SortNode",
     "SourceNode",
     "TableNode",
+    "TableViewNode",
     "ViewNode",
     "bind_source",
     "bound_sources",

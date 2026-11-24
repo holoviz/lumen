@@ -152,18 +152,19 @@ def result_rows(frame: Any) -> tuple[list[str], list[list[Any]], int]:
 def answer_nodes(ops: Any, names: Iterable[str]) -> tuple[str | None, list[str]]:
     """
     Of the nodes ``names``, the SQL or metric node whose result answers a
-    turn (the last one placed, or else the one the last chart shows) and
-    the charts.
+    turn (the last one placed, or else the one the last chart, table or
+    other Lumen view shows) and the charts.
     """
     names = set(names)
     touched = [(name, _graph.component_of(ops, name)) for name in _graph.nodes(ops) if name in names]
     queries = [name for name, component in touched if component in (SQL_ID, METRIC_ID)]
-    views = [name for name, component in touched if component == VIEW_ID]
+    charts = [name for name, component in touched if component == VIEW_ID]
+    views = [name for name, component in touched if _graph.view_class(component) is not None]
     if queries:
-        return queries[-1], views
+        return queries[-1], charts
     if views:
-        return _graph.upstream(ops, views[-1]), views
-    return None, views
+        return _graph.upstream(ops, views[-1]), charts
+    return None, charts
 
 
 def node_sql(ops: Any, name: str) -> str | None:
