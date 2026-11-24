@@ -253,3 +253,21 @@ def test_focus_returns_to_the_row_of_a_saved_metric(page, tmp_path, monkeypatch)
     expect(drawer).to_be_hidden()
     expect(page.locator(".flowdash-admin-row-fleet")).to_contain_text("Every turbine.")
     expect(page.locator(".flowdash-admin-row-fleet .flowdash-admin-metric-menu button")).to_be_focused()
+
+
+def test_focus_stays_where_the_user_moved_it_after_a_close(page, tmp_path, monkeypatch):
+    from lumen.flowdash import metrics_admin
+
+    monkeypatch.setattr(metrics_admin, "_FOCUS_DELAY_MS", 2000)
+    _serve(page, tmp_path, monkeypatch)
+    page.locator(".flowdash-admin-row-fleet").get_by_text("fleet", exact=True).click()
+    drawer = _drawer(page)
+    expect(drawer).to_contain_text("Edit fleet", timeout=15000)
+    page.keyboard.press("Escape")
+    expect(drawer).to_be_hidden()
+    new = page.get_by_role("button", name="New metric")
+    new.focus()
+    page.keyboard.press("Shift")
+    page.wait_for_timeout(2500)
+    expect(new).to_be_focused()
+    expect(page.locator(".flowdash-admin-row-fleet .flowdash-admin-metric-menu button")).not_to_be_focused()

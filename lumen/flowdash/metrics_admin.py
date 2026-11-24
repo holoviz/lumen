@@ -246,9 +246,9 @@ def save_metric(
     Only an admin (``app._still_admin()``) may save. Returns the problems
     that stopped it; none when it was written.
     """
-    if not _admin(app):
-        return [Problem(NOT_ADMIN)]
     with _FILE_LOCK:
+        if not _admin(app):
+            return [Problem(NOT_ADMIN)]
         try:
             current = raw_section(project)
         except ProjectError as exc:
@@ -271,9 +271,9 @@ def save_metric(
 
 def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = _UNSET) -> list[Problem]:
     """Delete metric ``name`` from the project file; only an admin may. Returns the problems that stopped it."""
-    if not _admin(app):
-        return [Problem(NOT_ADMIN.replace("saved", "deleted"))]
     with _FILE_LOCK:
+        if not _admin(app):
+            return [Problem(NOT_ADMIN.replace("saved", "deleted"))]
         try:
             current = raw_section(project)
         except ProjectError as exc:
@@ -863,12 +863,42 @@ class _MetricsTable(Table):
 _FOCUS_DELAY_MS = 400
 
 
-def _focus_after_close(widget: t.Any):
+# Armed when the drawer or dialog closes, it marks itself moved when the user presses a key or the
+# pointer before focus is put back, so focus stays where they put it in the meantime.
+_FOCUS_GUARD_JS = """
+const token = cb_obj.value
+if (!token.startsWith("armed")) { return }
+const seen = () => {
+  document.removeEventListener("keydown", seen, true)
+  document.removeEventListener("pointerdown", seen, true)
+  if (cb_obj.value === token) { cb_obj.value = "moved" + token.slice(5) }
+}
+document.addEventListener("keydown", seen, true)
+document.addEventListener("pointerdown", seen, true)
+"""
+
+
+def _focus_guard() -> pn.widgets.TextInput:
+    guard = pn.widgets.TextInput(value="", visible=False, margin=0)
+    guard.jscallback(value=_FOCUS_GUARD_JS)
+    return guard
+
+
+def _focus_after_close(widget: t.Any, guard: t.Any = None):
     doc = pn.state.curdoc
     if doc is None or doc.session_context is None:
         widget.focus()
         return
-    pn.state.add_periodic_callback(widget.focus, period=_FOCUS_DELAY_MS, count=1)
+    token = ""
+    if guard is not None:
+        token = str(int(guard.value[5:] or 0) + 1 if guard.value[:5] in ("armed", "moved") else 1)
+        guard.value = f"armed{token}"
+
+    def focus():
+        if guard is None or guard.value != f"moved{token}":
+            widget.focus()
+
+    pn.state.add_periodic_callback(focus, period=_FOCUS_DELAY_MS, count=1)
 
 
 class MetricsSettings(Viewer):
@@ -926,11 +956,13 @@ class MetricsSettings(Viewer):
         self._editor = MetricEditor(project)
         self._build_drawer()
         self._build_dialog()
+        self._focus_guard = _focus_guard()
         self._layout = pn.Column(
             self._alert,
             self._table,
             self._drawer,
             self._dialog,
+            self._focus_guard,
             margin=0,
             sizing_mode="stretch_width",
             css_classes=["flowdash-admin-metrics-section"],
@@ -971,23 +1003,54 @@ class MetricsSettings(Viewer):
     def refresh(self):
         """Draw the table from the project file."""
         self._menus = {}
+        self._alert.visible = False
         section = self.section()
         usage = self.usage()
+        problems = self.problems(section)
         where = Path(self.project.path).name if self.project.path else "the project file"
         n = len(section)
         self._count.object = f"{n} metric{'' if n == 1 else 's'} in {where}"
-        self._table.set_rows([(name, self._cells(name, spec, usage.get(name, []))) for name, spec in section.items()])
+        self._table.set_rows([
+            (name, self._cells(name, spec, usage.get(name, []), problems.get(name, [])))
+            for name, spec in section.items()
+        ])
+        if general := problems.get(None):
+            self._alert.param.update(
+                object="The project file's metrics have problems: " + " ".join(general), visible=True
+            )
 
-    def _cells(self, name: str, spec: t.Any, used: Sequence[DashboardRef]) -> list:
+    def problems(self, section: Mapping[str, t.Any]) -> dict[str | None, list[str]]:
+        """
+        Why the app does not use each metric of ``section``, e.g. after a hand
+        edit of the file, by metric name; None for problems of no one metric.
+        """
+        if not section:
+            return {}
+        _, problems = load_metrics(self.project, section)
+        by_metric: dict[str | None, list[str]] = {}
+        for problem in _masked(problems):
+            keys = tuple(problem.keys or ())
+            name = keys[0] if problem.section in (None, SECTION) and keys and keys[0] in section else None
+            by_metric.setdefault(name, []).append(problem.message)
+        return by_metric
+
+    def _cells(self, name: str, spec: t.Any, used: Sequence[DashboardRef], problems: Sequence[str] = ()) -> list:
         spec = spec if isinstance(spec, dict) else {}
         measures, dimensions = _fields(spec)
         description = spec.get("description") if isinstance(spec.get("description"), str) else ""
+        flag = (
+            f'<span class="main error-text small">Not used by the app: {esc(" ".join(problems))}</span>'
+            if problems else ""
+        )
         title = cell(
             f'<div class="metric"><span class="main">{esc(name)}</span>'
-            f'<span class="main muted small">{esc(description) or "&nbsp;"}</span></div>',
+            f'<span class="main muted small">{esc(description) or "&nbsp;"}</span>{flag}</div>',
             stylesheets=[_ROW_CSS],
         )
-        open_editor = pmui.Clickable(object=title, sizing_mode="stretch_width", margin=0)
+        open_editor = pmui.Clickable(
+            object=title, sizing_mode="stretch_width", margin=0,
+            css_classes=["flowdash-admin-metric-invalid"] if problems else [],
+        )
         open_editor.on_click(lambda *_args, name=name: self.open_metric(name))
         where = spec.get("table") if "table" in spec else "SQL query"
         source = cell(
@@ -1106,7 +1169,7 @@ class MetricsSettings(Viewer):
     def _restore_focus(self):
         """Focus the row menu of the metric last acted on, or New metric when it is gone."""
         opener = self._menus.get(self._return_to) if self._return_to is not None else None
-        _focus_after_close(opener or self._new)
+        _focus_after_close(opener or self._new, self._focus_guard)
 
     def open_metric(self, name: str | None, spec: Mapping[str, t.Any] | None = None, title: str | None = None):
         """Open the editor on metric ``name``, or on a new one (defined as ``spec``, if given)."""
@@ -1204,7 +1267,7 @@ class MetricsSettings(Viewer):
             return
         self._pending = None
         if self._drawer.open:
-            _focus_after_close(self._editor)
+            _focus_after_close(self._editor, self._focus_guard)
         else:
             self._restore_focus()
 

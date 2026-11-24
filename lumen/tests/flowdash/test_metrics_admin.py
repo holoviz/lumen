@@ -412,6 +412,36 @@ def test_a_failed_load_is_not_retried_before_its_time(project, source_down):
     assert source_down == ["fleet"]
 
 
+def test_reads_do_not_wait_on_a_slow_retry(project, monkeypatch):
+    import threading
+    import time
+
+    from lumen.flowdash import metrics as module
+
+    metrics = ProjectMetrics(project, retry=0)
+    assert list(metrics) == ["fleet"]
+    started, release = threading.Event(), threading.Event()
+
+    def hang(metric, source):
+        started.set()
+        release.wait(10)
+        raise RuntimeError("timed out")
+
+    monkeypatch.setattr(module, "check_metric", hang)
+    _reloaded(project, {**raw_section(project), "capacity": CAPACITY})
+    retrying = threading.Thread(target=lambda: list(metrics))
+    retrying.start()
+    try:
+        assert started.wait(10)
+        begin = time.monotonic()
+        for _ in range(20):
+            assert list(metrics) == ["fleet"] and metrics["fleet"].table == "turbines"
+        assert time.monotonic() - begin < 1
+    finally:
+        release.set()
+        retrying.join(10)
+
+
 def test_a_metric_deleted_while_the_metrics_are_read_does_not_break_the_reading(project):
     from lumen.flowdash.nodes import host_metrics
 
@@ -486,3 +516,21 @@ def test_an_invalid_rename_shows_its_problems_without_asking(project):
     assert not view.save()
     assert not view._dialog.open
     assert "letters, digits" in view._editor._name.helper_text
+
+
+def test_the_table_flags_a_metric_a_hand_edit_broke(project, tmp_path):
+    (tmp_path / PROJECT_FILE).write_text(
+        YAML.replace("turbines: COUNT(*)", "turbines: SUM(nope)")
+        + "  capacity:\n    source: turbines\n    sql: SELECT SUM(p_cap) AS capacity_mw FROM turbines\n"
+    )
+    view, _ = _settings(project)
+    rows = {
+        name: "".join(str(getattr(getattr(c, "object", ""), "object", "")) for c in row.select()) for name, row in zip(
+            raw_section(project), view._table._rows, strict=True
+        )
+    }
+    assert "Not used by the app" in rows["fleet"] and "Unknown column &#x27;nope&#x27;" in rows["fleet"]
+    assert "Not used by the app" not in rows["capacity"]
+    assert not view._alert.visible
+    clickables = [c for c in view._table._rows[0].select() if "flowdash-admin-metric-invalid" in getattr(c, "css_classes", [])]
+    assert clickables
