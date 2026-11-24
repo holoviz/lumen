@@ -16,6 +16,8 @@ a metric another admin changed since the editor opened.
 from __future__ import annotations
 
 import copy
+import dataclasses
+import io
 import logging
 import math
 import typing as t
@@ -36,9 +38,9 @@ from panel_flowdash.admin.kit import (
 )
 from panel_flowdash.admin.wizard import WizardStep
 from panel_flowdash.project import (
-    _FILE_LOCK, Problem, Project, ProjectError, Section, _dump, _parse, _read,
+    _FILE_LOCK, Problem, Project, ProjectError, Section, _parse,
 )
-from panel_flowdash.value_text import error_text
+from panel_flowdash.value_text import error_text, redact_secrets
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, SequenceNode
@@ -128,9 +130,14 @@ _OVERLINE_SX = {
 
 def raw_section(project: Project) -> dict[str, t.Any]:
     """The ``metrics:`` section as plain YAML data, as the project file has it now."""
-    path = Path(project.path) if project.path else None
+    path = Path(project.path).resolve() if project.path else None
     if path is not None and path.is_file():
-        data, _ = _parse(_read(path.resolve()), project.path)
+        with _FILE_LOCK:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise ProjectError([Problem(f"Cannot read the project file: {error_text(exc)}", str(path))]) from None
+        data, _ = _parse(text, project.path)
     else:
         data = project.data
     value = data.get(SECTION)
@@ -154,6 +161,11 @@ def _replaced(current: Mapping[str, t.Any], original: str | None, name: str, spe
 
 def _problem(name: str, keys: Sequence[str], message: str) -> Problem:
     return Problem(message, section=SECTION, keys=(name, *keys))
+
+
+def _masked(problems: Sequence[Problem]) -> list[Problem]:
+    """``problems`` with any credentials an engine's error quotes masked, to show an admin."""
+    return [dataclasses.replace(p, message=redact_secrets(p.message)) for p in problems]
 
 
 def load_metrics(project: Project, section: Mapping[str, t.Any]) -> tuple[MetricSet, list[Problem]]:
@@ -197,14 +209,14 @@ def check_metric(
     current = raw_section(project) if current is None else current
     if name != original and name in current:
         return [_problem(name, (NAME_KEY,), f"A metric named {name!r} exists already.")]
-    return load_metrics(project, _replaced(current, original, name, spec))[1]
+    return _masked(load_metrics(project, _replaced(current, original, name, spec))[1])
 
 
 def _admin(app: t.Any) -> bool:
     try:
         return app is not None and bool(app._still_admin())
-    except Exception:
-        logger.exception("Could not check whether this session is still an admin.")
+    except Exception as exc:
+        logger.warning("Could not check whether this session is still an admin: %s", error_text(exc))
         return False
 
 
@@ -216,7 +228,7 @@ def _write(project: Project, section: dict[str, t.Any]) -> list[Problem]:
     try:
         project.set(SECTION, section)
     except ProjectError as exc:
-        return list(exc.problems)
+        return _masked(exc.problems)
     except OSError as exc:
         return [Problem(f"Could not write the project file: {error_text(exc)}")]
     return []
@@ -240,7 +252,7 @@ def save_metric(
         try:
             current = raw_section(project)
         except ProjectError as exc:
-            return list(exc.problems)
+            return _masked(exc.problems)
         if original is not None and base is not _UNSET:
             if original not in current:
                 return [_problem(name, (), f"Metric {original!r} was deleted since you opened it; "
@@ -265,7 +277,7 @@ def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = _UNS
         try:
             current = raw_section(project)
         except ProjectError as exc:
-            return list(exc.problems)
+            return _masked(exc.problems)
         if name not in current:
             return [_problem(name, (), f"Metric {name!r} is not in the project file any more.")]
         if base is not _UNSET and current[name] != base:
@@ -304,7 +316,15 @@ def split_spec(spec: Mapping[str, t.Any]) -> tuple[dict[str, t.Any], str]:
     """The form's values of a metric's definition, and the rest of it as YAML text."""
     form = {key: spec.get(key) for key in FORM_KEYS}
     rest = {key: value for key, value in spec.items() if key not in FORM_KEYS}
-    return form, (_dump(_literal(rest)) if rest else "")
+    return form, (_yaml_text(_literal(rest)) if rest else "")
+
+
+def _yaml_text(value: Mapping[str, t.Any]) -> str:
+    yaml = YAML()
+    yaml.width = 4096
+    buffer = io.StringIO()
+    yaml.dump(value, buffer)
+    return buffer.getvalue()
 
 
 def join_spec(form: Mapping[str, t.Any], text: str) -> tuple[dict[str, t.Any], list[Problem], dict]:
@@ -470,7 +490,7 @@ def preview_metric(
     try:
         metric = _Reader(Section(SECTION, {name: spec}, candidate)).read()[name]
     except ProjectError as exc:
-        return list(exc.problems), []
+        return _masked(exc.problems), []
     source = lookup_source(metric.source, project.context)
     if source is None:
         from .nodes import host_sources
@@ -652,8 +672,8 @@ class MetricEditor(Viewer):
             return []
         try:
             return sorted(source.get_tables())
-        except Exception:
-            logger.exception("Could not list the tables of source %r", ref)
+        except Exception as exc:
+            logger.warning("Could not list the tables of source %r: %s", ref, error_text(exc))
             return []
 
     def _columns(self, ref: str | None, table: str | None) -> list[str]:
@@ -802,6 +822,10 @@ class MetricEditor(Viewer):
                 self._preview.object = f'<div class="k">{preview_html(results)}</div>'
         return results
 
+    def focus(self):
+        """Focus the name field."""
+        self._name.focus()
+
     def __panel__(self):
         return self._layout
 
@@ -834,6 +858,19 @@ class _MetricsTable(Table):
                 row.stylesheets = [*row.stylesheets, _NARROW_CSS]
 
 
+# How long after the drawer or dialog closes focus moves: its exit transition hands focus back to
+# what had it when it opened, and a row the table just redrew mounts only after this.
+_FOCUS_DELAY_MS = 400
+
+
+def _focus_after_close(widget: t.Any):
+    doc = pn.state.curdoc
+    if doc is None or doc.session_context is None:
+        widget.focus()
+        return
+    pn.state.add_periodic_callback(widget.focus, period=_FOCUS_DELAY_MS, count=1)
+
+
 class MetricsSettings(Viewer):
     """The Metrics section: the table of the project's metrics and a drawer that edits one."""
 
@@ -846,6 +883,8 @@ class MetricsSettings(Viewer):
         self.project = project
         self._app = current_app()
         self._base: t.Any = _UNSET
+        # The metric whose row menu takes the focus when the drawer or the dialog closes; None for New metric.
+        self._return_to: str | None = None
         self._alert = pmui.Alert(
             object="", severity="error", visible=False, sizing_mode="stretch_width", margin=0
         )
@@ -915,12 +954,12 @@ class MetricsSettings(Viewer):
             return {}
         try:
             return metric_usage(store._all_dashboards())
-        except Exception:
-            logger.exception("Could not read the dashboards that use the metrics.")
+        except Exception as exc:
+            logger.warning("Could not read the dashboards that use the metrics: %s", error_text(exc))
             return {}
 
     def _show_problems(self, problems: Sequence[Problem]):
-        self._alert.param.update(object="\n\n".join(p.message for p in problems), visible=bool(problems))
+        self._alert.param.update(object="\n\n".join(p.message for p in _masked(problems)), visible=bool(problems))
 
     def _notify(self, message: str):
         if self._app is not None:
@@ -1059,11 +1098,15 @@ class MetricsSettings(Viewer):
         if event.new:
             return
         # Closed with Escape, the backdrop or a button: focus goes back to what opened it.
-        opener = self._menus.get(self.selected) if self.selected is not None else self._new
         self.selected = None
         self._base = _UNSET
-        if opener is not None:
-            opener.focus()
+        if not self._dialog.open:
+            self._restore_focus()
+
+    def _restore_focus(self):
+        """Focus the row menu of the metric last acted on, or New metric when it is gone."""
+        opener = self._menus.get(self._return_to) if self._return_to is not None else None
+        _focus_after_close(opener or self._new)
 
     def open_metric(self, name: str | None, spec: Mapping[str, t.Any] | None = None, title: str | None = None):
         """Open the editor on metric ``name``, or on a new one (defined as ``spec``, if given)."""
@@ -1071,6 +1114,7 @@ class MetricsSettings(Viewer):
         if name is not None and name not in section:
             return
         self.selected = name
+        self._return_to = name
         self._base = copy.deepcopy(section[name]) if name is not None else _UNSET
         with pn.io.hold():
             self._drawer_alert.visible = False
@@ -1085,14 +1129,25 @@ class MetricsSettings(Viewer):
         self.selected = None
         self._base = _UNSET
 
-    def save(self) -> bool:
-        """Save the editor's metric; show the problems at their fields if it is refused."""
+    def save(self, confirmed: bool = False) -> bool:
+        """
+        Save the editor's metric; show the problems at their fields if it is
+        refused. Renaming a metric dashboards use asks first, as deleting
+        it does, unless ``confirmed``.
+        """
         spec, problems = self._editor.spec()
         name = self._editor.metric_name
+        original = self.selected
+        renamed = original is not None and name != original
+        if not problems and renamed and not confirmed and (used := self.usage().get(original)):
+            problems = check_metric(self.project, name, spec, original)
+            if not problems:
+                self.ask_rename(original, name, used)
+                return False
         if not problems:
             problems = save_metric(
                 self.project, name, spec, app=self._app if self.editable else None,
-                original=self.selected, base=self._base,
+                original=original, base=self._base,
             )
         if problems:
             general = self._editor.show_problems(problems)
@@ -1101,8 +1156,9 @@ class MetricsSettings(Viewer):
                 visible=True,
             )
             return False
-        self.close_metric()
+        self._return_to = name
         self.refresh()
+        self.close_metric()
         self._notify(f"Metric {name} saved.")
         return True
 
@@ -1122,7 +1178,8 @@ class MetricsSettings(Viewer):
     # Deleting
 
     def _build_dialog(self):
-        self._pending: tuple[str, t.Any] | None = None
+        # What the dialog asks about: ("delete", name, its definition) or ("rename", name, new name).
+        self._pending: tuple[str, str, t.Any] | None = None
         self._dialog_text = cell("", stylesheets=[_ROW_CSS])
         self._dialog_alert = pmui.Alert(
             object="", severity="error", visible=False, sizing_mode="stretch_width", margin=0
@@ -1130,7 +1187,7 @@ class MetricsSettings(Viewer):
         cancel = pmui.Button(label="Cancel", variant="text", color="default", margin=0)
         cancel.on_click(lambda _event: self.cancel_delete())
         self._confirm = pmui.Button(label="Delete metric", variant="contained", color="error", margin=0)
-        self._confirm.on_click(lambda _event: self.confirm_delete())
+        self._confirm.on_click(lambda _event: self.confirm())
         self._dialog = pmui.Dialog(
             pn.Column(self._dialog_alert, self._dialog_text, margin=0, sizing_mode="stretch_width",
                       styles={"gap": "12px"}),
@@ -1140,6 +1197,40 @@ class MetricsSettings(Viewer):
             close_on_click=True,
             css_classes=["flowdash-admin-confirm"],
         )
+        self._dialog.param.watch(self._on_dialog_open, "open")
+
+    def _on_dialog_open(self, event):
+        if event.new:
+            return
+        self._pending = None
+        if self._drawer.open:
+            _focus_after_close(self._editor)
+        else:
+            self._restore_focus()
+
+    @staticmethod
+    def _used_html(name: str, used: Sequence[DashboardRef], effect: str) -> str:
+        links = ", ".join(
+            f'<a href="/dash/{esc(ref.dashboard_id)}">{esc(ref.title)}</a>' for ref in used[:10]
+        ) + (f" and {len(used) - 10} more" if len(used) > 10 else "")
+        n = len(used)
+        return (
+            f'<p class="warn"><b>{n} dashboard{"" if n == 1 else "s"} use{"s" if n == 1 else ""} '
+            f"{esc(name)}</b>: {links}. {effect}</p>"
+        )
+
+    def ask_rename(self, original: str, name: str, used: Sequence[DashboardRef]):
+        """Ask before renaming ``original``, which the dashboards ``used`` read, to ``name``."""
+        self._pending = ("rename", original, name)
+        text = self._used_html(
+            original, used,
+            f"Their metric tiles will show an error until a metric named {esc(original)} is defined again.",
+        )
+        with pn.io.hold():
+            self._dialog_alert.visible = False
+            self._dialog_text.object = f'<div class="k">{text}<p>Rename it to <b>{esc(name)}</b> anyway?</p></div>'
+            self._confirm.label = "Rename metric"
+            self._dialog.param.update(title=f"Rename metric {original}?", open=True)
 
     def ask_delete(self, name: str):
         """Ask before deleting ``name``, listing the dashboards that use it."""
@@ -1147,42 +1238,46 @@ class MetricsSettings(Viewer):
         if name not in section:
             return
         used = self.usage().get(name, [])
-        self._pending = (name, copy.deepcopy(section[name]))
+        self._pending = ("delete", name, copy.deepcopy(section[name]))
+        self._return_to = name
         if used:
-            links = ", ".join(
-                f'<a href="/dash/{esc(ref.dashboard_id)}">{esc(ref.title)}</a>' for ref in used[:10]
-            ) + (f" and {len(used) - 10} more" if len(used) > 10 else "")
-            n = len(used)
-            text = (
-                f'<p class="warn"><b>{n} dashboard{"" if n == 1 else "s"} use{"s" if n == 1 else ""} '
-                f"{esc(name)}</b>: {links}. Their metric tiles will show an error until a metric of "
-                "this name is defined again.</p>"
+            text = self._used_html(
+                name, used, "Their metric tiles will show an error until a metric of this name is defined again."
             )
         else:
             text = f"<p>No dashboard uses <b>{esc(name)}</b>. The assistant stops offering it.</p>"
         with pn.io.hold():
             self._dialog_alert.visible = False
             self._dialog_text.object = f'<div class="k">{text}<p>This can\'t be undone.</p></div>'
+            self._confirm.label = "Delete metric"
             self._dialog.param.update(title=f"Delete metric {name}?", open=True)
 
     def cancel_delete(self):
-        self._pending = None
+        """Close the dialog without deleting or renaming."""
         self._dialog.open = False
+
+    def confirm(self) -> bool:
+        """Carry out what the dialog asks about."""
+        if self._pending is None:
+            return False
+        if self._pending[0] == "rename":
+            self._dialog.open = False
+            return self.save(confirmed=True)
+        return self.confirm_delete()
 
     def confirm_delete(self) -> bool:
         """Delete the metric the dialog asks about."""
-        if self._pending is None:
+        if self._pending is None or self._pending[0] != "delete":
             return False
-        name, base = self._pending
+        _, name, base = self._pending
         problems = delete_metric(self.project, name, app=self._app if self.editable else None, base=base)
         if problems:
             self._dialog_alert.param.update(object="\n\n".join(p.message for p in problems), visible=True)
             return False
-        self._pending = None
-        self._dialog.open = False
         if self.selected == name:
             self.close_metric()
         self.refresh()
+        self._dialog.open = False
         self._notify(f"Metric {name} deleted.")
         return True
 
