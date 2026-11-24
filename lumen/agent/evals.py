@@ -152,8 +152,8 @@ def result_rows(frame: Any) -> tuple[list[str], list[list[Any]], int]:
 def answer_nodes(ops: Any, names: Iterable[str]) -> tuple[str | None, list[str]]:
     """
     Of the nodes ``names``, the SQL or metric node whose result answers a
-    turn (the last one placed, or else the one the last chart, table or
-    other Lumen view shows) and the charts.
+    turn (the last one placed, or else the one the last chart, table, map
+    or other Lumen view shows) and the charts.
     """
     names = set(names)
     touched = [(name, _graph.component_of(ops, name)) for name in _graph.nodes(ops) if name in names]

@@ -1,7 +1,8 @@
-"""Tools that validate a query, chart or table before placing it on the dashboard as a node."""
+"""Tools that validate a query, chart, table or map before placing it on the dashboard as a node."""
 from __future__ import annotations
 
 import dataclasses
+import math
 
 from typing import Any, Literal
 
@@ -15,9 +16,13 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID, check_query,
-    effective_limit, host_metrics, pipeline_columns, primed_result, result_sql,
+    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_VIEW_ID,
+    VIEW_ID, check_query, effective_limit, fetch, host_metrics,
+    pipeline_columns, primed_result, result_sql, row_ceiling,
     selection_warnings,
+)
+from ..flowdash.deckgl import (
+    fit_view_state, layer_type, map_summary, position_columns,
 )
 from ..flowdash.metrics import MetricError, prepare
 from ..flowdash.nodes import metric_query
@@ -108,7 +113,7 @@ def place_view(ctx: RunContext[FlowDashDeps], component: str, data: str, name: s
     comes back as ``ModelRetry`` for the model to fix.
     """
     ops = ctx.deps.ops
-    port = _upstream_port(ops, data)
+    port = _upstream_port(ctx.deps, data)
     try:
         pipeline = _graph.output(ops, data, port)
     except OperationError as exc:
@@ -215,9 +220,89 @@ def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
     return f"Placed table {name!r} of {data!r} ({options})."
 
 
-def _upstream_port(ops, data: str) -> str:
+def add_map(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
+    """Place a deck.gl map of a SQL, table or filter node's rows with longitude and latitude columns.
+
+    Args:
+        data: SQL, table or filter node to map, not a source table: place a SQL node first.
+        name: Descriptive snake_case node name.
+        spec: deck.gl JSON spec without data: each layer draws the node's rows, has an
+            "@@type" and reads columns in "@@=" expressions with arithmetic, comparisons
+            and ?: only, no function calls, URLs or "@@function". Pick ScatterplotLayer
+            for points (sized or coloured by a value), HexagonLayer or GridLayer to bin
+            many points ("extruded": true for 3D), ColumnLayer for 3D bars at points,
+            HeatmapLayer for density, ArcLayer for origin-destination pairs. Radii are
+            metres unless "radiusUnits": "pixels"; to size points by a value use pixels
+            with getRadius scaled to about 2 to 20. Leave out mapStyle, initialViewState
+            and colours to follow the page's theme, fit the rows and take the dashboard's
+            colours. A fixed colour is an RGBA list. E.g. {"layers": [{"@@type":
+            "ScatterplotLayer", "getPosition": "@@=[lon, lat]", "radiusUnits": "pixels",
+            "getRadius": "@@=2 + capacity / 200", "pickable": true}], "tooltip": {"text":
+            "{name}: {capacity}"}} or {"layers": [{"@@type": "HexagonLayer",
+            "getPosition": "@@=[lon, lat]", "radius": 20000, "extruded": true,
+            "elevationScale": 50, "pickable": true}]}.
+    """
+    spec = place_view(ctx, DECKGL_ID, data, name, {"spec": spec})["spec"]
+    ops = ctx.deps.ops
+    try:
+        # The map fetched the same rows to draw them, so this reads them without a query.
+        rows = fetch(_graph.output(ops, data, _graph.pipeline_port(ops, data)), row_ceiling(ops.editor))
+    except Exception as exc:
+        ops.remove_node(name)
+        raise ModelRetry(format_error(exc)) from exc
+    placed = f"Placed map {name!r} of {data!r}: {map_summary(spec, rows)}."
+    view = spec.get("initialViewState")
+    notes = []
+    if view is None and (view := fit_view_state(spec, rows)) is not None:
+        placed += f" Fitted to the rows at longitude {view['longitude']}, latitude {view['latitude']}, zoom {view['zoom']}."
+    elif view is None and len(rows) and (lon_lat := position_columns(spec)) is not None:
+        notes.append(
+            f"no row has a longitude in -180..180 and a latitude in -90..90 in [{', '.join(lon_lat)}], "
+            "so the map shows the whole world; getPosition takes [longitude, latitude]."
+        )
+    if view is not None and (note := _radius_note(spec, view)):
+        notes.append(note)
+    return placed + "".join(f"\nNote: {note}" for note in notes)
+
+
+# Metres per pixel at the equator at zoom 0, where deck.gl draws the world 512 pixels wide.
+_EQUATOR_METRES_PER_PIXEL = 40_075_016.686 / 512
+
+
+def _radius_note(spec: dict[str, Any], view: dict[str, Any]) -> str | None:
+    """
+    A note when a scatterplot sizes its points in metres, which at the
+    view's zoom may all fall under ``radiusMinPixels`` and look alike.
+    """
+    zoom, latitude = view.get("zoom"), view.get("latitude", 0)
+    if not isinstance(zoom, (int, float)) or not isinstance(latitude, (int, float)):
+        return None
+    for layer in spec.get("layers", []):
+        radius = layer.get("getRadius")
+        if (layer_type(layer) != "ScatterplotLayer" or layer.get("radiusUnits", "meters") != "meters"
+                or not isinstance(radius, str)):
+            continue
+        metres = _EQUATOR_METRES_PER_PIXEL * math.cos(math.radians(latitude)) / 2 ** zoom
+        smallest = metres * max(layer.get("radiusMinPixels", 0), 1)
+        return (
+            f"getRadius is in metres; at zoom {zoom} a pixel is about {metres:,.0f} m, so radii under "
+            f"{smallest:,.0f} m all draw at the minimum size. To size points by a value, set "
+            '"radiusUnits": "pixels" and scale getRadius to about 2 to 20.'
+        )
+    return None
+
+
+def _upstream_port(deps: FlowDashDeps, data: str) -> str:
+    ops = deps.ops
     if data not in _graph.nodes(ops):
-        raise ModelRetry(f"No node {data!r}.")
+        shown = [node for node in _graph.nodes(ops) if _graph.pipeline_port(ops, node)]
+        hint = f" The SQL, table and filter nodes are: {', '.join(shown)}." if shown else ""
+        if any(data in _source_tables(deps, source) for source in _graph.nodes(ops, SOURCE_ID)):
+            raise ModelRetry(
+                f"No node {data!r}: {data!r} is a source table. Place a SQL node on it with add_sql "
+                f"first and pass that node's name.{hint}"
+            )
+        raise ModelRetry(f"No node {data!r}.{hint or ' Place a SQL node with add_sql first.'}")
     port = _graph.pipeline_port(ops, data)
     if port is None:
         raise ModelRetry(f"{data!r} has no Lumen pipeline output to show; pass the name of a SQL, metric, table or filter node.")
@@ -287,9 +372,16 @@ def add_text(
     return f"Placed {kind} {name!r}."
 
 
+def _source_tables(deps: FlowDashDeps, source: str) -> list[str]:
+    try:
+        return resolve_source(deps, source)[1].get_tables()
+    except ModelRetry:
+        return []
+
+
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_metric, add_chart, add_table and add_text."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_text], max_retries=3)
+    """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map and add_text."""
+    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
 
 
 class CheckedConfig(AbstractCapability[FlowDashDeps]):

@@ -27,6 +27,7 @@ QUESTIONS = {
     "paid_by_region": ("commerce", ["What is the total paid order amount per region?", "Only keep the west region."]),
     "top_customer": ("commerce", ["Which customer has the most paid orders? Show only that customer and the count."]),
     "capacity_by_state": ("turbine_metrics", ["What is the installed capacity in MW by state, counting projects since 2005?"]),
+    "turbines_map": ("turbines", ["Map the turbines, sized by capacity."]),
 }
 
 

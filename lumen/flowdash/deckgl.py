@@ -141,7 +141,7 @@ _FEATURE_KEYS = frozenset({"properties", "geometry", "type", "id"})
 _TEMPLATE = re.compile(r"\{([^{}]+)\}")
 
 
-def _layer_type(layer: dict[str, Any]) -> str | None:
+def layer_type(layer: dict[str, Any]) -> str | None:
     kind = layer.get("@@type")
     return kind if isinstance(kind, str) else None
 
@@ -204,7 +204,7 @@ def tooltip_fields(tooltip: Any) -> set[str]:
 
 def layer_fields(layer: dict[str, Any]) -> set[str]:
     """The columns a deck.gl layer's expressions read."""
-    feature = _layer_type(layer) == "GeoJsonLayer"
+    feature = layer_type(layer) == "GeoJsonLayer"
     fields: set[str] = set()
     for expression in _expressions(layer):
         fields |= expression_names(expression, feature)[0]
@@ -358,7 +358,7 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
         if not isinstance(layer, dict):
             raise ValueError(f"Layer {index + 1} must be an object.")
         name = _layer_name(index, layer)
-        kind = _layer_type(layer)
+        kind = layer_type(layer)
         if kind is None:
             hint = " (`type` is pydeck's name for it)" if "type" in layer else ""
             raise ValueError(f"{name} needs an `@@type`{hint}, e.g. \"ScatterplotLayer\".")
@@ -382,7 +382,7 @@ def check_deckgl(spec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
     return copy.deepcopy(spec)
 
 
-def _positions(spec: dict[str, Any]) -> tuple[str, str] | None:
+def position_columns(spec: dict[str, Any]) -> tuple[str, str] | None:
     """The longitude and latitude columns of the first layer positioned by two columns."""
     for layer in spec.get("layers") or []:
         value = layer.get("getPosition") if isinstance(layer, dict) else None
@@ -468,7 +468,7 @@ def fit_view_state(spec: dict[str, Any], data: Any) -> dict[str, Any] | None:
     layer positioned by longitude and latitude columns, leaving out the
     outer 1% at each side; None without such a layer or valid positions.
     """
-    columns = _positions(spec)
+    columns = position_columns(spec)
     if columns is None or data is None or not all(c in getattr(data, "columns", ()) for c in columns):
         return None
     lon, lat = (data[c] for c in columns)
@@ -490,11 +490,11 @@ def fit_view_state(spec: dict[str, Any], data: Any) -> dict[str, Any] | None:
     }
 
 
-def _summary(spec: dict[str, Any], data: Any) -> str:
+def map_summary(spec: dict[str, Any], data: Any) -> str:
     """A line saying what a map shows, e.g. ``Map of 2 layers (Hexagon, Scatterplot) of xlong and ylat, 4 rows``."""
     layers = [layer for layer in spec.get("layers") or [] if isinstance(layer, dict)]
     kinds = list(dict.fromkeys(
-        kind.removesuffix("Layer") for layer in layers if (kind := _layer_type(layer))
+        kind.removesuffix("Layer") for layer in layers if (kind := layer_type(layer))
     ))
     if len(layers) == 1 and kinds:
         text = f"{kinds[0]} map"
@@ -502,7 +502,7 @@ def _summary(spec: dict[str, Any], data: Any) -> str:
         text = f"Map of {len(layers)} layers ({', '.join(kinds)})"
     else:
         text = "Map"
-    position = _positions(spec)
+    position = position_columns(spec)
     fields = list(position) if position else sorted(deckgl_fields(spec))[:3]
     if fields:
         text += f" of {' and '.join(fields)}"
@@ -587,7 +587,7 @@ class DeckGLNode(LumenViewNode):
             spec["initialViewState"] = self._fitted or dict(WORLD_VIEW)
         color = SCHEME_COLORS.get(self._color_scheme() or "", SCHEME_COLORS["tableau10"])
         for layer in spec["layers"]:
-            for prop in COLOR_PROPS.get(_layer_type(layer) or "", ()):
+            for prop in COLOR_PROPS.get(layer_type(layer) or "", ()):
                 layer.setdefault(prop, color)
         return {
             "spec": spec, "tooltips": tooltip, "sizing_mode": "stretch_both",
@@ -629,4 +629,4 @@ class DeckGLNode(LumenViewNode):
         return frame
 
     def _summary(self, spec: dict[str, Any], data: Any) -> str:
-        return _summary(spec, data)
+        return map_summary(spec, data)
