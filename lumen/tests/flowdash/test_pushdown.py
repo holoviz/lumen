@@ -22,6 +22,7 @@ from lumen.flowdash import (
     fetch, filtered_pipeline, pipeline_sql, python_value, set_row_ceiling,
     table_pipeline,
 )
+from lumen.flowdash.nodes import conditioned_pipeline
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.duckdb import DuckDBSource
@@ -365,12 +366,13 @@ def test_filter_node_reports_a_value_it_cannot_apply(source):
     assert "Cannot filter on ('A', 'B', 'C')" in failure(ops, "by_category", "filtered")
 
 
-def test_filter_on_a_sql_node_keeps_the_node_limit(source):
+def test_filter_on_a_sql_node_reads_its_whole_result_and_keeps_the_node_limit(source):
     pipeline = compile_sql(source, "SELECT * FROM sales ORDER BY amount", "q", limit=1)
     assert pipeline.data.values.tolist() == [["A", 5]]
 
     assert fetch(filtered_pipeline(pipeline, "category", "A")).values.tolist() == [["A", 5]]
-    assert fetch(filtered_pipeline(pipeline, "category", "B")).empty
+    assert fetch(filtered_pipeline(pipeline, "category", "B")).values.tolist() == [["B", 20]]
+    assert fetch(conditioned_pipeline(pipeline, [("category", ["A", "B"])]), 10).values.tolist() == [["A", 5]]
 
 
 def test_fetch_stops_a_slow_query_after_the_timeout():

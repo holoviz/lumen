@@ -19,13 +19,11 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..flowdash import (
-    FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, effective_limit, fetch,
-    filterable_columns, host_metrics, pipeline_columns, primed_result,
-    result_sql, row_ceiling,
+    FILTER_ID, METRIC_ID, SQL_ID, fetch, filterable_columns, host_metrics,
+    pipeline_columns,
 )
 from ..flowdash.choices import pipeline_column_types
-from ..flowdash.nodes import column_values, execute
-from ..flowdash.results import expand
+from ..flowdash.nodes import column_values
 from ..flowdash.transforms import AGGREGATE_ID, COUNT_COLUMN
 from ..pipeline import Pipeline
 from . import _graph
@@ -244,19 +242,7 @@ def add_kpi(
         raise ModelRetry("label names one KPI; leave it out for one KPI per column, or pass column.")
     names = [name] if len(picked) == 1 else [f"{name}_{col}" for col in picked]
     component = _graph.component_of(ops, data)
-    # A SQL node keeps at most the row ceiling's rows, however many its query returns, so an
-    # aggregate node reading its pipeline may see only some; a query reading its result reads them
-    # all, whenever the node runs again. A smaller limit of its own is the rows it means to show.
-    full = bool(aggregate) and component == SQL_ID and _at_ceiling(ops, data)
-    if aggregate and component != SQL_ID and (sql_node := _reads_rows_of(ops, data)) and _at_ceiling(ops, sql_node):
-        raise ModelRetry(
-            f"{data!r} reads the rows SQL node {sql_node!r} keeps, at most {row_ceiling(ops.editor):,} of its result, "
-            f"so the {aggregate} over {data!r} could leave rows out. Add the KPI on {sql_node!r}, or on a SQL node on "
-            f"{sql_node!r} (add_sql with source={sql_node!r}) whose query does what {data!r} does, e.g. its WHERE."
-        )
-    if full:
-        helpers = [f"{name}_value"]
-    elif aggregate:
+    if aggregate:
         helpers = [*([f"{name}_per_key"] if keys else []), f"{name}_agg", f"{name}_value"]
     else:
         helpers = [] if component == SQL_ID or "data" in _outputs(ops, data) else [f"{name}_rows"]
@@ -265,22 +251,7 @@ def add_kpi(
     placed = _Placed(ops)
     try:
         value_port = None
-        if full:
-            sql = _aggregate_sql(pipeline, column, aggregate, keys)
-            src = _graph.output(ops, data, "result")
-            root, statement = expand(sql, src)
-            statement = result_sql(root, statement, effective_limit(ops.editor, None))
-            # Run here, so the node, which a served session would otherwise run in the background,
-            # has its number when the result below reads it.
-            try:
-                result = execute(root, statement, QUERY_TIMEOUT)
-            except Exception as exc:
-                raise ValueError(f"The query of {data!r}'s whole result failed: {exc}") from exc
-            with primed_result(src, statement, result):
-                placed.node(SQL_ID, {"sql": sql, "table": helpers[0]}, helpers[0])
-                placed.connect(f"{data}.result", f"{helpers[0]}.source")
-            frame_port, value_port = f"{helpers[0]}.data", f"{helpers[0]}.value"
-        elif aggregate:
+        if aggregate:
             upstream = f"{data}.{port}"
             if keys:
                 # One row per key, with the key's largest value; the aggregate then reads those.
@@ -293,7 +264,6 @@ def add_kpi(
             placed.node(DATA_ID, {}, rows_node)
             placed.connect(f"{agg}.result", f"{rows_node}.pipeline")
             frame_port = f"{rows_node}.data"
-
         elif helpers:
             placed.node(DATA_ID, {}, helpers[0])
             placed.connect(f"{data}.{port}", f"{helpers[0]}.pipeline")
@@ -308,7 +278,7 @@ def add_kpi(
             spec = format or spec
             text = label or _label(col, aggregate)
             config = {"label": text, "format": spec, "prefix": prefix, "suffix": suffix,
-                      "caption": _provenance(ops, data, component, col, aggregate, keys, full)}
+                      "caption": _provenance(ops, data, component, col, aggregate, keys)}
             placed.node(KPI_ID, config, kpi)
             if component == SQL_ID and not aggregate and len(columns) == 1:
                 value_port = f"{data}.value"
@@ -330,9 +300,6 @@ def add_kpi(
     how = f"the {aggregate} of {column!r}" if aggregate and column else "its row count" if aggregate else "its one row"
     per_key = f", taking the largest {column!r} of each {' and '.join(keys)} once" if keys else ""
     through = f" through {', '.join(map(repr, helpers))}" if helpers else ""
-    if full:
-        through += (f" ({helpers[0]!r} queries every row of {data!r}'s result, not only the rows it keeps; a local "
-                    "filter cannot narrow it)")
     adhoc = ""
     if component != METRIC_ID:
         adhoc = " The number is computed ad hoc, not an agreed metric; each card's caption says so."
@@ -344,57 +311,20 @@ def add_kpi(
             + "\n".join([*lines, *([adhoc.strip()] if adhoc else []), KPI_FILTERS]))
 
 
-def _provenance(ops, data: str, component: str, column: str, aggregate: str | None, keys: list[str],
-                full: bool) -> str:
+def _provenance(ops, data: str, component: str, column: str, aggregate: str | None, keys: list[str]) -> str:
     """How a card's number is computed, for its caption: the aggregate and whether it is an agreed metric."""
     if component == METRIC_ID:
         return f"Metric {_graph.config_of(ops, data).get('metric')}"
-    rows = "all rows"
-    if component == SQL_ID and aggregate and not full:
-        rows = f"the first {_graph.config_of(ops, data)['limit']:,} rows"
     if aggregate == "count" and column == COUNT_COLUMN:
-        what = "Count of rows" if rows == "all rows" else f"Count of {rows}"
+        what = "Count of rows"
     elif aggregate == "count" and keys:
         what = f"Count of {' and '.join(keys)} values with a {column}"
     elif aggregate:
         word = {"sum": "Sum", "mean": "Average", "min": "Lowest", "max": "Highest", "count": "Count"}[aggregate]
-        what = f"{word} of the largest {column} per {' and '.join(keys)}" if keys else f"{word} of {column} over {rows}"
+        what = f"{word} of the largest {column} per {' and '.join(keys)}" if keys else f"{word} of {column} over all rows"
     else:
         what = f"Value of {column} from {data}"
     return f"{what}, not an agreed metric"
-
-
-def _at_ceiling(ops, name: str) -> bool:
-    """Whether the row ceiling, not a smaller limit of its own, caps the rows SQL node ``name`` keeps."""
-    limit = _graph.config_of(ops, name).get("limit")
-    return not isinstance(limit, int) or limit >= row_ceiling(ops.editor)
-
-
-def _reads_rows_of(ops, name: str) -> str | None:
-    """The SQL node whose kept rows node ``name`` filters or transforms, through its pipeline inputs, if any."""
-    node, seen = name, set()
-    while _graph.component_of(ops, node) != SQL_ID:
-        seen.add(node)
-        feeder = _graph.feeding(ops, f"{node}.pipeline")
-        if feeder is None or (node := feeder.split(".")[0]) in seen:
-            return None
-    return node
-
-
-def _aggregate_sql(pipeline: Pipeline, column: str | None, aggregate: str, keys: list[str]) -> str:
-    """
-    A query of the aggregate over every row of a SQL node's result, read by
-    the table name ``pipeline``, the node's, gives it, which differs from
-    the node's ``table`` when that would shadow a table its query reads.
-    """
-    dialect = None if pipeline.source.dialect == "any" else pipeline.source.dialect
-    table = _quote(pipeline.table, dialect)
-    if keys:
-        by = ", ".join(_quote(k, dialect) for k in keys)
-        table = f"(SELECT {by}, MAX({_quote(column, dialect)}) AS {_quote(column, dialect)} FROM {table} GROUP BY {by}) AS per_key"
-    how = {"sum": "SUM", "mean": "AVG", "min": "MIN", "max": "MAX", "count": "COUNT"}[aggregate]
-    target = "*" if column is None else _quote(column, dialect)
-    return f"SELECT {how}({target}) AS {_quote(column or COUNT_COLUMN, dialect)} FROM {table}"
 
 
 def _outputs(ops, name: str) -> list[str]:
@@ -519,13 +449,6 @@ def add_filter_control(
         if view not in _graph.nodes(ops):
             raise ModelRetry(f"No node {view!r}.")
         if (path := _reader_path(graph_edges, view, source)) is None:
-            if _graph.feeding(ops, f"{view}.value") == f"{view}_value.value" and \
-                    _graph.feeding(ops, f"{view}_value.source") == f"{data}.result":
-                raise ModelRetry(
-                    f"{view!r} counts every row of {data!r}'s result in a query of its own, so a local filter cannot "
-                    f"narrow it. For a filtered number, place a SQL node on {data!r} whose query has the condition, "
-                    "and a KPI on that."
-                )
             readers = _graph.reading(ops, source)
             readers_text = (f"The nodes reading {data!r} are: {', '.join(map(repr, readers))}." if readers
                             else f"No node reads {data!r}'s rows directly.")
