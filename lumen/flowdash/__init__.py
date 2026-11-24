@@ -12,9 +12,10 @@ in its ``__init__.py``. Without sources, source nodes say how to provide them.
 Importing ``lumen`` does not import this package or panel-flowdash.
 """
 from .checks import (
-    PROBE_TIMEOUT, check_chart, check_columns, check_filter_config,
-    check_query, check_source_config, check_sql_config, check_table_config,
-    check_view_config, forget_probes, pipeline_columns, probe_query,
+    PROBE_TIMEOUT, CheckDiagnostic, check_chart, check_columns,
+    check_filter_config, check_query, check_source_config, check_sql_config,
+    check_table_config, check_view_config, extract_sql_error_location,
+    forget_probes, pipeline_columns, probe_query,
 )
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, NODE_TIMEOUT, PIPELINE_TYPE, PREVIEW_ROWS,
@@ -46,6 +47,7 @@ __all__ = [
     "SQL_ID",
     "TABLE_ID",
     "VIEW_ID",
+    "CheckDiagnostic",
     "DataNode",
     "FilterNode",
     "SQLNode",
@@ -64,6 +66,7 @@ __all__ = [
     "check_view_config",
     "compile_sql",
     "effective_limit",
+    "extract_sql_error_location",
     "fetch",
     "filter_condition",
     "filtered_pipeline",
