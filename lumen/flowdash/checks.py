@@ -25,7 +25,14 @@ from ..data.sql import validate_read_only_sql
 from ..data.utils import ANSI_ESCAPE, format_tool_error
 from ..sources.base import BaseSQLSource, QueryTimeoutError
 from ..transforms.sql import SQLLimit
+from ..util import normalize_table_name
 from .defaults import field_column
+from .results import expand, merge
+
+try:
+    from panel_flowdash.config_check import stored_config
+except ImportError:
+    stored_config = None
 
 # Seconds the engine may take to plan a query in ``check_sql_config``, waiting
 # for the source's previous probe included.
@@ -674,12 +681,14 @@ async def probe_query(sql: str, source: BaseSQLSource, timeout: float | None = N
     finish within ``timeout`` seconds (``PROBE_TIMEOUT`` by default), waiting
     for the source's previous probe included, raises ``QueryTimeoutError``.
     Queries the engine accepted are remembered until the source's table
-    definitions change or ``forget_probes`` is called.
+    definitions change or ``forget_probes`` is called. On a SQL node's
+    result source the probe is the expanded statement, run on the root.
     """
     timeout = PROBE_TIMEOUT if timeout is None else timeout
-    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(sql)
+    source, statement = expand(sql, source)
+    probe = SQLLimit(limit=0, write=source.dialect, identify=False).apply(statement)
     # A table the host redefines makes the queries accepted before unknown again.
-    key = (sql, repr(source.tables))
+    key = (statement, repr(source.tables))
     with _GUARD:
         probed = _PROBED.setdefault(source, OrderedDict())
         lock = _PROBE_LOCKS.setdefault(source, threading.Lock())

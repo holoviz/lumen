@@ -97,6 +97,9 @@ from .metrics import (
     bind_sql, coerce_dimension_values, prepare, table_sql,
 )
 from .redact import redact_spec
+from .results import (
+    derive, expand, is_derived, merge, not_a_source, root_of,
+)
 from .view_settings import VEGA_LITE_SETTINGS, themed_spec
 
 try:
@@ -162,6 +165,8 @@ _RESULTS: dict[tuple[int, str], Any] = {}
 # Rows fetched per pipeline, by the limit they were fetched under, so the nodes that
 # read one pipeline (a data node and a chart, say) run its query once.
 _FETCHED: weakref.WeakKeyDictionary[Pipeline, dict[float, Any]] = weakref.WeakKeyDictionary()
+# What a SQL node's result source is made of, by its pipeline, until the source is first read.
+_RESULT_SOURCES: weakref.WeakKeyDictionary[Pipeline, Any] = weakref.WeakKeyDictionary()
 
 
 # Marks a table that only keeps a name an earlier release gave a served file, so
@@ -346,6 +351,10 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     see exactly the rows the node outputs. SQL does not promise that the
     outer query keeps the subquery's ORDER BY; DuckDB keeps it in practice.
 
+    On another SQL node's result source, ``sql`` runs as one statement on
+    the root source with the results it reads inlined (``expand``).
+    ``result_source`` gives the result as a source of its own.
+
     Raises ``ValueError`` unless ``sql`` passes ``check_query``.
     """
     if is_failure(source):
@@ -353,17 +362,33 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     if not isinstance(source, BaseSQLSource):
         raise ValueError(f"{type(source).__name__} does not run SQL.")
     check_query(sql, source)
-    frame = execute(source, result_sql(source, sql, limit), timeout)
-    # The result table joins the source's own tables, so it must not shadow one the query reads.
-    while table in source.get_tables():
+    root, statement = expand(sql, source)
+    frame = execute(root, result_sql(root, statement, limit), timeout)
+    # The result table joins the source's own tables, so it must not shadow one the query reads,
+    # in any case, since engines and the CTEs inlined for it match names regardless of case.
+    taken = {name.lower() for name in source.get_tables()}
+    while table.lower() in taken:
         table = f"{table}_result"
-    kwargs = {"materialize": False} if isinstance(source, DuckDBSource) else {}
+    kwargs = {"materialize": False} if isinstance(root, DuckDBSource) else {}
     # The capped statement, so a filter downstream sees the rows the node outputs and no more.
-    query_source = source.create_sql_expr_source({table: result_sql(source, sql, limit)}, **kwargs)
+    query_source = root.create_sql_expr_source({table: result_sql(root, statement, limit)}, **kwargs)
     schema = get_dataframe_schema(frame)["items"]["properties"]
     pipeline = Pipeline(source=query_source, table=table, schema=schema, data=frame, name=table)
     _FETCHED[pipeline] = {math.inf: frame}
+    _RESULT_SOURCES[pipeline] = (source, table, sql, schema)
     return pipeline
+
+
+def result_source(pipeline: Pipeline) -> BaseSQLSource | None:
+    """
+    The source of the SQL node that compiled ``pipeline``, plus its result
+    as a table: the full query, not the capped statement, so a query on it
+    counts every row. Its table is the pipeline's.
+    """
+    entry = _RESULT_SOURCES.get(pipeline)
+    if isinstance(entry, tuple):
+        entry = _RESULT_SOURCES[pipeline] = derive(*entry)
+    return entry
 
 
 def table_pipeline(source: Source, table: str, limit: int = RESULT_LIMIT) -> Pipeline:
@@ -1308,6 +1333,9 @@ class LumenNode(Viewer):
         refresh runs each query once.
         """
         source = self._read_source()
+        # A SQL node's result changes when that node runs again, which runs this node then.
+        if is_derived(source):
+            return
         if isinstance(source, Source):
             source.clear_cache()
         if isinstance(source, BaseSQLSource):
@@ -1553,9 +1581,11 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     component=True, page=False, title="Lumen SQL", icon="code",
     description=(
         "A read-only SQL query run by the source's engine. Outputs a Lumen pipeline "
-        "over the result, the result as a DataFrame and, for a result of one row and one "
-        "numeric column such as SELECT SUM(x) FROM t, that cell as a number for a KPI; for "
-        "any other result the value output is empty."
+        "over the result, the result as a DataFrame, as `result` the source with the "
+        "result added as a table named by `table`, which another SQL node can query, and, for a "
+        "result of one row and one numeric column such as SELECT SUM(x) FROM t, that cell as a "
+        "number for a KPI; for any other result the value output is empty. Connect several "
+        "results of one source to `source` to join them."
     ),
     config=["sql", "table", "limit"],
     check_config=check_sql_config,
@@ -1564,6 +1594,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
         {"key": "pipeline", "type": PIPELINE_TYPE},
         {"key": "data", "type": "DataFrame"},
         {"key": "value", "type": "Number"},
+        {"key": "result", "type": SOURCE_TYPE},
     ],
     config_completions=sql_completions,
 )
@@ -1624,7 +1655,8 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return True
         limit = effective_limit(self.editor, self.limit)
         try:
-            return (id(self.source), result_sql(self.source, self.sql, limit)) in _RESULTS
+            root, statement = expand(self.sql, self.source)
+            return (id(root), result_sql(root, statement, limit)) in _RESULTS
         except Exception:
             return True
 
@@ -1641,8 +1673,12 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             exc, (ValueError, QueryTimeoutError)
         ):
             limit = effective_limit(self.editor, self.limit)
+            try:
+                root, statement = expand(self.sql, self.source)
+            except Exception:
+                root, statement = self.source, self.sql
             diagnostic = _engine_error(
-                exc, result_sql(self.source, self.sql, limit), self.sql, dialect=_read(self.source.dialect)
+                exc, result_sql(root, statement, limit), self.sql, dialect=_read(self.source.dialect)
             )
         text = ANSI_ESCAPE.sub("", str(diagnostic if diagnostic is not None else exc)).strip()
         line, column = getattr(diagnostic, "line", None), getattr(diagnostic, "column", None)
@@ -1672,6 +1708,12 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return single_number(pipeline.data)
         except ValueError:
             return None
+
+    @param.output(param.Parameter)
+    @param.depends("_object", "_error")
+    def result(self):
+        pipeline = self._value()
+        return pipeline if pipeline is None or is_failure(pipeline) else result_source(pipeline)
 
     def _body(self):
         pipeline = self._object
