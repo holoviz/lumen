@@ -796,8 +796,84 @@ def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
     return None if ref in sources else missing_source(ref, sources)
 
 
-def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
-    """Check a ``Lumen/view`` config with ``check_chart`` against the input's columns."""
+def _views(spec: Any) -> list[dict[str, Any]]:
+    """The views of a spec: the spec itself and its layers and concatenated or faceted views."""
+    if not isinstance(spec, dict):
+        return []
+    views = [spec]
+    for key in ("layer", "concat", "hconcat", "vconcat"):
+        for view in spec.get(key) or []:
+            views.extend(_views(view))
+    views.extend(_views(spec.get("spec")))
+    return views
+
+
+def _select_params(spec: Any) -> list[dict[str, Any]]:
+    return [
+        p for view in _views(spec) for p in view.get("params") or ()
+        if isinstance(p, dict) and p.get("select")
+    ]
+
+
+def _aggregates(view: dict[str, Any]) -> bool:
+    encoding = view.get("encoding") or {}
+    if any(isinstance(c, dict) and c.get("aggregate") for c in encoding.values()):
+        return True
+    return any(isinstance(t, dict) and "aggregate" in t for t in view.get("transform") or ())
+
+
+def _repeating_time_unit(unit: Any) -> bool:
+    unit = unit.get("unit") if isinstance(unit, dict) else unit
+    if not isinstance(unit, str):
+        return False
+    return not unit.removeprefix("binned").removeprefix("utc").startswith("year")
+
+
+def selection_warnings(spec: dict[str, Any]) -> list[str]:
+    """
+    What a chart's selection params cannot pass on to a filter exactly: a
+    brush on bins Vega derives from the data, on a repeating time unit, or
+    a point selection that names rows by position.
+    """
+    params = _select_params(spec)
+    if not params:
+        return []
+    warnings = []
+    kinds = {p["select"] if isinstance(p["select"], str) else p["select"].get("type") for p in params}
+    if "interval" in kinds:
+        for view in _views(spec):
+            for channel in (view.get("encoding") or {}).values():
+                if not isinstance(channel, dict) or not isinstance(channel.get("field"), str):
+                    continue
+                field, bins = channel["field"], channel.get("bin")
+                if bins and _aggregates(view) and not (isinstance(bins, dict) and bins.get("step")):
+                    warnings.append(
+                        f"The brush on the binned field {field!r} cannot select whole bins, since Vega "
+                        "derives them from the data; give the bin a fixed step, e.g. "
+                        "`\"bin\": {\"step\": 10}`, so a filter keeps the bins the chart highlights."
+                    )
+                if _repeating_time_unit(channel.get("timeUnit")):
+                    warnings.append(
+                        f"A brush on {field!r} by a repeating time unit selects the same period of every "
+                        "year, which a filter cannot apply; use a unit that starts with the year, "
+                        "e.g. 'yearmonth'."
+                    )
+    for p in params:
+        select = p["select"]
+        if isinstance(select, dict) and select.get("type") == "point" and not (
+                select.get("fields") or select.get("encodings")):
+            warnings.append(
+                f"The point selection {p.get('name')!r} names no fields, so it selects rows by "
+                "position and no filter can use it; give it `fields`."
+            )
+    return list(dict.fromkeys(warnings))
+
+
+def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
+    """
+    Check a ``Lumen/view`` config with ``check_chart`` against the input's
+    columns, warning about selections a filter cannot apply exactly.
+    """
     pipeline, spec = inputs.get("pipeline"), config.get("spec")
     if not spec:
         return None
@@ -815,4 +891,5 @@ def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | N
         return exc.diagnostic
     except ValueError as exc:
         return CheckDiagnostic(str(exc), field="spec")
-    return None
+    warnings = [w for w in map(_unverified, selection_warnings(spec)) if w is not None]
+    return warnings or None

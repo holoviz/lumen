@@ -80,6 +80,21 @@ Use the dialect list_tables names for the source.
 # settings, not in the agent fingerprint a cassette checks.
 MODEL_SETTINGS = {"openai_reasoning_effort": "none", "max_tokens": 1000}
 
+# Added for an agent that can wire nodes, i.e. with the connect tool.
+SELECTION_INSTRUCTIONS = """
+## Linking a chart's selection to other views
+To let a brush or click on a chart filter the rest of the dashboard:
+- Give the chart a selection param on the fields to filter by, e.g.
+  "params": [{"name": "brush", "select": {"type": "interval", "encodings": ["x"]}}], and
+  show it, e.g. with an opacity condition on the param. A bar chart of an aggregate selects
+  its grouping field. Bin with a fixed step and use time units starting with the year,
+  e.g. yearmonth.
+- The chart reads the unfiltered table or SQL node, so it keeps showing everything with the
+  selection highlighted. Never feed it from the filter its selection drives.
+- Add a filter node on the same table or SQL node and connect the chart's selection output
+  to the filter's selection input. Feed the KPIs, tables and other charts from the filter.
+"""
+
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
 # Named sets of FlowDash dashboard tools offered besides the agent's own.
@@ -140,6 +155,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         dashboard_tools = DASHBOARD_TOOLS[dashboard_tools]
     if dashboard_instructions is None:
         dashboard_instructions = dashboard_tools is None
+    if dashboard_tools is None or "connect" in dashboard_tools:
+        text += SELECTION_INSTRUCTIONS
     agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=dict(model_settings),
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",

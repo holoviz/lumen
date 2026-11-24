@@ -28,14 +28,28 @@ A dashboard cannot open connections of its own. The app hands the editor the dat
 | --- | --- | --- | --- |
 | Lumen Source (`Lumen/source`) | | `ref` | `source` |
 | Lumen Table (`Lumen/table`) | `source` | `table`, `limit` | `pipeline` |
-| Lumen Filter (`Lumen/filter`) | `pipeline`, `value` | `field` | `filtered` |
+| Lumen Filter (`Lumen/filter`) | `pipeline`, `value`, `selection` | `field` | `filtered` |
 | Lumen SQL (`Lumen/sql`) | `source` | `sql`, `table`, `limit` | `pipeline`, `data` |
 | Lumen Data (`Lumen/data`) | `pipeline` | | `data` |
-| Lumen Vega-Lite view (`Lumen/view`) | `pipeline` | `spec` | |
+| Lumen Vega-Lite view (`Lumen/view`) | `pipeline` | `spec`, `debounce` | `selection` |
 
 Edges between Lumen nodes carry a Lumen pipeline rather than a table of rows, so the work happens in the source's engine. A table node fetches nothing by itself. A filter node fed by a widget, say a Select on `species`, adds `WHERE "species" = 'Adelie'` and the row limit to the query the source runs, rather than Lumen filtering all rows after fetching them. A filter's value can be a single value, a list (from a MultiChoice) or a `(start, end)` range; an empty value keeps every row.
 
 Rows are fetched where they are needed: by a **Lumen Data** node, which outputs a DataFrame for any FlowDash component that takes one, by a chart, or by a node's own preview when it is shown. Every query is capped at 100,000 rows; a table or SQL node's `limit` can lower that.
+
+### Brushing a chart
+
+A chart can filter the rest of the dashboard. Give its spec a selection param, such as an interval brush, `"params": [{"name": "brush", "select": {"type": "interval", "encodings": ["x"]}}]`, and wire its `selection` output to a filter node's `selection` input. Feed the chart and the filter from the same table or SQL node, and the KPIs, tables and other charts from the filter:
+
+```
+table --> chart (selection) --> filter <-- table
+                                   |
+                                   +--> data, KPIs, other charts
+```
+
+The chart keeps showing all its rows with the brush highlighted, and the filter adds the brushed predicates to the source's query: `WHERE "category" IN ('A', 'B')` for a brush across bars, `"price" BETWEEN ...` for a range, and `"date" >= ... AND "date" < ...` for the whole months a `yearmonth` brush covers. Clearing the brush restores every row. The chart reports a drag once it pauses for `debounce` milliseconds, 150 by default, so a drag runs one query rather than one per mouse move. Feeding the chart from the filter it drives would be a cycle, which the editor refuses.
+
+The chart's check warns about selections a filter cannot apply exactly: a brush on bins without a fixed `step`, a brush on a repeating time unit such as `month`, and a point selection without `fields`.
 
 ### Checks
 
