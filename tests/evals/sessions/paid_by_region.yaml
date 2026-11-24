@@ -1,0 +1,84 @@
+lumen_session: 1
+fixture: commerce
+turns:
+- question: What is the total paid order amount per region?
+  nodes:
+  - paid_order_amount_by_region
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    nodes:
+      data:
+        component: Lumen/source
+        config:
+          ref: data
+        position: [0, 0]
+      paid_order_amount_by_region:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              customers.region,
+              SUM(orders.amount) AS total_paid_order_amount
+            FROM orders
+            JOIN customers
+              ON orders.customer_id = customers.customer_id
+            WHERE
+              orders.status = 'paid'
+            GROUP BY
+              customers.region
+            ORDER BY
+              customers.region
+          table: paid_order_amount_by_region
+        position: [350, 0]
+    edges:
+      - from: data.source
+        to: paid_order_amount_by_region.source
+- question: Only keep the west region.
+  nodes:
+  - paid_order_amount_by_region
+  dashboard: |
+    flowdash: 1
+    title: Untitled
+    settings:
+      description: ''
+      refresh_period: 0.0
+      controls_position: top
+      header_layout: compact
+      tile_cards: true
+      tile_titles: false
+      viewers_can_inspect: false
+    nodes:
+      data:
+        component: Lumen/source
+        config:
+          ref: data
+        position: [0, 0]
+      paid_order_amount_by_region:
+        component: Lumen/sql
+        config:
+          sql: |-
+            SELECT
+              customers.region,
+              SUM(orders.amount) AS total_paid_order_amount
+            FROM orders
+            JOIN customers
+              ON orders.customer_id = customers.customer_id
+            WHERE
+              orders.status = 'paid'
+              AND customers.region = 'west'
+            GROUP BY
+              customers.region
+          table: paid_order_amount_by_region
+        position: [350, 0]
+    edges:
+      - from: data.source
+        to: paid_order_amount_by_region.source
