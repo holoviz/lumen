@@ -66,6 +66,7 @@ from panel_flowdash.selection import (
 )
 from panel_flowdash.util import is_failure
 
+from ..data.sql import _legal_order
 from ..data.utils import ANSI_ESCAPE
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, QueryTimeoutError, Source
@@ -375,7 +376,7 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     kwargs = {"materialize": False} if isinstance(root, DuckDBSource) else {}
     # The full statement with the cap as the pipeline's last step, so a filter or an aggregate
     # downstream goes into the query ahead of the cap and reads every row of the result.
-    query_source = root.create_sql_expr_source({table: statement}, **kwargs)
+    query_source = root.create_sql_expr_source({table: _derived_table(statement, root.dialect)}, **kwargs)
     schema = get_dataframe_schema(frame)["items"]["properties"]
     pipeline = Pipeline(
         source=query_source, table=table, schema=schema, data=frame, name=table,
@@ -384,6 +385,22 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     _FETCHED[pipeline] = {math.inf: frame}
     _RESULT_SOURCES[pipeline] = (source, table, sql, schema)
     return pipeline
+
+
+def _derived_table(sql: str, dialect: str) -> str:
+    """
+    ``sql`` as the steps after it read it, from a derived table: on SQL
+    Server a top-level ORDER BY gets ``OFFSET 0 ROWS``, without which it
+    refuses one there; elsewhere ``sql`` is unchanged.
+    """
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return sql
+    if tree.args.get("offset") is not None:
+        return sql
+    _legal_order(tree, dialect)
+    return sql if tree.args.get("offset") is None else tree.sql(dialect=dialect)
 
 
 def result_source(pipeline: Pipeline) -> BaseSQLSource | None:
