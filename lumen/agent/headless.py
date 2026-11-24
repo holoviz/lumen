@@ -106,6 +106,8 @@ class TurnResult:
     messages: list[ModelMessage] = field(default_factory=list)
     responses: list[ModelResponse] = field(default_factory=list)
     """Every model response of the turn, also those of a failed run, which ``messages`` leaves out."""
+    tool_results: dict[str, str] = field(default_factory=dict)
+    """What each tool call of the turn returned, by tool call id, before the history was shortened."""
     error: str | None = None
 
 
@@ -124,6 +126,8 @@ class AgentSession:
         The agent; defaults to ``create_agent(model, instructions=instructions)``.
     instructions
         Extra instructions for the default agent.
+    model_settings
+        Model settings for the default agent, by default its ``MODEL_SETTINGS``.
     trace
         A path the model trace of the conversation is appended to.
     approve
@@ -134,6 +138,7 @@ class AgentSession:
     """
 
     def __init__(self, source: Source, model: Any, *, agent: Any = None, instructions: str = "",
+                 model_settings: dict[str, Any] | None = None,
                  trace: str | os.PathLike | None = None,
                  approve: Callable[[str, dict[str, Any]], bool] | None = None):
         self.source = source
@@ -143,15 +148,20 @@ class AgentSession:
         self.source_node = source_node_name(source)
         bind_source(self.editor, source, self.source_node)
         self.ops.add_node(SOURCE_ID, {"ref": self.source_node}, name=self.source_node)
-        self.agent = agent if agent is not None else create_agent(self.model, instructions=instructions or None)
+        if agent is None:
+            agent = create_agent(self.model, instructions=instructions or None, model_settings=model_settings)
+        self.agent = agent
         self.deps = FlowDashDeps(self.ops)
         policy = approval_policy(sensitive_components=SENSITIVE_COMPONENTS, ops=self.ops)
         self.runner = AgentRunner(self.agent, deps=self.deps, run_kwargs={"model": self.model}, approval_policy=policy)
         self.approve = approve
+        self._results: dict[str, str] = {}
         self._unsubscribe = self.runner.state.subscribe(self._on_event)
         self.recorder = ModelTraceRecorder(self.runner, trace) if trace is not None else None
 
     def _on_event(self, event: ev.Event):
+        if isinstance(event, ev.ToolCallResult):
+            self._results[event.tool_call_id] = event.content if isinstance(event.content, str) else str(event.content)
         if isinstance(event, ev.ApprovalRequested):
             asyncio.get_running_loop().call_soon(self._decide, event)
 
@@ -174,6 +184,7 @@ class AgentSession:
     async def ask(self, prompt: str) -> TurnResult:
         """Run the agent on ``prompt``, continuing the conversation, and report what the turn did."""
         before = self._configs()
+        self._results = {}
         history = len(self.runner.messages)
         metered = len(self.model.responses)
         self.deps.start_request()
@@ -193,6 +204,7 @@ class AgentSession:
             changed=changed,
             messages=list(self.runner.messages[history:]),
             responses=self.model.responses[metered:],
+            tool_results=dict(self._results),
             error=f"{type(error).__name__}: {error}" if error is not None else None,
         )
 

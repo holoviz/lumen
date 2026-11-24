@@ -89,6 +89,7 @@ async def test_subject_scored_end_to_end_on_outcomes(tmp_path):
     assert saved["run"]["subject"] == "flowdash"
     assert saved["run"]["scoring"] == "outcome"
     assert saved["run"]["subject_fingerprint"] == agent_fingerprint()
+    assert saved["run"]["settings"]["subject_settings"] == {"model_settings": {"openai_reasoning_effort": "none", "max_tokens": 1000}}
     turn = next(case for case in saved["cases"] if case["name"] == "sales_chart")["turns"][0]
     assert turn["chart_marks"] == ["bar"]
     assert turn["chart_encodings"] == [{"x": {"field": "category", "type": "nominal"},
@@ -236,7 +237,7 @@ async def test_rerun_during_live_session_keeps_its_source():
     try:
         session_case(SESSIONS / "paid_by_region.yaml", source)
         live.ops.replace_yaml(live.ops.get_dashboard())
-        assert live.ops.editor.graph.get_state(live.ops._instance("data")).source is live.source
+        assert live.ops.node_output("data", "source") is live.source
     finally:
         live.close()
 
@@ -264,3 +265,47 @@ async def test_save_session_writes_loadable_file(tmp_path):
     case = session_case(tmp_path / "total.yaml", source)
     assert case.metadata.rows == [[35.0]]
     assert isinstance(case, Case)
+
+
+async def test_timed_out_case_keeps_its_usage(tmp_path):
+    import asyncio as _asyncio
+
+    async def respond(messages, info):
+        if sum(isinstance(m, ModelResponse) for m in messages) == 0:
+            return ModelResponse(parts=[ToolCallPart("list_tables", {})])
+        await _asyncio.sleep(30)
+        return ModelResponse(parts=[TextPart("late")])
+
+    subject = FlowDashSubject(model=FunctionModel(respond, model_name="gpt-6-luna"))
+    dataset = Dataset[Inputs, Output, Expected](name="timeout", cases=by_name("sales_total"), evaluators=[CheckResult()])
+    output = tmp_path / "timeout.json"
+    await evaluate(subject.build_model("x"), dataset, source, output, subject=subject, prompt_timeout=2)
+    (case,) = json.loads(output.read_text())["cases"]
+    assert case["turns"][0]["status"] == "timeout"
+    assert case["usage"]["input_tokens"] > 0
+    assert subject._session is None
+
+
+async def test_partial_usage_belongs_to_the_current_case():
+    subject = FlowDashSubject(model=scripted([TextPart("ok")]))
+    case = by_name("sales_total")[0]
+    await subject.run(case.inputs, subject.build_model("x"), source(case.inputs))
+    assert subject.partial_usage().input_tokens > 0
+    assert subject._session is None
+
+    class Boom(Exception):
+        pass
+
+    def fail(*args, **kwargs):
+        raise Boom()
+
+    from lumen.agent import evals as agent_evals
+
+    original = agent_evals.AgentSession
+    agent_evals.AgentSession = fail
+    try:
+        with pytest.raises(Boom):
+            await subject.run(case.inputs, subject.build_model("x"), source(case.inputs))
+    finally:
+        agent_evals.AgentSession = original
+    assert subject.partial_usage() is None

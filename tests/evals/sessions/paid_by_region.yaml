@@ -12,6 +12,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -26,17 +27,15 @@ turns:
         config:
           sql: |-
             SELECT
-              customers.region,
-              SUM(orders.amount) AS total_paid_order_amount
-            FROM orders
-            JOIN customers
-              ON orders.customer_id = customers.customer_id
+              c."region",
+              SUM(o."amount") AS total_paid_order_amount
+            FROM orders AS o
+            JOIN customers AS c
+              ON o."customer_id" = c."customer_id"
             WHERE
-              orders.status = 'paid'
+              o."status" = 'paid' AND NOT c."region" IS NULL AND TRIM(c."region") <> ''
             GROUP BY
-              customers.region
-            ORDER BY
-              customers.region
+              c."region"
           table: paid_order_amount_by_region
         position: [350, 0]
     edges:
@@ -53,6 +52,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -67,16 +67,15 @@ turns:
         config:
           sql: |-
             SELECT
-              customers.region,
-              SUM(orders.amount) AS total_paid_order_amount
-            FROM orders
-            JOIN customers
-              ON orders.customer_id = customers.customer_id
+              c."region",
+              SUM(o."amount") AS total_paid_order_amount
+            FROM orders AS o
+            JOIN customers AS c
+              ON o."customer_id" = c."customer_id"
             WHERE
-              orders.status = 'paid'
-              AND customers.region = 'west'
+              o."status" = 'paid' AND c."region" = 'west'
             GROUP BY
-              customers.region
+              c."region"
           table: paid_order_amount_by_region
         position: [350, 0]
     edges:

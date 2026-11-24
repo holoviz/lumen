@@ -70,7 +70,7 @@ def main():
     except (ImportError, AttributeError, ValueError, TypeError) as exc:
         parser.error(f"Invalid --subject: {exc}")
     scoring = effective_scoring(subject, args.scoring)
-    settings = run_settings(subject=subject.name, scoring=scoring)
+    settings = run_settings(subject=subject.name, scoring=scoring, subject_settings=getattr(subject, "settings", None))
 
     instructions, instruction_version = SUITE_INSTRUCTIONS[args.suite]
     if args.no_sql_cleanup:
@@ -141,7 +141,8 @@ def run_all_bird(dataset, output, questions, databases, model, provider, key, re
     api = api or default_api(provider)
     settings = settings or {}
     resolved = resolve_subject(subject or settings.get("subject"), **subject_options(disable_sql_cleanup))
-    settings = run_settings(settings, resolved.name, effective_scoring(resolved, settings.get("scoring")))
+    settings = run_settings(settings, resolved.name, effective_scoring(resolved, settings.get("scoring")),
+                            getattr(resolved, "settings", None))
     spec = subject_spec(resolved)
     subject_fingerprint = resolved.fingerprint()
     fingerprint = case_fingerprint(dataset.cases, {"bird_questions_sha256": hashlib.sha256(questions.read_bytes()).hexdigest()},

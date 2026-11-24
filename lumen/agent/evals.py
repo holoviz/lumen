@@ -30,6 +30,7 @@ from ..flowdash import SQL_ID, VIEW_ID
 from ..sources.duckdb import DuckDBSource
 from ..util import as_pandas
 from . import _graph
+from .assistant import MODEL_SETTINGS
 from .headless import AgentSession, TurnResult
 
 # Name of the SQL node a case's pre-seeded query is placed as.
@@ -84,8 +85,12 @@ def _total(turns: list[Turn]) -> Usage | None:
                  sum(c.cached_tokens for c in calls), sum(costs) if all(c is not None for c in costs) else None)
 
 
-def tool_calls(messages: list[Any]) -> list[ToolCall]:
-    """Each tool call of ``messages`` with its arguments and result, as the Lumen subject records them."""
+def tool_calls(messages: list[Any], returned: dict[str, str] | None = None) -> list[ToolCall]:
+    """
+    Each tool call of ``messages`` with its arguments and result, as the Lumen
+    subject records them. ``returned`` results by tool call id take precedence over the
+    history, which may hold shortened results.
+    """
     results = {
         part.tool_call_id: part for message in messages if isinstance(message, ModelRequest)
         for part in message.parts if isinstance(part, (ToolReturnPart, RetryPromptPart))
@@ -99,6 +104,7 @@ def tool_calls(messages: list[Any]) -> list[ToolCall]:
                 result = results.get(part.tool_call_id)
                 content = result.model_response() if isinstance(result, RetryPromptPart) else (
                     result.model_response_str() if result is not None else "")
+                content = (returned or {}).get(part.tool_call_id, content)
                 calls.append(ToolCall(part.tool_name, part.args_as_dict(), content[:MAX_TOOL_RESULT_LENGTH]))
     return calls
 
@@ -140,9 +146,7 @@ def answer_nodes(ops: Any, names: Iterable[str]) -> tuple[str | None, list[str]]
     if queries:
         return queries[-1], views
     if views:
-        instance = ops._instance(views[-1])
-        upstream = next((e["source"] for e in ops.editor.graph.edges if e["target"] == instance), None)
-        return ops._names().get(upstream), views
+        return _graph.upstream(ops, views[-1]), views
     return None, views
 
 
@@ -162,7 +166,7 @@ def snapshot(session: AgentSession, turn: TurnResult) -> Turn:
             if frame is not None:
                 columns, rows, row_count = result_rows(frame)
     marks, encodings = chart_summary([_graph.config_of(ops, name).get("spec") or {} for name in views])
-    calls = tool_calls(turn.messages)
+    calls = tool_calls(turn.messages, turn.tool_results)
     listing = next((call.result for call in reversed(calls) if call.name == "list_tables"), None)
     answer = turn.output[:MAX_ANSWER_LENGTH] if turn.output is not None else None
     return Turn(
@@ -216,7 +220,8 @@ class FlowDashSubject:
     as a SQL node named ``result`` first.
 
     Pass ``model``, e.g. a ``FunctionModel``, or ``cassette``, the path of a
-    recorded model trace, to run offline. ``traces`` is a directory each case's
+    recorded model trace, to run offline. ``model_settings`` replaces the
+    agent's default model settings, ``MODEL_SETTINGS``. ``traces`` is a directory each case's
     model trace is written to, by default ``$LUMEN_AGENT_TRACES`` if set, so
     the CLI and its BIRD workers can record them too. The suite instructions
     given to ``build_model`` are appended to the agent's. ``fingerprint`` is
@@ -228,12 +233,25 @@ class FlowDashSubject:
     supports_architecture = False
 
     def __init__(self, model: Any = None, cassette: str | os.PathLike | None = None,
-                 traces: str | os.PathLike | None = None):
+                 traces: str | os.PathLike | None = None, model_settings: dict[str, Any] | None = None):
         self.model = model
+        self.model_settings = dict(MODEL_SETTINGS if model_settings is None else model_settings)
         self.cassette = cassette
         traces = traces if traces is not None else os.environ.get(TRACES_ENV)
         self.traces = Path(traces) if traces else None
         self.instructions = ""
+
+    def partial_usage(self) -> Usage | None:
+        """The usage of the case running now, or of the one that just ended, e.g. by a timeout or an error."""
+        session = getattr(self, "_session", None)
+        if session is not None:
+            return usage(session.model.responses)
+        return getattr(self, "_last_usage", None)
+
+    @property
+    def settings(self) -> dict[str, Any]:
+        """The model settings of every request, recorded with the run settings."""
+        return {"model_settings": self.model_settings}
 
     @property
     def requires_api_key(self) -> bool:
@@ -259,7 +277,9 @@ class FlowDashSubject:
             first = re.sub(r"\W+", "-", inputs.prompts[0].lower()).strip("-")[:40] if inputs.prompts else "case"
             digest = hashlib.sha1(json.dumps([inputs.fixture, inputs.prompts, inputs.query]).encode()).hexdigest()[:8]
             trace = self.traces / f"{first}-{digest}.jsonl"
-        session = AgentSession(source, model, instructions=self.instructions, trace=trace)
+        self._session = self._last_usage = None
+        session = self._session = AgentSession(source, model, instructions=self.instructions, trace=trace,
+                                               model_settings=self.model_settings)
         turns, artifacts = [], []
         try:
             if inputs.query:
@@ -276,4 +296,6 @@ class FlowDashSubject:
                     break
         finally:
             session.close()
+            self._session = None
+            self._last_usage = usage(session.model.responses)
         return Output(turns, _total(turns), artifacts)

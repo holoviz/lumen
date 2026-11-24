@@ -12,6 +12,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -27,10 +28,13 @@ turns:
           sql: |-
             SELECT
               "category",
-              SUM("amount") AS total_amount
-            FROM sales
+              SUM("amount") AS "total_amount"
+            FROM "sales"
             WHERE
-              NOT "category" IS NULL AND NOT "amount" IS NULL
+              NOT "category" IS NULL
+              AND TRIM("category") <> ''
+              AND NOT "amount" IS NULL
+              AND "amount" <> -9999
             GROUP BY
               "category"
           table: total_amount_by_category
@@ -49,6 +53,7 @@ turns:
       refresh_period: 0.0
       controls_position: top
       header_layout: compact
+      node_previews: false
       tile_cards: true
       tile_titles: false
       viewers_can_inspect: false
@@ -64,10 +69,13 @@ turns:
           sql: |-
             SELECT
               "category",
-              SUM("amount") AS total_amount
-            FROM sales
+              SUM("amount") AS "total_amount"
+            FROM "sales"
             WHERE
-              NOT "category" IS NULL AND NOT "amount" IS NULL
+              NOT "category" IS NULL
+              AND TRIM("category") <> ''
+              AND NOT "amount" IS NULL
+              AND "amount" <> -9999
             GROUP BY
               "category"
           table: total_amount_by_category
@@ -76,8 +84,7 @@ turns:
         component: Lumen/view
         config:
           spec:
-            mark:
-              type: bar
+            mark: bar
             encoding:
               x:
                 field: category
