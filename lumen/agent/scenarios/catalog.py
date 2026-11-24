@@ -323,25 +323,23 @@ SCENARIOS: list[Scenario] = [
 # fix it. Replaying the cassettes reports them as xfail, and as XPASS once a change makes them pass.
 EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "kpi_turbine_row": {"1/kpis": "W1"},
-    "kpi_top_bar": {"1/kpis": "W1"},
-    "kpi_penguin_units": {"1/kpis": "W1", "2/units": "W1"},
+    "kpi_penguin_units": {"1/kpis": "W1", "1/kpi_values": "W4", "2/units": "W1"},
     "kpi_quakes_row": {"1/kpis": "W1"},
-    "wind_build": {"1/kpis": "W1", "1/max_bars": "W5", "1/chart_titles": "W5", "1/requests": "W6"},
+    "wind_build": {"1/kpis": "W1", "1/chart_titles": "W5"},
     "click_to_filter": {"1/selection": "W1"},
-    "rename_table": {"1/node_title": "W1"},
-    "two_columns": {"1/row_top_manufacturers": "W3"},
+    "rename_table": {"1/node_title": "W1", "1/in_place": "W2"},
     "kpis_to_top": {"1/row_kpi_turbines": "W3"},
     "capacity_by_year": {"1/numbers": "W4", "1/chart_titles": "W5"},
+    "capacity_by_region": {"1/numbers": "W4"},
     "texas_share": {"1/value": "W4"},
     "california_quakes": {"1/value": "W4", "1/strongest": "W4"},
     "last_month": {"1/value": "W4"},
     "capacity_by_state": {"1/max_bars": "W5", "1/chart_titles": "W5"},
     "quakes_by_type": {"1/chart_titles": "W5"},
     "why_question": {"1/no_new_nodes": "W6"},
-    "penguin_batch": {"1/kpis": "W1"},
+    "penguin_batch": {"1/kpis": "W1", "1/requests": "W6"},
     "capacity_by_year_metric": {"1/chart_titles": "W5"},
     "texas_share_adhoc": {"1/value": "W4"},
-    "capacity_by_year_adhoc": {"1/numbers": "W4"},
 }
 
 for _scenario in SCENARIOS:

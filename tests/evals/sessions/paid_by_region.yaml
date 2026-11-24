@@ -4,6 +4,7 @@ turns:
 - question: What is the total paid order amount per region?
   nodes:
   - paid_order_amount_by_region
+  - paid_order_amount_by_region_table
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,25 +18,26 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t24fcdb64
+      - id: tc0c8e861
         actor: user
-        at: '2026-11-24T01:58:03Z'
+        at: '2026-11-24T03:56:21Z'
         summary: Added data.
-      - id: t4f205028
+      - id: t045a8be7
         actor: agent
-        at: '2026-11-24T01:58:08Z'
-        run: run-ba3c33f6d7ad
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
+        at: '2026-11-24T03:56:27Z'
+        run: run-3b085228ad81
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
+          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
     nodes:
       data:
         component: Lumen/source
-        origin: t24fcdb64
+        origin: tc0c8e861
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t4f205028
+        origin: t045a8be7
         config:
           sql: |-
             SELECT
@@ -50,11 +52,27 @@ turns:
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
+      paid_order_amount_by_region_table:
+        component: Lumen/table_view
+        origin: t045a8be7
+        config:
+          spec:
+            formatters:
+              total_paid_order_amount:
+                type: money
+                symbol: $
+                decimals: 0
+        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
+      - from: paid_order_amount_by_region.pipeline
+        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
+        - node: paid_order_amount_by_region_table
+          width: 100.0
+          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region
@@ -75,30 +93,31 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t24fcdb64
+      - id: tc0c8e861
         actor: user
-        at: '2026-11-24T01:58:03Z'
+        at: '2026-11-24T03:56:21Z'
         summary: Added data.
-      - id: t4f205028
+      - id: t045a8be7
         actor: agent
-        at: '2026-11-24T01:58:08Z'
-        run: run-ba3c33f6d7ad
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: tad931234
+        at: '2026-11-24T03:56:27Z'
+        run: run-3b085228ad81
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
+          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
+      - id: td5180bc8
         actor: agent
-        at: '2026-11-24T01:58:11Z'
-        run: run-ad75bda1e2f2
+        at: '2026-11-24T03:56:32Z'
+        run: run-5ee9f7072012
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: t24fcdb64
+        origin: tc0c8e861
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t4f205028
+        origin: t045a8be7
         config:
           sql: |-
             SELECT
@@ -113,11 +132,27 @@ turns:
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
+      paid_order_amount_by_region_table:
+        component: Lumen/table_view
+        origin: t045a8be7
+        config:
+          spec:
+            formatters:
+              total_paid_order_amount:
+                type: money
+                symbol: $
+                decimals: 0
+        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
+      - from: paid_order_amount_by_region.pipeline
+        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
+        - node: paid_order_amount_by_region_table
+          width: 100.0
+          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region
