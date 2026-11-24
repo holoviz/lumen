@@ -4,7 +4,6 @@ turns:
 - question: What is the total paid order amount per region?
   nodes:
   - paid_order_amount_by_region
-  - paid_order_amount_by_region_table
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -18,31 +17,30 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tc0c8e861
+      - id: t54829d43
         actor: user
-        at: '2026-11-24T03:56:21Z'
+        at: '2026-11-24T23:42:31Z'
         summary: Added data.
-      - id: t045a8be7
+      - id: t8d8fb42b
         actor: agent
-        at: '2026-11-24T03:56:27Z'
-        run: run-3b085228ad81
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
-          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
+        at: '2026-11-24T23:42:36Z'
+        run: run-f12b6e9a0705
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: tc0c8e861
+        origin: t54829d43
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t045a8be7
+        origin: t8d8fb42b
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS total_paid_order_amount
+              SUM(o."amount") AS "total_paid_order_amount"
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
@@ -50,29 +48,15 @@ turns:
               o."status" = 'paid'
             GROUP BY
               c."region"
+            ORDER BY
+              c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
-      paid_order_amount_by_region_table:
-        component: Lumen/table_view
-        origin: t045a8be7
-        config:
-          spec:
-            formatters:
-              total_paid_order_amount:
-                type: money
-                symbol: $
-                decimals: 0
-        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
-      - from: paid_order_amount_by_region.pipeline
-        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
-        - node: paid_order_amount_by_region_table
-          width: 100.0
-          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region
@@ -93,36 +77,35 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: tc0c8e861
+      - id: t54829d43
         actor: user
-        at: '2026-11-24T03:56:21Z'
+        at: '2026-11-24T23:42:31Z'
         summary: Added data.
-      - id: t045a8be7
+      - id: t8d8fb42b
         actor: agent
-        at: '2026-11-24T03:56:27Z'
-        run: run-3b085228ad81
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
-          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
-      - id: td5180bc8
+        at: '2026-11-24T23:42:36Z'
+        run: run-f12b6e9a0705
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
+      - id: t4bef9af2
         actor: agent
-        at: '2026-11-24T03:56:32Z'
-        run: run-5ee9f7072012
+        at: '2026-11-24T23:42:38Z'
+        run: run-0e3fd9f5dce4
         summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: tc0c8e861
+        origin: t54829d43
         config:
           ref: data
         position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: t045a8be7
+        origin: t8d8fb42b
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS total_paid_order_amount
+              SUM(o."amount") AS "total_paid_order_amount"
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
@@ -130,29 +113,15 @@ turns:
               o."status" = 'paid' AND c."region" = 'west'
             GROUP BY
               c."region"
+            ORDER BY
+              c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
-      paid_order_amount_by_region_table:
-        component: Lumen/table_view
-        origin: t045a8be7
-        config:
-          spec:
-            formatters:
-              total_paid_order_amount:
-                type: money
-                symbol: $
-                decimals: 0
-        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
-      - from: paid_order_amount_by_region.pipeline
-        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
-        - node: paid_order_amount_by_region_table
-          width: 100.0
-          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region

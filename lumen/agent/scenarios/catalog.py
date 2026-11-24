@@ -318,28 +318,28 @@ SCENARIOS: list[Scenario] = [
 ]
 
 
-# The checks that failed in the recorded baseline (gpt-6-luna on the integration branch with the
-# assistant plan's W1, W2 and W3), each with the workstream of the improvement plan expected to
-# fix it. Replaying the cassettes reports them as xfail, and as XPASS once a change makes them pass.
+# The checks that failed in the recorded baseline (gpt-6-luna on branch_2.0 with the assistant
+# plan's W1, W2, W3 and W4's data facts), each with the workstream of the improvement plan expected
+# to fix it. Replaying the cassettes reports them as xfail, and as XPASS once a change makes them pass.
 EXPECTED_FAILURES: dict[str, dict[str, str]] = {
     "kpi_turbine_row": {"1/kpis": "W1"},
-    "kpi_penguin_units": {"1/kpis": "W1", "1/kpi_values": "W4", "2/units": "W1"},
+    "kpi_penguin_units": {"1/kpis": "W1", "2/in_place": "W2"},
     "kpi_quakes_row": {"1/kpis": "W1"},
+    "kpi_top_bar": {"1/kpis": "W1"},
     "wind_build": {"1/kpis": "W1", "1/chart_titles": "W5"},
     "click_to_filter": {"1/selection": "W1"},
-    "rename_table": {"1/node_title": "W1", "1/in_place": "W2"},
+    "rename_table": {"1/node_title": "W1"},
     "kpis_to_top": {"1/row_kpi_turbines": "W3"},
-    "capacity_by_year": {"1/numbers": "W4", "1/chart_titles": "W5"},
-    "capacity_by_region": {"1/numbers": "W4"},
-    "texas_share": {"1/value": "W4"},
-    "california_quakes": {"1/value": "W4", "1/strongest": "W4"},
+    "rolling_average": {"1/legend": "W5"},
+    "units_gw": {"1/numbers": "W2"},
+    "capacity_by_year": {"1/chart_titles": "W5"},
+    "california_quakes": {"1/value": "W4"},
     "last_month": {"1/value": "W4"},
     "capacity_by_state": {"1/max_bars": "W5", "1/chart_titles": "W5"},
     "quakes_by_type": {"1/chart_titles": "W5"},
     "why_question": {"1/no_new_nodes": "W6"},
     "penguin_batch": {"1/kpis": "W1", "1/requests": "W6"},
     "capacity_by_year_metric": {"1/chart_titles": "W5"},
-    "texas_share_adhoc": {"1/value": "W4"},
 }
 
 for _scenario in SCENARIOS:

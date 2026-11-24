@@ -600,12 +600,10 @@ def test_recorded_cassettes_are_current():
         pytest.fail(stale_message(outdated, everything=len(outdated) == len(RECORDED)), pytrace=False)
 
 
-# Replays that send the model something other than the recording, by scenario, each with why.
-ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {
-    "rename_table": ([{"request": 2, "kind": "tool_return", "tool": "get_report"}], (
-        "panel-flowdash's get_report fences the report between markers with a random nonce, so its replayed "
-        "return differs from the recording in the nonce alone")),
-}
+# Replays that send the model something other than the recording, by scenario, each with why, e.g.
+# a recorded get_report call: panel-flowdash fences the report between markers with a random nonce,
+# so its replayed return differs from the recording in the nonce alone.
+ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {}
 
 
 def group(name: str):
