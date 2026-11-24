@@ -7,6 +7,7 @@ import yaml
 
 pytest.importorskip("duckdb")
 
+from panel_flowdash import FlowDash
 from panel_flowdash.agent import OperationError
 from panel_flowdash.agent.tools import TOOLS as FLOWDASH_TOOLS
 from pydantic_ai import ModelRetry
@@ -28,6 +29,11 @@ from lumen.flowdash import FILTER_ID, TABLE_ID
 from lumen.flowdash.metrics import read_metrics
 from lumen.flowdash.project import parse_project
 from lumen.sources.duckdb import DuckDBSource
+
+# Ad hoc captions read the provenance panel-flowdash gives a node, which 0.1.0rc8 does not have yet.
+needs_provenance = pytest.mark.skipif(
+    not hasattr(FlowDash, "node_provenance"), reason="panel-flowdash without node provenance"
+)
 
 # Turbines as in the wind data: p_cap is the project's capacity, repeated on each of its turbines' rows.
 TURBINES = (
@@ -120,6 +126,7 @@ def edges(session):
 
 # add_kpi
 
+@needs_provenance
 def test_add_kpi_reuses_the_value_of_a_one_cell_sql_node(ctx, session):
     session.add_sql("capacity", "SELECT SUM(t_cap) / 1000.0 AS capacity_mw FROM turbines")
     result = add_kpi(ctx, "capacity", "capacity_kpi", label="Installed capacity", unit="MW")
@@ -447,6 +454,7 @@ async def test_add_kpi_reads_its_number_at_once_in_a_served_session(monkeypatch)
     assert "Total fare = 1,500,000." in result
 
 
+@needs_provenance
 def test_a_kpi_caption_of_a_sql_value_says_how_its_query_computes_it(ctx, session):
     session.add_sql("capacity_total", "SELECT SUM(t_cap) AS capacity_kw FROM turbines")
     add_kpi(ctx, "capacity_total", "kpi")

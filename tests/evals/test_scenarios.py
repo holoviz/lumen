@@ -266,6 +266,7 @@ def test_the_ad_hoc_label_says_how_and_that_no_metric_was_used(reply, expected):
       ("add_chart", {"data": "capacity_by_year", "name": "capacity_chart", "spec": LINE})], "capacity_chart"),
     ([("add_sql", {"source": "data", "name": "capacity_by_year", "sql": GOOD_SQL})], "capacity_by_year"),
 ], ids=["chart", "sql_only"])
+@pytest.mark.skipif(not hasattr(panel_flowdash.FlowDash, "node_provenance"), reason="panel-flowdash without node provenance")
 async def test_the_ad_hoc_label_is_read_from_the_provenance_of_what_the_turn_placed(calls, label):
     async with state_after("turbines", scripted(calls)) as state:
         assert state.output == "done"
