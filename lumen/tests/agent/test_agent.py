@@ -2,9 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-pytest.importorskip("panel_flowdash")
-pytest.importorskip("panel_agents")
-pytest.importorskip("pydantic_ai")
+pytest.importorskip("duckdb")
 
 from pydantic_ai import ModelRetry
 from pydantic_ai.messages import (

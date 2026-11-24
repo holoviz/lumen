@@ -11,12 +11,12 @@ PYTHONIOENCODING = "utf-8"
 
 [environments]
 test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-312 = ["py312", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-313 = ["py313", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-314 = ["py314", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-evals = ["py314", "test-core", "ai", "sql", "evals"]
-test-core = ["py313", "test-core"]
-docs = ["py312", "doc", "ai", "sql"]
+test-312 = ["py312", "flowdash", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-313 = ["py313", "flowdash", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-314 = ["py314", "flowdash", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+evals = ["py314", "flowdash", "test-core", "ai", "sql", "evals"]
+test-core = ["py313", "flowdash", "test-core"]
+docs = ["py312", "flowdash", "doc", "ai", "sql"]
 build = ["py312", "build"]
 lint = ["py312", "lint"]
 homepage = ["homepage"]
@@ -46,6 +46,15 @@ requests = "*"
 sqlglot = ">=26.26.0"
 tornado = "*"
 tqdm = "*"
+
+[pypi-dependencies]
+# Lumen's FlowDash nodes report failures with param.ReactiveError, new in param 2.5;
+# naming the pre-release keeps the conda param from pyviz/label/dev in place.
+param = ">=2.5.0b5"
+
+# panel-flowdash needs Python 3.12, so test-311 runs without it.
+[feature.flowdash.pypi-dependencies]
+panel-flowdash = { version = ">=0.1.0rc5", extras = ["agent"] }
 
 [feature.py311.dependencies]
 python = "3.11.*"

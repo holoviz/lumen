@@ -5,10 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-pytest.importorskip("panel_flowdash")
-pytest.importorskip("panel_agents")
-pytest.importorskip("pydantic_ai")
+import yaml
 
 from panel_agents.adapters.cassette import Cassette
 from panel_agents.adapters.model_trace import load_messages
@@ -198,6 +195,15 @@ def playback():
     return reason
 
 
+def structure(dashboard: str) -> dict:
+    """A dashboard without its edit history, whose ids and times differ on every run."""
+    data = yaml.safe_load(dashboard)
+    data.pop("turns", None)
+    for node in data.get("nodes", {}).values():
+        node.pop("origin", None)
+    return data
+
+
 def fixture(inputs):
     data = source(inputs)
     # Tool results show rows in the engine's order, which only one thread keeps stable.
@@ -217,7 +223,7 @@ async def test_cassette_playback_rebuilds_recorded_graph(playback, name):
 
     assert [turn.error for turn in turns] == [None] * len(turns)
     assert cassette.remaining == 0
-    assert [turn.graph for turn in turns] == [turn.dashboard for turn in session.turns]
+    assert [structure(turn.graph) for turn in turns] == [structure(turn.dashboard) for turn in session.turns]
     assert [[*turn.nodes, *turn.changed] for turn in turns] == [turn.nodes for turn in session.turns]
 
 

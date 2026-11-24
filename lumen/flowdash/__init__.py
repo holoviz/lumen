@@ -9,16 +9,8 @@ panel-flowdash can pass host resources to editors (panel-flowdash#166), so
 there source nodes report that no source is bound; ``lumen serve --flowdash``
 binds the served data and is the working entry point.
 
-Needs panel-flowdash, which Lumen does not install; nothing else in Lumen
-imports this package.
+Importing ``lumen`` does not import this package or panel-flowdash.
 """
-try:
-    import panel_flowdash  # noqa: F401
-except ImportError as exc:
-    raise ImportError(
-        "lumen.flowdash needs panel-flowdash, which is not installed: pip install panel-flowdash"
-    ) from exc
-
 from .checks import (
     check_chart, check_filter_config, check_query, check_sql_config,
     check_table_config, check_view_config, pipeline_columns,
