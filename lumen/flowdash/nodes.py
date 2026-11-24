@@ -63,6 +63,7 @@ from .checks import (
     check_sql_config, check_table_config, check_view_config, forget_probes,
     pipeline_columns,
 )
+from .choices import pipeline_column_types, source_choices, table_choices
 from .contracts import (
     DATA_ID, FILTER_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, SourceContract,
 )
@@ -86,7 +87,7 @@ def _register_port_type(name: str, **options: Any) -> str:
 SOURCE_TYPE = _register_port_type("lumen.Source", color=SOURCE_COLOR)
 # Its columns come from the schema, so the inspector offers them without fetching rows.
 PIPELINE_TYPE = _register_port_type(
-    "lumen.Pipeline", color=PIPELINE_COLOR, columns=pipeline_columns
+    "lumen.Pipeline", color=PIPELINE_COLOR, columns=pipeline_column_types
 )
 
 # The key of the editor context the host puts its sources in, by ref.
@@ -759,6 +760,7 @@ class LumenNode(Viewer):
     config=["ref"],
     check_config=check_source_config,
     contract=SourceContract(),
+    config_choices=source_choices,
     provides=[{"key": "source", "type": SOURCE_TYPE}],
 )
 class SourceNode(LumenNode):
@@ -888,6 +890,7 @@ class PipelineNode(LumenNode):
     ),
     config=["table", "limit"],
     check_config=check_table_config,
+    config_choices=table_choices,
     requires=[{"key": "source", "type": SOURCE_TYPE, "required": True}],
     provides=[{"key": "pipeline", "type": PIPELINE_TYPE}],
 )
@@ -944,7 +947,10 @@ class FilterNode(PipelineNode):
 
     value = param.Parameter(doc="The value to keep, e.g. a widget's selection.")
 
-    field = param.String(default="", doc="The column to filter on.")
+    field = param.String(
+        default="", doc="The column to filter on.",
+        metadata={"flowdash": {"choices": "columns", "of": "pipeline"}},
+    )
 
     _waiting = "Waiting for a pipeline and a field"
 
