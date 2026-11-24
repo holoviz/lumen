@@ -24,6 +24,7 @@ from panel_flowdash.project import _parse
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
+from .catalog import CATALOG_KEY, ProjectCatalog
 from .metrics import METRICS_KEY, ProjectMetrics, serve_lumen
 from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
 from .project import (
@@ -391,6 +392,7 @@ def build_routes(
         project = load_project(project, {**context, "project_dir": Path(project).resolve().parent})
     # The admin view edits this project, so what it saves is what the app reads.
     context[METRICS_KEY] = ProjectMetrics(project)
+    context[CATALOG_KEY] = ProjectCatalog(project)
     editor_options["context"] = context
     routes = FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),

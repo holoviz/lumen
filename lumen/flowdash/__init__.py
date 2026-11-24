@@ -10,9 +10,15 @@ gives the editor in its context under ``SOURCES_KEY`` (``"lumen.sources"``),
 by ref: ``lumen serve --flowdash`` passes the served data, and a ``flowdash
 serve`` project sets ``editor_options = {"context": {"lumen.sources": {...}}}``
 in its ``__init__.py``. Without sources, source nodes say how to provide them.
+The tables of those sources an admin turned off for the assistant, in the
+project file's ``catalog:`` section, are read from ``CATALOG_KEY``
+(``"lumen.catalog"``), see ``lumen.flowdash.catalog``.
 
 Importing ``lumen`` does not import this package or panel-flowdash.
 """
+from .catalog import (
+    CATALOG_KEY, Catalog, ProjectCatalog, assistant_tables, hidden_tables,
+)
 from .checks import (
     PROBE_TIMEOUT, CheckDiagnostic, check_chart, check_columns,
     check_filter_config, check_query, check_source_config, check_sql_config,
@@ -56,6 +62,7 @@ __flowdash_components__ = COMPONENTS
 
 __all__ = [
     "AGGREGATE_ID",
+    "CATALOG_KEY",
     "COMPONENTS",
     "DATA_ID",
     "DECKGL_ID",
@@ -82,6 +89,7 @@ __all__ = [
     "TABLE_VIEW_ID",
     "VIEW_ID",
     "AggregateNode",
+    "Catalog",
     "CheckDiagnostic",
     "DataNode",
     "DeckGLNode",
@@ -92,6 +100,7 @@ __all__ = [
     "LumenViewNode",
     "MetricNode",
     "ParameterNode",
+    "ProjectCatalog",
     "SQLNode",
     "SelectNode",
     "SortNode",
@@ -99,6 +108,7 @@ __all__ = [
     "TableNode",
     "TableViewNode",
     "ViewNode",
+    "assistant_tables",
     "bind_source",
     "bound_sources",
     "check_chart",
@@ -124,6 +134,7 @@ __all__ = [
     "global_condition",
     "global_conditions",
     "globally_filtered",
+    "hidden_tables",
     "host_metrics",
     "host_sources",
     "listed_tables",
