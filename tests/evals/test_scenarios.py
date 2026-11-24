@@ -600,7 +600,11 @@ def test_recorded_cassettes_are_current():
 
 
 # Replays that send the model something other than the recording, by scenario, each with why.
-ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {}
+ALLOWED_DIVERGENCES: dict[str, tuple[list[dict], str]] = {
+    "rename_table": ([{"request": 2, "kind": "tool_return", "tool": "get_report"}], (
+        "panel-flowdash's get_report fences the report between markers with a random nonce, so its replayed "
+        "return differs from the recording in the nonce alone")),
+}
 
 
 def group(name: str):
