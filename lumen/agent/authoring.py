@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import math
 
@@ -9,7 +10,7 @@ from typing import Any, Literal
 
 import sqlglot
 
-from panel_flowdash.agent import FlowDashDeps, OperationError
+from panel_flowdash.agent import DashboardOps, FlowDashDeps, OperationError
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolReturn
@@ -17,10 +18,10 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SOURCE_ID, SQL_ID, TABLE_VIEW_ID,
-    VIEW_ID, CheckDiagnostic, check_query, check_sql_config, effective_limit,
-    fetch, host_metrics, pipeline_columns, primed_result, result_sql,
-    row_ceiling, selection_warnings,
+    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID,
+    CheckDiagnostic, check_query, check_sql_config, effective_limit, fetch,
+    pipeline_columns, primed_result, result_sql, row_ceiling,
+    selection_warnings,
 )
 from ..flowdash.deckgl import (
     fit_view_state, layer_type, map_summary, position_columns,
@@ -34,7 +35,18 @@ from . import _graph
 from ._graph import (
     DIVIDER_ID, HEADING_ID, MARKDOWN_ID, TEXT_FIELDS,
 )
-from .data import lint, resolve_source, source_output
+from .data import (
+    _sources_by_name, lint, resolve_source, source_output,
+)
+from .edits import (
+    PATCH_DEPTH, changed_layers, depth, kind, merge_chart_layers, merge_patch,
+    name_notes, patch_problem, unrelated, view_summary,
+)
+
+try:
+    from panel_flowdash.agent import ExplorationOps
+except ImportError:
+    ExplorationOps = None
 
 
 def _place(ops, component: str, name: str, config: dict[str, Any], source: str, target: str) -> None:
@@ -47,6 +59,36 @@ def _place(ops, component: str, name: str, config: dict[str, Any], source: str, 
     except OperationError as exc:
         ops.remove_node(name)
         raise ModelRetry(str(exc)) from exc
+
+
+def _taken(ops, name: str, component: str) -> bool:
+    """
+    Whether a node of ``component`` is already called ``name``, which an
+    add tool then changes; ``ModelRetry`` when a node of another kind is.
+    """
+    if name not in _graph.nodes(ops):
+        return False
+    if (other := _graph.component_of(ops, name)) != component:
+        raise ModelRetry(
+            f"{name!r} is already a {kind(other)} node, so no {kind(component)} can take its name; "
+            f"pick another name, or change {name!r} with the tool that placed it."
+        )
+    return True
+
+
+def _rewire(ops, ports: list[str], target: str) -> None:
+    """Connect the input ``target`` to the outputs ``ports`` instead of what feeds it now."""
+    current = _graph.feeding_all(ops, target)
+    if current == ports:
+        return
+    for port in current:
+        ops.disconnect(port, target)
+    for port in ports:
+        ops.connect(port, target)
+
+
+def _notes(notes: list[str]) -> str:
+    return "".join(f"\nNote: {note}" for note in notes)
 
 
 def _marks(spec: dict[str, Any]) -> list[str]:
@@ -159,14 +201,35 @@ async def _add_follower(ops, upstreams: list[str], src: Any, name: str, sql: str
     )
 
 
+def _view_problems(ops, name: str) -> list[str]:
+    """What the charts, tables and maps reading node ``name``'s rows now refuse, checked against its new columns."""
+    try:
+        columns = pipeline_columns(_graph.output(ops, name, "pipeline"))
+    except (OperationError, AttributeError):
+        return []
+    readers = list(dict.fromkeys(
+        reader for port in ("pipeline", "data") for reader in _graph.reading(ops, f"{name}.{port}")
+    ))
+    problems = []
+    for reader in readers:
+        if (view := _graph.view_class(_graph.component_of(ops, reader))) is None:
+            continue
+        try:
+            view.check_spec(_graph.config_of(ops, reader).get("spec") or {}, columns)
+        except ValueError as exc:
+            problems.append(f"View {reader!r} now fails: {exc} Change it with update_chart, or the query back.")
+    return problems
+
+
 async def _follower_problems(ops, name: str) -> list[str]:
     """
-    What the SQL nodes reading ``name``'s result directly now refuse,
-    checked against its new result. A node reading one of those in turn is
-    not checked: it fails, and reports it, once that one does.
+    What the SQL nodes reading ``name``'s result directly and the views
+    showing its rows now refuse, checked against its new result. A node
+    reading one of those in turn is not checked: it fails, and reports it,
+    once that one does.
     """
     followers = [f for f in _graph.reading(ops, f"{name}.result") if _graph.component_of(ops, f) == SQL_ID]
-    problems = []
+    problems = _view_problems(ops, name)
     for follower in followers:
         try:
             result = _merged_input(ops, follower)
@@ -187,12 +250,15 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: 
 
     Args:
         source: Source name from list_tables.
-        name: Descriptive snake_case node name.
+        name: snake_case name saying what the node holds; a SQL node of this name is changed instead.
         sql: One SELECT or WITH query.
     """
-    if (upstream := _result_input(ctx.deps.ops, source)) is not None:
-        return await _add_follower(ctx.deps.ops, *upstream, name, sql)
     ops = ctx.deps.ops
+    if _taken(ops, name, SQL_ID):
+        return await _change_sql(ctx, source, name, sql)
+    if (upstream := _result_input(ctx.deps.ops, source)) is not None:
+        text = await _add_follower(ctx.deps.ops, *upstream, name, sql)
+        return text + _sql_notes(ops, name)
     _, src = resolve_source(ctx.deps, source)
     limit = effective_limit(ops.editor, None)
     sql, statement, frame = await _test_run(src, sql, limit)
@@ -210,16 +276,76 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: 
             ops.remove_node(placed)
         raise
     capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
-    return f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+    return (f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+            + _sql_notes(ops, name))
+
+
+def _sql_notes(ops, name: str) -> str:
+    """Notes on the names of SQL node ``name`` and of the columns its query computes."""
+    try:
+        frame = _graph.output(ops, name, "data")
+        dialect = getattr(_graph.output(ops, name, "pipeline").source, "dialect", None)
+    except (OperationError, AttributeError):
+        return ""
+    columns = [str(column) for column in getattr(frame, "columns", [])]
+    return _notes(name_notes(name, columns, _graph.config_of(ops, name).get("sql") or "", dialect))
+
+
+async def _change_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: str, sql: str) -> str:
+    """
+    Change the query of SQL node ``name``, and what it reads when
+    ``source`` names other inputs, as ``add_sql`` would place it; its
+    tile, followers and table name stay.
+    """
+    ops = ctx.deps.ops
+    upstream = _result_input(ops, source)
+    placed_source = None
+    if upstream is not None:
+        names, src = upstream
+        if name in names:
+            raise ModelRetry(f"{name!r} cannot read its own result; pass the source or SQL nodes it reads.")
+        ports = [f"{n}.result" for n in names]
+    else:
+        _, src = resolve_source(ctx.deps, source)
+    before, wired = _graph.config_of(ops, name), _graph.feeding_all(ops, f"{name}.source")
+    rows = before.get("limit")
+    limit = effective_limit(ops.editor, rows if isinstance(rows, int) else None)
+    sql, statement, frame = await _test_run(src, sql, limit)
+    if upstream is None:
+        port, src, placed_source = source_output(ctx.deps, source)
+        ports = [port]
+    existing = set(_graph.nodes(ops))
+    target = name
+    try:
+        with primed_result(src, statement, frame):
+            # Rewired first, since the new query is checked against what the node reads.
+            _rewire(ops, ports, f"{name}.source")
+            ops.set_config(name, {"sql": sql})
+            target = _graph.edited(ops, name, existing)
+        frame = _graph.output(ops, target, "data")
+    except (OperationError, ValueError) as exc:
+        if target in _graph.nodes(ops):
+            ops.set_config(target, {"sql": before.get("sql", "")})
+            _rewire(ops, wired, f"{target}.source")
+        if placed_source is not None:
+            ops.remove_node(placed_source)
+        raise ModelRetry(str(exc)) from exc
+    capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
+    problems = "".join(f"\n\n{problem}" for problem in await _follower_problems(ops, target))
+    return (f"Changed SQL node {target!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+            f"{problems}" + _sql_notes(ops, target))
 
 
 def place_view(ctx: RunContext[FlowDashDeps], component: str, data: str, name: str,
-               config: dict[str, Any]) -> dict[str, Any]:
+               config: dict[str, Any], change: bool = False) -> tuple[str, dict[str, Any]]:
     """
     Place the Lumen view node ``component`` on the pipeline of node ``data``
     with ``config``, its spec checked by the view's ``check_spec`` against
-    the pipeline's columns first, and return the config placed. A problem
-    comes back as ``ModelRetry`` for the model to fix.
+    the pipeline's columns first, and return its name and the config placed.
+    With ``change``, the view node ``name`` gets ``config`` and shows
+    ``data`` instead, keeping its tile; in Explore, an earlier answer's
+    view is changed in a copy, whose name is returned. A problem comes
+    back as ``ModelRetry`` for the model to fix.
     """
     ops = ctx.deps.ops
     port = _upstream_port(ctx.deps, data)
@@ -234,8 +360,22 @@ def place_view(ctx: RunContext[FlowDashDeps], component: str, data: str, name: s
         config = {**config, "spec": view.check_spec(config.get("spec") or {}, pipeline_columns(pipeline))}
     except ValueError as exc:
         raise ModelRetry(str(exc)) from exc
-    _place(ops, component, name, config, f"{data}.{port}", f"{name}.pipeline")
-    return config
+    if not change:
+        _place(ops, component, name, config, f"{data}.{port}", f"{name}.pipeline")
+        return name, config
+    before, wired, existing = _graph.config_of(ops, name), _graph.feeding_all(ops, f"{name}.pipeline"), set(_graph.nodes(ops))
+    target = name
+    try:
+        # Rewired first, since the new spec is checked against the data the view shows.
+        _rewire(ops, [f"{data}.{port}"], f"{name}.pipeline")
+        ops.set_config(name, config)
+        target = _graph.edited(ops, name, existing)
+    except OperationError as exc:
+        if target in _graph.nodes(ops):
+            ops.set_config(target, {key: before.get(key) for key in config})
+            _rewire(ops, wired, f"{target}.pipeline")
+        raise ModelRetry(str(exc)) from exc
+    return target, config
 
 
 async def add_metric(
@@ -243,7 +383,9 @@ async def add_metric(
     dimensions: list[str] | None = None, grain: str | None = None, parameters: dict[str, Any] | None = None,
     order_by: list[str] | None = None, limit: int | None = None,
 ) -> str:
-    """Place a metric node, one of the app's agreed definitions, and return a preview of its result.
+    """Place one of the app's metrics, as list_tables lists them, and return a preview of its result.
+
+    It only places a metric the app defines and cannot create one: compute a new number with add_sql.
 
     Args:
         metric: Metric name from list_tables.
@@ -256,15 +398,20 @@ async def add_metric(
         limit: Rows at most, e.g. 10 for a top 10.
     """
     ops = ctx.deps.ops
-    metrics = host_metrics(ops.editor.context)
+    metrics = _graph.metrics(ops)
+    if not metrics:
+        return "Refused: this app defines no metrics, so there is none to place. Compute the number with add_sql."
     if metric not in metrics:
-        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics) or 'none'}.")
+        raise ModelRetry(f"No metric {metric!r}. The metrics are: {', '.join(metrics)}; compute anything else with add_sql.")
     config = {"metric": metric, "measures": measures or [], "dimensions": dimensions or [], "grain": grain or "",
               "order_by": order_by or [], "limit": limit}
     try:
         query = metric_query(config, parameters)
         prepare(metrics[metric], query)
     except MetricError as exc:
+        if metrics[metric].form == "sql" and exc.field in ("measures", "dimensions", "grain"):
+            raise ModelRetry(f"{exc} Place it with only its metric, name and parameters: its query already "
+                             "returns its columns, e.g. one per group.") from exc
         raise ModelRetry(str(exc)) from exc
     existing = name in _graph.nodes(ops)
     if existing and _graph.component_of(ops, name) != METRIC_ID:
@@ -302,31 +449,58 @@ def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[st
 
     Args:
         data: SQL, metric, table or filter node to chart.
-        name: Descriptive snake_case node name.
+        name: snake_case name saying what the chart shows; a chart of this name is replaced
+            by this one in its tile.
         spec: Vega-Lite spec using the node's columns, without data or URLs. Leave out
             width and height so the chart fills its tile and follows resizes; set
             them only when the user asks for a fixed size.
     """
-    spec = place_view(ctx, VIEW_ID, data, name, {"spec": spec})["spec"]
-    placed = f"Placed chart {name!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
-    notes = selection_warnings(spec)
-    return placed + "".join(f"\nNote: {note}" for note in notes)
+    change = _taken(ctx.deps.ops, name, VIEW_ID)
+    target, config = place_view(ctx, VIEW_ID, data, name, {"spec": spec}, change=change)
+    spec = config["spec"]
+    verb = "Changed" if change else "Placed"
+    placed = f"{verb} chart {target!r} ({', '.join(_marks(spec)) or 'composite'}) of {data!r}."
+    notes = selection_warnings(spec) + _chart_name_notes(ctx.deps.ops, name, data, spec)
+    return placed + _notes(notes)
 
 
-def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None) -> str:
+def _chart_name_notes(ops, name: str, data: str, spec: dict[str, Any]) -> list[str]:
+    """A note when a chart's name shares no word with its data node, fields or title."""
+    fields = [value["field"] for layer in [spec, *(spec.get("layer") or [])] if isinstance(layer, dict)
+              for value in (layer.get("encoding") or {}).values() if isinstance(value, dict) and isinstance(value.get("field"), str)]
+    title = spec.get("title") if isinstance(spec.get("title"), str) else ""
+    if not unrelated(name, data, title, *fields):
+        return []
+    return [f"the name {name!r} shares no word with its data {data!r} or fields ({', '.join(dict.fromkeys(fields))}); "
+            "name a chart after what it shows."]
+
+
+TableFormatter = Literal["number", "money", "plaintext", "textarea", "progress", "star", "tickCross", "traffic", "color"]
+
+
+def add_table(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any] | None = None,
+              formatters: dict[str, TableFormatter | dict[str, Any]] | None = None) -> str:
     """Place a table showing a SQL, table or filter node's rows, when the user asks to see rows rather than a chart.
 
     Args:
-        data: SQL, table or filter node to show.
-        name: Descriptive snake_case node name.
+        data: Name of the SQL, table or filter node to show (a node name, not a source table).
+        name: snake_case name saying what the table shows; a table of this name is replaced
+            by this one in its tile.
         spec: Optional table options naming the node's columns: page_size, layout,
             show_index, header_filters, frozen_columns, hidden_columns, sorters
-            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles, widths and formatters
-            ({column: "money" | "progress" | "star" | "tickCross" | ...}).
+            ([{"field": ..., "dir": "desc"}], dir defaults to "asc"), titles and widths.
+        formatters: How to draw a column's cells, a name or {"type": name, ...params}:
+            "number" with thousands separators and "decimals" (default 0 for whole numbers,
+            else 2), "money" ("symbol", "decimals"), "progress" ("min", "max"), "star",
+            "tickCross", "traffic", "color", "plaintext" or "textarea" (no params). Leave a year
+            column unformatted. E.g. {"capacity_mw": {"type": "number", "decimals": 1}}.
     """
-    config = place_view(ctx, TABLE_VIEW_ID, data, name, {"spec": spec or {}})
+    if formatters:
+        spec = {**(spec or {}), "formatters": {**((spec or {}).get("formatters") or {}), **formatters}}
+    change = _taken(ctx.deps.ops, name, TABLE_VIEW_ID)
+    target, config = place_view(ctx, TABLE_VIEW_ID, data, name, {"spec": spec or {}}, change=change)
     options = ", ".join(sorted(config["spec"])) or "default options"
-    return f"Placed table {name!r} of {data!r} ({options})."
+    return f"{'Changed' if change else 'Placed'} table {target!r} of {data!r} ({options})."
 
 
 def add_map(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
@@ -334,7 +508,8 @@ def add_map(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str,
 
     Args:
         data: SQL, table or filter node to map, not a source table: place a SQL node first.
-        name: Descriptive snake_case node name.
+        name: snake_case name saying what the map shows; a map of this name is replaced by
+            this one in its tile.
         spec: deck.gl JSON spec without data: each layer draws the node's rows, has an
             "@@type" and reads columns in "@@=" expressions with arithmetic, comparisons
             and ?: only, no function calls, URLs or "@@function". Pick ScatterplotLayer
@@ -351,15 +526,21 @@ def add_map(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str,
             "getPosition": "@@=[lon, lat]", "radius": 20000, "extruded": true,
             "elevationScale": 50, "pickable": true}]}.
     """
-    spec = place_view(ctx, DECKGL_ID, data, name, {"spec": spec})["spec"]
     ops = ctx.deps.ops
+    change = _taken(ops, name, DECKGL_ID)
+    before = _graph.config_of(ops, name) if change else None
+    target, config = place_view(ctx, DECKGL_ID, data, name, {"spec": spec}, change=change)
+    spec = config["spec"]
     try:
         # The map fetched the same rows to draw them, so this reads them without a query.
         rows = fetch(_graph.output(ops, data, _graph.pipeline_port(ops, data)), row_ceiling(ops.editor))
     except Exception as exc:
-        ops.remove_node(name)
+        if before is None:
+            ops.remove_node(name)
+        else:
+            ops.set_config(target, {"spec": before.get("spec")})
         raise ModelRetry(format_error(exc)) from exc
-    placed = f"Placed map {name!r} of {data!r}: {map_summary(spec, rows)}."
+    placed = f"{'Changed' if change else 'Placed'} map {target!r} of {data!r}: {map_summary(spec, rows)}."
     view = spec.get("initialViewState")
     notes = []
     if view is None and (view := fit_view_state(spec, rows)) is not None:
@@ -406,7 +587,7 @@ def _upstream_port(deps: FlowDashDeps, data: str) -> str:
     if data not in _graph.nodes(ops):
         shown = [node for node in _graph.nodes(ops) if _graph.pipeline_port(ops, node)]
         hint = f" The SQL, table and filter nodes are: {', '.join(shown)}." if shown else ""
-        if any(data in _source_tables(deps, source) for source in _graph.nodes(ops, SOURCE_ID)):
+        if any(data in _source_tables(deps, source) for source in _sources_by_name(deps)):
             raise ModelRetry(
                 f"No node {data!r}: {data!r} is a source table. Place a SQL node on it with add_sql "
                 f"first and pass that node's name.{hint}"
@@ -419,6 +600,9 @@ def _upstream_port(deps: FlowDashDeps, data: str) -> str:
 
 
 TEXT_IDS = {"heading": HEADING_ID, "markdown": MARKDOWN_ID, "divider": DIVIDER_ID}
+# FlowDash releases before place_tile took before and after cannot put a tile beside another,
+# nor keep a title placed at the top in front of the tiles added after it.
+PLACES_BESIDE = "before" in inspect.signature(DashboardOps.place_tile).parameters
 # The most characters each text field may hold; prose longer than this belongs in several tiles.
 TEXT_LIMITS = {
     (HEADING_ID, "text"): 200, (HEADING_ID, "subtitle"): 400,
@@ -451,20 +635,31 @@ def check_text(ops, component: str, config: dict[str, Any], name: str | None = N
 def add_text(
     ctx: RunContext[FlowDashDeps], kind: Literal["heading", "markdown", "divider"], name: str, text: str = "",
     subtitle: str = "", size: Literal["Title", "Heading", "Subheading", "Section"] | None = None,
+    position: Literal["top", "bottom"] | None = None, before: str | None = None, after: str | None = None,
 ) -> str:
     """Place a heading, Markdown prose or a divider with the text you write for it.
 
+    Returns the layout as it is now, row by row. A "Title" heading leads the dashboard by itself.
+
     Args:
         kind: "heading" for a title, "markdown" for prose, "divider" for a rule between groups of tiles.
-        name: Descriptive snake_case node name.
+        name: Descriptive snake_case node name; a text node of this kind and name gets this text instead.
         text: The heading's text, the Markdown (at most 4000 characters) or the divider's optional label.
         subtitle: Smaller text below a heading.
         size: A heading's size; "Title" for the dashboard's title.
+        position: "top" or "bottom" of the dashboard; without it, before or after, the text goes
+            where the layout puts it.
+        before: Put the text in front of this node's tile, e.g. a section heading above its chart.
+        after: Put the text after this node's tile.
     """
     ops = ctx.deps.ops
     component = TEXT_IDS[kind]
     if kind != "divider" and not text.strip():
         raise ModelRetry(f"Write the {kind}'s text.")
+    # Explore shows each answer in its feed, which has no layout to place text in.
+    explore = ExplorationOps is not None and isinstance(ops, ExplorationOps)
+    if not explore and any(p is not None for p in (position, before, after)):
+        _check_placement(ops, kind, position, before, after)
     config: dict[str, Any] = {TEXT_FIELDS[component]: text} if text else {}
     if kind == "heading":
         if subtitle:
@@ -473,12 +668,127 @@ def add_text(
             config["size"] = size
     elif subtitle or size:
         raise ModelRetry("Only a heading takes a subtitle or a size.")
-    check_text(ops, component, config)
+    changed = _taken(ops, name, component)
+    if changed:
+        check_text(ops, component, config, name)
+        existing = set(_graph.nodes(ops))
+        try:
+            ops.set_config(name, config)
+        except OperationError as exc:
+            raise ModelRetry(str(exc)) from exc
+        placed = f"Changed {kind} {_graph.edited(ops, name, existing)!r}"
+    else:
+        check_text(ops, component, config)
+        try:
+            ops.add_node(component, config, name=name)
+        except OperationError as exc:
+            raise ModelRetry(str(exc)) from exc
+        placed = f"Placed {kind} {name!r}"
+    if explore:
+        return f"{placed}." + (" Explore shows it in the feed, so position, before and after do not apply."
+                               if any(p is not None for p in (position, before, after)) else "")
+    # A changed text stays where it is unless it is moved, and only a position asked for moves a tile:
+    # moving one turns off FlowDash's automatic arrangement of the tiles placed after it, which
+    # already puts a Title first.
     try:
-        ops.add_node(component, config, name=name)
+        if before is not None or after is not None:
+            ops.place_tile(name, before=before, after=after)
+            placed += f" {'before' if before else 'after'} {before or after!r}"
+        elif position is not None:
+            ops.place_tile(name, index=0 if position == "top" else len(_graph.nodes(ops)))
+            placed += f" at the {position}"
+    except OperationError as exc:
+        placed += f", but not moved: {exc}"
+    describe = getattr(ops, "describe_layout", None)
+    return f"{placed}." + (f"\nLayout now:\n{describe()}" if describe is not None else "")
+
+
+def _check_placement(ops, kind: str, position: str | None, before: str | None, after: str | None) -> None:
+    """Retry a position, before or after that cannot apply, before the text is placed."""
+    if sum(p is not None for p in (position, before, after)) > 1:
+        raise ModelRetry("Pass one of position, before and after.")
+    for other in (before, after):
+        if other is not None and other not in _graph.nodes(ops):
+            raise ModelRetry(f"No node {other!r} to place the {kind} beside.")
+    if (before is not None or after is not None) and not PLACES_BESIDE:
+        raise ModelRetry("This FlowDash version cannot place text beside a tile; use position.")
+    hidden = ops.hidden_tiles() if hasattr(ops, "hidden_tiles") else []
+    for other in (before, after):
+        if other in hidden:
+            raise ModelRetry(
+                f"{other!r} has no tile on the dashboard (it is hidden, e.g. a SQL node), so "
+                f"nothing can go beside it; place the {kind} beside a tile that is shown."
+            )
+
+
+def update_chart(ctx: RunContext[FlowDashDeps], name: str, changes: dict[str, Any] | None = None,
+                 add_layers: list[dict[str, Any]] | None = None, layer: int | None = None) -> str:
+    """Change part of a chart's Vega-Lite spec, or of a table's options or a map's spec, keeping the rest and its tile.
+
+    changes merges into the spec: a key you give replaces that key, an object merges key by key and
+    null removes a key, e.g. {"mark": "line"}, {"encoding": {"y": {"title": "GW"}}},
+    {"encoding": {"color": null}}, {"title": "Sales by region"} or a table's {"formatters": {...}}.
+    A channel given another field drops the old field's title and format; swapping x and y swaps
+    them. On a layered chart a mark changes its main data layer, and a channel changes in the
+    layers that show the same field there.
+
+    Args:
+        name: The chart, table or map node.
+        changes: Part of a spec to merge into the node's spec.
+        add_layers: Vega-Lite layers to draw over a chart, e.g. a rolling average line or a rule;
+            they share the chart's x and y unless they set their own.
+        layer: Apply changes to this layer of the chart only, numbered from 0.
+    """
+    ops = ctx.deps.ops
+    if name not in _graph.nodes(ops):
+        views = [n for n in _graph.nodes(ops) if _graph.view_class(_graph.component_of(ops, n)) is not None]
+        raise ModelRetry(f"No node {name!r}." + (f" The charts, tables and maps are: {', '.join(views)}." if views else ""))
+    component = _graph.component_of(ops, name)
+    if (view := _graph.view_class(component)) is None:
+        raise ModelRetry(f"{name!r} is a {kind(component)} node; update_chart changes charts, tables and maps.")
+    if (add_layers or layer is not None) and component != VIEW_ID:
+        raise ModelRetry("Only a chart takes add_layers or layer.")
+    if not changes and not add_layers:
+        raise ModelRetry("Pass the changes to make, or add_layers.")
+    if problem := patch_problem({"changes": changes, "add_layers": add_layers}):
+        return f"Refused: {problem} Nothing was changed."
+    before = _graph.config_of(ops, name).get("spec") or {}
+    try:
+        if component == VIEW_ID:
+            spec, added = merge_chart_layers(before, changes, add_layers, layer)
+        else:
+            spec, added = merge_patch(before, changes), []
+    except ValueError as exc:
+        raise ModelRetry(f"{exc} Nothing was changed.") from exc
+    except RecursionError:
+        return "Refused: the changes nest too deeply to merge. Nothing was changed."
+    data = _graph.upstream(ops, name)
+    port = _graph.pipeline_port(ops, data) if data else None
+    try:
+        pipeline = _graph.output(ops, data, port) if port else None
     except OperationError as exc:
         raise ModelRetry(str(exc)) from exc
-    return f"Placed {kind} {name!r}."
+    # Without data to read, the spec's fields cannot be checked, but what it may hold still is.
+    columns = pipeline_columns(pipeline) if isinstance(pipeline, Pipeline) else sorted(view.spec_fields(spec))
+    try:
+        spec = view.check_spec(spec, columns)
+    except ValueError as exc:
+        hint = " To show another node's columns, call add_chart with this name and that node as data." if component == VIEW_ID else ""
+        raise ModelRetry(f"{exc}{hint} The spec after your changes: {json.dumps(spec)}") from exc
+    # Someone may have edited the node while the patched spec was checked; their edit wins.
+    if (_graph.config_of(ops, name).get("spec") or {}) != before:
+        return (f"Refused: {name!r} changed meanwhile, e.g. by the user, so nothing was changed. "
+                "Read it again in the dashboard state or with list_tables and retry the change.")
+    existing = set(_graph.nodes(ops))
+    try:
+        ops.set_config(name, {"spec": spec})
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    target = _graph.edited(ops, name, existing)
+    notes = selection_warnings(spec) if component == VIEW_ID else []
+    layers = changed_layers(before, spec, added) if component == VIEW_ID else ""
+    return (f"Changed {kind(component)} {target!r} of {data!r}{f' ({layers})' if layers else ''}: "
+            f"{view_summary(component, spec)}" + _notes(notes))
 
 
 def _source_tables(deps: FlowDashDeps, source: str) -> list[str]:
@@ -502,8 +812,16 @@ def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[s
 
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
-    """The authoring tools: add_sql, add_metric, add_chart, add_table, add_map and add_text."""
-    return FunctionToolset[FlowDashDeps]([add_sql, add_metric, add_chart, add_table, add_map, add_text], max_retries=3)
+    """
+    The authoring tools: add_sql, add_metric, add_chart, add_table, add_map,
+    add_text and update_chart. Each runs alone, as the calls of one response
+    change the same graph: e.g. update_chart waits for an add_sql adding the
+    column a new layer shows, and two add_sql calls do not place a source
+    node at once. The data tools, which only read, still run in parallel.
+    """
+    return FunctionToolset[FlowDashDeps](
+        [add_sql, add_metric, add_chart, add_table, add_map, add_text, update_chart], max_retries=3, sequential=True,
+    )
 
 
 def _refused(result: Any) -> bool:
@@ -527,6 +845,8 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
         config = args.get("config") if tool_def.name == "set_config" else None
         if not isinstance(config, dict):
             return await handler(args)
+        if depth(config) > PATCH_DEPTH:
+            return f"Refused: the config nests more than {PATCH_DEPTH} levels deep; a config needs only a few."
         ops, name = ctx.deps.ops, args.get("name")
         component = next((node["component"] for node in ops.nodes() if node["name"] == name), None)
         if component in TEXT_FIELDS:

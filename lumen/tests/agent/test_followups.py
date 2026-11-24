@@ -136,7 +136,7 @@ async def test_list_tables_lists_earlier_results_with_typed_columns(ctx, session
 
 def test_instructions_edit_answers_in_place_and_build_new_questions_on_results():
     assert "When the user narrows or changes an answer already on the dashboard" in INSTRUCTIONS
-    assert "edit that answer's node with set_config; do not add a" in INSTRUCTIONS
+    assert "answer's nodes in place; do not add a node for it" in INSTRUCTIONS
     assert "add_sql(source=<its SQL node>)" in INSTRUCTIONS
 
 

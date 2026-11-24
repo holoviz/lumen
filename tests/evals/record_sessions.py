@@ -10,8 +10,11 @@ from what it recorded.
 
 import argparse
 import asyncio
+import json
 
 from pathlib import Path
+
+import panel_flowdash
 
 from lumen.agent import AgentSession
 from lumen.agent.evals import build_model
@@ -52,6 +55,8 @@ async def record(model: str, names: list[str]):
         for turn in turns:
             print(f"{name}: {turn.prompt}\n  {turn.output}\n  nodes={turn.nodes} changed={turn.changed} error={turn.error}")
         save_session(SESSIONS / f"{name}.yaml", turns, name_fixture)
+    # The agent's tools come from panel-flowdash too, so the recording only matches the release it ran on.
+    (SESSIONS / "recorded.json").write_text(json.dumps({"model": model, "panel_flowdash": panel_flowdash.__version__}, indent=1) + "\n")
 
 
 def main():

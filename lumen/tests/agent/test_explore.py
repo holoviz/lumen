@@ -20,7 +20,9 @@ from lumen.agent.assistant import (
 )
 from lumen.agent.explore import OwnNodesOnly
 from lumen.agent.headless import streamable
-from lumen.flowdash import SOURCE_ID, SQL_ID, bound_sources
+from lumen.flowdash import (
+    METRIC_ID, SOURCE_ID, SQL_ID, bound_sources,
+)
 from lumen.flowdash.app import build_routes
 from lumen.sources.duckdb import DuckDBSource
 
@@ -44,7 +46,7 @@ def test_explore_builds_follow_ups_on_earlier_answers_and_the_drawer_edits_them(
     assert EXPLORE_FOLLOW_UPS in EXPLORE_INSTRUCTIONS and FOLLOW_UPS not in EXPLORE_INSTRUCTIONS
     assert "but never\n  change them" in EXPLORE_INSTRUCTIONS and "remove_node" not in EXPLORE_INSTRUCTIONS
     assert "use set_config only to fix a node you placed for the current question" in EXPLORE_INSTRUCTIONS.replace("\n  ", " ")
-    assert "edit that answer's node with set_config" in INSTRUCTIONS
+    assert "edit that\n  answer's nodes in place" in INSTRUCTIONS
     assert "remove_node" in tools(create_agent("test"))
 
 
@@ -230,6 +232,30 @@ async def test_the_guard_steps_aside_on_panel_flowdashs_exploration_ops(monkeypa
     assert await _step_aside(flowdash_agent.ExplorationOps, monkeypatch) == ("changed", [{"name": "frozen"}])
 
 
+async def test_explore_fixes_a_table_it_placed_but_cannot_rewrite_an_earlier_node_with_add_metric():
+    session, requests = explore_session(
+        [ToolCallPart("add_sql", {"source": "data", "name": "mine", "sql": "SELECT category FROM sales"}, tool_call_id="a1")],
+        [ToolCallPart("add_table", {"data": "mine", "name": "rows"}, tool_call_id="a2")],
+        [ToolCallPart("set_config", {"name": "rows", "config": {"spec": {"page_size": 5}}}, tool_call_id="s1")],
+        [TextPart("Placed and fixed my table.")],
+        [ToolCallPart("add_metric", {"metric": "capacity", "name": "totals"}, tool_call_id="m1")],
+        [TextPart("Refused.")],
+    )
+    try:
+        session.add_sql("totals", "SELECT category, SUM(amount) AS total FROM sales GROUP BY category")
+        await session.ask("Show the categories as a table of five rows")
+        await session.ask("Turn the totals into a metric")
+        spec = _graph.config_of(session.ops, "rows")["spec"]
+    finally:
+        session.close()
+
+    fixed = requests[3].parts[0]
+    assert isinstance(fixed, ToolReturnPart) and fixed.outcome != "retried"
+    assert spec == {"page_size": 5}
+    (refused,) = requests[5].parts
+    assert refused.outcome == "retried" and "stay as they are in Explore" in str(refused.content)
+
+
 def _exploration_ops():
     from panel_flowdash import agent as flowdash_agent
 
@@ -403,3 +429,74 @@ async def test_explore_stops_lumens_tools_once_the_user_opens_another_dashboard(
     await explore_app.ask("Total by category")
 
     assert results(explore_app.requests)["call-2"].startswith("Refused: the user switched to another dashboard")
+
+
+BAR = {"mark": "bar", "encoding": {"x": {"field": "category", "type": "nominal"}, "y": {"field": "total", "type": "quantitative"}}}
+
+
+async def test_explore_answers_on_a_fresh_dashboard_from_the_apps_sources(explore_app):
+    ref = _source(explore_app)
+    explore_app.script(
+        ("add_sql", {"source": ref, "name": "totals", "sql": explore_app.totals}),
+        ("add_chart", {"data": "totals", "name": "totals_chart", "spec": BAR}),
+        "Done.",
+    )
+    run = await explore_app.ask("Chart the totals by category")
+
+    found = results(explore_app.requests)
+    ex = explore_app.explorations
+    assert found["call-1"].startswith("Placed SQL node 'totals'") and found["call-2"].startswith("Placed chart")
+    assert ex.node_config(ref) == {"ref": ref}
+    assert ex.exploration().leaves(run) == ["totals_chart"]
+    assert explore_app.ops.nodes() == []
+
+
+@pytest.fixture
+def metric_app(tmp_path):
+    project = tmp_path / "flowdash.yaml"
+    project.write_text(
+        "metrics:\n  revenue:\n    source: sales\n    table: sales\n"
+        "    measures:\n      total: SUM(amount)\n      orders: COUNT(*)\n    dimensions:\n      category: category\n"
+    )
+    explore = exploring(tmp_path, project=project)
+    explore.ops.add_node(METRIC_ID, {"metric": "revenue", "measures": ["total"], "dimensions": ["category"]}, name="by_category")
+    yield explore
+    explore.close()
+
+
+async def test_explore_builds_on_a_dashboard_metric_and_copies_an_earlier_one(metric_app):
+    metric_app.script(
+        ("add_metric", {"metric": "revenue", "name": "by_category", "measures": ["orders"]}),
+        ("add_metric", {"metric": "revenue", "name": "orders", "measures": ["orders"], "dimensions": ["category"]}),
+        "Done.",
+    )
+    first = await metric_app.ask("Count the orders per category")
+    refused, placed = (results(metric_app.requests)[f"call-{n}"] for n in (1, 2))
+    metric_app.script(("add_metric", {"metric": "revenue", "name": "orders", "measures": ["orders"]}), "Done.")
+    await metric_app.ask("Only the total count")
+    changed = results(metric_app.requests)["call-1"]
+
+    ex = metric_app.explorations
+    assert refused.startswith("Refused: 'by_category' is a node of the dashboard") and "under another name" in refused
+    assert placed.startswith("Placed metric node 'orders'")
+    assert changed.startswith("Changed metric node 'orders_2'") and "Use 'orders_2' from now on." in changed
+    assert ex.node_config("orders")["dimensions"] == ["category"] and ex.node_config("orders_2")["dimensions"] == []
+    assert ex.exploration().leaves(first) == ["orders"]
+    assert metric_app.ops.node_config("by_category")["measures"] == ["total"]
+    assert [node["name"] for node in metric_app.ops.nodes()] == ["by_category"]
+
+
+
+async def test_explore_places_text_in_the_feed_without_a_layout(explore_app):
+    explore_app.script(
+        ("add_text", {"kind": "heading", "name": "title", "text": "Sales", "size": "Title", "position": "top"}),
+        ("add_text", {"kind": "markdown", "name": "note", "text": "Paid only.", "before": "nowhere"}),
+        ("add_text", {"kind": "markdown", "name": "plain", "text": "No layout."}),
+        "Done.",
+    )
+    await explore_app.ask("Title it")
+    shown = results(explore_app.requests)
+    skipped = " Explore shows it in the feed, so position, before and after do not apply."
+    assert shown["call-1"] == "Placed heading 'title'." + skipped
+    assert shown["call-2"] == "Placed markdown 'note'." + skipped
+    assert shown["call-3"] == "Placed markdown 'plain'."

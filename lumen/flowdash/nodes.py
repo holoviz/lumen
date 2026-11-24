@@ -39,7 +39,7 @@ import threading
 import time
 import weakref
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import (
     Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
@@ -66,6 +66,7 @@ from panel_flowdash.selection import (
 )
 from panel_flowdash.util import is_failure
 
+from ..data.sql import _legal_order
 from ..data.utils import ANSI_ESCAPE
 from ..pipeline import Pipeline
 from ..sources.base import BaseSQLSource, QueryTimeoutError, Source
@@ -256,10 +257,13 @@ def lookup_source(ref: str, context: Mapping[str, Any] | None = None) -> Source 
 def host_metrics(context: Mapping[str, Any] | None = None) -> Mapping[str, Metric]:
     """
     The metrics the host lets a dashboard use, by name, from ``context`` or
-    else ``dashboard_context()``: the ``MetricSet`` under ``METRICS_KEY``.
+    else ``dashboard_context()``: one snapshot of the ``MetricSet`` under
+    ``METRICS_KEY``, which an admin's save does not change while it is read.
     """
     context = dashboard_context() if context is None else context
-    return context.get(METRICS_KEY) or {}
+    metrics = context.get(METRICS_KEY)
+    snapshot = getattr(metrics, "snapshot", None)
+    return snapshot() if callable(snapshot) else (metrics or {})
 
 
 def missing_metric(name: str, metrics: Mapping[str, Metric]) -> str:
@@ -348,8 +352,10 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     A pipeline whose table is ``sql`` evaluated by ``source``'s engine, with
     its result fetched once under ``limit`` rows and ``timeout`` seconds.
 
-    Filters downstream wrap the capped statement in a subquery, so they
-    see exactly the rows the node outputs. SQL does not promise that the
+    The table is the full statement and the cap the pipeline's last SQL
+    transform, as on ``table_pipeline``: a filter or an aggregate downstream
+    goes into the query ahead of the cap, so it reads every row of the
+    result, not only the ones the node keeps. SQL does not promise that the
     outer query keeps the subquery's ORDER BY; DuckDB keeps it in practice.
 
     On another SQL node's result source, ``sql`` runs as one statement on
@@ -371,13 +377,33 @@ def compile_sql(source: Source, sql: str, table: str, limit: int = RESULT_LIMIT,
     while table.lower() in taken:
         table = f"{table}_result"
     kwargs = {"materialize": False} if isinstance(root, DuckDBSource) else {}
-    # The capped statement, so a filter downstream sees the rows the node outputs and no more.
-    query_source = root.create_sql_expr_source({table: result_sql(root, statement, limit)}, **kwargs)
+    # The full statement with the cap as the pipeline's last step, so a filter or an aggregate
+    # downstream goes into the query ahead of the cap and reads every row of the result.
+    query_source = root.create_sql_expr_source({table: _derived_table(statement, root.dialect)}, **kwargs)
     schema = get_dataframe_schema(frame)["items"]["properties"]
-    pipeline = Pipeline(source=query_source, table=table, schema=schema, data=frame, name=table)
+    pipeline = Pipeline(
+        source=query_source, table=table, schema=schema, data=frame, name=table,
+        sql_transforms=[SQLLimit(limit=limit, write=root.dialect)],
+    )
     _FETCHED[pipeline] = {math.inf: frame}
     _RESULT_SOURCES[pipeline] = (source, table, sql, schema)
     return pipeline
+
+
+def _derived_table(sql: str, dialect: str) -> str:
+    """
+    ``sql`` as the steps after it read it, from a derived table: on SQL
+    Server a top-level ORDER BY gets ``OFFSET 0 ROWS``, without which it
+    refuses one there; elsewhere ``sql`` is unchanged.
+    """
+    try:
+        tree = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
+        return sql
+    if tree.args.get("offset") is not None:
+        return sql
+    _legal_order(tree, dialect)
+    return sql if tree.args.get("offset") is None else tree.sql(dialect=dialect)
 
 
 def result_source(pipeline: Pipeline) -> BaseSQLSource | None:
@@ -911,6 +937,39 @@ def _watch_refresh(editor: Any, node: Any) -> None:
     _REFRESHED[editor].add(node)
 
 
+# The editors showing a Lumen metric node, with the document of their session, see ``metrics_changed``.
+_METRIC_EDITORS: weakref.WeakKeyDictionary[Any, Any] = weakref.WeakKeyDictionary()
+
+
+def _session_doc() -> Any:
+    """The document of the session the code runs in, None outside one."""
+    return pn.state.curdoc
+
+
+def metrics_changed() -> None:
+    """
+    Have every open dashboard with a metric node offer its provenance
+    labels and node actions anew, e.g. "Missing metric" once an admin
+    deleted the metric, after the project's metrics were saved or deleted.
+    Each one runs on its own session's event loop, never inline on the
+    caller's; one whose session is not known is refreshed only when the
+    caller is outside any session too, e.g. a script or a test.
+    """
+    inside = _session_doc() is not None
+    for editor, doc in list(_METRIC_EDITORS.items()):
+        refresh = getattr(editor, "refresh_provenance", None)
+        if refresh is None or (doc is None and inside):
+            continue
+
+        def run(refresh=refresh):
+            try:
+                refresh()
+            except Exception:
+                logger.exception("Could not refresh the provenance labels of a dashboard.")
+
+        _schedule(run, doc, None)
+
+
 def _refresh_dashboard(editor: Any) -> None:
     for node in list(_REFRESHED.get(editor, ())):
         node._on_dashboard_refresh()
@@ -1283,6 +1342,42 @@ def _chart_summary(spec: dict[str, Any], data: Any) -> str:
     return text
 
 
+# The inputs of a Lumen node that carry the data it shows or transforms; its other inputs,
+# e.g. a filter's value or selection, only control which of that data it keeps.
+DATA_INPUTS = ("pipeline", "source")
+
+
+def reads_as_data(editor: Any, via: Sequence[Mapping[str, Any]]) -> bool:
+    """
+    Whether the edges ``via`` (see ``panel_flowdash.node_actions``) carry
+    the reporting node's data to the view asking, rather than a value
+    controlling a Lumen node on the way, e.g. a SQL node's distinct values
+    feeding a filter's ``value``, which labels nothing the filter passes on.
+    """
+    if not via or editor is None:
+        return True
+    names = editor._node_names() if hasattr(editor, "_node_names") else {
+        node: editor._node_name(node) for node in editor._component_instances}
+    instances = {name: editor._component_instances.get(node) for node, name in names.items()}
+    for edge in via:
+        name, port = edge["to"].rsplit(".", 1)
+        if isinstance(instances.get(name), LumenNode) and port not in DATA_INPUTS:
+            return False
+    return True
+
+
+def refresh_provenance(node: LumenNode) -> None:
+    """Have the dashboard of ``node`` offer the provenance labels of it and the nodes downstream anew."""
+    editor = node.editor
+    refresh = getattr(editor, "refresh_provenance", None)
+    if refresh is None or (node_id := node.node_id()) is None:
+        return
+    try:
+        refresh(nodes=[node_id])
+    except Exception:
+        logger.exception("Could not refresh the provenance labels of a dashboard.")
+
+
 class LumenNode(Viewer):
 
     _object = param.Parameter(default=None, precedence=-1)
@@ -1473,9 +1568,8 @@ def _ref_source(ref: str, context: Mapping[str, Any]) -> Source | None:
 @register(
     component=True, page=False, title="Lumen Source", icon="storage",
     description=(
-        "A Lumen data source the app provides, named by its ref, for SQL nodes and for several "
-        "table nodes that share one connection. A table node names a source by ref itself, so "
-        "reading one table needs no source node."
+        "An app data source, named by its ref, for SQL nodes or tables sharing one connection; a table "
+        "node can name the ref itself."
     ),
     config=["ref"],
     check_config=check_source_config,
@@ -1586,12 +1680,10 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
 @register(
     component=True, page=False, title="Lumen SQL", icon="code",
     description=(
-        "A read-only SQL query run by the source's engine. Outputs a Lumen pipeline "
-        "over the result, the result as a DataFrame, as `result` the source with the "
-        "result added as a table named by `table`, which another SQL node can query, and, for a "
-        "result of one row and one numeric column such as SELECT SUM(x) FROM t, that cell as a "
-        "number for a KPI; for any other result the value output is empty. Connect several "
-        "results of one source to `source` to join them."
+        "A read-only SQL query run by the source. Outputs the result as a pipeline, as a DataFrame, as "
+        "`result` (the source plus the result as table `table`, for another SQL node) and, for one row "
+        "of one number such as SELECT SUM(x) FROM t, as `value` for a KPI. Connect several results of "
+        "one source to `source` to join them."
     ),
     config=["sql", "table", "limit"],
     check_config=check_sql_config,
@@ -1774,6 +1866,42 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return _pipeline_preview(self, self._object)
         return data
 
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
+        """
+        The "Ad hoc" label of the views reading the node's data, saying how
+        its query computes their numbers and that no metric was used, and
+        through an edge that aggregates its rows how it does so too. Rows a
+        query only picks are not labelled unless they are one row or an edge
+        aggregates them, nor data the node only controls, e.g. through a
+        filter's ``value``.
+        """
+        if not self.sql.strip() or self._error is not None or self._object is None:
+            return None
+        if not reads_as_data(self.editor, via):
+            return None
+        from .save_metric import (
+            aggregating_step, describe_adhoc_reading, describe_query,
+            picks_rows,
+        )
+
+        dialect = _read(getattr(self._input, "dialect", None))
+        aggregated = any(step.get("op") == "aggregate" for edge in via for step in edge.get("transform") or [])
+        rows = None
+        if aggregated or picks_rows(self.sql, dialect):
+            data = self._object.data
+            rows = len(data) if isinstance(data, pd.DataFrame) else None
+        step = aggregating_step(via, rows) if aggregated else None
+        if picks_rows(self.sql, dialect) and step is None and rows != 1:
+            return None
+        detail = describe_query(self.sql, dialect)
+        if step is not None:
+            detail = describe_adhoc_reading(*step, detail)
+        return {"label": "Ad hoc", "detail": detail, "kind": "ad hoc"}
+
+    @param.depends("_object", "_error", watch=True)
+    def _provenance_changed(self):
+        # The label reads the result, which changes when the query runs rather than on an edit.
+        refresh_provenance(self)
 
 class PipelineNode(GlobalFilterTarget, LumenNode):
     """A node whose output is a lazy pipeline, previewed only when its view is shown."""
@@ -1796,11 +1924,9 @@ class PipelineNode(GlobalFilterTarget, LumenNode):
 @register(
     component=True, page=False, title="Lumen Table", icon="table_chart",
     description=(
-        "A table of a source the app provides, picked by the source's ref and the table's name. "
-        "Outputs a Lumen pipeline that fetches nothing by itself: filter nodes and the row limit "
-        "become part of the source's query. Connect a Lumen Source node to the source input "
-        "instead of setting ref to share one source node between several tables; a connected "
-        "source is read instead of ref."
+        "A table of an app source, picked by the source's ref and the table's name. Its pipeline "
+        "fetches nothing itself: filters and the limit join the source's query. A connected source node "
+        "is read instead of ref, to share one."
     ),
     config=["ref", "table", "limit"],
     check_config=check_table_config,
@@ -1859,12 +1985,9 @@ class TableNode(PipelineNode):
 @register(
     component=True, page=False, title="Lumen Filter", icon="filter_alt",
     description=(
-        "Keeps the rows of a Lumen pipeline whose field matches the value input: equal to a "
-        "single value, one of a list, or within a (start, end) range of numbers or dates. An "
-        "empty value keeps every row, and a value of another shape is refused. The selection "
-        "input takes a chart's selection output and keeps the rows matching it; the field is "
-        "then optional. On a table read from a SQL source the source applies the filter in its "
-        "query, before the table's limit."
+        "Keeps a pipeline's rows whose field matches value: one value, a list or a (start, end) range; "
+        "empty keeps all. Or the selection input takes a chart's selection, field optional. A SQL "
+        "source filters in its query, before the limit."
     ),
     config=["field"],
     check_config=check_filter_config,
@@ -2069,11 +2192,9 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
 @register(
     component=True, page=False, title="Lumen Metric", icon="functions", tags=["transform"],
     description=(
-        "A metric the app defines: a named, described query over one of its sources. Pick the "
-        "measures and the dimensions to group by, and a grain for a time dimension; the parameters "
-        "input takes a mapping of parameter values, e.g. {\"n\": 5}, and of dimensions to filter "
-        "by. Outputs a Lumen pipeline that fetches nothing by itself: a filter node downstream "
-        "filters the rows before they are aggregated."
+        "An app metric, a named query over a source: pick measures, dimensions and a time grain; "
+        "parameters takes parameter values and dimension filters, e.g. {\"n\": 5}. A filter downstream "
+        "applies before aggregation."
     ),
     config=["metric", "measures", "dimensions", "grain", "order_by", "limit"],
     check_config=check_metric_config,
@@ -2085,6 +2206,13 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
 class MetricNode(PipelineNode):
 
     _reads_source = True
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        editor, doc = self.editor, _session_doc()
+        # A node made outside a session, e.g. while a dashboard is loaded in a thread, keeps the editor's document.
+        if editor is not None and (doc is not None or editor not in _METRIC_EDITORS):
+            _METRIC_EDITORS[editor] = doc
 
     metric = param.String(default="", doc="Name of a metric the app defines.")
 
@@ -2152,6 +2280,43 @@ class MetricNode(PipelineNode):
         pipeline = self._value()
         return pipeline if pipeline is None or is_failure(pipeline) else fetch(pipeline, row_ceiling(self.editor))
 
+    def __flowdash_provenance__(self, via: Sequence[Mapping[str, Any]] = ()) -> dict[str, str] | None:
+        """
+        The "Metric: <name>" label of the views reading the node, with the
+        metric's description. A view reading it through an edge that
+        aggregates its rows into another number, e.g. the mean of per-state
+        sums or the last of several groups, is labelled "Derived" with the
+        aggregation instead, and a metric the project no longer defines
+        says so.
+        """
+        if not self.metric or not reads_as_data(self.editor, via):
+            return None
+        metric = host_metrics(self._context).get(self.metric)
+        if metric is None:
+            return {"label": f"Missing metric: {self.metric}", "kind": "missing", "icon": "error_outline",
+                    "detail": f"The project no longer defines the {self.metric} metric, so this number cannot "
+                              "be computed. Pick another metric or define it again in Admin, Metrics."}
+        from .save_metric import (
+            aggregating_step, derived_label, describe_reading,
+        )
+
+        step = aggregating_step(via, self._rows(metric))
+        if step is not None:
+            how, column = step
+            return {"label": derived_label(how, self.metric), "kind": "derived",
+                    "detail": describe_reading(how, column, self.metric)}
+        detail = metric.description or f"The {self.metric} metric the project defines."
+        return {"label": f"Metric: {self.metric}", "detail": detail, "kind": "metric"}
+
+    def _rows(self, metric: Metric) -> int | None:
+        """How many rows the node gives: as fetched, else one for a structured metric without dimensions."""
+        fetched = _FETCHED.get(self._object) if isinstance(self._object, Pipeline) else None
+        if fetched:
+            return len(next(iter(fetched.values())))
+        if metric.form == "structured" and not self.dimensions:
+            return 1
+        return None
+
 
 def check_parameter_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     """Check a ``Lumen/parameter`` config: the name must be one some metric the host defines takes."""
@@ -2174,9 +2339,8 @@ def metric_parameter_names(metrics: Mapping[str, Metric]) -> list[str]:
 @register(
     component=True, page=False, title="Lumen Parameter", icon="tune", tags=["transform"],
     description=(
-        "Names a value as a parameter of a metric, e.g. a slider's value as the metric's n: wire the "
-        "value in and the parameters output to a Lumen Metric node's parameters input, which takes "
-        "several. An empty value takes the metric's default."
+        "Names a value as a metric parameter, e.g. a slider's as n, for Lumen Metric parameters inputs; "
+        "empty takes the default."
     ),
     config=["parameter"],
     check_config=check_parameter_config,
@@ -2216,8 +2380,7 @@ class ParameterNode(LumenNode):
 @register(
     component=True, page=False, title="Lumen Data", icon="table_rows",
     description=(
-        "Fetches the rows of a Lumen pipeline, at most the host's row ceiling, and outputs "
-        "them as a DataFrame for components that take one."
+        "A pipeline's rows as a DataFrame, up to the host's row ceiling."
     ),
     requires=[{"key": "pipeline", "type": PIPELINE_TYPE, "required": True}],
     provides=[{"key": "data", "type": "DataFrame"}],
@@ -2661,10 +2824,9 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 @register_view(
     title="Lumen Vega-Lite view", icon="bar_chart",
     description=(
-        "A Vega-Lite chart of a Lumen pipeline; the spec names the pipeline's columns and brings "
-        "no data or URLs. With a selection param in the spec, e.g. an interval brush, the "
-        "selection output gives what is selected: wire it to a filter's selection input that "
-        "reads the same unfiltered pipeline as the chart, and feed other views from the filter."
+        "A Vega-Lite chart of a pipeline, its spec naming columns, no data or URLs. A selection param "
+        "feeds the selection output: wire it to a filter on the same unfiltered pipeline and feed other "
+        "views from that."
     ),
     config=["debounce"],
     provides=[{"key": "selection", "type": SELECTION_TYPE}],

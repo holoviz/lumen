@@ -226,10 +226,10 @@ def parameter_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[st
 
 def metric_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     """A ``Lumen/metric`` palette entry per metric the host defines, with the metric filled in."""
-    from .nodes import METRICS_KEY
+    from .nodes import host_metrics
 
     presets = []
-    for name, metric in (context.get(METRICS_KEY) or {}).items():
+    for name, metric in host_metrics(context).items():
         config: dict[str, Any] = {"metric": name}
         if metric.form == "structured":
             config["measures"] = list(metric.measures)[:1]
@@ -247,8 +247,6 @@ def metric_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
 def palette_presets(hook: Callable[[Mapping[str, Any]], list[dict[str, Any]]]) -> dict[str, Any]:
     """``register`` arguments offering ``hook``'s presets, where panel-flowdash supports them."""
     return {"palette_presets": hook} if "palette_presets" in inspect.signature(register).parameters else {}
-
-
 def _distinct_sql(pipeline: Pipeline, field: str, limit: int) -> str | None:
     """
     The statement reading at most ``limit`` distinct values of ``field`` of

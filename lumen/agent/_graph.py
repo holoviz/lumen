@@ -1,6 +1,7 @@
 """Reading nodes, their config, live outputs and wiring through ``DashboardOps``."""
 from __future__ import annotations
 
+import logging
 import re
 import weakref
 
@@ -13,7 +14,37 @@ from panel_flowdash.agent import (
     DashboardOps, OperationError, OutputUnavailable,
 )
 
-from ..flowdash import COMPONENTS, LumenViewNode, bound_sources
+from ..flowdash import (
+    COMPONENTS, LumenViewNode, bound_sources, host_metrics,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def metrics(ops: DashboardOps) -> dict[str, Any]:
+    """
+    The app's metrics by name, copied once into a plain dict. The host's
+    mapping may re-read its project file on every access, so a caller reads
+    this snapshot instead of the live view: a metric removed while it is
+    read is left out, and when the mapping cannot be read at all there are
+    none. A failure is logged by its type only, as its message may quote
+    the project file.
+    """
+    snapshot: dict[str, Any] = {}
+    try:
+        live = host_metrics(ops.editor.context)
+        names = list(live)
+    except Exception as exc:
+        logger.warning("Could not read the app's metrics (%s).", type(exc).__name__)
+        return snapshot
+    for name in names:
+        try:
+            snapshot[name] = live[name]
+        except KeyError:
+            continue
+        except Exception as exc:
+            logger.warning("Could not read the app's metric %r (%s).", name, type(exc).__name__)
+    return snapshot
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
@@ -39,6 +70,18 @@ def output(ops: DashboardOps, name: str, port: str) -> Any:
         return ops.node_output(f"{name}.{port}")
     except OutputUnavailable as exc:
         raise OperationError(str(exc)) from exc
+
+
+def provenance(ops: DashboardOps, name: str) -> Any:
+    """
+    The provenance a node's numbers have, its own or the nearest upstream
+    node's, e.g. the "Ad hoc" label of a chart of a SQL node's rows, or None
+    when no node reports one or the editor has no provenance.
+    """
+    if not hasattr(ops.editor, "node_provenance"):
+        return None
+    found = ops.editor.node_provenance(ops._instance(name))
+    return found[0] if found else None
 
 
 def inputs_of(ops: DashboardOps, name: str) -> dict[str, Any]:

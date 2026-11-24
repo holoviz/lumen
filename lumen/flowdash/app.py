@@ -20,12 +20,15 @@ import param
 from panel_flowdash.agent.models import parse_models
 from panel_flowdash.app import FlowDashApp
 from panel_flowdash.dashboard_store import DashboardStore
+from panel_flowdash.project import _parse
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
-from .metrics import METRICS_KEY, read_metrics
+from .metrics import METRICS_KEY, ProjectMetrics, serve_lumen
 from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
-from .project import Project, load_project
+from .project import (
+    PROJECT_FILE, Project, ProjectError, load_project,
+)
 
 LIBRARY = "lumen.flowdash"
 
@@ -382,12 +385,14 @@ def build_routes(
     context = {
         **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: aliases,
     }
-    if project is not None:
-        if not isinstance(project, Project):
-            project = load_project(project, context)
-        context[METRICS_KEY] = read_metrics(project)
+    if project is None:
+        project = _working_project(context)
+    elif not isinstance(project, Project):
+        project = load_project(project, {**context, "project_dir": Path(project).resolve().parent})
+    # The admin view edits this project, so what it saves is what the app reads.
+    context[METRICS_KEY] = ProjectMetrics(project)
     editor_options["context"] = context
-    return FlowDashApp.build_routes(
+    routes = FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
         registry={},
         store=DashboardStore(str(db_path)),
@@ -396,5 +401,39 @@ def build_routes(
         agent=agent,
         agent_sensitive_components=list(params.pop("agent_sensitive_components", [])),
         title=title,
+        project=project,
         **params,
     )
+    return {path: _lumen_session(factory) for path, factory in routes.items()}
+
+
+def _lumen_session(factory: Any) -> Any:
+    """``factory`` marking each session it serves as a Lumen app's, which shows the Metrics admin."""
+    if not callable(factory):
+        return factory
+
+    def lumen_factory(*args: Any, **kwargs: Any) -> Any:
+        import panel as pn
+
+        serve_lumen(pn.state.curdoc)
+        return factory(*args, **kwargs)
+
+    return lumen_factory
+
+
+def _working_project(context: Mapping[str, Any]) -> Project:
+    """
+    The project file in the working directory, where panel-flowdash's admin
+    view writes one when none is given, with its sections loaded when first
+    asked for, so one it gets wrong is reported where it is used.
+    """
+    path = Path.cwd() / PROJECT_FILE
+    context = {**context, "project_dir": Path.cwd()}
+    if path.is_file():
+        try:
+            data, positions = _parse(path.read_text(encoding="utf-8"), str(path))
+        except (OSError, UnicodeDecodeError, ProjectError) as exc:
+            logger.warning("Not reading the project file %s: %s", path, exc)
+        else:
+            return Project(str(path), data, positions, context)
+    return Project(str(path), context=context)

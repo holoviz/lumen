@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import copy
 
+from collections.abc import Collection
 from typing import Any
 
 import pandas as pd
@@ -37,8 +38,18 @@ LAYOUTS = {
 
 TABULATOR_LAYOUTS = ("fit_data", "fit_data_fill", "fit_data_stretch", "fit_data_table", "fit_columns")
 
-# Tabulator's formatters that draw a cell's value without interpreting it as HTML or a URL.
-FORMATTERS = ("plaintext", "textarea", "money", "progress", "star", "tickCross", "traffic", "color")
+# Tabulator's formatters that draw a cell's value without interpreting it as HTML or a URL, with
+# the params each takes, plus "number": thousands separators and ``decimals`` digits (Tabulator's
+# money formatter without a symbol). ``decimals`` is money's precision too.
+FORMATTER_PARAMS = {
+    "number": ("decimals",),
+    "money": ("symbol", "symbolAfter", "decimals", "thousand", "decimal", "negativeSign"),
+    "plaintext": (), "textarea": (),
+    "progress": ("min", "max", "color", "legend", "legendColor", "legendAlign"),
+    "star": ("stars",), "tickCross": ("allowEmpty", "allowTruthy"), "traffic": ("min", "max"), "color": (),
+}
+FORMATTERS = tuple(FORMATTER_PARAMS)
+NUMBER_HINT = 'for thousands separators and decimals use {"type": "number", "decimals": 1}'
 
 DIRECTIONS = ("asc", "desc")
 
@@ -51,7 +62,10 @@ OPTIONS = {
     "frozen_columns": "columns kept in view while scrolling sideways",
     "hidden_columns": "columns not shown",
     "sorters": 'the initial sort, e.g. [{"field": "amount", "dir": "desc"}]; dir defaults to "asc"',
-    "formatters": 'a formatter per column, a name or {"type": name, ...params}',
+    "formatters": (
+        'a formatter per column, a name or {"type": name, ...params}: '
+        + "; ".join(f"{name} ({', '.join(params)})" if params else name for name, params in FORMATTER_PARAMS.items())
+    ),
     "titles": "a header per column",
     "widths": "a width in pixels per column",
 }
@@ -92,12 +106,20 @@ def _check_formatter(column: str, formatter: Any) -> None:
     if name not in FORMATTERS:
         raise ValueError(
             f"The formatter of {column!r} is {name!r}; use one of {', '.join(FORMATTERS)}, "
-            'as a name or as {"type": name, ...params}.'
+            f'as a name or as {{"type": name, ...params}}; {NUMBER_HINT}.'
         )
     if isinstance(formatter, dict):
+        allowed = FORMATTER_PARAMS[name]
         for key, value in formatter.items():
+            if key == "type":
+                continue
+            if key not in allowed:
+                takes = f"takes {', '.join(allowed)}" if allowed else "takes no params"
+                raise ValueError(f"The {name} formatter of {column!r} {takes}, not {key!r}; {NUMBER_HINT}.")
             if not isinstance(value, (str, int, float, bool)) or not _plain(value):
                 raise ValueError(f"The formatter of {column!r} has {key}={value!r}; params are numbers, true/false or text without HTML.")
+            if key == "decimals" and (not _is_int(value) or not 0 <= value <= 10):
+                raise ValueError(f"decimals of {column!r} is {value!r}; it must be a whole number from 0 to 10.")
 
 
 def check_table(spec: dict[str, Any] | None, columns: list[str]) -> dict[str, Any] | None:
@@ -150,9 +172,34 @@ def check_table(spec: dict[str, Any] | None, columns: list[str]) -> dict[str, An
     return spec
 
 
-def tabulator_options(spec: dict[str, Any]) -> dict[str, Any]:
-    """The ``Tabulator`` params of a checked table spec: pages only when it sets a page size."""
+def _tabulator_formatter(formatter: Any, whole: bool) -> Any:
+    """
+    A checked formatter as Tabulator takes it: "number" becomes the money
+    formatter without a symbol, by default with no decimals on a column of
+    whole numbers (``whole``) and two otherwise, and ``decimals`` becomes
+    money's ``precision``.
+    """
+    params = dict(formatter) if isinstance(formatter, dict) else {"type": formatter}
+    if params["type"] == "number":
+        decimals = params.pop("decimals", 0 if whole else 2)
+        return {"type": "money", "symbol": "", "precision": decimals}
+    if params["type"] == "money" and "decimals" in params:
+        params["precision"] = params.pop("decimals")
+    return params if isinstance(formatter, dict) else formatter
+
+
+def tabulator_options(spec: dict[str, Any], whole_columns: Collection[str] = ()) -> dict[str, Any]:
+    """
+    The ``Tabulator`` params of a checked table spec: pages only when it
+    sets a page size. ``whole_columns`` hold whole numbers, which a
+    "number" formatter shows without decimals by default.
+    """
     options = {**DEFAULTS, **copy.deepcopy(spec)}
+    if options.get("formatters"):
+        options["formatters"] = {
+            column: _tabulator_formatter(formatter, column in whole_columns)
+            for column, formatter in options["formatters"].items()
+        }
     # Tabulator reads every sorter's direction.
     if options.get("sorters"):
         options["sorters"] = [{"dir": "asc", **sorter} for sorter in options["sorters"]]
@@ -223,8 +270,17 @@ class TableViewNode(LumenViewNode):
 
     spec_fields = staticmethod(table_fields)
 
+    _whole_columns: tuple[str, ...] = ()
+
+    def _view_rows(self, rows: Any, spec: dict[str, Any]) -> Any:
+        if isinstance(rows, pd.DataFrame):
+            self._whole_columns = tuple(
+                str(c) for c in rows.columns if pd.api.types.is_integer_dtype(rows[c].dtype)
+            )
+        return rows
+
     def _view_params(self, spec: dict[str, Any]) -> dict[str, Any]:
-        return {**tabulator_options(spec), "sizing_mode": "stretch_both"}
+        return {**tabulator_options(spec, self._whole_columns), "sizing_mode": "stretch_both"}
 
     def _summary(self, spec: dict[str, Any], data: Any) -> str:
         if not isinstance(data, pd.DataFrame):
