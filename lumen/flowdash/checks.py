@@ -25,6 +25,7 @@ from ..data.sql import validate_read_only_sql
 from ..data.utils import ANSI_ESCAPE, format_tool_error
 from ..sources.base import BaseSQLSource, QueryTimeoutError
 from ..transforms.sql import SQLLimit
+from .view_settings import VEGA_LITE_SETTINGS
 
 # Seconds the engine may take to plan a query in ``check_sql_config``, waiting
 # for the source's previous probe included.
@@ -798,7 +799,15 @@ def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
 def check_view_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/view`` config with ``check_chart`` against the input's columns."""
     pipeline, spec = inputs.get("pipeline"), config.get("spec")
-    if pipeline is None or not spec:
+    if not spec:
+        return None
+    try:
+        from panel_flowdash.spec_settings import problems
+    except ImportError:  # panel-flowdash without spec settings
+        problems = None
+    if problems is not None and (found := problems(spec, VEGA_LITE_SETTINGS)):
+        return " ".join(found)
+    if pipeline is None:
         return None
     try:
         check_chart(spec, pipeline_columns(pipeline))
