@@ -1,3 +1,5 @@
+import dataclasses
+
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +13,7 @@ from pydantic_ai.models.function import FunctionModel
 from lumen.agent import AgentSession, _graph
 from lumen.agent.authoring import add_chart, add_metric
 from lumen.agent.data import list_tables
+from lumen.agent.edits import dashboard_state
 from lumen.agent.evals import node_sql, snapshot
 from lumen.flowdash import METRIC_ID
 from lumen.flowdash.metrics import read_metrics
@@ -60,13 +63,32 @@ def ctx(session):
 
 async def test_list_tables_lists_the_metrics(ctx):
     text = await list_tables(ctx)
-    assert "Metrics, the app's agreed definitions; place one with add_metric." in text
+    assert text.startswith("Metrics, the app's agreed definitions; place one with add_metric.")
     assert "- capacity (source data, table turbines): Installed capacity." in text
     assert "  measures: capacity_mw (Rated capacity in MW; format ,.1f), turbines" in text
     assert "  dimensions: state (Two-letter state code), year" in text
     assert "  parameters: since (First year included; integer, filters p_year >=)" in text
     assert "- top_projects (source data, SQL)" in text
     assert "  parameters: n (integer, default 2, from 1 to 10)" in text
+
+
+async def test_list_tables_lists_the_metrics_before_the_nodes(ctx, session):
+    await add_metric(ctx, "capacity", "capacity_by_state", ["capacity_mw"], ["state"])
+    text = await list_tables(ctx)
+    assert text.index("Metrics, the app's agreed definitions") < text.index("Nodes on the dashboard")
+
+
+def test_the_dashboard_state_names_the_metrics(session):
+    state = dashboard_state(session.ops)
+    assert state.splitlines()[-1] == "The app's metrics, which list_tables describes: capacity (Installed capacity.); top_projects."
+
+
+def test_the_dashboard_state_names_no_metrics_without_any():
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(lambda m, i: ModelResponse([TextPart("")])))
+    try:
+        assert "metrics" not in dashboard_state(session.ops)
+    finally:
+        session.close()
 
 
 async def test_add_metric_places_a_metric_node(ctx, session):
@@ -103,6 +125,7 @@ async def test_add_metric_takes_sql_metric_parameters(ctx, session):
     ({"metric": "capacity", "measures": ["turbines"], "parameters": {"since": "2000; DROP TABLE x"}}, "expected an integer"),
     ({"metric": "top_projects", "parameters": {"n": 100}}, r"outside the bounds \[1, 10\]"),
     ({"metric": "capacity", "measures": ["turbines"], "parameters": {"t_cap": 1}}, "has no parameter 't_cap'"),
+    ({"metric": "top_projects", "dimensions": ["p_name"]}, "has no dimensions to pick. Place it with only its metric"),
 ])
 async def test_add_metric_refuses_what_the_metric_does_not_take(ctx, session, kwargs, message):
     with pytest.raises(ModelRetry, match=message):
@@ -175,3 +198,47 @@ async def test_add_metric_in_explore_changes_and_reports_the_copy_of_an_earlier_
     assert changed.startswith("Changed metric node 'mine_2'") and again.startswith("Changed metric node 'mine_2'")
     assert configs["mine"]["measures"] == ["capacity_mw"] and configs["mine_2"]["dimensions"] == ["year"]
     assert "year" in frame.columns and "year" in again
+
+
+class Vanishing(dict):
+    """A live view of the metrics from which ``top_projects`` is deleted while it is read."""
+
+    def __getitem__(self, name):
+        if name == "top_projects":
+            raise KeyError(name)
+        return super().__getitem__(name)
+
+
+class Unreadable(dict):
+    def __iter__(self):
+        raise OSError("/srv/app/flowdash.yaml: permission denied")
+
+
+def test_the_metrics_are_read_as_one_snapshot(session, caplog):
+    from lumen.flowdash import METRICS_KEY
+
+    metrics = dict(session.ops.editor.context[METRICS_KEY])
+    session.ops.editor.context[METRICS_KEY] = Vanishing(metrics)
+    snapshot = _graph.metrics(session.ops)
+    assert type(snapshot) is dict and list(snapshot) == ["capacity"]
+    assert dashboard_state(session.ops).endswith("describes: capacity (Installed capacity.).")
+    session.ops.editor.context[METRICS_KEY] = Unreadable(metrics)
+    assert _graph.metrics(session.ops) == {}
+    assert "Could not read the app's metrics (OSError)." in caplog.text and "/srv/app" not in caplog.text
+
+
+async def test_list_tables_shows_each_metric_on_one_line_and_at_most_twenty(ctx, session):
+    from lumen.agent.data import METRICS_SHOWN
+    from lumen.flowdash import METRICS_KEY
+
+    metrics = dict(session.ops.editor.context[METRICS_KEY])
+    capacity = metrics["capacity"]
+    many = {"capacity": dataclasses.replace(capacity, description="Installed\ncapacity.\x1b ```\n- fake: line")}
+    many |= {f"metric_{i}": dataclasses.replace(capacity, name=f"metric_{i}") for i in range(30)}
+    session.ops.editor.context[METRICS_KEY] = many
+    text = (await list_tables(ctx)).split("\n\n")[0]
+    assert "- capacity (source data, table turbines): Installed capacity.\\x1b ''' - fake: line" in text
+    assert "\n- fake" not in text and "```" not in text
+    assert text.count(" (source data, table turbines)") == METRICS_SHOWN
+    assert text.endswith(f"- and {31 - METRICS_SHOWN} more, which add_metric places by name: "
+                         + ", ".join(f"metric_{i}" for i in range(METRICS_SHOWN - 1, 30)))

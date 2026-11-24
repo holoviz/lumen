@@ -6,6 +6,7 @@ import time
 import numpy as np
 import pandas as pd
 import pytest
+import sqlglot
 import yaml
 
 pytest.importorskip("duckdb")
@@ -14,13 +15,18 @@ from panel_flowdash import FlowDash
 from panel_flowdash.agent import (
     DashboardOps, OperationError, dashboard_from_yaml, dashboard_to_yaml,
 )
+from panel_flowdash.selection import Predicate
 
 from lumen.flowdash import (
     COMPONENTS, DATA_ID, FILTER_ID, PREVIEW_ROWS, RESULT_LIMIT, SOURCE_ID,
     SQL_ID, TABLE_ID, VIEW_ID, bind_source, check_filter_config,
     check_sql_config, check_table_config, check_view_config, compile_sql,
-    fetch, filtered_pipeline, pipeline_sql, python_value, set_row_ceiling,
-    table_pipeline,
+    fetch, filtered_pipeline, nodes as flowdash_nodes, pipeline_sql,
+    python_value, set_row_ceiling, table_pipeline,
+)
+from lumen.flowdash.nodes import conditioned_pipeline, globally_filtered
+from lumen.flowdash.transforms import (
+    SQLAggregate, aggregate_schema, transformed_pipeline,
 )
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
@@ -365,12 +371,13 @@ def test_filter_node_reports_a_value_it_cannot_apply(source):
     assert "Cannot filter on ('A', 'B', 'C')" in failure(ops, "by_category", "filtered")
 
 
-def test_filter_on_a_sql_node_keeps_the_node_limit(source):
+def test_filter_on_a_sql_node_reads_its_whole_result_and_keeps_the_node_limit(source):
     pipeline = compile_sql(source, "SELECT * FROM sales ORDER BY amount", "q", limit=1)
     assert pipeline.data.values.tolist() == [["A", 5]]
 
     assert fetch(filtered_pipeline(pipeline, "category", "A")).values.tolist() == [["A", 5]]
-    assert fetch(filtered_pipeline(pipeline, "category", "B")).empty
+    assert fetch(filtered_pipeline(pipeline, "category", "B")).values.tolist() == [["B", 20]]
+    assert fetch(conditioned_pipeline(pipeline, [("category", ["A", "B"])]), 10).values.tolist() == [["A", 5]]
 
 
 def test_fetch_stops_a_slow_query_after_the_timeout():
@@ -421,6 +428,28 @@ def test_filters_parse_and_write_the_source_dialect():
         "SELECT TOP 100000 * FROM (SELECT * FROM (SELECT TOP 10 * FROM t ORDER BY i) AS subquery "
         "WHERE [i] >= '2') AS subquery WHERE [b] = 1"
     )
+
+
+def test_steps_over_an_ordered_sql_node_stay_legal_on_sql_server(monkeypatch):
+    source = TSQLSource(uri=":memory:", tables={"t": "SELECT 1 AS i, 'A' AS category"})
+    frame = pd.DataFrame({"i": [1], "category": ["A"]})
+    monkeypatch.setattr(flowdash_nodes, "execute", lambda *args, **kwargs: frame)
+    pipeline = compile_sql(source, "SELECT i, category FROM t ORDER BY i", "q")
+    steps = {
+        "filter": filtered_pipeline(pipeline, "category", "A"),
+        "aggregate": transformed_pipeline(
+            pipeline, SQLAggregate(columns=["i"], method="sum", write="tsql"),
+            aggregate_schema(pipeline.schema, [], ["i"], "sum"), RESULT_LIMIT,
+        ),
+        "global filter": globally_filtered(pipeline, {"category": Predicate("category", "in", ("A",))}),
+    }
+    for step, piped in steps.items():
+        tree = sqlglot.parse_one(pipeline_sql(piped), read="tsql")
+        # SQL Server refuses an ORDER BY in a derived table unless TOP, OFFSET or FETCH depends on it.
+        ordered = [select for select in tree.find_all(sqlglot.exp.Select)
+                   if select is not tree and select.args.get("order")]
+        assert ordered, step
+        assert all(select.args.get("limit") or select.args.get("offset") for select in ordered), step
 
 
 def test_refresh_runs_the_nodes_again_on_new_rows():

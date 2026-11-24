@@ -197,7 +197,7 @@ def test_view_check_warns_about_a_histogram_without_a_bin_step(source):
     assert check_view_config({"spec": BRUSH}, {"pipeline": pipeline}) is None
 
 
-def test_agent_with_connect_is_told_how_to_link_selections(monkeypatch):
+def test_agent_that_can_place_filter_nodes_is_told_how_to_link_selections(monkeypatch):
     pytest.importorskip("pydantic_ai")
     from lumen.agent import assistant
 
@@ -209,7 +209,8 @@ def test_agent_with_connect_is_told_how_to_link_selections(monkeypatch):
     assistant.create_agent("test")
     assistant.create_agent("test", dashboard_tools="layout")
     assistant.create_agent("test", dashboard_tools=None)
-    assert [assistant.SELECTION_INSTRUCTIONS in text for text in given] == [False, True, True]
+    # The layout agent can connect nodes but not place the filter node a selection drives.
+    assert [assistant.SELECTION_INSTRUCTIONS in text for text in given] == [False, False, True]
 
 
 def test_selection_frame_filter_matches_the_pushed_down_rows(source, executed):

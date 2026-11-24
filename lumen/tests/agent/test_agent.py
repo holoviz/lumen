@@ -13,7 +13,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
-from lumen.agent import AgentSession, _graph, assistant
+from lumen.agent import (
+    AgentSession, _graph, assistant, authoring,
+)
 from lumen.agent.assistant import (
     INSTRUCTIONS, MODEL_SETTINGS, OTHER_MODEL_SETTINGS, create_agent,
     model_settings_for,
@@ -127,9 +129,9 @@ async def test_add_sql_retries_with_engine_error(ctx, session, sql, error):
     assert [node["name"] for node in session.ops.nodes()] == ["data"]
 
 
-async def test_add_sql_refuses_taken_name(ctx, session):
-    await add_sql(ctx, "data", "result", BY_REGION)
-    with pytest.raises(ModelRetry, match="result"):
+async def test_add_sql_refuses_a_name_taken_by_another_kind(ctx, session):
+    add_text(ctx, "heading", "result", "Results")
+    with pytest.raises(ModelRetry, match="'result' is already a heading node, so no SQL can take its name"):
         await add_sql(ctx, "data", "result", BY_REGION)
     assert [node["name"] for node in session.ops.nodes()] == ["data", "result"]
 
@@ -200,7 +202,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config"]
+    assert tools == ["add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config", "update_chart"]
 
 
 async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
@@ -605,7 +607,7 @@ def test_layout_agent_is_told_how_to_lay_out_tiles(monkeypatch):
     (data, _), (layout, tools), (placing, _) = given
     assert "## Laying out the dashboard" not in data
     assert "## Laying out the dashboard" in layout and "## Laying out the dashboard" in placing
-    assert ("call arrange_tiles" in layout.lower()) == ("arrange_tiles" in tools) == assistant.HAS_ARRANGE_TILES
+    assert ("arrange_tiles does that" in layout) == ("arrange_tiles" in tools) == assistant.HAS_ARRANGE_TILES
     assert "arrange_tiles" not in placing
 
 
@@ -828,7 +830,7 @@ async def test_add_sql_reuses_the_source_node_of_an_apps_source(ctx, empty):
 async def test_add_sql_places_no_source_node_when_placing_fails(ctx, empty):
     with pytest.raises(ModelRetry, match="Binder Error"):
         await add_sql(ctx, "energy", "broken", "SELECT watts FROM plants")
-    empty.ops.add_node(SQL_ID, {}, name="taken")
+    empty.ops.add_node(_graph.MARKDOWN_ID, {"text": "Notes"}, name="taken")
     with pytest.raises(ModelRetry):
         await add_sql(ctx, "energy", "taken", "SELECT COUNT(*) AS n FROM plants")
     assert [node["name"] for node in empty.ops.nodes()] == ["taken"]
@@ -878,6 +880,20 @@ async def test_a_source_node_named_like_another_apps_source_does_not_hide_it(ctx
     assert _graph.config_of(empty.ops, "energy_source") == {"ref": "energy"}
 
 
+
+def test_the_component_catalogue_fits_flowdash_budget_with_room_to_spare():
+    from panel_flowdash.agent.assistant import CATALOGUE_LIMIT, catalogue
+
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), FunctionModel(lambda m, i: ModelResponse([TextPart("")])))
+    try:
+        text = catalogue(session.ops)
+    finally:
+        session.close()
+    # Past the limit FlowDash lists only ids and titles, so leave room for a few more components.
+    assert "picked by the source's ref" in text
+    assert len(text) <= CATALOGUE_LIMIT - 1500, len(text)
+
+
 async def test_the_dashboard_assistant_reads_a_table_with_one_node():
     seen = {}
     responses = [
@@ -917,7 +933,9 @@ def test_only_an_agent_that_places_components_is_told_to_read_a_table_with_one_n
 
 
 async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ctx, session):
-    assert add_text(ctx, "heading", "title", "Paid orders", subtitle="By region", size="Title") == "Placed heading 'title'."
+    assert add_text(ctx, "heading", "title", "Paid orders", subtitle="By region", size="Title").startswith(
+        "Placed heading 'title'."
+    )
     add_text(ctx, "markdown", "intro", "This dashboard shows **paid** orders per region.")
     add_text(ctx, "divider", "rule")
 
@@ -929,6 +947,125 @@ async def test_add_text_places_a_heading_and_a_markdown_intro_with_their_text(ct
     text = await list_tables(ctx)
     assert "- intro (markdown; text): 'This dashboard shows **paid** orders per region.'" in text
     assert "- title (heading; text): 'Paid orders'" in text
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+async def test_add_text_places_a_title_at_the_top_and_text_where_asked(ctx, session):
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    add_chart(ctx, "paid_by_region", "paid_chart", BAR)
+    add_chart(ctx, "paid_by_region", "other_chart", BAR)
+    result = add_text(ctx, "heading", "title", "Paid orders", size="Title")
+    assert result.splitlines()[:3] == ["Placed heading 'title'.", "Layout now:", "Row 1: title 100% 96px"]
+    add_text(ctx, "heading", "section", "Regions", size="Section", before="other_chart")
+    add_text(ctx, "markdown", "notes", "Paid orders only.", position="bottom")
+    shown = [line.split(": ", 1)[1].split()[0] for line in session.ops.describe_layout().splitlines() if line.startswith("Row")]
+    assert shown == ["title", "paid_chart", "section", "other_chart", "notes"]
+
+
+def _saved_rows(session, widths=False):
+    """The grid's tile names, with their widths if asked, row by row, after a save/load round trip."""
+    from panel_flowdash import FlowDash
+    from panel_flowdash.agent import DashboardOps
+
+    from lumen.flowdash import COMPONENTS, bind_source
+
+    editor = FlowDash(components=COMPONENTS)
+    bind_source(editor, session.source, session.source_node)
+    editor.load_model(session.editor.to_model())
+    try:
+        rows = DashboardOps(editor).describe_layout().splitlines()
+    finally:
+        editor.dispose()
+    keep = 2 if widths else 1
+    return [
+        [" ".join(t.split()[:keep]) for t in line.split(": ", 1)[1].split(" | ")]
+        for line in rows if line.startswith("Row")
+    ]
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+@pytest.mark.parametrize("arrange", [False, True])
+@pytest.mark.parametrize("when", ["before", "between", "after"])
+async def test_a_title_stays_at_the_top_through_the_request(ctx, session, arrange, when):
+    session.deps.start_request("Build it")
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    charts = ["one", "two", "three", "four"]
+    at = {"before": 0, "between": 2, "after": 4}[when]
+    for name in [*charts[:at], None, *charts[at:]]:
+        if name is None:
+            assert add_text(ctx, "heading", "title", "Paid orders", size="Title").startswith("Placed heading 'title'.\n")
+        else:
+            add_chart(ctx, "paid_by_region", name, BAR)
+    if arrange:
+        session.deps.ops.arrange_tiles()
+    session.deps.end_request()
+    assert _saved_rows(session, widths=True) == [["title 100%"], ["one 50%", "two 50%"], ["three 50%", "four 50%"]]
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+@pytest.mark.parametrize("arrange", [False, True])
+async def test_a_title_added_in_parallel_with_its_charts_stays_at_the_top(arrange):
+    calls = [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="s")]
+    parallel = [ToolCallPart("add_text", {"kind": "heading", "name": "title", "text": "Paid", "size": "Title"}, tool_call_id="t")]
+    parallel += [ToolCallPart("add_chart", {"data": "paid_by_region", "name": n, "spec": BAR}, tool_call_id=n) for n in ("one", "two")]
+    steps = [calls, parallel] + ([[ToolCallPart("arrange_tiles", {}, tool_call_id="a")]] if arrange else []) + [[TextPart("Done.")]]
+    model, _ = script(*steps)
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=create_agent(model, dashboard_tools="layout"))
+    try:
+        await session.ask("Build it")
+        # Parallel calls may place the charts in either order.
+        rows = [sorted(row) for row in _saved_rows(session, widths=True)]
+        assert rows == [["title 100%"], ["one 50%", "two 50%"]]
+    finally:
+        session.close()
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+@pytest.mark.parametrize("arrange", [False, True])
+async def test_text_beside_a_shown_tile_stays_there_and_beside_a_hidden_one_is_refused(ctx, session, arrange):
+    session.deps.start_request("Build it")
+    await add_sql(ctx, "data", "paid_by_region", BY_REGION)
+    for name in ("one", "two"):
+        add_chart(ctx, "paid_by_region", name, BAR)
+    add_text(ctx, "heading", "section", "Second", size="Section", before="two")
+    add_text(ctx, "markdown", "note", "After the first.", after="one")
+    with pytest.raises(ModelRetry, match="'paid_by_region' has no tile on the dashboard"):
+        add_text(ctx, "heading", "orphan", "Data", before="paid_by_region")
+    if arrange:
+        session.deps.ops.arrange_tiles()
+    session.deps.end_request()
+    order = [n for row in _saved_rows(session) for n in row]
+    assert order == ["one", "note", "section", "two"]
+
+
+@pytest.mark.skipif(not authoring.PLACES_BESIDE, reason="needs a FlowDash whose place_tile takes before and after")
+@pytest.mark.parametrize("title_first", [True, False])
+async def test_a_title_leads_charts_placed_in_the_same_turn(title_first):
+    title = [ToolCallPart("add_text", {"kind": "heading", "name": "title", "text": "Paid orders", "size": "Title"},
+                          tool_call_id="t1")]
+    charts = [
+        [ToolCallPart("add_chart", {"data": "paid_by_region", "name": name, "spec": BAR}, tool_call_id=name)]
+        for name in ("one", "two")
+    ]
+    steps = [title, *charts] if title_first else [*charts, title]
+    model, _ = script(
+        [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION}, tool_call_id="s1")],
+        *steps, [TextPart("Done.")],
+    )
+    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model,
+                           agent=create_agent(model, dashboard_tools="layout"))
+    try:
+        turn = await session.ask("A dashboard of paid orders with a title")
+        rows = _saved_rows(session)
+    finally:
+        session.close()
+    assert turn.error is None
+    assert rows == [["title"], ["one", "two"]]
+
+
+def test_add_text_retries_a_position_beside_a_missing_node(ctx, session):
+    with pytest.raises(ModelRetry, match="No node 'nope'"):
+        add_text(ctx, "heading", "title", "Paid orders", after="nope")
 
 
 @pytest.mark.parametrize("args, error", [
@@ -1163,6 +1300,12 @@ async def test_add_map_before_any_query_says_to_place_one(turbines):
         "No node 'turbines': 'turbines' is a source table. Place a SQL node on it with add_sql first "
         "and pass that node's name."
     )
+
+
+async def test_add_map_on_a_table_of_an_apps_source_says_to_place_a_sql_node(turbines):
+    turbines.ops.remove_node("data")
+    with pytest.raises(ModelRetry, match="'turbines' is a source table. Place a SQL node on it with add_sql first"):
+        add_map(SimpleNamespace(deps=turbines.deps), "turbines", "turbine_map", POINTS)
 
 
 @pytest.fixture

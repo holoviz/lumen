@@ -12,9 +12,10 @@ from panel_flowdash.agent import DashboardOps
 from panel_flowdash.selection import Predicate
 
 from lumen.flowdash import (
-    COMPONENTS, FILTER_OPTIONS, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID,
-    FilterMismatch, bind_source, column_values, fetch, global_condition,
-    global_conditions, globally_filtered, pipeline_sql, table_pipeline,
+    COMPONENTS, DECKGL_ID, FILTER_OPTIONS, SOURCE_ID, SQL_ID, TABLE_ID,
+    TABLE_VIEW_ID, VIEW_ID, FilterMismatch, bind_source, column_values, fetch,
+    global_condition, global_conditions, globally_filtered, pipeline_sql,
+    table_pipeline,
 )
 from lumen.sources.duckdb import DuckDBSource
 from lumen.transforms.sql import SQLFilter
@@ -235,6 +236,20 @@ class TestNodes:
         assert len(fetch(chart.pipeline)) == 4
         chart.__flowdash_apply_filters__({})
         assert len(node(ops, "chart")._object.pipeline.data) == 4
+        ops.editor.dispose()
+
+    def test_every_lumen_view_queries_with_its_filters(self, duckdb_source, executed):
+        ops = dashboard(duckdb_source)
+        ops.add_node(DECKGL_ID, {}, name="map")
+        ops.connect("sales.pipeline", "map.pipeline")
+        assert node(ops, "map").__flowdash_columns__() == ["category", "amount", "state"]
+        ops.add_node(TABLE_VIEW_ID, {}, name="other_view")
+        ops.connect("sales.pipeline", "other_view.pipeline")
+        view = node(ops, "other_view")
+        executed.clear()
+        view.__flowdash_apply_filters__({"state": Predicate("state", "in", ("TX",))})
+        assert any("\"state\" IN ('TX')" in q for q in executed)
+        assert len(fetch(view.pipeline)) == 4
         ops.editor.dispose()
 
     def test_a_table_node_shows_its_filtered_rows_and_outputs_every_row(self, duckdb_source):

@@ -36,6 +36,7 @@ from .nodes import (
     selection_conditions, set_row_ceiling, spec_param, table_pipeline,
     unbind_source,
 )
+from .save_metric import register_action
 from .table_view import TABLE_VIEW_ID, TableViewNode
 from .transforms import (
     AGGREGATE_ID, DERIVE_ID, SELECT_ID, SORT_ID, TRANSFORM_COMPONENTS,
@@ -44,8 +45,10 @@ from .transforms import (
 
 COMPONENTS.update(TRANSFORM_COMPONENTS)
 COMPONENTS[TABLE_VIEW_ID] = TableViewNode
-
 COMPONENTS[DECKGL_ID] = DeckGLNode
+
+# "Save as metric…" in FlowDash's node menus, for admins.
+register_action()
 
 # What the package offers as a FlowDash component library, under stable ids
 # that saved dashboards refer to.

@@ -252,3 +252,25 @@ def test_the_schema_contract_records_the_columns_the_spec_names():
     found = {u.node: (u.coverage, {t: sorted(c) for t, c in u.tables.items()}) for u in usages(doc, "data", schema, "duckdb")}
     assert found["rows"] == (FULL, {"sales": ["amount"]})
     assert found["all"] == (FULL, {})
+
+
+def test_number_formatter_becomes_money_without_a_symbol():
+    spec = {"formatters": {"count": "number", "mass": {"type": "number", "decimals": 1},
+                           "price": {"type": "money", "symbol": "$", "decimals": 0}}}
+    assert check_table(spec, ["count", "mass", "price"]) == spec
+    options = tabulator_options(spec, whole_columns=["count"])
+    assert options["formatters"] == {
+        "count": {"type": "money", "symbol": "", "precision": 0},
+        "mass": {"type": "money", "symbol": "", "precision": 1},
+        "price": {"type": "money", "symbol": "$", "precision": 0},
+    }
+    assert tabulator_options({"formatters": {"mass": "number"}})["formatters"] == {
+        "mass": {"type": "money", "symbol": "", "precision": 2},
+    }
+
+
+def test_formatter_params_are_checked_per_formatter():
+    with pytest.raises(ValueError, match="The plaintext formatter of 'amount' takes no params, not 'thousandSeparator'"):
+        check_table({"formatters": {"amount": {"type": "plaintext", "thousandSeparator": True}}}, ["amount"])
+    with pytest.raises(ValueError, match="The star formatter of 'amount' takes stars, not 'max'"):
+        check_table({"formatters": {"amount": {"type": "star", "max": 3}}}, ["amount"])

@@ -1,9 +1,11 @@
 """The FlowDash agent as an eval subject, recorded sessions as cases, and cassette playback."""
 
 import json
+import re
 
 from pathlib import Path
 
+import panel_flowdash
 import pytest
 import yaml
 
@@ -185,8 +187,12 @@ def test_map_session_places_a_deckgl_map_of_its_query():
     dashboard = yaml.safe_load(session.turns[-1].dashboard)
     (name,) = [name for name, node in dashboard["nodes"].items() if node["component"] == DECKGL_ID]
     (edge,) = [edge for edge in dashboard["edges"] if edge["to"] == f"{name}.pipeline"]
-    assert dashboard["nodes"][edge["from"].split(".")[0]]["component"] == SQL_ID
-    assert "@@=[xlong, ylat]" in str(dashboard["nodes"][name]["config"]["spec"])
+    sql = dashboard["nodes"][edge["from"].split(".")[0]]
+    assert sql["component"] == SQL_ID and "xlong" in sql["config"]["sql"] and "ylat" in sql["config"]["sql"]
+    # The map reads the coordinates the query returns, under their own names or aliases.
+    (layer,) = dashboard["nodes"][name]["config"]["spec"]["layers"]
+    x, y = re.fullmatch(r"@@=\[(\w+), *(\w+)\]", layer["getPosition"]).groups()
+    assert re.search(rf"\b{x}\b", sql["config"]["sql"]) and re.search(rf"\b{y}\b", sql["config"]["sql"])
     expected = session_case(SESSIONS / "turbines_map.yaml", source).metadata
     assert len(expected.rows) == 5 and expected.chart_mark is None
 
@@ -212,6 +218,9 @@ def stale_sessions():
 
 
 def test_recorded_sessions_match_agent_surface():
+    recorded = json.loads((SESSIONS / "recorded.json").read_text()).get("panel_flowdash")
+    if stale_sessions() is not None and recorded != panel_flowdash.__version__:
+        pytest.skip(f"Recorded against panel-flowdash {recorded}, whose tools differ from {panel_flowdash.__version__}'s.")
     assert stale_sessions() is None, stale_sessions()
 
 
@@ -281,7 +290,8 @@ def test_recorded_sessions_hold_no_credentials_or_local_paths():
         text = path.read_text()
         for needle in ("/Users/", "/home/", "/private/", "sk-", "api_key", "Bearer "):
             assert needle not in text, f"{needle!r} in {path.name}"
-        assert load_messages(path) if path.suffix == ".jsonl" else load_session(path)
+        if path.suffix in (".jsonl", ".yaml"):
+            assert load_messages(path) if path.suffix == ".jsonl" else load_session(path)
 
 
 async def test_save_session_writes_loadable_file(tmp_path):

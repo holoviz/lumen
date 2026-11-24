@@ -515,8 +515,7 @@ def map_summary(spec: dict[str, Any], data: Any) -> str:
     title="Lumen DeckGL map", icon="map", extensions=["deckgl"],
     default_size={"height": 420}, min_size={"height": 240},
     description=(
-        "A deck.gl map of a Lumen pipeline's rows, e.g. points, hexagon bins or arcs on a "
-        "basemap; the spec's layers read the pipeline's columns in @@= expressions and bring no data."
+        "A deck.gl map of a pipeline's rows; layers read columns in @@= expressions, no data."
     ),
 )
 class DeckGLNode(LumenViewNode):

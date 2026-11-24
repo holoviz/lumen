@@ -4,6 +4,7 @@ turns:
 - question: What is the total paid order amount per region?
   nodes:
   - paid_order_amount_by_region
+  - paid_order_amount_by_region_table
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -17,53 +18,68 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t9d2f0a64
+      - id: tc0c8e861
         actor: user
-        at: '2026-11-22T00:56:56Z'
+        at: '2026-11-24T03:56:21Z'
         summary: Added data.
-      - id: tf132711a
+      - id: t045a8be7
         actor: agent
-        at: '2026-11-22T00:57:00Z'
-        run: run-91b9df91e182
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
+        at: '2026-11-24T03:56:27Z'
+        run: run-3b085228ad81
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
+          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
     nodes:
       data:
         component: Lumen/source
-        origin: t9d2f0a64
+        origin: tc0c8e861
         config:
           ref: data
-        position: [0.0, 22.0]
+        position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tf132711a
+        origin: t045a8be7
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
+              SUM(o."amount") AS total_paid_order_amount
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND TRIM(o."status") <> '' AND TRIM(c."region") <> ''
+              o."status" = 'paid'
             GROUP BY
-              c."region"
-            ORDER BY
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
+      paid_order_amount_by_region_table:
+        component: Lumen/table_view
+        origin: t045a8be7
+        config:
+          spec:
+            formatters:
+              total_paid_order_amount:
+                type: money
+                symbol: $
+                decimals: 0
+        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
+      - from: paid_order_amount_by_region.pipeline
+        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
+        - node: paid_order_amount_by_region_table
+          width: 100.0
+          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region
           visible: false
 - question: Only keep the west region.
   nodes:
-  - west_paid_order_amount
+  - paid_order_amount_by_region
   dashboard: |
     flowdash: 1
     title: Untitled
@@ -77,78 +93,67 @@ turns:
       tile_titles: false
       viewers_can_inspect: false
     turns:
-      - id: t9d2f0a64
+      - id: tc0c8e861
         actor: user
-        at: '2026-11-22T00:56:56Z'
+        at: '2026-11-24T03:56:21Z'
         summary: Added data.
-      - id: tf132711a
+      - id: t045a8be7
         actor: agent
-        at: '2026-11-22T00:57:00Z'
-        run: run-91b9df91e182
-        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region.
-      - id: t2fb0fceb
+        at: '2026-11-24T03:56:27Z'
+        run: run-3b085228ad81
+        summary: Added paid_order_amount_by_region. Connected data to paid_order_amount_by_region. Added paid_order_amount_by_region_table.
+          Connected paid_order_amount_by_region to paid_order_amount_by_region_table.
+      - id: td5180bc8
         actor: agent
-        at: '2026-11-22T00:57:06Z'
-        run: run-4759fbeca092
-        summary: Added west_paid_order_amount. Connected data to west_paid_order_amount.
+        at: '2026-11-24T03:56:32Z'
+        run: run-5ee9f7072012
+        summary: Changed the config of paid_order_amount_by_region.
     nodes:
       data:
         component: Lumen/source
-        origin: t9d2f0a64
+        origin: tc0c8e861
         config:
           ref: data
-        position: [0.0, 118.0]
+        position: [0.0, 44.0]
       paid_order_amount_by_region:
         component: Lumen/sql
-        origin: tf132711a
+        origin: t045a8be7
         config:
           sql: |-
             SELECT
               c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
+              SUM(o."amount") AS total_paid_order_amount
             FROM orders AS o
             JOIN customers AS c
               ON o."customer_id" = c."customer_id"
             WHERE
-              o."status" = 'paid' AND TRIM(o."status") <> '' AND TRIM(c."region") <> ''
+              o."status" = 'paid' AND c."region" = 'west'
             GROUP BY
-              c."region"
-            ORDER BY
               c."region"
           table: paid_order_amount_by_region
         position: [380.0, 0.0]
-      west_paid_order_amount:
-        component: Lumen/sql
-        origin: t2fb0fceb
+      paid_order_amount_by_region_table:
+        component: Lumen/table_view
+        origin: t045a8be7
         config:
-          sql: |-
-            SELECT
-              c."region",
-              SUM(o."amount") AS "total_paid_order_amount"
-            FROM orders AS o
-            JOIN customers AS c
-              ON o."customer_id" = c."customer_id"
-            WHERE
-              o."status" = 'paid'
-              AND TRIM(o."status") <> ''
-              AND TRIM(c."region") <> ''
-              AND c."region" = 'west'
-            GROUP BY
-              c."region"
-            ORDER BY
-              c."region"
-          table: west_paid_order_amount
-        position: [380.0, 192.0]
+          spec:
+            formatters:
+              total_paid_order_amount:
+                type: money
+                symbol: $
+                decimals: 0
+        position: [760.0, 44.0]
     edges:
       - from: data.source
         to: paid_order_amount_by_region.source
-      - from: data.source
-        to: west_paid_order_amount.source
+      - from: paid_order_amount_by_region.pipeline
+        to: paid_order_amount_by_region_table.pipeline
     layout:
       tiles:
+        - node: paid_order_amount_by_region_table
+          width: 100.0
+          height: 400
         - node: data
           visible: false
         - node: paid_order_amount_by_region
-          visible: false
-        - node: west_paid_order_amount
           visible: false

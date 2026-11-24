@@ -85,3 +85,39 @@ pixi run -e evals panel serve tests/evals/dashboard.py --show
 It groups runs by suite and case set, plots pass rate against estimated cost and runtime as well
 as token usage per run and per case, and shows each case's turns, SQL and errors for every run
 that attempted it.
+
+## Dashboard assistant scenarios
+
+`lumen.agent.scenarios` measures the FlowDash dashboard assistant (the drawer agent of
+`lumen serve --flowdash`) on multi-turn scenarios drawn from its playtests: KPIs, filters, titles,
+layout edits, edits in place, wrong-number traps, chart design, claims against the dashboard and
+runaway turns. Each scenario runs on a small synthetic fixture generated in code, optionally from a
+seeded dashboard, and checks the dashboard every turn leaves (its YAML and the live node outputs,
+with numbers compared against SQL on the fixture). Only the two claims scenarios, where the reply is
+the answer, also check the assistant's text. Goal checks test what was asked (nodes, tiles, numbers,
+wiring, layout); guards test that the turn did no harm (no hidden leftovers, notes, duplicates or
+other changes) and pass for an agent that does nothing, so they never earn credit alone. A turn did
+what was asked when every goal check and guard passes, partly when at least one goal check does, and
+not otherwise; an agent that does nothing scores 0 did and 0 partly. Chart titles, bar counts and the
+request budget are quality checks. Goals, guards and quality each get a column of their own, and a
+`diverged` column counts the places a replay sent the model something other than the recording.
+
+```bash
+pixi run -e evals python -m lumen.agent.scenarios --themes                        # replay the cassettes
+pixi run -e evals python -m lumen.agent.scenarios --live --output run.json        # call gpt-6-luna, re-record
+pixi run -e evals python -m lumen.agent.scenarios --diff tests/evals/scenarios/baseline.json
+```
+
+Replaying needs no key and takes about 30 seconds. A live run of all scenarios costs about 1.07M
+input tokens (96% of them cached), about $0.02 on gpt-6-luna; it reads `OPENROUTER_API_KEY` (or
+`--env-file`) and writes a gzipped model trace per scenario to `tests/evals/scenarios/`. A live run also writes `recorded.json` there with the commit of the agent code the cassettes were
+recorded against and the panel-flowdash release they ran on, whose tools are part of the agent, and a replay reports that commit as the run's `commit` (and the checkout it ran on
+as `replayed_on`). `baseline.json` is the recorded baseline, and
+`EXPECTED_FAILURES` in `lumen/agent/scenarios/catalog.py` lists the checks that fail in it with
+the workstream of the improvement plan meant to fix each. `test_scenarios.py` replays the
+cassettes offline: those checks report xfail, and XPASS once they flip. When the agent's
+instructions or tools change, the per-check replays skip as stale, `test_recorded_cassettes_are_current`
+fails naming the `--live` command that records them again, and so does the replay command. On another
+panel-flowdash release than the recorded one that test skips instead, as its tools differ. A replay
+that diverges from its recording fails the tests unless `ALLOWED_DIVERGENCES` in `test_scenarios.py`
+lists it.
