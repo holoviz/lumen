@@ -102,6 +102,9 @@ PIPELINE_TYPE = _register_port_type(
 
 # The key of the editor context the host puts its sources in, by ref.
 SOURCES_KEY = "lumen.sources"
+# The key of further names of those sources, ``{alias: ref}``, e.g. the positional
+# refs ``lumen serve`` gave before its refs were stable.
+SOURCE_ALIASES_KEY = "lumen.source_aliases"
 
 # Rows a SQL node keeps in memory and a table, filter or data node lets the source
 # return, unless the host sets another ceiling.
@@ -122,6 +125,44 @@ _RESULTS: dict[tuple[int, str], Any] = {}
 _FETCHED: weakref.WeakKeyDictionary[Pipeline, dict[float, Any]] = weakref.WeakKeyDictionary()
 
 
+# Marks a table that only keeps a name an earlier release gave a served file, so
+# saved queries still read it; listings leave it out. Derived sources copy it.
+LEGACY_TABLE = "/* lumen.flowdash: earlier name */"
+
+
+def add_legacy_tables(source: Source, names: Mapping[str, str]) -> None:
+    """Let queries on a DuckDB ``source`` read its table ``names[name]`` as ``name`` too, unlisted."""
+    connection = getattr(source, "_connection", None)
+    if connection is None or not names:
+        return
+    for name, table in names.items():
+        connection.execute(f'CREATE OR REPLACE VIEW "{name}" AS SELECT * FROM "{table}"')
+    source.tables = {**source.tables, **{name: f'SELECT * FROM "{table}" {LEGACY_TABLE}' for name, table in names.items()}}
+
+
+# The file each table of a served data files' source reads, by table.
+_SERVED_FILES: weakref.WeakKeyDictionary[Source, dict[str, str]] = weakref.WeakKeyDictionary()
+
+
+def set_served_files(source: Source, files: Mapping[str, str]) -> None:
+    """Record the file, as given, that each table of ``source`` reads."""
+    _SERVED_FILES[source] = dict(files)
+
+
+def served_file(source: Source, table: str) -> str | None:
+    """The file, as given, that ``table`` of a served ``source`` reads, if it reads one."""
+    return _SERVED_FILES.get(source, {}).get(table)
+
+
+def listed_tables(source: Source) -> list[str]:
+    """The tables of ``source`` to list, without those that only keep an earlier name."""
+    declared = getattr(source, "tables", None)
+    tables = source.get_tables()
+    if not isinstance(declared, dict):
+        return tables
+    return [t for t in tables if not (isinstance(declared.get(t), str) and LEGACY_TABLE in declared[t])]
+
+
 def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
     """
     Let source nodes of ``editor`` whose ``ref`` is ``ref`` use ``source``,
@@ -129,8 +170,9 @@ def bind_source(editor: Any, source: Source, ref: str = "data") -> str:
     Returns the ref.
     """
     editor.context.setdefault(SOURCES_KEY, {})[ref] = source
+    aliases = editor.context.get(SOURCE_ALIASES_KEY) or {}
     for node in list(_SOURCE_NODES.get(editor, ())):
-        if node.ref == ref:
+        if ref in (node.ref, aliases.get(node.ref)):
             node._refresh()
     return ref
 
@@ -147,11 +189,24 @@ def bound_sources(editor: Any) -> dict[str, Source]:
 def host_sources(context: Mapping[str, Any] | None = None) -> dict[str, Source]:
     """
     The sources the host lets a dashboard use, by ref, from ``context``
-    or else ``dashboard_context()``. It is the only place a node looks up a
-    host source.
+    or else ``dashboard_context()``. A node looks one up by ref with
+    ``lookup_source``.
     """
     context = dashboard_context() if context is None else context
     return dict(context.get(SOURCES_KEY) or {})
+
+
+def lookup_source(ref: str, context: Mapping[str, Any] | None = None) -> Source | None:
+    """
+    The host source ``ref`` names in ``context`` (or ``dashboard_context()``):
+    the source of that ref, or else of the ref it is an alias of.
+    """
+    context = dashboard_context() if context is None else context
+    sources = host_sources(context)
+    if ref in sources:
+        return sources[ref]
+    alias = (context.get(SOURCE_ALIASES_KEY) or {}).get(ref)
+    return sources.get(alias) if isinstance(alias, str) else None
 
 
 def missing_source(ref: str, sources: Mapping[str, Source]) -> str:
@@ -265,9 +320,10 @@ def table_pipeline(source: Source, table: str, limit: int = RESULT_LIMIT) -> Pip
         raise ValueError(f"The source failed: {failure_text(source)}")
     if not isinstance(source, Source):
         raise ValueError(f"Expected a Lumen source, got {type(source).__name__}.")
-    tables = source.get_tables()
-    if table not in tables:
-        raise ValueError(f"The source has no table {table!r}. Its tables are: {', '.join(sorted(tables))}.")
+    if table not in source.get_tables():
+        raise ValueError(
+            f"The source has no table {table!r}. Its tables are: {', '.join(sorted(listed_tables(source)))}."
+        )
     if source._supports_sql:
         return Pipeline(
             source=source, table=table, sql_transforms=[SQLLimit(limit=limit, write=source.dialect)], name=table,
@@ -498,7 +554,7 @@ def _source_summary(source: Source) -> pd.DataFrame | str:
     Without a stored size for any table it is a line naming the tables: a
     one-column frame would be captioned as its own shape, e.g. "1 row, 1 column".
     """
-    tables = source.get_tables()
+    tables = listed_tables(source)
     cached = source._get_schema_cache() or {}
     in_memory = source.tables if isinstance(getattr(source, "tables", None), Mapping) else {}
     entries: list[tuple[str, int | None, int | None]] = []
@@ -850,10 +906,10 @@ class SourceNode(LumenNode):
     def _resolve(self) -> Source | None:
         if not self.ref:
             return None
-        sources = host_sources(self._context)
-        if self.ref not in sources:
-            raise ValueError(missing_source(self.ref, sources))
-        return sources[self.ref]
+        source = lookup_source(self.ref, self._context)
+        if source is None:
+            raise ValueError(missing_source(self.ref, host_sources(self._context)))
+        return source
 
     @param.output(param.Parameter)
     @param.depends("_object", "_error")
@@ -864,7 +920,7 @@ class SourceNode(LumenNode):
         source = self._object
         if source is None:
             return pn.pane.Markdown("No source")
-        return pn.pane.Markdown(f"{type(source).__name__}: {', '.join(source.get_tables())}")
+        return pn.pane.Markdown(f"{self.ref}: {', '.join(listed_tables(source))}")
 
     def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | str | None:
         if self._error is not None or self._object is None:
@@ -881,7 +937,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
     source = inputs.get("source")
     if Choices is None or not isinstance(source, Source) or is_failure(source):
         return None
-    tables = list(source.get_tables())
+    tables = listed_tables(source)
     stored = source._get_schema_cache() or {}
     types: dict[str, str] = dict.fromkeys(tables, "table")
     words = list(tables)

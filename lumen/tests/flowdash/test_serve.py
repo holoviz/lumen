@@ -1,5 +1,7 @@
 import argparse
+import json
 
+from pathlib import Path
 from unittest.mock import patch
 
 import bokeh.command.subcommands.serve as bokeh_serve
@@ -9,14 +11,24 @@ pytest.importorskip("duckdb")
 
 from panel.command import Serve
 from panel_flowdash import FlowDash
-from panel_flowdash.agent import DashboardOps
+from panel_flowdash.agent import DashboardOps, OperationError
 
 from lumen.ai.llm import OpenAI
 from lumen.command.ai import LumenAIServe
 from lumen.flowdash import (
-    DATA_ID, SOURCE_ID, TABLE_ID, bound_sources,
+    DATA_ID, SOURCE_ALIASES_KEY, SOURCE_ID, TABLE_ID, bound_sources,
+    listed_tables,
 )
-from lumen.flowdash.app import build_routes, source_refs
+from lumen.flowdash.app import (
+    build_routes, resolve_sources, source_aliases, source_refs,
+)
+from lumen.sources.duckdb import DuckDBSource
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def output(ops, name, port):
+    return getattr(ops.editor.graph.get_state(ops._instance(name)), port)
 
 
 @pytest.fixture
@@ -86,11 +98,11 @@ def test_served_app_offers_lumen_nodes_over_the_data(csv):
     assert app.agent is False
     assert SOURCE_ID in app.agent_sensitive_components
     (source,) = bound_sources(editor).values()
-    assert list(bound_sources(editor)) == ["data"]
-    (table,) = source.get_tables()
+    assert list(bound_sources(editor)) == ["sales"]
+    (table,) = listed_tables(source)
 
     ops = DashboardOps(editor)
-    ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
+    ops.add_node(SOURCE_ID, {"ref": "sales"}, name="data")
     ops.add_node(TABLE_ID, {"table": table, "limit": 2}, name="sales")
     ops.connect("data.source", "sales.source")
     ops.add_node(DATA_ID, {}, name="rows")
@@ -147,5 +159,238 @@ def test_agent_model_without_an_id_is_refused(csv):
         build_routes([str(csv)], db_path=csv.parent / "dash.db", agent_model=["test", "=Luna"])
 
 
-def test_source_refs():
-    assert list(source_refs(["a", "b", "c"])) == ["data", "data_2", "data_3"]
+@pytest.fixture
+def served(tmp_path, monkeypatch):
+    """A DuckDB file with an orders table and two CSV files, as ``lumen serve`` gets them."""
+    import duckdb
+
+    monkeypatch.chdir(tmp_path)
+    with duckdb.connect(str(tmp_path / "shop.db")) as conn:
+        conn.execute("CREATE TABLE orders AS SELECT * FROM (VALUES ('A', 10), ('B', 20)) t(category, amount)")
+    (tmp_path / "plants.csv").write_text("plant,mw\nx,1\ny,2\nz,3\n")
+    (tmp_path / "turbines.csv").write_text("turbine,mw\na,1\n")
+    return tmp_path
+
+
+def refs(*data):
+    return source_refs(resolve_sources(list(data)))
+
+
+def aliases(*data):
+    return source_aliases(refs(*data))
+
+
+def tables(source):
+    return listed_tables(source)
+
+
+def sql_node(ops, source, sql, name="n"):
+    ops.add_node("Lumen/sql", {"sql": sql, "table": name}, name=name)
+    ops.connect(f"{source}.source", f"{name}.source")
+    return output(ops, name, "data")
+
+
+def test_the_data_files_source_is_named_after_the_data(served):
+    (served / "folder").mkdir()
+    (served / "folder" / "wind.csv").write_text("x\n1\n")
+    (served / "folder" / "notes.txt").write_text("not data")
+    assert list(refs("plants.csv")) == ["plants"]
+    assert list(refs("folder")) == ["folder"]
+    assert list(refs("plants.csv", "turbines.csv")) == ["local"]
+    assert list(refs("shop.db", "plants.csv")) == ["shop", "plants"]
+    assert refs("plants.csv")["plants"].name == "plants"
+    assert tables(refs("folder")["folder"]) == ["wind"]
+
+
+def test_tables_drop_the_file_extension(served):
+    (served / "x").mkdir()
+    (served / "x" / "turbines.csv").write_text("turbine,mw\nb,2\n")
+    assert tables(refs("plants.csv", "turbines.csv")["local"]) == ["plants", "turbines"]
+    assert tables(refs("x/turbines.csv")["turbines"]) == ["turbines"]
+    assert tables(refs(str(served / "x" / "turbines.csv"))["turbines"]) == ["turbines"]
+    assert tables(refs("plants.csv", "./plants.csv", str(served / "plants.csv"))["plants"]) == ["plants"]
+
+
+def test_files_of_one_name_are_numbered_in_command_line_order(served):
+    for year in ("2025", "2026"):
+        (served / year).mkdir()
+        (served / year / "sales.csv").write_text(f"year\n{year}\n")
+    first = refs("2025/sales.csv", "2026/sales.csv")["local"]
+    assert tables(first) == ["sales", "sales_2"]
+    assert first.execute("SELECT * FROM sales_2")["year"].tolist() == [2026]
+    second = refs("2026/sales.csv", "2025/sales.csv")["local"]
+    assert second.execute("SELECT * FROM sales")["year"].tolist() == [2026]
+
+
+def test_a_file_added_later_never_takes_a_saved_table(served):
+    (served / "x").mkdir()
+    (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
+    (served / "plants_2.csv").write_text("plant,mw\nr,7\n")
+    source = refs("plants.csv", "x/plants.csv", "plants_2.csv")["local"]
+    assert tables(source) == ["plants", "plants_3", "plants_2"]
+    assert source.execute("SELECT plant FROM plants")["plant"].tolist() == ["x", "y", "z"]
+    assert source.execute("SELECT plant FROM plants_2")["plant"].tolist() == ["r"]
+
+
+def test_sources_of_one_name_are_numbered_in_command_line_order(served):
+    (served / "shop.csv").write_text("x\n1\n")
+    assert list(refs("shop.db", "shop.csv")) == ["shop", "shop_2"]
+    assert list(refs("shop.csv", "shop.db")) == ["shop", "shop_2"]
+    assert refs("shop.csv", "shop.db")["shop"].get_tables()[0] == "shop"
+
+
+def test_source_refs_name_sources_by_their_name():
+    named = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="Sales Data")
+    counted = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="Sales12345")
+    table = DuckDBSource(uri=":memory:", tables={"b": "SELECT 1 AS x"})
+    several = DuckDBSource(uri=":memory:", tables={"a": "SELECT 1 AS x", "b": "SELECT 1 AS x"})
+    assert list(source_refs([named, counted, table, several])) == ["sales_data", "sales12345", "b", "duckdb"]
+
+
+def test_a_source_param_named_past_its_99999th_object_is_still_named_by_its_data():
+    late = DuckDBSource(uri=":memory:", tables={"b": "SELECT 1 AS x"}, name="DuckDBSource123456")
+    assert list(source_refs([late])) == ["b"]
+
+
+def test_earlier_table_names_still_read_in_queries_but_are_not_listed(served):
+    (served / "x").mkdir()
+    (served / "x" / "plants.csv").write_text("plant,mw\nq,9\n")
+    editor = build_routes(["plants.csv", "x/plants.csv", "turbines.csv"], db_path=served / "dash.db")["/"]()._editor
+    source = bound_sources(editor)["local"]
+    assert tables(source) == ["plants", "plants_2", "turbines"]
+    ops = DashboardOps(editor)
+    ops.add_node(SOURCE_ID, {"ref": "local"}, name="local")
+    # turbines_csv: the file name with its extension; x_plants_csv: the path as given.
+    assert sql_node(ops, "local", "SELECT COUNT(*) AS n FROM turbines_csv", "t")["n"].tolist() == [1]
+    assert sql_node(ops, "local", "SELECT plant FROM x_plants_csv", "x")["plant"].tolist() == ["q"]
+    # plants_csv named both files, so it reads neither.
+    result = sql_node(ops, "local", "SELECT COUNT(*) AS n FROM plants_csv", "p")
+    assert not hasattr(result, "columns")
+    assert "plants_csv" in str(getattr(result, "exception", result))
+
+
+def test_earlier_source_names_still_resolve_unless_two_sources_had_them(served):
+    (served / "shop.csv").write_text("x\n1\n")
+    assert aliases("shop.db", "plants.csv", "turbines.csv") == {
+        "data": "shop", "data_2": "local", "shop_db": "shop", "files": "local",
+        "plants": "local", "turbines": "local", "plants_files": "local", "turbines_files": "local",
+    }
+    clash = aliases("shop.db", "plants.csv", "shop.csv")
+    assert "shop_db" in clash and "shop_files" in clash and "files" in clash
+    assert "shop" not in clash
+
+
+@pytest.mark.parametrize("fixture", ["positional_refs.json", "positional_refs_v3.json"])
+def test_dashboard_saved_with_positional_refs_still_loads(served, fixture):
+    """
+    The fixtures were saved when ``lumen serve shop.db plants.csv`` named
+    its sources ``data`` (shop.db, read first) and ``data_2`` (the CSV
+    files) and the CSV's table ``plants_csv``, as stored model versions 4 and 3.
+    """
+    routes = build_routes(["plants.csv", "shop.db"], db_path=served / "dash.db")
+    editor = routes["/"]()._editor
+    assert list(bound_sources(editor)) == ["plants", "shop"]
+    assert editor.context[SOURCE_ALIASES_KEY] == {
+        "data": "shop", "data_2": "plants", "files": "plants", "local": "plants", "plants_files": "plants",
+        "shop_db": "shop",
+    }
+
+    editor.import_dashboard(json.loads((FIXTURES / fixture).read_text()))
+    ops = DashboardOps(editor)
+
+    assert ops._item(ops._instance("first"))["config"]["ref"] == "data"
+    assert output(ops, "first", "source") is bound_sources(editor)["shop"]
+    assert output(ops, "second", "source") is bound_sources(editor)["plants"]
+    assert output(ops, "order_count", "data")["n"].tolist() == [2]
+    assert output(ops, "plant_count", "data")["n"].tolist() == [3]
+    assert ops.validate() == []
+
+
+def test_dashboard_saved_with_one_file_keeps_its_source_when_files_are_added(served):
+    editor = build_routes(["turbines.csv", "plants.csv", "shop.db"], db_path=served / "dash.db")["/"]()._editor
+    ops = DashboardOps(editor)
+    ops.add_node(SOURCE_ID, {"ref": "plants"}, name="saved")
+    assert output(ops, "saved", "source") is bound_sources(editor)["local"]
+    assert sql_node(ops, "saved", "SELECT COUNT(*) AS n FROM plants")["n"].tolist() == [3]
+
+
+def test_every_served_source_is_named_by_its_ref(served):
+    (served / "shop.csv").write_text("x\n1\n")
+    editor = build_routes(["shop.db", "shop.csv"], db_path=served / "dash.db")["/"]()._editor
+    sources = bound_sources(editor)
+    assert {ref: source.name for ref, source in sources.items()} == {"shop": "shop", "shop_2": "shop_2"}
+    assert editor.context[SOURCE_ALIASES_KEY]["shop_db"] == "shop"
+
+
+def test_a_served_folder_keeps_resolving_when_files_are_served_beside_it(served):
+    (served / "f").mkdir()
+    (served / "f" / "wind.csv").write_text("x\n1\n")
+    assert list(refs("f")) == ["f"]
+    assert aliases("f", "plants.csv")["f"] == "local"
+    assert "f" not in aliases("f/wind.csv", "plants.csv")
+
+
+def test_local_resolves_with_one_file(served):
+    assert aliases("plants.csv")["local"] == "plants"
+
+
+def test_clashing_file_names_are_logged_with_their_tables(served, caplog):
+    for folder in ("x", "y"):
+        (served / folder).mkdir()
+        (served / folder / "sales.csv").write_text("x\n1\n")
+    with caplog.at_level("WARNING", logger="lumen.flowdash.app"):
+        refs("y/sales.csv", "plants.csv", "x/sales.csv")
+    assert "sales: y/sales.csv, sales_2: x/sales.csv" in caplog.text
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="lumen.flowdash.app"):
+        refs("plants.csv", "turbines.csv")
+    assert "share a name" not in caplog.text
+
+
+def test_earlier_table_names_never_come_from_the_working_directory(served):
+    source = refs("plants.csv")["plants"]
+    legacy = set(source.get_tables()) - set(tables(source))
+    assert legacy == {"plants_csv"}
+
+
+def test_concurrent_queries_on_a_source_with_earlier_names_create_no_views_again(served, caplog):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from lumen.flowdash import compile_sql, fetch
+
+    source = refs("plants.csv")["plants"]
+    queries = ["SELECT * FROM plants", "SELECT * FROM plants_csv WHERE mw > 1", "SELECT plant FROM plants WHERE mw = 3"]
+
+    def run(i):
+        pipeline = compile_sql(source, queries[i % 3], f"result_{i % 3}")
+        return i % 3, len(fetch(pipeline))
+
+    with caplog.at_level("WARNING"), ThreadPoolExecutor(8) as pool:
+        counts = list(pool.map(run, range(64 * 3)))
+    assert set(counts) == {(0, 3), (1, 2), (2, 1)}
+    assert "could not create a view" not in caplog.text
+    assert "conflict" not in caplog.text
+
+
+def test_sources_keep_resolve_data_order_when_it_makes_sources_of_its_own(served):
+    import pandas as pd
+
+    frame = pd.DataFrame({"x": [1]})
+    # The frame joins the data files' source, so there is no source per position.
+    sources = resolve_sources([frame, "plants.csv", "shop.db"])
+    assert [sorted(listed_tables(s)) for s in sources] == [["orders"], ["data", "plants"]]
+
+
+def test_a_source_the_host_passes_keeps_its_name(served):
+    warehouse = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"}, name="Warehouse DB")
+    first = build_routes([warehouse, "shop.db"], db_path=served / "one.db")["/"]()._editor
+    other = DuckDBSource(uri=":memory:", tables={"u": "SELECT 1 AS x"}, name="warehouse_db")
+    second = build_routes([other, warehouse], db_path=served / "two.db")["/"]()._editor
+    assert list(bound_sources(first)) == ["warehouse_db", "shop"]
+    assert list(bound_sources(second)) == ["warehouse_db", "warehouse_db_2"]
+    assert warehouse.name == "Warehouse DB" and other.name == "warehouse_db"
+    assert bound_sources(first)["shop"].name == "shop"
+    ops = DashboardOps(first)
+    ops.add_node(SOURCE_ID, {"ref": "warehouse_db"}, name="w")
+    node = first._component_instances[ops._instance("w")]
+    assert node._body().object == "warehouse_db: t"

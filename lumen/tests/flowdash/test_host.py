@@ -122,16 +122,16 @@ def test_sessions_keep_their_own_sources(tmp_path, monkeypatch):
     assert first.context[SOURCES_KEY] is not second.context[SOURCES_KEY]
     extra = DuckDBSource(uri=":memory:", tables={"t": "SELECT 1 AS x"})
     bind_source(first, extra, "extra")
-    unbind_source(first, "data")
+    unbind_source(first, "sales")
     assert list(bound_sources(first)) == ["extra"]
-    assert list(bound_sources(second)) == ["data"]
+    assert list(bound_sources(second)) == ["sales"]
 
     ops = DashboardOps(second)
-    with pytest.raises(OperationError, match="no source `extra`; its sources are: `data`"):
+    with pytest.raises(OperationError, match="no source `extra`; its sources are: `sales`"):
         ops.add_node(SOURCE_ID, {"ref": "extra"}, name="extra")
     place_unchecked(ops, SOURCE_ID, {"ref": "extra"}, "extra")
-    assert "no source `extra`; its sources are: `data`" in failure(ops, "extra", "source")
-    ops.add_node(SOURCE_ID, {"ref": "data"}, name="data")
+    assert "no source `extra`; its sources are: `sales`" in failure(ops, "extra", "source")
+    ops.add_node(SOURCE_ID, {"ref": "sales"}, name="data")
     ops.add_node(TABLE_ID, {"table": "sales_csv"}, name="sales")
     ops.connect("data.source", "sales.source")
     ops.add_node(DATA_ID, {}, name="rows")

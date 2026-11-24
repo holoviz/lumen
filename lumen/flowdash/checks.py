@@ -463,7 +463,7 @@ def check_query(sql: str, source: BaseSQLSource) -> None:
             )
             raise _DiagnosticError(CheckDiagnostic(
                 f"The query reads {qualified.lower()!r}, which is not a table of this source. "
-                f"Its tables are: {', '.join(sorted(source.get_tables()))}.",
+                f"Its tables are: {', '.join(sorted(_listed(source)))}.",
                 line=line,
                 column=column,
                 end_column=end_column,
@@ -474,7 +474,7 @@ def check_query(sql: str, source: BaseSQLSource) -> None:
             line, column, end_column = _locate_token(sql, target, dialect=dialect, is_call=isinstance(table.this, exp.Func))
             raise _DiagnosticError(CheckDiagnostic(
                 f"The query calls {table.this.sql(dialect=dialect)}; queries may only read the "
-                f"source's tables: {', '.join(sorted(source.get_tables()))}.",
+                f"source's tables: {', '.join(sorted(_listed(source)))}.",
                 line=line,
                 column=column,
                 end_column=end_column,
@@ -550,14 +550,19 @@ def pipeline_columns(pipeline: Any) -> list[str]:
 # failed. A config that fails is refused in the inspector and by the agent
 # tools before it is applied. None of them fetches rows.
 
+def _listed(source: Any) -> list[str]:
+    from .nodes import listed_tables
+
+    return listed_tables(source)
+
+
 def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/table`` config: the table must be one of the source's."""
     source, table = inputs.get("source"), config.get("table")
     if source is None or not table:
         return None
-    tables = source.get_tables()
-    if table not in tables:
-        return f"The source has no table {table!r}. Its tables are: {', '.join(sorted(tables))}."
+    if table not in source.get_tables():
+        return f"The source has no table {table!r}. Its tables are: {', '.join(sorted(_listed(source)))}."
     return None
 
 
@@ -787,13 +792,12 @@ async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> An
 
 def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | None:
     """Check a ``Lumen/source`` config: the ref must name a source the host provides."""
-    from .nodes import host_sources, missing_source
+    from .nodes import host_sources, lookup_source, missing_source
 
     ref = config.get("ref")
     if not ref:
         return None
-    sources = host_sources()
-    return None if ref in sources else missing_source(ref, sources)
+    return None if lookup_source(ref) is not None else missing_source(ref, host_sources())
 
 
 def _views(spec: Any) -> list[dict[str, Any]]:
