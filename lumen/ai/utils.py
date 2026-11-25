@@ -220,6 +220,7 @@ def render_template(template_path: Path | str, overrides: dict | None = None, re
     env.globals["dedent"] = lambda text: textwrap.dedent(text).strip()
     env.filters["json_to_yaml"] = json_to_yaml
     env.filters["table_name"] = slug_to_table_name
+    env.filters["normalized_name"] = normalized_name
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -1246,13 +1247,17 @@ def wrap_logfire_on_method(cls, method_name: str):
         setattr(cls, method_name, wrapped_method)
 
 
-def normalized_name(inst: param.Parameterized):
+def normalized_name(inst: param.Parameterized) -> str:
     """
     Returns the name of a Parameterized instance, stripping
     the auto-generated object count.
+
+    param names an unnamed instance after its class and a process-wide
+    counter padded to five digits, so past 99999 objects the counter
+    has six or more, e.g. ``ChatAgent100000``.
     """
-    class_name = inst.__class__.__name__
-    if re.match('^'+class_name+'[0-9]{5}$', inst.name):
+    class_name = type(inst).__name__
+    if re.fullmatch(re.escape(class_name) + r"\d{5,}", inst.name):
         return class_name
     return inst.name
 
