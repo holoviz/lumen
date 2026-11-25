@@ -582,3 +582,8 @@ def test_has_geometry_counts_only_the_tables_of_the_sources():
     here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
     assert has_geometry(metaset, {("src", "t"): here}) is True
     assert has_geometry(metaset, {("other", "u"): elsewhere}) is False
+
+
+async def test_sql_prompt_explains_a_mesh_only_for_mesh_data(sql_context, test_messages, llm):
+    assert "## Unstructured mesh" not in await _main_prompt(sql_context, test_messages, llm)
+    assert "## Unstructured mesh" in await _main_prompt(sql_context, test_messages, llm, mesh=True)
