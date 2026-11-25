@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 import yaml
 
+pytest.importorskip("duckdb")
 pytest.importorskip("sqlglot")
 
 from lumen.flowdash.redact import REDACTED, redact_spec
