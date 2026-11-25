@@ -108,6 +108,7 @@ xarray-sql = ">=0.4.0"
 [feature.geo.dependencies]
 datashader = "*"
 geopandas = "*"
+geopy = "*"
 geoviews = "*"
 shapely = "*"
 

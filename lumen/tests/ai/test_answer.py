@@ -348,7 +348,7 @@ def fresh_settings(monkeypatch):
     _env_llm.cache_clear()
     # Plain assignment: monkeypatch would restore the Parameter object itself
     SQLAgent.max_rows = max_rows
-    sharing.param.update(share="sample", mask_pii=False)
+    sharing.param.update(share="sample", mask_pii=False, geocode=False)
 
 
 async def test_aask_without_a_provider_explains_the_options(frame_source):
@@ -379,7 +379,8 @@ async def test_configure_sets_the_agents(llm, frame_source):
     assert answer._agents is None
     assert _planners.get(frame_source) is None  # explicit agents get their own Planner
     assert configure() == {
-        "agents": agents, "cache": False, "llm": None, "mask_pii": False, "max_rows": 1_000_000, "share": "sample",
+        "agents": agents, "cache": False, "geocode": False, "llm": None, "mask_pii": False, "max_rows": 1_000_000,
+        "share": "sample",
     }
 
 
@@ -2637,3 +2638,76 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
+
+
+
+# ---- Opt-in geocoding ----
+
+class FakePlace:
+    address = "Delhi, India"
+    longitude, latitude = 77.209, 28.6139
+    raw = {"boundingbox": ["28.4", "28.9", "76.8", "77.4"]}
+
+
+@pytest.fixture
+def nominatim(monkeypatch):
+    """Nominatim, faked: counts lookups, so no test reaches the internet."""
+    import lumen.ai.tools.geocode as geocode_module
+    asked = []
+    geocode_module._lookup.cache_clear()
+    monkeypatch.setattr(geocode_module, "_nominatim", lambda: lambda place, exactly_one: asked.append(place) or (FakePlace() if place == "Delhi" else None))
+    yield asked
+    geocode_module._lookup.cache_clear()
+
+
+def test_the_geocode_tool_is_offered_only_once_turned_on():
+    from lumen.ai.tools.geocode import geocode_tools
+    assert geocode_tools({}) is None
+    configure(geocode=True)
+    assert [tool.name for tool in geocode_tools({})] == ["geocode"]
+
+
+def test_geocode_returns_coordinates_and_asks_each_place_once(nominatim):
+    from lumen.ai.tools.geocode import geocode
+    first, second = geocode("Delhi"), geocode("Delhi")
+    assert first == second and "lon 77.209000, lat 28.613900" in first and "west 76.8" in first
+    assert "© OpenStreetMap contributors" in first
+    assert nominatim == ["Delhi"]
+    assert "No place called 'Atlantis'" in geocode("Atlantis")
+
+
+def test_nominatim_is_asked_with_a_user_agent_and_a_rate_limit():
+    pytest.importorskip("geopy")
+    import lumen.ai.tools.geocode as geocode_module
+    geocode_module._nominatim.cache_clear()
+    limited = geocode_module._nominatim()
+    assert limited.min_delay_seconds == 1
+    assert limited.func.__self__.headers["User-Agent"].startswith("lumen/")
+    geocode_module._nominatim.cache_clear()
+
+
+async def test_an_answer_names_the_places_it_geocoded(nominatim, frame_source):
+    from lumen.ai.tools.geocode import geocode
+
+    class Geocoding(MockLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if response_model is not None and "Plan" in response_model.__name__:
+                return _plan(("ChatAgent", "Explain"))
+            geocode("Delhi")
+            return "Delhi is at 28.6 N, 77.2 E."
+
+    answer = await aask(frame_source, "Where is Delhi?", llm=Geocoding(), agents=[ChatAgent()])
+    assert answer.geocoded == ["Delhi"]
+    assert "Geocoded 'Delhi' with OpenStreetMap Nominatim, © OpenStreetMap contributors" in answer._usage_note
+
+
+async def test_places_named_in_a_question_are_looked_up_for_an_llm_without_tools(nominatim):
+    from lumen.ai.tools.geocode import PlaceNames, geocode_places
+
+    class Picks(MockLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            assert response_model is PlaceNames and "within 50 km of Delhi" in messages[-1]["content"]
+            return PlaceNames(places=["Delhi"])
+
+    found = await geocode_places(Picks(), [{"role": "user", "content": "How many are within 50 km of Delhi?"}])
+    assert "lon 77.209000, lat 28.613900" in found and nominatim == ["Delhi"]
