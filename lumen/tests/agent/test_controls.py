@@ -945,22 +945,19 @@ def test_layout_role_takes_flowdash_layout_tools_with_report_tools():
     assert {"add_filter", "set_title", "place_tile", "arrange_tiles"} <= set(layout)
 
 
-async def test_local_add_filter_points_to_add_filter_control():
-    from panel_flowdash.agent import tools as fd_tools
+def test_only_an_agent_with_add_filter_control_has_local_filters_pointed_to_it(monkeypatch):
+    create_flowdash_agent, routes = assistant.create_flowdash_agent, []
 
-    if not hasattr(fd_tools, "register_local_filter"):
-        pytest.skip("panel-flowdash without register_local_filter")
-    layout = create_agent("test", dashboard_tools="layout")
-    data = create_agent("test")
-    session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), _model())
-    try:
-        local = await fd_tools.add_filter(SimpleNamespace(deps=session.deps, agent=layout), "t_state", scope="local")
-        other = await fd_tools.add_filter(SimpleNamespace(deps=session.deps, agent=data), "t_state", scope="local")
-    finally:
-        session.close()
-    assert "Build a local filter with add_filter_control instead." in str(local)
-    # Another agent in the same process, e.g. FlowDash's own, has no add_filter_control.
-    assert "add_filter_control" not in str(other) and "No tool here builds one" in str(other)
+    def recorded(*args, local_filter=None, **kwargs):
+        routes.append(local_filter)
+        return create_flowdash_agent(*args, **kwargs)
+
+    # Also on a panel-flowdash whose create_agent takes no local_filter, which create_agent then leaves out.
+    monkeypatch.setattr(assistant, "ROUTES_LOCAL_FILTER", True)
+    monkeypatch.setattr(assistant, "create_flowdash_agent", recorded)
+    create_agent("test", dashboard_tools="layout")
+    create_agent("test")
+    assert routes == ["add_filter_control", None]
 
 
 async def test_playtest_local_add_filter_in_a_run_points_to_add_filter_control():

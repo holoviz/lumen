@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import jinja2
 import numpy as np
 import pandas as pd
+import param
 import pytest
 import yaml
 
@@ -26,9 +27,10 @@ from lumen.ai.utils import (
     content_to_text, count_tokens, describe_data, errors_in_result,
     find_slug_by_table_name, format_msg_content, format_tool_error,
     fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
-    parse_huggingface_url, print_task_exception, render_template, report_error,
-    retry_llm_output, sanitize_column_names, serialize_image_content,
-    set_content_text, slug_to_table_name, truncate_to_tokens,
+    normalized_name, parse_huggingface_url, print_task_exception,
+    render_template, report_error, retry_llm_output, sanitize_column_names,
+    serialize_image_content, set_content_text, slug_to_table_name,
+    truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
@@ -1160,3 +1162,20 @@ def test_task_tracebacks_are_hidden_only_while_errors_go_into_the_result(capsys)
         errors_in_result.reset(token)
     err = capsys.readouterr().err
     assert "shown" in err and "hidden" not in err
+
+
+def test_normalized_name_strips_the_counter_past_99999_objects(monkeypatch):
+    from lumen.ai.agents import ChatAgent
+
+    # param counts the objects a process makes, so a long-running server passes 99999.
+    monkeypatch.setattr(param.parameterized, "object_count", 100_000)
+    agent = ChatAgent()
+    assert agent.name == "ChatAgent100000"
+    assert normalized_name(agent) == "ChatAgent"
+
+
+def test_normalized_name_keeps_a_given_name():
+    from lumen.ai.agents import ChatAgent
+
+    assert normalized_name(ChatAgent(name="Helper")) == "Helper"
+    assert normalized_name(ChatAgent(name="ChatAgent2")) == "ChatAgent2"

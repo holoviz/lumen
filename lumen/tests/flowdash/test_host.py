@@ -64,6 +64,13 @@ async def settle(seconds=0.5):
         await asyncio.sleep(0.01)
 
 
+async def ran(panel, timeout=10):
+    """Wait until the code panel's run is done, however busy the machine."""
+    deadline = time.monotonic() + timeout
+    while panel.running and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+
 def test_source_nodes_read_the_editor_context(source):
     editor = FlowDash(components=COMPONENTS, context={SOURCES_KEY: {"data": source}})
     ops = query_dashboard(editor)
@@ -204,7 +211,7 @@ async def test_the_code_panel_holds_back_sql_the_engine_rejects(source):
     assert (panel.instance_id, panel.field) == (node, "sql")
 
     panel.run(BROKEN)
-    await settle()
+    await ran(panel)
     assert editor._component_instances[node].sql == QUERY
     assert panel.dirty
     [problem] = panel.tools.diagnostics
@@ -212,7 +219,7 @@ async def test_the_code_panel_holds_back_sql_the_engine_rejects(source):
 
     fixed = QUERY.replace("SUM", "MAX")
     panel.run(fixed)
-    await settle()
+    await ran(panel)
     assert editor._component_instances[node].sql == fixed
     assert panel.tools.diagnostics == []
 
