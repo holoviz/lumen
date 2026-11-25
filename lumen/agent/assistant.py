@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import re
-import weakref
 
 from collections.abc import Collection
 from typing import Any
@@ -233,23 +233,9 @@ HAS_ADD_FILTER = "add_filter" in _FLOWDASH_TOOL_NAMES
 # FlowDash's own set for an assistant that lays out a dashboard, with its report, title and filter
 # tools, where FlowDash has one.
 FLOWDASH_LAYOUT_TOOLS: tuple[str, ...] | None = getattr(_flowdash_tools, "LAYOUT_TOOLS", None)
-# Where FlowDash has it, add_filter(scope="local") points the model to add_filter_control, in the
-# runs of the agents create_agent gave that tool; FlowDash's hook is the same for the whole process.
-register_local_filter = getattr(_flowdash_tools, "register_local_filter", None)
-_LOCAL_FILTER_AGENTS: set[int] = set()
-
-
-def _local_filter(ctx: RunContext[FlowDashDeps], **_: Any) -> str:
-    """add_filter(scope="local"): point an agent with add_filter_control to it, and refuse it for any other."""
-    instead = (
-        "Build a local filter with add_filter_control instead." if id(getattr(ctx, "agent", None)) in _LOCAL_FILTER_AGENTS
-        else "No tool here builds one: tell the user, and offer the filter bar instead."
-    )
-    return (
-        "Refused: add_filter only adds filters to the dashboard's filter bar (scope='global'), which filters "
-        f"every view with the column. A local filter, a control linked to some views through a Filter node, "
-        f"is not built by it. {instead}"
-    )
+# Where FlowDash's create_agent takes it, add_filter(scope="local") points the model to
+# add_filter_control in the runs of the agents create_agent gives that tool.
+ROUTES_LOCAL_FILTER = "local_filter" in inspect.signature(create_flowdash_agent).parameters
 
 CUT_OFF = "Your answer was cut off at the output limit; answer again, more briefly."
 
@@ -447,15 +433,13 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         arrange = " arrange_tiles does that, keeping place_tile sizes." if "arrange_tiles" in dashboard_tools else ""
         filters = GLOBAL_FILTER if "add_filter" in dashboard_tools else LOCAL_FILTER
         text += LAYOUT_INSTRUCTIONS.format(arrange=arrange, filters=filters)
+    if lays_out and ROUTES_LOCAL_FILTER:
+        kwargs.setdefault("local_filter", "add_filter_control")
     agent = create_flowdash_agent(
         model, instructions=text, toolsets=toolsets, tools=dashboard_tools, model_settings=settings,
         default_instructions=dashboard_instructions, catalogue="full" if dashboard_instructions else "none",
         capabilities=capabilities, **kwargs,
     )
-    if lays_out and register_local_filter is not None:
-        register_local_filter(_local_filter)
-        _LOCAL_FILTER_AGENTS.add(id(agent))
-        weakref.finalize(agent, _LOCAL_FILTER_AGENTS.discard, id(agent))
 
     # A tool call cut off at the output limit fails its argument validation and is retried by
     # pydantic-ai; a cut-off final answer would otherwise pass as complete.

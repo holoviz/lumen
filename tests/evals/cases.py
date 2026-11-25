@@ -1,8 +1,10 @@
 """Local behavior and opt-in BIRD Mini-Dev evaluation cases."""
+from __future__ import annotations
 
 import json
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic_evals import Case, Dataset
 
@@ -11,9 +13,10 @@ from lumen.ai.evals.harness import (
     CheckResult, Expected, Inputs, Output,
 )
 from lumen.data.catalog import DocumentChunk
-from lumen.flowdash.metrics import MetricSet, read_metrics
-from lumen.flowdash.project import parse_project
 from lumen.sources.duckdb import DuckDBSource
+
+if TYPE_CHECKING:
+    from lumen.flowdash.metrics import MetricSet
 
 SUITE_INSTRUCTIONS = {
     "local": ("", ""),
@@ -89,6 +92,10 @@ def metrics(inputs: Inputs) -> MetricSet | None:
     """The metrics of a fixture that has a project file."""
     if inputs.fixture != "turbine_metrics":
         return None
+    # Only the FlowDash subject reads metrics, and lumen.flowdash needs panel-flowdash (Python 3.12+).
+    from lumen.flowdash.metrics import read_metrics
+    from lumen.flowdash.project import parse_project
+
     return read_metrics(parse_project(TURBINE_METRICS, "flowdash.yaml"))
 
 

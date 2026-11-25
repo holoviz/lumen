@@ -783,8 +783,11 @@ async def test_update_chart_refuses_what_it_cannot_check(ctx, session):
 
 
 async def test_deep_patches_through_the_agent_are_refused_not_raised():
+    # Past PATCH_DEPTH, but within the 99 levels pydantic-core writes as JSON on Windows (255 elsewhere):
+    # ToolCallPart.args_as_json_str writes the arguments out again, in the scripted stream here as when
+    # a model's history is sent.
     deep = {}
-    for _ in range(100):
+    for _ in range(64):
         deep = {"a": deep}
     model, requests = script(
         [ToolCallPart("update_chart", {"name": "quakes_per_month_chart", "changes": {"encoding": deep}}, tool_call_id="u1"),
