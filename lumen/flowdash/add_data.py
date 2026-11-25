@@ -152,9 +152,9 @@ class AddDataDialog(Viewer):
             pn.Row(self._location, self._ref, margin=0, sizing_mode="stretch_width", styles={"gap": "12px"}),
             pn.Row(
                 pmui.Typography(
-                    "Read as lumen serve reads its data. A connection string is kept with its credentials in the "
-                    "app's data folder.", variant="caption", margin=0, sx={"color": "text.secondary"},
-                    styles={"flex": "1 1 auto"},
+                    "Read as lumen serve reads its data. A password is stored encrypted, or write it as "
+                    "${VARIABLE} to read it from the server's environment.", variant="caption", margin=0,
+                    sx={"color": "text.secondary"}, styles={"flex": "1 1 auto"},
                 ),
                 self._read, margin=0, sizing_mode="stretch_width", styles={"gap": "12px", "align-items": "center"},
             ),
@@ -245,16 +245,20 @@ class AddDataDialog(Viewer):
                 f"Added as the source {preview.ref}. Everyone who can open the app can read it in dashboards."
             )
 
-    def open(self, mode: str = "upload"):
-        """Open the dialog with nothing chosen, on uploading a file or, for an admin, ``mode="connect"``."""
+    def open(self, mode: str = "upload", location: str = "", name: str = ""):
+        """
+        Open the dialog with nothing chosen, on uploading a file or, for an
+        admin, ``mode="connect"``, there filled in with ``location`` and
+        ``name``, e.g. to enter a source's credentials again.
+        """
         admin = _is_admin(self._app)
         with pn.io.hold():
             self._content, self._filename, self._preview, self._source = None, "", None, None
             self._chosen.object = "No file chosen"
             self._name.value = ""
             self._sheet.param.update(options={ALL_SHEETS: ""}, value="", visible=False)
-            self._location.value = ""
-            self._ref.value = ""
+            self._location.value = location
+            self._ref.value = name
             self._preview_pane.object = ""
             self._alert.visible = False
             self._assistant.value = True

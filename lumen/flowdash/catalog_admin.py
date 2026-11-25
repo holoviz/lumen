@@ -485,7 +485,7 @@ class CatalogSettings(Viewer):
         elif upload is not None:
             second = f'<span class="main muted small">{esc(uploaded_text(upload))}</span>'
         else:
-            second = f'<span class="mono">{esc(served_file(source, table) or "") or "&nbsp;"}</span>'
+            second = self._file_html(served_file(source, table), "mono")
         title = cell(
             f'<div class="table{"" if row["assistant"] else " off"}"><span class="main">{esc(table)}</span>{second}</div>',
             stylesheets=[_ROW_CSS],
@@ -518,6 +518,22 @@ class CatalogSettings(Viewer):
             cell(columns_text),
             cell(used, stylesheets=[_USED_CSS]),
         ]
+
+    def _file_html(self, path: str | None, css: str) -> str:
+        """
+        The file a table reads, relative to the project's or the uploads'
+        folder, else by its name, so the server's folders are not shown; an
+        admin gets the whole path as a tooltip.
+        """
+        from .data import data_roots, display_path
+
+        if not path:
+            return '<span class="mono">&nbsp;</span>'
+        shown = display_path(path, data_roots(self.project))
+        title = f' title="{esc(path)}"' if self.editable and shown != path else ""
+        if css == "code":
+            return f"<code{title}>{esc(shown)}</code>"
+        return f'<span class="mono"{title}>{esc(shown)}</span>'
 
     def set_assistant(self, ref: str, table: str, on: bool) -> bool:
         """Turn ``table`` of ``ref`` on or off for the assistant, for everyone, writing the project file at once."""
@@ -777,7 +793,7 @@ class CatalogSettings(Viewer):
             )))
         else:
             if where := served_file(source, table):
-                details.append(("File", f"<code>{esc(where)}</code>"))
+                details.append(("File", self._file_html(where, "code")))
             details.append(("Source", f"{esc(ref)}, {esc(_type_name(source))}"))
         if description:
             details.append(("Description", esc(description)))

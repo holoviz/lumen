@@ -310,3 +310,124 @@ def test_an_admin_connects_a_source_that_comes_back_after_a_restart(context, tmp
     assert restored.disconnect("plant", app=Admin()) == [] and "plant" not in restored.sources
     with pytest.raises(UploadError, match="Could not read it"):
         uploads.read_location(str(tmp_path / "nowhere.csv"), app=Admin())
+
+
+# ---------------------------------------------------------------------------
+# A connected source's credentials
+
+pytest.importorskip("panel_flowdash.secret_store")
+
+SECRET_URL = "postgresql://ana:hunter2@db.example.com/fleet"
+
+
+@pytest.fixture
+def secret_key(monkeypatch):
+    from panel_flowdash.secret_store import (
+        KEY_ENV, encryption_available, fernet_key,
+    )
+
+    if not encryption_available():
+        pytest.skip("needs cryptography")
+    key = fernet_key()
+    monkeypatch.setenv(KEY_ENV, key)
+    return key
+
+
+@pytest.fixture
+def opened(monkeypatch):
+    """Connecting reads any location into a small DuckDB source, keeping the locations it was given."""
+    seen = []
+
+    def fake_open(self, location, ref):
+        seen.append(location)
+        return DuckDBSource(uri=":memory:", tables={"readings": "SELECT 1 AS kw"}, name=ref)
+
+    monkeypatch.setattr(Uploads, "_open", fake_open)
+    return seen
+
+
+def test_a_password_is_stored_encrypted_and_read_back(secret_key):
+    from lumen.flowdash.uploads import (
+        Connection, resolved_location, stored_location,
+    )
+
+    kept, secret = stored_location(SECRET_URL)
+    assert kept == "postgresql://ana:***@db.example.com/fleet" and set(secret) == {"encrypted", "key_id"}
+    assert "hunter2" not in str(secret)
+    assert resolved_location(Connection("fleet", kept, "ana", "", secret=secret)) == SECRET_URL
+    assert stored_location("/data/plant.db") == ("/data/plant.db", None)
+
+
+def test_a_password_given_as_a_reference_is_kept_as_written(monkeypatch):
+    from lumen.flowdash.uploads import (
+        Connection, resolved_location, stored_location,
+    )
+
+    reference = "postgresql://ana:${PG_PASSWORD}@db.example.com/fleet"
+    assert stored_location(reference) == (reference, None)
+    monkeypatch.setenv("PG_PASSWORD", "hunter2")
+    assert resolved_location(Connection("fleet", reference, "ana", "")) == SECRET_URL
+    monkeypatch.delenv("PG_PASSWORD")
+    with pytest.raises(UploadError, match="credentials can't be read.*PG_PASSWORD is not set"):
+        resolved_location(Connection("fleet", reference, "ana", ""))
+
+
+def test_without_encryption_a_written_password_is_refused(monkeypatch):
+    from panel_flowdash import secret_store
+
+    from lumen.flowdash.uploads import stored_location
+
+    monkeypatch.setattr(secret_store, "encryption_available", lambda: False)
+    with pytest.raises(UploadError, match=r"panel-flowdash\[secrets\].*\$\{PG_PASSWORD\}"):
+        stored_location(SECRET_URL)
+
+
+def test_the_manifest_never_holds_the_password_and_a_restart_connects_again(context, tmp_path, secret_key, opened):
+    import json
+
+    project = _project(tmp_path, context)
+    uploads = project.context[UPLOADS_KEY]
+    connection = uploads.connect(SECRET_URL, "warehouse", app=Admin())
+    assert connection.location == "postgresql://ana:***@db.example.com/fleet"
+    manifest = (uploads.directory / "manifest.json").read_text()
+    assert "hunter2" not in manifest
+    assert json.loads(manifest)["sources"][0]["secret"]["key_id"]
+
+    restored = Uploads(tmp_path / "uploads", {}, project=project)
+    restored.restore()
+    assert opened[-1] == SECRET_URL and "warehouse" in restored.sources
+    assert restored.connection_problem("warehouse") is None
+
+
+def test_a_source_whose_key_is_gone_stays_listed_until_its_credentials_are_entered_again(
+    context, tmp_path, secret_key, opened, monkeypatch,
+):
+    from panel_flowdash.secret_store import KEY_ENV, fernet_key
+
+    from lumen.flowdash.data import source_summaries
+
+    project = _project(tmp_path, context)
+    project.context[UPLOADS_KEY].connect(SECRET_URL, "warehouse", app=Admin())
+    monkeypatch.setenv(KEY_ENV, fernet_key())
+    sources = {ref: source for ref, source in context[SOURCES_KEY].items() if ref != "warehouse"}
+    restored = Uploads(tmp_path / "uploads", sources, project=project)
+    restored.restore()
+    assert "warehouse" not in restored.sources and restored.connection("warehouse") is not None
+    problem = restored.connection_problem("warehouse")
+    assert "credentials can't be read" in problem and "enter it again" in problem and "hunter2" not in problem
+    summary = source_summaries({**context, SOURCES_KEY: sources, UPLOADS_KEY: restored})[-1]
+    assert (summary.ref, summary.kind, summary.problem) == ("warehouse", "PostgreSQL", problem)
+    assert summary.files == ("postgresql://ana:***@db.example.com/fleet",)
+
+    again = restored.connect(SECRET_URL, "warehouse", app=Admin())
+    assert again.ref == "warehouse" and restored.connection_problem("warehouse") is None and "warehouse" in restored.sources
+
+
+def test_files_are_shown_relative_to_the_project_or_by_name(tmp_path):
+    from lumen.flowdash.data import display_path
+
+    inside = tmp_path / "data" / "owners.parquet"
+    assert display_path(str(inside), [tmp_path]) == "data/owners.parquet"
+    assert display_path("/srv/elsewhere/owners.parquet", [tmp_path]) == "owners.parquet"
+    assert display_path("turbines/turbines.csv", [tmp_path]) == "turbines/turbines.csv"
+    assert display_path(SECRET_URL) == "postgresql://ana:***@db.example.com/fleet"

@@ -383,14 +383,24 @@ class Upload:
 
 @dataclass
 class Connection:
-    """A source an admin connected in the app: a database, a database file or a data file, by its location."""
+    """
+    A source an admin connected in the app: a database, a database file or
+    a data file, by its location. The manifest never holds its credentials:
+    a location with a password or token keeps only its masked form, and the
+    whole location goes in ``secret``, encrypted as panel-flowdash stores a
+    model provider's key (see ``panel_flowdash.secret_store``); a password
+    written as a ``${VARIABLE}`` reference is kept as written and read from
+    the server's environment when it connects.
+    """
 
     ref: str
     location: str
-    """What ``lumen serve`` would be given for it: a path, a URL or a connection string."""
+    """What ``lumen serve`` would be given for it, a path, a URL or a connection string, credentials masked."""
     added_by: str
     added_at: str
     id: str = ""
+    secret: dict[str, str] | None = None
+    """The location with its credentials, encrypted, when it has any written out."""
 
     @property
     def when(self) -> dt.datetime | None:
@@ -401,10 +411,61 @@ class Connection:
 
     @property
     def shown(self) -> str:
-        """The location to show, its credentials masked."""
+        """The location to show: masked, with any ``${VARIABLE}`` reference as written."""
         from panel_flowdash.value_text import redact_secrets
 
-        return redact_secrets(self.location)
+        return self.location if _REFERENCE.search(self.location) else redact_secrets(self.location)
+
+
+# A reference to an environment variable in a location, e.g. the password of postgresql://ana:${PG_PASSWORD}@host/db.
+_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}")
+
+
+def stored_location(location: str) -> tuple[str, dict[str, str] | None]:
+    """
+    What the manifest keeps of ``location``: the location itself when it
+    holds no credentials, or only ``${VARIABLE}`` references to them; else
+    its masked form and the whole location encrypted. Raises
+    ``UploadError`` when it holds credentials and nothing here can encrypt
+    them.
+    """
+    from panel_flowdash.secret_store import (
+        INSTALL_HINT, SecretError, encrypt_secret, encryption_available,
+    )
+    from panel_flowdash.value_text import redact_secrets
+
+    masked = redact_secrets(location)
+    if masked == location:
+        return location, None
+    # With each reference standing where a secret would, only a secret written out is left to mask.
+    referenced = _REFERENCE.sub("***", location)
+    if redact_secrets(referenced) == referenced:
+        return location, None
+    if not encryption_available():
+        raise UploadError(
+            f"{INSTALL_HINT} Or write the password as a reference to an environment variable the server "
+            "has, e.g. postgresql://user:${PG_PASSWORD}@host/db."
+        )
+    try:
+        return masked, encrypt_secret(location)
+    except SecretError as exc:
+        raise UploadError(f"Could not store its credentials: {exc}") from None
+
+
+def resolved_location(connection: Connection) -> str:
+    """
+    The location ``connection`` connects to, with its credentials:
+    decrypted, and its references read from the environment. Raises
+    ``UploadError`` saying why they cannot be read, never what they are.
+    """
+    from panel_flowdash.project import expand_env
+    from panel_flowdash.secret_store import SecretError, resolve_secret
+
+    try:
+        location = resolve_secret(connection.secret) if connection.secret else connection.location
+        return expand_env(location)
+    except (SecretError, ValueError) as exc:
+        raise UploadError(f"Its credentials can't be read, so it is not connected. {exc}") from None
 
 
 @dataclass
@@ -511,6 +572,8 @@ class Uploads:
         self.trash_days = trash_days
         self._uploads: dict[str, Upload] = {}
         self._connections: dict[str, Connection] = {}
+        # Why each connection that is listed but not served could not connect, e.g. its credentials are unreadable.
+        self._broken: dict[str, str] = {}
         self._lock = threading.RLock()
         self._editors: weakref.WeakKeyDictionary[t.Any, _Session] = weakref.WeakKeyDictionary()
 
@@ -559,6 +622,10 @@ class Uploads:
     def connection(self, ref: str) -> Connection | None:
         """The source an admin connected as ``ref``, if it is one."""
         return self._connections.get(ref)
+
+    def connection_problem(self, ref: str) -> str | None:
+        """Why the connected source ``ref`` is listed but not served, e.g. its credentials can't be read."""
+        return self._broken.get(ref)
 
     def _manifest_path(self) -> Path:
         return self.directory / MANIFEST
@@ -635,13 +702,19 @@ class Uploads:
             if connection.ref in self.sources:
                 logger.warning("Not restoring the source %r: a served source has its name.", connection.ref)
                 continue
+            # A source that cannot connect stays listed, so an admin can enter its credentials again or remove it.
+            self._connections[connection.ref] = connection
             try:
-                source = self._open(connection.location, connection.ref)
+                source = self._open(resolved_location(connection), connection.ref)
+            except UploadError as exc:
+                self._broken[connection.ref] = str(exc)
+                logger.warning("Not connecting the source %r: %s", connection.ref, exc)
+                continue
             except Exception as exc:
                 # The error may quote the connection's credentials, which are not logged.
+                self._broken[connection.ref] = f"Could not connect to it ({type(exc).__name__})."
                 logger.warning("Could not connect the source %r: %s", connection.ref, type(exc).__name__)
                 continue
-            self._connections[connection.ref] = connection
             self.sources[connection.ref] = source
         for entry in entries:
             try:
@@ -661,11 +734,12 @@ class Uploads:
             self._uploads[upload.ref] = upload
             self.sources[upload.ref] = source
 
-    def _ref(self, name: str) -> str:
+    def _ref(self, name: str, free: t.Collection[str] = ()) -> str:
+        """A ref for ``name`` no source, upload or connection has, except those in ``free``."""
         base = _slug(name) or "upload"
         if base[0].isdigit():
             base = f"t_{base}"
-        taken = {*self.sources, *self._uploads, *self._connections}
+        taken = {*self.sources, *self._uploads, *self._connections} - set(free)
         ref, n = base, 1
         while ref in taken:
             n += 1
@@ -801,6 +875,13 @@ class Uploads:
         location = location.strip()
         if not location:
             raise UploadError("Give a file, a URL or a connection string.")
+        if _REFERENCE.search(location):
+            from panel_flowdash.project import expand_env
+
+            try:
+                location = expand_env(location)
+            except ValueError as exc:
+                raise UploadError(str(exc)) from None
         sources = resolve_sources([location])
         if len(sources) != 1:
             raise UploadError(f"That gives {len(sources)} sources; connect one at a time.")
@@ -820,7 +901,8 @@ class Uploads:
         if not _is_admin(app):
             raise UploadError("Only admins can connect sources.")
         stem = re.split(r"[/:?@]", location.strip().rstrip("/"))[-1].rsplit(".", 1)[0] if location else ""
-        ref = self._ref(name or stem or "source")
+        # A source listed without its credentials is replaced by connecting it again under its name.
+        ref = self._ref(name or stem or "source", free=self._broken)
         try:
             source = self._open(location, ref)
             tables = listed_tables(source)
@@ -852,17 +934,19 @@ class Uploads:
         if "://" not in location and Path(location).exists():
             # A path the app was given is kept whole, so a restart elsewhere still finds it.
             location = str(Path(location).resolve())
+        kept, secret = stored_location(location)
         if source is None:
             _, source = self.read_location(location, name, app=app)
         user = _identity_name(app)
         with self._lock:
-            ref = source.name if source.name not in {*self.sources, *self._uploads, *self._connections} else self._ref(source.name)
+            ref = self._ref(source.name, free=self._broken)
             with param.edit_constant(source):
                 source.name = ref
             connection = Connection(
-                ref=ref, location=location.strip(), added_by=user,
-                added_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), id=uuid.uuid4().hex,
+                ref=ref, location=kept, added_by=user,
+                added_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), id=uuid.uuid4().hex, secret=secret,
             )
+            self._broken.pop(ref, None)
             self._connections[ref] = connection
             self._write_manifest()
             self.sources[ref] = source
@@ -884,6 +968,7 @@ class Uploads:
             connection = self._connections.pop(ref, None)
             if connection is None:
                 return [Problem(f"There is no connected source {ref!r} any more.")]
+            self._broken.pop(ref, None)
             self.sources.pop(ref, None)
             self._write_manifest()
             sessions = list(self._editors.items())
@@ -1044,5 +1129,6 @@ _register()
 __all__ = [
     "ENTRY_POINT_GROUP", "SECTION", "UPLOADS_KEY", "Connection", "Preview", "TablePreview", "Upload",
     "UploadError", "UploadFormat", "UploadSettings", "Uploads", "excel_sheets", "extension_of", "read_file",
-    "read_frames", "register_upload_handler", "table_preview", "upload_formats", "upload_settings",
+    "read_frames", "register_upload_handler", "resolved_location", "stored_location", "table_preview",
+    "upload_formats", "upload_settings",
 ]

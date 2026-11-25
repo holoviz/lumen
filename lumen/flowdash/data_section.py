@@ -76,6 +76,7 @@ _CARD_CSS = """
 .name { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 0.9375rem; font-weight: 500; }
 .line { font-size: 0.8125rem; color: var(--mui-palette-text-secondary); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; margin-top: 2px; }
+.line.problem { color: var(--mui-palette-error-main, #d32f2f); }
 """
 
 _EMPTY_CSS = """
@@ -113,6 +114,13 @@ def data_section() -> t.Any:
 def table_url(ref: str, table: str) -> str:
     """The URL opening the drawer of ``table`` of the source ``ref``."""
     return f"/{ROUTE}?table={quote(f'{ref}.{table}', safe='')}"
+
+
+def _short(problem: str) -> str:
+    """A connected source's problem in a card's one line, e.g. "Credentials can't be read; enter them again"."""
+    if "credentials can't be read" in problem:
+        return "Credentials can't be read; enter them again"
+    return problem.split(". ", 1)[0]
 
 
 def _query(search: str) -> dict[str, str]:
@@ -162,8 +170,10 @@ class DataPage(Viewer):
             section = raw_section(project)
         except Exception:
             section = {}
+        from .data import data_roots
+
         tables, _ = catalog_tables(self.context, section)
-        self.sources = source_summaries(self.context, tables)
+        self.sources = source_summaries(self.context, tables, data_roots(project))
         self.statuses, _ = metric_statuses(project)
         self.n_tables = len(tables)
         if self.page == "metrics":
@@ -333,25 +343,31 @@ class DataPage(Viewer):
             files = ", ".join(summary.files)
             line = f"{summary.kind} · {files}" if files else summary.kind
             noun = "table" if summary.tables == 1 else "tables"
+            if summary.problem:
+                last = f'<div class="line problem" title="{esc(summary.problem)}">{esc(_short(summary.problem))}</div>'
+            else:
+                last = f'<div class="line">{summary.tables} {noun} · {esc(summary.origin)}</div>'
             body = cell(
                 f'<div class="card"><div class="icon">{UPLOAD_SVG if summary.upload is not None else DATABASE_SVG}'
                 f'</div><div class="text"><div class="name">{esc(summary.ref)}</div>'
-                f'<div class="line" title="{esc(line)}">{esc(line)}</div>'
-                f'<div class="line">{summary.tables} {noun} · {esc(summary.origin)}</div></div></div>',
+                f'<div class="line" title="{esc(line)}">{esc(line)}</div>{last}</div></div>',
                 stylesheets=[_CARD_CSS],
             )
             open_it = pmui.Clickable(object=body, sizing_mode="stretch_width", margin=0)
             open_it.on_click(lambda *_args, ref=summary.ref: self.navigate(f"/{ROUTE}?source={quote(ref, safe='')}"))
             parts = [open_it]
             if self.admin and (summary.upload is not None or summary.connection is not None):
+                items = [{"label": "Delete upload" if summary.upload is not None else "Remove source",
+                          "icon": "delete", "action": "remove"}]
+                if summary.problem:
+                    items.insert(0, {"label": "Enter credentials again", "icon": "key", "action": "reconnect"})
                 menu = pmui.MenuButton(
-                    items=[{"label": "Delete upload" if summary.upload is not None else "Remove source",
-                            "icon": "delete", "action": "remove"}],
-                    icon="more_vert", label="", variant="text", color="default", size="small", margin=0,
+                    items=items, icon="more_vert", label="", variant="text", color="default", size="small", margin=0,
                     description=f"More actions for {summary.ref}", css_classes=["lumen-data-source-menu"],
                     sx={"minWidth": 0, "& .MuiButton-endIcon": {"display": "none"}},
                 )
-                menu.on_click(lambda _item, ref=summary.ref: self.remove_source(ref))
+                menu.on_click(lambda item, summary=summary: self.reconnect(summary) if item.get("action") == "reconnect"
+                              else self.remove_source(summary.ref))
                 parts.append(menu)
             cards.append(pmui.Paper(
                 pn.Row(*parts, margin=0, sizing_mode="stretch_width", styles={"align-items": "flex-start"}),
@@ -364,6 +380,13 @@ class DataPage(Viewer):
             *cards, gap="12px", flex_wrap="wrap", margin=(0, 0, 16, 0), sizing_mode="stretch_width",
             css_classes=["lumen-data-sources"],
         )
+
+    def reconnect(self, summary: t.Any) -> None:
+        """Open Connect a source on a source listed without its credentials, to enter them again."""
+        dialog = self.catalog._upload_dialog
+        if dialog is None or summary.connection is None:
+            return
+        dialog.open("connect", location=summary.connection.shown, name=summary.ref)
 
     def remove_source(self, ref: str) -> None:
         """Remove the source an admin connected, or ask before deleting an upload, from its card's menu."""

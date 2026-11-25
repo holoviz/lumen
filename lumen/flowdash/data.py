@@ -199,6 +199,45 @@ def hidden_reads_of(spec: t.Any, context: Mapping[str, t.Any]) -> list[str]:
 # Sources
 
 
+def display_path(text: str, roots: t.Sequence[t.Any] = ()) -> str:
+    """
+    ``text``, a file a source reads, as a page shows it: relative to one of
+    ``roots`` (e.g. the project's folder or the uploads folder) when it is
+    in one, else its file name, so the server's folders are not shown; a URL
+    with its credentials masked.
+    """
+    from pathlib import Path
+
+    from panel_flowdash.value_text import redact_secrets
+
+    if "://" in text:
+        return redact_secrets(text)
+    path = Path(text)
+    if not path.is_absolute():
+        return text.replace("\\", "/")
+    for root in roots:
+        try:
+            return path.resolve().relative_to(Path(root).resolve()).as_posix()
+        except (ValueError, OSError):
+            continue
+    return path.name
+
+
+def data_roots(project: t.Any) -> list[t.Any]:
+    """The folders a page shows files relative to: the project's and its uploads'."""
+    from pathlib import Path
+
+    from .uploads import UPLOADS_KEY
+
+    roots = []
+    if getattr(project, "path", None):
+        roots.append(Path(project.path).parent)
+    uploads = (getattr(project, "context", None) or {}).get(UPLOADS_KEY)
+    if uploads is not None:
+        roots.append(uploads.directory)
+    return roots
+
+
 @dataclass(frozen=True)
 class SourceSummary:
     """A source the app serves, as a card shows it: what it is, what it reads and how it got there."""
@@ -213,6 +252,15 @@ class SourceSummary:
     """How it got there, e.g. "From the command line" or "Uploaded by ana, 24 Nov"."""
     upload: t.Any = None
     connection: t.Any = None
+    problem: str | None = None
+    """Why a source an admin connected is listed but not served, e.g. its credentials can't be read."""
+
+
+# How people name the databases of connection strings, by scheme.
+_SCHEMES = {
+    "duckdb": "DuckDB", "mssql": "SQL Server", "mysql": "MySQL", "oracle": "Oracle", "postgresql": "PostgreSQL",
+    "snowflake": "Snowflake", "sqlite": "SQLite",
+}
 
 
 def source_kind(source: t.Any) -> str:
@@ -222,25 +270,24 @@ def source_kind(source: t.Any) -> str:
 
 
 def _location(source: t.Any) -> str:
-    from panel_flowdash.value_text import redact_secrets
-
     location = getattr(source, "uri", None) or getattr(source, "url", None)
     if not isinstance(location, str) or not location or location == ":memory:":
         return ""
-    if "://" in location:
-        return redact_secrets(location)
-    return location.replace("\\", "/").rsplit("/", 1)[-1]
+    return display_path(location)
 
 
 def _day(when: t.Any) -> str:
     return f"{when.astimezone():%-d %b}" if when is not None else ""
 
 
-def source_summaries(context: Mapping[str, t.Any], tables: Sequence[t.Any] = ()) -> list[SourceSummary]:
+def source_summaries(
+    context: Mapping[str, t.Any], tables: Sequence[t.Any] = (), roots: Sequence[t.Any] = (),
+) -> list[SourceSummary]:
     """
     Each source in ``context``, uploads included, in the order they are
     served, with ``tables`` (``catalog.CatalogTable`` entries) counted per
-    source.
+    source, and then each source an admin connected that is not served,
+    with why. Files are shown relative to ``roots`` (see ``display_path``).
     """
     from .app import _BUILT
     from .nodes import host_sources, served_file
@@ -252,7 +299,7 @@ def source_summaries(context: Mapping[str, t.Any], tables: Sequence[t.Any] = ())
     for entry in tables:
         counts[entry.ref] = counts.get(entry.ref, 0) + 1
         if (path := served_file(entry.source, entry.table)) is not None:
-            files.setdefault(entry.ref, []).append(path.replace("\\", "/").rsplit("/", 1)[-1])
+            files.setdefault(entry.ref, []).append(display_path(path).rsplit("/", 1)[-1])
     summaries = []
     for ref, source in host_sources(context).items():
         upload = uploads.get(ref) if uploads is not None else None
@@ -268,6 +315,17 @@ def source_summaries(context: Mapping[str, t.Any], tables: Sequence[t.Any] = ())
             else:
                 origin = "From the command line" if source in _BUILT else "Served by the app"
         summaries.append(SourceSummary(ref, kind, shown, counts.get(ref, 0), origin, upload, connection))
+    served = host_sources(context)
+    for connection in uploads.connections() if uploads is not None else []:
+        if connection.ref in served:
+            continue
+        scheme = connection.shown.split("://", 1)[0].split("+", 1)[0] if "://" in connection.shown else ""
+        summaries.append(SourceSummary(
+            connection.ref, _SCHEMES.get(scheme, scheme.capitalize() or "Source"),
+            (display_path(connection.shown, roots),), 0,
+            f"Added by {connection.added_by}" + (f", {_day(connection.when)}" if connection.when else ""),
+            connection=connection, problem=uploads.connection_problem(connection.ref),
+        ))
     return summaries
 
 

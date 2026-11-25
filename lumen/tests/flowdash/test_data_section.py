@@ -337,3 +337,43 @@ def test_the_metrics_count_only_the_dashboards_the_session_may_open(project):
     assert [r.title for r in page(project, "metrics", store=store).metrics.usage()["paid"]] == ["bo's"]
     admin = page(project, "metrics", admin=True, store=store)
     assert sorted(r.title for r in admin.metrics.usage()["paid"]) == ["ana's", "bo's"]
+
+
+def test_a_source_listed_without_its_credentials_offers_to_enter_them_again(project, monkeypatch):
+    from panel_flowdash.secret_store import (
+        KEY_ENV, encryption_available, fernet_key,
+    )
+
+    if not encryption_available():
+        pytest.skip("needs cryptography")
+    monkeypatch.setenv(KEY_ENV, fernet_key())
+    monkeypatch.setattr(Uploads, "_open", lambda self, location, ref: DuckDBSource(
+        uri=":memory:", tables={"readings": "SELECT 1 AS kw"}, name=ref))
+    uploads = project.context[UPLOADS_KEY]
+    uploads.connect("postgresql://ana:hunter2@db.example.com/plant", "plant", app=Session(project, admin=True))
+    monkeypatch.setenv(KEY_ENV, fernet_key())
+    sources = project.context[SOURCES_KEY]
+    sources.pop("plant")
+    restored = project.context[UPLOADS_KEY] = Uploads(uploads.directory, sources, project=project)
+    restored.restore()
+
+    view = page(project, admin=True)
+    text = _text(view)
+    assert "Credentials can&#x27;t be read; enter them again" in text and "hunter2" not in text
+    menus = [o for o in view.__panel__().select() if "lumen-data-source-menu" in getattr(o, "css_classes", [])]
+    assert [item["label"] for item in menus[0].items] == ["Enter credentials again", "Remove source"]
+    view.reconnect(next(s for s in view.sources if s.ref == "plant"))
+    dialog = view.catalog._upload_dialog
+    assert dialog.connecting and dialog._ref.value == "plant"
+    assert dialog._location.value == "postgresql://ana:***@db.example.com/plant"
+
+
+def test_a_file_outside_the_project_is_shown_by_its_name(project, tmp_path):
+    from lumen.flowdash.nodes import set_served_files
+
+    set_served_files(project.context[SOURCES_KEY]["shop"], {"orders": "/srv/data/orders.parquet"})
+    admin, viewer = page(project, admin=True).catalog, page(project).catalog
+    assert 'title="/srv/data/orders.parquet">orders.parquet<' in "".join(
+        str(o.object) for o in admin._table._rows[0].select() if isinstance(getattr(o, "object", None), str))
+    viewer_text = "".join(str(o.object) for o in viewer._table._rows[0].select() if isinstance(getattr(o, "object", None), str))
+    assert ">orders.parquet<" in viewer_text and "/srv/data" not in viewer_text
