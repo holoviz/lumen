@@ -7,6 +7,12 @@ import pandas as pd
 
 from .base import MultiTypeComponent
 from .config import SessionCache
+from .util import geometry_columns, geometry_to_wkt, try_import
+
+
+def _crs(crs) -> str | None:
+    """A CRS as text a spec can hold, e.g. "EPSG:4326"."""
+    return None if crs is None else crs.to_string()
 
 
 class Serializer(MultiTypeComponent):
@@ -30,6 +36,10 @@ class CSVSerializer(Serializer):
     serializer_type = 'csv'
 
     def serialize(self, data) -> dict[str, any]:
+        # Shapes go as WKT text, with each column's CRS to rebuild them
+        gpd = try_import("geopandas", load=False)
+        geometry = {col: _crs(gpd.GeoSeries(data[col]).crs) for col in geometry_columns(data)}
+        data = geometry_to_wkt(data)
         csv = StringIO()
         index = list(data.index.names)
         if len(index) == 1 and index[0] is None:
@@ -42,7 +52,8 @@ class CSVSerializer(Serializer):
             'type': self.serializer_type,
             'index': index,
             'date_cols': list(data.select_dtypes(np.datetime64).columns),
-            'dtypes': {col: str(data[col].dtype) for col in data.columns},
+            'dtypes': {col: str(data[col].dtype) for col in data.columns if col not in geometry},
+            **({'geometry': geometry} if geometry else {}),
             'serializer': self.to_spec()
         }
 
@@ -51,6 +62,11 @@ class CSVSerializer(Serializer):
         df = pd.read_csv(
             data_buf, parse_dates=data['date_cols']
         ).astype(data['dtypes'])
+        if geometry := data.get('geometry'):
+            gpd = try_import("geopandas")
+            for col, crs in geometry.items():
+                df[col] = gpd.GeoSeries.from_wkt(df[col], crs=crs)
+            df = gpd.GeoDataFrame(df, geometry=next(iter(geometry)))
         index_cols = data['index']
         if index_cols:
             df = df.set_index(index_cols)
