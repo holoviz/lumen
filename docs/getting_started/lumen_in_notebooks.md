@@ -315,6 +315,17 @@ mean_air.ds                     # an xarray Dataset on lat and lon
 
 Map charts of longitude and latitude data sit on basemap tiles when geoviews is installed (the tiles are fetched from OpenStreetMap while you view the map), and large grids and point clouds are rasterized when datashader is installed. A colour that shows a number gets a [colorcet](https://colorcet.holoviz.org) map that fits it: `coolwarm` centred on zero for an anomaly or a change, `colorwheel` for a direction or an hour of day, `fire` or `kbc_r` for a magnitude. Ask for another one, or `refine` the answer, to change it. Where the card cannot render, such as a saved notebook, an answer over a table with a geometry column falls back to a static Vega-Lite map. Maps drawn from longitude and latitude columns and grids have no static fallback yet. `lumen[geo]` installs all of this.
 
+## Single-cell and microscopy data
+
+An AnnData store or object and an OME-Zarr image read through DuckDB's [zarr extension](https://duckdb.org/community_extensions/extensions/zarr) (downloaded once, then cached), with nothing loaded into memory until a query reads it:
+
+``` python
+cells = lumen.read("pbmc.zarr")          # or lumen.read({"pbmc": adata}) for an AnnData object
+cells.ask("Which cell type has the highest mean expression of CD3E?")
+```
+
+An AnnData store gives `obs` (a row per cell), `var` (a row per gene), `obs_var` (the matrix X, a row per cell and gene) and its other tables, such as `obsm_x_umap`. A sparse X has rows for every cell and gene in `obs_var`, zeros included, so means come out right; its nonzero values alone are in `obs_var_nonzero`. An AnnData object is written to a temporary Zarr store first, so `.h5ad` files are read with `anndata.read_h5ad` and passed in. An OME-Zarr image gives a table per resolution level, `image` at full resolution and `image_level_1` and on below it, with a row per pixel: its axes (for example `c`, `y`, `x`) and its `value`.
+
 ## Settings
 
 `lumen.ai.configure` sets the defaults for every question in the session. A question's own `llm=` or `agents=` still wins.
