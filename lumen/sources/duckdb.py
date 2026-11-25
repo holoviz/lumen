@@ -111,7 +111,7 @@ class DuckDBSource(BaseSQLSource):
 
     dialect = 'duckdb'
 
-    _install_extension_pattern = re.compile(r"^\s*INSTALL\s+([A-Za-z_][\w]*)\s*;?\s*$", re.IGNORECASE)
+    _install_extension_pattern = re.compile(r"^\s*INSTALL\s+([A-Za-z_][\w]*)(?:\s+FROM\s+\w+)?\s*;?\s*$", re.IGNORECASE)
 
     def __init__(self, **params):
         connection = params.pop('_connection', None)
@@ -337,6 +337,31 @@ class DuckDBSource(BaseSQLSource):
         except duckdb.Error:
             # Versions before 2.0 have no such setting
             pass
+
+    def load_extension(self, name: str) -> DuckDBSource:
+        """
+        Install and load a DuckDB extension, e.g. "h3", from DuckDB's own
+        repository or, for one it does not list, the community repository.
+        It is kept in ``initializers``, so a source rebuilt from its spec
+        loads it too. Returns the source.
+        """
+        with self._connection.cursor() as cursor:
+            # Core extensions are listed even before they are installed; an
+            # installed community one says where it came from
+            known = dict(cursor.execute("SELECT extension_name, installed_from FROM duckdb_extensions()").fetchall())
+        repository = " FROM community" if name not in known or known[name] == "community" else ""
+        for init in (f"INSTALL {name}{repository};", f"LOAD {name};"):
+            try:
+                self._run_initializer(init)
+            except duckdb.Error as e:
+                raise RuntimeError(
+                    f"Could not load the DuckDB extension {name!r}: {e}\nAn extension downloads the first time it is "
+                    f"used, which needs internet access and a build of it for this DuckDB version ({duckdb.__version__}); "
+                    "DuckDB then loads its cached copy from ~/.duckdb/extensions."
+                ) from e
+            if init not in self.initializers:
+                self.initializers = [*self.initializers, init]
+        return self
 
     def _run_initializer(self, init: str) -> None:
         try:

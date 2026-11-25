@@ -87,6 +87,11 @@ Each row is one grid cell, with the dimensions (e.g. `time`, `lat`, `lon`) as co
 - Monthly climatology: `GROUP BY EXTRACT(MONTH FROM time)`; an anomaly is the value minus the climatology for its month.
 - The nearest grid point to a coordinate: `ORDER BY ABS(lat - y) + ABS(lon - x) LIMIT 1`, with x first moved into the grid's longitude range (on a 0 to 360 grid, add 360 to a negative x).
 {%- endif %}
+{%- if h3 is defined and h3 %}
+
+## H3 hexagons
+The H3 extension is loaded. Bin points into hexagons with `h3_latlng_to_cell(lat, lon, resolution)`, latitude first, grouping by the cell; resolution 3 gives cells about 100 km across, 5 about 20 km, 7 about 3 km, 9 about 400 m. For a map, add the hexagon as `ST_GeomFromText(h3_cell_to_boundary_wkt(cell))::GEOMETRY('EPSG:4326') AS geometry` so it draws on a basemap; `h3_cell_to_lat(cell)` and `h3_cell_to_lng(cell)` give its centre. Neighbours of a cell: `h3_grid_disk(cell, k)`.
+{%- endif %}
 {%- endblock -%}
 
 {%- block context -%}

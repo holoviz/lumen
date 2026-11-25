@@ -157,6 +157,7 @@ def _remote_name(url: str) -> str:
 def read(
     data: DataT | list[DataT] | dict[str, DataT], *, variables: list[str] | None = None,
     sel: dict[str, Any] | None = None, bbox: tuple[float, float, float, float] | None = None,
+    extensions: list[str] | None = None,
 ) -> Source:
     """
     Load data into a single Lumen Source.
@@ -194,6 +195,10 @@ def read(
         Without it a remote (Geo)Parquet file is queried in place, which
         cannot skip row groups by Overture's bbox column and may download
         whole files for every question.
+    extensions: list[str] | None
+        DuckDB extensions to install and load on the source, from DuckDB's
+        repository or the community one, e.g. ``["h3"]`` to bin points into
+        H3 hexagons. The source must be a DuckDB source.
 
     Public remote data is read without credentials: ``https://``, and
     ``s3://`` or ``gs://`` buckets that allow anonymous reads, e.g. Overture
@@ -205,6 +210,14 @@ def read(
     -------
     Source
     """
+    if extensions:
+        source = read(data, variables=variables, sel=sel, bbox=bbox)
+        if not isinstance(source, DuckDBSource):
+            raise ValueError(f"extensions load into DuckDB, but this data reads as a {type(source).__name__}.")
+        # A map of H3 hexagons turns them into geometry, which needs spatial
+        for name in [*extensions, *(["spatial"] if "h3" in extensions and "spatial" not in extensions else [])]:
+            source.load_extension(name)
+        return source
     if variables or sel or bbox:
         name, url = next(iter(data.items())) if isinstance(data, dict) and len(data) == 1 else (None, data)
         if not isinstance(url, (str, Path)):
