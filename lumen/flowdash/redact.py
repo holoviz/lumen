@@ -73,8 +73,9 @@ _PLAIN_ENV = {
     "HOME", "PWD", "OLDPWD", "PATH", "USER", "USERNAME", "LOGNAME", "SHELL", "LANG",
     "TERM", "TMPDIR", "TEMP", "TMP", "HOSTNAME", "PYTHONPATH",
 }
-# Shorter values of environment variables not named like a credential are hidden only where they are
-# a whole value, as they are too likely to be part of unrelated text.
+# Values of environment variables not named like a credential are hidden inside a longer value only
+# from this length and as a whole word, as they are too likely to be part of unrelated text, e.g.
+# PGUSER=postgres in every postgresql:// URL.
 _MIN_ENV_INSIDE = 6
 # Environment variables named like a credential, whose value is hidden even inside a longer string.
 _SECRET_ENV = re.compile(
@@ -243,6 +244,13 @@ def _redact_sql(text: str, dialect: str = "duckdb") -> str:
     return "; ".join(out) if out else REDACTED
 
 
+def _word(value: str) -> re.Pattern:
+    """Matches ``value`` where no letter or digit continues it, e.g. not ``postgres`` in ``postgresql``."""
+    start = r"(?<![A-Za-z0-9])" if value[0].isalnum() else ""
+    end = r"(?![A-Za-z0-9])" if value[-1].isalnum() else ""
+    return re.compile(start + re.escape(value) + end)
+
+
 class _Redactor:
 
     def __init__(self, environ: Mapping[str, str]):
@@ -252,13 +260,19 @@ class _Redactor:
         }
         self._whole = {value for value in plain.values() if len(value) >= 4}
         self._inside = [
-            value for name, value in plain.items()
-            if len(value) >= (3 if _SECRET_ENV.search(name) else _MIN_ENV_INSIDE)
+            value for name, value in plain.items() if _SECRET_ENV.search(name) and len(value) >= 3
+        ]
+        self._words = [
+            _word(value) for name, value in plain.items()
+            if not _SECRET_ENV.search(name) and len(value) >= _MIN_ENV_INSIDE
         ]
 
     def shown(self, text: str | None) -> str:
         """``text`` unless it is None or holds an environment variable's value, ``***`` otherwise."""
-        if text is None or text in self._whole or any(value in text for value in self._inside):
+        if (
+            text is None or text in self._whole or any(value in text for value in self._inside)
+            or any(word.search(text) for word in self._words)
+        ):
             return REDACTED
         return text
 
@@ -328,8 +342,9 @@ def redact_spec(spec: Any, environ: Mapping[str, str] | None = None) -> Any:
     table definitions) as written with every string literal hidden unless
     it is a location, and every statement that sets a value reduced to its
     keyword. Any shown word that looks like a token, anything that equals
-    an environment variable's value, and anything containing the value of
-    one named like a credential are hidden too. Every other value reads
-    ``***``, and objects YAML cannot show are named by their type.
+    an environment variable's value or holds it as a whole word, and anything
+    containing the value of one named like a credential are hidden too.
+    Every other value reads ``***``, and objects YAML cannot show are named
+    by their type.
     """
     return _Redactor(os.environ if environ is None else environ).value("", spec)

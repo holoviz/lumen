@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 import yaml
 
+pytest.importorskip("duckdb")
 pytest.importorskip("sqlglot")
 
 from lumen.flowdash.redact import REDACTED, redact_spec
@@ -274,3 +275,10 @@ def test_masked_keys_stay_unique():
     redacted = redact_spec({"headers": {"Authorization": "a", "X-Api-Key": "b"}}, environ={})
     assert len(redacted["headers"]) == 2
     assert set(redacted["headers"].values()) == {REDACTED}
+
+
+def test_a_plain_environment_value_is_hidden_only_as_a_word():
+    url = "postgresql://warehouse.example.com/sales"
+    assert redact_spec({"url": url}, environ={"PGUSER": "postgres"}) == {"url": url}
+    assert redact_spec({"url": url}, environ={"DB_HOST": "warehouse"}) == {"url": REDACTED}
+    assert redact_spec({"url": url}, environ={"DB_PASSWORD": "ware"}) == {"url": REDACTED}

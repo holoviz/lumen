@@ -255,6 +255,35 @@ def test_a_deleted_upload_waits_in_the_trash_and_can_be_brought_back(uploads):
     assert not trash.exists()
 
 
+def test_recover_cannot_be_made_to_read_outside_the_trash(tmp_path, uploads):
+    admin = App(admin=True)
+    # A real deleted upload, so the trash folder it lives beside actually exists.
+    upload = uploads.add(CSV, "sales.csv", app=App())
+    uploads.delete("sales", app=admin)
+
+    outside = tmp_path / "secret"
+    outside.mkdir()
+    (outside / "upload.json").write_text(json.dumps({
+        "ref": "evil", "id": "evil", "filename": "x", "format": "csv", "tables": [],
+        "uploaded_by": "x", "uploaded_at": "2024-01-01T00:00:00", "size": 0,
+    }))
+    for upload_id in ("../../secret", "..", "../.."):
+        with pytest.raises(UploadError, match="no deleted upload"):
+            uploads.recover(upload_id, app=admin)
+    assert outside.exists() and "evil" not in uploads.sources
+    # The real deleted upload is still recoverable by its actual id.
+    assert uploads.recover(upload.id, app=admin).ref == "sales"
+
+
+def test_a_traversal_attempt_in_an_uploaded_filename_is_kept_to_its_own_folder(tmp_path, uploads):
+    upload = uploads.add(CSV, "../../etc/notes.csv", app=App())
+    assert upload.filename == "notes.csv"
+    assert (uploads.folder(upload) / "notes.csv").read_bytes() == CSV
+    assert not (tmp_path / "etc").exists()
+    with pytest.raises(UploadError, match="not a file type"):
+        uploads.add(CSV, "..", app=App())
+
+
 def test_the_add_data_button_shows_on_dashboards_for_someone_who_may_upload(project, uploads):
     app = App(editor=FlowDash(components=COMPONENTS, context={SOURCES_KEY: {}}))
     button = uploads.attach(app)

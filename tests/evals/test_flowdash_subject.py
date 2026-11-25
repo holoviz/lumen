@@ -1,5 +1,7 @@
 """The FlowDash agent as an eval subject, recorded sessions as cases, and cassette playback."""
 
+import asyncio
+import contextlib
 import json
 import re
 
@@ -312,18 +314,37 @@ async def test_save_session_writes_loadable_file(tmp_path):
 
 
 async def test_timed_out_case_keeps_its_usage(tmp_path):
-    import asyncio as _asyncio
+    answering = asyncio.Event()
 
     async def respond(messages, info):
         if sum(isinstance(m, ModelResponse) for m in messages) == 0:
             return ModelResponse(parts=[ToolCallPart("list_tables", {})])
-        await _asyncio.sleep(30)
-        return ModelResponse(parts=[TextPart("late")])
+        answering.set()
+        await asyncio.Event().wait()
 
-    subject = FlowDashSubject(model=FunctionModel(respond, model_name="gpt-6-luna"))
+    class TimesOut(FlowDashSubject):
+        """
+        Times out while the model answers the second request, as the harness's
+        deadline would: a deadline in seconds can pass before the first answer
+        on a busy machine, leaving no usage to keep.
+        """
+
+        async def run(self, *args, **kwargs):
+            run = asyncio.ensure_future(super().run(*args, **kwargs))
+            waiting = asyncio.ensure_future(answering.wait())
+            await asyncio.wait([run, waiting], return_when=asyncio.FIRST_COMPLETED)
+            waiting.cancel()
+            if run.done():
+                return run.result()
+            run.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await run
+            raise TimeoutError
+
+    subject = TimesOut(model=FunctionModel(respond, model_name="gpt-6-luna"))
     dataset = Dataset[Inputs, Output, Expected](name="timeout", cases=by_name("sales_total"), evaluators=[CheckResult()])
     output = tmp_path / "timeout.json"
-    await evaluate(subject.build_model("x"), dataset, source, output, subject=subject, prompt_timeout=2)
+    await evaluate(subject.build_model("x"), dataset, source, output, subject=subject, prompt_timeout=60)
     (case,) = json.loads(output.read_text())["cases"]
     assert case["turns"][0]["status"] == "timeout"
     assert case["usage"]["input_tokens"] > 0
