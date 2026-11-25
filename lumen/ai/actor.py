@@ -20,7 +20,7 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .context import ContextModel, TContext
 from .llm import Llm, Message, SubmitTool
 from .utils import (
-    class_name_to_llm_spec_key, log_debug, render_template,
+    class_name_to_llm_spec_key, log_debug, normalized_name, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
 )
 
@@ -548,7 +548,7 @@ class ContextProvider(param.Parameterized):
 
     def __str__(self):
         string = (
-            f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
+            f"- {normalized_name(self)}: {' '.join(self.purpose.strip().split())}\n"
             f"  Requires: `{'`, `'.join(sorted(self.input_schema.__required_keys__))}`\n"
             f"  Provides: `{'`, `'.join(sorted(self.output_schema.__required_keys__))}`\n"
         )

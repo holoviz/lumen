@@ -36,11 +36,11 @@ from .llm import Llm, Message
 CASSETTE_VERSION = 2
 
 # What changes from run to run without changing the question: the counter
-# param gives unnamed objects (MetadataLookup00348), UUIDs and addresses.
-# Only a class-style name takes the counter, so data such as CA94110 or
-# id_10234 is left alone.
+# param gives unnamed objects (MetadataLookup00348, or MetadataLookup100348
+# past 99999 objects), UUIDs and addresses. Only a class-style name takes the
+# counter, so data such as CA94110 or id_10234 is left alone.
 _VOLATILE = [
-    (re.compile(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*)\d{5}\b"), r"\1#"),
+    (re.compile(r"\b([A-Z][a-z]+(?:[A-Z][a-z]*)*)\d{5,}\b"), r"\1#"),
     (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"), "<uuid>"),
     (re.compile(r"\b0x[0-9a-f]{6,}\b"), "0x#"),
 ]
