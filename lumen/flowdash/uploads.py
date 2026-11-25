@@ -667,11 +667,24 @@ class Uploads:
                 purged.append(folder.name)
         return purged
 
+    def _trash_folder(self, upload_id: str) -> Path:
+        """
+        ``upload_id``'s folder directly inside the trash, as ``folder`` names one
+        for a deleted upload: never a path that escapes the trash, the way
+        ``add`` keeps an uploaded file's name to its last component.
+        """
+        name = Path(str(upload_id).replace("\\", "/")).name
+        trash = self.directory / TRASH
+        folder = (trash / name).resolve() if name and name not in (".", "..") else None
+        if folder is None or not folder.is_relative_to(trash.resolve()):
+            raise UploadError(f"There is no deleted upload {upload_id!r} in the trash.")
+        return folder
+
     def recover(self, upload_id: str, *, app: t.Any) -> Upload:
         """Bring back the deleted upload ``upload_id`` from the trash, under a free name if its own was taken since."""
         if not _is_admin(app):
             raise UploadError("Only admins can bring back deleted uploads.")
-        trash = self.directory / TRASH / upload_id
+        trash = self._trash_folder(upload_id)
         try:
             note = json.loads((trash / "upload.json").read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
