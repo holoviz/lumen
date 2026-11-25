@@ -24,11 +24,13 @@ import pandas as pd
 import sqlglot
 
 from sqlglot import exp
+from sqlglot.optimizer.qualify import qualify
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from ..data.sharing import shares_values, sharing
 from ..data.stats import (
     EXACT, ColumnStats, TableStats, format_name, format_value, get_adapter,
-    quote_identifier,
+    get_stats_store, quote_identifier,
 )
 from ..sources.base import Source
 from ..util import as_pandas
@@ -40,18 +42,23 @@ GROUPS_TESTED = 2
 # Pairs of columns tested as a key when no single column is unique.
 PAIRS_TESTED = 3
 # Columns tested for holding one value per group, and number columns whose per-group sums
-# the numbers among them are compared with.
-DEPENDENTS_TESTED = 40
-SUMS_TESTED = 12
+# the numbers among them are compared with; a table wider than WIDE_TABLE columns has only
+# one group tested, which bounds the statement on tables of a hundred columns and more.
+DEPENDENTS_TESTED = 24
+SUMS_TESTED = 8
+WIDE_TABLE = 60
 # Column names a note lists before summarising the rest.
 NAMES_SHOWN = 10
-# Stored values read to check a filter's text against, and the closest of them shown.
+# Stored values read to check a filter's text against, and the closest of them shown; the
+# columns of one query whose filters are checked.
 VALUES_READ = 1000
+FILTERED_COLUMNS = 4
 CLOSEST_SHOWN = 4
 # Rows of values a missed-values note gives as examples.
 EXAMPLES_SHOWN = 2
-# Dialects whose LIKE ignores case.
+# Dialects whose LIKE ignores case, and those whose = also ignores case and trailing spaces by default.
 CASELESS_LIKE = frozenset({"sqlite", "mysql", "tsql", "mssql"})
+CASELESS_TEXT = frozenset({"mysql", "tsql", "mssql"})
 
 _ID_NAME = re.compile(r"(?:^|_)(?:id|key|code|uuid)$", re.IGNORECASE)
 _CAMEL_ID = re.compile(r"[a-z0-9]I[dD]$")
@@ -93,7 +100,8 @@ def _id_like(name: str) -> bool:
 
 
 def _key_rank(col: ColumnStats) -> tuple:
-    return (not col.primary_key, not _id_like(col.name), col.kind == "temporal")
+    """Keys first, then id-like names, then text before whole numbers, which may be unique measures, before dates."""
+    return (not col.primary_key, not _id_like(col.name), 0 if col.kind == "string" else 1 if _integer(col) else 2)
 
 
 # -- what one row of a table is ---------------------------------------------------------------------
@@ -146,10 +154,12 @@ def _plan(stats: TableStats) -> tuple[list[ColumnStats], list[tuple[ColumnStats,
         (c for c in columns if not _unique(stats, c) and 2 <= c.distinct
          and 2 * c.distinct <= rows * (1 - (c.nulls or 0)) and (c.kind == "string" or (_integer(c) and _id_like(c.name)))),
         key=lambda c: -c.distinct,
-    )[:GROUPS_TESTED]
+    )[:GROUPS_TESTED if len(stats.columns) <= WIDE_TABLE else 1]
     groups = []
     for group in candidates:
-        dependents = [c for c in columns if c is not group and not _unique(stats, c) and 2 <= c.distinct <= group.distinct]
+        # MIN and MAX of a boolean fail on some engines, e.g. Postgres.
+        dependents = [c for c in columns if c is not group and c.kind != "boolean" and not _unique(stats, c)
+                      and 2 <= c.distinct <= group.distinct]
         if dependents:
             groups.append((group, dependents[:DEPENDENTS_TESTED]))
     summed = [c for c in columns if c.kind == "numeric" and not _unique(stats, c)][:SUMS_TESTED]
@@ -159,9 +169,12 @@ def _plan(stats: TableStats) -> tuple[list[ColumnStats], list[tuple[ColumnStats,
 def _grain_sql(adapter, relation: str, pairs, groups, summed) -> str | None:
     """
     One statement answering every test of ``_plan``: one single-row
-    subquery per pair and group, cross joined. Per group, a number column
-    totals it when its value is the same multiple of the group's row count,
-    or of another column's sum over the group, in every group.
+    subquery per pair and group, cross joined. A column holds one value per
+    group when, in every group, its MIN is its MAX and it is NULL on all of
+    the group's rows or on none, since a value on one row and NULL on the
+    others is not repeated. A number column totals the group when its value
+    is the same multiple of the group's row count, or of another column's
+    sum over the group, in every group.
     """
     def q(name: str) -> str:
         return quote_identifier(name, adapter.dialect)
@@ -176,16 +189,17 @@ def _grain_sql(adapter, relation: str, pairs, groups, summed) -> str | None:
         outer = [f"COUNT(*) AS {p}n", f"MIN(lumen_n) AS {p}lo", f"MAX(lumen_n) AS {p}hi"]
         inner += [f"SUM({q(col.name)}) AS lumen_s{k}" for k, col in enumerate(summed)]
         for j, col in enumerate(dependents):
-            inner.append(f"COUNT(DISTINCT {q(col.name)}) AS lumen_d{j}")
-            outer.append(f"SUM(CASE WHEN lumen_d{j} > 1 THEN 1 ELSE 0 END) AS {p}v{j}")
+            inner += [f"MIN({q(col.name)}) AS lumen_lo{j}", f"MAX({q(col.name)}) AS lumen_hi{j}",
+                      f"COUNT({q(col.name)}) AS lumen_c{j}"]
+            outer.append(f"SUM(CASE WHEN lumen_lo{j} <> lumen_hi{j} OR (lumen_c{j} > 0 AND lumen_c{j} < lumen_n) "
+                         f"THEN 1 ELSE 0 END) AS {p}v{j}")
             if col.kind != "numeric":
                 continue
-            inner.append(f"MIN({q(col.name)}) AS lumen_m{j}")
             if _integer(col):
-                outer.append(f"SUM(CASE WHEN lumen_m{j} = lumen_n THEN 1 ELSE 0 END) AS {p}r{j}")
+                outer.append(f"SUM(CASE WHEN lumen_lo{j} = lumen_n THEN 1 ELSE 0 END) AS {p}r{j}")
             for k, other in enumerate(summed):
                 if other is not col:
-                    ratio = f"lumen_m{j} * 1.0 / NULLIF(lumen_s{k}, 0)"
+                    ratio = f"lumen_lo{j} * 1.0 / NULLIF(lumen_s{k}, 0)"
                     outer += [f"MIN({ratio}) AS {p}a{j}_{k}", f"MAX({ratio}) AS {p}b{j}_{k}"]
         sub = (f"SELECT {', '.join(inner)} FROM {relation} WHERE {q(group.name)} IS NOT NULL "
                f"GROUP BY {q(group.name)}")
@@ -214,8 +228,9 @@ async def table_grain(source: Source, table: str, stats: TableStats) -> Grain | 
     if stats.method != EXACT or not stats.rows or stats.rows < 2:
         return None
     unique, pairs, groups, summed = _plan(stats)
-    grain = Grain(key=[unique[0].name] if unique else [], unique=[c.name for c in unique[1:]])
-    adapter = get_adapter(source)
+    grain = Grain(key=[unique[0].name] if unique else [],
+                  unique=[c.name for c in unique[1:] if c.kind == "string" or _id_like(c.name)])
+    adapter = _adapter(source)
     sql = _grain_sql(adapter, adapter.relation(table), pairs, groups, summed)
     if sql is None:
         return grain
@@ -240,12 +255,13 @@ async def table_grain(source: Source, table: str, stats: TableStats) -> Grain | 
         low, high = number(f"{p}lo"), number(f"{p}hi")
         totals = []
         for j, col in enumerate(dependents):
-            if col not in fixed or col.kind != "numeric":
+            # With few groups, or groups of one size, a column matches a row count or a multiple of
+            # another column holding one value per group by chance.
+            if col not in fixed or col.kind != "numeric" or values < 3 or low == high:
                 continue
             if f"{p}r{j}" in row and number(f"{p}r{j}") == values:
                 totals.append(f"{format_name(col.name)} is its row count")
-            # With groups of one size, any multiple of another column holding one value per group would pass.
-            elif values >= 3 and low != high:
+            else:
                 total = next((f"{format_name(col.name)} is its SUM of {format_name(other.name)}{scale}"
                               for k, other in enumerate(summed) if (scale := _scale(row, f"{p}a{j}_{k}", f"{p}b{j}_{k}"))
                               is not None), None)
@@ -342,7 +358,8 @@ def dates_note(stats: TableStats, day: date | None = None) -> str | None:
         return None
     spans = ", ".join(f"{format_name(c.name)} {lo} to {hi}" for c in cols for lo, hi in [_span(c)])
     if _ends_before(cols, day or today()):
-        return f"dates: {spans}. The data ends before today: {_anchor('its latest date')}."
+        return (f"dates: {spans}. The data ends before today: unless the user asked about calendar dates, "
+                f"{_anchor('its latest date')}.")
     return f"dates: {spans}."
 
 
@@ -402,30 +419,67 @@ def answer_notes(frame: Any) -> list[str]:
 
 
 def _read_tables(tree: exp.Expression, source: Source) -> dict[str, str]:
-    """The source tables ``tree`` reads, by the name or alias it reads them under, lowercased."""
+    """The source tables ``tree`` reads, by their lowercased names."""
     try:
         names = {table.lower(): table for table in source.get_tables()}
     except Exception:
         return {}
     ctes = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
-    found = {}
-    for table in tree.find_all(exp.Table):
-        if table.name.lower() in ctes or (name := names.get(table.name.lower())) is None:
-            continue
-        found[table.alias_or_name.lower()] = name
-    return found
+    return {
+        table.name.lower(): name for table in tree.find_all(exp.Table)
+        if table.name.lower() not in ctes and (name := names.get(table.name.lower())) is not None
+    }
 
 
-def _resolve(column: exp.Column, tables: dict[str, str], stats: dict[str, TableStats]) -> tuple[str, ColumnStats] | None:
-    """The table and column statistics a column reference reads, if a table read by the query has it."""
-    qualifier = column.table.lower()
-    candidates = [tables[qualifier]] if qualifier in tables else [] if qualifier else list(dict.fromkeys(tables.values()))
-    for table in candidates:
-        if (found := stats.get(table)) is None:
-            continue
-        if col := next((c for c in found.columns if c.name.lower() == column.name.lower()), None):
-            return table, col
-    return None
+def _traced(scope: Scope, column: exp.Column) -> tuple[str, str] | None:
+    """
+    The table and column whose values a column reference in ``scope``
+    reads unchanged: directly, or through CTEs and subqueries that select
+    the column itself, renamed or not. None for a derived column, e.g. a
+    CASE, UPPER or sum named like a column of the table.
+    """
+    source = scope.sources.get(column.table)
+    if isinstance(source, exp.Table):
+        return source.name, column.name
+    if not isinstance(source, Scope) or not isinstance(source.expression, exp.Select):
+        return None
+    projection = next((p for p in source.expression.selects if p.alias_or_name == column.name), None)
+    inner = projection.unalias() if projection is not None else None
+    return _traced(source, inner) if isinstance(inner, exp.Column) else None
+
+
+class Lineage:
+    """
+    The scopes of a query, qualified against the columns of the source
+    tables it reads, to tell which table column a reference reads unchanged.
+    A query sqlglot cannot qualify has no scopes, so nothing in it resolves.
+    """
+
+    def __init__(self, tree: exp.Expression, source: Source, stats: dict[str, TableStats], dialect: str | None):
+        self.tables = _read_tables(tree, source)
+        self.stats = stats
+        schema = {table: {col.name: "TEXT" for col in found.columns} for table, found in stats.items()}
+        try:
+            qualified = qualify(tree.copy(), schema=schema, dialect=dialect, validate_qualify_columns=False,
+                                quote_identifiers=False)
+            self.scopes = list(traverse_scope(qualified))
+        except Exception:
+            self.scopes = []
+
+    def find_all(self, *types: type[exp.Expression]):
+        """Each node of ``types`` with the scope it belongs to."""
+        for scope in self.scopes:
+            for node in scope.find_all(*types):
+                yield scope, node
+
+    def resolve(self, scope: Scope, column: exp.Column) -> tuple[str, ColumnStats] | None:
+        """The table and the statistics of the column a reference reads unchanged, if any."""
+        traced = _traced(scope, column)
+        if traced is None or (table := self.tables.get(traced[0].lower())) is None:
+            return None
+        found = self.stats.get(table)
+        col = next((c for c in found.columns if c.name.lower() == traced[1].lower()), None) if found else None
+        return (table, col) if col is not None else None
 
 
 def _reads_today(tree: exp.Expression) -> bool:
@@ -440,18 +494,17 @@ def _reads_today(tree: exp.Expression) -> bool:
     return False
 
 
-def relative_date_notes(tree: exp.Expression, tables: dict[str, str], stats: dict[str, TableStats],
-                        day: date | None = None) -> list[str]:
+def relative_date_notes(tree: exp.Expression, lineage: Lineage, day: date | None = None) -> list[str]:
     """
     When a query reads today's date and the dates it reads end before
     today, where they end, and that relative periods are read from there.
     """
     if not _reads_today(tree):
         return []
-    dated = {table: _dated(found) for table, found in stats.items()}
+    dated = {table: _dated(found) for table, found in lineage.stats.items()}
     used = []
-    for column in tree.find_all(exp.Column):
-        resolved = _resolve(column, tables, stats)
+    for scope, column in lineage.find_all(exp.Column):
+        resolved = lineage.resolve(scope, column)
         if resolved is not None and resolved[1] in dated.get(resolved[0], []) and resolved not in used:
             used.append(resolved)
     if not used:
@@ -465,13 +518,13 @@ def relative_date_notes(tree: exp.Expression, tables: dict[str, str], stats: dic
             f"dates, {_anchor('that latest date')}."]
 
 
-def span_notes(tree: exp.Expression, tables: dict[str, str], stats: dict[str, TableStats]) -> list[str]:
+def span_notes(lineage: Lineage) -> list[str]:
     """The span of each date, time or year column a query compares with a value, for a result that answers nothing."""
-    dated = {table: _dated(found) for table, found in stats.items()}
+    dated = {table: _dated(found) for table, found in lineage.stats.items()}
     spans = []
-    for node in tree.find_all(exp.GT, exp.GTE, exp.LT, exp.LTE, exp.EQ, exp.Between):
+    for scope, node in lineage.find_all(exp.GT, exp.GTE, exp.LT, exp.LTE, exp.EQ, exp.Between):
         for column in node.find_all(exp.Column):
-            resolved = _resolve(column, tables, stats)
+            resolved = lineage.resolve(scope, column)
             if resolved is None or resolved[1] not in dated.get(resolved[0], []):
                 continue
             table, col = resolved
@@ -490,6 +543,8 @@ class TextFilter:
     """``=`` (also for IN), ``LIKE`` or ``ILIKE``."""
     text: str
     caseless: bool
+    padded: bool = False
+    """Whether ``=`` ignores trailing spaces, as SQL Server and MySQL compare text."""
 
 
 def _filtered_column(node: exp.Expression) -> tuple[exp.Column, bool] | None:
@@ -505,34 +560,40 @@ def _string(node: exp.Expression) -> str | None:
     return node.this if isinstance(node, exp.Literal) and node.is_string else None
 
 
-def text_filters(tree: exp.Expression, tables: dict[str, str], stats: dict[str, TableStats], dialect: str | None) -> list[TextFilter]:
-    """The comparisons of a text column with a text value in ``tree``: =, IN, LIKE and ILIKE, not negated."""
+def text_filters(tree: exp.Expression, lineage: Lineage, dialect: str | None) -> list[TextFilter]:
+    """
+    The comparisons, not negated, of a text column with a text value: =,
+    IN, LIKE and ILIKE on a column of a source table, or on one a CTE or
+    subquery passes through unchanged. A derived column of the same name
+    is no column of the table, so its filters are left out.
+    """
     found = []
 
-    def add(column_node, op, values):
+    def add(scope, column_node, op, values):
         if (target := _filtered_column(column_node)) is None:
             return
         column, caseless = target
-        if (resolved := _resolve(column, tables, stats)) is None or resolved[1].kind != "string":
+        resolved = lineage.resolve(scope, column)
+        if resolved is None or resolved[1].kind != "string":
             return
-        if op == "LIKE" and dialect in CASELESS_LIKE:
-            op = "ILIKE"
+        padded = op == "=" and dialect in CASELESS_TEXT
+        caseless = caseless or padded or op == "ILIKE" or (op == "LIKE" and dialect in CASELESS_LIKE)
         for value in values:
-            found.append(TextFilter(resolved[0], resolved[1], op, value, caseless or op == "ILIKE"))
+            found.append(TextFilter(resolved[0], resolved[1], op, value, caseless, padded))
 
-    for node in tree.find_all(exp.EQ, exp.In, exp.Like, exp.ILike):
+    for scope, node in lineage.find_all(exp.EQ, exp.In, exp.Like, exp.ILike):
         if isinstance(node.parent, exp.Not):
             continue
         if isinstance(node, exp.EQ):
             for side, other in ((node.this, node.expression), (node.expression, node.this)):
                 if (value := _string(other)) is not None:
-                    add(side, "=", [value])
+                    add(scope, side, "=", [value])
         elif isinstance(node, exp.In):
             values = [_string(v) for v in node.expressions]
             if values and None not in values:
-                add(node.this, "=", values)
+                add(scope, node.this, "=", values)
         elif (pattern := _string(node.expression)) is not None:
-            add(node.this, "ILIKE" if isinstance(node, exp.ILike) else "LIKE", [pattern])
+            add(scope, node.this, "ILIKE" if isinstance(node, exp.ILike) else "LIKE", [pattern])
     return found
 
 
@@ -588,11 +649,20 @@ def _counted(values: list[tuple[str, int]]) -> str:
     return ", ".join(f"{_quoted(v)} ({n} rows)" for v, n in values)
 
 
+def _key(found: TextFilter) -> Callable[[str], str]:
+    """How ``=`` compares a stored value with the filter's text."""
+    def key(value: str) -> str:
+        value = value.rstrip(" ") if found.padded else value
+        return value.lower() if found.caseless else value
+    return key
+
+
 def _matches(found: TextFilter) -> Callable[[str], bool]:
     if found.op != "=":
         return _like_regex(found.text, found.caseless).fullmatch
-    text = found.text.lower() if found.caseless else found.text
-    return (lambda value: value.lower() == text) if found.caseless else (lambda value: value == text)
+    key = _key(found)
+    text = key(found.text)
+    return lambda value: key(value) == text
 
 
 def _any_of(matchers: list[Callable[[str], bool]]) -> Callable[[str], bool]:
@@ -603,23 +673,23 @@ def filter_notes(found: TextFilter, stored: list[tuple[str, int]], complete: boo
                  covered: Callable[[str], bool] | None = None) -> list[str]:
     """
     What a text filter misses, checked against the column's stored values
-    and their row counts (all of them when ``complete``): a value no row
-    holds, with the closest stored ones, or for a pattern, the rows it
-    misses that hold its text in another case or an abbreviation of it.
-    ``covered`` tells the values the query's other filters on the column
-    match, which a pattern does not miss.
+    and their row counts, all of them when ``complete``, else the most
+    frequent: a value no row holds, with the closest stored ones, or for a
+    pattern, the rows it misses that hold its text in another case or an
+    abbreviation of it. ``covered`` tells the values the query's other
+    filters on the column match, which a pattern does not miss. Nothing
+    for a column whose values may not be shown, as distinct_values withholds
+    them.
     """
+    if not shares_values(found.column.name, [v for v, _ in stored]):
+        return []
     name = format_name(found.column.name)
-    shown = shares_values(found.column.name, [v for v, _ in stored])
     counts = dict(stored)
     if found.op == "=":
-        if found.text in counts or (found.caseless and any(v.lower() == found.text.lower() for v in counts)):
+        if not complete or any(_matches(found)(v) for v in counts):
             return []
-        if not complete:
-            return []
-        note = f"No row of {found.table} has {name} = {_quoted(found.text)}{', ignoring case' if found.caseless else ''}."
-        if not shown:
-            return [note]
+        how = ", ignoring case and trailing spaces" if found.padded else ", ignoring case" if found.caseless else ""
+        note = f"No row of {found.table} has {name} = {_quoted(found.text)}{how}."
         if near := closest(found.text, list(counts)):
             return [f"{note} The closest stored values: {_counted([(v, counts[v]) for v in near])}."]
         top = sorted(stored, key=lambda item: -item[1])[:CLOSEST_SHOWN]
@@ -640,29 +710,51 @@ def filter_notes(found: TextFilter, stored: list[tuple[str, int]], complete: boo
             for token in dict.fromkeys(re.findall(r"\b[A-Z]{2,3}\b", v)):
                 if _abbreviates(token, core):
                     tokens.setdefault(token, []).append((v, n))
-        for token, rows in tokens.items():
-            kinds.append((f"with {_quoted(token)} as a word" if shown else "with an abbreviation of it", rows))
+        kinds += [(f"with {_quoted(token)} as a word", rows) for token, rows in tokens.items()]
     if not kinds:
         if matched or not complete:
             return []
         note = f"No row of {found.table} has {clause}."
-        if shown and (near := closest(core, list(counts))):
+        if near := closest(core, list(counts)):
             note += f" The closest stored values: {_counted([(v, counts[v]) for v in near])}."
         return [note]
     misses = []
     for what, rows in kinds:
         examples = sorted(rows, key=lambda item: -item[1])[:EXAMPLES_SHOWN]
-        example = f", e.g. {', '.join(_quoted(v) for v, _ in examples)}" if shown else ""
-        misses.append(f"{sum(n for _, n in rows)}{'' if complete else ' or more'} rows {what}{example}")
-    return [f"{clause} matches {matched} rows of {found.table}, not the {'; nor the '.join(misses)}. "
+        misses.append(f"{sum(n for _, n in rows)} rows {what}, e.g. {', '.join(_quoted(v) for v, _ in examples)}")
+    if complete:
+        return [f"{clause} matches {matched} rows of {found.table}, not the {'; nor the '.join(misses)}. "
+                "Check whether they belong in the answer."]
+    # Counted over the most frequent values only, so what it matches is unknown and what it misses a minimum.
+    return [f"In {found.table}, {clause} misses at least {'; and at least '.join(misses)}. "
             "Check whether they belong in the answer."]
 
 
-async def stored_values(source: Source, table: str, column: ColumnStats) -> tuple[list[tuple[str, int]], bool] | None:
-    """A text column's stored values with their row counts, most frequent first, and whether that is all of them."""
+def _adapter(source: Source):
+    """The statistics adapter of ``source``, with the profiler's cap on the bytes a BigQuery query may bill."""
+    return get_adapter(source, get_stats_store().profiler.max_bytes_billed)
+
+
+_VALUES: weakref.WeakKeyDictionary[Source, dict[tuple[str, str, Any], tuple[list[tuple[str, int]], bool] | None]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+async def stored_values(source: Source, table: str, column: ColumnStats,
+                        stats: TableStats | None = None) -> tuple[list[tuple[str, int]], bool] | None:
+    """
+    A text column's stored values with their row counts, most frequent
+    first, and whether that is all of them: the profile's list when it is
+    complete, else up to ``VALUES_READ`` read by one query, cached per
+    profile of the table.
+    """
     if column.values and column.values_complete and all(isinstance(n, int) for _, n in column.values):
         return [(str(v), int(n)) for v, n in column.values], True
-    adapter = get_adapter(source)
+    cache = _VALUES.setdefault(source, {})
+    key = (table, column.name, (stats.fingerprint or stats.computed_at) if stats else None)
+    if key in cache:
+        return cache[key]
+    adapter = _adapter(source)
     q = quote_identifier(column.name, adapter.dialect)
     sql = adapter.limit(
         f"SELECT {q} AS lumen_v, COUNT(*) AS lumen_n FROM {adapter.relation(table)} WHERE {q} IS NOT NULL "
@@ -670,10 +762,11 @@ async def stored_values(source: Source, table: str, column: ColumnStats) -> tupl
     )
     try:
         frame = await _run(adapter, sql, adapter.params(table))
+        values = [(str(v), int(n)) for v, n in zip(frame.iloc[:, 0], frame.iloc[:, 1], strict=False)]
+        cache[key] = values[:VALUES_READ], len(values) <= VALUES_READ
     except Exception:
-        return None
-    values = [(str(v), int(n)) for v, n in zip(frame.iloc[:, 0], frame.iloc[:, 1], strict=False)]
-    return values[:VALUES_READ], len(values) <= VALUES_READ
+        cache[key] = None
+    return cache[key]
 
 
 async def query_notes(source: Source, sql: str, frame: Any,
@@ -682,8 +775,8 @@ async def query_notes(source: Source, sql: str, frame: Any,
     The facts a query's result is reported with, beyond ``answer_notes``:
     where the dates it reads end, when it reads today's date, and which of
     its text filters miss stored values. Text filters are checked on tables
-    small enough to have exact statistics, with at most one query per
-    filtered column.
+    small enough to have exact statistics, on at most ``FILTERED_COLUMNS``
+    columns, with at most one cached query each.
     """
     dialect = getattr(source, "dialect", None)
     try:
@@ -694,15 +787,16 @@ async def query_notes(source: Source, sql: str, frame: Any,
         return []
     tables = _read_tables(tree, source)
     stats = {table: found for table in set(tables.values()) if (found := stats_of(table)) is not None}
-    notes = relative_date_notes(tree, tables, stats)
+    lineage = Lineage(tree, source, stats, dialect)
+    notes = relative_date_notes(tree, lineage)
     if not notes and answer_notes(frame):
-        notes += span_notes(tree, tables, stats)
+        notes += span_notes(lineage)
     by_column: dict[tuple[str, str], list[TextFilter]] = {}
-    for found in text_filters(tree, tables, stats, dialect):
-        if stats[found.table].method == EXACT:
+    for found in text_filters(tree, lineage, dialect):
+        if stats[found.table].method == EXACT and shares_values(found.column.name):
             by_column.setdefault((found.table, found.column.name), []).append(found)
-    for (table, _), filters in by_column.items():
-        values = await stored_values(source, table, filters[0].column)
+    for (table, _), filters in list(by_column.items())[:FILTERED_COLUMNS]:
+        values = await stored_values(source, table, filters[0].column, stats[table])
         if values is None:
             continue
         covered = _any_of([_matches(found) for found in filters])
