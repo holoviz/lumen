@@ -17,6 +17,7 @@ from panel_flowdash.agent import (
 from ..flowdash import (
     COMPONENTS, LumenViewNode, bound_sources, host_metrics,
 )
+from ..flowdash.data import hidden_reads_of
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ def metrics(ops: DashboardOps) -> dict[str, Any]:
     this snapshot instead of the live view: a metric removed while it is
     read is left out, and when the mapping cannot be read at all there are
     none. A failure is logged by its type only, as its message may quote
-    the project file.
+    the project file. A metric computed from a table the catalog turns off
+    for the assistant is left out, as the table is.
     """
     snapshot: dict[str, Any] = {}
     try:
@@ -44,7 +46,13 @@ def metrics(ops: DashboardOps) -> dict[str, Any]:
             continue
         except Exception as exc:
             logger.warning("Could not read the app's metric %r (%s).", name, type(exc).__name__)
-    return snapshot
+    # A metric computed from a table the catalog turns off for the assistant is left out with it.
+    try:
+        hidden = {name for name, metric in snapshot.items() if hidden_reads_of(metric, ops.editor.context)}
+    except Exception as exc:
+        logger.warning("Could not check the metrics' tables against the catalog (%s).", type(exc).__name__)
+        hidden = set()
+    return {name: metric for name, metric in snapshot.items() if name not in hidden}
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:

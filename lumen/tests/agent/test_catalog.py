@@ -94,3 +94,20 @@ async def test_turning_a_table_on_in_the_admin_view_lets_the_agent_use_it(ctx, s
     text = await list_tables(ctx)
     assert text.startswith("3 table(s)") and "salary" in text
     assert "1 rows" in await run_sql(ctx, "SELECT AVG(salary) FROM salaries")
+
+
+async def test_a_metric_over_a_table_turned_off_is_left_out(ctx, session):
+    from lumen.agent import _graph
+    from lumen.flowdash import METRICS_KEY
+    from lumen.flowdash.project import parse_project
+
+    text = (
+        "metrics:\n"
+        "  revenue:\n    source: data\n    table: orders\n    measures: {total: SUM(amount)}\n"
+        "  payroll:\n    source: data\n    sql: SELECT SUM(salary) AS total FROM salaries\n"
+    )
+    project = parse_project(text, PROJECT_FILE, dict(session.editor.context))
+    session.editor.context[METRICS_KEY] = project.get("metrics")
+    assert list(_graph.metrics(session.ops)) == ["revenue"]
+    listing = await list_tables(ctx)
+    assert "revenue" in listing and "payroll" not in listing

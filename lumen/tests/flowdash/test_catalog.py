@@ -216,7 +216,7 @@ def test_the_section_lists_every_table_with_its_rows_and_columns(project):
     texts = [_row_text(row) for row in view._table._rows]
     assert "orders" in texts[0] and "3 columns" in texts[0] and "order_id, status, amount" in texts[0]
     assert "DuckDB" in texts[0]
-    assert [c.label for c in view._chip_row] == ["All 3", "Off 1"]
+    assert [c.label for c in view._chip_row] == ["All 3", "Assistant off 1"]
 
 
 def test_the_switch_turns_a_table_off_for_everyone(project, context, source):
@@ -225,7 +225,7 @@ def test_the_switch_turns_a_table_off_for_everyone(project, context, source):
     switches[0].value = False
     assert raw_section(project)["shop"]["tables"]["orders"] == {"assistant": False}
     assert hidden_tables(source, _app_context(context, project)) == {"orders", "raw_events"}
-    assert [c.label for c in view._chip_row] == ["All 3", "Off 2"]
+    assert [c.label for c in view._chip_row] == ["All 3", "Assistant off 2"]
 
 
 def test_the_switch_refuses_someone_no_longer_admin(project):
@@ -233,7 +233,10 @@ def test_the_switch_refuses_someone_no_longer_admin(project):
     assert not view.set_assistant("shop", "orders", False)
     assert "Only admins" in view._alert.object and view._alert.visible
     assert "orders" not in raw_section(project)["shop"]["tables"]
-    assert _settings(project, editable=False)._table._rows[0].select(lambda o: o.__class__.__name__ == "Switch")[0].disabled
+    # Someone who may not change it sees each table's status instead of a switch.
+    viewer = _settings(project, editable=False)
+    assert not viewer._table._rows[0].select(lambda o: o.__class__.__name__ == "Switch")
+    assert "On" in _row_text(viewer._table._rows[0]) and "Off" in _row_text(viewer._table._rows[2])
 
 
 def test_search_and_chips_filter_the_tables(project):
@@ -261,7 +264,9 @@ def test_the_drawer_shows_a_tables_columns_and_first_rows(project):
     view = _settings(project)
     view.open_table("shop", "orders")
     assert view._drawer.open and view._drawer_title.object == "orders"
-    assert "Uses it" in view._details.object and "<dd>3</dd>" in view._details.object
+    assert view._drawer_switch.value and view._switch_text.object == "Uses it" and "<dd>3</dd>" in view._details.object
+    view._drawer_switch.value = False
+    assert raw_section(project)["shop"]["tables"]["orders"] == {"assistant": False}
     assert "order_id" in view._columns.object and "20 to 40" in view._columns.object
     assert "paid" in view._sample.object and view._detail_body.visible
     view.close_table()

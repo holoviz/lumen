@@ -389,12 +389,41 @@ def _dimension_value(metric: str, name: str, value: Any) -> Any:
                       "parameters")
 
 
-class MetricSet(Mapping[str, Metric]):
-    """The metrics of a project file, by name, and where each is written."""
+@dataclass(frozen=True)
+class MetricFailure:
+    """Why a metric of the project file is left out: what checking it against its source found, and where."""
 
-    def __init__(self, metrics: Mapping[str, Metric] | None = None, section: Section | None = None):
+    metric: Metric
+    message: str
+    path: tuple = ()
+    """The keys of the metric's definition at fault, e.g. ``("table",)``."""
+
+    @property
+    def kind(self) -> str:
+        """What is wrong: ``source`` or ``table`` missing, a ``column`` missing, or the ``query`` refused."""
+        if self.path[:1] == ("source",):
+            return "source"
+        if self.path[:1] == ("table",):
+            return "table"
+        if self.message.startswith("Unknown column"):
+            return "column"
+        return "query"
+
+
+class MetricSet(Mapping[str, Metric]):
+    """
+    The metrics of a project file, by name, and where each is written;
+    ``failures`` holds the ones left out because they do not work on the
+    app's sources, by name.
+    """
+
+    def __init__(
+        self, metrics: Mapping[str, Metric] | None = None, section: Section | None = None,
+        failures: Mapping[str, MetricFailure] | None = None,
+    ):
         self._metrics = dict(metrics or {})
         self.section = section
+        self.failures = dict(failures or {})
 
     def __getitem__(self, name: str) -> Metric:
         return self._metrics[name]
@@ -1128,36 +1157,44 @@ def check_metrics(metrics: MetricSet, context: Mapping[str, Any]) -> tuple[Metri
     Check each metric against the host sources in ``context``, with every
     measure and dimension picked and the defaults bound: its source must
     exist and run SQL, its table and columns exist, and the compiled query
-    pass ``check_query`` and the engine's planning. Raises ``ProjectError``
-    with every problem; a metric whose source the app does not serve is
-    left out and reported as a warning instead.
+    pass ``check_query`` and the engine's planning. A metric that fails is
+    left out, so the others keep working, and reported as a warning; the
+    returned set keeps why in its ``failures``.
     """
+    from panel_flowdash.value_text import redact_secrets
+
     from .nodes import host_sources, lookup_source
 
-    problems: list[Problem] = []
     warnings: list[Problem] = []
-    kept = {}
+    kept: dict[str, Metric] = {}
+    failures: dict[str, MetricFailure] = {}
+    # Section.warn logs the warning and keeps it in the project's warnings.
+    report = getattr(metrics.section, "warn", None)
+
+    def fail(name: str, path: tuple, message: str, warning: str | None = None) -> None:
+        # An engine's error may quote its connection URL, which is shown and logged.
+        message = redact_secrets(message)
+        failures[name] = MetricFailure(metrics[name], message, path)
+        text = warning or f"Metric {name!r} is left out: {message}"
+        warnings.append(report((name, *path), text) if report is not None else Problem(text))
+
     for name, metric in metrics.items():
         source = lookup_source(metric.source, context)
         if source is None:
             refs = ", ".join(sorted(host_sources(context))) or "none"
-            message = f"Metric {name!r} is left out: the app serves no source {metric.source!r}; its sources are: {refs}."
-            # Section.warn logs the warning and keeps it in the project's warnings.
-            report = getattr(metrics.section, "warn", None)
-            warnings.append(report((name, "source"), message) if report is not None else Problem(message))
+            fail(name, ("source",), f"The app serves no source {metric.source!r}; its sources are: {refs}.",
+                 f"Metric {name!r} is left out: the app serves no source {metric.source!r}; its sources are: {refs}.")
             continue
         try:
             check_metric(metric, source)
         except MetricCheckError as exc:
-            problems.append(metrics.problem((name, *exc.path), str(exc)))
+            fail(name, exc.path, str(exc))
             continue
         except Exception as exc:
-            problems.append(metrics.problem((name,), f"Metric {name!r}: {exc}"))
+            fail(name, (), f"Metric {name!r}: {exc}")
             continue
         kept[name] = metric
-    if problems:
-        raise ProjectError(problems)
-    return MetricSet(kept, metrics.section), warnings
+    return MetricSet(kept, metrics.section, failures), warnings
 
 
 class MetricCheckError(ValueError):
@@ -1254,8 +1291,10 @@ class ProjectMetrics(MetricSet):
 
     Each change of the project's data is read once. A ``metrics:`` section
     that fails to load is logged once, with credentials masked, and the
-    metrics read before it are kept; a failure is tried again at most every
-    ``retry`` seconds, e.g. for a source that was down. Read ``snapshot()``
+    metrics read before it are kept, with its ``problems``; a failure is
+    tried again at most every ``retry`` seconds, e.g. for a source that was
+    down. A metric that does not work on its source is left out on its own
+    (see ``check_metrics``) and checked again as often. Read ``snapshot()``
     to use several metrics together: the mapping methods each read the
     current snapshot, which an admin's save may replace in between.
     """
@@ -1268,10 +1307,19 @@ class ProjectMetrics(MetricSet):
         self._raw: Any = _UNREAD
         self._snapshot = MetricSet()
         self._failed_at: float | None = None
+        self._checked_at = time.monotonic()
+        self.problems: list[Problem] = []
+        """Why the section as the file has it now is not used, if it is not."""
+
+    def _due(self) -> bool:
+        now = time.monotonic()
+        if self._failed_at is not None:
+            return now - self._failed_at >= self.retry
+        return bool(self._snapshot.failures) and now - self._checked_at >= self.retry
 
     def snapshot(self) -> MetricSet:
         data = self.project.data
-        if data is self._data and (self._failed_at is None or time.monotonic() - self._failed_at < self.retry):
+        if data is self._data and not self._due():
             return self._snapshot
         # One thread reads at a time; while it does, e.g. waiting on a slow source, the others get the
         # metrics read before. Only the very first read waits, as there is nothing to give before it.
@@ -1287,6 +1335,8 @@ class ProjectMetrics(MetricSet):
                     return self._read(log=True)
             if self._failed_at is not None and time.monotonic() - self._failed_at >= self.retry:
                 return self._read(log=False)
+            if self._due():
+                return self._recheck()
             return self._snapshot
         finally:
             self._lock.release()
@@ -1296,6 +1346,7 @@ class ProjectMetrics(MetricSet):
             metrics = read_metrics(self.project)
         except ProjectError as exc:
             self._failed_at = time.monotonic()
+            self.problems = list(exc.problems)
             if log:
                 from panel_flowdash.value_text import error_text
 
@@ -1306,8 +1357,31 @@ class ProjectMetrics(MetricSet):
                 )
             return self._snapshot
         self._failed_at = None
+        self._checked_at = time.monotonic()
+        self.problems = []
         self._snapshot = metrics
         return metrics
+
+    def _recheck(self) -> MetricSet:
+        """The snapshot with the metrics left out checked again, e.g. once their source is back."""
+        current = self._snapshot
+        retried, _ = check_metrics(
+            MetricSet({name: failure.metric for name, failure in current.failures.items()}), self.project.context,
+        )
+        self._checked_at = time.monotonic()
+        if not retried:
+            return current
+        for name in retried:
+            logger.info("Metric %r works again and is used from now on.", name)
+        metrics = {**current._metrics, **retried._metrics}
+        order = [name for name in (self._raw if isinstance(self._raw, dict) else {}) if name in metrics]
+        order += [name for name in metrics if name not in order]
+        self._snapshot = MetricSet({name: metrics[name] for name in order}, current.section, retried.failures)
+        return self._snapshot
+
+    @property
+    def failures(self) -> dict[str, MetricFailure]:  # type: ignore[override]
+        return self.snapshot().failures
 
     @property
     def _metrics(self) -> dict[str, Metric]:  # type: ignore[override]
@@ -1347,6 +1421,8 @@ def _wizard_view(project: Project) -> Any:
 
 # The Bokeh documents of the sessions of apps that serve Lumen sources, see ``serve_lumen``.
 _LUMEN_DOCS: weakref.WeakSet = weakref.WeakSet()
+# Those whose app shows the Data section, see ``serve_data``.
+_DATA_DOCS: weakref.WeakSet = weakref.WeakSet()
 
 
 def serve_lumen(doc: Any) -> None:
@@ -1363,17 +1439,50 @@ def serves_lumen() -> bool:
     return doc is not None and doc in _LUMEN_DOCS
 
 
+def serve_data(doc: Any) -> None:
+    """Mark ``doc``, a session's document, as one of an app whose sidebar has the Data section."""
+    if doc is not None:
+        _DATA_DOCS.add(doc)
+
+
+def shows_data() -> bool:
+    """Whether the current session's app has the Data section, which shows the catalog and the metrics."""
+    import panel as pn
+
+    doc = pn.state.curdoc
+    return doc is not None and doc in _DATA_DOCS
+
+
+def metrics_page() -> str:
+    """Where the current session's people find the metrics, to name in a message."""
+    return "Data, Metrics" if shows_data() else "Admin, Metrics"
+
+
 class _LumenSection(ProjectSection):
     """
-    The ``metrics:`` section, whose admin view and setup step exist only in
-    the sessions of an app serving Lumen sources: registering a section is
-    process-wide, and another FlowDash app in the process keeps its own
-    Data step and has no Metrics section.
+    A Lumen section of the project file, whose admin view and setup step
+    exist only in the sessions of an app serving Lumen sources: registering
+    a section is process-wide, and another FlowDash app in the process keeps
+    its own Data step and has no Metrics section.
     """
 
     def __getattribute__(self, name: str) -> Any:
         value = object.__getattribute__(self, name)
         if name in ("settings_view", "wizard_view") and value is not None and not serves_lumen():
+            return None
+        return value
+
+
+class _DataSection(_LumenSection):
+    """
+    A Lumen section whose page is in the Data section where the app has
+    one (``shows_data``), so the admin view leaves it out; on a
+    panel-flowdash without sidebar sections it stays in the admin view.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        value = super().__getattribute__(name)
+        if name == "settings_view" and value is not None and shows_data():
             return None
         return value
 
@@ -1385,7 +1494,7 @@ _ADMIN = {
     }.items() if key in getattr(ProjectSection, "__dataclass_fields__", {})
 }
 
-register_section((_LumenSection if _ADMIN else ProjectSection)(
+register_section((_DataSection if _ADMIN else ProjectSection)(
     SECTION, load_section, title="Metrics", icon="functions",
     description="Numbers defined here are the agreed definitions; the assistant uses them instead of "
     "writing its own SQL.",

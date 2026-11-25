@@ -426,9 +426,9 @@ def test_flowdash_reads_the_project_file_given_or_found(csv, given):
 
 def test_flowdash_refuses_a_project_file_with_problems(csv):
     project = csv.parent / "flowdash.yaml"
-    project.write_text(METRICS.replace("SUM(amount)", "SUM(amout)"))
+    project.write_text(METRICS.replace("SUM(amount)", "SUM(amount"))
     with patch.object(Serve, "invoke", return_value=True), pytest.raises(ValueError, match=(
-        r"flowdash.yaml:5:24: Unknown column 'amout' in measure 'amount'. Did you mean 'amount'\?"
+        r"flowdash.yaml:5:24: Measure 'amount' does not parse"
     )):
         LumenAIServe(argparse.ArgumentParser()).invoke(parse(str(csv), "--flowdash"))
 
@@ -451,7 +451,7 @@ def test_the_project_file_read_is_logged(csv, caplog, given):
 def test_a_failing_command_reports_its_error_once(csv, monkeypatch, capsys):
     from lumen.command import ai
 
-    (csv.parent / "flowdash.yaml").write_text(METRICS.replace("SUM(amount)", "SUM(amout)"))
+    (csv.parent / "flowdash.yaml").write_text(METRICS.replace("SUM(amount)", "SUM(amount"))
     monkeypatch.setattr(sys, "argv", ["lumen", "serve", str(csv), "--flowdash"])
     with patch.object(Serve, "invoke", return_value=True), pytest.raises(SystemExit):
         ai.main()

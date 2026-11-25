@@ -21,13 +21,14 @@ from lumen.flowdash import (
     CATALOG_KEY, COMPONENTS, SOURCES_KEY, ProjectCatalog, hidden_tables,
     uploads as uploads_module,
 )
+from lumen.flowdash.add_data import UploadDialog
 from lumen.flowdash.app import build_routes
 from lumen.flowdash.catalog import raw_section
 from lumen.flowdash.catalog_admin import CatalogSettings, set_assistant
 from lumen.flowdash.project import PROJECT_FILE, ProjectError, load_project
 from lumen.flowdash.uploads import (
-    UPLOADS_KEY, UploadDialog, UploadError, UploadFormat, Uploads,
-    register_upload_handler, upload_formats, upload_settings,
+    UPLOADS_KEY, UploadError, UploadFormat, Uploads, register_upload_handler,
+    upload_formats, upload_settings,
 )
 from lumen.flowdash.uploads_admin import UploadsForm
 from lumen.sources.duckdb import DuckDBSource
@@ -322,8 +323,8 @@ def test_the_catalog_lists_uploads_and_an_admin_deletes_one(tmp_path, project, u
     set_assistant(project, "sales", "sales", False, app=App(admin=True))
     with using_app(App(admin=True)):
         view = CatalogSettings(project)
-    assert [c.label for c in view._chip_row] == ["All 2", "Uploaded 1", "Off 1"]
-    view.filter = "uploaded"
+    assert [c.label for c in view._chip_row] == ["All 2", "served 1", "sales 1", "Assistant off 1"]
+    view.filter = "source:sales"
     assert [r["table"] for r in view.visible_rows()] == ["sales"]
     view.open_table("sales", "sales")
     assert view._delete.visible and "Uploaded by" in view._details.object and "<dd>ana</dd>" in view._details.object

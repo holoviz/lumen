@@ -1,26 +1,25 @@
 """
-The Catalog section of panel-flowdash's admin view: the sources the app
-serves and their tables, and which of them Lumen's assistant may use.
+The catalog's view: the sources the app serves and their tables, and which
+of them Lumen's assistant may use. The Data section shows it, and so does
+panel-flowdash's admin view as its Catalog section where there are no
+sidebar sections.
 
 The table lists every table of every source with its row and column
 counts, read off the event loop; its switch turns a table off or on for
 the assistant at once, writing the project file's ``catalog:`` section (see
-``lumen.flowdash.catalog``). A table's drawer shows its columns with their
-types, value ranges and descriptions, its other metadata and its first
-rows. Turning a table off or on checks again that the caller is an admin.
+``lumen.flowdash.catalog``, which reads and writes what this shows). A
+table's drawer shows its columns with their types, value ranges and
+descriptions, its other metadata and its first rows. Turning a table off or
+on checks again that the caller is an admin; someone who is not sees it
+all read-only, and can add data where uploads let them.
 """
 from __future__ import annotations
 
-import asyncio
-import copy
-import datetime as dt
 import logging
-import math
 import numbers
 import typing as t
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Sequence
 from functools import partial
 
 import panel as pn
@@ -32,34 +31,31 @@ from panel_flowdash.admin.form import current_app
 from panel_flowdash.admin.kit import (
     Table, caption, cell, chip, esc,
 )
-from panel_flowdash.project import (
-    _FILE_LOCK, Problem, Project, ProjectError,
-)
-from panel_flowdash.value_text import error_text, redact_secrets
+from panel_flowdash.project import Problem, Project, ProjectError
+from panel_flowdash.value_text import error_text
 
-from ..sources.base import BaseSQLSource, Source
-from ..transforms.sql import SQLLimit
-from .catalog import SECTION, raw_section
-from .uploads import UPLOADS_KEY, Upload, UploadDialog
+from ..sources.base import Source
+from .add_data import AddDataDialog
+from .catalog import (
+    ColumnInfo, TableDetail, TableInfo, catalog_tables, known_info, plain_text,
+    raw_section, set_assistant, table_detail, table_info,
+)
+from .uploads import UPLOADS_KEY, Upload
 
 logger = logging.getLogger(__name__)
 
 # The tables whose row and column counts the list reads by itself; the others when their drawer opens.
 LIST_TABLES = 50
-# The rows a table's drawer shows, and how long reading them may take.
-SAMPLE_ROWS = 10
-SAMPLE_TIMEOUT = 5
-# The values of a column the drawer lists before saying how many more there are.
-VALUES_SHOWN = 6
 # The column names a row lists.
 NAMES_SHOWN = 6
 # The rows the table draws at most; a search narrows down the others.
 ROWS_SHOWN = 100
-
-NOT_ADMIN = "Only admins can change what the assistant uses, so this was not saved."
-
-# Metadata the drawer shows elsewhere, or that only Lumen uses.
-_SHOWN_KEYS = frozenset({"description", "columns", "rows", "docs", "source_name", "data_type"})
+# The sources the filter chips name each, at most.
+SOURCE_CHIPS = 6
+# The dashboards and metrics a drawer's Used by names before saying how many more.
+USED_SHOWN = 8
+# The columns past which a drawer folds the table's first rows.
+FOLD_COLUMNS = 8
 
 _CHIP_SX = {"fontSize": "0.875rem"}
 
@@ -89,261 +85,6 @@ _DETAILS_CSS = """
 .k .sample td { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .k .col { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 0.75rem; white-space: nowrap; }
 """
-
-
-# ---------------------------------------------------------------------------
-# Reading the sources
-
-
-@dataclass
-class TableInfo:
-    """What the list shows of a table: its rows, columns and description, or why they could not be read."""
-
-    rows: int | None = None
-    columns: list[str] | None = None
-    description: str = ""
-    error: str | None = None
-    loading: bool = False
-
-
-@dataclass
-class ColumnInfo:
-    name: str
-    type: str = ""
-    values: str = ""
-    description: str = ""
-
-
-@dataclass
-class TableDetail:
-    """What a table's drawer shows."""
-
-    rows: int | None = None
-    description: str = ""
-    columns: list[ColumnInfo] = field(default_factory=list)
-    metadata: dict[str, t.Any] = field(default_factory=dict)
-    sample: t.Any = None
-    error: str | None = None
-    sample_error: str | None = None
-
-
-def _safe(exc: BaseException) -> str:
-    lines = redact_secrets(error_text(exc)).strip().splitlines()
-    return lines[0] if lines else type(exc).__name__
-
-
-def _count(value: t.Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number == value else None
-
-
-def _text(value: t.Any) -> str:
-    return value.strip() if isinstance(value, str) else ""
-
-
-def known_info(source: Source, table: str) -> TableInfo | None:
-    """What is known of ``table`` without a query: the schema the source stored or the frame it holds."""
-    from .nodes import _table_metadata
-
-    try:
-        rows, columns = _table_metadata(source, table, source._get_schema_cache() or {})
-    except Exception:
-        return None
-    if columns is None:
-        return None
-    described = (source.descriptions or {}).get(table) or (source.metadata or {}).get(table) or {}
-    return TableInfo(rows=rows, columns=columns, description=_text(described.get("description")))
-
-
-def table_info(source: Source, table: str) -> TableInfo:
-    """The rows, columns and description of ``table`` from the source's metadata, which may query it."""
-    try:
-        metadata = source.get_metadata(table)
-    except Exception as exc:
-        return TableInfo(error=_safe(exc))
-    columns = metadata.get("columns")
-    return TableInfo(
-        rows=_count(metadata.get("rows")),
-        columns=[str(c) for c in columns] if isinstance(columns, Mapping) else None,
-        description=_text(metadata.get("description")),
-    )
-
-
-def _plain(value: t.Any) -> str:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return ""
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    if isinstance(value, (dt.datetime, dt.date)):
-        return value.isoformat(sep=" ") if isinstance(value, dt.datetime) else value.isoformat()
-    return str(value)
-
-
-def _values(spec: Mapping[str, t.Any]) -> str:
-    if isinstance(enum := spec.get("enum"), list) and enum:
-        shown = ", ".join(_plain(v) for v in enum[:VALUES_SHOWN] if v is not None)
-        return shown + (f" +{len(enum) - VALUES_SHOWN} more" if len(enum) > VALUES_SHOWN else "")
-    low, high = spec.get("inclusiveMinimum"), spec.get("inclusiveMaximum")
-    if low is not None or high is not None:
-        return f"{_plain(low)} to {_plain(high)}"
-    return ""
-
-
-def _type(spec: Mapping[str, t.Any], metadata: Mapping[str, t.Any]) -> str:
-    kind = spec.get("type") or metadata.get("data_type") or ""
-    kind = "/".join(map(str, kind)) if isinstance(kind, list) else str(kind)
-    if not (fmt := spec.get("format")):
-        return kind
-    return str(fmt) if kind in ("string", "") else f"{kind} ({fmt})"
-
-
-def sample_sql(source: BaseSQLSource, table: str, rows: int = SAMPLE_ROWS) -> str:
-    """The statement reading the first ``rows`` rows of ``table``."""
-    return SQLLimit(limit=rows, write=source.dialect).apply(source.get_sql_expr(source.normalize_table(table)))
-
-
-def table_detail(source: Source, table: str, timeout: float = SAMPLE_TIMEOUT) -> TableDetail:
-    """
-    The columns of ``table`` with their types, value ranges and
-    descriptions, its other metadata and, for a SQL source, its first rows.
-    Reading the schema counts the rows and the value ranges, so this queries
-    the table; run it off the event loop.
-    """
-    from .nodes import execute
-
-    detail = TableDetail()
-    try:
-        metadata = source.get_metadata(table)
-    except Exception as exc:
-        metadata = {}
-        detail.error = _safe(exc)
-    try:
-        schema = source.get_schema(table)
-    except Exception as exc:
-        schema = {}
-        detail.error = detail.error or _safe(exc)
-    columns_meta = metadata.get("columns") if isinstance(metadata.get("columns"), Mapping) else {}
-    detail.rows = _count(schema.get("__len__")) if isinstance(schema, Mapping) else None
-    if detail.rows is None:
-        detail.rows = _count(metadata.get("rows"))
-    detail.description = _text(metadata.get("description"))
-    names = [name for name in (schema or {}) if name != "__len__"] or list(columns_meta)
-    for name in names:
-        spec = schema.get(name) if isinstance(schema.get(name), Mapping) else {}
-        column = columns_meta.get(name)
-        column = column if isinstance(column, Mapping) else {"description": column} if isinstance(column, str) else {}
-        detail.columns.append(ColumnInfo(
-            str(name), _type(spec, column), _values(spec), _text(column.get("description")),
-        ))
-    detail.metadata = {
-        str(key): value for key, value in metadata.items()
-        if key not in _SHOWN_KEYS and value not in (None, "", [], {})
-    }
-    if isinstance(source, BaseSQLSource):
-        try:
-            detail.sample = execute(source, sample_sql(source, table), timeout)
-        except Exception as exc:
-            detail.sample_error = _safe(exc)
-    return detail
-
-
-# ---------------------------------------------------------------------------
-# Writing the section
-
-
-def _admin(app: t.Any) -> bool:
-    try:
-        return app is not None and bool(app._still_admin())
-    except Exception as exc:
-        logger.warning("Could not check whether this session is still an admin: %s", error_text(exc))
-        return False
-
-
-def _prune(section: dict[str, t.Any]) -> dict[str, t.Any]:
-    """``section`` without the tables, sources and ``tables:`` left with no settings."""
-    result = {}
-    for ref, spec in section.items():
-        if not isinstance(spec, dict):
-            result[ref] = spec
-            continue
-        tables = spec.get("tables")
-        if isinstance(tables, dict):
-            kept = {table: settings for table, settings in tables.items() if settings}
-            spec = {**spec, "tables": kept} if kept else {k: v for k, v in spec.items() if k != "tables"}
-        if spec:
-            result[ref] = spec
-    return result
-
-
-def set_assistant(
-    project: Project, ref: str, table: str, on: bool, *, app: t.Any,
-) -> list[Problem]:
-    """
-    Turn ``table`` of the source ``ref`` on or off for the assistant,
-    writing the project file's ``catalog:`` section and keeping the rest of
-    it as the file has it now. Turning it on also clears the setting under
-    an alias of the source, e.g. one written by hand. Only an admin
-    (``app._still_admin()``) may. Returns the problems that stopped it.
-    """
-    from .nodes import lookup_source
-
-    with _FILE_LOCK:
-        if not _admin(app):
-            return [Problem(NOT_ADMIN)]
-        try:
-            current = raw_section(project)
-        except ProjectError as exc:
-            return list(exc.problems)
-        except OSError as exc:
-            return [Problem(f"Could not read the project file: {error_text(exc)}")]
-        section = copy.deepcopy(current)
-        context = project.context or {}
-        source = lookup_source(ref, context)
-        if on:
-            for name, spec in section.items():
-                if name != ref and (source is None or lookup_source(str(name), context) is not source):
-                    continue
-                settings = ((spec or {}).get("tables") or {}).get(table) if isinstance(spec, dict) else None
-                if isinstance(settings, dict):
-                    settings.pop("assistant", None)
-        else:
-            spec = section.get(ref)
-            spec = section[ref] = spec if isinstance(spec, dict) else {}
-            tables = spec.get("tables")
-            tables = spec["tables"] = tables if isinstance(tables, dict) else {}
-            settings = tables.get(table)
-            settings = tables[table] = settings if isinstance(settings, dict) else {}
-            settings["assistant"] = False
-        try:
-            project.set(SECTION, _prune(section))
-        except ProjectError as exc:
-            return list(exc.problems)
-        except OSError as exc:
-            return [Problem(f"Could not write the project file: {error_text(exc)}")]
-    who = getattr(getattr(app, "_identity", None), "user", None) or "someone"
-    logger.info("Admin: %s turned %s table %r of %r for the assistant.", who, "on" if on else "off", table, ref)
-    return []
-
-
-def hidden_by_source(section: Mapping[str, t.Any], context: Mapping[str, t.Any]) -> dict[int, set[str]]:
-    """The tables ``section``, the raw ``catalog:`` data, turns off, by the ``id`` of the source each ref names."""
-    from .nodes import lookup_source
-
-    hidden: dict[int, set[str]] = {}
-    for ref, spec in section.items():
-        source = lookup_source(str(ref), context)
-        tables = spec.get("tables") if isinstance(spec, Mapping) else None
-        if source is None or not isinstance(tables, Mapping):
-            continue
-        for table, settings in tables.items():
-            if isinstance(settings, Mapping) and settings.get("assistant") is False:
-                hidden.setdefault(id(source), set()).add(str(table))
-    return hidden
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +122,7 @@ def _sample_html(frame: t.Any) -> str:
     body = "".join(
         "<tr>" + "".join(
             f'<td class="{"n" if isinstance(v, numbers.Number) and not isinstance(v, bool) else ""}" '
-            f'title="{esc(_plain(v))}">{esc(_plain(v))}</td>'
+            f'title="{esc(plain_text(v))}">{esc(plain_text(v))}</td>'
             for v in row
         ) + "</tr>"
         for row in frame.itertuples(index=False)
@@ -406,6 +147,30 @@ def _columns_html(columns: Sequence[ColumnInfo]) -> str:
         + ("<th>Description</th>" if described else "")
         + f"</tr></thead><tbody>{rows}</tbody></table></div>"
     )
+
+
+# Material's dashboard icon, beside a count of dashboards.
+DASHBOARD_SVG = (
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3zm0 8h8v-6H3zm10 0h8V11h-8zm0-18v6h8V3z"/></svg>'
+)
+
+_USED_CSS = """
+.k .used { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; white-space: nowrap;
+  color: var(--mui-palette-text-secondary); font-size: 0.8125rem; }
+.k .used svg { width: 14px; height: 14px; fill: currentColor; }
+.k .used b { font-weight: 400; font-family: "Roboto", sans-serif; }
+"""
+
+
+def used_html(dashboards: Sequence[t.Any], metrics: Sequence[str]) -> str:
+    """How many dashboards and metrics use a table, with their names as tooltips."""
+    parts = []
+    if dashboards:
+        titles = esc(", ".join(d.title for d in dashboards))
+        parts.append(f'<span class="used" title="Dashboards: {titles}">{DASHBOARD_SVG}{len(dashboards)}</span>')
+    if metrics:
+        parts.append(f'<span class="used" title="Metrics: {esc(", ".join(metrics))}"><b>Σ</b>{len(metrics)}</span>')
+    return "".join(parts) or '<span class="muted">-</span>'
 
 
 # Below this width the table drops its Source and Columns columns.
@@ -434,7 +199,13 @@ class _CatalogTable(Table):
 
 
 class CatalogSettings(Viewer):
-    """The Catalog section: the table of the sources' tables and a drawer showing one of them."""
+    """
+    The catalog: the table of the sources' tables and a drawer showing one
+    of them. Only an ``editable`` one turns tables off for the assistant
+    and deletes uploads; anyone the uploads settings let upload may add
+    data. ``app`` is the session's app, by default the one whose admin view
+    builds it.
+    """
 
     editable = param.Boolean(default=True)
 
@@ -443,10 +214,22 @@ class CatalogSettings(Viewer):
 
     query = param.String(default="")
 
-    def __init__(self, project: Project, editable: bool = True, **params):
+    def __init__(
+        self, project: Project, editable: bool = True, app: t.Any = None, show_add: bool = True,
+        on_select: t.Callable[[tuple[str, str] | None], t.Any] | None = None,
+        on_open: t.Callable[[str], t.Any] | None = None, on_change: t.Callable[[], t.Any] | None = None,
+        **params,
+    ):
         super().__init__(editable=editable, **params)
         self.project = project
-        self._app = current_app()
+        self._app = app if app is not None else current_app()
+        # Told the table the drawer shows, or None when it closes; asked to open a dashboard or metric URL;
+        # and told a source was added or deleted.
+        self._on_select = on_select
+        self._on_open = on_open
+        self._on_change = on_change
+        self._usage: tuple[dict, dict] | None = None
+        self._rendering = False
         self._infos: dict[tuple[str, str], TableInfo] = {}
         self._listing_errors: dict[str, str] = {}
         self.selected: tuple[str, str] | None = None
@@ -461,13 +244,13 @@ class CatalogSettings(Viewer):
         self._chip_row = pn.Row(margin=0, styles={"gap": "8px", "flex-wrap": "wrap", "align-items": "center"})
         self.uploads = (project.context or {}).get(UPLOADS_KEY)
         self._upload_dialog = (
-            UploadDialog(self.uploads, self._app, on_added=self._on_uploaded) if self.uploads is not None else None
+            AddDataDialog(self.uploads, self._app, on_added=self._on_uploaded) if self.uploads is not None else None
         )
         self._upload = pmui.Button(
-            label="Upload data", icon="upload_file", variant="contained", margin=0,
-            visible=self.uploads is not None, disabled=not editable, css_classes=["flowdash-catalog-upload"],
+            label="Add data", icon="add", variant="contained", margin=0,
+            visible=show_add and self.may_add(), css_classes=["flowdash-catalog-upload"],
         )
-        self._upload.on_click(lambda _event: self._upload_dialog.open())
+        self._upload.on_click(lambda _event: self.add_data())
         toolbar = pn.Row(
             self._search,
             self._chip_row,
@@ -485,8 +268,9 @@ class CatalogSettings(Viewer):
                 ("Assistant", "88px"),
                 ("Table", "2fr"),
                 ("Source", "1fr"),
-                ("Rows", "0.8fr"),
-                ("Columns", "2.6fr"),
+                ("Rows", "0.7fr"),
+                ("Columns", "2.2fr"),
+                ("Used by", "0.9fr"),
             ],
             toolbar=toolbar,
             footer=caption(
@@ -516,6 +300,38 @@ class CatalogSettings(Viewer):
     # ------------------------------------------------------------------
     # Data
 
+    def may_add(self) -> bool:
+        """Whether this session may add data: an admin always, others where the uploads settings let them."""
+        if self.uploads is None:
+            return False
+        return self.editable or self.uploads.offered(self._app)
+
+    def add_data(self, mode: str = "upload"):
+        """Open the Add data dialog."""
+        if self._upload_dialog is not None and self.may_add():
+            self._upload_dialog.open(mode)
+
+    def usage(self) -> tuple[dict[tuple[str, str], list[t.Any]], dict[tuple[str, str], list[str]]]:
+        """
+        The dashboards this session may open that read each table, and the
+        metrics computed from it, by source ref and table.
+        """
+        if self._usage is None:
+            from .data import metric_tables, table_usage, visible_dashboards
+            from .metrics_edit import raw_section as metrics_section
+
+            context = self.project.context or {}
+            metrics: dict[tuple[str, str], list[str]] = {}
+            try:
+                section = metrics_section(self.project)
+            except ProjectError:
+                section = {}
+            for name, spec in section.items():
+                for key in metric_tables(spec, context):
+                    metrics.setdefault(key, []).append(str(name))
+            self._usage = (table_usage(visible_dashboards(self._app), context), metrics)
+        return self._usage
+
     def sources(self) -> dict[str, Source]:
         """The sources the app serves, by ref, in the order given."""
         from .nodes import host_sources
@@ -533,34 +349,23 @@ class CatalogSettings(Viewer):
 
     def rows(self) -> list[dict[str, t.Any]]:
         """What the table shows for each table of each source, in the order the sources are served."""
-        from .nodes import listed_tables
-
-        hidden = hidden_by_source(self.section(), self.project.context or {})
+        tables, self._listing_errors = catalog_tables(self.project.context or {}, self.section())
         rows = []
-        for ref, source in self.sources().items():
-            try:
-                tables = listed_tables(source)
-            except Exception as exc:
-                self._listing_errors[ref] = _safe(exc)
-                continue
-            self._listing_errors.pop(ref, None)
-            off = hidden.get(id(source), set())
-            for table in tables:
-                info = self._infos.get((ref, table))
-                if info is None and (known := known_info(source, table)) is not None:
-                    info = self._infos[(ref, table)] = known
-                rows.append({
-                    "ref": ref, "source": source, "table": table, "assistant": table not in off,
-                    "info": info or TableInfo(), "upload": self.uploads.get(ref) if self.uploads is not None else None,
-                })
+        for entry in tables:
+            key = (entry.ref, entry.table)
+            info = self._infos.get(key)
+            if info is None and (known := known_info(entry.source, entry.table)) is not None:
+                info = self._infos[key] = known
+            rows.append({
+                "ref": entry.ref, "source": entry.source, "table": entry.table, "assistant": entry.assistant,
+                "info": info or TableInfo(), "upload": entry.upload,
+            })
         return rows
 
     def _passes(self, row: dict[str, t.Any]) -> bool:
         if self.filter == "off" and row["assistant"]:
             return False
         if self.filter.startswith("source:") and row["ref"] != self.filter[7:]:
-            return False
-        if self.filter == "uploaded" and row["upload"] is None:
             return False
         info = row["info"]
         haystack = " ".join([row["ref"], row["table"], info.description, *(info.columns or [])]).lower()
@@ -577,26 +382,9 @@ class CatalogSettings(Viewer):
     # Reading the tables' metadata
 
     def _schedule(self, work: t.Callable[[], t.Any], done: t.Callable[[], t.Any]) -> None:
-        """Run ``work`` on a worker and then ``done`` on the session's event loop; both at once outside a server."""
-        from .nodes import _in_served_session, _preview_pool, _schedule
+        from .nodes import in_background
 
-        if not _in_served_session():
-            work()
-            done()
-            return
-        doc = pn.state.curdoc
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        def finished(future):
-            if not future.cancelled():
-                if (exc := future.exception()) is not None:
-                    logger.warning("Could not read the catalog: %s", error_text(exc))
-                _schedule(done, doc, loop)
-
-        _preview_pool().submit(work).add_done_callback(finished)
+        in_background(work, done)
 
     def _read_infos(self, rows: Sequence[dict[str, t.Any]] | None = None):
         """Read the rows and columns of the first ``LIST_TABLES`` tables not known yet, then redraw."""
@@ -634,17 +422,15 @@ class CatalogSettings(Viewer):
         """Draw the chips and the table from the sources and the project file."""
         self._alert.visible = False
         rows = self.rows()
-        # Each upload is a source of its own, so they share one chip rather than get one each.
-        refs = [ref for ref in self.sources() if self.uploads is None or self.uploads.get(ref) is None]
-        counts = {
-            "all": len(rows), "off": sum(not row["assistant"] for row in rows),
-            "uploaded": sum(row["upload"] is not None for row in rows),
-        }
+        refs = list(dict.fromkeys(row["ref"] for row in rows))
+        counts = {"all": len(rows), "off": sum(not row["assistant"] for row in rows)}
         for ref in refs:
             counts[f"source:{ref}"] = sum(row["ref"] == ref for row in rows)
+        # Past a handful of sources the chips would crowd the search; the Data section's nav filters by source too.
+        by_source = 1 < len(refs) <= SOURCE_CHIPS or self.filter.startswith("source:")
         labels = {
-            "all": "All", **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}),
-            "uploaded": "Uploaded", "off": "Off",
+            "all": "All", **({f"source:{ref}": ref for ref in refs} if by_source else {}),
+            "off": "Assistant off",
         }
         if self.filter not in labels:
             self.filter = "all"
@@ -653,7 +439,7 @@ class CatalogSettings(Viewer):
             chips = []
             for key, label in labels.items():
                 active = key == self.filter
-                if key in ("off", "uploaded") and not counts[key] and not active:
+                if key == "off" and not counts[key] and not active:
                     continue
                 widget = self._chip(key)
                 widget.param.update(
@@ -670,7 +456,7 @@ class CatalogSettings(Viewer):
                 (f"{ref}--error", [
                     cell(""),
                     cell(f'<span class="main">Could not list its tables</span><span class="mono error-text">{esc(message)}</span>'),
-                    cell(f'<span class="main">{esc(ref)}</span>'), cell(""), cell(""),
+                    cell(f'<span class="main">{esc(ref)}</span>'), cell(""), cell(""), cell(""),
                 ])
                 for ref, message in self._listing_errors.items()
                 if self.filter in ("all", f"source:{ref}")
@@ -685,10 +471,14 @@ class CatalogSettings(Viewer):
         from .nodes import served_file
 
         ref, table, info, source = row["ref"], row["table"], row["info"], row["source"]
-        switch = pmui.Switch(
-            value=row["assistant"], margin=0, disabled=not self.editable, css_classes=["flowdash-catalog-assistant"],
-        )
-        switch.param.watch(lambda event, ref=ref, table=table: self.set_assistant(ref, table, event.new), "value")
+        if self.editable:
+            switch = pmui.Switch(value=row["assistant"], margin=0, css_classes=["flowdash-catalog-assistant"])
+            switch.param.watch(lambda event, ref=ref, table=table: self.set_assistant(ref, table, event.new), "value")
+        else:
+            switch = cell(
+                chip("On", "success") if row["assistant"] else chip("Off", "warning"),
+                css_classes=["flowdash-catalog-assistant-status"],
+            )
         upload = row["upload"]
         if info.description:
             second = f'<span class="main muted small">{esc(info.description)}</span>'
@@ -717,13 +507,16 @@ class CatalogSettings(Viewer):
                     f'<span class="main">{n} column{"" if n == 1 else "s"}</span>'
                     f'<span class="mono">{esc(_column_names(info.columns))}</span>'
                 )
+        dashboards, metrics = self.usage()
+        used = used_html(dashboards.get((ref, table), []), metrics.get((ref, table), []))
         return [
             switch,
             open_drawer,
             cell(f'<span class="main">{esc(ref)}</span><span class="mono">'
                  f'{"Upload, " if upload is not None else ""}{esc(_type_name(source))}</span>'),
-            cell(rows_text),
+            cell(f'<div style="text-align: right">{rows_text}</div>'),
             cell(columns_text),
+            cell(used, stylesheets=[_USED_CSS]),
         ]
 
     def set_assistant(self, ref: str, table: str, on: bool) -> bool:
@@ -751,11 +544,31 @@ class CatalogSettings(Viewer):
         self._details = cell("", stylesheets=[_DETAILS_CSS])
         self._columns = cell("", stylesheets=[_DETAILS_CSS])
         self._sample = cell("", stylesheets=[_DETAILS_CSS])
+        self._drawer_switch = pmui.Switch(value=True, margin=0, css_classes=["flowdash-catalog-drawer-assistant"])
+        self._drawer_switch.param.watch(self._on_drawer_switch, "value")
+        self._switch_text = pmui.Typography("", variant="body2", margin=0)
+        self._switch_row = pn.Row(
+            pmui.Typography("Assistant", variant="body2", margin=0, sx={"color": "text.secondary"}, width=120),
+            self._drawer_switch, self._switch_text,
+            margin=0, sizing_mode="stretch_width", visible=self.editable,
+            styles={"align-items": "center", "gap": "16px"},
+        )
+        self._used_links = pn.Row(margin=0, sizing_mode="stretch_width", styles={"flex-wrap": "wrap", "gap": "0 4px"})
+        self._used_row = pn.Row(
+            pmui.Typography("Used by", variant="body2", margin=(6, 0, 0, 0), sx={"color": "text.secondary"},
+                            width=120, styles={"flex": "0 0 120px"}),
+            self._used_links,
+            margin=0, sizing_mode="stretch_width", styles={"gap": "16px", "align-items": "flex-start"},
+            css_classes=["flowdash-catalog-used-by"],
+        )
+        self._first_rows = pmui.Card(
+            self._sample, title="First rows", collapsible=True, collapsed=False, margin=0, title_variant="body1",
+            sizing_mode="stretch_width", css_classes=["flowdash-catalog-first-rows"],
+        )
         self._detail_body = pn.Column(
             pmui.Typography("Columns", variant="overline", sx=_OVERLINE_SX, margin=(12, 0, 0, 0)),
             self._columns,
-            pmui.Typography("First rows", variant="overline", sx=_OVERLINE_SX, margin=(12, 0, 0, 0)),
-            self._sample,
+            self._first_rows,
             margin=0,
             sizing_mode="stretch_width",
             styles={"gap": "8px"},
@@ -766,7 +579,7 @@ class CatalogSettings(Viewer):
         done.on_click(lambda _event: self.close_table())
         self._delete = pmui.Button(
             label="Delete upload", icon="delete", variant="outlined", color="error", margin=0, visible=False,
-            disabled=not self.editable, css_classes=["flowdash-catalog-delete"],
+            css_classes=["flowdash-catalog-delete"],
         )
         self._delete.on_click(lambda _event: self.ask_delete())
         self._build_confirm()
@@ -781,7 +594,9 @@ class CatalogSettings(Viewer):
             },
         )
         fields = pn.Column(
+            self._switch_row,
             self._details,
+            self._used_row,
             self._loading,
             self._detail_body,
             margin=0,
@@ -834,7 +649,11 @@ class CatalogSettings(Viewer):
             title="Delete upload?", open=False, show_close_button=True, width_option="sm",
         )
 
-    def _on_uploaded(self, upload: Upload):
+    def _on_uploaded(self, upload: t.Any):
+        self._usage = None
+        if self._on_change is not None:
+            self._on_change()
+            return
         self.refresh()
         self._read_infos()
 
@@ -866,11 +685,21 @@ class CatalogSettings(Viewer):
         self.refresh()
         if self._app is not None and hasattr(self._app, "_notify"):
             self._app._notify("success", f"Deleted the upload {ref}.")
+        if self._on_change is not None:
+            self._on_change()
         return True
 
     def _on_drawer_open(self, event):
         if not event.new:
             self.selected = None
+            if self._on_select is not None:
+                self._on_select(None)
+
+    def _on_drawer_switch(self, event):
+        if self.selected is None or self._rendering:
+            return
+        ref, table = self.selected
+        self.set_assistant(ref, table, event.new)
 
     def _row(self, ref: str, table: str) -> dict[str, t.Any] | None:
         return next((r for r in self.rows() if r["ref"] == ref and r["table"] == table), None)
@@ -887,6 +716,8 @@ class CatalogSettings(Viewer):
             self._loading.visible = True
             self._detail_body.visible = False
             self._drawer.open = True
+        if self._on_select is not None:
+            self._on_select((ref, table))
         source = row["source"]
         result: list[TableDetail] = []
 
@@ -923,14 +754,18 @@ class CatalogSettings(Viewer):
         self._drawer_title.object = table
         kind = "an uploaded" if row["upload"] is not None else f"a {_type_name(source)}"
         self._drawer_subtitle.object = f"Table of {ref}, {kind} source"
-        self._delete.visible = row["upload"] is not None
+        self._delete.visible = row["upload"] is not None and self.editable
+        self._rendering = True
+        try:
+            self._drawer_switch.value = row["assistant"]
+        finally:
+            self._rendering = False
+        self._switch_text.object = "Uses it" if row["assistant"] else "Turned off"
         assistant = chip("Uses it", "success") if row["assistant"] else chip("Turned off", "warning")
         rows = detail.rows if detail is not None else info.rows
         description = (detail.description if detail is not None else "") or info.description
-        details = [
-            ("Assistant", assistant),
-            ("Rows", f"{rows:,}" if rows is not None else '<span class="muted">Reading…</span>'),
-        ]
+        details = [] if self.editable else [("Assistant", assistant)]
+        details.append(("Rows", f"{rows:,}" if rows is not None else '<span class="muted">Reading…</span>'))
         upload = row["upload"]
         if upload is not None:
             when = upload.when
@@ -940,17 +775,39 @@ class CatalogSettings(Viewer):
             details.append(("File", f"<code>{esc(upload.filename)}</code>" + (
                 f" (sheet {esc(upload.sheet)})" if upload.sheet else ""
             )))
-        elif where := served_file(source, table):
-            details.append(("File", f"<code>{esc(where)}</code>"))
+        else:
+            if where := served_file(source, table):
+                details.append(("File", f"<code>{esc(where)}</code>"))
+            details.append(("Source", f"{esc(ref)}, {esc(_type_name(source))}"))
         if description:
             details.append(("Description", esc(description)))
         if detail is not None:
-            details += [(esc(key.replace("_", " ").capitalize()), esc(_plain(value))) for key, value in detail.metadata.items()]
+            details += [(esc(key.replace("_", " ").capitalize()), esc(plain_text(value))) for key, value in detail.metadata.items()]
             if detail.error:
                 details.append(("Problem", f'<span class="error-text">{esc(detail.error)}</span>'))
         self._details.object = '<div class="k"><dl>' + "".join(
             f"<dt>{label}</dt><dd>{value}</dd>" for label, value in details
         ) + "</dl></div>"
+        self._render_used(ref, table)
+
+    def _render_used(self, ref: str, table: str):
+        """The dashboards and metrics using the table, each a link."""
+        dashboards, metrics = self.usage()
+        links = [
+            *((f"/dash/{d.dashboard_id}", d.title, "space_dashboard") for d in dashboards.get((ref, table), [])),
+            *((f"/data/metrics/{name}", name, "functions") for name in metrics.get((ref, table), [])),
+        ]
+        buttons = []
+        for url, label, icon in links[:USED_SHOWN]:
+            button = pmui.Button(
+                label=label, icon=icon, variant="text", size="small", margin=0,
+                disabled=self._on_open is None, sx={"textTransform": "none", "minWidth": 0},
+            )
+            button.on_click(lambda _event, url=url: self._on_open(url) if self._on_open is not None else None)
+            buttons.append(button)
+        if len(links) > USED_SHOWN:
+            buttons.append(caption(f"and {len(links) - USED_SHOWN} more", margin=(6, 4, 0, 4)))
+        self._used_links[:] = buttons or [caption("Nothing yet", margin=(6, 0, 0, 0))]
 
     def _render_detail(self):
         detail = self._detail
@@ -966,6 +823,12 @@ class CatalogSettings(Viewer):
             else:
                 sample = _sample_html(detail.sample)
             self._sample.object = f'<div class="k">{sample}</div>'
+            n = len(detail.sample) if detail.sample is not None else 0
+            self._first_rows.param.update(
+                title=f"First rows ({n})" if n else "First rows",
+                # A wide table's columns already fill the drawer, so its rows wait to be unfolded.
+                collapsed=len(detail.columns) > FOLD_COLUMNS,
+            )
             self._loading.visible = False
             self._detail_body.visible = True
 

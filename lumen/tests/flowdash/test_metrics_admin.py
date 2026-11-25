@@ -60,7 +60,7 @@ metrics:
 
 class Admin:
     def __init__(self, admin=True, store=None):
-        self.admin = admin
+        self.admin = self.is_admin = admin
         self.store = store
         self.notified = []
 
@@ -316,12 +316,15 @@ def test_only_a_lumen_app_shows_the_metrics_admin_and_key_numbers(tmp_path, monk
     from panel_flowdash.admin.wizard import DataStep, wizard_steps
     from panel_flowdash.app import FlowDashApp
 
+    from lumen.flowdash.data_section import data_section
+
     monkeypatch.chdir(tmp_path)
     (tmp_path / "turbines.csv").write_text("p_name,t_state,p_year,p_cap,t_cap\nAlta,CA,2010,6.0,3000\n")
     routes = build_routes(["turbines.csv"], db_path=tmp_path / "dash.db")
     with set_curdoc(Document()):
         lumen_app = routes["/"]()
-        assert "metrics" in [s.name for s in admin_sections()]
+        # With sidebar sections the metrics are in the Data section rather than the admin view.
+        assert ("metrics" in [s.name for s in admin_sections()]) == (data_section() is None)
         steps = wizard_steps(lumen_app._settings_project(), lumen_app)
         assert isinstance(steps[1], KeyNumbersStep)
         assert not any(isinstance(step, DataStep) for step in steps)
@@ -366,42 +369,52 @@ def _reloaded(project, section):
     project._values.pop("metrics", None)
 
 
-def test_metrics_that_fail_to_load_are_logged_once_masked(project, source_down, caplog):
+def test_metrics_that_fail_their_check_are_left_out_logged_once_masked(project, source_down, caplog):
     _reloaded(project, raw_section(project))
-    metrics = ProjectMetrics(project)
-    with caplog.at_level("WARNING", logger="lumen.flowdash.metrics"):
+    metrics = ProjectMetrics(project, retry=3600)
+    with caplog.at_level("WARNING"):
         for _ in range(30):
             assert list(metrics) == [] and len(metrics) == 0 and "fleet" not in metrics
     assert source_down == ["fleet"]
-    warnings = [r.getMessage() for r in caplog.records if r.name == "lumen.flowdash.metrics"]
+    failure = metrics.failures["fleet"]
+    assert "hunter2" not in failure.message and "***" in failure.message and failure.kind == "query"
+    warnings = [r.getMessage() for r in caplog.records if "fleet" in r.getMessage()]
     assert len(warnings) == 1
     assert "hunter2" not in warnings[0] and "***" in warnings[0]
 
 
-def test_metrics_that_fail_to_reload_keep_the_last_good_set(project, monkeypatch, caplog):
+def test_one_failing_metric_leaves_the_others_and_is_checked_again(project, monkeypatch):
     metrics = ProjectMetrics(project, retry=0)
     assert list(metrics) == ["fleet"]
     from lumen.flowdash import metrics as module
 
     checked = module.check_metric
-    calls = []
 
-    def fail(metric, source):
-        calls.append(metric.name)
-        raise RuntimeError(f"could not connect to {SECRET_URL}")
+    def fail_capacity(metric, source):
+        if metric.name == "capacity":
+            raise module.MetricCheckError("The source 'turbines' has no table 'turbines_v2'.", ("table",))
+        return checked(metric, source)
 
-    monkeypatch.setattr(module, "check_metric", fail)
+    monkeypatch.setattr(module, "check_metric", fail_capacity)
     _reloaded(project, {**raw_section(project), "capacity": CAPACITY})
+    assert list(metrics) == ["fleet"]
+    assert metrics["fleet"].table == "turbines"
+    assert metrics.failures["capacity"].kind == "table" and metrics.problems == []
+    # With the table back, the next check takes the metric in, in the file's order.
+    monkeypatch.setattr(module, "check_metric", checked)
+    assert list(metrics) == ["fleet", "capacity"] and metrics.failures == {}
+
+
+def test_a_section_that_fails_to_load_keeps_the_last_good_set(project, caplog):
+    metrics = ProjectMetrics(project, retry=0)
+    assert list(metrics) == ["fleet"]
+    _reloaded(project, {**raw_section(project), "capacity": {"source": "turbines"}})
     with caplog.at_level("WARNING", logger="lumen.flowdash.metrics"):
-        for _ in range(5):
+        for _ in range(3):
             assert list(metrics) == ["fleet"]
-            assert metrics["fleet"].table == "turbines"
+    assert "needs either a `table`" in metrics.problems[0].message
     warnings = [r.getMessage() for r in caplog.records if r.name == "lumen.flowdash.metrics"]
     assert len(warnings) == 1 and "Keeping the 1 metric read before" in warnings[0]
-    assert "hunter2" not in warnings[0]
-    # With the source back, the next retry reads the changed metrics.
-    monkeypatch.setattr(module, "check_metric", checked)
-    assert list(metrics) == ["fleet", "capacity"]
 
 
 def test_a_failed_load_is_not_retried_before_its_time(project, source_down):
@@ -525,12 +538,15 @@ def test_the_table_flags_a_metric_a_hand_edit_broke(project, tmp_path):
     )
     view, _ = _settings(project)
     rows = {
-        name: "".join(str(getattr(getattr(c, "object", ""), "object", "")) for c in row.select()) for name, row in zip(
-            raw_section(project), view._table._rows, strict=True
-        )
+        name: "".join(str(c.object) for c in row.select() if isinstance(getattr(c, "object", None), str))
+        for name, row in zip(raw_section(project), view._table._rows, strict=True)
     }
-    assert "Not used by the app" in rows["fleet"] and "Unknown column &#x27;nope&#x27;" in rows["fleet"]
-    assert "Not used by the app" not in rows["capacity"]
+    assert "Column missing" in rows["fleet"] and "Unknown column &#x27;nope&#x27;" in rows["fleet"]
+    assert "Valid" in rows["capacity"]
     assert not view._alert.visible
+    # The banner says which metric cannot run, and the filter finds it.
+    assert view._banner.visible and "fleet can" in view._banner[0][0].object
+    view.filter = "problems"
+    assert len(view._table._rows) == 1
     clickables = [c for c in view._table._rows[0].select() if "flowdash-admin-metric-invalid" in getattr(c, "css_classes", [])]
     assert clickables
