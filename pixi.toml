@@ -127,6 +127,7 @@ pytest-asyncio = "*"
 test-unit = 'pytest lumen/tests tests/evals -n logical --dist loadgroup'
 
 [feature.test.dependencies]
+anywidget = "*"  # answer.widget, the card marimo shows
 dask-core = "*"
 datashader = "*"
 fastparquet = "*"
