@@ -2,6 +2,7 @@ import datetime as dt
 import io
 import json
 import logging
+import re
 
 from typing import get_args
 from unittest.mock import AsyncMock, patch
@@ -183,6 +184,18 @@ async def test_dependency_resolver_headless_raises_agent_errors(llm):
         await resolver.respond([{'role': 'user', 'content': 'Hello?'}], {})
 
 
+async def test_dependency_resolver_offers_actors_by_the_names_it_keys_them_by(llm, monkeypatch):
+    monkeypatch.setattr(param.parameterized, "object_count", 100_000)
+    resolver = DependencyResolver(llm=llm, agents=[ChatAgent()], tools=[_add_one], headless=True)
+    with patch.object(resolver, "_get_model", side_effect=RuntimeError("stop")) as get_model:
+        with pytest.raises(RuntimeError, match="stop"):
+            await resolver._choose_agent([{'role': 'user', 'content': 'Hello?'}], {})
+
+    names = get_model.call_args.kwargs["agent_names"]
+    assert {"ChatAgent", "_add_one"} <= set(names)
+    assert not any(re.search(r"\d{5}$", name) for name in names)
+
+
 async def test_planner_unanswerable_plan_tells_the_chat_why(llm):
     plan_model = make_plan_model(["ChatAgent"], [])
     reason = "No table has an elevation column."
@@ -342,6 +355,39 @@ def test_plan_model_schema_has_no_refs():
     assert "$ref" not in schema
     assert "$defs" not in schema
     assert '"enum": ["SQLAgent", "MetadataLookup"]' in schema
+
+
+async def test_planner_finds_its_agents_past_99999_objects(llm, monkeypatch):
+    # param counts the objects a process makes, so a long-running server names agents e.g. ChatAgent100000.
+    monkeypatch.setattr(param.parameterized, "object_count", 100_000)
+    PlanModel = make_plan_model(["ChatAgent"], [])
+    (StepModel,) = get_args(PlanModel.__annotations__['steps'])
+    llm.set_responses([
+        PlanModel(chain_of_thought="", title="Hello!", steps=[StepModel(actor="ChatAgent", instruction="Say Hello!")]),
+        "Hello there!",
+    ])
+    planner = Planner(llm=llm, headless=True)
+
+    plan = await planner.respond([{'role': 'user', 'content': 'Hello?'}], {})
+    outputs, _ = await plan.execute()
+
+    assert re.fullmatch(r"ChatAgent\d{6}", planner.agents[0].name)
+    assert plan.status == "success"
+    assert outputs[-1].object == "Hello there!"
+
+
+async def test_planner_prompt_names_each_actor_as_a_plan_step_does(llm):
+    plan_model = make_plan_model(["ChatAgent"], ["_add_one"])
+    llm.set_responses([
+        ThinkingYesNo(chain_of_thought="Simple greeting", yes=False),
+        plan_model(chain_of_thought="", title="Hello!", steps=[]),
+    ])
+    with patch.object(llm, "invoke", wraps=llm.invoke) as invoke:
+        await Planner(llm=llm, tools=[_add_one]).respond([{'role': 'user', 'content': 'Hello?'}], {})
+
+    system = invoke.call_args.kwargs["system"]
+    assert "### `_add_one`" in system and "### `ChatAgent`" in system
+    assert "FunctionTool" not in system
 
 
 async def test_planner_reasks_after_invalid_plan(llm):
