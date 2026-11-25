@@ -58,10 +58,12 @@ def test_source_node_definition_is_its_redacted_spec_as_yaml(monkeypatch):
     assert spec["initializers"] == ["CREATE ***", "SET ***"]
 
 
-def test_source_node_definition_hides_a_sqlalchemy_url_password():
+def test_source_node_definition_hides_a_sqlalchemy_url_password(monkeypatch):
     pytest.importorskip("sqlalchemy")
     from lumen.sources.sqlalchemy import SQLAlchemySource
 
+    # As on GitHub's Windows runners; postgresql:// holds the value but not as a word.
+    monkeypatch.setenv("PGUSER", "postgres")
     source = SQLAlchemySource(url="sqlite://")
     source.param.update(url="postgresql://alice:s3cr%2Ft@db.example.com/sales", connect_args={"sslpassword": "hunter22"})
     ops = editor_with(source)

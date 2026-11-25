@@ -10,4 +10,4 @@ else:
 
     if find_spec("panel_flowdash") is None:
         # The FlowDash subject needs panel-flowdash, which needs Python 3.12.
-        collect_ignore = ["test_flowdash_subject.py", "test_scenarios.py"]
+        collect_ignore = ["test_flowdash_subject.py", "test_followup_cases.py", "test_scenarios.py"]
