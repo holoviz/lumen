@@ -302,6 +302,12 @@ def test_sql_min_max():
     assert result == expected
 
 
+def test_sql_min_max_and_sort_quote_mixed_case_columns():
+    # DataFusion folds an unquoted p2t_degC to p2t_degc and then cannot find it
+    assert 'MIN("p2t_degC") AS "p2t_degC_min"' in SQLMinMax.apply_to("SELECT * FROM t", columns=["p2t_degC"])
+    assert 'ORDER BY "p2t_degC" ASC' in SQLSort.apply_to("SELECT * FROM t", by=["p2t_degC"])
+
+
 def test_sql_min_max_nonalphanum_characters():
     result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A_B-123", "Period life expectancy at birth - Sex: total - Age: 0"])
     expected = (
