@@ -2232,7 +2232,11 @@ class Answer(param.Parameterized):
         if self.spec is not None:
             return "json", json.dumps(_without_values(self.spec), indent=2, default=str)
         spec = {key: value for key, value in self.view.to_spec().items() if key != "pipeline"}
-        return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
+        try:
+            return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
+        except yaml.representer.RepresenterError:
+            # A spec can hold objects YAML cannot write, e.g. a formatter; show them as text
+            return "json", json.dumps(spec, indent=2, default=str)
 
     def _vega_lite_spec(self) -> dict | None:
         """The chart as a self-contained Vega-Lite spec, data inlined."""
