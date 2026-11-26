@@ -1467,8 +1467,12 @@ class Answer(param.Parameterized):
         messages = [{"role": "user", "content": self.question}]
         # The Planner only sets the agent's LLM while a plan runs
         llm = actor.llm or self._llm
-        with actor.param.update(llm=llm), llm.capture_usage() as usage:
-            editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
+        token = errors_in_result.set(True)  # a retried attempt's traceback stays out of the cell, as in ask
+        try:
+            with actor.param.update(llm=llm), llm.capture_usage() as usage:
+                editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
+        finally:
+            errors_in_result.reset(token)
         refined = Answer(
             agents=self._agents, context=self._context, data=self._data, editor=editor,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
