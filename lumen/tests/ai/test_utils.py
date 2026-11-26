@@ -24,7 +24,8 @@ from lumen.ai.models import (
 from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
-    content_to_text, count_tokens, describe_data, errors_in_result,
+    content_to_text, count_tokens, describe_data, describe_data_sync,
+    errors_in_result,
     find_slug_by_table_name, format_msg_content, format_tool_error,
     fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
     normalized_name, parse_huggingface_url, print_task_exception,
@@ -1179,3 +1180,9 @@ def test_normalized_name_keeps_a_given_name():
 
     assert normalized_name(ChatAgent(name="Helper")) == "Helper"
     assert normalized_name(ChatAgent(name="ChatAgent2")) == "ChatAgent2"
+
+
+def test_describe_data_writes_timestamps_as_iso_strings():
+    # A Timestamp reached the LLM as a !!python/object tag
+    out = describe_data_sync(pd.DataFrame({"time": [pd.Timestamp("2026-11-01 03:04:05", tz="UTC")], "mag": [6.8]}))
+    assert "!!python" not in out and "2026-11-01T03:04:05+00:00" in out
