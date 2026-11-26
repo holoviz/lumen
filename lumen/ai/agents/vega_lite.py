@@ -932,10 +932,11 @@ class VegaLiteAgent(BaseCodeAgent):
             for step_name, step_desc in steps.items():
                 # Only pass the vega lite 'spec' portion to prevent ballooning context
                 # Include the VegaLiteEditor so the LLM can see the current plot
-                step_name, update_dict = await self._update_spec_step(
-                    step_name, step_desc, out.spec, step_name, messages, context, doc=doc, out=out
-                )
                 try:
+                    # Polish is optional: a failed LLM call keeps the chart as it is
+                    step_name, update_dict = await self._update_spec_step(
+                        step_name, step_desc, out.spec, step_name, messages, context, doc=doc, out=out
+                    )
                     # Validate merged spec, and keep what normalization added to it
                     merged_spec = self._deep_merge_dicts(out._spec_dict["spec"], update_dict)
                     normalized = await self._extract_spec(
