@@ -19,8 +19,8 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Table, VegaLiteView, View, _force_light_theme, hvOverlayView,
-    hvPlotView,
+    DeckGLView, Table, VegaLiteView, View, _clip_to_web_mercator,
+    _force_light_theme, hvOverlayView, hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -759,6 +759,19 @@ def test_view_hvplot_geometry_auto_kind():
     plot = view.get_plot(df)
     # Polygon geometry -> a Polygons element rather than an empty/failed plot
     assert type(plot).__name__ == 'Polygons'
+
+
+@requires_geopandas
+def test_clip_to_web_mercator_drops_a_polar_cell_and_clips_one_across_the_edge():
+    # A cell wholly above 85.05 N projects to nothing on tiles and broke the whole layer
+    gdf = gpd.GeoDataFrame(
+        {"n": [1, 2, 3]},
+        geometry=[Polygon([(50, 86), (70, 86), (60, 87)]), Polygon([(0, 80), (10, 80), (5, 89)]), Polygon([(0, 0), (1, 0), (0, 1)])],
+        crs=4326,
+    )
+    clipped = _clip_to_web_mercator(gdf)
+    assert clipped["n"].tolist() == [2, 3]
+    assert clipped.geometry.bounds.maxy.max() <= 85.0511
 
 
 @requires_geopandas
