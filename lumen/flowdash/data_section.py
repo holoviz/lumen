@@ -11,10 +11,10 @@ shows the catalog (``catalog_admin.CatalogSettings``) and the metrics
 (``metrics_admin.MetricsSettings``, ``metric_page.MetricPage``), which then
 leave the admin view, whose old routes lead here. Everyone sees it all;
 only an admin turns tables off for the assistant, connects and removes
-sources, deletes uploads and defines metrics, and anyone the uploads
-settings let upload may add files. Where panel-flowdash has no sidebar
-sections, ``data_section`` gives None and the admin view keeps its
-Catalog and Metrics.
+sources, and defines metrics; anyone the uploads settings let upload may
+add files and delete their own upload, an admin anyone's. Where
+panel-flowdash has no sidebar sections, ``data_section`` gives None and
+the admin view keeps its Catalog and Metrics.
 """
 from __future__ import annotations
 
@@ -356,7 +356,13 @@ class DataPage(Viewer):
             open_it = pmui.Clickable(object=body, sizing_mode="stretch_width", margin=0)
             open_it.on_click(lambda *_args, ref=summary.ref: self.navigate(f"/{ROUTE}?source={quote(ref, safe='')}"))
             parts = [open_it]
-            if self.admin and (summary.upload is not None or summary.connection is not None):
+            # A connected source is an admin's to manage; an upload is its uploader's too, not just an admin's.
+            may_manage = (
+                self.admin if summary.connection is not None
+                else summary.upload is not None and self.uploads is not None
+                and self.uploads.may_delete(summary.upload, self.app)
+            )
+            if may_manage:
                 items = [{"label": "Delete upload" if summary.upload is not None else "Remove source",
                           "icon": "delete", "action": "remove"}]
                 if summary.problem:

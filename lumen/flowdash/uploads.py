@@ -21,10 +21,10 @@ switch applies to its tables like to any other.
 The files are kept beside the project file, in an ``uploads`` folder: each
 upload in a folder named by its stable id, and ``manifest.json`` listing
 them with who uploaded each, when, and its checksum. They are read again
-when the app starts. Deleting an upload moves its folder to
-``uploads/.trash``, where it stays for ``TRASH_DAYS`` days, so a backup
-taken shortly before stays consistent and ``Uploads.recover`` can bring
-it back.
+when the app starts. Deleting an upload, which its uploader or an admin
+may, moves its folder to ``uploads/.trash``, where it stays for
+``TRASH_DAYS`` days, so a backup taken shortly before stays consistent and
+``Uploads.recover`` can bring it back; only an admin can recover one.
 
 A file is read by the upload handler registered for its extension. A
 handler has the signature of Lumen AI's ``upload_handlers``:
@@ -364,7 +364,6 @@ class Upload:
     filename: str
     format: str
     tables: list[str]
-    uploaded_by: str
     uploaded_at: str
     size: int
     sheet: str | None = None
@@ -372,6 +371,11 @@ class Upload:
     """Stable for the upload's life, and the name of its folder."""
     sha256: str = ""
     """The checksum of the uploaded file."""
+    uploaded_by: str = ""
+    """
+    Who uploaded it, by the app's identity name; empty for a record kept
+    from before this was recorded, which only an admin may then delete.
+    """
 
     @property
     def when(self) -> dt.datetime | None:
@@ -551,6 +555,11 @@ def _is_admin(app: t.Any) -> bool:
         return False
 
 
+def _is_uploader(app: t.Any, upload: Upload) -> bool:
+    """Whether app's session is the one who made upload; a record kept before uploaders were recorded is no one's."""
+    return bool(upload.uploaded_by) and _identity_name(app) == upload.uploaded_by
+
+
 class Uploads:
     """
     The uploads of an app: the files in ``directory``, each read by the
@@ -604,6 +613,10 @@ class Uploads:
     def may_upload(self, app: t.Any) -> bool:
         """Whether ``app``'s session may upload: an admin always, anyone else as ``offered`` says."""
         return _is_admin(app) or self.offered(app)
+
+    def may_delete(self, upload: Upload | None, app: t.Any) -> bool:
+        """Whether ``app``'s session may delete ``upload``: an admin always, or whoever uploaded it, themself."""
+        return upload is not None and (_is_admin(app) or _is_uploader(app, upload))
 
     # ------------------------------------------------------------------
     # The uploads
@@ -983,10 +996,15 @@ class Uploads:
         """
         Delete the upload ``ref`` for everyone: its source and its catalog
         settings. Its folder moves to the trash, with a note of who deleted
-        it and when, and is removed ``trash_days`` later. Only an admin may.
+        it and when, and is removed ``trash_days`` later. Only an admin, or
+        whoever uploaded it, may.
         """
-        if not _is_admin(app):
-            return [Problem("Only admins can delete uploads, so this was not deleted.")]
+        with self._lock:
+            upload = self._uploads.get(ref)
+        if upload is None:
+            return [Problem(f"There is no upload {ref!r} any more.")]
+        if not self.may_delete(upload, app):
+            return [Problem("Only admins or whoever uploaded it can delete it, so this was not deleted.")]
         user = _identity_name(app)
         with self._lock:
             upload = self._uploads.pop(ref, None)

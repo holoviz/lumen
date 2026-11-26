@@ -242,7 +242,20 @@ def test_a_viewer_allowed_to_upload_adds_a_file_without_the_connect_tab(project)
     assert view.opened == ["/data"]
     assert raw_section(project)["sales"] == {"tables": {"sales": {"assistant": False}}}
     catalog.open_table("sales", "sales")
-    assert not catalog._delete.visible and not catalog.delete_upload()
+    # The viewer uploaded it themself ("bo", Session's default user), so they, not just an admin, may delete it.
+    assert catalog._delete.visible and catalog.delete_upload()
+    assert "sales" not in project.context[SOURCES_KEY]
+
+
+def test_a_viewer_cannot_delete_someone_elses_upload(project):
+    project.set("uploads", {"enabled": True})
+    uploader = page(project, user="ana")
+    uploader.catalog.add_data()
+    uploader.catalog._upload_dialog.choose(b"region,revenue\nNorth,1\n", "sales.csv")
+    assert uploader.catalog._upload_dialog.submit() is not None
+    stranger = page(project, user="bo")
+    stranger.catalog.open_table("sales", "sales")
+    assert not stranger.catalog._delete.visible and not stranger.catalog.delete_upload()
     assert "sales" in project.context[SOURCES_KEY]
 
 

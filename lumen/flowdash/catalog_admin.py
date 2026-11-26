@@ -201,10 +201,10 @@ class _CatalogTable(Table):
 class CatalogSettings(Viewer):
     """
     The catalog: the table of the sources' tables and a drawer showing one
-    of them. Only an ``editable`` one turns tables off for the assistant
-    and deletes uploads; anyone the uploads settings let upload may add
-    data. ``app`` is the session's app, by default the one whose admin view
-    builds it.
+    of them. Only an ``editable`` one turns tables off for the assistant;
+    anyone the uploads settings let upload may add data, and may delete
+    their own upload, an admin anyone's. ``app`` is the session's app, by
+    default the one whose admin view builds it.
     """
 
     editable = param.Boolean(default=True)
@@ -690,7 +690,7 @@ class CatalogSettings(Viewer):
         if self.uploads is None or self.selected is None:
             return False
         ref = self.selected[0]
-        problems = self.uploads.delete(ref, app=self._app if self.editable else None)
+        problems = self.uploads.delete(ref, app=self._app)
         self._confirm_dialog.open = False
         if problems:
             self._show_problems(problems)
@@ -770,7 +770,7 @@ class CatalogSettings(Viewer):
         self._drawer_title.object = table
         kind = "an uploaded" if row["upload"] is not None else f"a {_type_name(source)}"
         self._drawer_subtitle.object = f"Table of {ref}, {kind} source"
-        self._delete.visible = row["upload"] is not None and self.editable
+        self._delete.visible = self.uploads is not None and self.uploads.may_delete(row["upload"], self._app)
         self._rendering = True
         try:
             self._drawer_switch.value = row["assistant"]

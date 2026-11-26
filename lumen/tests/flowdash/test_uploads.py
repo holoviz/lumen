@@ -219,16 +219,61 @@ def test_uploads_are_served_again_after_a_restart(tmp_path, uploads):
     assert taken.get("sales") is None
 
 
+def test_a_manifest_entry_from_before_uploaders_were_recorded_loads_fine(tmp_path, uploads):
+    upload = uploads.add(CSV, "sales.csv", app=App(user="ana"))
+    manifest_path = tmp_path / "uploads" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    del manifest["uploads"][0]["uploaded_by"]
+    manifest_path.write_text(json.dumps(manifest))
+    restored = Uploads(tmp_path / "uploads", {})
+    restored.restore()
+    restored_upload = restored.get(upload.ref)
+    assert restored_upload is not None and restored_upload.uploaded_by == ""
+    assert "Only admins" in restored.delete(upload.ref, app=App(user="ana"))[0].message
+    assert restored.delete(upload.ref, app=App(admin=True)) == []
+
+
 def test_every_session_gets_an_upload_and_loses_a_deleted_one(uploads):
     sessions = [App(editor=FlowDash(components=COMPONENTS, context={SOURCES_KEY: {}})) for _ in range(2)]
     for app in sessions:
         uploads.attach(app)
     uploads.add(CSV, "sales.csv", app=sessions[0])
     assert all("sales" in app._editor.context[SOURCES_KEY] for app in sessions)
-    assert "Only admins" in uploads.delete("sales", app=sessions[0])[0].message
-    assert uploads.delete("sales", app=App(admin=True)) == []
+    assert "Only admins" in uploads.delete("sales", app=App(user="cy"))[0].message
+    # sessions[0] uploaded it (as "ana", App's default user), so it, not just an admin, may delete it.
+    assert uploads.delete("sales", app=sessions[0]) == []
     assert all("sales" not in app._editor.context[SOURCES_KEY] for app in sessions)
     assert uploads.uploads() == []
+
+
+def test_the_uploader_may_delete_their_own_upload(uploads):
+    upload = uploads.add(CSV, "sales.csv", app=App(user="ana"))
+    assert uploads.delete(upload.ref, app=App(user="ana")) == []
+    assert "sales" not in uploads.sources and uploads.uploads() == []
+
+
+def test_a_non_admin_non_uploader_cannot_delete_someone_elses_upload(uploads):
+    upload = uploads.add(CSV, "sales.csv", app=App(user="ana"))
+    problems = uploads.delete(upload.ref, app=App(user="cy"))
+    assert problems and "Only admins" in problems[0].message
+    assert "sales" in uploads.sources
+
+
+def test_an_admin_may_delete_anyones_upload(uploads):
+    upload = uploads.add(CSV, "sales.csv", app=App(user="ana"))
+    assert uploads.delete(upload.ref, app=App(user="cy", admin=True)) == []
+    assert "sales" not in uploads.sources
+
+
+def test_an_upload_with_no_recorded_uploader_is_only_an_admins_to_delete(uploads):
+    import dataclasses
+
+    upload = uploads.add(CSV, "sales.csv", app=App(user="ana"))
+    # A record kept from before uploaded_by was recorded, simulated by clearing it.
+    uploads._uploads[upload.ref] = dataclasses.replace(upload, uploaded_by="")
+    problems = uploads.delete(upload.ref, app=App(user="ana"))
+    assert problems and "Only admins" in problems[0].message
+    assert uploads.delete(upload.ref, app=App(admin=True)) == []
 
 
 def test_a_deleted_upload_waits_in_the_trash_and_can_be_brought_back(uploads):
