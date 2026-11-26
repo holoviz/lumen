@@ -54,6 +54,17 @@ class App:
         self.notified.append((severity, message))
 
 
+class AnonApp:
+    """A session with no real identity, e.g. ``app._identity`` never resolved: what every such session shares."""
+
+    def __init__(self, admin=False):
+        self._identity = None
+        self.admin = admin
+
+    def _still_admin(self):
+        return self.admin
+
+
 def read_notes(context, file, alias, filename):
     """A made-up format: ``key=value`` lines, one row each."""
     import pandas as pd
@@ -274,6 +285,28 @@ def test_an_upload_with_no_recorded_uploader_is_only_an_admins_to_delete(uploads
     problems = uploads.delete(upload.ref, app=App(user="ana"))
     assert problems and "Only admins" in problems[0].message
     assert uploads.delete(upload.ref, app=App(admin=True)) == []
+
+
+def test_two_identity_less_sessions_cannot_delete_each_others_or_their_own_upload(uploads):
+    """Two sessions that never resolved a real identity both record (and would both claim) "someone", so neither
+    may delete the other's upload: only an admin may. This also means the very session that uploaded it cannot
+    delete it either, since its own "identity" is just as unverified as the other session's — a deliberate
+    tightening, since without it both sessions would look like the same "uploader"."""
+    uploader, other = AnonApp(), AnonApp()
+    upload = uploads.add(CSV, "sales.csv", app=uploader)
+    assert upload.uploaded_by == "someone"
+
+    problems = uploads.delete(upload.ref, app=other)
+    assert problems and "Only admins" in problems[0].message
+    assert "sales" in uploads.sources
+
+    # Not even the uploading session may delete its own identity-less upload.
+    problems = uploads.delete(upload.ref, app=uploader)
+    assert problems and "Only admins" in problems[0].message
+    assert "sales" in uploads.sources
+
+    assert uploads.delete(upload.ref, app=AnonApp(admin=True)) == []
+    assert "sales" not in uploads.sources
 
 
 def test_a_deleted_upload_waits_in_the_trash_and_can_be_brought_back(uploads):

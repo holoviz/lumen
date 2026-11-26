@@ -548,6 +548,11 @@ def _identity_name(app: t.Any) -> str:
     return getattr(getattr(app, "_identity", None), "user", None) or "someone"
 
 
+def _has_identity(app: t.Any) -> bool:
+    """Whether app's session carries a real identity, as opposed to the "someone" every identity-less session shares."""
+    return bool(getattr(getattr(app, "_identity", None), "user", None))
+
+
 def _is_admin(app: t.Any) -> bool:
     try:
         return app is not None and bool(app._still_admin())
@@ -556,8 +561,10 @@ def _is_admin(app: t.Any) -> bool:
 
 
 def _is_uploader(app: t.Any, upload: Upload) -> bool:
-    """Whether app's session is the one who made upload; a record kept before uploaders were recorded is no one's."""
-    return bool(upload.uploaded_by) and _identity_name(app) == upload.uploaded_by
+    """Whether app's session is the one who made upload; a record kept before uploaders were recorded is no one's,
+    and neither is one made or checked by a session without a real identity, since every such session would
+    otherwise match under the shared "someone" placeholder."""
+    return bool(upload.uploaded_by) and _has_identity(app) and _identity_name(app) == upload.uploaded_by
 
 
 class Uploads:
