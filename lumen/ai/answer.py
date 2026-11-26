@@ -72,7 +72,9 @@ from .agents.hvplot import LAT_NAMES, LON_NAMES, hvPlotAgent
 from .config import PROMPTS_DIR, QueryError, RetriesExceededError
 from .coordinator import Plan, Planner
 from .editors import LumenEditor
-from .export import format_output, make_md_cell, make_preamble
+from .export import (
+    format_output, make_md_cell, make_preamble, to_pyodide_html,
+)
 from .llm import (
     Llm, get_available_llm, llm_class, quiet_retries, signed_in_cli_hint,
 )
@@ -1217,6 +1219,54 @@ class Chat(param.Parameterized):
                 extensions.append(extension)
         notebook = nbformat.v4.new_notebook(cells=[*make_preamble("", extensions=extensions), *cells])
         text = nbformat.writes(notebook)
+        if path is not None:
+            Path(path).write_text(text, encoding="utf-8")
+        return text
+
+    def to_app(self, path: str | Path | None = None, title: str | None = None) -> str:
+        """
+        The conversation as a Lumen dashboard spec, to run with
+        ``lumen serve``: a tab per answer with its chart, or its table when
+        it has none, and its written answer. Each answer's result is in the
+        spec as CSV, so the file runs on its own, with no LLM and no access
+        to the original data; it shows the results as they were, not a new
+        query. A path ending in .html gets one page that runs the dashboard
+        in the browser with Pyodide, with no server at all. Returns the
+        YAML, or the page, and writes it to path when given.
+        """
+        tables, layouts = {}, []
+        for i, answer in enumerate(self.answers, 1):
+            pipeline = answer.view.pipeline if answer.view is not None else answer.pipeline
+            if answer.status != "success" or pipeline is None:
+                continue
+            name = f"answer_{i}"
+            tables[name] = as_pandas(pipeline.data)
+            view = {"type": "table"} if answer.view is None else answer.view.to_spec()
+            # Every view reads its answer's result, which the spec holds
+            view.pop("pipeline", None)
+            layout = {"title": answer.question, "pipeline": name, "views": {name: view}}
+            if answer.value:
+                layout["description"] = answer.value
+            layouts.append(layout)
+        if not layouts:
+            raise ValueError("No answer in this conversation has data to put in an app.")
+        with config.param.update(serializer="csv"):
+            # CSV keeps the data in the file; the default keeps it in this session only
+            source = DuckDBSource.from_df(tables).to_spec()
+        spec = {
+            "config": {"title": title or "Lumen", "layout": "tabs"},
+            "sources": {"chat": source},
+            "pipelines": {layout["pipeline"]: {"source": "chat", "table": layout["pipeline"]} for layout in layouts},
+            "layouts": layouts,
+        }
+        text = yaml.dump(spec, sort_keys=False, allow_unicode=True)
+        if path is not None and Path(path).suffix.lower() in (".html", ".htm"):
+            if any(geometry_columns(df) for df in tables.values()):
+                raise ValueError(
+                    "A map cannot run in the browser app: DuckDB's spatial extension has no Pyodide build. "
+                    "Save the app as .yaml and run it with lumen serve."
+                )
+            text = to_pyodide_html(text, title or "Lumen")
         if path is not None:
             Path(path).write_text(text, encoding="utf-8")
         return text

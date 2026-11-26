@@ -75,6 +75,7 @@ To keep a conversation:
 | `chat.to_html("chat.html")` | One page: each question over its answer, the chart as an image, the SQL and the spec |
 | `chat.to_notebook("chat.ipynb")` | Each question and answer, then Lumen code that rebuilds its chart or data with no LLM |
 | `chat.to_report("Penguins")` | A Lumen Report of the answers and their charts, with its own `to_html`, `to_notebook` and `to_docx` |
+| `chat.to_app("app.yaml", title="Penguins")` | A Lumen dashboard: a tab per answer with its chart, or its table, and its text. Each result is in the file, so `lumen serve app.yaml` runs it with no LLM and no access to the original data; it shows the results as they were, not new queries. `chat.to_app("app.html")` writes the same dashboard as one page that runs in the browser with Pyodide, no Python or server needed; a chat with a map answer has to stay `.yaml`, as DuckDB's spatial extension has no browser build |
 
 ## Ask several questions
 
