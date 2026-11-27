@@ -498,7 +498,8 @@ def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
     return bool(parsed.find(sqlglot.exp.Group) or parsed.find(sqlglot.exp.AggFunc))
 
 
-ROW_GENERATING_FUNCTIONS = (sqlglot.exp.Unnest, sqlglot.exp.Explode)
+# GenerateSeries also covers Postgres' ExplodingGenerateSeries
+ROW_GENERATING_FUNCTIONS = (sqlglot.exp.Unnest, sqlglot.exp.Explode, sqlglot.exp.GenerateSeries)
 
 
 def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
@@ -527,9 +528,11 @@ def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
         return any(agg.find_ancestor(sqlglot.exp.Select) is parsed for agg in proj.find_all(sqlglot.exp.AggFunc))
 
     def constant(proj: sqlglot.exp.Expression) -> bool:
-        # A label or CURRENT_DATE reads no rows, so it adds none
+        # A label or CURRENT_DATE reads no rows, so it adds none. A function sqlglot
+        # does not know (Anonymous), such as regexp_split_to_table, may return rows.
         return proj.find(
-            sqlglot.exp.Column, sqlglot.exp.Star, sqlglot.exp.Subquery, sqlglot.exp.Window, *ROW_GENERATING_FUNCTIONS
+            sqlglot.exp.Column, sqlglot.exp.Star, sqlglot.exp.Subquery, sqlglot.exp.Window,
+            sqlglot.exp.Anonymous, *ROW_GENERATING_FUNCTIONS
         ) is None
 
     projections = parsed.expressions

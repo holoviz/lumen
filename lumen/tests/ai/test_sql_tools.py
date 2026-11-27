@@ -227,6 +227,16 @@ def test_sql_is_scalar_aggregate(sql, expected):
     assert sql_is_scalar_aggregate(sql, "duckdb") is expected
 
 
+@pytest.mark.parametrize("sql, dialect", [
+    ("SELECT COUNT(*), generate_series(1, 3) FROM t", "duckdb"),
+    ("SELECT COUNT(*), generate_series(1, 3) FROM t", "postgres"),
+    ("SELECT COUNT(*), regexp_split_to_table('a,b', ',') FROM t", "postgres"),
+])
+def test_sql_is_scalar_aggregate_with_a_set_returning_function(sql, dialect):
+    # These return a row per value, so the result is not one row
+    assert sql_is_scalar_aggregate(sql, dialect) is False
+
+
 def test_referenced_columns():
     assert referenced_columns('SELECT "Name", SUM(t.value) FROM t WHERE Region = 1 GROUP BY 1', "duckdb") == {
         "name", "value", "region",
