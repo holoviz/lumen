@@ -1231,7 +1231,7 @@ def test_answer_code_explains_joined_grids_cannot_be_rebuilt():
     source = read({"climate": grid, "tiny": pd.DataFrame({"x": [0]})})
     answer = Answer(source=source, pipeline=Pipeline(source=source, table="climate"))
     with pytest.raises(ValueError, match="joins xarray data"):
-        answer.code  # noqa: B018
+        answer.code
 
 
 async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
@@ -1249,7 +1249,7 @@ async def test_answer_code_explains_joined_grids_after_a_chat_follow_up():
     follow_up = await conversation.aask("Only the warm ones")
     assert follow_up.source is not source
     with pytest.raises(ValueError, match="joins xarray data"):
-        follow_up.code  # noqa: B018
+        follow_up.code
 
 
 class FollowUpLLM(MockLLM):
@@ -1898,7 +1898,7 @@ def test_a_redefined_class_is_another_cache_key():
 
     first = Total
 
-    class Total(BaseModel):
+    class Total(BaseModel):  # noqa: F811
         total: float
         note: str = ""
 
@@ -2115,7 +2115,7 @@ async def test_a_question_typed_into_the_chat_widget_joins_the_chat(llm, frame_s
     await async_wait_until(lambda: widget.objects[-1].object is answer.__panel__(), timeout=10000)
 
     assert answer.value == "The total value is 38."
-    assert [message.object for message in widget.objects][0] == "Total value?"  # noqa: RUF015
+    assert [message.object for message in widget.objects][0] == "Total value?"
     assert conversation._messages[-1] == {"role": "assistant", "content": "The total value is 38."}
 
 
