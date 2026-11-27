@@ -11,8 +11,8 @@ PYTHONIOENCODING = "utf-8"
 
 [environments]
 test-311 = ["py311", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-312 = ["py312", "flowdash", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
-test-313 = ["py313", "flowdash", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-312 = ["py312", "flowdash", "dbt", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
+test-313 = ["py313", "flowdash", "dbt", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
 test-314 = ["py314", "flowdash", "test-core", "test", "ai", "sql", "xarray", "geo", "docx", "evals"]
 evals = ["py314", "flowdash", "test-core", "ai", "sql", "evals"]
 test-core = ["py313", "flowdash", "test-core"]
@@ -55,6 +55,10 @@ param = ">=2.5.0b5"
 # panel-flowdash needs Python 3.12, so test-311 runs without it.
 [feature.flowdash.pypi-dependencies]
 panel-flowdash = { version = ">=0.1.0rc8", extras = ["agent"] }
+
+# dbt-sl-sdk requires Python <3.14, so test-314 runs without it.
+[feature.dbt.pypi-dependencies]
+dbt-sl-sdk = { version = ">=0.3.0", extras = ["async"] }
 
 [feature.py311.dependencies]
 python = "3.11.*"
