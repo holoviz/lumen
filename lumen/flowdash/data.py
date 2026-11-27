@@ -166,7 +166,7 @@ def metric_tables(spec: t.Any, context: Mapping[str, t.Any]) -> list[tuple[str, 
     """
     if hasattr(spec, "source") and hasattr(spec, "form"):
         spec = {"source": spec.source, "table": spec.table, "sql": spec.sql}
-    if not isinstance(spec, Mapping):
+    if not isinstance(spec, Mapping) or "environment_id" in spec:
         return []
     ref = _canonical(context)(spec.get("source"))
     if ref is None:
@@ -359,6 +359,12 @@ class MetricStatus:
     """Why it does not run on its source, a ``metrics.MetricFailure``."""
     problems: list[str] | None = None
     """Why the section, with this metric in it, does not load."""
+    origin: str | None = None
+    """External origin when inherited (e.g. ``'dbt'``); None for metrics defined in flowdash.yaml."""
+
+    @property
+    def read_only(self) -> bool:
+        return self.origin is not None
 
     @property
     def check(self) -> str:
@@ -385,12 +391,16 @@ class MetricStatus:
 def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     """
     Every metric of ``project``'s ``metrics:`` section as the file has it
-    now, with whether the app uses it, and the section's problems that
-    concern no one metric. It reads what the app's ``ProjectMetrics`` (in
-    the project's context) found, so a page listing them runs no query;
-    without one it checks them, which queries their sources.
+    now (including any inherited from a ``dbt:`` Semantic Layer declaration),
+    with whether the app uses it, and the section's problems that concern no
+    one metric. It reads what the app's ``ProjectMetrics`` (in the project's
+    context) found, so a page listing them runs no query; without one it
+    checks them, which queries their sources.
     """
-    from .metrics import METRICS_KEY, MetricSet, _Reader
+    from .dbt_metrics import DBT_KEY, metric_spec
+    from .metrics import (
+        METRICS_KEY, MetricSet, _Reader, load_section,
+    )
     from .metrics_edit import load_metrics, masked, raw_section
     from .project import ProjectError, Section
 
@@ -402,13 +412,20 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     if current is not None and hasattr(current, "snapshot"):
         snapshot = current.snapshot()
         problems = list(getattr(current, "problems", []))
+    elif DBT_KEY in section:
+        try:
+            snapshot = load_section(Section("metrics", section, project))
+            problems = []
+        except ProjectError as exc:
+            snapshot = MetricSet()
+            problems = list(exc.problems)
     else:
         snapshot, problems = load_metrics(project, section)
         problems = [p for p in problems if not (p.keys and p.keys[0] in snapshot.failures)]
     by_metric: dict[str | None, list[str]] = {}
     for problem in masked(problems):
         keys = tuple(problem.keys or ())
-        name = keys[0] if keys and keys[0] in section else None
+        name = keys[0] if keys and keys[0] in section and keys[0] != DBT_KEY else None
         by_metric.setdefault(name, []).append(problem.message)
     try:
         parsed: t.Mapping[str, t.Any] = _Reader(Section("metrics", section, project)).read()
@@ -416,7 +433,11 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
         parsed = MetricSet()
     failures = getattr(snapshot, "failures", {})
     statuses = []
+    seen: set[str] = set()
     for name, spec in section.items():
+        if name == DBT_KEY:
+            continue
+        seen.add(str(name))
         failure = failures.get(name)
         metric = parsed.get(name) or (failure.metric if failure is not None else None)
         statuses.append(MetricStatus(
@@ -425,4 +446,20 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
         # A metric the snapshot neither uses nor knows failing was not read yet, e.g. after a section problem.
         if not by_metric.get(name) and failure is None and name not in snapshot and problems:
             statuses[-1].problems = ["The project file's metrics have problems, so this one is not used yet."]
-    return statuses, by_metric.get(None, [])
+    for name, metric in snapshot.items():
+        if metric.origin is None or name in seen:
+            continue
+        seen.add(name)
+        statuses.append(MetricStatus(name, metric_spec(metric), metric, None, None, origin=metric.origin))
+    for name, failure in failures.items():
+        if failure.metric.origin is None or name in seen:
+            continue
+        seen.add(name)
+        statuses.append(MetricStatus(
+            name, metric_spec(failure.metric), failure.metric, failure, None, origin=failure.metric.origin,
+        ))
+    general = list(by_metric.get(None, []))
+    dbt_error = getattr(snapshot, "dbt_error", None)
+    if dbt_error and dbt_error not in general:
+        general.append(dbt_error)
+    return statuses, general

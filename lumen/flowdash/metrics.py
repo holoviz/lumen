@@ -318,10 +318,16 @@ class Metric:
     dimensions: dict[str, Dimension] = field(default_factory=dict)
     parameters: dict[str, Parameter] = field(default_factory=dict)
     access: Permission = field(default_factory=Permission)
+    origin: str | None = None
 
     @property
     def form(self) -> str:
         return "sql" if self.sql is not None else "structured"
+
+    @property
+    def read_only(self) -> bool:
+        """Whether this metric is inherited from an external layer (e.g. dbt) and cannot be edited here."""
+        return self.origin is not None
 
     def values(self, given: Mapping[str, Any] | None) -> dict[str, Any]:
         """
@@ -423,10 +429,13 @@ class MetricSet(Mapping[str, Metric]):
     def __init__(
         self, metrics: Mapping[str, Metric] | None = None, section: Section | None = None,
         failures: Mapping[str, MetricFailure] | None = None,
+        *, dbt_config: Any = None, dbt_error: str | None = None,
     ):
         self._metrics = dict(metrics or {})
         self.section = section
         self.failures = dict(failures or {})
+        self.dbt_config = dbt_config
+        self.dbt_error = dbt_error
 
     def __getitem__(self, name: str) -> Metric:
         return self._metrics[name]
@@ -554,6 +563,8 @@ class _Reader:
         return value
 
     def read(self) -> MetricSet:
+        from .dbt_metrics import DBT_KEY, read_dbt_config
+
         section = self.section.value
         if section is None:
             return MetricSet(section=self.section)
@@ -561,14 +572,19 @@ class _Reader:
             self.fail((), "`metrics` must be a mapping of metric names to definitions.")
             raise ProjectError(self.problems)
         metrics = {}
+        dbt_config = None
         for name, spec in section.items():
+            if name == DBT_KEY:
+                if spec is not None:
+                    dbt_config = read_dbt_config(self, spec)
+                continue
             if self.name(name, (name,), "Metric name"):
                 metric = self.metric(name, spec)
                 if metric is not None:
                     metrics[name] = metric
         if self.problems:
             raise ProjectError(self.problems)
-        return MetricSet(metrics, self.section)
+        return MetricSet(metrics, self.section, dbt_config=dbt_config)
 
     def metric(self, name: str, spec: Any) -> Metric | None:
         path = (name,)
@@ -790,18 +806,42 @@ class _Reader:
 
 def load_section(section: Section) -> MetricSet:
     """
-    The loader of the ``metrics:`` section: its metrics, checked against
-    the Lumen sources of the project's context when it has them (see
-    ``check_metrics``), with a metric over a source the app does not serve
-    left out and reported by ``Section.warn``. Raises ``ProjectError`` with
-    every problem found.
+    The loader of the ``metrics:`` section: its metrics (including any inherited
+    from a ``dbt:`` Semantic Layer declaration), checked against the Lumen
+    sources of the project's context when it has them (see ``check_metrics``),
+    with a metric over a source the app does not serve left out and reported by
+    ``Section.warn``. Raises ``ProjectError`` with every problem found.
     """
+    from .dbt_metrics import DBT_KEY, load_dbt_metrics
     from .nodes import SOURCES_KEY
 
     metrics = _Reader(section).read()
+    dbt_failures: dict[str, MetricFailure] = {}
+    dbt_error: str | None = None
+    if metrics.dbt_config is not None:
+        dbt_loaded, dbt_failures, dbt_error = load_dbt_metrics(metrics.dbt_config, section)
+        report = section.warn
+        merged = dict(metrics._metrics)
+        for name, metric in dbt_loaded.items():
+            if name in merged:
+                report(
+                    (DBT_KEY,),
+                    f"dbt metric {name!r} is left out: a metric with that name is already defined in metrics.",
+                )
+                continue
+            merged[name] = metric
+        metrics = MetricSet(
+            merged, metrics.section, dbt_failures, dbt_config=metrics.dbt_config, dbt_error=dbt_error,
+        )
     if SOURCES_KEY not in section.context:
         return metrics
-    return check_metrics(metrics, section.context)[0]
+    checked, _ = check_metrics(metrics, section.context)
+    if dbt_failures:
+        return MetricSet(
+            checked._metrics, checked.section, {**dbt_failures, **checked.failures},
+            dbt_config=metrics.dbt_config, dbt_error=dbt_error,
+        )
+    return checked
 
 
 def read_metrics(project: Project) -> MetricSet:
@@ -1179,9 +1219,11 @@ def check_metrics(metrics: MetricSet, context: Mapping[str, Any]) -> tuple[Metri
     def fail(name: str, path: tuple, message: str, warning: str | None = None) -> None:
         # An engine's error may quote its connection URL, which is shown and logged.
         message = redact_secrets(message)
-        failures[name] = MetricFailure(metrics[name], message, path)
+        metric = metrics[name]
+        failures[name] = MetricFailure(metric, message, path)
         text = warning or f"Metric {name!r} is left out: {message}"
-        warnings.append(report((name, *path), text) if report is not None else Problem(text))
+        warn_path = (metric.origin,) if metric.origin else (name, *path)
+        warnings.append(report(warn_path, text) if report is not None else Problem(text))
 
     for name, metric in metrics.items():
         source = lookup_source(metric.source, context)
@@ -1199,7 +1241,9 @@ def check_metrics(metrics: MetricSet, context: Mapping[str, Any]) -> tuple[Metri
             fail(name, (), f"Metric {name!r}: {exc}")
             continue
         kept[name] = metric
-    return MetricSet(kept, metrics.section, failures), warnings
+    return MetricSet(
+        kept, metrics.section, failures, dbt_config=metrics.dbt_config, dbt_error=metrics.dbt_error,
+    ), warnings
 
 
 class MetricCheckError(ValueError):
@@ -1320,6 +1364,8 @@ class ProjectMetrics(MetricSet):
         now = time.monotonic()
         if self._failed_at is not None:
             return now - self._failed_at >= self.retry
+        if self._snapshot.dbt_error and now - self._checked_at >= self.retry:
+            return True
         return bool(self._snapshot.failures) and now - self._checked_at >= self.retry
 
     def snapshot(self) -> MetricSet:
@@ -1340,15 +1386,20 @@ class ProjectMetrics(MetricSet):
                     return self._read(log=True)
             if self._failed_at is not None and time.monotonic() - self._failed_at >= self.retry:
                 return self._read(log=False)
+            if self._snapshot.dbt_error and time.monotonic() - self._checked_at >= self.retry:
+                return self._read(log=False, force=True)
             if self._due():
                 return self._recheck()
             return self._snapshot
         finally:
             self._lock.release()
 
-    def _read(self, log: bool) -> MetricSet:
+    def _read(self, log: bool, force: bool = False) -> MetricSet:
         try:
-            metrics = read_metrics(self.project)
+            if force:
+                metrics = load_section(Section(SECTION, self.project.data.get(SECTION), self.project))
+            else:
+                metrics = read_metrics(self.project)
         except ProjectError as exc:
             self._failed_at = time.monotonic()
             self.problems = list(exc.problems)
@@ -1370,6 +1421,8 @@ class ProjectMetrics(MetricSet):
     def _recheck(self) -> MetricSet:
         """The snapshot with the metrics left out checked again, e.g. once their source is back."""
         current = self._snapshot
+        if any(f.metric.origin == "dbt" and f.path == ("dbt",) for f in current.failures.values()):
+            return self._read(log=False, force=True)
         retried, _ = check_metrics(
             MetricSet({name: failure.metric for name, failure in current.failures.items()}), self.project.context,
         )
@@ -1381,8 +1434,15 @@ class ProjectMetrics(MetricSet):
         metrics = {**current._metrics, **retried._metrics}
         order = [name for name in (self._raw if isinstance(self._raw, dict) else {}) if name in metrics]
         order += [name for name in metrics if name not in order]
-        self._snapshot = MetricSet({name: metrics[name] for name in order}, current.section, retried.failures)
+        self._snapshot = MetricSet(
+            {name: metrics[name] for name in order}, current.section, retried.failures,
+            dbt_config=current.dbt_config, dbt_error=current.dbt_error,
+        )
         return self._snapshot
+
+    @property
+    def dbt_error(self) -> str | None:
+        return self.snapshot().dbt_error
 
     @property
     def failures(self) -> dict[str, MetricFailure]:  # type: ignore[override]
