@@ -359,6 +359,12 @@ class MetricStatus:
     """Why it does not run on its source, a ``metrics.MetricFailure``."""
     problems: list[str] | None = None
     """Why the section, with this metric in it, does not load."""
+    origin: str | None = None
+    """External origin when inherited (e.g. ``'dbt'``); None for metrics defined in flowdash.yaml."""
+
+    @property
+    def read_only(self) -> bool:
+        return self.origin is not None
 
     @property
     def check(self) -> str:
@@ -382,15 +388,38 @@ class MetricStatus:
         return value.strip() if isinstance(value, str) else ""
 
 
+def _with_cached_dbt(snapshot: t.Any, context: Mapping[str, t.Any]) -> t.Any:
+    """``snapshot`` with the dbt metrics of a fetch still cached added; a page render never asks dbt itself."""
+    from .dbt_metrics import cached_dbt_metrics
+    from .metrics import MetricSet, check_metrics
+    from .nodes import SOURCES_KEY
+
+    config = getattr(snapshot, "dbt_config", None)
+    cached = cached_dbt_metrics(config) if config is not None else None
+    if not cached:
+        return snapshot
+    inherited = MetricSet({name: m for name, m in cached.items() if name not in snapshot})
+    if SOURCES_KEY in context:
+        inherited, _ = check_metrics(inherited, context)
+    return MetricSet(
+        {**snapshot._metrics, **inherited._metrics}, snapshot.section, {**inherited.failures, **snapshot.failures},
+        dbt_config=config, dbt_error=snapshot.dbt_error,
+    )
+
+
 def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     """
     Every metric of ``project``'s ``metrics:`` section as the file has it
-    now, with whether the app uses it, and the section's problems that
-    concern no one metric. It reads what the app's ``ProjectMetrics`` (in
-    the project's context) found, so a page listing them runs no query;
-    without one it checks them, which queries their sources.
+    now (including any inherited from a ``dbt:`` Semantic Layer declaration),
+    with whether the app uses it, and the section's problems that concern no
+    one metric. It reads what the app's ``ProjectMetrics`` (in the project's
+    context) found, so a page listing them runs no query; without one it
+    checks them, which queries their sources, and shows dbt metrics only
+    from a fetch still cached.
     """
-    from .metrics import METRICS_KEY, MetricSet, _Reader
+    from .metrics import (
+        DBT_KEY, METRICS_KEY, MetricSet, _Reader, metric_spec,
+    )
     from .metrics_edit import load_metrics, masked, raw_section
     from .project import ProjectError, Section
 
@@ -405,10 +434,11 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     else:
         snapshot, problems = load_metrics(project, section)
         problems = [p for p in problems if not (p.keys and p.keys[0] in snapshot.failures)]
+        snapshot = _with_cached_dbt(snapshot, project.context or {})
     by_metric: dict[str | None, list[str]] = {}
     for problem in masked(problems):
         keys = tuple(problem.keys or ())
-        name = keys[0] if keys and keys[0] in section else None
+        name = keys[0] if keys and keys[0] in section and keys[0] != DBT_KEY else None
         by_metric.setdefault(name, []).append(problem.message)
     try:
         parsed: t.Mapping[str, t.Any] = _Reader(Section("metrics", section, project)).read()
@@ -416,7 +446,11 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
         parsed = MetricSet()
     failures = getattr(snapshot, "failures", {})
     statuses = []
+    seen: set[str] = set()
     for name, spec in section.items():
+        if name == DBT_KEY:
+            continue
+        seen.add(str(name))
         failure = failures.get(name)
         metric = parsed.get(name) or (failure.metric if failure is not None else None)
         statuses.append(MetricStatus(
@@ -425,4 +459,20 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
         # A metric the snapshot neither uses nor knows failing was not read yet, e.g. after a section problem.
         if not by_metric.get(name) and failure is None and name not in snapshot and problems:
             statuses[-1].problems = ["The project file's metrics have problems, so this one is not used yet."]
-    return statuses, by_metric.get(None, [])
+    for name, metric in snapshot.items():
+        if metric.origin is None or name in seen:
+            continue
+        seen.add(name)
+        statuses.append(MetricStatus(name, metric_spec(metric), metric, None, None, origin=metric.origin))
+    for name, failure in failures.items():
+        if failure.metric.origin is None or name in seen:
+            continue
+        seen.add(name)
+        statuses.append(MetricStatus(
+            name, metric_spec(failure.metric), failure.metric, failure, None, origin=failure.metric.origin,
+        ))
+    general = list(by_metric.get(None, []))
+    dbt_error = getattr(snapshot, "dbt_error", None)
+    if dbt_error and dbt_error not in general:
+        general.append(dbt_error)
+    return statuses, general

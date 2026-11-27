@@ -29,8 +29,8 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from ..sources.base import BaseSQLSource
 from .access import is_admin
 from .metrics import (
-    _NAME, SECTION, Metric, MetricSet, Query, _Reader, aggregate, bind_sql,
-    check_metrics, coerce_dimension_values, prepare, table_sql,
+    _NAME, DBT_KEY, SECTION, Metric, MetricSet, Query, _Reader, aggregate,
+    bind_sql, check_metrics, coerce_dimension_values, prepare, table_sql,
 )
 from .project import (
     Problem, Project, ProjectError, Section,
@@ -137,6 +137,22 @@ def metric_problems(project: Project, section: Mapping[str, t.Any]) -> dict[str 
     return by_metric
 
 
+def _readonly_origin(project: Project, name: str) -> str | None:
+    """The external origin (e.g. ``'dbt'``) of ``name`` if it is a read-only inherited metric."""
+    from .metrics import METRICS_KEY
+
+    current = (project.context or {}).get(METRICS_KEY)
+    if current is None:
+        return None
+    snapshot = current.snapshot() if hasattr(current, "snapshot") else current
+    if name in snapshot and getattr(snapshot[name], "read_only", False):
+        return snapshot[name].origin
+    failure = getattr(snapshot, "failures", {}).get(name)
+    if failure is not None and getattr(failure.metric, "read_only", False):
+        return failure.metric.origin
+    return None
+
+
 def check_metric(
     project: Project, name: str, spec: t.Any, original: str | None = None,
     current: Mapping[str, t.Any] | None = None,
@@ -150,6 +166,12 @@ def check_metric(
     if not isinstance(name, str) or not _NAME.fullmatch(name):
         return [_problem(str(name), (NAME_KEY,), "A metric's name is letters, digits and underscores, "
                          "starting with a letter, e.g. capacity_mw.")]
+    if name == DBT_KEY:
+        return [_problem(name, (NAME_KEY,), "'dbt' is reserved for the dbt Semantic Layer connection.")]
+    if original is not None and (origin := _readonly_origin(project, original)):
+        return [_problem(original, (), f"Metric {original!r} comes from {origin} and is read-only.")]
+    if name != original and (origin := _readonly_origin(project, name)):
+        return [_problem(name, (NAME_KEY,), f"Metric {name!r} comes from {origin} and is read-only.")]
     if not isinstance(spec, dict):
         return [_problem(name, (), "A metric is a mapping of its settings.")]
     current = raw_section(project) if current is None else current
@@ -239,6 +261,10 @@ def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = UNSE
     with _FILE_LOCK:
         if not is_admin(app):
             return [Problem(NOT_ADMIN.replace("saved", "deleted"))]
+        if name == DBT_KEY:
+            return [_problem(name, (), "'dbt' is the dbt Semantic Layer connection, not a metric.")]
+        if (origin := _readonly_origin(project, name)):
+            return [_problem(name, (), f"Metric {name!r} comes from {origin} and is read-only.")]
         try:
             current = raw_section(project)
         except ProjectError as exc:

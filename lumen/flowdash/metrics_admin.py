@@ -53,7 +53,9 @@ from .data import (
     CHECKS, DashboardRef, MetricStatus, metric_statuses, metric_usage,
     visible_dashboards,
 )
-from .metrics import SECTION, metrics_page
+from .metrics import (
+    DBT_KEY, DBT_ORIGIN, SECTION, metrics_page,
+)
 from .metrics_edit import (
     NAME_KEY, NOT_ADMIN_PREVIEW, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET,
     PreviewResult, check_metric, delete_metric, literal_blocks, masked,
@@ -354,12 +356,17 @@ class MetricEditor(Viewer):
             styles={"gap": "14px"},
             css_classes=["flowdash-metric-editor"],
         )
+        self._preview_parts = list(self._layout[4:])
         if not editable:
-            for widget in (self._name, self._description, self._source, self._table, self._yaml):
-                widget.disabled = True
-            for item in self._layout[4:]:
-                item.visible = False
+            self.set_readonly(True)
         self.load()
+
+    def set_readonly(self, readonly: bool):
+        """Show the definition without letting it be edited or previewed, or editable again."""
+        for widget in (self._name, self._description, self._source, self._table, self._yaml):
+            widget.disabled = readonly
+        for item in self._preview_parts:
+            item.visible = not readonly
 
     def _context(self) -> Mapping[str, t.Any]:
         return self.project.context or {}
@@ -742,11 +749,13 @@ class MetricsSettings(Viewer):
     def _passes(self, status: MetricStatus) -> bool:
         if self.filter == "problems" and status.check == "valid":
             return False
+        if self.filter == f"origin:{DBT_ORIGIN}" and status.origin != DBT_ORIGIN:
+            return False
         if self.filter.startswith("source:") and status.spec.get("source") != self.filter[7:]:
             return False
         measures, dimensions = _fields(status.spec)
         haystack = " ".join([status.name, status.description, str(status.spec.get("table") or ""),
-                             *measures, *dimensions]).lower()
+                             status.origin or "", *measures, *dimensions]).lower()
         return all(word in haystack for word in self.query.lower().split())
 
     def _chip(self, key: str) -> pmui.Chip:
@@ -767,14 +776,20 @@ class MetricsSettings(Viewer):
         usage = self.usage()
         where = Path(self.project.path).name if self.project.path else "the project file"
         n = len(statuses)
-        self._count.object = f"{n} metric{'' if n == 1 else 's'} in {where}"
+        n_dbt = sum(s.origin == DBT_ORIGIN for s in statuses)
+        dbt_note = f" ({n_dbt} from dbt)" if n_dbt else ""
+        self._count.object = f"{n} metric{'' if n == 1 else 's'}{dbt_note} in {where}"
         refs = list(dict.fromkeys(str(s.spec.get("source")) for s in statuses if s.spec.get("source")))
         failing = [s for s in statuses if s.check != "valid"]
-        counts = {"all": n, "problems": len(failing)}
+        counts = {"all": n, f"origin:{DBT_ORIGIN}": n_dbt, "problems": len(failing)}
         for ref in refs:
             counts[f"source:{ref}"] = sum(s.spec.get("source") == ref for s in statuses)
-        labels = {"all": "All", **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}),
-                  "problems": "Has problems"}
+        labels = {
+            "all": "All",
+            **({f"origin:{DBT_ORIGIN}": "From dbt"} if n_dbt else {}),
+            **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}),
+            "problems": "Has problems",
+        }
         if self.filter not in labels:
             self.filter = "all"
             return
@@ -844,14 +859,20 @@ class MetricsSettings(Viewer):
         name, spec = status.name, status.spec
         measures, dimensions = _fields(spec)
         parameters = [str(p) for p in spec.get("parameters") or {}] if isinstance(spec.get("parameters"), dict) else []
+        origin_chip = f" {chip(status.origin, 'outlined')}" if status.origin else ""
         title = cell(
-            f'<div class="metric"><span class="main mono-name">Σ&nbsp; {esc(name)}</span>'
+            f'<div class="metric"><span class="main mono-name">Σ&nbsp; {esc(name)}{origin_chip}</span>'
             f'<span class="main muted small">{esc(status.description) or "&nbsp;"}</span></div>',
             stylesheets=[_ROW_CSS],
         )
+        row_classes = []
+        if status.check != "valid":
+            row_classes.append("flowdash-admin-metric-invalid")
+        if status.origin == DBT_ORIGIN:
+            row_classes.append("flowdash-metric-dbt")
         open_it = pmui.Clickable(
             object=title, sizing_mode="stretch_width", margin=0,
-            css_classes=["flowdash-admin-metric-invalid"] if status.check != "valid" else [],
+            css_classes=row_classes,
         )
         open_it.on_click(lambda *_args, name=name: self.open(name))
         table = spec.get("table") if "table" in spec else None
@@ -878,19 +899,22 @@ class MetricsSettings(Viewer):
             cell(used_html(used, []), stylesheets=[_USED_CSS]),
         ]
         if self.editable:
-            menu = pmui.MenuButton(
-                items=[
-                    {"label": "Edit", "icon": "edit", "action": "edit"},
-                    {"label": "Duplicate", "icon": "content_copy", "action": "duplicate"},
-                    {"label": "Delete", "icon": "delete", "action": "delete"},
-                ],
-                icon="more_vert", label="", variant="text", color="default", size="small", icon_size="20px",
-                margin=0, sx=_MENU_SX, description=f"More actions for {name}",
-                css_classes=["flowdash-admin-metric-menu"],
-            )
-            menu.on_click(lambda item, name=name: self.run(item.get("action"), name))
-            self._menus[name] = menu
-            cells.append(menu)
+            if status.read_only:
+                cells.append(cell("", css_classes=["flowdash-metric-readonly"]))
+            else:
+                menu = pmui.MenuButton(
+                    items=[
+                        {"label": "Edit", "icon": "edit", "action": "edit"},
+                        {"label": "Duplicate", "icon": "content_copy", "action": "duplicate"},
+                        {"label": "Delete", "icon": "delete", "action": "delete"},
+                    ],
+                    icon="more_vert", label="", variant="text", color="default", size="small", icon_size="20px",
+                    margin=0, sx=_MENU_SX, description=f"More actions for {name}",
+                    css_classes=["flowdash-admin-metric-menu"],
+                )
+                menu.on_click(lambda item, name=name: self.run(item.get("action"), name))
+                self._menus[name] = menu
+                cells.append(menu)
         return cells
 
     def run(self, action: str | None, name: str):
@@ -913,7 +937,7 @@ class MetricsSettings(Viewer):
         self._drawer_alert = pmui.Alert(
             object="", severity="error", visible=False, sizing_mode="stretch_width", margin=0
         )
-        cancel = pmui.Button(
+        self._cancel = cancel = pmui.Button(
             label="Cancel" if self.editable else "Done", variant="outlined", color="default", margin=0,
         )
         cancel.on_click(lambda _event: self.close_metric())
@@ -980,20 +1004,37 @@ class MetricsSettings(Viewer):
         opener = self._menus.get(self._return_to) if self._return_to is not None else None
         _focus_after_close(opener or self._new, self._focus_guard)
 
+    def _set_editor_readonly(self, readonly: bool):
+        disabled = readonly or not self.editable
+        self._editor.set_readonly(disabled)
+        self._save.param.update(disabled=disabled, visible=not disabled)
+        self._cancel.label = "Done" if disabled else "Cancel"
+
     def open_metric(self, name: str | None, spec: Mapping[str, t.Any] | None = None, title: str | None = None):
         """Open the editor on metric ``name``, or on a new one (defined as ``spec``, if given)."""
         section = self.section()
-        if name is not None and name not in section:
-            return
-        self.selected = name
+        readonly_status = None
+        if name is not None and (name == DBT_KEY or name not in section):
+            readonly_status = next((s for s in self.statuses() if s.name == name and s.read_only), None)
+            if readonly_status is None:
+                return
+        self.selected = None if readonly_status is not None else name
         self._return_to = name
-        self._base = copy.deepcopy(section[name]) if name is not None else UNSET
+        self._base = copy.deepcopy(section[name]) if name is not None and readonly_status is None else UNSET
         with pn.io.hold():
             self._drawer_alert.visible = False
-            self._drawer_title.object = title or (
-                "New metric" if name is None else f"Edit {name}" if self.editable else name
-            )
-            self._editor.load(name or "", section[name] if name is not None else spec)
+            if readonly_status is not None:
+                self._drawer_title.object = title or f"{name} (from {readonly_status.origin})"
+                self._drawer_subtitle.object = f"Inherited from {readonly_status.origin} (read-only)."
+                self._set_editor_readonly(True)
+                self._editor.load(name or "", readonly_status.spec)
+            else:
+                self._drawer_title.object = title or (
+                    "New metric" if name is None else f"Edit {name}" if self.editable else name
+                )
+                self._drawer_subtitle.object = HELP
+                self._set_editor_readonly(False)
+                self._editor.load(name or "", section[name] if name is not None else spec)
             self._drawer.open = True
 
     def close_metric(self):
@@ -1041,7 +1082,7 @@ class MetricsSettings(Viewer):
     def duplicate(self, name: str):
         """Open the editor on a new metric defined as ``name`` is, named after it."""
         section = self.section()
-        if name not in section:
+        if name == DBT_KEY or name not in section:
             return
         copy_name, n = f"{name}_copy", 1
         while copy_name in section:
@@ -1111,7 +1152,7 @@ class MetricsSettings(Viewer):
     def ask_delete(self, name: str):
         """Ask before deleting ``name``, listing the dashboards that use it."""
         section = self.section()
-        if name not in section:
+        if name == DBT_KEY or name not in section:
             return
         used = self.usage().get(name, [])
         self._pending = ("delete", name, copy.deepcopy(section[name]))
