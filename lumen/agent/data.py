@@ -59,8 +59,13 @@ METRIC_TEXT_CHARS = 160
 METRIC_FIELD_CHARS = 80
 METRIC_NAMES_CHARS = 600
 
-# The metaset of each source, with the tables it covers.
-_METASETS: weakref.WeakKeyDictionary[Source, tuple[tuple[str, ...], Metaset]] = weakref.WeakKeyDictionary()
+# The metaset of each source, with the tables and metadata revision it covers.
+_METASETS: weakref.WeakKeyDictionary[Source, tuple[tuple[str, ...], int, Metaset]] = weakref.WeakKeyDictionary()
+
+
+def invalidate_metaset(source: Source) -> None:
+    """Drop the cached Metaset for ``source`` so the assistant reads fresh metadata and stats."""
+    _METASETS.pop(source, None)
 
 
 def _sources_by_name(deps: FlowDashDeps) -> dict[str, tuple[str | None, Source | None]]:
@@ -171,15 +176,20 @@ def allow_host_sources(ops) -> None:
 async def metaset(source: Source, tables: list[str] | None = None) -> Metaset:
     """
     The catalog and column statistics of ``tables`` of ``source``, every
-    listed table by default, computed once per source and set of tables.
+    listed table by default, computed once per source, set of tables and
+    metadata revision.
     """
     tables_key = tuple(listed_tables(source) if tables is None else tables)
+    revision = source._metadata_revision
     cached = _METASETS.get(source)
-    if cached is None or cached[0] != tables_key:
+    if cached is None or cached[0] != tables_key or cached[1] != revision:
         slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in tables_key]
-        prev = cached[1] if cached is not None else None
-        _METASETS[source] = (tables_key, await get_metaset([source], slugs, prev=prev, stats_timeout=STATS_TIMEOUT))
-    return _METASETS[source][1]
+        # Reuse earlier catalog entries only when the source's descriptions did not change.
+        prev = cached[2] if cached is not None and cached[1] == revision else None
+        _METASETS[source] = (
+            tables_key, revision, await get_metaset([source], slugs, prev=prev, stats_timeout=STATS_TIMEOUT),
+        )
+    return _METASETS[source][2]
 
 
 def _turned_off(deps: FlowDashDeps, source: Source, table: str, name: str) -> str | None:

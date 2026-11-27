@@ -745,14 +745,27 @@ class Source(MultiTypeComponent):
                 **described.get("columns", {}),
                 **{column: _as_column_metadata(value) for column, value in columns.items()},
             }
+        self._set_descriptions(table, described)
+        return self
+
+    def _set_descriptions(self, table: str, described: dict | None) -> None:
+        """
+        Replace the descriptions of ``table`` with ``described`` (or remove
+        them when it is empty) without querying the source or validating
+        against its schema, and bump ``_metadata_revision``.
+        """
+        descriptions = dict(self.descriptions)
+        if described:
+            descriptions[table] = described
+        else:
+            descriptions.pop(table, None)
         # A parameter, so specs and answer.code carry it. Without events: a
         # parameter change otherwise clears the data cache, on disk too, for
         # what is only a change of words.
         with param.parameterized.discard_events(self):
-            self.descriptions = {**self.descriptions, table: described}
+            self.descriptions = descriptions
         self._metadata_cache = {}
         self._metadata_revision += 1
-        return self
 
     def chat(self, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
         """

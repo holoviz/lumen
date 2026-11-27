@@ -1079,6 +1079,15 @@ def _schemas_read(source: Source) -> dict[str, dict | None]:
         return {table: schema for table, (_, schema) in read.items()}
 
 
+def invalidate_source_schemas(source: Source, table: str | None = None) -> None:
+    """Drop cached overview schemas for ``table`` of ``source``, or all tables when ``table`` is None."""
+    with _PREVIEW_LOCK:
+        if table is None:
+            _SCHEMAS_READ.pop(source, None)
+        elif (read := _SCHEMAS_READ.get(source)) is not None:
+            read.pop(table, None)
+
+
 def _read_schemas(source: Source, tables: list[str]) -> None:
     """Read the schema of each of ``tables`` and remember it, or that it failed."""
     for table in tables:

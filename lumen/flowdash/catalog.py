@@ -63,6 +63,8 @@ _LEGACY_TARGET = re.compile(r'FROM "((?:[^"]|"")+)"')
 # The rows ``table_detail`` reads of a table, and how long reading them may take.
 SAMPLE_ROWS = 10
 SAMPLE_TIMEOUT = 5
+# Seconds the table drawer waits for statistics not cached yet; they keep computing after.
+STATS_TIMEOUT = 5
 # The values of a column ``table_detail`` lists before saying how many more there are.
 VALUES_SHOWN = 6
 
@@ -357,11 +359,17 @@ class ColumnInfo:
     type: str = ""
     values: str = ""
     description: str = ""
+    nulls: str = ""
+    distinct: str = ""
+    sql_type: str = ""
+    stats_summary: str = ""
+    primary_key: bool = False
+    references: str = ""
 
 
 @dataclass
 class TableDetail:
-    """All that is known of a table: its columns with their types and values, its metadata and its first rows."""
+    """All that is known of a table: its columns with their types, statistics and values, its metadata and its first rows."""
 
     rows: int | None = None
     description: str = ""
@@ -370,6 +378,9 @@ class TableDetail:
     sample: Any = None
     error: str | None = None
     sample_error: str | None = None
+    stats: Any = None
+    stats_note: str = ""
+    stats_pending: Any = field(default=None, repr=False, compare=False)
 
 
 def safe_error(exc: BaseException) -> str:
@@ -456,13 +467,114 @@ def sample_sql(source: BaseSQLSource, table: str, rows: int = SAMPLE_ROWS) -> st
     return SQLLimit(limit=rows, write=source.dialect).apply(source.get_sql_expr(source.normalize_table(table)))
 
 
-def table_detail(source: Source, table: str, timeout: float = SAMPLE_TIMEOUT) -> TableDetail:
+def _format_null_share(nulls: float | None) -> str:
+    if nulls is None:
+        return ""
+    if nulls <= 0:
+        return "0%"
+    if nulls >= 1:
+        return "100%"
+    pct = nulls * 100
+    if pct < 1:
+        return "<1%"
+    if pct > 99:
+        return ">99%"
+    return f"{pct:.0f}%"
+
+
+def _format_distinct(col: Any, stats: Any) -> str:
+    from ..data.stats import EXACT
+
+    if col is None or col.distinct is None:
+        return ""
+    exact = getattr(stats, "method", None) == EXACT
+    rows = getattr(stats, "rows", None)
+    nonnull = round(rows * (1 - col.nulls)) if exact and rows is not None and col.nulls is not None else None
+    if exact and nonnull and nonnull > 1 and col.distinct == nonnull:
+        return f"{col.distinct:,} (unique)"
+    return f"{col.distinct:,}"
+
+
+def _format_stats_summary(col: Any, stats: Any) -> str:
+    from ..data.stats import EXACT
+
+    if col is None:
+        return ""
+    if col.nulls is not None and col.nulls >= 1:
+        return "All null"
+    if col.values:
+        parts = []
+        for value, count in col.values[:VALUES_SHOWN]:
+            text = plain_text(value) or "NULL"
+            if isinstance(count, float):
+                pct = count * 100
+                suffix = " (<1%)" if 0 < pct < 1 else f" ({pct:.0f}%)"
+            elif count is not None:
+                suffix = f" ({int(count):,})"
+            else:
+                suffix = ""
+            parts.append(f"{text}{suffix}")
+        shown = ", ".join(parts)
+        exact = getattr(stats, "method", None) == EXACT
+        if col.distinct and col.distinct > len(parts) and (exact or col.values_complete):
+            shown += f" +{col.distinct - len(parts)} more"
+        elif len(col.values) > len(parts):
+            shown += f" +{len(col.values) - len(parts)} more"
+        elif not col.values_complete:
+            shown += ", ..."
+        return shown
+    if col.kind in ("numeric", "temporal") and (col.min is not None or col.max is not None):
+        lo, hi = plain_text(col.min), plain_text(col.max)
+        return lo if lo == hi else f"{lo} to {hi}"
+    if col.examples:
+        shown = ", ".join(plain_text(v) for v in col.examples[:VALUES_SHOWN] if v is not None)
+        return f"e.g. {shown}" if shown else ""
+    return ""
+
+
+def _format_stats_note(stats: Any) -> str:
+    from ..data.stats import (
+        ESTIMATED, EXACT, SAMPLED, SCHEMA, TYPES_ONLY,
+    )
+
+    if stats is None or not getattr(stats, "columns", None):
+        return ""
+    method = getattr(stats, "method", None)
+    if method == EXACT:
+        return "Exact"
+    if method == SAMPLED:
+        size = getattr(stats, "sample_size", None)
+        if size:
+            kind = "sample" if getattr(stats, "sample_random", True) else "first rows"
+            return f"{size:,}-row {kind}"
+        return "Sampled"
+    if method == ESTIMATED:
+        return "Engine-estimated (exact ranges)" if getattr(stats, "ranges_exact", False) else "Engine-estimated"
+    if method == SCHEMA:
+        return "From schema"
+    if method == TYPES_ONLY:
+        return "Types only"
+    return ""
+
+
+def table_detail(
+    source: Source,
+    table: str,
+    timeout: float = SAMPLE_TIMEOUT,
+    *,
+    compute_stats: bool = False,
+    stats_timeout: float = STATS_TIMEOUT,
+    include_sample: bool = True,
+) -> TableDetail:
     """
-    The columns of ``table`` with their types, value ranges and
+    The columns of ``table`` with their types, statistics, value ranges and
     descriptions, its other metadata and, for a SQL source, its first rows.
-    Reading the schema counts the rows and the value ranges, so this queries
-    the table; run it off the event loop.
+    Reading the schema and computing ``TableStatsStore`` statistics query
+    the table; run this off the event loop. Statistics not cached yet are
+    waited for at most ``stats_timeout`` seconds (``stats_pending`` is then
+    the future that keeps computing them) unless ``compute_stats``.
     """
+    from ..data.stats import compact_geometry_type, get_stats_store
     from .nodes import execute
 
     detail = TableDetail()
@@ -476,24 +588,56 @@ def table_detail(source: Source, table: str, timeout: float = SAMPLE_TIMEOUT) ->
     except Exception as exc:
         schema = {}
         detail.error = detail.error or safe_error(exc)
+    stats = None
+    try:
+        store = get_stats_store()
+        if compute_stats:
+            stats = store.compute(source, table)
+        elif (stats := store.get(source, table)) is None:
+            stats, detail.stats_pending = store.compute_within(source, table, stats_timeout)
+    except Exception as exc:
+        logger.debug("Could not compute TableStatsStore stats for %r: %s", table, type(exc).__name__)
+    if stats is not None and stats.columns:
+        detail.stats = stats
+        detail.stats_note = _format_stats_note(stats)
     columns_meta = metadata.get("columns") if isinstance(metadata.get("columns"), Mapping) else {}
     detail.rows = _count(schema.get("__len__")) if isinstance(schema, Mapping) else None
     if detail.rows is None:
         detail.rows = _count(metadata.get("rows"))
+    if detail.rows is None and stats is not None:
+        detail.rows = _count(stats.rows)
     detail.description = _text(metadata.get("description"))
-    names = [name for name in (schema or {}) if name != "__len__"] or list(columns_meta)
+    stats_by_name = {col.name: col for col in stats.columns} if stats is not None else {}
+    names = (
+        [name for name in (schema or {}) if name != "__len__"]
+        or ([col.name for col in stats.columns] if stats is not None and stats.columns else [])
+        or list(columns_meta)
+    )
     for name in names:
         spec = schema.get(name) if isinstance(schema.get(name), Mapping) else {}
         column = columns_meta.get(name)
         column = column if isinstance(column, Mapping) else {"description": column} if isinstance(column, str) else {}
+        scol = stats_by_name.get(str(name))
+        sql_type = compact_geometry_type(scol.type) if scol is not None and scol.type else ""
+        stats_summary = _format_stats_summary(scol, stats) if scol is not None else ""
+        values = _values(spec) or stats_summary
         detail.columns.append(ColumnInfo(
-            str(name), _type(spec, column), _values(spec), _text(column.get("description")),
+            str(name),
+            _type(spec, column) or sql_type,
+            values,
+            _text(column.get("description")),
+            nulls=_format_null_share(scol.nulls) if scol is not None else "",
+            distinct=_format_distinct(scol, stats) if scol is not None else "",
+            sql_type=sql_type,
+            stats_summary=stats_summary,
+            primary_key=bool(scol.primary_key) if scol is not None else False,
+            references=str(scol.references or "") if scol is not None else "",
         ))
     detail.metadata = {
         str(key): value for key, value in metadata.items()
         if key not in _SHOWN_KEYS and value not in (None, "", [], {})
     }
-    if isinstance(source, BaseSQLSource):
+    if include_sample and isinstance(source, BaseSQLSource):
         try:
             detail.sample = execute(source, sample_sql(source, table), timeout)
         except Exception as exc:

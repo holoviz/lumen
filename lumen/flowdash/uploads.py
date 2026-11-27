@@ -73,6 +73,9 @@ from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
 
+if t.TYPE_CHECKING:
+    from .metadata import DescriptionStore
+
 logger = logging.getLogger(__name__)
 
 SECTION = "uploads"
@@ -590,6 +593,7 @@ class Uploads:
         self._connections: dict[str, Connection] = {}
         # Why each connection that is listed but not served could not connect, e.g. its credentials are unreadable.
         self._broken: dict[str, str] = {}
+        self._descriptions: DescriptionStore | None = None
         self._lock = threading.RLock()
         self._editors: weakref.WeakKeyDictionary[t.Any, _Session] = weakref.WeakKeyDictionary()
 
@@ -863,6 +867,7 @@ class Uploads:
             self._write_manifest()
             self.sources[ref] = source
             sessions = list(self._editors.items())
+        self._restore_descriptions(ref, source)
         logger.info("Upload: %s added %s (%d bytes) as %r with tables %s.", user, filename, len(content), ref,
                     ", ".join(upload.tables))
         if not assistant and self.project is not None:
@@ -973,6 +978,7 @@ class Uploads:
             self._write_manifest()
             self.sources[ref] = source
             sessions = list(self._editors.items())
+        self._restore_descriptions(ref, source)
         logger.info("Admin: %s connected the source %r.", user, ref)
         if not assistant and self.project is not None:
             from .nodes import listed_tables
@@ -1022,7 +1028,7 @@ class Uploads:
             self.sources.pop(ref, None)
             self._write_manifest()
             sessions = list(self._editors.items())
-            self._to_trash(upload, user)
+            self._to_trash(upload, user, self._pop_descriptions(ref))
         self.purge_trash()
         for editor, session in sessions:
             self._in_session(session, partial(_unbind, editor, ref))
@@ -1031,7 +1037,7 @@ class Uploads:
         logger.info("Upload: %s deleted the upload %r (%s).", user, ref, upload.filename)
         return []
 
-    def _to_trash(self, upload: Upload, user: str) -> None:
+    def _to_trash(self, upload: Upload, user: str, descriptions: Mapping[str, t.Any] | None = None) -> None:
         folder = self.folder(upload)
         trash = self.directory / TRASH / folder.name
         trash.parent.mkdir(parents=True, exist_ok=True)
@@ -1042,6 +1048,8 @@ class Uploads:
         else:
             trash.mkdir(parents=True, exist_ok=True)
         note = {**asdict(upload), "deleted_by": user, "deleted_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds")}
+        if descriptions:
+            note["descriptions"] = dict(descriptions)
         (trash / "upload.json").write_text(json.dumps(note, indent=2), encoding="utf-8")
 
     def purge_trash(self, now: dt.datetime | None = None) -> list[str]:
@@ -1094,10 +1102,37 @@ class Uploads:
             self._write_manifest()
             self.sources[upload.ref] = source
             sessions = list(self._editors.items())
+        if isinstance(descriptions := note.get("descriptions"), Mapping) and descriptions:
+            self.descriptions.put(upload.ref, descriptions)
+        self._restore_descriptions(upload.ref, source)
         for editor, session in sessions:
             self._in_session(session, partial(_bind, editor, source, upload.ref))
         logger.info("Upload: %s brought back the upload %r (%s).", _identity_name(app), upload.ref, upload.filename)
         return upload
+
+    @property
+    def descriptions(self) -> DescriptionStore:
+        """The table and column descriptions admins saved, kept beside the manifest."""
+        if self._descriptions is None:
+            from .metadata import DESCRIPTIONS_FILE, DescriptionStore
+
+            self._descriptions = DescriptionStore(self.directory / DESCRIPTIONS_FILE)
+        return self._descriptions
+
+    def _restore_descriptions(self, ref: str, source: Source) -> None:
+        """Apply the saved descriptions of ``ref`` to its new source, e.g. a source connected again."""
+        try:
+            self.descriptions.restore({ref: source})
+        except Exception as exc:
+            logger.warning("Could not apply the saved descriptions of %r: %s", ref, type(exc).__name__)
+
+    def _pop_descriptions(self, ref: str) -> dict[str, t.Any]:
+        """Remove the saved descriptions of the deleted upload ``ref``, so a new upload under its name starts without them."""
+        try:
+            return self.descriptions.pop(ref)
+        except OSError as exc:
+            logger.warning("Could not remove the saved descriptions of %r: %s", ref, type(exc).__name__)
+            return {}
 
     def _forget_catalog(self, ref: str) -> None:
         from .catalog import SECTION as CATALOG, raw_section
