@@ -53,7 +53,9 @@ from .data import (
     CHECKS, DashboardRef, MetricStatus, metric_statuses, metric_usage,
     visible_dashboards,
 )
-from .metrics import SECTION, metrics_page
+from .metrics import (
+    DBT_KEY, DBT_ORIGIN, SECTION, metrics_page,
+)
 from .metrics_edit import (
     NAME_KEY, NOT_ADMIN_PREVIEW, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET,
     PreviewResult, check_metric, delete_metric, literal_blocks, masked,
@@ -354,12 +356,17 @@ class MetricEditor(Viewer):
             styles={"gap": "14px"},
             css_classes=["flowdash-metric-editor"],
         )
+        self._preview_parts = list(self._layout[4:])
         if not editable:
-            for widget in (self._name, self._description, self._source, self._table, self._yaml):
-                widget.disabled = True
-            for item in self._layout[4:]:
-                item.visible = False
+            self.set_readonly(True)
         self.load()
+
+    def set_readonly(self, readonly: bool):
+        """Show the definition without letting it be edited or previewed, or editable again."""
+        for widget in (self._name, self._description, self._source, self._table, self._yaml):
+            widget.disabled = readonly
+        for item in self._preview_parts:
+            item.visible = not readonly
 
     def _context(self) -> Mapping[str, t.Any]:
         return self.project.context or {}
@@ -742,7 +749,7 @@ class MetricsSettings(Viewer):
     def _passes(self, status: MetricStatus) -> bool:
         if self.filter == "problems" and status.check == "valid":
             return False
-        if self.filter == "origin:dbt" and status.origin != "dbt":
+        if self.filter == f"origin:{DBT_ORIGIN}" and status.origin != DBT_ORIGIN:
             return False
         if self.filter.startswith("source:") and status.spec.get("source") != self.filter[7:]:
             return False
@@ -769,17 +776,17 @@ class MetricsSettings(Viewer):
         usage = self.usage()
         where = Path(self.project.path).name if self.project.path else "the project file"
         n = len(statuses)
-        n_dbt = sum(s.origin == "dbt" for s in statuses)
+        n_dbt = sum(s.origin == DBT_ORIGIN for s in statuses)
         dbt_note = f" ({n_dbt} from dbt)" if n_dbt else ""
         self._count.object = f"{n} metric{'' if n == 1 else 's'}{dbt_note} in {where}"
         refs = list(dict.fromkeys(str(s.spec.get("source")) for s in statuses if s.spec.get("source")))
         failing = [s for s in statuses if s.check != "valid"]
-        counts = {"all": n, "origin:dbt": n_dbt, "problems": len(failing)}
+        counts = {"all": n, f"origin:{DBT_ORIGIN}": n_dbt, "problems": len(failing)}
         for ref in refs:
             counts[f"source:{ref}"] = sum(s.spec.get("source") == ref for s in statuses)
         labels = {
             "all": "All",
-            **({"origin:dbt": "From dbt"} if n_dbt else {}),
+            **({f"origin:{DBT_ORIGIN}": "From dbt"} if n_dbt else {}),
             **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}),
             "problems": "Has problems",
         }
@@ -861,7 +868,7 @@ class MetricsSettings(Viewer):
         row_classes = []
         if status.check != "valid":
             row_classes.append("flowdash-admin-metric-invalid")
-        if status.origin == "dbt":
+        if status.origin == DBT_ORIGIN:
             row_classes.append("flowdash-metric-dbt")
         open_it = pmui.Clickable(
             object=title, sizing_mode="stretch_width", margin=0,
@@ -893,10 +900,7 @@ class MetricsSettings(Viewer):
         ]
         if self.editable:
             if status.read_only:
-                cells.append(cell(
-                    f'<span class="muted small" title="Inherited from {esc(status.origin)} (read-only)"></span>',
-                    css_classes=["flowdash-metric-readonly"],
-                ))
+                cells.append(cell("", css_classes=["flowdash-metric-readonly"]))
             else:
                 menu = pmui.MenuButton(
                     items=[
@@ -933,7 +937,7 @@ class MetricsSettings(Viewer):
         self._drawer_alert = pmui.Alert(
             object="", severity="error", visible=False, sizing_mode="stretch_width", margin=0
         )
-        cancel = pmui.Button(
+        self._cancel = cancel = pmui.Button(
             label="Cancel" if self.editable else "Done", variant="outlined", color="default", margin=0,
         )
         cancel.on_click(lambda _event: self.close_metric())
@@ -1002,17 +1006,12 @@ class MetricsSettings(Viewer):
 
     def _set_editor_readonly(self, readonly: bool):
         disabled = readonly or not self.editable
-        for widget in (self._editor._name, self._editor._description, self._editor._source,
-                       self._editor._table, self._editor._yaml):
-            widget.disabled = disabled
-        for item in self._editor._layout[4:]:
-            item.visible = not disabled
+        self._editor.set_readonly(disabled)
         self._save.param.update(disabled=disabled, visible=not disabled)
+        self._cancel.label = "Done" if disabled else "Cancel"
 
     def open_metric(self, name: str | None, spec: Mapping[str, t.Any] | None = None, title: str | None = None):
         """Open the editor on metric ``name``, or on a new one (defined as ``spec``, if given)."""
-        from .dbt_metrics import DBT_KEY
-
         section = self.section()
         readonly_status = None
         if name is not None and (name == DBT_KEY or name not in section):
@@ -1082,8 +1081,6 @@ class MetricsSettings(Viewer):
 
     def duplicate(self, name: str):
         """Open the editor on a new metric defined as ``name`` is, named after it."""
-        from .dbt_metrics import DBT_KEY
-
         section = self.section()
         if name == DBT_KEY or name not in section:
             return
@@ -1154,8 +1151,6 @@ class MetricsSettings(Viewer):
 
     def ask_delete(self, name: str):
         """Ask before deleting ``name``, listing the dashboards that use it."""
-        from .dbt_metrics import DBT_KEY
-
         section = self.section()
         if name == DBT_KEY or name not in section:
             return

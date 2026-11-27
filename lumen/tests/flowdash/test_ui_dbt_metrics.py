@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
-import enum
 import getpass
-
-from dataclasses import dataclass, field
 
 import pytest
 
@@ -22,71 +18,38 @@ from playwright.sync_api import expect
 from lumen.flowdash import METRICS_KEY, SOURCES_KEY
 from lumen.flowdash.app import build_routes
 from lumen.flowdash.data_section import DataPage
-from lumen.flowdash.dbt_metrics import DBT_CLIENT_KEY
+from lumen.flowdash.dbt_metrics import DBT_CLIENT_KEY, clear_dbt_cache
 from lumen.flowdash.metrics import ProjectMetrics
 from lumen.flowdash.project import PROJECT_FILE, load_project
 from lumen.flowdash.uploads import UPLOADS_KEY, Uploads
 from lumen.sources.duckdb import DuckDBSource
 
+from .dbt_fakes import (
+    FakeSemanticLayer, dimension, measure, metric, semantic_sql,
+)
+
 pytestmark = pytest.mark.filterwarnings("ignore:reference already known")
 
 
-class _MetricType(enum.Enum):
-    SIMPLE = "SIMPLE"
-    CUMULATIVE = "CUMULATIVE"
+def _FakeClient():
+    return FakeSemanticLayer(
+        [
+            metric("dbt_revenue", measures=[measure("amount", "SUM", "amount")], dimensions=[dimension("order__region")],
+                   description="Revenue from dbt semantic layer"),
+            metric("dbt_cumulative", "CUMULATIVE", description="Cumulative revenue via compile_sql"),
+        ],
+        {
+            "dbt_revenue": semantic_sql("orders", "SUM(amount) AS dbt_revenue", {"order__region": "region"}),
+            "dbt_cumulative": "SELECT region, SUM(amount) AS dbt_cumulative FROM orders GROUP BY region",
+        },
+    )
 
 
-class _DimensionType(enum.Enum):
-    CATEGORICAL = "CATEGORICAL"
-
-
-@dataclass
-class _Measure:
-    name: str
-    agg: str
-    expr: str | None = None
-    semantic_model: str | None = None
-
-
-@dataclass
-class _Dimension:
-    name: str
-    type: _DimensionType = _DimensionType.CATEGORICAL
-    description: str = ""
-
-
-@dataclass
-class _Metric:
-    name: str
-    type: _MetricType = _MetricType.SIMPLE
-    description: str = ""
-    measures: list[_Measure] = field(default_factory=list)
-    dimensions: list[_Dimension] = field(default_factory=list)
-
-
-class _FakeClient:
-    @contextlib.asynccontextmanager
-    async def session(self):
-        yield self
-
-    async def metrics(self):
-        return [
-            _Metric(
-                name="dbt_revenue",
-                type=_MetricType.SIMPLE,
-                description="Revenue from dbt semantic layer",
-                measures=[_Measure("amount", "SUM", expr="amount", semantic_model="orders")],
-                dimensions=[_Dimension("region")],
-            ),
-            _Metric(
-                name="dbt_cumulative",
-                type=_MetricType.CUMULATIVE,
-                description="Cumulative revenue via compile_sql",
-            ),
-        ]
-
-    async def compile_sql(self, **kwargs):
-        return "SELECT region, SUM(amount) AS dbt_cumulative FROM orders GROUP BY region"
+@pytest.fixture(autouse=True)
+def fresh_cache():
+    clear_dbt_cache()
+    yield
+    clear_dbt_cache()
 
 
 class _AdminSession:
@@ -110,6 +73,8 @@ metrics:
   dbt:
     source: orders
     environment_id: 12345
+    tables:
+      dbt_revenue: orders
   local_orders:
     description: Hand-authored order count
     source: orders
@@ -161,6 +126,12 @@ def test_dbt_metrics_appear_marked_and_readonly_in_app(page, tmp_path, monkeypat
     page.locator(".filter-origin-dbt").click()
     expect(dbt_row).to_be_visible()
     expect(local_row).to_have_count(0)
+
+    # Opening a dbt metric shows its definition read-only, closed with Done rather than Cancel.
+    dbt_row.locator(".flowdash-metric-dbt").click()
+    expect(page.get_by_role("button", name="Done")).to_be_visible(timeout=10000)
+    expect(page.locator(".flowdash-metric-save")).to_be_hidden()
+    expect(page.locator(".flowdash-metric-preview-run")).to_be_hidden()
 
 
 def test_dbt_metric_page_is_readonly_and_runs_try_it(page, tmp_path):

@@ -24,6 +24,7 @@ from panel_flowdash.admin.kit import (
     caption, cell, chip, esc,
 )
 
+from .metrics import DBT_ORIGIN
 from .metrics_edit import PREVIEW_ROWS, PREVIEW_TIMEOUT
 
 _MONO_SX = {"fontFamily": '"Roboto Mono", ui-monospace, monospace', "fontSize": "0.8125rem"}
@@ -307,7 +308,7 @@ class MetricPage(Viewer):
             note = "opens the table" if spec.get("table") else "its SQL query reads it" if len(tables) == 1 else "its SQL query reads them"
             reads.append(caption(note))
         rows.append(self._fact("Reads", *reads))
-        if status.origin == "dbt":
+        if status.origin == DBT_ORIGIN:
             detail = "dbt Semantic Layer (read-only · compiled SQL)" if self.metric and self.metric.form == "sql" else "dbt Semantic Layer (read-only)"
             rows.append(self._fact("Origin", caption(detail)))
         if status.check == "valid":
