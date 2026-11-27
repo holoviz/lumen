@@ -205,8 +205,12 @@ def configure(
 
 def _clone(obj: Any, **overrides) -> Any:
     """A new instance of a Lumen component with the same parameter values, or those given."""
-    # None is left out so the parameter takes its default: a list parameter's default is [], not None
-    values = {key: value for key, value in obj.param.values().items() if key != "name" and value is not None}
+    # None is left out so the parameter takes its default: a list parameter's default is [], not None.
+    # Lists are copied, so appending to the clone's leaves the original's alone.
+    values = {
+        key: list(value) if isinstance(value, list) else value
+        for key, value in obj.param.values().items() if key != "name" and value is not None
+    }
     return type(obj)(**{**values, **overrides})
 
 
@@ -960,7 +964,8 @@ async def _aask_messages(
     llm: Llm | None, agents: list | None, confirm: bool = False, use_cache: bool = True, returns: Any = None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
-    planner = await _planner(source, llm or _default_llm(), _settings["agents"] if agents is None else agents)
+    own = _own_agents(_settings["agents"] if agents is None else agents)
+    planner = await _planner(source, llm or _default_llm(), own)
     # A retry or a preview is asked for a fresh answer, so neither is cached.
     # Nor is data read here from a frame or a dict: each question reads its own
     # copy, so no later question could hit it and it would only hold that copy.
@@ -972,7 +977,8 @@ async def _aask_messages(
             _answer_cache.move_to_end(key)
             return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    # The answer keeps its own copies, or None to follow configure(agents=...)
+    answer, _ = await _respond(planner, question, messages, context, data, None if agents is None else own, confirm)
     if returns is not None:
         await _typed(answer, returns, planner.llm)
     if key is not None and answer.status == "success":
@@ -1088,7 +1094,8 @@ async def _ask_many(
     llm = llm or _default_llm()
     agents = _settings["agents"] if agents is None else agents
     distinct = list(dict.fromkeys(questions))
-    asked = await _gather(data, [(q, llm, _own_agents(agents)) for q in distinct], returns, concurrency)
+    # _aask_messages copies the agents for each question
+    asked = await _gather(data, [(q, llm, agents) for q in distinct], returns, concurrency)
     by_question = dict(zip(distinct, zip(asked, asked.seconds, strict=True), strict=True))
     return Answers([by_question[q][0] for q in questions], seconds=[by_question[q][1] for q in questions])
 
@@ -1137,7 +1144,7 @@ class Chat(param.Parameterized):
         self._data = data
         self._source, self._visible_slugs = _resolve(data)
         self._llm = llm
-        self._agents = agents
+        self._agents = _own_agents(agents)
         self._messages: list[dict[str, str]] = []
         self._context: dict[str, Any] | None = None
         self._interface: ChatInterface | None = None
@@ -1267,7 +1274,7 @@ class Chat(param.Parameterized):
         returns: Any = None, in_widget: bool = False,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
-        agents = _settings["agents"] if self._agents is None else self._agents
+        agents = _own_agents(_settings["agents"]) if self._agents is None else self._agents
         planner = await _planner(self._source, self._llm or _default_llm(), agents)
         context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)

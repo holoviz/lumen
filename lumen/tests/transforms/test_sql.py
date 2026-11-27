@@ -1208,14 +1208,17 @@ def test_sql_sample_mysql_size():
 def test_sql_sample_sqlite_percent():
     """Test percent-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="sqlite")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE RANDOM() < 0.2"
+    # Newer sqlglot scales RANDOM() to [0, 1), older ones leave it as is
+    rand = sqlglot.exp.Rand().sql("sqlite")
+    expected = f"SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE {rand} < 0.2"
     assert result == expected
 
 
 def test_sql_sample_sqlite_size():
     """Test size-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="sqlite")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RANDOM() LIMIT 100"
+    rand = sqlglot.exp.Rand().sql("sqlite")
+    expected = f"SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY {rand} LIMIT 100"
     assert result == expected
 
 
