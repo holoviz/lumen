@@ -35,6 +35,13 @@ Lumen includes nine agents automatically. You don't need to configure anything.
 
 These agents work together automatically. The coordinator picks which agents to use for each question.
 
+### Document citations
+
+When ChatAgent answers from uploaded documents, it appends a **Sources** section
+listing every file it read, the similarity of the match, and the start of the
+chunk. A user can check the answer against the document instead of taking it on
+trust.
+
 ## Optional agents
 
 These agents ship with Lumen but are not on by default. Add them with `agents=`, which extends the defaults:

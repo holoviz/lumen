@@ -295,6 +295,26 @@ async def test_document_llm_tools_list_and_search():
     searched = await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
     assert "cold water" in searched
 
+    # The chunks are also kept on the working memory so the answer can cite them.
+    assert [source["filename"] for source in ctx["document_sources"]] == ["zoo.md"]
+    assert ctx["document_sources"][0]["text"] == "penguins like cold water"
+    assert 0 <= ctx["document_sources"][0]["similarity"] <= 1
+
+
+async def test_document_llm_tools_do_not_record_duplicate_sources():
+    """Searching twice must not list the same chunk twice in the citations."""
+    store = NumpyVectorStore()
+    await store.add(
+        [{"text": "penguins like cold water", "metadata": {"filename": "zoo.md", "type": "document"}}]
+    )
+    ctx: dict = {"document_vector_store": store}
+    tools = make_document_vector_llm_tools(ctx)
+
+    await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
+    await tools[1].function(query="penguins", top_k=3, min_similarity=-1.0)
+
+    assert len(ctx["document_sources"]) == 1
+
 
 class _DummyInterface:
 

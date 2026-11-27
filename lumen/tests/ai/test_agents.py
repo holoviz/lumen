@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
-from panel.chat import ChatFeed
+from panel.chat import ChatFeed, ChatMessage
 from panel.pane import Markdown
 
 from lumen.ai.agents import (
@@ -23,6 +23,7 @@ from lumen.ai.agents import (
 )
 from lumen.ai.agents.analysis import make_analysis_model
 from lumen.ai.agents.base_lumen import BaseLumenAgent
+from lumen.ai.agents.chat import format_document_sources
 from lumen.ai.agents.deck_gl import DeckGLAgent
 from lumen.ai.agents.document_list import DocumentListAgent
 from lumen.ai.agents.hvplot import hvPlotAgent
@@ -191,6 +192,68 @@ async def test_chat_agent_with_data(llm, duckdb_source, test_messages):
     assert len(out) == 1
     assert out[0].object == "Analysis of data"
     assert out_context == {'chat': 'Analysis of data'}
+
+
+async def test_chat_agent_appends_document_sources(llm, test_messages):
+    """Chunks retrieved by the document search tools are shown under the answer."""
+    agent = ChatAgent(llm=llm)
+    context = {}
+
+    async def stream(messages, context, **kwargs):
+        context["document_sources"] = [
+            {"filename": "policy.md", "similarity": 0.81, "text": "Refunds within 30 days."},
+            {"filename": "handbook.md", "similarity": 0.42, "text": "Remote work is allowed."},
+        ]
+        return ChatMessage("Refunds are allowed for 30 days.", user="Lumen")
+
+    agent._stream = stream
+    out, out_context = await agent.respond(test_messages, context)
+
+    assert out[0].object.startswith("Refunds are allowed for 30 days.")
+    assert "**Sources**" in out[0].object
+    assert "`policy.md`" in out[0].object
+    assert "Refunds within 30 days." in out[0].object
+    assert "document_sources" not in context
+    # Citations stay out of working memory, which other agents read.
+    assert out_context == {"chat": "Refunds are allowed for 30 days."}
+
+
+async def test_chat_agent_drops_stale_document_sources(llm, test_messages):
+    """A turn that does not search documents must not repeat earlier citations."""
+    agent = ChatAgent(llm=llm)
+    context = {
+        "document_sources": [
+            {"filename": "policy.md", "similarity": 0.81, "text": "Refunds within 30 days."},
+        ],
+    }
+    llm.set_responses(["Test Response"])
+
+    out, out_context = await agent.respond(test_messages, context)
+
+    assert out[0].object == "Test Response"
+    assert out_context == {"chat": "Test Response"}
+    assert "document_sources" not in context
+
+
+def test_format_document_sources_dedupes_and_orders():
+    sources = [
+        {"filename": "a.md", "similarity": 0.4, "text": "lower match"},
+        {"filename": "b.md", "similarity": 0.9, "text": "best match"},
+        {"filename": "a.md", "similarity": 0.7, "text": "better match"},
+    ]
+
+    formatted = format_document_sources(sources)
+
+    assert formatted.index("`b.md`") < formatted.index("`a.md`")
+    assert "better match" in formatted
+    assert "lower match" not in formatted
+    assert formatted.count("`a.md`") == 1
+
+
+def test_format_document_sources_without_filenames():
+    assert format_document_sources([]) == ""
+    assert format_document_sources([{"text": "no filename"}]) == ""
+
 
 async def test_sql_agent(llm, duckdb_source, test_messages):
     agent = SQLAgent(llm=llm)
