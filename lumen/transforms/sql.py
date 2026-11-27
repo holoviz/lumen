@@ -297,6 +297,15 @@ class SQLFormat(SQLTransform):
         return self.to_sql(replaced_expression,)
 
 
+def _needs_quotes(col: str) -> bool:
+    """
+    Whether a column must be quoted to be found: one with characters other
+    than letters, digits and underscores, or mixed case, which DataFusion and
+    Postgres fold to lower case and Snowflake to upper case when unquoted.
+    """
+    return bool(re.search(r'\W', col)) or col not in (col.lower(), col.upper())
+
+
 def _alias(name: str) -> Identifier | None:
     # An empty Identifier renders as AS "" under identify=True, which is invalid SQL
     return Identifier(this=name) if name else None
@@ -523,7 +532,7 @@ class SQLMinMax(SQLTransform):
         subquery = self._to_subquery(self.parse_sql(sql_in))
         minmax = []
         for col in self.columns:
-            quoted = self.identify or bool(re.search(r'\W', col))
+            quoted = self.identify or _needs_quotes(col)
             for agg_func in (Min, Max):
                 alias = Identifier(this=(col + f"_{agg_func.__name__.lower()}"), quoted=quoted)
                 minmax.append(
@@ -654,7 +663,7 @@ class SQLSort(SQLTransform):
         subquery = self._to_subquery(self.parse_sql(sql_in))
         order = []
         for col, asc in zip(self.by, ascending, strict=True):
-            quoted = self.identify or bool(re.search(r'\W', col))
+            quoted = self.identify or _needs_quotes(col)
             column = Column(this=Identifier(this=col, quoted=quoted)).sql(dialect=self.write)
             order.append(f'{column} {"ASC" if asc else "DESC"}')
         expression = select("*").from_(subquery).order_by(*order)

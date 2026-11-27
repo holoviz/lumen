@@ -1474,8 +1474,12 @@ class Answer(param.Parameterized):
         messages = [{"role": "user", "content": self.question}]
         # The Planner only sets the agent's LLM while a plan runs
         llm = actor.llm or self._llm
-        with actor.param.update(llm=llm), llm.capture_usage() as usage:
-            editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
+        token = errors_in_result.set(True)  # a retried attempt's traceback stays out of the cell, as in ask
+        try:
+            with actor.param.update(llm=llm), llm.capture_usage() as usage:
+                editor.spec = await actor.revise(instruction, messages, self._context, view=editor)
+        finally:
+            errors_in_result.reset(token)
         refined = Answer(
             agents=self._agents, context=self._context, data=self._data, editor=editor,
             llm=self._llm, pipeline=self.pipeline, plan=self.plan, question=self.question,
@@ -2164,11 +2168,19 @@ class Answer(param.Parameterized):
         )
 
     def _chart_part(self, view: View):
+        if isinstance(view, VegaLiteView):
+            # A notebook output has no height to stretch into: a chart that
+            # stretches keeps its minimum height, and a faceted chart drawn
+            # taller than that spills over the sections below it
+            view.kwargs = {**view.kwargs, "sizing_mode": "stretch_width", "min_height": None}
         try:
             # Drawn here, because inside the card a failure only becomes a
             # notification once the chat UI has turned those on, and a
             # notebook shows none, so the chart would just be missing
             view.get_panel()
+            if isinstance(view, VegaLiteView):
+                # The pane may already be drawn, e.g. by its editor while the chart was polished
+                view.update()
         except Exception as e:
             return Alert(
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
@@ -2239,7 +2251,11 @@ class Answer(param.Parameterized):
         if self.spec is not None:
             return "json", json.dumps(_without_values(self.spec), indent=2, default=str)
         spec = {key: value for key, value in self.view.to_spec().items() if key != "pipeline"}
-        return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
+        try:
+            return "yaml", yaml.safe_dump(spec, sort_keys=False).strip()
+        except yaml.representer.RepresenterError:
+            # A spec can hold objects YAML cannot write, e.g. a formatter; show them as text
+            return "json", json.dumps(spec, indent=2, default=str)
 
     def _vega_lite_spec(self) -> dict | None:
         """The chart as a self-contained Vega-Lite spec, data inlined."""

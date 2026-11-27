@@ -140,6 +140,29 @@ _FORCE_LIGHT_THEME = contextvars.ContextVar(
 _VEGA_THEME_VIEWS: WeakSet = WeakSet()
 
 
+#: Web Mercator, the projection of map tiles, ends at this latitude
+MERCATOR_MAX_LAT = 85.0511
+
+
+def _clip_to_web_mercator(gdf):
+    """
+    Clip longitude and latitude shapes to the latitudes Web Mercator can show.
+
+    A shape wholly past them, such as an H3 cell at the pole, projects to
+    nothing, and GeoViews then fails to colour the whole layer.
+    """
+    if gdf.crs is not None and not gdf.crs.is_geographic:
+        return gdf
+    bounds = gdf.geometry.bounds
+    if bounds.empty or (bounds.miny.min() >= -MERCATOR_MAX_LAT and bounds.maxy.max() <= MERCATOR_MAX_LAT):
+        return gdf
+    # Deferred: shapely comes with geopandas, which only geo plots need
+    import shapely
+    clipped = shapely.clip_by_rect(gdf.geometry.values, -180, -MERCATOR_MAX_LAT, 180, MERCATOR_MAX_LAT)
+    gdf = gdf.set_geometry(gdf.geometry.__class__(clipped, index=gdf.index, crs=gdf.crs))
+    return gdf[~gdf.geometry.is_empty]
+
+
 @contextmanager
 def _force_light_theme():
     """Render Vega-Lite charts light, whatever the dashboard theme, since an
@@ -1460,6 +1483,8 @@ class hvPlotView(hvPlotBaseView):
                 kind = None
             if 'z' in processed:
                 processed['c'] = processed.pop('z')
+            if processed.get('tiles'):
+                plot_source = _clip_to_web_mercator(plot_source)
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
         elif kind in BAR_KINDS and x is not None:
@@ -2007,6 +2032,11 @@ class VegaLiteView(View):
         encoded = self._apply_text_default(encoded, theme)
         params = dict(object=encoded, **self.kwargs)
         params['theme'] = theme
+        sizing = str(params.get('sizing_mode') or '')
+        if encoded.get('height') == 'container' and 'both' not in sizing and 'height' not in sizing:
+            # Nothing gives the pane a height to fill, so the chart would
+            # collapse; Vega's default height draws it instead
+            params['object'] = {k: v for k, v in encoded.items() if k != 'height'}
         return params
 
     def get_panel(self) -> pn.pane.Vega:

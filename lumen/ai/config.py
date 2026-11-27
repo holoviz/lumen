@@ -6,6 +6,7 @@ from functools import cache
 from pathlib import Path, PosixPath
 
 import numpy as np
+import pandas as pd
 import panel as pn
 import platformdirs
 import yaml
@@ -279,6 +280,9 @@ yaml.add_representer(str, str_presenter)
 yaml.add_representer(tuple, tuple_presenter)
 yaml.add_representer(PosixPath, path_representer)
 yaml.add_representer(Path, path_representer)
+# A date in a prompt reads as an ISO string, not a Python object tag
+yaml.add_representer(pd.Timestamp, lambda dumper, data: dumper.represent_str(data.isoformat()))
+yaml.add_representer(pd.Timedelta, lambda dumper, data: dumper.represent_str(str(data)))
 
 # Add numpy representer if numpy is available
 try:

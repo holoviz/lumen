@@ -19,8 +19,8 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Table, VegaLiteView, View, _force_light_theme, hvOverlayView,
-    hvPlotView,
+    DeckGLView, Table, VegaLiteView, View, _clip_to_web_mercator,
+    _force_light_theme, hvOverlayView, hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -762,6 +762,19 @@ def test_view_hvplot_geometry_auto_kind():
 
 
 @requires_geopandas
+def test_clip_to_web_mercator_drops_a_polar_cell_and_clips_one_across_the_edge():
+    # A cell wholly above 85.05 N projects to nothing on tiles and broke the whole layer
+    gdf = gpd.GeoDataFrame(
+        {"n": [1, 2, 3]},
+        geometry=[Polygon([(50, 86), (70, 86), (60, 87)]), Polygon([(0, 80), (10, 80), (5, 89)]), Polygon([(0, 0), (1, 0), (0, 1)])],
+        crs=4326,
+    )
+    clipped = _clip_to_web_mercator(gdf)
+    assert clipped["n"].tolist() == [2, 3]
+    assert clipped.geometry.bounds.maxy.max() <= 85.0511
+
+
+@requires_geopandas
 def test_table_view_geometry_rendered_as_wkt():
     """Table view converts geometry columns to WKT so Bokeh can serialize them."""
     try:
@@ -1075,3 +1088,13 @@ def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
     plot = view.get_plot(view.get_data())
     assert type(plot).__name__ == "Points"
     assert "needs geoviews" in caplog.text
+
+
+def test_vega_container_height_is_dropped_when_nothing_gives_the_pane_a_height():
+    # In a notebook card the pane stretches only its width, and height="container" would collapse the chart
+    pipeline = Pipeline(source=InMemorySource(tables={"t": pd.DataFrame({"a": [1, 2]})}), table="t")
+    spec = {"width": "container", "height": "container", "mark": "bar", "encoding": {"y": {"field": "a"}}}
+    card = VegaLiteView(pipeline=pipeline, spec=spec, sizing_mode="stretch_width")
+    assert "height" not in card._get_params()["object"]
+    chat = VegaLiteView(pipeline=pipeline, spec=spec, sizing_mode="stretch_both")
+    assert chat._get_params()["object"]["height"] == "container"

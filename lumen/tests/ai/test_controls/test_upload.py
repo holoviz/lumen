@@ -151,6 +151,13 @@ class TestUploadControlsMetadataProcessing:
         )
         assert csv_file.file_type == "data"
 
+    async def test_json_array_is_data_and_json_object_is_metadata(self, upload_controls):
+        records = UploadedFileRow(file_obj=io.BytesIO(b' \n[{"a": 1}]'), filename="movies", extension="json")
+        assert records.file_type == "data"
+        assert records.file_obj.read() == b' \n[{"a": 1}]'
+        config = UploadedFileRow(file_obj=io.BytesIO(b'{"key": "value"}'), filename="config", extension="json")
+        assert config.file_type == "metadata"
+
     async def test_process_mixed_files(self, upload_controls, source_catalog, context):
         """Test processing a mix of data and metadata files."""
         # Setup files

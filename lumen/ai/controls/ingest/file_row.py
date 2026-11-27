@@ -54,10 +54,15 @@ class UploadedFileRow(Viewer):
         params["alias"] = normalize_table_name(filename)
 
         # Auto-detect file type from extension and filename patterns
-        is_metadata = (
-            extension.lower() in METADATA_EXTENSIONS or
-            any(pattern in filename.lower() for pattern in METADATA_FILENAME_PATTERNS)
-        )
+        named_metadata = any(pattern in filename.lower() for pattern in METADATA_FILENAME_PATTERNS)
+        if extension.lower() == "json" and not named_metadata:
+            # A JSON array is records, a table; an object is more likely a document
+            head = file_obj.read(64)
+            file_obj.seek(0)
+            text = head.decode("utf-8-sig", errors="ignore") if isinstance(head, bytes) else head
+            is_metadata = not text.lstrip().startswith("[")
+        else:
+            is_metadata = named_metadata or extension.lower() in METADATA_EXTENSIONS
         params.setdefault("file_type", "metadata" if is_metadata else "data")
 
         super().__init__(**params)

@@ -302,6 +302,12 @@ def test_sql_min_max():
     assert result == expected
 
 
+def test_sql_min_max_and_sort_quote_mixed_case_columns():
+    # DataFusion folds an unquoted p2t_degC to p2t_degc and then cannot find it
+    assert 'MIN("p2t_degC") AS "p2t_degC_min"' in SQLMinMax.apply_to("SELECT * FROM t", columns=["p2t_degC"])
+    assert 'ORDER BY "p2t_degC" ASC' in SQLSort.apply_to("SELECT * FROM t", by=["p2t_degC"])
+
+
 def test_sql_min_max_nonalphanum_characters():
     result = SQLMinMax.apply_to("SELECT * FROM TABLE", columns=["A_B-123", "Period life expectancy at birth - Sex: total - Age: 0"])
     expected = (
@@ -1667,6 +1673,15 @@ def test_source_query_with_a_range_value():
     source = DuckDBSource.from_df({"df": df})
     assert source.get("df", A=Range(1, 3, closed="left"))["A"].tolist() == [1, 2]
     assert source.get("df", A=Range(1, 3))["A"].tolist() == [1, 2, 3]
+
+
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_cache_key_of_a_range_follows_its_value_not_its_identity():
+    # A freed Range can pass its id() on, which made Range(1, 3) reuse the rows of Range(1, 3, closed="left")
+    source = DuckDBSource.from_df({"df": pd.DataFrame({"A": [0, 1, 2, 3]})})
+    left, also_left = Range(1, 3, closed="left"), Range(1, 3, closed="left")
+    assert source._get_key("df", A=left) == source._get_key("df", A=also_left)
+    assert source._get_key("df", A=left) != source._get_key("df", A=Range(1, 3))
 
 
 def test_sql_prefilter_range_value():
