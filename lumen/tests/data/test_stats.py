@@ -734,15 +734,21 @@ class TestMetasetFixes:
 
     async def test_get_metaset_wait_is_bounded(self, duckdb_source, table_stats_store):
         original = table_stats_store.profiler.profile
+        release = threading.Event()
 
-        def slow(*args, **kwargs):
-            time.sleep(1)
+        def blocked(*args, **kwargs):
+            release.wait(30)
             return original(*args, **kwargs)
 
-        with patch.object(table_stats_store.profiler, "profile", side_effect=slow):
-            start = time.monotonic()
-            metaset = await get_metaset([duckdb_source], ["orders"], stats_timeout=0.05)
-            assert time.monotonic() - start < 0.9
+        # The profile stays blocked until the end, so get_metaset returns only
+        # if it stops waiting; a wall-clock bound flaked on slow CI runners
+        with patch.object(table_stats_store.profiler, "profile", side_effect=blocked):
+            try:
+                metaset = await asyncio.wait_for(
+                    get_metaset([duckdb_source], ["orders"], stats_timeout=0.05), timeout=20
+                )
+            finally:
+                release.set()
         assert not metaset.stats
 
     async def test_non_sql_sources_get_schema_stats(self):
