@@ -15,7 +15,8 @@ from panel_flowdash.agent import (
 )
 
 from ..flowdash import (
-    COMPONENTS, LumenViewNode, bound_sources, host_metrics,
+    ANALYSIS_ID, COMPONENTS, LumenViewNode, bound_sources, host_analyses,
+    host_metrics,
 )
 from ..flowdash.access import can_access_metric
 from ..flowdash.data import hidden_reads_of
@@ -57,6 +58,19 @@ def metrics(ops: DashboardOps) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("Could not check access to the app's metric %r (%s).", name, type(exc).__name__)
     return allowed
+
+
+def analyses(ops: DashboardOps) -> dict[str, Any]:
+    """
+    The host-registered ``Analysis`` classes or instances the agent may invoke,
+    by name: those in ``lumen.analyses`` whose ``_callable_by_llm`` is true.
+    """
+    try:
+        live = host_analyses(ops.editor.context)
+    except Exception as exc:
+        logger.warning("Could not read the app's analyses (%s).", type(exc).__name__)
+        return {}
+    return {name: entry for name, entry in live.items() if getattr(entry, "_callable_by_llm", True)}
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:
@@ -147,6 +161,7 @@ def input_port(ops: DashboardOps, name: str) -> str | None:
 PIPELINE_PORTS = {
     "Lumen/table": "pipeline", "Lumen/filter": "filtered", "Lumen/sql": "pipeline", "Lumen/metric": "pipeline",
     "Lumen/aggregate": "result", "Lumen/sort": "result", "Lumen/select": "result", "Lumen/derive": "result",
+    ANALYSIS_ID: "result",
 }
 
 

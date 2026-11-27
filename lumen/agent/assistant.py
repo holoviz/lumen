@@ -53,6 +53,7 @@ agreed metrics); add_chart and add_table can show a SQL, metric, table or filter
   user does not see its result.
 - When a metric in list_tables answers the question, place it with add_metric instead of
   writing SQL: its definitions are the agreed numbers. Otherwise write SQL.
+- When an analysis in list_tables fits the request, run it on a data node with add_analysis.
 - Build on nodes already on the dashboard when the question is about them. Place each new
   result with add_sql and each chart with add_chart on a SQL node, or a table with
   add_table when the user asks to see rows. Change a node in place, which keeps its tile:

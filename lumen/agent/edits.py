@@ -26,9 +26,10 @@ from pydantic_ai.messages import (
 )
 
 from ..flowdash import (
-    DECKGL_ID, FILTER_ID, METRIC_ID, SOURCE_ID, SQL_ID, TABLE_ID,
+    ANALYSIS_ID, DECKGL_ID, FILTER_ID, METRIC_ID, SOURCE_ID, SQL_ID, TABLE_ID,
     TABLE_VIEW_ID, VIEW_ID,
 )
+from ..flowdash.analysis import analysis_doc
 from . import _graph
 
 # The most nodes the state block lists; a dashboard with more ends it with a count.
@@ -53,8 +54,8 @@ STATE_STUB = "[The dashboard as it was at this turn; the latest user message has
 
 KINDS = {
     SQL_ID: "SQL", VIEW_ID: "chart", TABLE_VIEW_ID: "table", DECKGL_ID: "map", METRIC_ID: "metric",
-    SOURCE_ID: "source", TABLE_ID: "table node", FILTER_ID: "filter", _graph.HEADING_ID: "heading",
-    _graph.MARKDOWN_ID: "markdown", _graph.DIVIDER_ID: "divider",
+    ANALYSIS_ID: "analysis", SOURCE_ID: "source", TABLE_ID: "table node", FILTER_ID: "filter",
+    _graph.HEADING_ID: "heading", _graph.MARKDOWN_ID: "markdown", _graph.DIVIDER_ID: "divider",
 }
 
 # Marks that annotate a chart rather than plot its data, and the encoding channels
@@ -141,6 +142,10 @@ def _gist(component: str, config: dict[str, Any]) -> str:
     if component == METRIC_ID:
         picked = [*(config.get("measures") or []), *(f"by {d}" for d in config.get("dimensions") or [])]
         return f"{config.get('metric')}" + (f": {', '.join(map(str, picked))}" if picked else "")
+    if component == ANALYSIS_ID:
+        params = config.get("params") or {}
+        extra = f" ({', '.join(f'{k}={v!r}' for k, v in params.items())})" if isinstance(params, dict) and params else ""
+        return f"{config.get('analysis') or ''}{extra}"
     if component == TABLE_ID:
         return f"table {config.get('table')!r}"
     if component == FILTER_ID:
@@ -225,7 +230,11 @@ def dashboard_state(ops) -> str | None:
     title = _cut(doc.get("title") or "Untitled", STATE_TEXT_CHARS)
     text = escape(f"Title {title!r}; {len(nodes)} node{'s' * (len(nodes) != 1)} in reading order "
                   "(top bar, grid rows, sidebar, then nodes without a visible tile):") + "\n" + "\n".join(lines)
-    return text + (f"\n{metrics}" if (metrics := _metrics_line(ops)) else "")
+    if metrics := _metrics_line(ops):
+        text += f"\n{metrics}"
+    if analyses := _analyses_line(ops):
+        text += f"\n{analyses}"
+    return text
 
 
 def _metrics_line(ops) -> str | None:
@@ -237,6 +246,20 @@ def _metrics_line(ops) -> str | None:
              for m in metrics[:STATE_METRICS]]
     more = f", and {len(metrics) - STATE_METRICS} more" if len(metrics) > STATE_METRICS else ""
     return escape(f"The app's metrics, which list_tables describes: {'; '.join(named)}{more}.")
+
+
+def _analyses_line(ops) -> str | None:
+    """The app's LLM-callable analyses for the state block, by name and summary, or None without any."""
+    available = list(_graph.analyses(ops).items())
+    if not available:
+        return None
+    named = []
+    for name, entry in available[:STATE_METRICS]:
+        doc = analysis_doc(entry)
+        first = doc.splitlines()[0].strip() if doc else ""
+        named.append(f"{name} ({_cut(first, STATE_METRIC_CHARS)})" if first else name)
+    more = f", and {len(available) - STATE_METRICS} more" if len(available) > STATE_METRICS else ""
+    return escape(f"The app's analyses, which list_tables describes: {'; '.join(named)}{more}.")
 
 
 def fenced_state(state: str, prompt: str = "") -> str:
