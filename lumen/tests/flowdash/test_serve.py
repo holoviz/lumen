@@ -470,3 +470,33 @@ def test_a_failing_command_reports_its_error_once(csv, monkeypatch, capsys):
         ai.main()
     err = capsys.readouterr().err
     assert err.startswith("ERROR: ") and not err.startswith("ERROR: ERROR")
+
+
+@pytest.mark.parametrize("sensitive, held", [
+    ([], set()),
+    (["Lumen/analysis"], {"add_analysis"}),
+    (["Lumen/metric"], {"add_metric"}),
+    (["Lumen/*"], {"add_analysis", "add_metric"}),
+])
+def test_a_sensitive_lumen_component_holds_back_the_tool_placing_it(csv, sensitive, held):
+    pytest.importorskip("pydantic_ai")
+    app = build_routes(
+        [str(csv)], db_path=csv.parent / "dash.db", agent_model="test", agent_sensitive_components=sensitive,
+    )["/"]()
+    session = app._agent_session
+
+    for policy in (session._approval_policy(), *(runner.approval_policy for runner in session.runners)):
+        needs = {tool for tool in ("add_analysis", "add_metric") if policy.requires_approval(tool, {})}
+        assert needs == held
+
+
+def test_a_component_made_sensitive_later_holds_back_its_tool_from_the_next_call(csv):
+    pytest.importorskip("pydantic_ai")
+    app = build_routes([str(csv)], db_path=csv.parent / "dash.db", agent_model="test")["/"]()
+    policy = app._agent_session._approval_policy()
+    assert not policy.requires_approval("add_analysis", {})
+
+    app.agent_sensitive_components = ["Lumen/analysis"]
+
+    assert policy.requires_approval("add_analysis", {})
+    assert not policy.requires_approval("add_metric", {})

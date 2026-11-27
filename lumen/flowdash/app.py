@@ -24,8 +24,9 @@ from panel_flowdash.project import _parse
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
-from .analysis import ANALYSES_KEY
+from .analysis import ANALYSES_KEY, ANALYSIS_ID
 from .catalog import CATALOG_KEY, ProjectCatalog
+from .contracts import METRIC_ID
 from .data_section import (
     SECTION_ID as DATA_SECTION_ID, data_section, redirect_moved_admin_pages,
 )
@@ -384,7 +385,9 @@ def build_routes(
         project file by default. The uploads there are served again when
         the app starts.
     **params
-        Further ``FlowDashApp`` parameters.
+        Further ``FlowDashApp`` parameters. A Lumen component matching
+        ``agent_sensitive_components`` also needs approval for the agent
+        tool that places it, e.g. ``"Lumen/analysis"`` for ``add_analysis``.
     """
     sources = source_refs(resolve_sources(data))
     aliases = source_aliases(sources)
@@ -496,6 +499,7 @@ def _lumen_session(factory: Any, uploads: Uploads | None = None, data: bool = Fa
         from .access import attach_access
 
         attach_access(app)
+        require_tool_approval(app)
         if data:
             redirect_moved_admin_pages(app)
         if uploads is not None:
@@ -503,6 +507,41 @@ def _lumen_session(factory: Any, uploads: Uploads | None = None, data: bool = Fa
         return app
 
     return lumen_factory
+
+
+# Lumen's agent tools that place a component without FlowDash's add_node, which the
+# sensitive-component rules hold back.
+COMPONENT_TOOLS: dict[str, str] = {"add_analysis": ANALYSIS_ID, "add_metric": METRIC_ID}
+
+
+def tool_approval_rules(app: Any) -> list[Any]:
+    """
+    Rules holding back a call to one of ``COMPONENT_TOOLS`` while its
+    component is sensitive in ``app``, as FlowDash would hold back placing
+    it with ``add_node``. They ask FlowDash's policy at call time, so
+    sensitive components changed in the admin view apply from the next
+    call; a policy that cannot be asked asks for approval.
+    """
+    from panel_agents import ApprovalRule
+
+    def placing_needs_approval(component: str) -> bool:
+        session = app._agent_session
+        return session._approval_policy().requires_approval("add_node", {"component": component})
+
+    return [
+        ApprovalRule(tool, when=lambda args, component=component: placing_needs_approval(component))
+        for tool, component in COMPONENT_TOOLS.items()
+    ]
+
+
+def require_tool_approval(app: Any) -> None:
+    """Add ``tool_approval_rules`` to ``app``'s approval rules and its agent's runners."""
+    session = getattr(app, "_agent_session", None)
+    if session is None:
+        return
+    app.agent_approval_rules = [*app.agent_approval_rules, *tool_approval_rules(app)]
+    for runner in session.runners:
+        runner.approval_policy = session._approval_policy()
 
 
 def _working_project(context: Mapping[str, Any]) -> Project:
