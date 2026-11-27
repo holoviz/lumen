@@ -24,11 +24,11 @@ from ..flowdash import (
     fetch, hidden_tables, pipeline_columns, primed_result, result_sql,
     row_ceiling, selection_warnings,
 )
-from ..flowdash.analysis import (
-    _bounded_pipeline, build_analysis, missing_columns,
-)
 from ..flowdash.access import (
     access_denied_source, can_access_source, sql_access_denied,
+)
+from ..flowdash.analysis import (
+    _bounded_pipeline, build_analysis, missing_columns,
 )
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.deckgl import (
