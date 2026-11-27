@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import sys
+import threading
 
 from typing import TYPE_CHECKING, Any
 
@@ -233,18 +234,35 @@ class DuckDBSource(BaseSQLSource):
 
     async def execute_with_timeout(self, sql_query: str, timeout: float | None, fetch: bool = False):
         cursor = self._connection.cursor()
+        timed_out = threading.Event()
 
         def run():
             with cursor:
+                if timed_out.is_set():
+                    return None
                 if fetch:
                     return self._fetch_df(cursor, sql_query, date_as_object=True, backend=self.dataframe_backend)
                 return self._fetch_df(cursor, sql_query)
 
+        work = asyncio.ensure_future(asyncio.to_thread(run))
+        # The interrupted statement's error is expected, so asyncio should not report it as never retrieved
+        work.add_done_callback(lambda done: done.cancelled() or done.exception())
         try:
-            return await asyncio.wait_for(asyncio.to_thread(run), timeout)
+            return await asyncio.wait_for(asyncio.shield(work), timeout)
         except TimeoutError as e:
-            # Stops the statement, which the default would leave running.
-            cursor.interrupt()
+            # Stops the statement, which the default would leave running. A
+            # worker that has not started skips it; DuckDB drops an interrupt
+            # sent just before the statement starts, so it is sent again
+            # until the worker closes the cursor, for up to a second.
+            timed_out.set()
+            for _ in range(20):
+                try:
+                    cursor.interrupt()
+                except duckdb.ConnectionException:
+                    break
+                finished, _ = await asyncio.wait([work], timeout=0.05)
+                if finished:
+                    break
             raise QueryTimeoutError(f"The query did not finish within {timeout} seconds.") from e
 
     def _ingest_table(self, name: str, df: pd.DataFrame):

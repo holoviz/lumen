@@ -36,7 +36,7 @@ from .util import (
 from .validation import ValidationError, match_suggestion_message
 
 if TYPE_CHECKING:
-    from .ai.answer import Answer
+    from .ai.answer import Answer, Answers
     from .ai.llm import Llm
 
 
@@ -259,6 +259,30 @@ class Pipeline(Viewer, Component):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from .ai.answer import aask
         return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def ask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this pipeline's table several independent questions at once and return their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from .ai.answer import ask_many
+        return ask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    async def aask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this pipeline's table several independent questions at once and await their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from .ai.answer import aask_many
+        return await aask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
 
     def __panel__(self) -> Row:
         controls = self.control_panel

@@ -32,10 +32,12 @@ try:
 except ModuleNotFoundError:
     pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
 
+import numpy as np
 import sqlglot
 
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 from lumen.sources.base import QueryTimeoutError
+from lumen.sources.data import read
 from lumen.sources.duckdb import DuckDBSource
 
 SLUGS = [f"DuckDBSource00001{SEP}orders", f"DuckDBSource00001{SEP}Customers", f"other{SEP}data.csv"]
@@ -508,6 +510,23 @@ async def test_sql_prompt_names_the_gridded_tools_only_when_offered(sql_context,
     assert "## Gridded SQL" in joined and "time_slice" not in joined
     offered = await _main_prompt(sql_context, test_messages, llm, gridded=True, tool_names=["time_slice"])
     assert "`time_slice`" in offered
+
+
+async def test_sql_agent_prompt_names_the_gridded_tools_it_offers(values_source, test_messages, llm):
+    xr = pytest.importorskip("xarray")
+    pytest.importorskip("xarray_sql")
+    grid = read(xr.Dataset({"t": (("x",), np.arange(3.0))}, coords={"x": [0, 1, 2]}))
+    systems = {}
+    for name, source, table in [("grid", grid, "t"), ("plain", values_source, "people")]:
+        invoke = AsyncMock(return_value=None)
+        context = {"source": source, "sources": [source], "metaset": None}
+        with patch.object(llm, "invoke", invoke), pytest.raises(ValueError, match="No output"):
+            await SQLAgent(llm=llm)._attempt_query(
+                test_messages, context, {(source.name, table): source}, "Querying", "Done", {},
+            )
+        systems[name] = invoke.call_args.kwargs["system"]
+    assert "`time_slice`" in systems["grid"] and "`area_weighted_mean`" in systems["grid"]
+    assert "time_slice" not in systems["plain"]
 
 
 @pytest.mark.parametrize("flags, spatial, gridded", [

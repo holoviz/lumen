@@ -1,4 +1,3 @@
-import asyncio
 import datetime as dt
 import json
 import os
@@ -1910,7 +1909,8 @@ def test_missing_table_resolves_case_insensitively():
     assert source.missing_table(ValueError("Table with name orders does not exist!")) is None
 
 
-async def test_execute_with_timeout_interrupts_the_query():
+@pytest.mark.parametrize("timeout", [0, 0.1])
+async def test_execute_with_timeout_interrupts_the_query(timeout):
     source = DuckDBSource(uri=":memory:")
     connection, cursors = source._connection, []
 
@@ -1921,10 +1921,10 @@ async def test_execute_with_timeout_interrupts_the_query():
 
     source._connection = RecordingConnection()
     slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
-    with pytest.raises(QueryTimeoutError, match="0.1 seconds"):
-        await source.execute_with_timeout(slow, 0.1)
-    await asyncio.sleep(0.2)
-    # The worker closes its cursor once the interrupted statement returns.
+    with pytest.raises(QueryTimeoutError, match=f"{timeout} seconds"):
+        await source.execute_with_timeout(slow, timeout)
+    # The worker has returned and closed its cursor, even when the timeout
+    # came before the statement started.
     with pytest.raises(duckdb.ConnectionException):
         cursors[0].execute("SELECT 1")
     assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]
