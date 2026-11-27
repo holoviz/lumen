@@ -25,13 +25,12 @@ from lumen.ai.utils import (
     FALLBACK_CHARS_PER_TOKEN, IMAGE_MIME_TYPES, UNRECOVERABLE_ERRORS,
     apply_changes, clean_sql, collapse_indexed_columns, column_tooltips,
     content_to_text, count_tokens, describe_data, describe_data_sync,
-    errors_in_result,
-    find_slug_by_table_name, format_msg_content, format_tool_error,
-    fuse_messages, get_schema, inline_schema_defs, mutate_user_message,
-    normalized_name, parse_huggingface_url, print_task_exception,
-    render_template, report_error, retry_llm_output, sanitize_column_names,
-    serialize_image_content, set_content_text, slug_to_table_name,
-    truncate_to_tokens,
+    errors_in_result, find_slug_by_table_name, format_msg_content,
+    format_tool_error, fuse_messages, get_schema, inline_schema_defs,
+    mutate_user_message, normalized_name, parse_huggingface_url,
+    print_task_exception, render_template, report_error, retry_llm_output,
+    sanitize_column_names, serialize_image_content, set_content_text,
+    slug_to_table_name, truncate_to_tokens,
 )
 from lumen.config import SOURCE_TABLE_SEPARATOR as SEP
 
