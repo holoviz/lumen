@@ -498,8 +498,9 @@ def sql_contains_aggregates(sql_query: str, dialect: str | None = None) -> bool:
     return bool(parsed.find(sqlglot.exp.Group) or parsed.find(sqlglot.exp.AggFunc))
 
 
-# GenerateSeries also covers Postgres' ExplodingGenerateSeries
-ROW_GENERATING_FUNCTIONS = (sqlglot.exp.Unnest, sqlglot.exp.Explode, sqlglot.exp.GenerateSeries)
+# Postgres' generate_series returns a row per value; DuckDB's returns one list,
+# which sqlglot keeps apart as GenerateSeries
+ROW_GENERATING_FUNCTIONS = (sqlglot.exp.Unnest, sqlglot.exp.Explode, sqlglot.exp.ExplodingGenerateSeries)
 
 
 def sql_is_scalar_aggregate(sql_query: str, dialect: str | None = None) -> bool:
