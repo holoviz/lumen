@@ -1,4 +1,5 @@
 import base64
+import re
 
 from collections import Counter
 from functools import partial
@@ -30,9 +31,9 @@ from ..llm import Message, OpenAI
 from ..models import EscapeBaseModel, RetrySpec
 from ..sharing import shares_values, sharing
 from ..utils import (
-    category_palette, get_data, get_gridded_metadata, get_schema,
-    has_categorical_color, load_json, log_debug, normalize_vegalite_spec,
-    retry_llm_output, subset_gridded_to_2d,
+    _spec_field_references, category_palette, get_data, get_gridded_metadata,
+    get_schema, has_categorical_color, load_json, log_debug,
+    normalize_vegalite_spec, retry_llm_output, subset_gridded_to_2d,
 )
 from ..vector_store import DuckDBVectorStore
 from .base_code import BaseCodeAgent
@@ -921,6 +922,72 @@ class VegaLiteAgent(BaseCodeAgent):
         mark = spec.get("mark")
         return isinstance(mark, dict) and mark.get("tooltip") is not None
 
+    @classmethod
+    def _table_fields(cls, spec: dict) -> set[str]:
+        """Fields that the views drawing the table refer to.
+
+        A view with its own data (map boundaries, a reference line) reads
+        fields the table does not have, so it and its children are left out.
+        Vega-Lite also brings data inline as ``values`` or from a generator.
+        """
+        data = spec.get("data")
+        if VegaLiteView._declares_own_data({"data": data}) or (
+            isinstance(data, dict) and data.keys() & {"values", "sequence", "sphere", "graticule"}
+        ):
+            return set()
+        views = ("layer", "concat", "hconcat", "vconcat", "spec")
+        fields = _spec_field_references({k: v for k, v in spec.items() if k not in views}, "vega-lite")
+        for key in views:
+            children = spec.get(key)
+            for view in children if isinstance(children, list) else [children]:
+                if isinstance(view, dict):
+                    fields |= cls._table_fields(view)
+        return fields
+
+    @classmethod
+    def _transform_outputs(cls, spec: Any) -> set[str]:
+        """The ``as`` names of the spec's transforms, at any level."""
+        if isinstance(spec, list):
+            return set().union(*(cls._transform_outputs(item) for item in spec))
+        if not isinstance(spec, dict):
+            return set()
+        transforms = [t for t in spec.get("transform") or [] if isinstance(t, dict)]
+        outputs = set(cls._extract_as_keys(transforms))
+        for transform in transforms:
+            if "lookup" in transform and "as" not in transform:
+                outputs.update((transform.get("from") or {}).get("fields") or [])
+            if transform.get("bin") and isinstance(transform.get("as"), str):
+                outputs.add(f"{transform['as']}_end")
+        for key in ("layer", "concat", "hconcat", "vconcat", "spec"):
+            outputs |= cls._transform_outputs(spec.get(key))
+        return outputs
+
+    @classmethod
+    def _check_fields_exist(cls, spec: dict, previous_spec: dict, columns: set[str]):
+        """Raise if ``spec`` reads a field from the table that does not exist.
+
+        A field counts as known if it is a column, a transform output, or
+        already used by the previous spec. A map over a table with geometry
+        reads each column as ``properties.<column>``, unless the table has a
+        ``properties`` column of its own. Any other nested (``a.b``) or
+        escaped (``a\\.b``) name counts if the name it starts from is known.
+        Rejecting an update only skips the polish, so fields a transform names
+        without ``as`` (fold, pivot) are not worked out.
+        """
+        known = columns | cls._transform_outputs(spec) | cls._table_fields(previous_spec)
+
+        def is_known(field: str) -> bool:
+            name = field.replace("\\", "")
+            if field in known or name in known:
+                return True
+            if name.startswith("properties.") and "properties" not in known:
+                return name.removeprefix("properties.") in known
+            return re.split(r"(?<!\\)[.\[]", field)[0] in known
+
+        unknown = sorted(field for field in cls._table_fields(spec) if not is_known(field))
+        if unknown:
+            raise ValueError(f"fields not in the data: {', '.join(unknown)}")
+
     async def _polish_plot(self, out: VegaLiteEditor, messages: list[Message], context: TContext, doc: str | None = None):
         steps = {
             "interaction_polish": "Add helpful tooltips and ensure responsive, accessible user experience",
@@ -938,6 +1005,11 @@ class VegaLiteAgent(BaseCodeAgent):
                 try:
                     # Validate merged spec, and keep what normalization added to it
                     merged_spec = self._deep_merge_dicts(out._spec_dict["spec"], update_dict)
+                    data = out.component.pipeline.data
+                    if data is not None:
+                        # A field the data lacks would leave the chart empty.
+                        columns = {str(column) for column in data.columns}
+                        self._check_fields_exist(merged_spec, out._spec_dict["spec"], columns)
                     normalized = await self._extract_spec(
                         context, {"yaml_spec": dump_yaml(merged_spec)}, apply_defaults=False
                     )
@@ -945,7 +1017,7 @@ class VegaLiteAgent(BaseCodeAgent):
                     log_debug(f"Skipping invalid {step_name} update due to error: {e}")
                     continue
                 out.spec = dump_yaml(normalized["spec"])
-            log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
+                log_debug(f"📊 Applied {step_name} updates and refreshed visualization")
 
     @staticmethod
     def _overview_item(editor: VegaLiteEditor) -> ParamFunction:
