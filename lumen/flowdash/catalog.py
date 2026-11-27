@@ -63,6 +63,8 @@ _LEGACY_TARGET = re.compile(r'FROM "((?:[^"]|"")+)"')
 # The rows ``table_detail`` reads of a table, and how long reading them may take.
 SAMPLE_ROWS = 10
 SAMPLE_TIMEOUT = 5
+# Seconds the table drawer waits for statistics not cached yet; they keep computing after.
+STATS_TIMEOUT = 5
 # The values of a column ``table_detail`` lists before saying how many more there are.
 VALUES_SHOWN = 6
 
@@ -378,6 +380,7 @@ class TableDetail:
     sample_error: str | None = None
     stats: Any = None
     stats_note: str = ""
+    stats_pending: Any = field(default=None, repr=False, compare=False)
 
 
 def safe_error(exc: BaseException) -> str:
@@ -559,14 +562,17 @@ def table_detail(
     table: str,
     timeout: float = SAMPLE_TIMEOUT,
     *,
-    refresh_stats: bool = False,
+    compute_stats: bool = False,
+    stats_timeout: float = STATS_TIMEOUT,
     include_sample: bool = True,
 ) -> TableDetail:
     """
     The columns of ``table`` with their types, statistics, value ranges and
     descriptions, its other metadata and, for a SQL source, its first rows.
     Reading the schema and computing ``TableStatsStore`` statistics query
-    the table; run this off the event loop.
+    the table; run this off the event loop. Statistics not cached yet are
+    waited for at most ``stats_timeout`` seconds (``stats_pending`` is then
+    the future that keeps computing them) unless ``compute_stats``.
     """
     from ..data.stats import compact_geometry_type, get_stats_store
     from .nodes import execute
@@ -585,11 +591,10 @@ def table_detail(
     stats = None
     try:
         store = get_stats_store()
-        if refresh_stats:
-            store.invalidate(source, table)
-        stats = store.get(source, table)
-        if stats is None:
+        if compute_stats:
             stats = store.compute(source, table)
+        elif (stats := store.get(source, table)) is None:
+            stats, detail.stats_pending = store.compute_within(source, table, stats_timeout)
     except Exception as exc:
         logger.debug("Could not compute TableStatsStore stats for %r: %s", table, type(exc).__name__)
     if stats is not None and stats.columns:

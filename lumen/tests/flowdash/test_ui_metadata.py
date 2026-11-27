@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("duckdb")
@@ -22,7 +24,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from lumen.data.stats import TableStatsStore, set_stats_store
-from lumen.flowdash import DESCRIPTIONS_KEY, SOURCES_KEY, DescriptionStore
+from lumen.flowdash import DESCRIPTIONS_KEY, SOURCES_KEY
 from lumen.flowdash.data_section import DataPage
 from lumen.flowdash.metadata import DESCRIPTIONS_FILE
 from lumen.flowdash.project import PROJECT_FILE, load_project
@@ -59,13 +61,22 @@ def _fake_model():
     return FunctionModel(respond)
 
 
+class AgentSession:
+    def __init__(self, model):
+        self.runner = SimpleNamespace(model=model, agent=None, run_kwargs={})
+        self.ledger = None
+
+    def plan_request(self, target):
+        return None, {}, None
+
+
 class _Session:
     def __init__(self, project, *, admin: bool = True, user: str = "ana", agent_model=None):
         self.project = project
         self.is_admin = self.admin = admin
         self.store = MemoryDashboardStore()
         self._identity = Identity(user)
-        self.agent_model = agent_model
+        self._agent_session = AgentSession(agent_model) if agent_model is not None else None
 
     def _still_admin(self) -> bool:
         return self.admin
@@ -92,8 +103,8 @@ def _make_project(tmp_path):
     path = tmp_path / PROJECT_FILE
     path.write_text("general:\n  admins: [ana]\n")
     project = load_project(path, {SOURCES_KEY: sources})
-    project.context[UPLOADS_KEY] = Uploads(tmp_path / "uploads", sources, project=project)
-    project.context[DESCRIPTIONS_KEY] = DescriptionStore(tmp_path / "uploads" / DESCRIPTIONS_FILE)
+    uploads = project.context[UPLOADS_KEY] = Uploads(tmp_path / "uploads", sources, project=project)
+    project.context[DESCRIPTIONS_KEY] = uploads.descriptions
     return project, source
 
 
@@ -113,7 +124,7 @@ def test_admin_refreshes_metadata_views_stats_and_enriches_with_llm(page, tmp_pa
     source.tables["orders"] = (
         "SELECT * FROM (VALUES (1, 'paid', 30), (2, 'paid', 20), (3, 'open', NULL), (4, 'open', 40), (5, 'paid', 50)) AS t(order_id, status, amount)"
     )
-    page.locator(".lumen-data-source-refresh-shop button").click()
+    page.locator(".lumen-data-source-shop .lumen-data-source-refresh button").click()
     expect(orders_row).to_contain_text("5", timeout=15000)
 
     # 2. Open table drawer and verify TableStatsStore column stats are shown.
@@ -156,7 +167,7 @@ def test_admin_refreshes_metadata_views_stats_and_enriches_with_llm(page, tmp_pa
     assert entry["origin"] == "llm"
 
 
-def test_viewer_sees_stats_and_refresh_but_not_llm_enrichment(page, tmp_path):
+def test_viewer_sees_stats_but_not_refresh_or_llm_enrichment(page, tmp_path):
     project, _ = _make_project(tmp_path)
     session = _Session(project, admin=False, user="bo", agent_model=_fake_model())
     view = DataPage(session, project, admin=False, navigate=lambda _url: None)
@@ -169,6 +180,8 @@ def test_viewer_sees_stats_and_refresh_but_not_llm_enrichment(page, tmp_path):
     orders_row.get_by_text("orders").click()
     drawer = page.locator(".flowdash-admin-catalog-drawer")
     expect(drawer).to_contain_text("Exact", timeout=15000)
-    expect(drawer.locator(".flowdash-catalog-refresh")).to_be_visible()
+    expect(drawer.locator(".flowdash-catalog-refresh")).to_be_hidden()
+    expect(page.locator(".lumen-data-source-refresh")).to_have_count(0)
+    expect(page.locator(".flowdash-catalog-row-refresh")).to_have_count(0)
     expect(drawer.locator(".flowdash-catalog-enrich")).to_be_hidden()
     expect(drawer.locator(".flowdash-catalog-edit-descriptions")).to_be_hidden()

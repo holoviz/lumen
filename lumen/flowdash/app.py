@@ -28,7 +28,7 @@ from .catalog import CATALOG_KEY, ProjectCatalog
 from .data_section import (
     SECTION_ID as DATA_SECTION_ID, data_section, redirect_moved_admin_pages,
 )
-from .metadata import DESCRIPTIONS_FILE, DESCRIPTIONS_KEY, DescriptionStore
+from .metadata import DESCRIPTIONS_KEY
 from .metrics import (
     METRICS_KEY, ProjectMetrics, serve_data, serve_lumen,
 )
@@ -411,7 +411,7 @@ def build_routes(
     uploads = Uploads(upload_dir or project_dir / UPLOAD_DIR, sources, upload_formats(upload_handlers))
     # Uploads take the refs they were given, after the served sources took theirs.
     uploads.restore()
-    descriptions = DescriptionStore(uploads.directory / DESCRIPTIONS_FILE)
+    descriptions = uploads.descriptions
     descriptions.restore(sources)
     editor_options = dict(params.pop("editor_options", {}))
     context = {

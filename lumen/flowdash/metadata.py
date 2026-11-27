@@ -24,8 +24,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import param
-
 from pydantic import BaseModel, Field
 
 from ..data.sharing import shares_values, sharing
@@ -44,8 +42,19 @@ DESCRIPTIONS_KEY = "lumen.descriptions"
 DESCRIPTIONS_FILE = "descriptions.json"
 DESCRIPTIONS_VERSION = 1
 
+# A source refresh reads the schema of at most this many tables and profiles
+# at most REFRESH_PROFILE_TABLES of them; the rest are read when shown.
+REFRESH_TABLES = 50
+REFRESH_PROFILE_TABLES = 10
+
 NOT_ADMIN_ENRICH = "Only admins can generate or edit table descriptions."
-NO_MODEL = "No agent model is configured for this app. Configure an agent model to enrich descriptions with an LLM."
+NOT_ADMIN_REFRESH = "Only admins can refresh metadata, as it drops what every session has cached."
+NO_STORE = "This app keeps no table descriptions, so they cannot be saved."
+NO_MODEL = (
+    "No agent model is configured for this app, or the assistant is not available to you. "
+    "Configure an agent model to enrich descriptions with an LLM."
+)
+NO_ASSISTANT = "You no longer have access to the assistant, so descriptions cannot be generated."
 
 # Sample rows included in the LLM enrichment prompt when value sharing allows it.
 ENRICH_SAMPLE_ROWS = 5
@@ -90,19 +99,9 @@ class TableEnrichment(BaseModel):
 
 
 def _is_admin(app: t.Any) -> bool:
-    """Live admin check, failing closed when the app is missing or raises."""
-    if app is None:
-        return False
-    check = getattr(app, "still_admin", None) or getattr(app, "_still_admin", None)
-    if not callable(check):
-        return False
-    try:
-        return bool(check())
-    except Exception as exc:
-        from panel_flowdash.value_text import error_text
+    from .metrics_edit import is_admin
 
-        logger.warning("Could not check whether this session is still an admin: %s", error_text(exc))
-        return False
+    return is_admin(app)
 
 
 def _identity_name(app: t.Any) -> str:
@@ -139,30 +138,20 @@ def apply_descriptions(
     columns: Mapping[str, str] | None = None,
 ) -> None:
     """
-    Apply ``description`` and ``columns`` onto ``source.descriptions`` without
-    querying the source or clearing its data cache. Clears cached metadata,
-    bumps ``_metadata_revision`` and invalidates the agent's cached Metaset so
-    ``source.get_metadata()`` and the assistant see the update immediately.
+    Replace the descriptions of ``table`` on ``source`` with ``description``
+    and ``columns``, without querying the source (unlike ``Source.describe``,
+    which validates against the live schema and merges), and invalidate the
+    on-disk metadata cache and the agent's cached Metaset so the assistant
+    sees the update immediately.
     """
-    existing = dict(source.descriptions or {})
     entry: dict[str, t.Any] = {}
     if isinstance(description, str) and description.strip():
         entry["description"] = description.strip()
     clean_cols = {str(col): {"description": text.strip()} for col, text in (columns or {}).items() if isinstance(text, str) and text.strip()}
     if clean_cols:
         entry["columns"] = clean_cols
-    if entry:
-        existing[table] = entry
-    else:
-        existing.pop(table, None)
-    # Suppress param events so Source.clear_cache does not evict cached dataframes.
-    with param.parameterized.discard_events(source):
-        source.descriptions = existing
-    cache = getattr(source, "_metadata_cache", None)
-    if isinstance(cache, dict):
-        cache.pop(table, None)
+    source._set_descriptions(table, entry)
     _unlink_disk_cache(source, metadata=True)
-    source._metadata_revision = getattr(source, "_metadata_revision", 0) + 1
     _invalidate_agent_metaset(source)
 
 
@@ -296,31 +285,32 @@ class DescriptionStore:
                     restored += 1
         return restored
 
+    def pop(self, ref: str) -> dict[str, dict[str, t.Any]]:
+        """Remove and return the persisted descriptions of every table of ``ref``."""
+        with self._lock:
+            raw = self._read_raw()
+            removed = raw.pop(ref, None)
+            if removed is None:
+                return {}
+            self._write_raw(raw)
+        return removed
+
+    def put(self, ref: str, tables: Mapping[str, Mapping[str, t.Any]]) -> None:
+        """Persist ``tables`` (as returned by ``pop``) under ``ref``, replacing what ``ref`` had."""
+        tables = {str(tbl): dict(entry) for tbl, entry in tables.items() if isinstance(entry, Mapping)}
+        if not tables:
+            return
+        with self._lock:
+            raw = self._read_raw()
+            raw[ref] = tables
+            self._write_raw(raw)
+
 
 def description_store(project: t.Any) -> DescriptionStore | None:
-    """
-    The ``DescriptionStore`` for ``project``: from ``project.context`` if
-    present, else beside ``uploads/manifest.json`` (or in ``<project_dir>/uploads``).
-    """
-    from .uploads import UPLOAD_DIR, UPLOADS_KEY
-
+    """The app's ``DescriptionStore``, which ``build_routes`` puts in ``project.context``."""
     context = getattr(project, "context", None)
-    if isinstance(context, Mapping) and isinstance(store := context.get(DESCRIPTIONS_KEY), DescriptionStore):
-        return store
-    uploads = context.get(UPLOADS_KEY) if isinstance(context, Mapping) else None
-    directory: Path | None = None
-    if uploads is not None and getattr(uploads, "directory", None) is not None:
-        directory = Path(uploads.directory)
-    elif getattr(project, "path", None):
-        directory = Path(project.path).resolve().parent / UPLOAD_DIR
-    elif isinstance(context, Mapping) and context.get("project_dir"):
-        directory = Path(context["project_dir"]) / UPLOAD_DIR
-    if directory is None:
-        return None
-    store = DescriptionStore(directory / DESCRIPTIONS_FILE)
-    if isinstance(context, dict):
-        context[DESCRIPTIONS_KEY] = store
-    return store
+    store = context.get(DESCRIPTIONS_KEY) if isinstance(context, Mapping) else None
+    return store if isinstance(store, DescriptionStore) else None
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +333,12 @@ def invalidate_table(source: Source, table: str) -> None:
     _invalidate_agent_metaset(source)
 
 
-def invalidate_source(source: Source) -> None:
-    """Drop cached schema, metadata, overview and TableStatsStore entries for every table of ``source``."""
+def invalidate_source(source: Source, tables: Sequence[str] = ()) -> None:
+    """
+    Drop cached schema, metadata, overview and TableStatsStore entries for
+    every table of ``source``; ``tables`` names those whose statistics may
+    be on disk without being in memory.
+    """
     from .nodes import invalidate_source_schemas
 
     if isinstance(getattr(source, "_schema_cache", None), dict):
@@ -353,7 +347,7 @@ def invalidate_source(source: Source) -> None:
         source._metadata_cache = {}
     _unlink_disk_cache(source, schema=True, metadata=True)
     invalidate_source_schemas(source)
-    get_stats_store().invalidate(source)
+    get_stats_store().invalidate(source, tables=tables)
     _invalidate_agent_metaset(source)
 
 
@@ -366,36 +360,39 @@ def refresh_table(
 ) -> TableDetail:
     """
     Invalidate cached schema, metadata and statistics for ``table`` and read
-    them fresh from ``source``. Run off the event loop for remote sources.
+    them fresh from ``source``, profiling it again. Run off the event loop.
     """
     invalidate_table(source, table)
-    return table_detail(source, table, timeout=timeout, refresh_stats=True, include_sample=include_sample)
+    return table_detail(source, table, timeout=timeout, compute_stats=True, include_sample=include_sample)
 
 
 def refresh_source(
     source: Source,
     *,
     tables: Sequence[str] | None = None,
-    compute_stats: bool = True,
+    limit: int = REFRESH_TABLES,
+    profile: int = REFRESH_PROFILE_TABLES,
 ) -> tuple[dict[str, TableInfo], str | None]:
     """
-    Invalidate cached schema, metadata and statistics for ``source`` and read
-    them fresh for each listed table. Returns ``(infos_by_table, listing_error)``.
-    Run off the event loop for remote sources.
+    Invalidate cached schema, metadata and statistics for ``source``, then
+    read the schema of its first ``limit`` listed tables again and profile
+    the first ``profile`` of them; the others are read when they are shown.
+    Returns ``(infos_by_table, listing_error)``. Run off the event loop.
     """
     from .nodes import listed_tables
 
-    invalidate_source(source)
     if tables is None:
         try:
             names = list(listed_tables(source))
         except Exception as exc:
+            invalidate_source(source)
             return {}, safe_error(exc)
     else:
         names = list(tables)
+    invalidate_source(source, names)
     store = get_stats_store()
     infos: dict[str, TableInfo] = {}
-    for table in names:
+    for i, table in enumerate(names[:limit]):
         info = table_info(source, table)
         try:
             schema = source.get_schema(table)
@@ -408,7 +405,7 @@ def refresh_source(
                 info.rows = length
             if info.columns is None:
                 info.columns = [str(k) for k in schema if k != "__len__"]
-        if compute_stats:
+        if i < profile:
             try:
                 stats = store.compute(source, table)
             except Exception as exc:
@@ -426,101 +423,62 @@ def refresh_source(
 # Agent model resolution and LLM enrichment
 
 
-def _first_model_entry(models: Sequence[t.Any]) -> t.Any:
-    for item in models:
-        if isinstance(item, str) and item.strip():
-            return item.strip().split("=", 1)[0].strip()
-        if isinstance(item, Mapping):
-            target = item.get("target") or item.get("model") or item.get("id")
-            if target:
-                return target
-        else:
-            target = getattr(item, "target", None) or getattr(item, "model", None) or getattr(item, "id", None)
-            if target:
-                return target
-    return None
+@dataclass
+class EnrichmentModel:
+    """
+    The model enrichment runs on, as the app's assistant would run a request:
+    the session's model after its monthly limit and fallback, with that
+    model's settings, and the ledger its spend is counted in.
+    """
+
+    model: t.Any
+    model_id: str | None = None
+    settings: dict[str, t.Any] = field(default_factory=dict)
+    ledger: t.Any = None
+    note: str | None = None
+
+    def record_spend(self, messages: Sequence[t.Any]) -> None:
+        """Count the cost of the model responses in ``messages`` against the model's monthly spend."""
+        if self.model_id is None or self.ledger is None:
+            return
+        from pydantic_ai.messages import ModelResponse
+
+        costs = [_response_cost(m) for m in messages if isinstance(m, ModelResponse)]
+        known = [c for c in costs if c is not None]
+        self.ledger.add(self.model_id, sum(known) if known else None)
 
 
-def _project_ai_model(app: t.Any, project: t.Any) -> t.Any:
-    """Resolve a model configured in the project file's ``ai:`` section, including provider secrets."""
+def _response_cost(response: t.Any) -> float | None:
+    if (cost := getattr(response.usage, "cost", None)) is not None:
+        return float(cost)
     try:
-        from panel_flowdash.ai import (
-            default_model_id, model_choice, model_entries,
-        )
-    except ImportError:
-        return None
-    ai: dict[str, t.Any] = {}
-    if app is not None and hasattr(app, "_project_section"):
-        try:
-            ai = app._project_section("ai") or {}
-        except Exception:
-            ai = {}
-    elif project is not None:
-        try:
-            ai = project.get("ai") or {}
-        except Exception:
-            ai = {}
-    if not isinstance(ai, Mapping) or not ai:
-        return None
-    if app is not None and hasattr(app, "_model_entries"):
-        try:
-            entries, default = app._model_entries(ai)
-        except Exception:
-            entries, default = [], None
-    else:
-        entries = model_entries(ai)
-        default = default_model_id(ai, entries, None)
-    if not entries:
-        return None
-    picked = next((e for e in entries if e.id == default), entries[0])
-    try:
-        choice = model_choice(picked, ai)
-        return choice.target or choice.id
+        return float(response.cost().total_price)
     except Exception:
-        return picked.id
+        return None
 
 
-def configured_model(app: t.Any = None, project: t.Any = None) -> t.Any | None:
+def configured_model(app: t.Any) -> EnrichmentModel | None:
     """
-    The app's configured agent model (a pydantic-ai ``Model`` or model id),
-    reusing ``panel_flowdash``'s ``ai:`` provider credentials rather than a
-    separate API key store. Returns None when no agent model is configured.
+    The model the session's assistant would run a request on, resolved
+    through panel-flowdash's model policy (the models offered to this
+    person, monthly limits and fallbacks, model settings), or None when the
+    app has no assistant or this person may not use it.
     """
-    if app is not None:
-        session = getattr(app, "_agent_session", None)
-        if session is not None:
-            model_id = getattr(session, "model", None)
-            choices = getattr(session, "models", None) or ()
-            if model_id:
-                for choice in choices:
-                    if getattr(choice, "id", None) == model_id:
-                        return getattr(choice, "target", None) or choice.id
-                return model_id
-            if (agent_model := getattr(getattr(session, "agent", None), "model", None)) is not None:
-                return agent_model
-        # Combine code models with project ai: provider credentials when FlowDashApp exposes them.
-        if getattr(app, "agent", None) is not False and (ai_model := _project_ai_model(app, project)) is not None:
-            return ai_model
-        agent = getattr(app, "agent", None)
-        if agent is not False:
-            if isinstance(agent, str) and agent.strip():
-                return agent.strip()
-            if (agent_model := getattr(agent, "model", None)) is not None:
-                return agent_model
-        if (direct := getattr(app, "agent_model", None)) is not None:
-            if not isinstance(direct, str) or direct.strip():
-                return direct.strip() if isinstance(direct, str) else direct
-        if (models := getattr(app, "agent_models", None)) and (first := _first_model_entry(models)):
-            return first
-    if (ai_model := _project_ai_model(None, project)) is not None:
-        return ai_model
-    if env_model := (os.environ.get("FLOWDASH_AGENT_MODEL") or "").strip():
-        return env_model
-    if env_models := (os.environ.get("FLOWDASH_AGENT_MODELS") or "").strip():
-        first = env_models.split(",", 1)[0].strip().split("=", 1)[0].strip()
-        if first:
-            return first
-    return None
+    session = getattr(app, "_agent_session", None) if app is not None else None
+    runner = getattr(session, "runner", None)
+    if runner is None:
+        return None
+    target = runner.model if runner.model is not None else getattr(runner.agent, "model", None)
+    if target is None:
+        return None
+    model_id, kwargs, note = session.plan_request(target)
+    if model_id is None and note:
+        return EnrichmentModel(None, note=note)
+    settings = dict(runner.run_kwargs.get("model_settings") or {})
+    settings.update(kwargs.get("model_settings") or {})
+    return EnrichmentModel(
+        kwargs.get("model", target), model_id=model_id, settings=settings, ledger=session.ledger, note=note,
+    )
 
 
 def _sample_lines(frame: t.Any, max_rows: int = ENRICH_SAMPLE_ROWS) -> list[str]:
@@ -589,17 +547,14 @@ def build_enrichment_prompt(
     return "\n".join(lines)
 
 
-def _enrichment_model_settings(model: t.Any) -> dict[str, t.Any] | None:
-    """Use the agent's provider-aware model settings with enough output budget for wide tables."""
-    try:
-        from ..agent.assistant import model_settings_for
-    except Exception:
-        return None
-    if isinstance(model, str):
-        return {"max_tokens": ENRICH_MAX_TOKENS}
-    settings = model_settings_for(model)
-    settings["max_tokens"] = max(int(settings.get("max_tokens") or 0), ENRICH_MAX_TOKENS)
-    return settings
+def _enrichment_model_settings(model: t.Any, settings: Mapping[str, t.Any]) -> dict[str, t.Any]:
+    """The agent's provider-aware model settings and the model's own, with enough output budget for wide tables."""
+    from ..agent.assistant import model_settings_for
+
+    merged = {} if isinstance(model, str) else dict(model_settings_for(model))
+    merged.update(settings)
+    merged["max_tokens"] = max(int(merged.get("max_tokens") or 0), ENRICH_MAX_TOKENS)
+    return merged
 
 
 def _normalize_enrichment(output: TableEnrichment, column_names: Sequence[str]) -> TableEnrichment:
@@ -629,68 +584,53 @@ async def enrich_table(
     *,
     ref: str = "",
     app: t.Any = None,
-    project: t.Any = None,
-    model: t.Any = None,
+    model: EnrichmentModel | None = None,
     detail: TableDetail | None = None,
     check_admin: bool = True,
 ) -> TableEnrichment:
     """
-    Generate table and column descriptions for ``table`` using the app's
-    configured agent model. Does not save them; callers let an admin review
-    and edit the draft before saving.
+    Generate table and column descriptions for ``table`` with the model the
+    app's assistant runs on (see ``configured_model``), counting the spend
+    against it. Does not save them; callers let an admin review and edit
+    the draft before saving.
     """
     if check_admin and not _is_admin(app):
         raise PermissionError(NOT_ADMIN_ENRICH)
-    resolved_model = model if model is not None else configured_model(app, project)
-    if resolved_model is None:
+    if model is None:
+        if app is not None and hasattr(app, "_assistant_still_allowed") and not app._assistant_still_allowed():
+            raise PermissionError(NO_ASSISTANT)
+        model = configured_model(app)
+    if model is None:
         raise ValueError(NO_MODEL)
+    if model.model is None:
+        raise ValueError(model.note or NO_MODEL)
     if detail is None:
         detail = table_detail(source, table)
     from pydantic_ai import Agent
 
-    capabilities: list[t.Any] = []
-    try:
-        from ..agent.assistant import ReasoningRequired
+    from ..agent.assistant import ReasoningRequired
 
-        capabilities.append(ReasoningRequired())
-    except Exception:
-        pass
-    settings = _enrichment_model_settings(resolved_model)
     agent: Agent[None, TableEnrichment] = Agent(
-        resolved_model,
+        model.model,
         output_type=TableEnrichment,
         instructions=ENRICH_INSTRUCTIONS,
         retries=2,
-        **({"capabilities": capabilities} if capabilities else {}),
-        **({"model_settings": settings} if settings else {}),
+        capabilities=[ReasoningRequired()],
+        model_settings=_enrichment_model_settings(model.model, model.settings),
     )
     prompt = build_enrichment_prompt(ref, table, detail, source=source)
     result = await agent.run(prompt)
+    model.record_spend(result.all_messages())
     return _normalize_enrichment(result.output, [col.name for col in detail.columns])
 
 
-def enrich_table_sync(
-    source: Source,
-    table: str,
-    *,
-    ref: str = "",
-    app: t.Any = None,
-    project: t.Any = None,
-    model: t.Any = None,
-    detail: TableDetail | None = None,
-    check_admin: bool = True,
-) -> TableEnrichment:
-    """Synchronous wrapper around :func:`enrich_table`, safe both off and inside a running event loop."""
-    coro = enrich_table(
-        source,
-        table,
-        ref=ref,
-        app=app,
-        project=project,
-        model=model,
-        detail=detail,
-        check_admin=check_admin,
-    )
+def enrich_table_sync(source: Source, table: str, **kwargs: t.Any) -> TableEnrichment:
+    """
+    :func:`enrich_table` from synchronous code. In a worker thread it runs
+    its own event loop; ``in_background`` runs work inline outside a served
+    session, possibly inside a running loop, so it then uses a thread.
+    """
+    coro = enrich_table(source, table, **kwargs)
     try:
         asyncio.get_running_loop()
     except RuntimeError:

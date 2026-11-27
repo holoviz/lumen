@@ -41,9 +41,10 @@ from .catalog import (
     raw_section, safe_error, set_assistant, table_detail, table_info,
 )
 from .metadata import (
-    NO_MODEL, NOT_ADMIN_ENRICH, TableEnrichment, _is_admin, apply_descriptions,
-    configured_model, description_store, enrich_table_sync,
-    refresh_source as _refresh_source, refresh_table as _refresh_table,
+    NO_MODEL, NO_STORE, NOT_ADMIN_ENRICH, NOT_ADMIN_REFRESH, EnrichmentModel,
+    TableEnrichment, _is_admin, configured_model, description_store,
+    enrich_table_sync, refresh_source as _refresh_source,
+    refresh_table as _refresh_table,
 )
 from .uploads import UPLOADS_KEY, Upload
 
@@ -257,6 +258,7 @@ class CatalogSettings(Viewer):
         self._on_open = on_open
         self._on_change = on_change
         self._usage: tuple[dict, dict] | None = None
+        self._model_known: bool | None = None
         self._rendering = False
         self._infos: dict[tuple[str, str], TableInfo] = {}
         self._listing_errors: dict[str, str] = {}
@@ -432,10 +434,20 @@ class CatalogSettings(Viewer):
 
         self._schedule(work, self.refresh)
 
+    def _may_refresh(self) -> bool:
+        """Whether this session may refresh metadata, which drops caches every session shares (admins only)."""
+        if self.editable and _is_admin(self._app):
+            return True
+        self._show_problems([Problem(NOT_ADMIN_REFRESH)])
+        return False
+
     def refresh_source(self, ref: str, *, on_done: t.Callable[[], t.Any] | None = None) -> None:
-        """Invalidate cached schema, metadata and stats for ``ref`` and read every listed table fresh."""
+        """
+        Invalidate cached schema, metadata and stats for ``ref`` and read its
+        tables fresh in the background, profiling only the first few.
+        """
         source = self.sources().get(ref)
-        if source is None:
+        if source is None or not self._may_refresh():
             return
         for row in self.rows():
             if row["ref"] == ref:
@@ -474,7 +486,7 @@ class CatalogSettings(Viewer):
     def refresh_table(self, ref: str, table: str) -> None:
         """Invalidate cached schema, metadata and stats for one table and read them fresh."""
         source = self.sources().get(ref)
-        if source is None:
+        if source is None or not self._may_refresh():
             return
         self._infos[(ref, table)] = TableInfo(loading=True)
         is_open = self.selected == (ref, table)
@@ -623,12 +635,15 @@ class CatalogSettings(Viewer):
                 )
         dashboards, metrics = self.usage()
         used = used_html(dashboards.get((ref, table), []), metrics.get((ref, table), []))
-        refresh_btn = pmui.IconButton(
-            icon="refresh", size="small", margin=0, disabled=info.loading,
-            description=f"Read schema and fetch metadata for {table}",
-            css_classes=["flowdash-catalog-row-refresh"],
-        )
-        refresh_btn.on_click(lambda _event, ref=ref, table=table: self.refresh_table(ref, table))
+        if self.editable:
+            refresh_btn = pmui.IconButton(
+                icon="refresh", size="small", margin=0, disabled=info.loading,
+                description=f"Read schema and fetch metadata for {table}",
+                css_classes=["flowdash-catalog-row-refresh"],
+            )
+            refresh_btn.on_click(lambda _event, ref=ref, table=table: self.refresh_table(ref, table))
+        else:
+            refresh_btn = cell("")
         return [
             switch,
             open_drawer,
@@ -700,7 +715,7 @@ class CatalogSettings(Viewer):
         )
         self._drawer_refresh = pmui.Button(
             label="Refresh metadata", icon="refresh", variant="outlined", size="small", margin=0,
-            css_classes=["flowdash-catalog-refresh"],
+            visible=self.editable, css_classes=["flowdash-catalog-refresh"],
         )
         self._drawer_refresh.on_click(lambda _event: self.refresh_selected())
         self._enrich_btn = pmui.Button(
@@ -870,13 +885,13 @@ class CatalogSettings(Viewer):
             return False
         ref, table = self.selected
         row = self._row(ref, table)
-        if row is None:
-            return False
         detail = self._detail
-        info = row["info"]
-        current_desc = (detail.description if detail is not None else "") or info.description
-        current_cols = {c.name: c.description for c in detail.columns} if detail is not None else {}
-        col_names = [c.name for c in detail.columns] if detail is not None else list(info.columns or ())
+        # Without the loaded columns, saving would replace their descriptions with none.
+        if row is None or detail is None:
+            return False
+        current_desc = detail.description or row["info"].description
+        current_cols = {c.name: c.description for c in detail.columns}
+        col_names = [c.name for c in detail.columns]
         if draft is not None:
             table_desc = draft.description or current_desc
             col_values = {name: draft.columns.get(name, current_cols.get(name, "")) for name in col_names}
@@ -901,7 +916,7 @@ class CatalogSettings(Viewer):
             widgets.append(field_input)
         self._enrich_col_inputs = inputs
         self._enrich_cols_box[:] = widgets or [caption("No columns loaded yet.", margin=(4, 0))]
-        has_model = configured_model(self._app, self.project) is not None
+        has_model = self._has_model()
         with pn.io.hold():
             self._enrich_alert.visible = False
             self._enrich_spinner.visible = False
@@ -913,8 +928,14 @@ class CatalogSettings(Viewer):
             self._enrich_panel.visible = True
         return True
 
-    def start_enrich(self, *, model: t.Any = None) -> bool:
-        """Generate table and column descriptions with the app's configured model for review before saving."""
+    def _has_model(self) -> bool:
+        """Whether the session's assistant has a model enrichment can run on, checked once per drawer."""
+        if self._model_known is None:
+            self._model_known = configured_model(self._app) is not None
+        return self._model_known
+
+    def start_enrich(self, *, model: EnrichmentModel | None = None) -> bool:
+        """Generate table and column descriptions with the assistant's model for review before saving."""
         if not self.editable or self.selected is None:
             return False
         if not _is_admin(self._app):
@@ -922,15 +943,14 @@ class CatalogSettings(Viewer):
             self._enrich_panel.visible = True
             self._enrich_form.visible = False
             return False
-        resolved_model = model if model is not None else configured_model(self._app, self.project)
-        if resolved_model is None:
+        if model is None and not self._has_model():
             self._enrich_alert.param.update(object=NO_MODEL, visible=True)
             self._enrich_panel.visible = True
             self._enrich_form.visible = False
             return False
         ref, table = self.selected
         row = self._row(ref, table)
-        if row is None:
+        if row is None or self._detail is None:
             return False
         source = row["source"]
         detail = self._detail
@@ -949,10 +969,7 @@ class CatalogSettings(Viewer):
 
         def work():
             try:
-                draft = enrich_table_sync(
-                    source, table, ref=ref, app=self._app, project=self.project,
-                    model=resolved_model, detail=detail,
-                )
+                draft = enrich_table_sync(source, table, ref=ref, app=self._app, model=model, detail=detail)
             except Exception as exc:
                 errors.append(safe_error(exc))
             else:
@@ -962,8 +979,7 @@ class CatalogSettings(Viewer):
             self._enrich_running = False
             if self.selected != (ref, table):
                 return
-            has_model = configured_model(self._app, self.project) is not None
-            self._enrich_btn.disabled = not has_model
+            self._enrich_btn.disabled = not self._has_model()
             self._enrich_spinner.visible = False
             if errors:
                 self._enrich_alert.param.update(object=errors[0], visible=True)
@@ -978,7 +994,8 @@ class CatalogSettings(Viewer):
 
     def save_descriptions(self) -> bool:
         """Persist the reviewed table and column descriptions and update the source and assistant."""
-        if not self.editable or self.selected is None:
+        # Only from an open editor, whose inputs hold every loaded column's description.
+        if not self.editable or self.selected is None or self._detail is None or not self._enrich_form.visible:
             return False
         ref, table = self.selected
         row = self._row(ref, table)
@@ -988,15 +1005,12 @@ class CatalogSettings(Viewer):
         description = (self._enrich_table_input.value or "").strip()
         columns = {name: (widget.value or "").strip() for name, widget in self._enrich_col_inputs.items()}
         store = description_store(self.project)
-        if store is not None:
+        if store is None:
+            problems = [Problem(NO_STORE)]
+        else:
             problems = store.save(
                 ref, table, description, columns, source=source, app=self._app, origin=self._enrich_origin,
             )
-        elif not _is_admin(self._app):
-            problems = [Problem(NOT_ADMIN_ENRICH)]
-        else:
-            apply_descriptions(source, table, description, columns)
-            problems = []
         if problems:
             self._enrich_alert.param.update(object="\n\n".join(p.message for p in problems), visible=True)
             return False
@@ -1106,6 +1120,7 @@ class CatalogSettings(Viewer):
         self.cancel_enrich()
         self.selected = (ref, table)
         self._detail = None
+        self._model_known = None
         with pn.io.hold():
             self._render_head()
             self._loading.visible = True
@@ -1131,7 +1146,28 @@ class CatalogSettings(Viewer):
                     description=detail.description, error=detail.error if not detail.columns else None,
                 )
                 self.refresh()
+            self._render_head()
             self._render_detail()
+            if detail.stats_pending is not None:
+                self._await_stats(ref, table, source, detail.stats_pending)
+
+        self._schedule(work, done)
+
+    def _await_stats(self, ref: str, table: str, source: Source, pending: t.Any) -> None:
+        """Show the drawer's table again once statistics that took longer than the drawer waited arrive."""
+        result: list[TableDetail] = []
+
+        def work():
+            try:
+                pending.result()
+            except Exception:
+                return
+            result.append(table_detail(source, table))
+
+        def done():
+            if result and self.selected == (ref, table) and self._detail is not None and not self._enrich_panel.visible:
+                self._detail = result[0]
+                self._render_detail()
 
         self._schedule(work, done)
 
@@ -1150,13 +1186,14 @@ class CatalogSettings(Viewer):
         kind = "an uploaded" if row["upload"] is not None else f"a {_type_name(source)}"
         self._drawer_subtitle.object = f"Table of {ref}, {kind} source"
         self._delete.visible = self.uploads is not None and self.uploads.may_delete(row["upload"], self._app)
-        has_model = configured_model(self._app, self.project) is not None
+        has_model = self._has_model()
+        loaded = self._detail is not None
         self._enrich_btn.param.update(
             visible=self.editable,
-            disabled=self._enrich_running or not has_model,
+            disabled=self._enrich_running or not has_model or not loaded,
             description="" if has_model else NO_MODEL,
         )
-        self._edit_desc_btn.visible = self.editable
+        self._edit_desc_btn.param.update(visible=self.editable, disabled=not loaded)
         self._rendering = True
         try:
             self._drawer_switch.value = row["assistant"]

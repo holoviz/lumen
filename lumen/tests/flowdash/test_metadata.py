@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+from types import SimpleNamespace
+
 import pytest
 
 pytest.importorskip("duckdb")
@@ -15,7 +17,7 @@ pytest.importorskip("panel_flowdash.admin.wizard")
 
 from panel_flowdash import MemoryDashboardStore
 from panel_flowdash.admin.form import using_app
-from panel_flowdash.auth import Identity
+from panel_flowdash.auth import AuthConfig, Identity
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -23,15 +25,15 @@ from lumen.agent.data import _METASETS, metaset
 from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.data.sharing import sharing
 from lumen.data.stats import TableStatsStore, get_stats_store, set_stats_store
-from lumen.flowdash import DESCRIPTIONS_KEY, SOURCES_KEY, DescriptionStore
+from lumen.flowdash import DESCRIPTIONS_KEY, SOURCES_KEY
 from lumen.flowdash.app import build_routes
 from lumen.flowdash.catalog import ColumnInfo, table_detail
 from lumen.flowdash.catalog_admin import CatalogSettings, _columns_html
 from lumen.flowdash.data_section import DataPage
 from lumen.flowdash.metadata import (
-    DESCRIPTIONS_FILE, NO_MODEL, NOT_ADMIN_ENRICH, apply_descriptions,
-    build_enrichment_prompt, configured_model, description_store, enrich_table,
-    refresh_source, refresh_table,
+    DESCRIPTIONS_FILE, NO_MODEL, NOT_ADMIN_ENRICH, NOT_ADMIN_REFRESH,
+    apply_descriptions, build_enrichment_prompt, configured_model,
+    description_store, enrich_table, refresh_source, refresh_table,
 )
 from lumen.flowdash.nodes import _SCHEMAS_READ, _read_schemas
 from lumen.flowdash.project import PROJECT_FILE, load_project
@@ -73,13 +75,24 @@ def _fake_model(description: str = "Customer orders with payment status and amou
     return FunctionModel(respond)
 
 
+class AgentSession:
+    """The parts of panel-flowdash's AgentSession that model resolution reads, without a model policy."""
+
+    def __init__(self, model):
+        self.runner = SimpleNamespace(model=model, agent=None, run_kwargs={})
+        self.ledger = None
+
+    def plan_request(self, target):
+        return None, {}, None
+
+
 class Session:
     def __init__(self, project, *, admin: bool = True, user: str = "ana", agent_model=None):
         self.project = project
         self.is_admin = self.admin = admin
         self.store = MemoryDashboardStore()
         self._identity = Identity(user)
-        self.agent_model = agent_model
+        self._agent_session = AgentSession(agent_model) if agent_model is not None else None
         self.notified: list[tuple[str, str]] = []
 
     def _still_admin(self) -> bool:
@@ -115,13 +128,9 @@ def project(tmp_path, source):
     path = tmp_path / PROJECT_FILE
     path.write_text("general:\n  admins: [ana]\n")
     proj = load_project(path, {SOURCES_KEY: sources})
-    proj.context[UPLOADS_KEY] = Uploads(tmp_path / "uploads", sources, project=proj)
-    proj.context[DESCRIPTIONS_KEY] = DescriptionStore(tmp_path / "uploads" / DESCRIPTIONS_FILE)
+    uploads = proj.context[UPLOADS_KEY] = Uploads(tmp_path / "uploads", sources, project=proj)
+    proj.context[DESCRIPTIONS_KEY] = uploads.descriptions
     return proj
-
-
-# ---------------------------------------------------------------------------
-# 1. Explicit schema and metadata refresh (per table and per source)
 
 
 def test_refresh_table_invalidates_all_caches_and_reads_fresh_data(source):
@@ -161,12 +170,29 @@ def test_refresh_source_invalidates_and_fetches_every_table(source):
     assert get_stats_store().get(source, "invoices") is not None
 
 
+def test_refresh_source_reads_and_profiles_a_capped_number_of_tables(source, monkeypatch):
+    for i in range(4):
+        source.tables[f"extra_{i}"] = f"SELECT {i} AS n"
+    profiled = []
+    store = get_stats_store()
+    compute = store.compute
+    monkeypatch.setattr(store, "compute", lambda src, table: profiled.append(table) or compute(src, table))
+
+    infos, error = refresh_source(source, limit=3, profile=1)
+
+    assert error is None
+    assert len(infos) == 3
+    assert profiled == [next(iter(infos))]
+
+
+def _refresh_buttons(page):
+    return [o for o in page.__panel__().select() if "lumen-data-source-refresh" in getattr(o, "css_classes", [])]
+
+
 def test_catalog_and_data_page_explicit_refresh_actions(project, source):
     session = Session(project, admin=True)
     page = DataPage(session, project, admin=True, navigate=lambda _url: None)
-    # Every served source card exposes an explicit refresh icon button.
-    refresh_buttons = [o for o in page.__panel__().select() if "lumen-data-source-refresh-shop" in getattr(o, "css_classes", [])]
-    assert len(refresh_buttons) == 1
+    assert len(_refresh_buttons(page)) == 1
 
     # Mutate table and click per-source refresh.
     source.tables["customers"] = "SELECT * FROM (VALUES (1, 'Ada'), (2, 'Bo'), (3, 'Cy')) AS t(customer_id, name)"
@@ -182,6 +208,26 @@ def test_catalog_and_data_page_explicit_refresh_actions(project, source):
     assert page.catalog._detail.rows == 1
     assert page.catalog._infos[("shop", "customers")].rows == 1
     assert any("Refreshed metadata for customers" in msg for _, msg in session.notified)
+
+
+def test_viewers_cannot_refresh_metadata(project, source):
+    viewer = Session(project, admin=False)
+    page = DataPage(viewer, project, admin=False, navigate=lambda _url: None)
+    assert _refresh_buttons(page) == []
+    page.catalog.open_table("shop", "orders")
+    assert not page.catalog._drawer_refresh.visible
+
+    table_detail(source, "orders")
+    page.refresh_source("shop")
+    page.catalog.refresh_table("shop", "orders")
+    assert get_stats_store().get(source, "orders") is not None
+
+    # An admin view whose session lost its admin rights is refused too.
+    revoked = Session(project, admin=False)
+    view = CatalogSettings(project, editable=True, app=revoked)
+    view.refresh_source("shop")
+    assert NOT_ADMIN_REFRESH in view._alert.object
+    assert get_stats_store().get(source, "orders") is not None
 
 
 def test_table_stats_store_invalidate_removes_memory_and_disk_entries(tmp_path, isolated_stats_store):
@@ -202,8 +248,45 @@ def test_table_stats_store_invalidate_removes_memory_and_disk_entries(tmp_path, 
     assert not list((tmp_path / "stats_cache").glob("*.json"))
 
 
-# ---------------------------------------------------------------------------
-# 2. TableStatsStore column stats in the table drawer
+def test_table_stats_store_invalidate_whole_source_names_its_disk_entries(tmp_path, isolated_stats_store):
+    import duckdb
+
+    db_file = tmp_path / "shop.duckdb"
+    conn = duckdb.connect(str(db_file))
+    conn.execute("CREATE TABLE items AS SELECT 1 AS id")
+    conn.execute("CREATE TABLE tags AS SELECT 'a' AS label")
+    conn.close()
+    src = DuckDBSource(uri=str(db_file), name="file_shop")
+    isolated_stats_store.compute(src, "items")
+    isolated_stats_store.compute(src, "tags")
+    assert len(list((tmp_path / "stats_cache").glob("*.json"))) == 2
+
+    # A new store has the entries on disk only, as after a restart, and drops just the tables it is given.
+    fresh = TableStatsStore(cache_dir=tmp_path / "stats_cache")
+    fresh.invalidate(src, tables=["items"])
+    assert len(list((tmp_path / "stats_cache").glob("*.json"))) == 1
+    isolated_stats_store.invalidate(src)
+    assert isolated_stats_store.get(src, "tags") is None
+    assert not list((tmp_path / "stats_cache").glob("*.json"))
+
+
+def test_drawer_shows_stats_that_take_longer_than_it_waits(project, source, monkeypatch):
+    from concurrent.futures import Future
+
+    store = get_stats_store()
+    pending: Future = Future()
+    monkeypatch.setattr(store, "compute_within", lambda src, table, timeout: (None, pending))
+    session = Session(project, admin=True)
+    view = CatalogSettings(project, editable=True, app=session)
+    computed = store.compute(source, "orders")
+    store.invalidate(source, "orders")
+
+    pending.set_result(computed)
+    # Outside a served session the background work runs at once, so the drawer is drawn again with the stats.
+    monkeypatch.setattr(store, "get", lambda src, table: computed if pending.done() and view._detail is not None else None)
+    view.open_table("shop", "orders")
+    assert view._detail.stats is computed
+    assert "<th>Nulls</th>" in view._columns.object
 
 
 def test_table_detail_and_drawer_show_table_stats_store_metrics(project, source):
@@ -250,26 +333,59 @@ def test_columns_html_renders_pk_and_fk_and_escapes_values():
     assert "users.&lt;script&gt;" in html and "<script>" not in html
 
 
-# ---------------------------------------------------------------------------
-# 3. Admin-only LLM enrichment, review/edit flow, and Metaset/assistant sync
+def _real_app(tmp_path, monkeypatch, ai: str = "", **kwargs):
+    from panel_flowdash.ai import ledger_for
 
-
-def test_configured_model_resolves_from_app_and_env(project, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("panel_flowdash.app.resolve_identity", lambda _c: Identity(user="ana"))
     monkeypatch.delenv("FLOWDASH_AGENT_MODEL", raising=False)
     monkeypatch.delenv("FLOWDASH_AGENT_MODELS", raising=False)
-    assert configured_model(Session(project, agent_model=None), project) is None
-    assert configured_model(Session(project, agent_model="openai:gpt-5"), project) == "openai:gpt-5"
+    (tmp_path / "orders.csv").write_text("order_id,amount\n1,30\n2,20\n")
+    (tmp_path / PROJECT_FILE).write_text("general:\n  admins: [ana]\n" + ai)
+    app = build_routes(
+        ["orders.csv"], db_path=tmp_path / "dash.db", project=tmp_path / PROJECT_FILE, auth_config=AuthConfig(),
+        **kwargs,
+    )["/"]()
+    return app, ledger_for(tmp_path)
 
-    model = _fake_model()
-    assert configured_model(Session(project, agent_model=model), project) is model
 
-    monkeypatch.setenv("FLOWDASH_AGENT_MODEL", "anthropic:claude-haiku")
-    assert configured_model(Session(project, agent_model=None), project) == "anthropic:claude-haiku"
+def test_configured_model_is_none_without_an_assistant(tmp_path, monkeypatch):
+    monkeypatch.setenv("FLOWDASH_AGENT_MODEL", "test")
+    assert configured_model(None) is None
+    app, _ = _real_app(tmp_path, monkeypatch)
+    assert app._agent_session is None
+    assert configured_model(app) is None
+
+
+async def test_enrichment_follows_the_apps_model_policy(tmp_path, monkeypatch):
+    from panel_agents import ModelChoice
+
+    main = _fake_model()
+    app, ledger = _real_app(
+        tmp_path, monkeypatch, "ai:\n  models:\n    - id: fn:main\n      monthly_limit: 1\n",
+        agent_model=["test"], agent_models=[ModelChoice("test", model="test"), ModelChoice("fn:main", model=main)],
+    )
+    source = app._editor.context[SOURCES_KEY]["orders"]
+    # The model picked in the assistant's drawer is the one enrichment runs on.
+    app._agent_session.runner.model = main
+    monkeypatch.setattr(app, "_still_admin", lambda: True)
+    model = configured_model(app)
+    assert model.model_id == "fn:main" and model.ledger is ledger
+
+    draft = await enrich_table(source, "orders", ref="orders", app=app)
+    assert draft.description == "Customer orders with payment status and amount."
+    # The request counts against the model's monthly spend, as the assistant's do.
+    assert ledger.month("fn:main")[1] == 1
+
+    # Over its monthly limit with no fallback, enrichment is refused as the assistant's requests are.
+    ledger.add("fn:main", 5.0)
+    with pytest.raises(ValueError, match="monthly spending limit"):
+        await enrich_table(source, "orders", ref="orders", app=app)
 
 
 async def test_enrich_table_uses_model_filters_unknown_columns_and_respects_sharing(project, source):
     admin = Session(project, admin=True, agent_model=_fake_model())
-    draft = await enrich_table(source, "orders", ref="shop", app=admin, project=project)
+    draft = await enrich_table(source, "orders", ref="shop", app=admin)
     assert draft.description == "Customer orders with payment status and amount."
     assert set(draft.columns) == {"order_id", "status", "amount", "ordered_on"}
     assert "nonexistent_col" not in draft.columns
@@ -277,7 +393,7 @@ async def test_enrich_table_uses_model_filters_unknown_columns_and_respects_shar
     # Non-admin is rejected before calling any model.
     viewer = Session(project, admin=False, agent_model=_fake_model())
     with pytest.raises(PermissionError, match="Only admins"):
-        await enrich_table(source, "orders", ref="shop", app=viewer, project=project)
+        await enrich_table(source, "orders", ref="shop", app=viewer)
 
     # Prompt respects lumen.data.sharing=none (no sample rows or literal values).
     detail = table_detail(source, "orders")
@@ -359,9 +475,29 @@ def test_viewer_and_revoked_admin_cannot_enrich_or_save_descriptions(project, so
     assert not description_store(project).path.exists()
 
 
+def test_descriptions_editor_waits_for_the_drawer_to_load(project, source):
+    store = description_store(project)
+    admin = Session(project, admin=True, agent_model=_fake_model())
+    assert store.save("shop", "orders", "Orders", {"amount": "Order total"}, source=source, app=admin) == []
+    view = CatalogSettings(project, editable=True, app=admin)
+    view.selected = ("shop", "orders")
+    view._detail = None
+    view._render_head()
+
+    assert view._edit_desc_btn.disabled and view._enrich_btn.disabled
+    assert not view.open_descriptions_editor()
+    assert not view.start_enrich()
+    assert not view.save_descriptions()
+    assert store.get("shop", "orders").columns == {"amount": "Order total"}
+    assert source.descriptions["orders"]["columns"]["amount"] == {"description": "Order total"}
+
+    view.open_table("shop", "orders")
+    assert not view._edit_desc_btn.disabled
+    assert view.open_descriptions_editor()
+    assert view._enrich_col_inputs["amount"].value == "Order total"
+
+
 def test_enrich_button_disabled_without_configured_model(project, monkeypatch):
-    monkeypatch.delenv("FLOWDASH_AGENT_MODEL", raising=False)
-    monkeypatch.delenv("FLOWDASH_AGENT_MODELS", raising=False)
     admin = Session(project, admin=True, agent_model=None)
     view = CatalogSettings(project, editable=True, app=admin)
     view.open_table("shop", "orders")
@@ -369,10 +505,6 @@ def test_enrich_button_disabled_without_configured_model(project, monkeypatch):
     assert view._enrich_btn.description == NO_MODEL
     assert not view.start_enrich()
     assert NO_MODEL in view._enrich_alert.object
-
-
-# ---------------------------------------------------------------------------
-# 4. Persistence across restarts
 
 
 async def test_descriptions_persist_beside_uploads_manifest_and_survive_restart(tmp_path, monkeypatch):
@@ -432,3 +564,35 @@ def test_apply_descriptions_does_not_query_source(source, monkeypatch):
     apply_descriptions(source, "orders", "Orders table", {"amount": "Order amount"})
     assert source.descriptions["orders"]["description"] == "Orders table"
     assert source.descriptions["orders"]["columns"]["amount"] == {"description": "Order amount"}
+
+
+def test_upload_descriptions_follow_the_upload(tmp_path, project):
+    uploads = project.context[UPLOADS_KEY]
+    store = uploads.descriptions
+    admin = Session(project, admin=True)
+    upload = uploads.add(b"id,amount\n1,30\n", "sales.csv", app=admin)
+    source = uploads.sources[upload.ref]
+    assert store.save(upload.ref, "sales", "Sales", {"amount": "Total"}, source=source, app=admin) == []
+
+    # Deleting the upload takes its descriptions with it into the trash...
+    assert uploads.delete(upload.ref, app=admin) == []
+    assert store.get(upload.ref, "sales") is None
+
+    # ...so a different file uploaded under the same name starts without them, now and after a restart.
+    other = uploads.add(b"id,price\n1,9\n", "sales.csv", app=admin)
+    assert other.ref == upload.ref
+    assert "sales" not in uploads.sources[other.ref].descriptions
+    assert store.get(other.ref, "sales") is None
+    assert uploads.delete(other.ref, app=admin) == []
+
+    # Bringing the first upload back brings its descriptions back.
+    recovered = uploads.recover(upload.id, app=admin)
+    assert store.get(recovered.ref, "sales").description == "Sales"
+    assert uploads.sources[recovered.ref].descriptions["sales"]["description"] == "Sales"
+
+
+def test_descriptions_apply_to_a_source_added_while_the_app_runs(project):
+    uploads = project.context[UPLOADS_KEY]
+    uploads.descriptions.put("sales", {"sales": {"description": "Saved before"}})
+    upload = uploads.add(b"id,amount\n1,30\n", "sales.csv", app=Session(project, admin=True))
+    assert uploads.sources[upload.ref].get_metadata("sales")["description"] == "Saved before"
