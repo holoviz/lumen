@@ -356,6 +356,14 @@ class DataPage(Viewer):
             open_it = pmui.Clickable(object=body, sizing_mode="stretch_width", margin=0)
             open_it.on_click(lambda *_args, ref=summary.ref: self.navigate(f"/{ROUTE}?source={quote(ref, safe='')}"))
             parts = [open_it]
+            if not summary.problem:
+                refresh = pmui.IconButton(
+                    icon="refresh", size="small", margin=0,
+                    description=f"Read schema and fetch metadata for {summary.ref}",
+                    css_classes=["lumen-data-source-refresh", f"lumen-data-source-refresh-{summary.ref}"],
+                )
+                refresh.on_click(lambda _event, ref=summary.ref: self.refresh_source(ref))
+                parts.append(refresh)
             # A connected source is an admin's to manage; an upload is its uploader's too, not just an admin's.
             may_manage = (
                 self.admin if summary.connection is not None
@@ -386,6 +394,11 @@ class DataPage(Viewer):
             *cards, gap="12px", flex_wrap="wrap", margin=(0, 0, 16, 0), sizing_mode="stretch_width",
             css_classes=["lumen-data-sources"],
         )
+
+    def refresh_source(self, ref: str) -> None:
+        """Explicitly invalidate and re-read schema, metadata and statistics for ``ref``."""
+        if hasattr(self, "catalog"):
+            self.catalog.refresh_source(ref)
 
     def reconnect(self, summary: t.Any) -> None:
         """Open Connect a source on a source listed without its credentials, to enter them again."""

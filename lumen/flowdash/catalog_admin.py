@@ -38,7 +38,12 @@ from ..sources.base import Source
 from .add_data import AddDataDialog
 from .catalog import (
     ColumnInfo, TableDetail, TableInfo, catalog_tables, known_info, plain_text,
-    raw_section, set_assistant, table_detail, table_info,
+    raw_section, safe_error, set_assistant, table_detail, table_info,
+)
+from .metadata import (
+    NO_MODEL, NOT_ADMIN_ENRICH, TableEnrichment, _is_admin, apply_descriptions,
+    configured_model, description_store, enrich_table_sync,
+    refresh_source as _refresh_source, refresh_table as _refresh_table,
 )
 from .uploads import UPLOADS_KEY, Upload
 
@@ -84,6 +89,10 @@ _DETAILS_CSS = """
 .k td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .k .sample td { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
 .k .col { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 0.75rem; white-space: nowrap; }
+.k .badge { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 0.6875rem;
+  font-weight: 500; background: rgba(var(--mui-palette-primary-mainChannel) / 0.12);
+  color: var(--mui-palette-primary-main); vertical-align: middle; }
+.k .sub { font-size: 0.75rem; margin-top: 2px; }
 """
 
 
@@ -133,19 +142,38 @@ def _sample_html(frame: t.Any) -> str:
 def _columns_html(columns: Sequence[ColumnInfo]) -> str:
     if not columns:
         return '<span class="muted">No columns known</span>'
+    has_nulls = any(c.nulls for c in columns)
+    has_distinct = any(c.distinct for c in columns)
     described = any(c.description for c in columns)
     none = '<span class="muted">-</span>'
-    rows = "".join(
-        f'<tr><td class="col">{esc(c.name)}</td><td>{esc(c.type) or "&nbsp;"}</td>'
-        f"<td>{esc(c.values) or none}</td>"
-        + (f"<td>{esc(c.description) or none}</td>" if described else "")
-        + "</tr>"
-        for c in columns
-    )
+    rows = []
+    for c in columns:
+        name_html = esc(c.name)
+        if c.primary_key:
+            name_html += '<span class="badge">PK</span>'
+        if c.references:
+            name_html += f'<div class="sub muted">-&gt; {esc(c.references)}</div>'
+        type_title = f' title="{esc(c.sql_type)}"' if c.sql_type and c.sql_type.lower() != c.type.lower() else ""
+        values_html = esc(c.values) if c.values else none
+        if c.stats_summary and c.stats_summary != c.values:
+            values_html += f'<div class="sub muted">{esc(c.stats_summary)}</div>'
+        row = f'<tr><td class="col">{name_html}</td><td{type_title}>{esc(c.type) or "&nbsp;"}</td>'
+        if has_nulls:
+            row += f'<td class="n">{esc(c.nulls) or none}</td>'
+        if has_distinct:
+            row += f'<td class="n">{esc(c.distinct) or none}</td>'
+        row += f"<td>{values_html}</td>"
+        if described:
+            row += f"<td>{esc(c.description) or none}</td>"
+        row += "</tr>"
+        rows.append(row)
     return (
-        '<div class="scroll"><table><thead><tr><th>Column</th><th>Type</th><th>Values</th>'
+        '<div class="scroll"><table><thead><tr><th>Column</th><th>Type</th>'
+        + ("<th>Nulls</th>" if has_nulls else "")
+        + ("<th>Distinct</th>" if has_distinct else "")
+        + "<th>Values</th>"
         + ("<th>Description</th>" if described else "")
-        + f"</tr></thead><tbody>{rows}</tbody></table></div>"
+        + f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
     )
 
 
@@ -271,6 +299,7 @@ class CatalogSettings(Viewer):
                 ("Rows", "0.7fr"),
                 ("Columns", "2.2fr"),
                 ("Used by", "0.9fr"),
+                ("", "44px"),
             ],
             toolbar=toolbar,
             footer=caption(
@@ -403,6 +432,91 @@ class CatalogSettings(Viewer):
 
         self._schedule(work, self.refresh)
 
+    def refresh_source(self, ref: str, *, on_done: t.Callable[[], t.Any] | None = None) -> None:
+        """Invalidate cached schema, metadata and stats for ``ref`` and read every listed table fresh."""
+        source = self.sources().get(ref)
+        if source is None:
+            return
+        for row in self.rows():
+            if row["ref"] == ref:
+                self._infos[(ref, row["table"])] = TableInfo(loading=True)
+        self.refresh()
+        result: list[tuple[dict[str, TableInfo], str | None]] = []
+
+        def work():
+            result.append(_refresh_source(source))
+
+        def done():
+            if not result:
+                return
+            infos, error = result[0]
+            for key in [k for k in self._infos if k[0] == ref and k[1] not in infos]:
+                del self._infos[key]
+            for table, info in infos.items():
+                self._infos[(ref, table)] = info
+            self._usage = None
+            if error:
+                self._listing_errors[ref] = error
+                self._show_problems([Problem(f"Could not refresh {ref}: {error}")])
+            else:
+                self._listing_errors.pop(ref, None)
+                if self._app is not None and hasattr(self._app, "_notify"):
+                    n = len(infos)
+                    self._app._notify("success", f"Refreshed metadata for {ref} ({n} table{'' if n == 1 else 's'}).")
+            self.refresh()
+            if self.selected is not None and self.selected[0] == ref:
+                self.open_table(*self.selected)
+            if on_done is not None:
+                on_done()
+
+        self._schedule(work, done)
+
+    def refresh_table(self, ref: str, table: str) -> None:
+        """Invalidate cached schema, metadata and stats for one table and read them fresh."""
+        source = self.sources().get(ref)
+        if source is None:
+            return
+        self._infos[(ref, table)] = TableInfo(loading=True)
+        is_open = self.selected == (ref, table)
+        if is_open:
+            self._loading.visible = True
+            self._drawer_refresh.disabled = True
+        self.refresh()
+        result: list[TableDetail] = []
+
+        def work():
+            result.append(_refresh_table(source, table))
+
+        def done():
+            if not result:
+                if self.selected == (ref, table):
+                    self._loading.visible = False
+                    self._drawer_refresh.disabled = False
+                return
+            detail = result[0]
+            self._infos[(ref, table)] = TableInfo(
+                rows=detail.rows,
+                columns=[c.name for c in detail.columns],
+                description=detail.description,
+                error=detail.error if not detail.columns else None,
+            )
+            self.refresh()
+            if self.selected == (ref, table):
+                self._detail = detail
+                self._drawer_refresh.disabled = False
+                self._render_detail()
+            if detail.error and not detail.columns:
+                self._show_problems([Problem(f"Could not refresh {table}: {detail.error}")])
+            elif self._app is not None and hasattr(self._app, "_notify"):
+                self._app._notify("success", f"Refreshed metadata for {table}.")
+
+        self._schedule(work, done)
+
+    def refresh_selected(self) -> None:
+        """Refresh schema, metadata and stats for the table currently shown in the drawer."""
+        if self.selected is not None:
+            self.refresh_table(*self.selected)
+
     # ------------------------------------------------------------------
     # The table
 
@@ -456,7 +570,7 @@ class CatalogSettings(Viewer):
                 (f"{ref}--error", [
                     cell(""),
                     cell(f'<span class="main">Could not list its tables</span><span class="mono error-text">{esc(message)}</span>'),
-                    cell(f'<span class="main">{esc(ref)}</span>'), cell(""), cell(""), cell(""),
+                    cell(f'<span class="main">{esc(ref)}</span>'), cell(""), cell(""), cell(""), cell(""),
                 ])
                 for ref, message in self._listing_errors.items()
                 if self.filter in ("all", f"source:{ref}")
@@ -509,6 +623,12 @@ class CatalogSettings(Viewer):
                 )
         dashboards, metrics = self.usage()
         used = used_html(dashboards.get((ref, table), []), metrics.get((ref, table), []))
+        refresh_btn = pmui.IconButton(
+            icon="refresh", size="small", margin=0, disabled=info.loading,
+            description=f"Read schema and fetch metadata for {table}",
+            css_classes=["flowdash-catalog-row-refresh"],
+        )
+        refresh_btn.on_click(lambda _event, ref=ref, table=table: self.refresh_table(ref, table))
         return [
             switch,
             open_drawer,
@@ -517,6 +637,7 @@ class CatalogSettings(Viewer):
             cell(f'<div style="text-align: right">{rows_text}</div>'),
             cell(columns_text),
             cell(used, stylesheets=[_USED_CSS]),
+            refresh_btn,
         ]
 
     def _file_html(self, path: str | None, css: str) -> str:
@@ -577,6 +698,30 @@ class CatalogSettings(Viewer):
             margin=0, sizing_mode="stretch_width", styles={"gap": "16px", "align-items": "flex-start"},
             css_classes=["flowdash-catalog-used-by"],
         )
+        self._drawer_refresh = pmui.Button(
+            label="Refresh metadata", icon="refresh", variant="outlined", size="small", margin=0,
+            css_classes=["flowdash-catalog-refresh"],
+        )
+        self._drawer_refresh.on_click(lambda _event: self.refresh_selected())
+        self._enrich_btn = pmui.Button(
+            label="Enrich with LLM", icon="auto_awesome", variant="outlined", size="small", margin=0,
+            visible=self.editable, css_classes=["flowdash-catalog-enrich"],
+        )
+        self._enrich_btn.on_click(lambda _event: self.start_enrich())
+        self._edit_desc_btn = pmui.Button(
+            label="Edit descriptions", icon="edit", variant="text", size="small", margin=0,
+            visible=self.editable, css_classes=["flowdash-catalog-edit-descriptions"],
+        )
+        self._edit_desc_btn.on_click(lambda _event: self.open_descriptions_editor())
+        self._drawer_actions = pn.Row(
+            self._drawer_refresh,
+            self._enrich_btn,
+            self._edit_desc_btn,
+            margin=0, sizing_mode="stretch_width",
+            styles={"gap": "8px", "flex-wrap": "wrap", "align-items": "center"},
+            css_classes=["flowdash-catalog-drawer-actions"],
+        )
+        self._build_enrich_panel()
         self._first_rows = pmui.Card(
             self._sample, title="First rows", collapsible=True, collapsed=False, margin=0, title_variant="body1",
             sizing_mode="stretch_width", css_classes=["flowdash-catalog-first-rows"],
@@ -610,6 +755,8 @@ class CatalogSettings(Viewer):
             },
         )
         fields = pn.Column(
+            self._drawer_actions,
+            self._enrich_panel,
             self._switch_row,
             self._details,
             self._used_row,
@@ -645,6 +792,236 @@ class CatalogSettings(Viewer):
         )
         self._drawer.param.watch(self._on_drawer_open, "open")
         self._detail: TableDetail | None = None
+
+    def _build_enrich_panel(self):
+        self._enrich_origin = "manual"
+        self._enrich_running = False
+        self._enrich_col_inputs: dict[str, pmui.TextInput] = {}
+        self._enrich_title = pmui.Typography("Review descriptions", variant="subtitle2", margin=0)
+        self._enrich_caption = caption(
+            "Review and edit before saving. Saved descriptions are shared with dashboards and the assistant.",
+            margin=(2, 0, 8, 0),
+        )
+        self._enrich_alert = pmui.Alert(
+            object="", severity="error", visible=False, sizing_mode="stretch_width", margin=(0, 0, 8, 0),
+        )
+        self._enrich_spinner = pn.Row(
+            pmui.LoadingSpinner(value=True, size=20, margin=0),
+            pmui.Typography("Generating descriptions with the app's model…", variant="body2", margin=0),
+            visible=False, margin=(4, 0), styles={"align-items": "center", "gap": "8px"},
+        )
+        self._enrich_table_input = pmui.TextAreaInput(
+            label="Table description", value="", rows=2, sizing_mode="stretch_width", margin=0,
+            css_classes=["flowdash-enrich-table-desc"],
+        )
+        self._enrich_cols_box = pn.Column(
+            margin=0, sizing_mode="stretch_width",
+            styles={"gap": "8px", "max-height": "280px", "overflow-y": "auto", "padding-top": "4px"},
+        )
+        self._enrich_cancel = pmui.Button(
+            label="Cancel", variant="outlined", color="default", size="small", margin=0,
+            css_classes=["flowdash-enrich-cancel"],
+        )
+        self._enrich_cancel.on_click(lambda _event: self.cancel_enrich())
+        self._enrich_regenerate = pmui.Button(
+            label="Regenerate", icon="auto_awesome", variant="outlined", size="small", margin=0,
+            css_classes=["flowdash-enrich-regenerate"],
+        )
+        self._enrich_regenerate.on_click(lambda _event: self.start_enrich())
+        self._enrich_save = pmui.Button(
+            label="Save descriptions", icon="save", variant="contained", color="primary", size="small", margin=0,
+            css_classes=["flowdash-enrich-save"],
+        )
+        self._enrich_save.on_click(lambda _event: self.save_descriptions())
+        self._enrich_form = pn.Column(
+            self._enrich_table_input,
+            pmui.Typography("Column descriptions", variant="overline", sx=_OVERLINE_SX, margin=(8, 0, 0, 0)),
+            self._enrich_cols_box,
+            pn.Row(
+                pn.layout.HSpacer(), self._enrich_cancel, self._enrich_regenerate, self._enrich_save,
+                margin=(12, 0, 0, 0), sizing_mode="stretch_width", styles={"gap": "8px"},
+            ),
+            margin=0, sizing_mode="stretch_width", styles={"gap": "4px"},
+        )
+        self._enrich_panel = pmui.Paper(
+            pn.Column(
+                self._enrich_title,
+                self._enrich_caption,
+                self._enrich_alert,
+                self._enrich_spinner,
+                self._enrich_form,
+                margin=0, sizing_mode="stretch_width",
+            ),
+            variant="outlined", visible=False, margin=0, sizing_mode="stretch_width",
+            sx={"p": "14px 16px", "borderRadius": "8px"},
+            css_classes=["flowdash-catalog-enrich-review"],
+        )
+
+    def open_descriptions_editor(
+        self, draft: TableEnrichment | None = None, *, origin: str = "manual",
+    ) -> bool:
+        """Open the inline review and edit panel for the selected table's descriptions (admins only)."""
+        if not self.editable or self.selected is None:
+            return False
+        if not _is_admin(self._app):
+            self._enrich_alert.param.update(object=NOT_ADMIN_ENRICH, visible=True)
+            self._enrich_panel.visible = True
+            self._enrich_form.visible = False
+            return False
+        ref, table = self.selected
+        row = self._row(ref, table)
+        if row is None:
+            return False
+        detail = self._detail
+        info = row["info"]
+        current_desc = (detail.description if detail is not None else "") or info.description
+        current_cols = {c.name: c.description for c in detail.columns} if detail is not None else {}
+        col_names = [c.name for c in detail.columns] if detail is not None else list(info.columns or ())
+        if draft is not None:
+            table_desc = draft.description or current_desc
+            col_values = {name: draft.columns.get(name, current_cols.get(name, "")) for name in col_names}
+            self._enrich_title.object = "Review suggested descriptions"
+        else:
+            table_desc = current_desc
+            col_values = {name: current_cols.get(name, "") for name in col_names}
+            self._enrich_title.object = "Edit descriptions"
+        self._enrich_origin = origin
+        self._enrich_running = False
+        self._enrich_table_input.value = table_desc
+        inputs: dict[str, pmui.TextInput] = {}
+        widgets = []
+        for name in col_names:
+            css = "".join(c if c.isalnum() else "-" for c in name).lower()
+            field_input = pmui.TextInput(
+                label=name, value=col_values.get(name, ""), placeholder=f"Description for {name}",
+                size="small", sizing_mode="stretch_width", margin=0,
+                css_classes=["flowdash-enrich-col-desc", f"flowdash-enrich-col-{css}"],
+            )
+            inputs[name] = field_input
+            widgets.append(field_input)
+        self._enrich_col_inputs = inputs
+        self._enrich_cols_box[:] = widgets or [caption("No columns loaded yet.", margin=(4, 0))]
+        has_model = configured_model(self._app, self.project) is not None
+        with pn.io.hold():
+            self._enrich_alert.visible = False
+            self._enrich_spinner.visible = False
+            self._enrich_regenerate.visible = has_model
+            self._enrich_regenerate.disabled = False
+            self._enrich_save.disabled = False
+            self._enrich_btn.disabled = not has_model
+            self._enrich_form.visible = True
+            self._enrich_panel.visible = True
+        return True
+
+    def start_enrich(self, *, model: t.Any = None) -> bool:
+        """Generate table and column descriptions with the app's configured model for review before saving."""
+        if not self.editable or self.selected is None:
+            return False
+        if not _is_admin(self._app):
+            self._enrich_alert.param.update(object=NOT_ADMIN_ENRICH, visible=True)
+            self._enrich_panel.visible = True
+            self._enrich_form.visible = False
+            return False
+        resolved_model = model if model is not None else configured_model(self._app, self.project)
+        if resolved_model is None:
+            self._enrich_alert.param.update(object=NO_MODEL, visible=True)
+            self._enrich_panel.visible = True
+            self._enrich_form.visible = False
+            return False
+        ref, table = self.selected
+        row = self._row(ref, table)
+        if row is None:
+            return False
+        source = row["source"]
+        detail = self._detail
+        self._enrich_running = True
+        with pn.io.hold():
+            self._enrich_title.object = "Enrich with LLM"
+            self._enrich_alert.visible = False
+            self._enrich_form.visible = False
+            self._enrich_spinner.visible = True
+            self._enrich_panel.visible = True
+            self._enrich_btn.disabled = True
+            self._enrich_regenerate.disabled = True
+            self._enrich_save.disabled = True
+        result: list[TableEnrichment] = []
+        errors: list[str] = []
+
+        def work():
+            try:
+                draft = enrich_table_sync(
+                    source, table, ref=ref, app=self._app, project=self.project,
+                    model=resolved_model, detail=detail,
+                )
+            except Exception as exc:
+                errors.append(safe_error(exc))
+            else:
+                result.append(draft)
+
+        def done():
+            self._enrich_running = False
+            if self.selected != (ref, table):
+                return
+            has_model = configured_model(self._app, self.project) is not None
+            self._enrich_btn.disabled = not has_model
+            self._enrich_spinner.visible = False
+            if errors:
+                self._enrich_alert.param.update(object=errors[0], visible=True)
+                self._enrich_form.visible = False
+                self._enrich_panel.visible = True
+                return
+            if result:
+                self.open_descriptions_editor(result[0], origin="llm")
+
+        self._schedule(work, done)
+        return True
+
+    def save_descriptions(self) -> bool:
+        """Persist the reviewed table and column descriptions and update the source and assistant."""
+        if not self.editable or self.selected is None:
+            return False
+        ref, table = self.selected
+        row = self._row(ref, table)
+        if row is None:
+            return False
+        source = row["source"]
+        description = (self._enrich_table_input.value or "").strip()
+        columns = {name: (widget.value or "").strip() for name, widget in self._enrich_col_inputs.items()}
+        store = description_store(self.project)
+        if store is not None:
+            problems = store.save(
+                ref, table, description, columns, source=source, app=self._app, origin=self._enrich_origin,
+            )
+        elif not _is_admin(self._app):
+            problems = [Problem(NOT_ADMIN_ENRICH)]
+        else:
+            apply_descriptions(source, table, description, columns)
+            problems = []
+        if problems:
+            self._enrich_alert.param.update(object="\n\n".join(p.message for p in problems), visible=True)
+            return False
+        if self._detail is not None:
+            self._detail.description = description
+            for col in self._detail.columns:
+                if col.name in columns:
+                    col.description = columns[col.name]
+        info = self._infos.get((ref, table))
+        if info is not None:
+            info.description = description
+        self.cancel_enrich()
+        self._render_detail()
+        self.refresh()
+        if self._app is not None and hasattr(self._app, "_notify"):
+            self._app._notify("success", f"Saved descriptions for {table}.")
+        return True
+
+    def cancel_enrich(self) -> None:
+        """Close the inline descriptions editor without saving."""
+        self._enrich_running = False
+        with pn.io.hold():
+            self._enrich_alert.visible = False
+            self._enrich_spinner.visible = False
+            self._enrich_panel.visible = False
 
     def _build_confirm(self):
         self._confirm_text = cell("")
@@ -707,6 +1084,7 @@ class CatalogSettings(Viewer):
 
     def _on_drawer_open(self, event):
         if not event.new:
+            self.cancel_enrich()
             self.selected = None
             if self._on_select is not None:
                 self._on_select(None)
@@ -725,6 +1103,7 @@ class CatalogSettings(Viewer):
         row = self._row(ref, table)
         if row is None:
             return
+        self.cancel_enrich()
         self.selected = (ref, table)
         self._detail = None
         with pn.io.hold():
@@ -771,6 +1150,13 @@ class CatalogSettings(Viewer):
         kind = "an uploaded" if row["upload"] is not None else f"a {_type_name(source)}"
         self._drawer_subtitle.object = f"Table of {ref}, {kind} source"
         self._delete.visible = self.uploads is not None and self.uploads.may_delete(row["upload"], self._app)
+        has_model = configured_model(self._app, self.project) is not None
+        self._enrich_btn.param.update(
+            visible=self.editable,
+            disabled=self._enrich_running or not has_model,
+            description="" if has_model else NO_MODEL,
+        )
+        self._edit_desc_btn.visible = self.editable
         self._rendering = True
         try:
             self._drawer_switch.value = row["assistant"]
@@ -782,6 +1168,8 @@ class CatalogSettings(Viewer):
         description = (detail.description if detail is not None else "") or info.description
         details = [] if self.editable else [("Assistant", assistant)]
         details.append(("Rows", f"{rows:,}" if rows is not None else '<span class="muted">Reading…</span>'))
+        if detail is not None and detail.stats_note:
+            details.append(("Stats", esc(detail.stats_note)))
         upload = row["upload"]
         if upload is not None:
             when = upload.when
@@ -850,6 +1238,7 @@ class CatalogSettings(Viewer):
 
     def close_table(self):
         """Close the drawer."""
+        self.cancel_enrich()
         if self._drawer.open:
             self._drawer.open = False
         self.selected = None
