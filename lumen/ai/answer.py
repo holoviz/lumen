@@ -205,14 +205,12 @@ def configure(
 
 def _clone(obj: Any, **overrides) -> Any:
     """A new instance of a Lumen component with the same parameter values, or those given."""
-    # None is left out so the parameter takes its default: a list parameter's default is [], not None
-    values = {}
-    for key, value in obj.param.values().items():
-        if key == "name" or value is None:
-            continue
-        if isinstance(value, list):
-            value = list(value)
-        values[key] = value
+    # None is left out so the parameter takes its default: a list parameter's default is [], not None.
+    # Lists are copied, so appending to the clone's leaves the original's alone.
+    values = {
+        key: list(value) if isinstance(value, list) else value
+        for key, value in obj.param.values().items() if key != "name" and value is not None
+    }
     return type(obj)(**{**values, **overrides})
 
 
