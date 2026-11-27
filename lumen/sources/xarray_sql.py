@@ -385,20 +385,49 @@ class XArraySQLSource(BaseSQLSource):
         if duckdb:
             from xarray_sql import to_dataset
             result = self._ctx._connection.sql(sql)
-            names = set(result.columns)
+            schema = result.limit(0).to_arrow_table().schema
         else:
             result = self._ctx.sql(sql)
-            names = set(result.schema().names)
+            schema = result.schema()
+        names = set(schema.names)
         # Pass only the dims the result actually has a column for. Multiple
         # data vars need dims passed explicitly (the FROM clause is
         # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
         # aggregating sql_transform can leave a dataset dim out of the
         # result, and to_dataset(dims=...) errors on a dim it can't find.
         dims = [d for d in self._dataset.dims if d in names]
+        if len(dims) < len(self._dataset.dims):
+            dims += self._derived_dims(schema)
         ds = to_dataset(result, dims=dims) if duckdb else result.to_dataset(dims=dims)
         # Coordinates come in the order the rows did, which a GROUP BY leaves
         # arbitrary, and a grid with unsorted coordinates plots and slices wrong
         return ds.sortby([d for d in dims if d in ds.coords])
+
+    def _derived_dims(self, schema) -> list[str]:
+        """Result columns the SQL derived to label rows, e.g.
+        ``CAST(time AS DATE) AS date`` or a ``CASE`` that names a season.
+
+        Only date, timestamp and text columns the source doesn't have qualify:
+        they can't hold a measured value, which is numeric, so the rows they
+        tell apart must be cells of the grid. Left out of the dims, the rows
+        that share the remaining dims collapse into one cell and the column
+        becomes a data variable, so the axis it was derived for is lost.
+        """
+        import pyarrow as pa
+
+        def is_label(dtype):
+            if pa.types.is_dictionary(dtype):
+                dtype = dtype.value_type
+            return (
+                pa.types.is_timestamp(dtype) or pa.types.is_date(dtype)
+                or pa.types.is_string(dtype) or pa.types.is_large_string(dtype)
+                or getattr(pa.types, 'is_string_view', lambda t: False)(dtype)
+            )
+
+        return [
+            field.name for field in schema
+            if field.name not in self._dataset.variables and is_label(field.type)
+        ]
 
     def create_sql_expr_source(
         self,
