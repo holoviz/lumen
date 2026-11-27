@@ -744,6 +744,38 @@ class TestToDataset:
         assert "time" not in result.dims
         assert set(result.dims) == {"lat", "lon"}
 
+    @pytest.mark.parametrize("sql_engine", ["datafusion", "duckdb"])
+    def test_to_dataset_keeps_derived_time_axis(self, synthetic_dataset, sql_engine):
+        """A time axis the SQL derives (CAST(time AS DATE) AS date) replaces
+        the source's time dim; it must become a dim, or every date collapses
+        into one cell per (lat, lon) and the axis is lost (gh-2443)."""
+        ds = synthetic_dataset.assign_coords(
+            time=pd.date_range("2020-01-01", periods=10, freq="12h")
+        )
+        source = XArraySQLSource(_dataset=ds, sql_engine=sql_engine).create_sql_expr_source({
+            "daily": (
+                "SELECT CAST(time AS DATE) AS date, lat, lon, AVG(temperature) AS temperature "
+                "FROM temperature GROUP BY CAST(time AS DATE), lat, lon"
+            )
+        })
+        result = source.to_dataset("daily")
+        assert set(result.dims) == {"date", "lat", "lon"}
+        assert list(result.data_vars) == ["temperature"]
+        expected = ds["temperature"].resample(time="1D").mean()
+        np.testing.assert_allclose(
+            result["temperature"].transpose("date", "lat", "lon").values, expected.values
+        )
+
+    def test_to_dataset_leaves_derived_label_beside_its_dim(self, synthetic_dataset):
+        """A derived column next to the dim it came from labels that dim's
+        cells; the source dims already make a grid, so it stays a variable."""
+        source = XArraySQLSource(_dataset=synthetic_dataset).create_sql_expr_source({
+            "labelled": "SELECT time, lat, lon, temperature, CAST(time AS DATE) AS date FROM temperature"
+        })
+        result = source.to_dataset("labelled")
+        assert set(result.dims) == {"time", "lat", "lon"}
+        assert "date" in result.data_vars
+
     def test_get_still_returns_long_form(self, synthetic_dataset):
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
