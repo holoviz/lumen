@@ -9,14 +9,14 @@ Select the agent that will provide the user with the output they requested. You 
 {% block context %}
 Here's the choice of experts and their uses:
 {% for agent in agents %}
-- `{{ agent.name[:-5] }}`
+- `{{ agent | normalized_name }}`
   Provides: {{ agent.provides }}
   Info: {{ agent.purpose.strip().split() | join(' ') }}
 {% endfor %}
 {% if tools -%}
 Here's a list of tools:
 {% for tool in tools %}
-- `{{ tool.name }}`
+- `{{ tool | normalized_name }}`
   Requires: {{ tool.requires }}
   Provides: {{ tool.provides }}
   Info: {{ tool.purpose.strip().split() | join(' ') }}
