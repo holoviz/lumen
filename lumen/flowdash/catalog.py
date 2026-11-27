@@ -42,7 +42,10 @@ from sqlglot import exp
 
 from ..sources.base import BaseSQLSource, Source
 from ..transforms.sql import SQLLimit
-from .access import authorized_tables, is_admin, parse_access
+from .access import (
+    access_to_dict, authorized_tables, is_admin, lockout_reason,
+    normalize_access, parse_access, session_identity,
+)
 from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
@@ -71,6 +74,7 @@ STATS_TIMEOUT = 5
 VALUES_SHOWN = 6
 
 NOT_ADMIN = "Only admins can change what the assistant uses, so this was not saved."
+NOT_ADMIN_ACCESS = "Only admins can change access rules, so this was not saved."
 
 # Metadata ``table_detail`` reads into its own fields, or that only Lumen uses.
 _SHOWN_KEYS = frozenset({"description", "columns", "rows", "docs", "source_name", "data_type"})
@@ -748,6 +752,116 @@ def set_assistant(
             return [Problem(f"Could not write the project file: {error_text(exc)}")]
     who = getattr(getattr(app, "_identity", None), "user", None) or "someone"
     logger.info("Admin: %s turned %s table %r of %r for the assistant.", who, "on" if on else "off", table, ref)
+    return []
+
+
+def set_source_access(
+    project: Project,
+    ref: str,
+    access: Permission | Mapping[str, Any] | None,
+    *,
+    app: Any,
+) -> list[Problem]:
+    """
+    Set or clear the ``access:`` rule on source ``ref`` in the project file's
+    ``catalog:`` section. Re-checks live admin rights and refuses any rule that
+    would lock out the saving admin. Returns the problems that stopped it.
+    """
+    from panel_flowdash.project import _FILE_LOCK
+    from panel_flowdash.value_text import error_text
+
+    with _FILE_LOCK:
+        if not is_admin(app):
+            return [Problem(NOT_ADMIN_ACCESS)]
+        perm, problems = normalize_access(access, section=SECTION, keys=(ref, "access"))
+        if problems:
+            return problems
+        identity = session_identity(project.context or {}, app=app)
+        if reason := lockout_reason(perm, identity):
+            return [Problem(reason, section=SECTION, keys=(ref, "access"))]
+        try:
+            current = raw_section(project)
+        except ProjectError as exc:
+            return list(exc.problems)
+        except OSError as exc:
+            return [Problem(f"Could not read the project file: {error_text(exc)}")]
+        section = copy.deepcopy(current)
+        access_dict = access_to_dict(perm)
+        if access_dict:
+            spec = section.get(ref)
+            spec = section[ref] = spec if isinstance(spec, dict) else {}
+            spec["access"] = access_dict
+        else:
+            spec = section.get(ref)
+            if isinstance(spec, dict):
+                spec.pop("access", None)
+        try:
+            project.set(SECTION, _prune(section))
+        except ProjectError as exc:
+            return list(exc.problems)
+        except OSError as exc:
+            return [Problem(f"Could not write the project file: {error_text(exc)}")]
+    who = getattr(getattr(app, "_identity", None), "user", None) or "someone"
+    logger.info("Admin: %s updated access rules for source %r.", who, ref)
+    return []
+
+
+def set_table_access(
+    project: Project,
+    ref: str,
+    table: str,
+    access: Permission | Mapping[str, Any] | None,
+    *,
+    app: Any,
+) -> list[Problem]:
+    """
+    Set or clear the ``access:`` rule on ``table`` of source ``ref`` in the
+    project file's ``catalog:`` section. Re-checks live admin rights and
+    refuses any rule that would lock out the saving admin. Returns the
+    problems that stopped it.
+    """
+    from panel_flowdash.project import _FILE_LOCK
+    from panel_flowdash.value_text import error_text
+
+    with _FILE_LOCK:
+        if not is_admin(app):
+            return [Problem(NOT_ADMIN_ACCESS)]
+        perm, problems = normalize_access(access, section=SECTION, keys=(ref, "tables", table, "access"))
+        if problems:
+            return problems
+        identity = session_identity(project.context or {}, app=app)
+        if reason := lockout_reason(perm, identity):
+            return [Problem(reason, section=SECTION, keys=(ref, "tables", table, "access"))]
+        try:
+            current = raw_section(project)
+        except ProjectError as exc:
+            return list(exc.problems)
+        except OSError as exc:
+            return [Problem(f"Could not read the project file: {error_text(exc)}")]
+        section = copy.deepcopy(current)
+        access_dict = access_to_dict(perm)
+        if access_dict:
+            spec = section.get(ref)
+            spec = section[ref] = spec if isinstance(spec, dict) else {}
+            tables = spec.get("tables")
+            tables = spec["tables"] = tables if isinstance(tables, dict) else {}
+            settings = tables.get(table)
+            settings = tables[table] = settings if isinstance(settings, dict) else {}
+            settings["access"] = access_dict
+        else:
+            spec = section.get(ref)
+            tables = spec.get("tables") if isinstance(spec, dict) else None
+            settings = tables.get(table) if isinstance(tables, dict) else None
+            if isinstance(settings, dict):
+                settings.pop("access", None)
+        try:
+            project.set(SECTION, _prune(section))
+        except ProjectError as exc:
+            return list(exc.problems)
+        except OSError as exc:
+            return [Problem(f"Could not write the project file: {error_text(exc)}")]
+    who = getattr(getattr(app, "_identity", None), "user", None) or "someone"
+    logger.info("Admin: %s updated access rules for table %r of %r.", who, table, ref)
     return []
 
 

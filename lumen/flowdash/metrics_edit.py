@@ -27,7 +27,10 @@ from pathlib import Path
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from ..sources.base import BaseSQLSource
-from .access import is_admin
+from .access import (
+    access_to_dict, is_admin, lockout_reason, normalize_access,
+    session_identity,
+)
 from .metrics import (
     _NAME, SECTION, Metric, MetricSet, Query, _Reader, aggregate, bind_sql,
     check_metrics, coerce_dimension_values, prepare, table_sql,
@@ -46,6 +49,7 @@ PREVIEW_TIMEOUT = 5
 NAME_KEY = "name"
 
 NOT_ADMIN = "Only admins can change metrics, so this was not saved."
+NOT_ADMIN_ACCESS = "Only admins can change access rules, so this was not saved."
 NOT_ADMIN_PREVIEW = "Only admins can preview metrics."
 
 # The definition a writer read before changing it, when it did not say.
@@ -223,6 +227,12 @@ def save_metric(
         problems = check_metric(project, name, spec, original, current)
         if problems:
             return problems
+        if "access" in spec:
+            perm, access_problems = normalize_access(spec.get("access"), section=SECTION, keys=(name, "access"))
+            if access_problems:
+                return access_problems
+            if reason := lockout_reason(perm, session_identity(project.context or {}, app=app)):
+                return [_problem(name, ("access",), reason)]
         problems = _write(project, replace_metric(current, original, name, spec))
     if not problems:
         logger.info("Admin: %s saved metric %r.", _who(app), name)
@@ -252,6 +262,55 @@ def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = UNSE
         problems = _write(project, rest)
     if not problems:
         logger.info("Admin: %s deleted metric %r.", _who(app), name)
+        from .nodes import metrics_changed
+
+        metrics_changed()
+    return problems
+
+
+def set_metric_access(
+    project: Project,
+    name: str,
+    access: t.Any,
+    *,
+    app: t.Any,
+    base: t.Any = UNSET,
+) -> list[Problem]:
+    """
+    Set or clear the ``access:`` rule on metric ``name`` in the project file's
+    ``metrics:`` section. Re-checks live admin rights and refuses any rule that
+    would lock out the saving admin. ``base`` is the metric's ``access:`` value
+    when the editor opened, so another admin's concurrent edit is not overwritten.
+    """
+    from panel_flowdash.project import _FILE_LOCK
+
+    with _FILE_LOCK:
+        if not is_admin(app):
+            return [Problem(NOT_ADMIN_ACCESS)]
+        perm, problems = normalize_access(access, section=SECTION, keys=(name, "access"))
+        if problems:
+            return problems
+        identity = session_identity(project.context or {}, app=app)
+        if reason := lockout_reason(perm, identity):
+            return [_problem(name, ("access",), reason)]
+        try:
+            current = raw_section(project)
+        except ProjectError as exc:
+            return masked(exc.problems)
+        if name not in current or not isinstance(current[name], dict):
+            return [_problem(name, (), f"Metric {name!r} is not in the project file any more.")]
+        if base is not UNSET and current[name].get("access") != base:
+            return [_problem(name, ("access",), f"Access rules for metric {name!r} were changed since you opened "
+                             "them. Reopen the editor to see the change.")]
+        updated = copy.deepcopy(current[name])
+        access_dict = access_to_dict(perm)
+        if access_dict:
+            updated["access"] = access_dict
+        else:
+            updated.pop("access", None)
+        problems = _write(project, replace_metric(current, name, name, updated))
+    if not problems:
+        logger.info("Admin: %s updated access rules for metric %r.", _who(app), name)
         from .nodes import metrics_changed
 
         metrics_changed()
