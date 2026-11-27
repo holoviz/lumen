@@ -9,11 +9,13 @@ import contextvars
 import copy
 import html
 import importlib.util
+import math
 import re
 import sys
 import warnings
 
 from contextlib import contextmanager
+from datetime import date, datetime
 from io import BytesIO, StringIO
 from typing import (
     IO, TYPE_CHECKING, Any, ClassVar, Literal,
@@ -257,7 +259,7 @@ class View(MultiTypeComponent, Viewer):
             if self.loading_indicator:
                 pipeline._update_widget.param.watch(self._update_loading, 'loading')
         super().__init__(pipeline=pipeline, refs=refs, **params)
-        self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'name')])
+        self.param.watch(self.update, [p for p in self.param if p not in ('rerender', 'selection_expr', 'selection', 'name')])
         self.download.view = self
         if self.selection_group:
             self._init_link_selections()
@@ -2014,6 +2016,134 @@ class VegaLiteView(View):
             self._doc = pn.state.curdoc
         spec = self._normalize_params(self._get_params())
         return pn.pane.Vega(**spec)
+
+
+class EChartsView(View):
+    """
+    `EChartsView` renders an Apache ECharts option through Panel's ECharts pane.
+
+    Pipeline rows are injected as an ECharts ``dataset`` whose first row is the
+    column names, so the spec refers to fields with ``encode`` and never carries
+    the data itself. A spec that already supplies a ``dataset.source`` is left
+    as written.
+
+    Dates and timestamps are serialized as ISO strings, and NaN/NaT become
+    ``null`` so the option is JSON-safe and ECharts can treat missing values as
+    gaps. Clicks report a ``dataIndex`` that maps straight back to a pipeline
+    row and is stored on ``selection``.
+    """
+
+    spec = param.Dict(default={}, doc="""
+        An ECharts option dictionary. Name columns with encode; the pipeline
+        fills dataset.source at render time.""")
+
+    renderer = param.Selector(default="canvas", objects=["canvas", "svg"], doc="""
+        Whether Panel's ECharts pane draws to canvas or SVG.""")
+
+    theme = param.Selector(default="default", objects=["default", "light", "dark"], doc="""
+        Theme passed through to the ECharts pane.""")
+
+    selection = param.Parameter(default=None, doc="""
+        The pipeline row corresponding to the last chart click, as a dict, or
+        None if nothing has been clicked.""")
+
+    view_type = 'echarts'
+
+    _extension = 'echarts'
+
+    _internal_params: ClassVar[list[str]] = ['name', 'rerender', 'selection']
+
+    _panel_type = pn.pane.ECharts
+
+    @staticmethod
+    def _declares_own_dataset(spec: dict[str, Any]) -> bool:
+        """Whether the option already carries row data in dataset.source."""
+        dataset = spec.get('dataset')
+        if isinstance(dataset, list):
+            return any(
+                isinstance(item, dict) and item.get('source')
+                for item in dataset
+            )
+        return isinstance(dataset, dict) and bool(dataset.get('source'))
+
+    @staticmethod
+    def _serialize_cell(value: Any) -> Any:
+        """JSON-safe cell: ISO timestamps, null for missing values, Python scalars."""
+        if value is None:
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, pd.Timestamp):
+            return value.isoformat()
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        if isinstance(value, np.datetime64):
+            if np.isnat(value):
+                return None
+            return pd.Timestamp(value).isoformat()
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.floating):
+            if math.isnan(value) or math.isinf(value):
+                return None
+            return float(value)
+        if isinstance(value, np.bool_):
+            return bool(value)
+        return value
+
+    @classmethod
+    def _dataset_source(cls, df: pd.DataFrame) -> list[list[Any]]:
+        """ECharts dataset.source: header row of column names, then value rows."""
+        rows = [
+            [cls._serialize_cell(value) for value in row]
+            for row in df.itertuples(index=False, name=None)
+        ]
+        return [list(df.columns), *rows]
+
+    @staticmethod
+    def _event_data_index(event: Any) -> int | None:
+        payload = getattr(event, 'data', event)
+        if not isinstance(payload, dict):
+            return None
+        index = payload.get('dataIndex')
+        if isinstance(index, list):
+            index = index[0] if index else None
+        if index is None:
+            return None
+        try:
+            return int(index)
+        except (TypeError, ValueError):
+            return None
+
+    def _on_click(self, event: Any) -> None:
+        index = self._event_data_index(event)
+        if index is None:
+            return
+        df = self.get_data()
+        if index < 0 or index >= len(df):
+            return
+        self.selection = df.iloc[index].to_dict()
+
+    def _get_params(self) -> dict[str, Any]:
+        df = self.get_data()
+        spec = copy.deepcopy(self.spec or {})
+        if not self._declares_own_dataset(spec):
+            dataset = dict(spec.get('dataset') or {})
+            dataset['source'] = self._dataset_source(df)
+            spec['dataset'] = dataset
+        return dict(
+            object=spec, renderer=self.renderer, theme=self.theme, **self.kwargs
+        )
+
+    def get_panel(self) -> pn.pane.ECharts:
+        pane = self._panel_type(**self._normalize_params(self._get_params()))
+        pane.on_event('click', self._on_click)
+        return pane
 
 
 class DeckGLView(View):
