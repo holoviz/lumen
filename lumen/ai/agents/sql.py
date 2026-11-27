@@ -889,7 +889,7 @@ class SQLAgent(BaseLumenAgent):
                 read_tables = {
                     table.name for table in sqlglot.parse_one(sql_query, read=read).find_all(sqlglot.exp.Table)
                 } & set(source.get_tables())
-                if findings := review_sql(sql_query, self._table_facts(source, sorted(read_tables)), read):
+                if findings := review_sql(sql_query, self._table_facts(source, sorted(read_tables)), read, self.max_rows):
                     attempts += 1
                     step.stream("\n\n⚠️ " + " ".join(findings))
                     sql_query = await self.revise(
@@ -1311,8 +1311,13 @@ class SQLAgent(BaseLumenAgent):
                     column: bool(props.get("geographic")) for column, props in schema.items()
                     if isinstance(props, dict) and props.get("format") == "geometry"
                 }
-            units = source.column_units(table) if isinstance(source, XArraySQLSource) else {}
-            facts[table] = TableFacts(geometry=geometry, units=units)
+            if isinstance(source, XArraySQLSource):
+                units = source.column_units(table)
+                # From the grid's shape, so it costs no query
+                rows = int(source.dataset[table].size) if table in source.dataset.data_vars else None
+            else:
+                units, rows = {}, None
+            facts[table] = TableFacts(geometry=geometry, units=units, rows=rows)
         return facts
 
     def _submit_sql_tool(
@@ -1337,7 +1342,7 @@ class SQLAgent(BaseLumenAgent):
                     "The query reads no table. Select from the tables listed in `tables` "
                     "instead of returning literal values."
                 )
-            findings = review_sql(output.query, self._table_facts(source, tables), read)
+            findings = review_sql(output.query, self._table_facts(source, tables), read, self.max_rows)
             if findings and checked.get("review") != output.query:
                 # Asked once, like the empty result: the model may know better,
                 # e.g. a buffer in degrees on purpose, and resubmits unchanged

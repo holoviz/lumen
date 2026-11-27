@@ -64,3 +64,27 @@ def test_geographic_crs_reads_the_column_type(column_type, expected):
     pytest.importorskip("pyproj")
     from lumen.ai.sql_review import geographic_crs
     assert geographic_crs(column_type) is expected
+
+
+GRID = {"air": TableFacts(rows=3_869_000)}
+
+
+def test_review_finds_a_whole_grid_read_past_the_row_cap():
+    (finding,) = review_sql('SELECT "time", "lat", "lon", "air" FROM "air"', GRID, max_rows=1_000_000)
+    assert "all 3,869,000 rows of the grid air" in finding and "at most 1,000,000" in finding and "Aggregate" in finding
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT lat, lon, AVG(air) AS air FROM air GROUP BY lat, lon",
+    "SELECT time, AVG(air) AS air FROM air GROUP BY time",
+    "SELECT time, lat, lon, air FROM air WHERE time = '2013-07-01'",
+    "SELECT time, lat, lon, air FROM air LIMIT 100",
+])
+def test_review_leaves_a_grid_query_that_shrinks_it_alone(sql):
+    assert review_sql(sql, GRID, max_rows=1_000_000) == []
+
+
+def test_review_leaves_a_grid_within_the_cap_or_with_no_cap_alone():
+    sql = "SELECT time, lat, lon, air FROM air"
+    assert review_sql(sql, {"air": TableFacts(rows=500)}, max_rows=1_000_000) == []
+    assert review_sql(sql, GRID) == []
