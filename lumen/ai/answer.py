@@ -215,9 +215,7 @@ def _clone(obj: Any, **overrides) -> Any:
         if isinstance(value, list):
             value = list(value)
         values[key] = value
-    clone = type(obj)(**{**values, **overrides})
-    clone._lumen_user_llm = obj.llm
-    return clone
+    return type(obj)(**{**values, **overrides})
 
 
 def _cached_rows() -> int:
@@ -389,9 +387,6 @@ if os.name == "posix":  # Windows cannot fork
 
 async def _planner(source: Source, llm: Llm, agents: list | None) -> Planner:
     if agents is not None:
-        for agent in agents:
-            if isinstance(agent, Agent):
-                agent.llm = getattr(agent, "_lumen_user_llm", agent.llm)
         return Planner(llm=llm, agents=agents, headless=True)
     planner = _planners.get(source)
     if planner is not None and planner.llm is llm and planner not in _busy:
