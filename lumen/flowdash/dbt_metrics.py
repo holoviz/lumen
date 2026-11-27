@@ -9,28 +9,41 @@ Declared under ``metrics:`` in ``flowdash.yaml``::
         environment_id: 12345
         host: semantic-layer.cloud.getdbt.com   # optional
         auth_token: ${DBT_AUTH_TOKEN}           # optional; ${VAR} or encrypted secret
-        table: orders                           # optional default table for local SQL
-        tables:                                 # optional metric/semantic-model -> table map
+        tables:                                 # optional dbt metric -> table map
           revenue: orders
         metrics: [revenue, order_count]         # optional allowlist of dbt metric names
 
-Each dbt metric is converted into a standard ``Metric`` (with ``origin="dbt"``)
-so ``MetricNode``, ``aggregate()`` and ``bind_sql()`` work unchanged. Simple,
-single-table ratio and single-table derived metrics are expressed locally as
-structured ``Metric`` objects; metrics that cannot be expressed locally
-(cumulative, conversion, filtered, time-offset or multi-table metrics) fall back
-to ``client.compile_sql(...)`` as SQL-form ``Metric`` objects.
+Each dbt metric becomes a standard ``Metric`` (with ``origin="dbt"``), so
+``MetricNode``, ``aggregate()`` and ``bind_sql()`` work unchanged.
+
+The dbt Semantic Layer API does not say whether a metric has a filter or which
+semantic model a measure comes from, so by default every metric is the SQL
+that ``client.compile_sql`` returns for it, without dimensions or grains. A
+metric becomes a structured ``Metric`` (sliceable by dimension and time) only
+when all of this holds: it is ``SIMPLE`` with one measure of a plain
+aggregation, it is mapped to a table under ``tables:``, and the SQL dbt
+compiles for it (and for each dimension kept) reads only that table, without
+joins, filters or window functions. Anything unknown means compiled SQL.
+
+Results are cached per configuration for ``CACHE_TTL`` seconds, so saving a
+local metric does not refetch from dbt; ``ProjectMetrics`` refetches once
+the cache has expired, which is how upstream dbt changes show up. A fetch
+gives up after ``TIMEOUT`` seconds.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
+import threading
+import time
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import sqlglot
@@ -39,8 +52,8 @@ from sqlglot import exp
 
 from ..sources.base import BaseSQLSource
 from .metrics import (
-    _NAME, _TYPE, GRAINS, OPS, RANGE_TYPES, SCALAR_TYPES, Dimension, Measure,
-    Metric, MetricFailure, Parameter, check_expression, expression_columns,
+    _NAME, DBT_KEY, DBT_ORIGIN, GRAINS, Dimension, Measure, Metric,
+    MetricFailure, check_expression, expression_columns,
 )
 from .project import Section
 
@@ -49,29 +62,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The key under ``metrics:`` in flowdash.yaml holding dbt Semantic Layer settings.
-DBT_KEY = "dbt"
-# Origin tag placed on metrics inherited from dbt Semantic Layer.
-DBT_ORIGIN = "dbt"
-# Optional context key allowing callers or tests to supply a dbt client or factory.
+# A context key through which callers or tests supply a dbt client, or a factory taking the DbtConfig.
 DBT_CLIENT_KEY = "lumen.dbt_client"
 
 DEFAULT_HOST = "semantic-layer.cloud.getdbt.com"
 
-_DBT_KEYS = {"source", "environment_id", "host", "auth_token", "table", "tables", "metrics"}
+# Seconds a fetch (listing and compiling every metric) may take, and a successful one is reused.
+TIMEOUT = 30.0
+CACHE_TTL = 300.0
 
-# dbt aggregation types expressible as standard SQL aggregates over one table.
+_COMPILE_CONCURRENCY = 8
+
+_DBT_KEYS = {"source", "environment_id", "host", "auth_token", "tables", "metrics"}
+
+# dbt aggregation types with the same meaning as a portable SQL aggregate over one table.
 _SIMPLE_AGGS = {
     "SUM": lambda target: f"SUM({target})",
     "COUNT": lambda target: "COUNT(*)" if target in ("", "1", "*") else f"COUNT({target})",
     "COUNT_DISTINCT": lambda target: f"COUNT(DISTINCT {target})",
     "AVERAGE": lambda target: f"AVG({target})",
-    "AVG": lambda target: f"AVG({target})",
     "MIN": lambda target: f"MIN({target})",
     "MAX": lambda target: f"MAX({target})",
     "SUM_BOOLEAN": lambda target: f"SUM(CASE WHEN {target} THEN 1 ELSE 0 END)",
-    "MEDIAN": lambda target: f"MEDIAN({target})",
 }
+
+_NOT_PLAIN = (exp.Join, exp.Where, exp.Having, exp.Qualify, exp.Window, exp.SetOperation)
 
 
 @dataclass(frozen=True)
@@ -82,9 +97,18 @@ class DbtConfig:
     environment_id: int
     host: str = DEFAULT_HOST
     auth_token: Any = None
-    table: str | None = None
-    tables: Mapping[str, str] = field(default_factory=dict)
+    tables: tuple[tuple[str, str], ...] = ()
     metrics: tuple[str, ...] | None = None
+
+    @property
+    def table_map(self) -> dict[str, str]:
+        return dict(self.tables)
+
+    def cache_key(self) -> str:
+        return json.dumps(
+            [self.source, self.environment_id, self.host, self.auth_token, self.tables, self.metrics],
+            sort_keys=True, default=str,
+        )
 
 
 def read_dbt_config(reader: _Reader, spec: Any) -> DbtConfig | None:
@@ -114,17 +138,13 @@ def read_dbt_config(reader: _Reader, spec: Any) -> DbtConfig | None:
     if (secret_problem := check_secret(auth_token, "auth_token")) is not None:
         reader.fail((*path, "auth_token"), secret_problem)
 
-    table = reader.text(spec.get("table"), (*path, "table"), "table")
-    if "table" in spec and not table:
-        reader.fail((*path, "table"), "dbt `table` must be a table name.")
-
     tables: dict[str, str] = {}
     if "tables" in spec and spec["tables"] is not None:
         raw_tables = reader.mapping(spec["tables"], (*path, "tables"), "dbt tables")
         if raw_tables is not None:
             for key, value in raw_tables.items():
                 if not isinstance(key, str) or not key:
-                    reader.fail((*path, "tables", key), "dbt table mapping keys must be non-empty text.")
+                    reader.fail((*path, "tables", key), "dbt table mapping keys must be dbt metric names.")
                 elif not isinstance(value, str) or not value:
                     reader.fail((*path, "tables", key), f"dbt table for {key!r} must be a non-empty table name.")
                 else:
@@ -145,28 +165,9 @@ def read_dbt_config(reader: _Reader, spec: Any) -> DbtConfig | None:
         environment_id=env_id,
         host=host,
         auth_token=auth_token,
-        table=table,
-        tables=tables,
+        tables=tuple(tables.items()),
         metrics=allowlist,
     )
-
-
-def encrypt_dbt_token(token: str) -> dict[str, str]:
-    """
-    Encrypt a dbt Semantic Layer token for storage in ``flowdash.yaml`` via
-    ``panel_flowdash.secret_store``. Refuses plaintext fallback when
-    ``cryptography`` is unavailable.
-    """
-    from panel_flowdash.secret_store import (
-        INSTALL_HINT, SecretError, encrypt_secret, encryption_available,
-    )
-
-    if not encryption_available():
-        raise ValueError(f"{INSTALL_HINT} Or write auth_token as an environment variable reference, e.g. '${{DBT_AUTH_TOKEN}}'.")
-    try:
-        return encrypt_secret(token)
-    except SecretError as exc:
-        raise ValueError(f"Could not encrypt dbt auth_token: {exc}") from None
 
 
 def _make_client(config: DbtConfig) -> Any:
@@ -200,14 +201,6 @@ async def _call_maybe_async(func: Any, *args: Any, **kwargs: Any) -> Any:
     return await result if inspect.isawaitable(result) else result
 
 
-async def _open_session(client: Any):
-    """Return a context manager pair supporting both async and sync dbt client sessions."""
-    session = client.session()
-    if hasattr(session, "__aenter__"):
-        return session, True
-    return session, False
-
-
 def _enum_name(value: Any) -> str:
     if value is None:
         return ""
@@ -218,190 +211,61 @@ def _enum_name(value: Any) -> str:
     return str(value).upper()
 
 
-def _get(obj: Any, name: str, default: Any = None) -> Any:
-    if isinstance(obj, Mapping):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
+def _text(obj: Any, *names: str) -> str:
+    for name in names:
+        value = getattr(obj, name, None)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
 
-def _has_filter(obj: Any) -> bool:
-    flt = _get(obj, "filter")
-    if flt is None:
+def _declares_filter(obj: Any) -> bool:
+    """Whether ``obj`` carries filter or type parameter details, which a local translation would drop."""
+    return any(getattr(obj, name, None) for name in ("filter", "type_params", "offset_window", "offset_to_grain"))
+
+
+def _clean_query(sql: Any, what: str) -> str:
+    if not isinstance(sql, str) or not sql.strip():
+        raise ValueError(f"dbt compile_sql returned no SQL for {what}.")
+    cleaned = sql.strip().rstrip(";").strip()
+    try:
+        parsed = sqlglot.parse_one(cleaned)
+    except sqlglot.errors.SqlglotError as exc:
+        raise ValueError(f"dbt compile_sql returned unparseable SQL for {what}: {exc}") from None
+    if not isinstance(parsed, exp.Query):
+        raise ValueError(f"dbt compile_sql did not return a SELECT or WITH query for {what}.")
+    return cleaned
+
+
+def _scans_only(sql: str, table: str, dialect: str | None) -> bool:
+    """Whether the compiled ``sql`` reads ``table`` alone, without joins, filters or windows."""
+    try:
+        parsed = sqlglot.parse_one(sql, read=dialect)
+    except sqlglot.errors.SqlglotError:
         return False
-    if isinstance(flt, str):
-        return bool(flt.strip())
-    if isinstance(flt, (list, tuple, set, Mapping)):
-        return bool(flt)
-    where_filters = _get(flt, "where_filters")
-    if where_filters is not None:
-        return bool(where_filters)
-    where_sql = _get(flt, "where_sql_template")
-    if where_sql is not None:
-        return bool(str(where_sql).strip())
-    return True
+    if any(parsed.find(kind) for kind in _NOT_PLAIN):
+        return False
+    ctes = {cte.alias_or_name.lower() for cte in parsed.find_all(exp.CTE)}
+    read = {t.name.lower() for t in parsed.find_all(exp.Table) if t.name.lower() not in ctes}
+    return read == {table.rsplit(".", 1)[-1].strip('"`[]').lower()}
 
 
-def _has_offset(obj: Any) -> bool:
-    return bool(_get(obj, "offset_window") or _get(obj, "offset_to_grain"))
-
-
-def _measure_sql(measure: Any) -> str | None:
-    """Convert one dbt ``Measure`` into an aggregate SQL expression, or None if unsupported."""
-    if _has_filter(measure):
+def _measure_sql(measure: Any, columns: Mapping[str, Any], dialect: str | None) -> str | None:
+    """One dbt ``Measure`` as an aggregate over ``columns``, or None if that is not certain."""
+    if _declares_filter(measure):
         return None
-    agg = _enum_name(_get(measure, "agg"))
-    builder = _SIMPLE_AGGS.get(agg)
+    builder = _SIMPLE_AGGS.get(_enum_name(getattr(measure, "agg", None)))
     if builder is None:
         return None
-    raw_expr = _get(measure, "expr")
-    target = str(raw_expr).strip() if raw_expr is not None and str(raw_expr).strip() else str(_get(measure, "name") or "").strip()
-    if not target and agg != "COUNT":
-        return None
-    sql = builder(target)
+    target = _text(measure, "expr", "name")
     try:
-        check_expression(sql, aggregate=True)
+        check_expression(target, aggregate=False, dialect=dialect)
+        sql = builder(target)
+        check_expression(sql, aggregate=True, dialect=dialect)
     except ValueError:
         return None
-    return sql
-
-
-def _measure_table(measure: Any, config: DbtConfig, source_tables: set[str] | None) -> str | None:
-    """Find the physical table in ``config.source`` backing ``measure``, if known."""
-    for attr in ("table", "semantic_model", "model"):
-        ref = _get(measure, attr)
-        if isinstance(ref, str) and ref:
-            if ref in config.tables:
-                return config.tables[ref]
-            if source_tables is None or ref in source_tables:
-                return ref
-    return None
-
-
-def _resolve_metric_table(
-    dbt_metric: Any,
-    measures: list[Any],
-    config: DbtConfig,
-    source_tables: set[str] | None,
-) -> str | None:
-    """Resolve a single target table for ``dbt_metric``, or None if ambiguous or unknown."""
-    name = str(_get(dbt_metric, "name") or "")
-    if name in config.tables:
-        return config.tables[name]
-    for attr in ("table", "semantic_model", "model"):
-        ref = _get(dbt_metric, attr)
-        if isinstance(ref, str) and ref:
-            if ref in config.tables:
-                return config.tables[ref]
-            if source_tables is None or ref in source_tables:
-                return ref
-    found = {_measure_table(m, config, source_tables) for m in measures}
-    found.discard(None)
-    if len(found) == 1:
-        return next(iter(found))
-    if len(found) > 1:
-        return None
-    return config.table
-
-
-def _simple_measure_info(
-    dbt_metric: Any,
-    config: DbtConfig,
-    source_tables: set[str] | None,
-) -> tuple[str | None, str | None, str | None]:
-    """Return ``(table, aggregate_sql, agg_time_dimension)`` for a simple dbt metric."""
-    if _has_filter(dbt_metric):
-        return None, None, None
-    type_params = _get(dbt_metric, "type_params")
-    if type_params is not None and _has_filter(type_params):
-        return None, None, None
-    measures = list(_get(dbt_metric, "measures") or ())
-    chosen = None
-    tp_measure = _get(type_params, "measure") if type_params is not None else None
-    if tp_measure is not None:
-        if _has_filter(tp_measure):
-            return None, None, None
-        tp_name = tp_measure if isinstance(tp_measure, str) else _get(tp_measure, "name")
-        chosen = next((m for m in measures if _get(m, "name") == tp_name), None)
-        if chosen is None and not isinstance(tp_measure, str) and _get(tp_measure, "agg") is not None:
-            chosen = tp_measure
-    elif len(measures) == 1:
-        chosen = measures[0]
-    if chosen is None:
-        return None, None, None
-    expr = _measure_sql(chosen)
-    if expr is None:
-        return None, None, None
-    table = _resolve_metric_table(dbt_metric, [chosen], config, source_tables)
-    if not table:
-        return None, None, None
-    agg_time = _get(chosen, "agg_time_dimension")
-    return table, expr, str(agg_time) if agg_time else None
-
-
-def _resolve_input_ref(
-    ref: Any,
-    simple_by_name: Mapping[str, tuple[str, str, str | None]],
-    measures_by_name: Mapping[str, Any],
-    config: DbtConfig,
-    source_tables: set[str] | None,
-) -> tuple[str, str, str, str | None] | None:
-    """Resolve a ratio/derived input reference to ``(alias, table, aggregate_sql, agg_time_dim)``."""
-    if ref is None or _has_filter(ref) or _has_offset(ref):
-        return None
-    if isinstance(ref, str):
-        name, alias = ref, ref
-    else:
-        name = _get(ref, "name")
-        alias = _get(ref, "alias") or name
-    if not isinstance(name, str) or not name:
-        return None
-    if name in simple_by_name:
-        table, expr, agg_time = simple_by_name[name]
-        return str(alias), table, expr, agg_time
-    measure = measures_by_name.get(name) or (ref if not isinstance(ref, str) and _get(ref, "agg") is not None else None)
-    if measure is None:
-        return None
-    expr = _measure_sql(measure)
-    table = _measure_table(measure, config, source_tables) or config.table
-    if expr is None or not table:
-        return None
-    agg_time = _get(measure, "agg_time_dimension")
-    return str(alias), table, expr, str(agg_time) if agg_time else None
-
-
-def _substitute_derived(expr_text: str, replacements: Mapping[str, str]) -> str | None:
-    """Replace input metric identifiers in a derived expression with their aggregate SQL."""
-    try:
-        parsed = sqlglot.parse_one(expr_text)
-    except sqlglot.errors.SqlglotError:
-        return None
-    parsed_replacements: dict[str, exp.Expression] = {}
-    for key, sql in replacements.items():
-        try:
-            parsed_replacements[key] = exp.Paren(this=sqlglot.parse_one(sql))
-        except sqlglot.errors.SqlglotError:
-            return None
-
-    unresolved = False
-
-    def replace(node: exp.Expression) -> exp.Expression:
-        nonlocal unresolved
-        if isinstance(node, exp.Column):
-            if node.table:
-                unresolved = True
-                return node
-            if node.name in parsed_replacements:
-                return parsed_replacements[node.name].copy()
-            unresolved = True
-        return node
-
-    transformed = parsed.transform(replace)
-    if unresolved:
-        return None
-    sql = transformed.sql()
-    try:
-        check_expression(sql, aggregate=True)
-    except ValueError:
+    lowered = {c.lower() for c in columns}
+    if any(col.lower() not in lowered for col in expression_columns(sql, dialect)):
         return None
     return sql
 
@@ -412,330 +276,182 @@ def _convert_grains(raw_grains: Any) -> tuple[str, ...]:
     return grains or GRAINS
 
 
-def _convert_dimensions(
-    dbt_metric: Any,
-    measure_names: set[str],
-    agg_time_dimension: str | None,
-    source_columns: Mapping[str, Any] | None,
-    dialect: str | None,
-) -> dict[str, Dimension]:
-    """Convert a dbt metric's dimensions into FlowDash ``Dimension`` objects."""
-    dimensions: dict[str, Dimension] = {}
-    metric_grains = _get(dbt_metric, "queryable_granularities") or ()
-    lowered_cols = {c.lower(): c for c in source_columns} if source_columns is not None else None
-
-    for dbt_dim in _get(dbt_metric, "dimensions") or ():
-        raw_name = str(_get(dbt_dim, "name") or "").strip()
-        if not raw_name or not _NAME.fullmatch(raw_name) or raw_name in measure_names or raw_name in dimensions:
-            continue
-        is_time = _enum_name(_get(dbt_dim, "type")) == "TIME"
-        raw_expr = _get(dbt_dim, "expr")
-        expr_text = str(raw_expr).strip() if raw_expr is not None and str(raw_expr).strip() else ""
-
-        column: str | None = None
-        expr: str
-        if not expr_text:
-            candidate = agg_time_dimension if raw_name == "metric_time" and agg_time_dimension else raw_name
-            if lowered_cols is not None and candidate.lower() not in lowered_cols and "__" in candidate:
-                # Entity-prefixed dbt dimension like customer__country -> try unqualified column on this table.
-                suffix = candidate.rsplit("__", 1)[1]
-                if suffix.lower() in lowered_cols:
-                    candidate = lowered_cols[suffix.lower()]
-            elif lowered_cols is not None and candidate.lower() in lowered_cols:
-                candidate = lowered_cols[candidate.lower()]
-            column = candidate
-            expr = exp.column(column, quoted=True).sql()
-        elif _NAME.fullmatch(expr_text):
-            candidate = expr_text
-            if lowered_cols is not None and candidate.lower() in lowered_cols:
-                candidate = lowered_cols[candidate.lower()]
-            column = candidate
-            expr = exp.column(column, quoted=True).sql()
-        else:
-            try:
-                check_expression(expr_text, aggregate=False, dialect=dialect)
-            except ValueError:
-                continue
-            expr = expr_text
-
-        if lowered_cols is not None:
-            if column is not None:
-                if column.lower() not in lowered_cols:
-                    continue
-            elif any(col.lower() not in lowered_cols for col in expression_columns(expr, dialect)):
-                continue
-
-        dim_grains = _convert_grains(_get(dbt_dim, "queryable_granularities") or metric_grains) if is_time else ()
-        description = str(_get(dbt_dim, "description") or _get(dbt_dim, "label") or "").strip()
-        dimensions[raw_name] = Dimension(
-            name=raw_name,
-            expr=expr,
-            column=column,
-            time=is_time,
-            grains=dim_grains,
-            format=None,
-            description=description,
-        )
-    return dimensions
-
-
-def _convert_parameters(dbt_metric: Any, dimensions: Mapping[str, Dimension]) -> dict[str, Parameter]:
-    """Convert any explicit dbt parameter declarations into FlowDash ``Parameter`` objects."""
-    raw = _get(dbt_metric, "parameters")
-    if not isinstance(raw, Mapping):
-        return {}
-    parameters: dict[str, Parameter] = {}
-    for name, item in raw.items():
-        if not isinstance(name, str) or not _NAME.fullmatch(name) or name in dimensions:
-            continue
-        if isinstance(item, Parameter):
-            parameters[name] = item
-            continue
-        if not isinstance(item, Mapping):
-            continue
-        given = str(item.get("type") or "string")
-        match = _TYPE.fullmatch(given)
-        if not match:
-            continue
-        kind, inner = (match.group(1), match.group(2)) if match.group(1) else (match.group(3), None)
-        if (inner is None and kind not in SCALAR_TYPES) or (inner is not None and inner not in SCALAR_TYPES):
-            continue
-        if kind == "range" and inner not in RANGE_TYPES:
-            continue
-        column = item.get("column")
-        if not isinstance(column, str) or not column:
-            continue
-        op = str(item.get("op") or {"list": "in", "range": "between"}.get(kind, "="))
-        if op not in OPS:
-            continue
-        parameter = Parameter(
-            name=name,
-            kind=kind,
-            item=inner,
-            default=None,
-            required=bool(item.get("required", False)),
-            description=str(item.get("description") or ""),
-            column=column,
-            op=op,
-        )
-        if item.get("default") is not None:
-            try:
-                parameter = Parameter(
-                    name=parameter.name,
-                    kind=parameter.kind,
-                    item=parameter.item,
-                    default=parameter.coerce(item["default"]),
-                    required=parameter.required,
-                    description=parameter.description,
-                    column=parameter.column,
-                    op=parameter.op,
-                )
-            except ValueError:
-                continue
-        parameters[name] = parameter
-    return parameters
-
-
-def _try_convert_local(
-    dbt_metric: Any,
-    simple_by_name: Mapping[str, tuple[str, str, str | None]],
-    config: DbtConfig,
-    source_tables: set[str] | None,
-    schema_loader: Any,
-    dialect: str | None,
-) -> tuple[Metric | None, str]:
-    """
-    Attempt to convert ``dbt_metric`` into a local structured ``Metric``.
-
-    Returns ``(Metric, "")`` on success or ``(None, reason)`` when it must
-    fall back to ``client.compile_sql``.
-    """
-    name = str(_get(dbt_metric, "name") or "").strip()
-    if not _NAME.fullmatch(name):
-        return None, f"metric name {name!r} is not a valid FlowDash metric identifier"
-    if _has_filter(dbt_metric):
-        return None, "metric has a dbt filter"
-
-    metric_type = _enum_name(_get(dbt_metric, "type")) or "SIMPLE"
-    type_params = _get(dbt_metric, "type_params")
-    if type_params is not None and _has_filter(type_params):
-        return None, "metric type_params has a dbt filter"
-
-    measures_list = list(_get(dbt_metric, "measures") or ())
-    measures_by_name = {str(_get(m, "name")): m for m in measures_list if _get(m, "name")}
-
-    table: str | None = None
-    measure_sql: str | None = None
-    agg_time: str | None = None
-
-    if metric_type == "SIMPLE":
-        table, measure_sql, agg_time = _simple_measure_info(dbt_metric, config, source_tables)
-        if not table or not measure_sql:
-            return None, "simple metric measure or target table cannot be resolved locally"
-
-    elif metric_type == "RATIO":
-        num_ref = _get(type_params, "numerator") if type_params is not None else (measures_list[0] if len(measures_list) == 2 else None)
-        den_ref = _get(type_params, "denominator") if type_params is not None else (measures_list[1] if len(measures_list) == 2 else None)
-        num = _resolve_input_ref(num_ref, simple_by_name, measures_by_name, config, source_tables)
-        den = _resolve_input_ref(den_ref, simple_by_name, measures_by_name, config, source_tables)
-        if num is None or den is None:
-            return None, "ratio metric inputs cannot be resolved locally"
-        if num[1] != den[1]:
-            return None, "ratio metric spans multiple tables"
-        table = num[1]
-        measure_sql = f"1.0 * ({num[2]}) / NULLIF(({den[2]}), 0)"
-        agg_time = num[3] or den[3]
-
-    elif metric_type == "DERIVED":
-        expr_text = _get(type_params, "expr") if type_params is not None else None
-        raw_inputs = (_get(type_params, "metrics") or _get(type_params, "input_metrics")) if type_params is not None else None
-        if not isinstance(expr_text, str) or not expr_text.strip() or not raw_inputs:
-            return None, "derived metric lacks a local expression or input metrics"
-        replacements: dict[str, str] = {}
-        tables_used: set[str] = set()
-        for ref in raw_inputs:
-            resolved = _resolve_input_ref(ref, simple_by_name, measures_by_name, config, source_tables)
-            if resolved is None:
-                return None, "derived metric input cannot be resolved locally"
-            alias, ref_table, ref_sql, ref_time = resolved
-            replacements[alias] = ref_sql
-            tables_used.add(ref_table)
-            agg_time = agg_time or ref_time
-        if len(tables_used) != 1:
-            return None, "derived metric spans multiple tables"
-        table = next(iter(tables_used))
-        measure_sql = _substitute_derived(expr_text, replacements)
-        if measure_sql is None:
-            return None, "derived metric expression cannot be translated locally"
-
+def _dimension(
+    dbt_dim: Any, metric_grains: Any, columns: Mapping[str, Any], dialect: str | None,
+) -> tuple[str, Dimension] | None:
+    """``(group_by, Dimension)`` for one dbt dimension over ``columns``, or None."""
+    group_by = _text(dbt_dim, "qualified_name", "name")
+    if not _NAME.fullmatch(group_by):
+        return None
+    lowered = {c.lower(): c for c in columns}
+    raw_expr = _text(dbt_dim, "expr", "name")
+    if not raw_expr:
+        return None
+    column: str | None = None
+    if _NAME.fullmatch(raw_expr):
+        if raw_expr.lower() not in lowered:
+            return None
+        column = lowered[raw_expr.lower()]
+        expr = exp.column(column, quoted=True).sql()
     else:
-        return None, f"metric type {metric_type!r} cannot be expressed as a single-table structured metric"
+        try:
+            check_expression(raw_expr, aggregate=False, dialect=dialect)
+        except ValueError:
+            return None
+        if any(col.lower() not in lowered for col in expression_columns(raw_expr, dialect)):
+            return None
+        expr = raw_expr
+    is_time = group_by == "metric_time" or _enum_name(getattr(dbt_dim, "type", None)) == "TIME"
+    grains = _convert_grains(getattr(dbt_dim, "queryable_granularities", None) or metric_grains) if is_time else ()
+    return group_by, Dimension(
+        name=group_by, expr=expr, column=column, time=is_time, grains=grains, format=None,
+        description=_text(dbt_dim, "description", "label"),
+    )
 
-    try:
-        check_expression(measure_sql, aggregate=True, dialect=dialect)
-    except ValueError as exc:
-        return None, f"measure expression invalid locally: {exc}"
 
-    source_columns = schema_loader(table) if schema_loader is not None else None
-    description = str(_get(dbt_metric, "description") or _get(dbt_metric, "label") or "").strip()
-    measures = {name: Measure(name=name, expr=measure_sql, format=None, description=description)}
-    dimensions = _convert_dimensions(dbt_metric, set(measures), agg_time, source_columns, dialect)
-    parameters = _convert_parameters(dbt_metric, dimensions)
-    return (
-        Metric(
+class _Converter:
+    """Converts the dbt metrics of one fetch, compiling SQL through ``client`` a few calls at a time."""
+
+    def __init__(self, client: Any, config: DbtConfig, source_tables: set[str] | None, schema_loader: Any, dialect: str | None):
+        self.client = client
+        self.config = config
+        self.source_tables = source_tables
+        self.schema_loader = schema_loader
+        self.dialect = dialect
+        self._limit = asyncio.Semaphore(_COMPILE_CONCURRENCY)
+
+    async def compile(self, name: str, group_by: list[str]) -> str:
+        compile_fn = getattr(self.client, "compile_sql", None)
+        if compile_fn is None:
+            raise ValueError("the dbt client has no compile_sql.")
+        kwargs: dict[str, Any] = {"metrics": [name]}
+        if group_by:
+            kwargs["group_by"] = group_by
+        async with self._limit:
+            sql = await _call_maybe_async(compile_fn, **kwargs)
+        return _clean_query(sql, f"metric {name!r}")
+
+    async def convert(self, dbt_metric: Any) -> Metric:
+        name = _text(dbt_metric, "name")
+        base = ["metric_time"] if getattr(dbt_metric, "requires_metric_time", False) else []
+        sql = await self.compile(name, base)
+        local = await self.local(dbt_metric, name, sql, base)
+        if local is not None:
+            return local
+        return Metric(
+            name=name, source=self.config.source, description=_text(dbt_metric, "description", "label"),
+            sql=sql, origin=DBT_ORIGIN,
+        )
+
+    async def local(self, dbt_metric: Any, name: str, sql: str, base: list[str]) -> Metric | None:
+        """``dbt_metric`` as a structured ``Metric`` when nothing about it is in doubt, else None."""
+        table = self.config.table_map.get(name)
+        measures = list(getattr(dbt_metric, "measures", None) or ())
+        if (table is None or _enum_name(getattr(dbt_metric, "type", None)) != "SIMPLE"
+                or _declares_filter(dbt_metric) or len(measures) != 1
+                or (self.source_tables is not None and table not in self.source_tables)
+                or not _scans_only(sql, table, self.dialect)):
+            return None
+        columns = self.schema_loader(table) if self.schema_loader is not None else None
+        if not columns:
+            return None
+        measure_sql = _measure_sql(measures[0], columns, self.dialect)
+        if measure_sql is None:
+            return None
+
+        agg_time = _text(measures[0], "agg_time_dimension") or None
+        metric_grains = getattr(dbt_metric, "queryable_granularities", None)
+        candidates: dict[str, Dimension] = {}
+        dbt_dims = [
+            d for d in getattr(dbt_metric, "dimensions", None) or () if _text(d, "qualified_name", "name") != "metric_time"
+        ]
+        if agg_time:
+            # metric_time is the measure's agg_time_dimension, at the grain a query asks for.
+            agg_dim = next((d for d in dbt_dims if _text(d, "name") == agg_time), None)
+            dbt_dims.append(SimpleNamespace(
+                name="metric_time", type="TIME", expr=_text(agg_dim, "expr") or agg_time,
+                queryable_granularities=getattr(agg_dim, "queryable_granularities", None),
+            ))
+        for dbt_dim in dbt_dims:
+            converted = _dimension(dbt_dim, metric_grains, columns, self.dialect)
+            if converted is not None and converted[0] != name and converted[0] not in candidates:
+                candidates[converted[0]] = converted[1]
+
+        async def keeps(group_by: str) -> bool:
+            # A dimension on another semantic model compiles to a join; only one on this table is local.
+            try:
+                compiled = await self.compile(name, list(dict.fromkeys([*base, group_by])))
+            except Exception:
+                return False
+            return _scans_only(compiled, table, self.dialect)
+
+        kept = await asyncio.gather(*(keeps(g) for g in candidates))
+        dimensions = {g: d for (g, d), ok in zip(candidates.items(), kept, strict=True) if ok}
+        if base and not all(g in dimensions for g in base):
+            return None
+        description = _text(dbt_metric, "description", "label")
+        return Metric(
             name=name,
-            source=config.source,
+            source=self.config.source,
             description=description,
             table=table,
-            sql=None,
-            measures=measures,
+            measures={name: Measure(name=name, expr=measure_sql, format=None, description=description)},
             dimensions=dimensions,
-            parameters=parameters,
             origin=DBT_ORIGIN,
-        ),
-        "",
-    )
+        )
 
+    async def run(self) -> tuple[dict[str, Metric], dict[str, MetricFailure]]:
+        session = self.client.session()
+        if hasattr(session, "__aenter__"):
+            async with session:
+                return await self._convert_all()
+        with session:
+            return await self._convert_all()
 
-async def _compile_fallback(client: Any, dbt_metric: Any, config: DbtConfig, reason: str) -> Metric:
-    """Fall back to ``client.compile_sql`` and wrap the result as a SQL-form ``Metric``."""
-    name = str(_get(dbt_metric, "name") or "").strip()
-    description = str(_get(dbt_metric, "description") or _get(dbt_metric, "label") or "").strip()
-    compile_fn = getattr(client, "compile_sql", None)
-    if compile_fn is None:
-        raise ValueError(f"Metric {name!r} cannot be expressed locally ({reason}) and the dbt client has no compile_sql.")
+    async def _convert_all(self) -> tuple[dict[str, Metric], dict[str, MetricFailure]]:
+        from panel_flowdash.value_text import redact_secrets
 
-    kwargs: dict[str, Any] = {"metrics": [name]}
-    if _get(dbt_metric, "requires_metric_time"):
-        kwargs["group_by"] = ["metric_time"]
-
-    sql = await _call_maybe_async(compile_fn, **kwargs)
-    if not isinstance(sql, str) or not sql.strip():
-        raise ValueError(f"dbt compile_sql returned no SQL for metric {name!r}.")
-    cleaned = sql.strip().rstrip(";").strip()
-    try:
-        parsed = sqlglot.parse_one(cleaned)
-    except sqlglot.errors.SqlglotError as exc:
-        raise ValueError(f"dbt compile_sql returned unparseable SQL for {name!r}: {exc}") from None
-    if not isinstance(parsed, exp.Query):
-        raise ValueError(f"dbt compile_sql did not return a SELECT or WITH query for {name!r}.")
-
-    logger.debug("dbt metric %r fell back to client.compile_sql (%s).", name, reason)
-    return Metric(
-        name=name,
-        source=config.source,
-        description=description,
-        table=None,
-        sql=cleaned,
-        measures={},
-        dimensions={},
-        parameters={},
-        origin=DBT_ORIGIN,
-    )
-
-
-async def _fetch_and_convert(
-    client: Any,
-    config: DbtConfig,
-    source_tables: set[str] | None,
-    schema_loader: Any,
-    dialect: str | None,
-) -> tuple[dict[str, Metric], dict[str, MetricFailure]]:
-    session, is_async = await _open_session(client)
-    if is_async:
-        async with session:
-            return await _convert_in_session(client, config, source_tables, schema_loader, dialect)
-    with session:
-        return await _convert_in_session(client, config, source_tables, schema_loader, dialect)
-
-
-async def _convert_in_session(
-    client: Any,
-    config: DbtConfig,
-    source_tables: set[str] | None,
-    schema_loader: Any,
-    dialect: str | None,
-) -> tuple[dict[str, Metric], dict[str, MetricFailure]]:
-    raw_metrics = list(await _call_maybe_async(client.metrics))
-
-    # Pre-index simple metrics so ratio and derived metrics can resolve their inputs locally.
-    simple_by_name: dict[str, tuple[str, str, str | None]] = {}
-    for m in raw_metrics:
-        m_name = str(_get(m, "name") or "").strip()
-        m_type = _enum_name(_get(m, "type")) or "SIMPLE"
-        if m_name and m_type == "SIMPLE":
-            table, expr, agg_time = _simple_measure_info(m, config, source_tables)
-            if table and expr:
-                simple_by_name[m_name] = (table, expr, agg_time)
-
-    allow = set(config.metrics) if config.metrics is not None else None
-    converted: dict[str, Metric] = {}
-    failures: dict[str, MetricFailure] = {}
-
-    for dbt_metric in raw_metrics:
-        name = str(_get(dbt_metric, "name") or "").strip()
-        if not name or (allow is not None and name not in allow):
-            continue
-        if not _NAME.fullmatch(name):
-            continue
-        local, reason = _try_convert_local(dbt_metric, simple_by_name, config, source_tables, schema_loader, dialect)
-        if local is not None:
-            converted[name] = local
-            continue
-        try:
-            converted[name] = await _compile_fallback(client, dbt_metric, config, reason)
-        except Exception as exc:
-            from panel_flowdash.value_text import redact_secrets
-
+        raw_metrics = list(await _call_maybe_async(self.client.metrics))
+        allow = set(self.config.metrics) if self.config.metrics is not None else None
+        selected = [
+            m for m in raw_metrics
+            if _NAME.fullmatch(_text(m, "name")) and (allow is None or _text(m, "name") in allow)
+        ]
+        results = await asyncio.gather(*(self.convert(m) for m in selected), return_exceptions=True)
+        converted: dict[str, Metric] = {}
+        failures: dict[str, MetricFailure] = {}
+        for dbt_metric, result in zip(selected, results, strict=True):
+            name = _text(dbt_metric, "name")
+            if isinstance(result, Metric):
+                converted[name] = result
+                continue
+            if not isinstance(result, Exception):
+                raise result
             placeholder = Metric(
-                name=name,
-                source=config.source,
-                description=str(_get(dbt_metric, "description") or _get(dbt_metric, "label") or "").strip(),
-                sql="",
-                origin=DBT_ORIGIN,
+                name=name, source=self.config.source, description=_text(dbt_metric, "description", "label"),
+                sql="", origin=DBT_ORIGIN,
             )
-            failures[name] = MetricFailure(placeholder, redact_secrets(str(exc)), (DBT_KEY,))
-    return converted, failures
+            failures[name] = MetricFailure(placeholder, redact_secrets(str(result)), (DBT_KEY,))
+        return converted, failures
+
+
+_cache: dict[str, tuple[float, dict[str, Metric]]] = {}
+_cache_lock = threading.Lock()
+
+
+def clear_dbt_cache() -> None:
+    """Forget every cached dbt fetch, so the next load asks dbt again."""
+    with _cache_lock:
+        _cache.clear()
+
+
+def cached_dbt_metrics(config: DbtConfig) -> dict[str, Metric] | None:
+    """The metrics of the last successful fetch for ``config`` if it has not expired, without asking dbt."""
+    with _cache_lock:
+        entry = _cache.get(config.cache_key())
+    if entry is None or time.monotonic() - entry[0] >= CACHE_TTL:
+        return None
+    return entry[1]
 
 
 def load_dbt_metrics(
@@ -744,7 +460,8 @@ def load_dbt_metrics(
 ) -> tuple[dict[str, Metric], dict[str, MetricFailure], str | None]:
     """
     Fetch metrics from the dbt Semantic Layer configured by ``config`` and
-    convert them into FlowDash ``Metric`` objects.
+    convert them into FlowDash ``Metric`` objects, reusing a fetch less than
+    ``CACHE_TTL`` seconds old.
 
     Returns ``(metrics, failures, error)``. Connection-level errors are caught,
     redacted, reported via ``section.warn`` and returned in ``error`` so local
@@ -753,6 +470,9 @@ def load_dbt_metrics(
     from panel_flowdash.value_text import redact_secrets
 
     from .nodes import SOURCES_KEY, lookup_source
+
+    if (cached := cached_dbt_metrics(config)) is not None:
+        return dict(cached), {}, None
 
     context = section.context or {}
     source = lookup_source(config.source, context) if SOURCES_KEY in context else None
@@ -778,7 +498,6 @@ def load_dbt_metrics(
                 schema_cache[table] = None
         return schema_cache[table]
 
-    # Section.warn logs the warning and keeps it in the project's warnings.
     report = section.warn
     client_entry = context.get(DBT_CLIENT_KEY)
     try:
@@ -786,9 +505,14 @@ def load_dbt_metrics(
             client = client_entry(config) if callable(client_entry) else client_entry
         else:
             client = _make_client(config)
-        metrics, failures = _run_async(_fetch_and_convert(client, config, source_tables, schema_loader, dialect))
+        converter = _Converter(client, config, source_tables, schema_loader, dialect)
+        metrics, failures = _run_async(asyncio.wait_for(converter.run(), TIMEOUT))
     except ImportError as exc:
         msg = redact_secrets(f"Could not connect to the dbt Semantic Layer: install `dbtsl` (`pip install dbt-sl-sdk`). ({exc})")
+        report((DBT_KEY,), msg)
+        return {}, {}, msg
+    except TimeoutError:
+        msg = f"Could not load metrics from the dbt Semantic Layer: no answer within {TIMEOUT:g} seconds."
         report((DBT_KEY,), msg)
         return {}, {}, msg
     except Exception as exc:
@@ -796,48 +520,9 @@ def load_dbt_metrics(
         report((DBT_KEY,), msg)
         return {}, {}, msg
 
+    if not failures:
+        with _cache_lock:
+            _cache[config.cache_key()] = (time.monotonic(), dict(metrics))
     for name, failure in failures.items():
         report((DBT_KEY,), f"dbt metric {name!r} is left out: {failure.message}")
     return metrics, failures, None
-
-
-def metric_spec(metric: Metric) -> dict[str, Any]:
-    """Serialize ``metric`` into a plain YAML-like mapping for display in Data/Metrics views."""
-    spec: dict[str, Any] = {"source": metric.source}
-    if metric.description:
-        spec["description"] = metric.description
-    if metric.form == "sql":
-        spec["sql"] = metric.sql or ""
-    else:
-        spec["table"] = metric.table
-        spec["measures"] = {
-            name: {
-                "expr": m.expr,
-                **({"format": m.format} if m.format else {}),
-                **({"description": m.description} if m.description else {}),
-            }
-            for name, m in metric.measures.items()
-        }
-        if metric.dimensions:
-            spec["dimensions"] = {
-                name: {
-                    **({"column": d.column} if d.column is not None else {"expr": d.expr}),
-                    **({"type": "time", "grains": list(d.grains)} if d.time else {}),
-                    **({"format": d.format} if d.format else {}),
-                    **({"description": d.description} if d.description else {}),
-                }
-                for name, d in metric.dimensions.items()
-            }
-    if metric.parameters:
-        spec["parameters"] = {
-            name: {
-                "type": p.type,
-                **({"default": p.default} if p.default is not None else {}),
-                **({"required": True} if p.required else {}),
-                **({"column": p.column} if p.column else {}),
-                **({"op": p.op} if p.op else {}),
-                **({"description": p.description} if p.description else {}),
-            }
-            for name, p in metric.parameters.items()
-        }
-    return spec

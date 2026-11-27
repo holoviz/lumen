@@ -80,6 +80,9 @@ from .project import (
 
 SECTION = "metrics"
 
+# The key under metrics: declaring a dbt Semantic Layer, and the origin of the metrics it gives.
+DBT_KEY = DBT_ORIGIN = "dbt"
+
 _UNREAD = object()
 
 logger = logging.getLogger(__name__)
@@ -563,7 +566,7 @@ class _Reader:
         return value
 
     def read(self) -> MetricSet:
-        from .dbt_metrics import DBT_KEY, read_dbt_config
+        from .dbt_metrics import read_dbt_config
 
         section = self.section.value
         if section is None:
@@ -812,7 +815,7 @@ def load_section(section: Section) -> MetricSet:
     with a metric over a source the app does not serve left out and reported by
     ``Section.warn``. Raises ``ProjectError`` with every problem found.
     """
-    from .dbt_metrics import DBT_KEY, load_dbt_metrics
+    from .dbt_metrics import load_dbt_metrics
     from .nodes import SOURCES_KEY
 
     metrics = _Reader(section).read()
@@ -848,6 +851,48 @@ def read_metrics(project: Project) -> MetricSet:
     """The metrics of a loaded project file, or none if it has no ``metrics:`` section."""
     metrics = project.get(SECTION)
     return metrics if isinstance(metrics, MetricSet) else MetricSet()
+
+
+def metric_spec(metric: Metric) -> dict[str, Any]:
+    """``metric`` as the mapping the ``metrics:`` section would define it with, the inverse of ``_Reader.metric``."""
+    spec: dict[str, Any] = {"source": metric.source}
+    if metric.description:
+        spec["description"] = metric.description
+    if metric.form == "sql":
+        spec["sql"] = metric.sql or ""
+    else:
+        spec["table"] = metric.table
+        spec["measures"] = {
+            name: {
+                "expr": m.expr,
+                **({"format": m.format} if m.format else {}),
+                **({"description": m.description} if m.description else {}),
+            }
+            for name, m in metric.measures.items()
+        }
+        if metric.dimensions:
+            spec["dimensions"] = {
+                name: {
+                    **({"column": d.column} if d.column is not None else {"expr": d.expr}),
+                    **({"type": "time", "grains": list(d.grains)} if d.time else {}),
+                    **({"format": d.format} if d.format else {}),
+                    **({"description": d.description} if d.description else {}),
+                }
+                for name, d in metric.dimensions.items()
+            }
+    if metric.parameters:
+        spec["parameters"] = {
+            name: {
+                "type": p.type,
+                **({"default": p.default} if p.default is not None else {}),
+                **({"required": True} if p.required else {}),
+                **({"column": p.column} if p.column else {}),
+                **({"op": p.op} if p.op else {}),
+                **({"description": p.description} if p.description else {}),
+            }
+            for name, p in metric.parameters.items()
+        }
+    return spec
 
 
 # ---------------------------------------------------------------------------
@@ -1364,9 +1409,19 @@ class ProjectMetrics(MetricSet):
         now = time.monotonic()
         if self._failed_at is not None:
             return now - self._failed_at >= self.retry
-        if self._snapshot.dbt_error and now - self._checked_at >= self.retry:
+        if self._dbt_stale(now):
             return True
         return bool(self._snapshot.failures) and now - self._checked_at >= self.retry
+
+    def _dbt_stale(self, now: float) -> bool:
+        """Whether dbt metrics should be fetched again: after a failed fetch, or once the dbt cache expired."""
+        from .dbt_metrics import CACHE_TTL
+
+        if self._snapshot.dbt_config is None:
+            return False
+        if self._snapshot.dbt_error or any(f.path == (DBT_KEY,) for f in self._snapshot.failures.values()):
+            return now - self._checked_at >= self.retry
+        return now - self._checked_at >= CACHE_TTL
 
     def snapshot(self) -> MetricSet:
         data = self.project.data
@@ -1386,7 +1441,7 @@ class ProjectMetrics(MetricSet):
                     return self._read(log=True)
             if self._failed_at is not None and time.monotonic() - self._failed_at >= self.retry:
                 return self._read(log=False)
-            if self._snapshot.dbt_error and time.monotonic() - self._checked_at >= self.retry:
+            if self._dbt_stale(time.monotonic()):
                 return self._read(log=False, force=True)
             if self._due():
                 return self._recheck()
@@ -1397,6 +1452,8 @@ class ProjectMetrics(MetricSet):
     def _read(self, log: bool, force: bool = False) -> MetricSet:
         try:
             if force:
+                # Loads the section afresh to ask dbt again; the project's own cached section (what
+                # ``read_metrics`` returns) keeps the earlier dbt metrics until the file changes.
                 metrics = load_section(Section(SECTION, self.project.data.get(SECTION), self.project))
             else:
                 metrics = read_metrics(self.project)
@@ -1421,8 +1478,6 @@ class ProjectMetrics(MetricSet):
     def _recheck(self) -> MetricSet:
         """The snapshot with the metrics left out checked again, e.g. once their source is back."""
         current = self._snapshot
-        if any(f.metric.origin == "dbt" and f.path == ("dbt",) for f in current.failures.values()):
-            return self._read(log=False, force=True)
         retried, _ = check_metrics(
             MetricSet({name: failure.metric for name, failure in current.failures.items()}), self.project.context,
         )

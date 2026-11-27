@@ -166,7 +166,7 @@ def metric_tables(spec: t.Any, context: Mapping[str, t.Any]) -> list[tuple[str, 
     """
     if hasattr(spec, "source") and hasattr(spec, "form"):
         spec = {"source": spec.source, "table": spec.table, "sql": spec.sql}
-    if not isinstance(spec, Mapping) or "environment_id" in spec:
+    if not isinstance(spec, Mapping):
         return []
     ref = _canonical(context)(spec.get("source"))
     if ref is None:
@@ -388,6 +388,25 @@ class MetricStatus:
         return value.strip() if isinstance(value, str) else ""
 
 
+def _with_cached_dbt(snapshot: t.Any, context: Mapping[str, t.Any]) -> t.Any:
+    """``snapshot`` with the dbt metrics of a fetch still cached added; a page render never asks dbt itself."""
+    from .dbt_metrics import cached_dbt_metrics
+    from .metrics import MetricSet, check_metrics
+    from .nodes import SOURCES_KEY
+
+    config = getattr(snapshot, "dbt_config", None)
+    cached = cached_dbt_metrics(config) if config is not None else None
+    if not cached:
+        return snapshot
+    inherited = MetricSet({name: m for name, m in cached.items() if name not in snapshot})
+    if SOURCES_KEY in context:
+        inherited, _ = check_metrics(inherited, context)
+    return MetricSet(
+        {**snapshot._metrics, **inherited._metrics}, snapshot.section, {**inherited.failures, **snapshot.failures},
+        dbt_config=config, dbt_error=snapshot.dbt_error,
+    )
+
+
 def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     """
     Every metric of ``project``'s ``metrics:`` section as the file has it
@@ -395,11 +414,11 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     with whether the app uses it, and the section's problems that concern no
     one metric. It reads what the app's ``ProjectMetrics`` (in the project's
     context) found, so a page listing them runs no query; without one it
-    checks them, which queries their sources.
+    checks them, which queries their sources, and shows dbt metrics only
+    from a fetch still cached.
     """
-    from .dbt_metrics import DBT_KEY, metric_spec
     from .metrics import (
-        METRICS_KEY, MetricSet, _Reader, load_section,
+        DBT_KEY, METRICS_KEY, MetricSet, _Reader, metric_spec,
     )
     from .metrics_edit import load_metrics, masked, raw_section
     from .project import ProjectError, Section
@@ -412,16 +431,10 @@ def metric_statuses(project: t.Any) -> tuple[list[MetricStatus], list[str]]:
     if current is not None and hasattr(current, "snapshot"):
         snapshot = current.snapshot()
         problems = list(getattr(current, "problems", []))
-    elif DBT_KEY in section:
-        try:
-            snapshot = load_section(Section("metrics", section, project))
-            problems = []
-        except ProjectError as exc:
-            snapshot = MetricSet()
-            problems = list(exc.problems)
     else:
         snapshot, problems = load_metrics(project, section)
         problems = [p for p in problems if not (p.keys and p.keys[0] in snapshot.failures)]
+        snapshot = _with_cached_dbt(snapshot, project.context or {})
     by_metric: dict[str | None, list[str]] = {}
     for problem in masked(problems):
         keys = tuple(problem.keys or ())

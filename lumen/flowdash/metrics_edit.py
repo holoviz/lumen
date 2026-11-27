@@ -29,8 +29,8 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from ..sources.base import BaseSQLSource
 from .access import is_admin
 from .metrics import (
-    _NAME, SECTION, Metric, MetricSet, Query, _Reader, aggregate, bind_sql,
-    check_metrics, coerce_dimension_values, prepare, table_sql,
+    _NAME, DBT_KEY, SECTION, Metric, MetricSet, Query, _Reader, aggregate,
+    bind_sql, check_metrics, coerce_dimension_values, prepare, table_sql,
 )
 from .project import (
     Problem, Project, ProjectError, Section,
@@ -163,8 +163,6 @@ def check_metric(
     concerns; none when it would be saved. ``current`` is the section as
     the file has it now, read when not given.
     """
-    from .dbt_metrics import DBT_KEY
-
     if not isinstance(name, str) or not _NAME.fullmatch(name):
         return [_problem(str(name), (NAME_KEY,), "A metric's name is letters, digits and underscores, "
                          "starting with a letter, e.g. capacity_mw.")]
@@ -259,8 +257,6 @@ def save_metric(
 def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = UNSET) -> list[Problem]:
     """Delete metric ``name`` from the project file; only an admin may. Returns the problems that stopped it."""
     from panel_flowdash.project import _FILE_LOCK
-
-    from .dbt_metrics import DBT_KEY
 
     with _FILE_LOCK:
         if not is_admin(app):

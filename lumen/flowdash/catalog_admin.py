@@ -349,6 +349,7 @@ class CatalogSettings(Viewer):
         """
         if self._usage is None:
             from .data import metric_tables, table_usage, visible_dashboards
+            from .metrics import DBT_KEY
             from .metrics_edit import raw_section as metrics_section
 
             context = self.project.context or {}
@@ -358,6 +359,8 @@ class CatalogSettings(Viewer):
             except ProjectError:
                 section = {}
             for name, spec in section.items():
+                if name == DBT_KEY:
+                    continue
                 for key in metric_tables(spec, context):
                     metrics.setdefault(key, []).append(str(name))
             self._usage = (table_usage(visible_dashboards(self._app), context), metrics)

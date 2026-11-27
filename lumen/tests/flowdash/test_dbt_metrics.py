@@ -3,13 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import enum
 import sys
 import types
-
-from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 
@@ -18,17 +13,17 @@ pytest.importorskip("duckdb")
 from panel_flowdash import FlowDash, MemoryDashboardStore
 from panel_flowdash.agent import DashboardOps
 from panel_flowdash.auth import Identity
-from panel_flowdash.secret_store import KEY_ENV, fernet_key
+from panel_flowdash.secret_store import KEY_ENV, encrypt_secret, fernet_key
 
 from lumen.agent.data import metric_line
 from lumen.flowdash import (
-    COMPONENTS, METRIC_ID, METRICS_KEY, SOURCES_KEY, bind_source, fetch,
-    metric_pipeline,
+    COMPONENTS, METRIC_ID, METRICS_KEY, SOURCES_KEY, bind_source, dbt_metrics,
+    fetch, metric_pipeline,
 )
 from lumen.flowdash.data import metric_statuses, metric_tables
 from lumen.flowdash.data_section import DataPage
 from lumen.flowdash.dbt_metrics import (
-    DBT_CLIENT_KEY, DBT_ORIGIN, DbtConfig, _make_client, encrypt_dbt_token,
+    DBT_CLIENT_KEY, DBT_ORIGIN, DbtConfig, _make_client, clear_dbt_cache,
 )
 from lumen.flowdash.metrics import (
     ProjectMetrics, Query, aggregate, bind_sql, read_metrics,
@@ -42,109 +37,9 @@ from lumen.flowdash.project import (
 from lumen.flowdash.uploads import UPLOADS_KEY, Uploads
 from lumen.sources.duckdb import DuckDBSource
 
-# ---------------------------------------------------------------------------
-# Lightweight stubs mirroring dbtsl.models
-
-
-class MetricType(enum.Enum):
-    SIMPLE = "SIMPLE"
-    RATIO = "RATIO"
-    DERIVED = "DERIVED"
-    CUMULATIVE = "CUMULATIVE"
-    CONVERSION = "CONVERSION"
-
-
-class DimensionType(enum.Enum):
-    CATEGORICAL = "CATEGORICAL"
-    TIME = "TIME"
-
-
-class TimeGranularity(enum.Enum):
-    DAY = "DAY"
-    WEEK = "WEEK"
-    MONTH = "MONTH"
-    QUARTER = "QUARTER"
-    YEAR = "YEAR"
-    MINUTE = "MINUTE"
-
-
-@dataclass
-class FakeMeasure:
-    name: str
-    agg: str
-    expr: str | None = None
-    agg_time_dimension: str | None = None
-    semantic_model: str | None = None
-    filter: Any = None
-
-
-@dataclass
-class FakeDimension:
-    name: str
-    type: DimensionType = DimensionType.CATEGORICAL
-    expr: str | None = None
-    description: str = ""
-    queryable_granularities: list[TimeGranularity] = field(default_factory=list)
-
-
-@dataclass
-class FakeTypeParams:
-    measure: Any = None
-    numerator: Any = None
-    denominator: Any = None
-    expr: str | None = None
-    metrics: list[Any] = field(default_factory=list)
-    filter: Any = None
-
-
-@dataclass
-class FakeInputRef:
-    name: str
-    alias: str | None = None
-    filter: Any = None
-    offset_window: str | None = None
-    offset_to_grain: str | None = None
-
-
-@dataclass
-class FakeMetric:
-    name: str
-    type: MetricType = MetricType.SIMPLE
-    description: str = ""
-    measures: list[FakeMeasure] = field(default_factory=list)
-    dimensions: list[FakeDimension] = field(default_factory=list)
-    queryable_granularities: list[TimeGranularity] = field(default_factory=list)
-    type_params: FakeTypeParams | None = None
-    filter: Any = None
-    requires_metric_time: bool = False
-    parameters: dict[str, Any] | None = None
-
-
-class FakeAsyncClient:
-    """Async dbt Semantic Layer client stub matching ``AsyncSemanticLayerClient``."""
-
-    def __init__(self, metrics: list[FakeMetric], compiled: dict[str, str] | None = None, fail_compile: set[str] | None = None):
-        self._metrics = metrics
-        self._compiled = compiled or {}
-        self._fail_compile = fail_compile or set()
-        self.compile_calls: list[dict[str, Any]] = []
-        self.sessions = 0
-
-    @contextlib.asynccontextmanager
-    async def session(self):
-        self.sessions += 1
-        yield self
-
-    async def metrics(self):
-        return list(self._metrics)
-
-    async def compile_sql(self, **kwargs):
-        self.compile_calls.append(kwargs)
-        name = kwargs["metrics"][0]
-        if name in self._fail_compile:
-            raise RuntimeError(f"compile_sql failed for {name}")
-        return self._compiled[name]
-
+from .dbt_fakes import (
+    MIRRORS, FakeSemanticLayer, dimension, measure, metric, semantic_sql,
+)
 
 ORDERS_SQL = (
     "SELECT * FROM (VALUES "
@@ -154,70 +49,49 @@ ORDERS_SQL = (
     ") AS t(order_id, region, status, order_date, amount, cost, is_paid)"
 )
 
+ORDER_DIMS = {"order__region": "region", "order__status": "status"}
+
+
+@pytest.fixture(autouse=True)
+def fresh_cache():
+    clear_dbt_cache()
+    yield
+    clear_dbt_cache()
+
 
 @pytest.fixture
 def warehouse():
     return DuckDBSource(uri=":memory:", tables={"orders": ORDERS_SQL}, name="warehouse")
 
 
-def _sample_dbt_metrics() -> list[FakeMetric]:
-    dims = [
-        FakeDimension("customer__region", DimensionType.CATEGORICAL, description="Sales region"),
-        FakeDimension("status", DimensionType.CATEGORICAL),
-        FakeDimension("metric_time", DimensionType.TIME, queryable_granularities=[TimeGranularity.MONTH, TimeGranularity.YEAR, TimeGranularity.MINUTE]),
-        FakeDimension("other_model__ghost", DimensionType.CATEGORICAL),
-    ]
+def _dims():
     return [
-        FakeMetric(
-            name="revenue",
-            type=MetricType.SIMPLE,
-            description="Total order revenue",
-            measures=[FakeMeasure("order_amount", "SUM", expr="amount", agg_time_dimension="order_date", semantic_model="orders")],
-            dimensions=dims,
-            parameters={"min_order": {"type": "integer", "column": "order_id", "op": ">=", "default": 1}},
-        ),
-        FakeMetric(
-            name="order_count",
-            type=MetricType.SIMPLE,
-            description="Number of orders",
-            measures=[FakeMeasure("orders", "COUNT", expr="1", agg_time_dimension="order_date", semantic_model="orders")],
-            dimensions=dims,
-        ),
-        FakeMetric(
-            name="total_cost",
-            type=MetricType.SIMPLE,
-            description="Total order cost",
-            measures=[FakeMeasure("order_cost", "SUM", expr="cost", agg_time_dimension="order_date", semantic_model="orders")],
-            dimensions=dims,
-        ),
-        FakeMetric(
-            name="avg_order_value",
-            type=MetricType.RATIO,
-            description="Revenue per order",
-            type_params=FakeTypeParams(
-                numerator=FakeInputRef("revenue"),
-                denominator=FakeInputRef("order_count"),
-            ),
-            dimensions=dims,
-        ),
-        FakeMetric(
-            name="gross_profit",
-            type=MetricType.DERIVED,
-            description="Revenue minus cost",
-            type_params=FakeTypeParams(
-                expr="rev - cost",
-                metrics=[FakeInputRef("revenue", alias="rev"), FakeInputRef("total_cost", alias="cost")],
-            ),
-            dimensions=dims,
-        ),
-        FakeMetric(
-            name="rolling_revenue",
-            type=MetricType.CUMULATIVE,
-            description="Cumulative rolling revenue",
-            requires_metric_time=True,
-            measures=[FakeMeasure("order_amount", "SUM", expr="amount")],
-        ),
+        dimension("order__region", description="Sales region"),
+        dimension("order__status"),
+        dimension("order__order_date", "TIME", grains=["MONTH", "YEAR"]),
+        dimension("customer__region"),
     ]
+
+
+def _revenue(name="revenue", agg="SUM", expr="amount"):
+    return metric(
+        name, measures=[measure("order_amount", agg, expr, agg_time_dimension="order_date")],
+        dimensions=_dims(), description="Total order revenue",
+    )
+
+
+def _project(warehouse, client, extra="", tables="    tables:\n      revenue: orders\n"):
+    text = f"metrics:\n  dbt:\n    source: warehouse\n    environment_id: 12345\n{tables}{extra}"
+    return parse_project(text, PROJECT_FILE, {SOURCES_KEY: {"warehouse": warehouse}, DBT_CLIENT_KEY: client})
+
+
+def test_fakes_have_only_fields_of_the_real_dbtsl_models():
+    models = pytest.importorskip("dbtsl.models")
+    import dataclasses
+
+    for name, mirror in MIRRORS.items():
+        real = {f.name for f in dataclasses.fields(getattr(models, name))}
+        assert {f.name for f in dataclasses.fields(mirror)} <= real, name
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +107,7 @@ def _sample_dbt_metrics() -> list[FakeMetric]:
         ("metrics:\n  dbt:\n    source: warehouse\n    environment_id: 123\n    hst: example.com\n", "Did you mean 'host'?"),
         ("metrics:\n  dbt:\n    source: warehouse\n    environment_id: 123\n    auth_token: raw-plaintext-secret\n", "never written in the file"),
         ("metrics:\n  dbt:\n    source: warehouse\n    environment_id: 123\n    metrics: []\n", "non-empty list of metric names"),
+        ("metrics:\n  dbt:\n    source: warehouse\n    environment_id: 123\n    table: orders\n", "table"),
     ],
 )
 def test_dbt_config_validation(text, expected):
@@ -254,26 +129,19 @@ def test_dbt_secret_store_env_and_encrypted(monkeypatch):
     monkeypatch.setitem(sys.modules, "dbtsl", fake_dbtsl)
     monkeypatch.setitem(sys.modules, "dbtsl.asyncio", fake_asyncio)
 
-    # 1. ${ENV_VAR} reference resolves lazily without leaking.
     monkeypatch.setenv("DBT_SVC_TOKEN", "super-secret-env-token")
-    cfg = DbtConfig(source="warehouse", environment_id=42, auth_token="${DBT_SVC_TOKEN}")
-    _make_client(cfg)
+    _make_client(DbtConfig(source="warehouse", environment_id=42, auth_token="${DBT_SVC_TOKEN}"))
     assert captured == {
         "environment_id": 42,
         "auth_token": "super-secret-env-token",
         "host": "semantic-layer.cloud.getdbt.com",
     }
 
-    # 2. Encrypted secret round-trips through panel_flowdash.secret_store.
     pytest.importorskip("cryptography")
     monkeypatch.setenv(KEY_ENV, fernet_key())
-    encrypted = encrypt_dbt_token("super-secret-fernet-token")
-    assert set(encrypted) == {"encrypted", "key_id"}
-    assert "super-secret-fernet-token" not in str(encrypted)
-
+    encrypted = encrypt_secret("super-secret-fernet-token")
     captured.clear()
-    cfg_enc = DbtConfig(source="warehouse", environment_id=99, host="custom.getdbt.com", auth_token=encrypted)
-    _make_client(cfg_enc)
+    _make_client(DbtConfig(source="warehouse", environment_id=99, host="custom.getdbt.com", auth_token=encrypted))
     assert captured == {
         "environment_id": 99,
         "auth_token": "super-secret-fernet-token",
@@ -281,158 +149,202 @@ def test_dbt_secret_store_env_and_encrypted(monkeypatch):
     }
 
 
-def test_encrypt_dbt_token_refuses_without_cryptography(monkeypatch):
-    from panel_flowdash import secret_store
-
-    monkeypatch.setattr(secret_store, "encryption_available", lambda: False)
-    with pytest.raises(ValueError, match="panel-flowdash\\[secrets\\]"):
-        encrypt_dbt_token("secret-token")
-
-
 # ---------------------------------------------------------------------------
-# Conversion, compile_sql fallback, and MetricNode execution
+# Which metrics are translated locally
 
 
-def test_local_conversion_and_selective_compile_sql_fallback(warehouse):
-    client = FakeAsyncClient(
-        _sample_dbt_metrics(),
-        compiled={
-            "rolling_revenue": "SELECT order_date AS metric_time, SUM(amount) AS rolling_revenue FROM orders GROUP BY order_date",
-        },
+def test_mapped_simple_metric_is_local_with_its_own_dimensions(warehouse):
+    client = FakeSemanticLayer(
+        [_revenue()], {"revenue": semantic_sql("orders", "SUM(amount) AS revenue", ORDER_DIMS)},
     )
-    yaml_text = """\
-metrics:
-  dbt:
-    source: warehouse
-    environment_id: 12345
-    auth_token: ${DBT_AUTH_TOKEN}
-"""
-    context = {SOURCES_KEY: {"warehouse": warehouse}, DBT_CLIENT_KEY: client}
-    project = parse_project(yaml_text, PROJECT_FILE, context)
+    project = _project(warehouse, client)
     metrics = read_metrics(project)
 
     assert project.warnings == []
-    assert set(metrics) == {"revenue", "order_count", "total_cost", "avg_order_value", "gross_profit", "rolling_revenue"}
-    assert all(m.origin == DBT_ORIGIN and m.read_only for m in metrics.values())
-
-    # Local structured metrics did NOT trigger compile_sql.
-    assert [c["metrics"] for c in client.compile_calls] == [["rolling_revenue"]]
-    assert client.compile_calls[0]["group_by"] == ["metric_time"]
-
-    # Check SIMPLE metric shape.
     rev = metrics["revenue"]
+    assert rev.origin == DBT_ORIGIN and rev.read_only
     assert rev.form == "structured" and rev.table == "orders"
     assert rev.measures["revenue"].expr == "SUM(amount)"
-    # Entity-prefixed customer__region mapped to column 'region'; cross-table ghost skipped.
-    assert "customer__region" in rev.dimensions and rev.dimensions["customer__region"].column == "region"
-    assert "other_model__ghost" not in rev.dimensions
-    # metric_time mapped to agg_time_dimension 'order_date' and grains intersected with GRAINS.
+    # Dimensions keep dbt's qualified names; one joining another semantic model is left out
+    # even though the orders table has a same-named column.
+    assert set(rev.dimensions) == {"order__region", "order__status", "metric_time"}
+    assert rev.dimensions["order__region"].column == "region"
     mt = rev.dimensions["metric_time"]
-    assert mt.time is True and mt.column == "order_date" and mt.grains == ("year", "month")
-    assert "min_order" in rev.parameters and rev.parameters["min_order"].default == 1
+    assert mt.time and mt.column == "order_date" and mt.grains == ("year", "month")
+    assert rev.parameters == {}
 
-    # Check RATIO and DERIVED metrics converted locally into structured metrics.
-    assert metrics["avg_order_value"].form == "structured"
-    assert metrics["gross_profit"].form == "structured"
-    assert "NULLIF" in metrics["avg_order_value"].measures["avg_order_value"].expr
-
-    # Check CUMULATIVE metric fell back to SQL form.
-    rolling = metrics["rolling_revenue"]
-    assert rolling.form == "sql" and "SUM(amount)" in rolling.sql
-
-    # Verify unchanged aggregate(), bind_sql(), metric_pipeline(), MetricNode, and agent metric_line().
-    agg = aggregate(rev, Query(measures=["revenue"], dimensions=["customer__region"]), {"min_order": 1}, "duckdb")
+    agg = aggregate(rev, Query(measures=["revenue"], dimensions=["order__region"]), {}, "duckdb")
     assert agg.measures and agg.dimensions
-    sql = bind_sql(rolling, {}, "duckdb")
-    assert "rolling_revenue" in sql
-
-    df_rev = fetch(metric_pipeline(rev, warehouse, Query(measures=["revenue"], dimensions=["customer__region"], order_by=["-revenue"])))
-    assert df_rev.to_dict("records") == [
-        {"customer__region": "North", "revenue": 300.0},
-        {"customer__region": "South", "revenue": 50.0},
+    df = fetch(metric_pipeline(rev, warehouse, Query(measures=["revenue"], dimensions=["order__region"], order_by=["-revenue"])))
+    assert df.to_dict("records") == [
+        {"order__region": "North", "revenue": 300.0},
+        {"order__region": "South", "revenue": 50.0},
     ]
+    assert "revenue (source warehouse, table orders)" in metric_line(rev)
 
-    df_profit = fetch(metric_pipeline(metrics["gross_profit"], warehouse, Query(measures=["gross_profit"])))
-    assert df_profit["gross_profit"].iloc[0] == pytest.approx(270.0)
 
-    df_ratio = fetch(metric_pipeline(metrics["avg_order_value"], warehouse, Query(measures=["avg_order_value"])))
-    assert df_ratio["avg_order_value"].iloc[0] == pytest.approx(350.0 / 3.0)
+def test_filtered_simple_metric_without_a_filter_field_uses_compile_sql(warehouse):
+    # The dbtsl models say nothing about filters; dbt's compiled SQL does.
+    client = FakeSemanticLayer(
+        [_revenue("paid_revenue")],
+        {"paid_revenue": semantic_sql("orders", "SUM(amount) AS paid_revenue", ORDER_DIMS, where="is_paid")},
+    )
+    metrics = read_metrics(_project(warehouse, client, tables="    tables:\n      paid_revenue: orders\n"))
+    paid = metrics["paid_revenue"]
+    assert paid.form == "sql" and "WHERE is_paid" in paid.sql and paid.dimensions == {}
+    df = fetch(metric_pipeline(paid, warehouse, Query()))
+    assert df["paid_revenue"].iloc[0] == pytest.approx(300.0)
 
-    # MetricNode executes both structured and fallback SQL dbt metrics unchanged.
+
+def test_unmapped_simple_metric_uses_compile_sql(warehouse):
+    client = FakeSemanticLayer([_revenue()], {"revenue": semantic_sql("orders", "SUM(amount) AS revenue", ORDER_DIMS)})
+    metrics = read_metrics(_project(warehouse, client, tables=""))
+    assert metrics["revenue"].form == "sql"
+    assert [c["metrics"] for c in client.compile_calls] == [["revenue"]]
+
+
+def test_mapped_metric_compiled_over_another_table_uses_compile_sql(warehouse):
+    client = FakeSemanticLayer([_revenue()], {"revenue": "SELECT SUM(amount) AS revenue FROM analytics.invoices"})
+    metrics = read_metrics(_project(warehouse, client))
+    # Kept as compiled SQL, which then fails its check against the source rather than reading orders.
+    assert "revenue" not in metrics and metrics.failures["revenue"].metric.form == "sql"
+
+
+def test_qualified_table_in_compiled_sql_matches_the_mapping(warehouse):
+    client = FakeSemanticLayer([_revenue()], {"revenue": "SELECT SUM(amount) AS revenue FROM analytics.prod.orders AS src"})
+    assert read_metrics(_project(warehouse, client))["revenue"].form == "structured"
+
+
+@pytest.mark.parametrize("agg", ["MEDIAN", "PERCENTILE"])
+def test_non_portable_aggregations_use_compile_sql(warehouse, agg):
+    client = FakeSemanticLayer([_revenue(agg=agg)], {"revenue": semantic_sql("orders", "MEDIAN(amount) AS revenue")})
+    assert read_metrics(_project(warehouse, client))["revenue"].form == "sql"
+
+
+def test_ratio_and_derived_metrics_use_compile_sql_even_when_mapped(warehouse):
+    # A ratio whose name matches a measure, and measures listed in an order that is no
+    # numerator/denominator contract: neither is translated locally.
+    ratio = metric(
+        "order_amount", "RATIO", measures=[measure("orders", "COUNT", "1"), measure("order_amount", "SUM", "amount")],
+    )
+    derived = metric("gross_profit", "DERIVED", measures=[measure("order_amount", "SUM", "amount")])
+    client = FakeSemanticLayer(
+        [ratio, derived],
+        {
+            "order_amount": "SELECT SUM(amount) / NULLIF(COUNT(1), 0) AS order_amount FROM orders",
+            "gross_profit": "SELECT SUM(amount) - SUM(cost) AS gross_profit FROM orders",
+        },
+    )
+    metrics = read_metrics(_project(warehouse, client, tables="    tables:\n      order_amount: orders\n      gross_profit: orders\n"))
+    assert metrics["order_amount"].form == "sql"
+    assert metrics["gross_profit"].form == "sql"
+    assert fetch(metric_pipeline(metrics["order_amount"], warehouse, Query()))["order_amount"].iloc[0] == pytest.approx(350.0 / 3)
+
+
+def test_metric_requiring_metric_time_keeps_it_or_falls_back(warehouse):
+    rolling = metric(
+        "rolling_revenue", "CUMULATIVE", requires_metric_time=True,
+        measures=[measure("order_amount", "SUM", "amount", agg_time_dimension="order_date")],
+    )
+    client = FakeSemanticLayer(
+        [rolling], {"rolling_revenue": "SELECT order_date AS metric_time, SUM(amount) AS rolling_revenue FROM orders GROUP BY order_date"},
+    )
+    metrics = read_metrics(_project(warehouse, client, tables="    tables:\n      rolling_revenue: orders\n"))
+    rolling = metrics["rolling_revenue"]
+    assert rolling.form == "sql"
+    assert client.compile_calls == [{"metrics": ["rolling_revenue"], "group_by": ["metric_time"]}]
+    assert "rolling_revenue" in bind_sql(rolling, {}, "duckdb")
+
+
+def test_sql_and_structured_dbt_metrics_run_as_metric_nodes(warehouse):
+    rolling = metric("rolling_revenue", "CUMULATIVE", requires_metric_time=True)
+    client = FakeSemanticLayer(
+        [_revenue(), rolling],
+        {
+            "revenue": semantic_sql("orders", "SUM(amount) AS revenue", ORDER_DIMS),
+            "rolling_revenue": "SELECT order_date AS metric_time, SUM(amount) AS rolling_revenue FROM orders GROUP BY order_date",
+        },
+    )
+    metrics = read_metrics(_project(warehouse, client))
     editor = FlowDash(components=COMPONENTS)
     try:
         bind_source(editor, warehouse, "warehouse")
         editor.context[METRICS_KEY] = metrics
         ops = DashboardOps(editor)
-        ops.add_node(METRIC_ID, {"metric": "revenue", "measures": ["revenue"], "dimensions": ["status"]}, name="rev")
+        ops.add_node(METRIC_ID, {"metric": "revenue", "measures": ["revenue"], "dimensions": ["order__status"]}, name="rev")
         ops.add_node(METRIC_ID, {"metric": "rolling_revenue"}, name="roll")
-        out_rev = ops.node_output("rev.data")
-        assert set(out_rev["status"]) == {"paid", "open"}
-        out_roll = ops.node_output("roll.data")
-        assert len(out_roll) == 3
+        assert set(ops.node_output("rev.data")["order__status"]) == {"paid", "open"}
+        assert len(ops.node_output("roll.data")) == 3
     finally:
         editor.dispose()
 
-    # Agent listing works unchanged.
-    line = metric_line(rev)
-    assert "revenue (source warehouse, table orders)" in line
-    assert "customer__region" in line
-
-
-def test_filtered_and_offset_and_boolean_aggs(warehouse):
-    client = FakeAsyncClient(
-        [
-            FakeMetric(
-                name="paid_orders",
-                type=MetricType.SIMPLE,
-                measures=[FakeMeasure("is_paid", "SUM_BOOLEAN", expr="is_paid", semantic_model="orders")],
-            ),
-            FakeMetric(
-                name="filtered_rev",
-                type=MetricType.SIMPLE,
-                filter="{{ Dimension('status') }} = 'paid'",
-                measures=[FakeMeasure("amount", "SUM", expr="amount", semantic_model="orders")],
-            ),
-            FakeMetric(
-                name="prev_month_rev",
-                type=MetricType.DERIVED,
-                type_params=FakeTypeParams(
-                    expr="a",
-                    metrics=[FakeInputRef("paid_orders", alias="a", offset_window="1 month")],
-                ),
-            ),
-        ],
-        compiled={
-            "filtered_rev": "SELECT SUM(amount) AS filtered_rev FROM orders WHERE status = 'paid'",
-            "prev_month_rev": "SELECT SUM(amount) AS prev_month_rev FROM orders",
-        },
-    )
-    yaml_text = """\
-metrics:
-  dbt:
-    source: warehouse
-    environment_id: 7
-"""
-    project = parse_project(yaml_text, PROJECT_FILE, {SOURCES_KEY: {"warehouse": warehouse}, DBT_CLIENT_KEY: client})
-    metrics = read_metrics(project)
-    assert metrics["paid_orders"].form == "structured"
-    df = fetch(metric_pipeline(metrics["paid_orders"], warehouse, Query(measures=["paid_orders"])))
-    assert df["paid_orders"].iloc[0] == 2
-    assert metrics["filtered_rev"].form == "sql"
-    assert metrics["prev_month_rev"].form == "sql"
-    assert [c["metrics"][0] for c in client.compile_calls] == ["filtered_rev", "prev_month_rev"]
-
 
 def test_runs_safely_inside_active_event_loop(warehouse):
-    client = FakeAsyncClient([FakeMetric(name="revenue", measures=[FakeMeasure("amount", "SUM", expr="amount", semantic_model="orders")])])
-    yaml_text = "metrics:\n  dbt:\n    source: warehouse\n    environment_id: 5\n"
+    client = FakeSemanticLayer([_revenue()], {"revenue": semantic_sql("orders", "SUM(amount) AS revenue")})
 
     async def inside_loop():
-        project = parse_project(yaml_text, PROJECT_FILE, {SOURCES_KEY: {"warehouse": warehouse}, DBT_CLIENT_KEY: client})
-        return read_metrics(project)
+        return read_metrics(_project(warehouse, client))
 
-    metrics = asyncio.run(inside_loop())
-    assert list(metrics) == ["revenue"]
+    assert list(asyncio.run(inside_loop())) == ["revenue"]
+
+
+# ---------------------------------------------------------------------------
+# Caching, timeout and refresh
+
+
+def test_fetch_is_cached_and_refetched_once_expired(warehouse, monkeypatch):
+    client = FakeSemanticLayer([_revenue()], {"revenue": semantic_sql("orders", "SUM(amount) AS revenue", ORDER_DIMS)})
+    read_metrics(_project(warehouse, client))
+    calls = len(client.compile_calls)
+    assert client.metric_calls == 1
+
+    read_metrics(_project(warehouse, client))
+    assert client.metric_calls == 1 and len(client.compile_calls) == calls
+
+    monkeypatch.setattr(dbt_metrics, "CACHE_TTL", 0)
+    read_metrics(_project(warehouse, client))
+    assert client.metric_calls == 2
+
+
+def test_slow_dbt_times_out_without_holding_local_metrics(warehouse, monkeypatch):
+    monkeypatch.setattr(dbt_metrics, "TIMEOUT", 0.05)
+    client = FakeSemanticLayer([_revenue()], {"revenue": "SELECT 1"}, delay=1)
+    local = "  local_orders:\n    source: warehouse\n    table: orders\n    measures:\n      n: COUNT(*)\n"
+    project = _project(warehouse, client, extra=local)
+    metrics = read_metrics(project)
+    assert list(metrics) == ["local_orders"]
+    assert "no answer within 0.05 seconds" in metrics.dbt_error
+
+
+def test_project_metrics_refetch_after_the_cache_expires(warehouse, tmp_path, monkeypatch):
+    revenue = _revenue()
+    client = FakeSemanticLayer([revenue], {"revenue": semantic_sql("orders", "SUM(amount) AS revenue"), "order_count": "SELECT COUNT(*) AS order_count FROM orders"})
+    path = tmp_path / PROJECT_FILE
+    path.write_text("metrics:\n  dbt:\n    source: warehouse\n    environment_id: 10\n")
+    project = load_project(path, {SOURCES_KEY: {"warehouse": warehouse}, DBT_CLIENT_KEY: client})
+    pm = ProjectMetrics(project)
+    assert list(pm) == ["revenue"]
+
+    client._metrics = [revenue, metric("order_count")]
+    assert list(pm) == ["revenue"]
+    monkeypatch.setattr(dbt_metrics, "CACHE_TTL", 0)
+    assert list(pm) == ["revenue", "order_count"]
+
+
+def test_metric_statuses_without_project_metrics_never_asks_dbt(warehouse, tmp_path):
+    client = FakeSemanticLayer([_revenue()], {"revenue": semantic_sql("orders", "SUM(amount) AS revenue")})
+    path = tmp_path / PROJECT_FILE
+    path.write_text("metrics:\n  dbt:\n    source: warehouse\n    environment_id: 10\n")
+    project = load_project(path, {SOURCES_KEY: {"warehouse": warehouse}, DBT_CLIENT_KEY: client})
+    clear_dbt_cache()
+    calls = client.metric_calls
+
+    statuses, _ = metric_statuses(project)
+    assert statuses == [] and client.metric_calls == calls
+
+    load_project(path, project.context)
+    statuses, _ = metric_statuses(project)
+    assert [(s.name, s.origin) for s in statuses] == [("revenue", DBT_ORIGIN)]
 
 
 # ---------------------------------------------------------------------------
@@ -455,11 +367,9 @@ class _Admin:
 
 
 def test_coexistence_readonly_guards_and_yaml_preservation(warehouse, tmp_path):
-    client = FakeAsyncClient(
-        [
-            FakeMetric(name="revenue", description="From dbt", measures=[FakeMeasure("amount", "SUM", expr="amount", semantic_model="orders")]),
-            FakeMetric(name="manual_metric", description="Collides with yaml", measures=[FakeMeasure("amount", "SUM", expr="amount", semantic_model="orders")]),
-        ]
+    client = FakeSemanticLayer(
+        [_revenue(), _revenue("manual_metric")],
+        {"revenue": "SELECT SUM(amount) AS revenue FROM orders", "manual_metric": "SELECT SUM(amount) AS manual_metric FROM orders"},
     )
     path = tmp_path / PROJECT_FILE
     path.write_text(
@@ -510,11 +420,7 @@ def test_dbt_connection_failure_isolated_and_retried(warehouse, tmp_path):
     def factory(_config):
         if broken:
             raise RuntimeError("cannot reach https://user:secretpass@dbt.example.com")
-        return FakeAsyncClient(
-            [
-                FakeMetric(name="revenue", measures=[FakeMeasure("amount", "SUM", expr="amount", semantic_model="orders")]),
-            ]
-        )
+        return FakeSemanticLayer([_revenue()], {"revenue": "SELECT SUM(amount) AS revenue FROM orders"})
 
     path = tmp_path / PROJECT_FILE
     path.write_text(
@@ -547,21 +453,16 @@ metrics:
 
 
 def test_metrics_page_marks_dbt_metrics_and_hides_edit_controls(warehouse, tmp_path):
-    client = FakeAsyncClient(
+    client = FakeSemanticLayer(
         [
-            FakeMetric(
-                name="revenue",
-                description="Revenue from dbt",
-                measures=[FakeMeasure("amount", "SUM", expr="amount", semantic_model="orders")],
-                dimensions=[FakeDimension("region", DimensionType.CATEGORICAL)],
-            ),
-            FakeMetric(
-                name="rolling_revenue",
-                type=MetricType.CUMULATIVE,
-                description="Rolling revenue",
-            ),
+            metric("revenue", measures=[measure("amount", "SUM", "amount")], dimensions=[dimension("order__region")],
+                   description="Revenue from dbt"),
+            metric("rolling_revenue", "CUMULATIVE", description="Rolling revenue"),
         ],
-        compiled={"rolling_revenue": "SELECT region, SUM(amount) AS rolling_revenue FROM orders GROUP BY region"},
+        {
+            "revenue": semantic_sql("orders", "SUM(amount) AS revenue", ORDER_DIMS),
+            "rolling_revenue": "SELECT region, SUM(amount) AS rolling_revenue FROM orders GROUP BY region",
+        },
     )
     path = tmp_path / PROJECT_FILE
     path.write_text(
@@ -570,6 +471,8 @@ metrics:
   dbt:
     source: warehouse
     environment_id: 10
+    tables:
+      revenue: orders
   local_orders:
     description: Local orders
     source: warehouse
@@ -615,3 +518,13 @@ metrics:
     assert "compiled SQL" in sql_text
     sql_res = sql_page.metric.run()
     assert sql_res.error is None and len(sql_res.rows) == 2
+
+    # 4. The drawer shows a dbt metric read-only, and a local one editable again.
+    ms.open_metric("revenue")
+    assert ms._drawer.open and ms.selected is None
+    assert ms._editor._yaml.disabled and not ms._save.visible and ms._cancel.label == "Done"
+    assert not any(part.visible for part in ms._editor._preview_parts)
+    ms.close_metric()
+    ms.open_metric("local_orders")
+    assert not ms._editor._yaml.disabled and ms._save.visible and ms._cancel.label == "Cancel"
+    assert all(part.visible for part in ms._editor._preview_parts)
