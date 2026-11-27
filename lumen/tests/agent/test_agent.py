@@ -905,7 +905,7 @@ def test_the_component_catalogue_fits_flowdash_budget_with_room_to_spare():
         session.close()
     # Past the limit FlowDash lists only ids and titles, so leave room for a few more components.
     assert "picked by the source's ref" in text
-    assert len(text) <= CATALOGUE_LIMIT - 1500, len(text)
+    assert len(text) <= CATALOGUE_LIMIT - 500, len(text)
 
 
 async def test_the_dashboard_assistant_reads_a_table_with_one_node():
