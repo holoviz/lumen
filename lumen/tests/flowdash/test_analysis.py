@@ -447,3 +447,133 @@ def test_unbinding_an_analysis_refreshes_the_nodes_naming_it(duck):
         assert node._object is None and "no Lumen analyses" in node._error
     finally:
         editor.dispose()
+
+
+def test_analysis_access_rules_and_enforcement(duck, tmp_path):
+    import weakref
+
+    from panel_flowdash.auth import Identity, Permission
+    from panel_flowdash.editor import _current
+
+    from lumen.flowdash import (
+        ANALYSES_ACCESS_KEY, authorized_analyses, can_access_analysis,
+    )
+    from lumen.flowdash.access import bind_identity
+
+    hr_user = Identity("alice", groups=frozenset({"hr"}))
+    sales_user = Identity("sam", groups=frozenset({"sales"}))
+    denied_admin = Identity("blocked", groups=frozenset({"admins", "hr"}))
+    admin = Identity("root", groups=frozenset({"admins"}))
+
+    # Build a saved dashboard as admin with both a public and a restricted analysis.
+    rules = {
+        "ScaleAmount": {"allow_groups": ["hr"], "deny_users": ["blocked"]},
+    }
+    author = FlowDash(
+        components=COMPONENTS,
+        notifications=False,
+        context={ANALYSES_KEY: [ScaleAmount, SummaryView], ANALYSES_ACCESS_KEY: rules},
+    )
+    bind_source(author, duck, "data")
+    bind_identity(author, admin, admin=True)
+    try:
+        a_ops = DashboardOps(author)
+        a_ops.add_node(TABLE_ID, {"ref": "data", "table": "sales"}, name="sales")
+        a_ops.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="restricted")
+        a_ops.connect("sales.pipeline", "restricted.pipeline")
+        a_ops.add_node(ANALYSIS_ID, {"analysis": "SummaryView"}, name="public")
+        a_ops.connect("sales.pipeline", "public.pipeline")
+        saved = author.export_dashboard()
+    finally:
+        author.dispose()
+
+    # Unauthorized sales user: choices/presets/authorized_analyses omit ScaleAmount,
+    # config check and runtime node report permission denied, missing hint hides restricted names.
+    editor = FlowDash(
+        components=COMPONENTS,
+        notifications=False,
+        context={ANALYSES_KEY: [ScaleAmount, SummaryView], ANALYSES_ACCESS_KEY: rules},
+    )
+    bind_source(editor, duck, "data")
+    bind_identity(editor, sales_user)
+    try:
+        ops = DashboardOps(editor)
+        assert not can_access_analysis("ScaleAmount", editor.context)
+        assert can_access_analysis("SummaryView", editor.context)
+        assert set(authorized_analyses(editor.context)) == {"SummaryView"}
+
+        with _current(weakref.ref(editor)):
+            assert analysis_choices({}, {}) == {"analysis": ["SummaryView"]}
+            assert [p["config"]["analysis"] for p in analysis_presets(editor.context)] == ["SummaryView"]
+            diag = check_analysis_config({"analysis": "ScaleAmount"}, {})
+            assert diag is not None and "permission" in str(diag).lower()
+            missing = check_analysis_config({"analysis": "DoesNotExist"}, {})
+            assert missing is not None and "ScaleAmount" not in str(missing) and "SummaryView" in str(missing)
+
+        with pytest.raises(OperationError, match="permission"):
+            ops.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="nope")
+
+        # Opening an admin-saved dashboard fails closed on the restricted analysis node.
+        editor.import_dashboard(saved)
+        nodes = ops.preview()["nodes"]
+        assert nodes["public"]["status"] == "ok"
+        assert nodes["restricted"]["status"] in ("invalid", "failed")
+        assert "permission" in nodes["restricted"]["message"].lower()
+
+        # Explicit deny beats admin; unrestricted admin passes allowlist; no identity fails closed.
+        assert can_access_analysis("ScaleAmount", editor.context, identity=hr_user)
+        assert can_access_analysis("ScaleAmount", editor.context, identity=admin, admin=True)
+        assert not can_access_analysis("ScaleAmount", editor.context, identity=denied_admin, admin=True)
+        assert not can_access_analysis("ScaleAmount", editor.context, identity=None, admin=True)
+        assert can_access_analysis("SummaryView", editor.context, identity=None)
+    finally:
+        editor.dispose()
+
+    # Malformed raw context rules fail closed to admins-only.
+    bad_ctx = {ANALYSES_KEY: [ScaleAmount], ANALYSES_ACCESS_KEY: {"ScaleAmount": {"allow_roles": ["hr"]}}}
+    assert not can_access_analysis("ScaleAmount", bad_ctx, identity=hr_user)
+    assert can_access_analysis("ScaleAmount", bad_ctx, identity=admin, admin=True)
+
+    # bind_analysis(..., access=...) validates, attaches, and refreshes nodes; unbind clears it.
+    editor2, ops2 = _setup(duck, [])
+    bind_identity(editor2, sales_user)
+    try:
+        with pytest.raises(ValueError, match="Unknown key 'bad_key'"):
+            bind_analysis(editor2, ScaleAmount, access={"bad_key": ["hr"]})
+        bind_analysis(editor2, ScaleAmount, access=Permission.from_spec(allow_groups=["hr"]))
+        assert not can_access_analysis("ScaleAmount", editor2.context)
+        bind_analysis(editor2, ScaleAmount, access={"allow_groups": ["sales"]})
+        assert can_access_analysis("ScaleAmount", editor2.context)
+        ops2.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="bound")
+        ops2.connect("sales.pipeline", "bound.pipeline")
+        assert _component(ops2, "bound")._error is None
+        bind_analysis(editor2, ScaleAmount, access={"allow_groups": ["hr"]})
+        assert "permission" in (_component(ops2, "bound")._error or "").lower()
+        unbind_analysis(editor2, "ScaleAmount")
+        assert "ScaleAmount" not in editor2.context[ANALYSES_ACCESS_KEY]
+    finally:
+        editor2.dispose()
+
+    # build_routes validates and wires analysis_access into editor context.
+    csv = tmp_path / "sales.csv"
+    csv.write_text("category,amount\nA,10\nB,20\n")
+    with pytest.raises(ValueError, match="Invalid access rule for analysis 'ScaleAmount'"):
+        build_routes(
+            [str(csv)],
+            db_path=tmp_path / "bad.db",
+            analyses=[ScaleAmount],
+            analysis_access={"ScaleAmount": {"unknown": ["hr"]}},
+        )
+    routes = build_routes(
+        [str(csv)],
+        db_path=tmp_path / "ok.db",
+        analyses=[ScaleAmount, SummaryView],
+        analysis_access={"ScaleAmount": {"allow_groups": ["hr"]}},
+    )
+    app = routes["/"]()
+    try:
+        assert app._editor.context[ANALYSES_ACCESS_KEY]["ScaleAmount"] == Permission.from_spec(allow_groups=["hr"])
+        assert not can_access_analysis("ScaleAmount", app._editor.context, identity=sales_user)
+        assert can_access_analysis("ScaleAmount", app._editor.context, identity=hr_user)
+    finally:
+        app._editor.dispose()

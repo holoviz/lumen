@@ -248,8 +248,42 @@ def _raw_access_permission(value: t.Any) -> Permission:
     """Parse a raw ``access:`` dict outside a section loader, failing closed if malformed."""
     if value is None:
         return Permission()
+    if isinstance(value, Permission):
+        return value
     parsed, errors = _access_names(value)
     return _ADMINS_ONLY if errors else Permission.from_spec(**parsed)
+
+
+def parse_access_spec(value: t.Any) -> Permission:
+    """
+    Parse a Python ``access:`` rule (``None``, ``Permission``, or a mapping of
+    ``ACCESS_KEYS``) into a ``Permission``, raising ``ValueError`` if malformed.
+    """
+    if value is None:
+        return Permission()
+    if isinstance(value, Permission):
+        return value
+    parsed, errors = _access_names(value)
+    if errors:
+        raise ValueError("; ".join(message for _, message, _ in errors))
+    return Permission.from_spec(**parsed)
+
+
+def parse_analysis_access(rules: Mapping[str, t.Any] | None) -> dict[str, Permission]:
+    """Validate a mapping of analysis names to ``access:`` rules into ``{name: Permission}``."""
+    if rules is None:
+        return {}
+    if not isinstance(rules, Mapping):
+        raise ValueError("`analysis_access` must be a mapping of analysis names to access rules.")
+    parsed: dict[str, Permission] = {}
+    for name, rule in rules.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Analysis names in `analysis_access` must be non-empty strings.")
+        try:
+            parsed[name.strip()] = parse_access_spec(rule)
+        except ValueError as exc:
+            raise ValueError(f"Invalid access rule for analysis {name!r}: {exc}") from exc
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +760,68 @@ def authorized_metrics(
     return {name: metric for name, metric in host_metrics(context).items() if can_access_metric(metric, context, identity=resolved_identity, admin=resolved_admin)}
 
 
+def analysis_permission(
+    name: str,
+    context: Mapping[str, t.Any] | None = None,
+) -> Permission:
+    """The ``Permission`` configured for host-registered analysis ``name``, or empty if unrestricted."""
+    from .analysis import ANALYSES_ACCESS_KEY
+
+    if context is None:
+        from panel_flowdash import dashboard_context
+
+        context = dashboard_context()
+    rules = context.get(ANALYSES_ACCESS_KEY)
+    if rules is None:
+        return Permission()
+    if not isinstance(rules, Mapping):
+        return _ADMINS_ONLY
+    if name not in rules:
+        return Permission()
+    return _raw_access_permission(rules[name])
+
+
+def can_access_analysis(
+    name: str,
+    context: Mapping[str, t.Any] | None = None,
+    *,
+    app: t.Any = None,
+    identity: t.Any = _UNSET,
+    admin: bool | Callable[[], bool] | None = None,
+) -> bool:
+    """Whether the session may access host-registered analysis ``name``."""
+    context, resolved_identity, resolved_admin = _resolve_session(
+        context,
+        app=app,
+        identity=identity,
+        admin=admin,
+    )
+    return can_access(analysis_permission(name, context), resolved_identity, admin=resolved_admin)
+
+
+def authorized_analyses(
+    context: Mapping[str, t.Any] | None = None,
+    *,
+    app: t.Any = None,
+    identity: t.Any = _UNSET,
+    admin: bool | Callable[[], bool] | None = None,
+) -> dict[str, t.Any]:
+    """The host analyses in ``context`` that the session is permitted to access, by name."""
+    from .analysis import host_analyses
+
+    context, resolved_identity, resolved_admin = _resolve_session(
+        context,
+        app=app,
+        identity=identity,
+        admin=admin,
+    )
+    return {
+        name: entry
+        for name, entry in host_analyses(context).items()
+        if can_access_analysis(name, context, identity=resolved_identity, admin=resolved_admin)
+    }
+
+
 # ---------------------------------------------------------------------------
 # User-facing denial messages
 
@@ -745,20 +841,28 @@ def access_denied_metric(name: str) -> str:
     return f"You do not have permission to access metric {name!r}."
 
 
+def access_denied_analysis(name: str) -> str:
+    return f"You do not have permission to access analysis {name!r}."
+
+
 __all__ = [
     "ACCESS_KEYS",
     "ADMIN_KEY",
     "IDENTITY_KEY",
+    "access_denied_analysis",
     "access_denied_file_reads",
     "access_denied_metric",
     "access_denied_source",
     "access_denied_tables",
+    "analysis_permission",
     "attach_access",
+    "authorized_analyses",
     "authorized_metrics",
     "authorized_sources",
     "authorized_tables",
     "bind_identity",
     "can_access",
+    "can_access_analysis",
     "can_access_metric",
     "can_access_source",
     "can_access_table",
@@ -766,6 +870,8 @@ __all__ = [
     "has_access_rules",
     "is_admin",
     "parse_access",
+    "parse_access_spec",
+    "parse_analysis_access",
     "restricted_tables",
     "session_identity",
     "session_is_admin",

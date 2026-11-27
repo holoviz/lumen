@@ -18,7 +18,7 @@ from ..flowdash import (
     ANALYSIS_ID, COMPONENTS, LumenViewNode, bound_sources, host_analyses,
     host_metrics,
 )
-from ..flowdash.access import can_access_metric
+from ..flowdash.access import can_access_analysis, can_access_metric
 from ..flowdash.data import hidden_reads_of
 
 logger = logging.getLogger(__name__)
@@ -62,19 +62,31 @@ def metrics(ops: DashboardOps) -> dict[str, Any]:
 
 def analyses(ops: DashboardOps) -> dict[str, Any]:
     """
-    The host-registered ``Analysis`` classes or instances the agent may invoke,
-    by name: those in ``lumen.analyses`` whose ``_callable_by_llm`` is true.
-    That hides an analysis from list_tables, add_analysis and set_config; it
-    is not an access control, since FlowDash's own add_node or YAML tools
-    can still name it. ``agent_sensitive_components=["Lumen/analysis"]``
-    holds those back for approval.
+    The host-registered ``Analysis`` classes or instances the agent may invoke
+    in the current session, by name: those in ``lumen.analyses`` whose
+    ``_callable_by_llm`` is true and whose ``access:`` rule permits the
+    session. Access checks fail closed per analysis. ``_callable_by_llm``
+    hides an analysis from list_tables, add_analysis and set_config; it is
+    not an access control, since FlowDash's own add_node or YAML tools can
+    still name it. ``agent_sensitive_components=["Lumen/analysis"]`` holds
+    those back for approval, and ``access:`` rules block unauthorized
+    sessions in both the agent and ``AnalysisNode``.
     """
     try:
         live = host_analyses(ops.editor.context)
     except Exception as exc:
         logger.warning("Could not read the app's analyses (%s).", type(exc).__name__)
         return {}
-    return {name: entry for name, entry in live.items() if getattr(entry, "_callable_by_llm", True)}
+    allowed: dict[str, Any] = {}
+    for name, entry in live.items():
+        if not getattr(entry, "_callable_by_llm", True):
+            continue
+        try:
+            if can_access_analysis(name, ops.editor.context):
+                allowed[name] = entry
+        except Exception as exc:
+            logger.warning("Could not check access to the app's analysis %r (%s).", name, type(exc).__name__)
+    return allowed
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:

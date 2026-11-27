@@ -24,7 +24,8 @@ from panel_flowdash.project import _parse
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
-from .analysis import ANALYSES_KEY, ANALYSIS_ID
+from .access import parse_analysis_access
+from .analysis import ANALYSES_ACCESS_KEY, ANALYSES_KEY, ANALYSIS_ID
 from .catalog import CATALOG_KEY, ProjectCatalog
 from .contracts import METRIC_ID
 from .data_section import (
@@ -340,6 +341,7 @@ def build_routes(
     project: str | os.PathLike | Project | None = None,
     title: str = "Lumen",
     analyses: Mapping[str, Any] | Sequence[Any] | None = None,
+    analysis_access: Mapping[str, Any] | None = None,
     upload_handlers: Mapping[str, Any] | None = None,
     upload_dir: str | os.PathLike | None = None,
     **params: Any,
@@ -373,6 +375,11 @@ def build_routes(
     analyses
         Host-registered Lumen ``Analysis`` subclasses or instances (a mapping by
         name or a sequence) available to ``Lumen/analysis`` nodes and the agent.
+    analysis_access
+        Optional per-analysis ``access:`` rules, mapping an analysis name to a
+        ``panel_flowdash.auth.Permission`` or a dict of ``allow_users``,
+        ``allow_groups``, ``deny_users`` and ``deny_groups``. Evaluated with
+        the same semantics as source, table and metric access rules.
     upload_handlers
         Readers of further file types people may upload, by extension, e.g.
         ``{"h5ad": upload_h5ad}``, each ``handler(context, file, alias,
@@ -432,6 +439,11 @@ def build_routes(
     }
     if analyses is not None:
         context[ANALYSES_KEY] = analyses
+    if analysis_access is not None:
+        existing_rules = context.get(ANALYSES_ACCESS_KEY)
+        merged = parse_analysis_access(existing_rules) if existing_rules is not None else {}
+        merged.update(parse_analysis_access(analysis_access))
+        context[ANALYSES_ACCESS_KEY] = merged
     if project is None:
         project = _working_project(context)
     elif not isinstance(project, Project):

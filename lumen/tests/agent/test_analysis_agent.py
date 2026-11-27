@@ -358,3 +358,62 @@ async def test_add_analysis_says_when_it_ran_on_capped_input(more, session):
     set_row_ceiling(session.ops.editor, 2)
     placed = await add_analysis(more, "sales_rows", "NormalizeAmount", "shares")
     assert placed.startswith("Placed analysis node 'shares' (NormalizeAmount) on the first 2 rows of 'sales_rows'")
+
+
+async def test_agent_enforces_analysis_access_rules(monkeypatch):
+    from panel_flowdash.auth import Identity
+
+    from lumen.flowdash.access import bind_identity
+
+    rules = {
+        "NormalizeAmount": {"allow_groups": ["finance"], "deny_users": ["blocked"]},
+    }
+    sess = AgentSession(
+        DuckDBSource(uri=":memory:", tables=TABLES),
+        FunctionModel(lambda m, i: ModelResponse([TextPart("")])),
+        analyses=[NormalizeAmount, ExecutiveCard, InternalOnly],
+        analysis_access=rules,
+    )
+    try:
+        sess.add_sql("sales_rows", "SELECT category, amount FROM sales")
+        ctx = SimpleNamespace(deps=sess.deps)
+
+        # Unauthorized sales user cannot see or invoke NormalizeAmount, only ExecutiveCard.
+        bind_identity(sess.editor, Identity("sam", groups=frozenset({"sales"})))
+        assert list(_graph.analyses(sess.ops)) == ["ExecutiveCard"]
+        listing = await list_tables(ctx)
+        assert "ExecutiveCard" in listing and "NormalizeAmount" not in listing
+        state = dashboard_state(sess.ops)
+        assert "ExecutiveCard" in state and "NormalizeAmount" not in state
+        with pytest.raises(ModelRetry, match="No analysis 'NormalizeAmount'"):
+            await add_analysis(ctx, "sales_rows", "NormalizeAmount", "shares")
+
+        placed = await add_analysis(ctx, "sales_rows", "ExecutiveCard", "card")
+        assert placed.startswith("Placed analysis node 'card'")
+        with pytest.raises(ModelRetry, match="No analysis 'NormalizeAmount'"):
+            await set_config(ctx, "card", {"analysis": "NormalizeAmount"})
+
+        # Authorized finance user and admin can see and place NormalizeAmount; denied admin cannot.
+        bind_identity(sess.editor, Identity("bob", groups=frozenset({"finance"})))
+        assert set(_graph.analyses(sess.ops)) == {"NormalizeAmount", "ExecutiveCard"}
+        ok = await add_analysis(ctx, "sales_rows", "NormalizeAmount", "shares")
+        assert ok.startswith("Placed analysis node 'shares'")
+
+        bind_identity(sess.editor, Identity("root", groups=frozenset({"admins"})), admin=True)
+        assert set(_graph.analyses(sess.ops)) == {"NormalizeAmount", "ExecutiveCard"}
+
+        bind_identity(sess.editor, Identity("blocked", groups=frozenset({"admins", "finance"})), admin=True)
+        assert list(_graph.analyses(sess.ops)) == ["ExecutiveCard"]
+
+        # Access check failures fail closed per analysis.
+        bind_identity(sess.editor, Identity("bob", groups=frozenset({"finance"})))
+
+        def flaky(name, context):
+            if name == "NormalizeAmount":
+                raise RuntimeError("broken check")
+            return True
+
+        monkeypatch.setattr(_graph, "can_access_analysis", flaky)
+        assert list(_graph.analyses(sess.ops)) == ["ExecutiveCard"]
+    finally:
+        sess.close()
