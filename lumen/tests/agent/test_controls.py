@@ -25,6 +25,7 @@ from lumen.agent.controls import (
     KPI_ID, add_filter_control, add_kpi, controls_toolset,
 )
 from lumen.agent.data import data_toolset
+from lumen.agent.report import report_toolset
 from lumen.flowdash import FILTER_ID, TABLE_ID
 from lumen.flowdash.metrics import read_metrics
 from lumen.flowdash.project import parse_project
@@ -756,7 +757,7 @@ def _surface(monkeypatch, **kwargs):
 
 
 TOOL_NAMES = {tool.__name__ for tool in FLOWDASH_TOOLS} | {
-    name for toolset in (data_toolset(), authoring_toolset(), controls_toolset()) for name in toolset.tools
+    name for toolset in (data_toolset(), authoring_toolset(), controls_toolset(), report_toolset()) for name in toolset.tools
 } | {"add_filter", "set_title", "arrange_tiles", "add_node"}
 
 
