@@ -757,17 +757,21 @@ async def get_metaset(
                 log_debug(f"Failed to get metadata for table {table_name} in source {source_name}: {e}")
                 metadata = {}
 
+            columns = []
+            for col_name, col_values in metadata.get("columns", {}).items():
+                if isinstance(col_values, dict):
+                    col_meta = dict(col_values)
+                    col_desc = col_meta.pop("description", None)
+                elif isinstance(col_values, str):
+                    col_meta, col_desc = {}, col_values
+                else:
+                    col_meta, col_desc = {}, None
+                columns.append(Column(name=col_name, description=col_desc, metadata=col_meta))
+
             catalog_entry = TableCatalogEntry(
                 table_slug=table_slug,
                 similarity=1,
-                columns=[
-                    Column(
-                        name=col_name,
-                        description=col_values.pop("description", None),
-                        metadata=col_values
-                    )
-                    for col_name, col_values in metadata.get("columns", {}).items()
-                ],
+                columns=columns,
                 source=source,
                 sql_expr=source.get_sql_expr(source.normalize_table(table_name)),
                 description=metadata.get("description"),

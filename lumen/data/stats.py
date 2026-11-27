@@ -1842,6 +1842,53 @@ class TableStatsStore(param.Parameterized):
             self._budgets.clear()
             self._slots.clear()
 
+    def invalidate(self, source: Source, table: str | None = None) -> None:
+        """
+        Drop cached statistics (in memory and on disk) for ``table`` of
+        ``source``, or for every table of ``source`` when ``table`` is None.
+        """
+        try:
+            adapter = self._adapter(source)
+            identity = self._identity(source, adapter)
+        except Exception:
+            return
+        removed: list[tuple] = []
+        with self._lock:
+            for key in [
+                k for k in self._memory
+                if k[0] == identity and (table is None or k[1] == table)
+            ]:
+                del self._memory[key]
+                removed.append(key)
+            for key in [
+                k for k in self._tasks
+                if k[0] == identity and (table is None or k[1] == table)
+            ]:
+                del self._tasks[key]
+        if table is not None:
+            try:
+                exact_key = (identity, table, adapter.definition(table))
+            except Exception:
+                exact_key = None
+            if exact_key is not None and exact_key not in removed:
+                removed.append(exact_key)
+        else:
+            try:
+                tables = list(source.get_tables())
+            except Exception:
+                tables = []
+            for tbl in tables:
+                try:
+                    exact_key = (identity, tbl, adapter.definition(tbl))
+                except Exception:
+                    continue
+                if exact_key not in removed:
+                    removed.append(exact_key)
+        for key in removed:
+            path = self._path(key)
+            if path is not None:
+                path.unlink(missing_ok=True)
+
     # Keys ----------------------------------------------------------------------
 
     def _adapter(self, source: Source) -> StatsAdapter:
