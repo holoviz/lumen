@@ -1430,6 +1430,13 @@ def test_to_file_refuses_to_overwrite_unless_asked(tmp_path, frame_source):
     assert answer.to_file(path, overwrite=True) == path
 
 
+def test_an_answer_with_no_rows_says_so(frame_source):
+    source = frame_source.create_sql_expr_source({"none": "SELECT * FROM tiny WHERE 1 = 0"})
+    answer = Answer(question="?", status="success", pipeline=Pipeline(source=source, table="none"))
+    assert "The query returned no rows" in answer._cap_note
+    assert "returned no rows" not in Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"))._cap_note
+
+
 def test_to_file_warns_when_the_data_was_cut_at_max_rows(tmp_path, frame_source):
     answer = Answer(question="?", status="success", pipeline=Pipeline(source=frame_source, table="tiny"), truncated_at=2)
     with pytest.warns(UserWarning, match="first 2 rows"):

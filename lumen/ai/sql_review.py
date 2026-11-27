@@ -48,6 +48,8 @@ class TableFacts:
     geometry: dict[str, bool] = field(default_factory=dict)
     #: CF units of the columns that declare them
     units: dict[str, str] = field(default_factory=dict)
+    #: The rows a gridded table holds, one per cell and time step; None when not known
+    rows: int | None = None
 
 
 def geographic_crs(column_type: str) -> bool:
@@ -92,13 +94,16 @@ def _number(node: exp.Expression | None) -> float | None:
     return None
 
 
-def review_sql(sql: str, tables: dict[str, TableFacts], dialect: str | None = "duckdb") -> list[str]:
+def review_sql(
+    sql: str, tables: dict[str, TableFacts], dialect: str | None = "duckdb", max_rows: int | None = None,
+) -> list[str]:
     """
     The problems found in a query, each as a sentence the LLM can act on:
     a buffer or distance in degrees on longitude and latitude, an area or
     length that comes out in degrees, a join of two geometry tables with no
-    spatial predicate, and a Kelvin column compared with what looks like a
-    Celsius value or the other way round. Empty when nothing is found or the
+    spatial predicate, a Kelvin column compared with what looks like a
+    Celsius value or the other way round, and a whole grid read cell by cell
+    past the max_rows an answer holds. Empty when nothing is found or the
     query does not parse.
     """
     try:
@@ -142,7 +147,28 @@ def review_sql(sql: str, tables: dict[str, TableFacts], dialect: str | None = "d
             )
     findings += _unpredicated_joins(tree, tables)
     findings += _unit_mismatches(tree, tables)
+    findings += _oversized_grids(tree, tables, max_rows)
     return findings
+
+
+def _oversized_grids(tree: exp.Expression, tables: dict[str, TableFacts], max_rows: int | None) -> list[str]:
+    """
+    A grid read whole, cell by cell, with more rows than an answer holds: the
+    result is cut at max_rows part way through the grid, and its map draws
+    only some cells of some time steps. Only a query that cannot shrink the
+    grid counts: no aggregate, GROUP BY, WHERE or LIMIT anywhere in it.
+    """
+    if max_rows is None or any(tree.find_all(exp.AggFunc, exp.Group, exp.Where, exp.Limit)):
+        return []
+    read = {table.name for table in tree.find_all(exp.Table)}
+    return [
+        f"This reads all {facts.rows:,} rows of the grid {name}, one per cell and time step, but an answer holds "
+        f"at most {max_rows:,}, so the result would stop part way through the grid and its map would draw only "
+        "part of it. Aggregate (e.g. AVG over time for each lat and lon, or over the grid for each time step), "
+        "or filter to the time steps or area asked about."
+        for name, facts in tables.items()
+        if name in read and facts.rows is not None and facts.rows > max_rows
+    ]
 
 
 def _spatial(condition: exp.Expression | None) -> bool:

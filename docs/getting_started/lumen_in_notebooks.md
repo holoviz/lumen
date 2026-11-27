@@ -144,6 +144,8 @@ A map of a grid with several time steps, such as `air_temperature`'s 20, gets a 
 
 A scatter or line chart of more than 5,000 points is drawn with hvPlot and datashader as a density image, which stays fast however many rows there are, instead of a Vega-Lite chart with one mark per row; a chart coloured by a category blends the categories. The card says so. Without datashader installed the chart stays Vega-Lite and the card suggests installing it.
 
+An answer holds at most 1,000,000 rows (`lumen.ai.configure(max_rows=...)`). A grid read cell by cell at every time step can hold more, for example 2,920 six-hourly steps of a 25 by 53 grid, and cut at the cap its map would draw only part of the grid; the SQL agent is told so before the query runs and aggregates or filters instead. An answer whose query returns no rows says so in the card rather than drawing an empty chart.
+
 ## Change the chart
 
 ``` py

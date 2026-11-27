@@ -593,6 +593,21 @@ async def test_submit_sql_reviews_a_kelvin_column_compared_with_celsius():
         await submit.validate(output)
 
 
+async def test_submit_sql_reviews_a_whole_grid_read_past_the_row_cap():
+    xr = pytest.importorskip("xarray")
+    from lumen.sources.xarray_sql import XArraySQLSource
+    ds = xr.Dataset({"air": (["time", "lat"], [[1.0, 2.0]] * 3)}, coords={"time": [0, 1, 2], "lat": [10.0, 20.0]})
+    source = XArraySQLSource(_dataset=ds)
+    agent = SQLAgent(llm=OpenAI(model_kwargs={"default": {"model": "gpt-test"}}), max_rows=4)
+    submit = agent._submit_sql_tool({(source.name, "air"): source}, {})
+    output = make_sql_model([(source.name, "air")])(query="SELECT time, lat, air FROM air", table_slug="x", tables=["air"])
+    with pytest.raises(ValueError, match="reads all 6 rows of the grid air, .* at most 4"):
+        await submit.validate(output)
+    # Aggregated over time, the same grid fits
+    output = make_sql_model([(source.name, "air")])(query="SELECT lat, AVG(air) AS air FROM air GROUP BY lat", table_slug="x", tables=["air"])
+    await submit.validate(output)
+
+
 def test_has_geometry_counts_only_the_tables_of_the_sources():
     metaset = _metaset_with("geometry")
     here, elsewhere = DuckDBSource(uri=":memory:", name="src"), DuckDBSource(uri=":memory:", name="other")
