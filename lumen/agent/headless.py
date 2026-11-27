@@ -5,7 +5,7 @@ import asyncio
 import os
 import re
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,7 +23,8 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 from ..flowdash import (
-    COMPONENTS, METRICS_KEY, SOURCE_ID, SQL_ID, bind_source, unbind_source,
+    ANALYSES_KEY, COMPONENTS, METRICS_KEY, SOURCE_ID, SQL_ID, bind_source,
+    unbind_source,
 )
 from ..sources.base import Source
 from . import _graph
@@ -145,6 +146,7 @@ class AgentSession:
     def __init__(self, source: Source, model: Any, *, agent: Any = None, instructions: str = "",
                  model_settings: dict[str, Any] | None = None,
                  trace: str | os.PathLike | None = None, metrics: Mapping[str, Any] | None = None,
+                 analyses: Mapping[str, Any] | Sequence[Any] | None = None,
                  approve: Callable[[str, dict[str, Any]], bool] | None = None):
         self.source = source
         self.model = Meter(streamable(model))
@@ -154,6 +156,8 @@ class AgentSession:
         bind_source(self.editor, source, self.source_node)
         if metrics:
             self.editor.context[METRICS_KEY] = metrics
+        if analyses:
+            self.editor.context[ANALYSES_KEY] = analyses
         self.ops.add_node(SOURCE_ID, {"ref": self.source_node}, name=self.source_node)
         if agent is None:
             agent = create_agent(self.model, instructions=instructions or None, model_settings=model_settings)

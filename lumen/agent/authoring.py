@@ -19,13 +19,16 @@ from pydantic_ai.messages import ToolReturn
 from ..ai.agents.sql import format_exploration_result
 from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
-    DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID,
-    CheckDiagnostic, check_query, check_sql_config, effective_limit, fetch,
-    hidden_tables, pipeline_columns, primed_result, result_sql, row_ceiling,
-    selection_warnings,
+    ANALYSIS_ID, DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID,
+    VIEW_ID, CheckDiagnostic, check_query, check_sql_config, effective_limit,
+    fetch, hidden_tables, pipeline_columns, primed_result, result_sql,
+    row_ceiling, selection_warnings,
 )
 from ..flowdash.access import (
     access_denied_source, can_access_source, sql_access_denied,
+)
+from ..flowdash.analysis import (
+    _bounded_pipeline, build_analysis, missing_columns,
 )
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.deckgl import (
@@ -459,6 +462,106 @@ async def add_metric(
             + _notes(answer_notes(frame)))
 
 
+async def add_analysis(
+    ctx: RunContext[FlowDashDeps],
+    data: str,
+    analysis: str,
+    name: str,
+    params: dict[str, Any] | None = None,
+) -> str:
+    """Run one of the app's custom analyses (from list_tables) on a data node's pipeline.
+
+    Returns a preview of its result rows when the analysis outputs a pipeline or DataFrame,
+    or confirms the rendered view when the analysis outputs a view.
+
+    Args:
+        data: Name of the SQL, metric, table, filter, transform or analysis node to feed in.
+        analysis: Analysis name from list_tables.
+        name: Descriptive snake_case node name; an analysis node of this name is changed instead.
+        params: Optional parameter values for the analysis, matching the params shown in list_tables.
+    """
+    ops = ctx.deps.ops
+    available = _graph.analyses(ops)
+    if not available:
+        return "Refused: this app defines no analyses, so there is none to place."
+    if analysis not in available:
+        raise ModelRetry(
+            f"No analysis {analysis!r}. The analyses are: {', '.join(sorted(available))}."
+        )
+    entry = available[analysis]
+    port = _upstream_port(ctx.deps, data)
+    try:
+        pipeline = _graph.output(ops, data, port)
+    except OperationError as exc:
+        raise ModelRetry(str(exc)) from exc
+    if not isinstance(pipeline, Pipeline):
+        raise ModelRetry(
+            f"{data!r} has no Lumen pipeline output to analyze; pass the name of a SQL, metric, table, "
+            "filter or analysis node that outputs a pipeline."
+        )
+    columns = pipeline_columns(pipeline)
+    if missing := missing_columns(entry, columns):
+        raise ModelRetry(
+            f"Analysis {analysis!r} requires column(s) {', '.join(missing)}, "
+            f"not in {data!r}'s columns ({', '.join(columns) or 'none'})."
+        )
+    try:
+        build_analysis(entry, params, name=analysis, columns=columns)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+    # The node checks that the analysis applies when it runs, so only the input's size is read here.
+    limit = row_ceiling(ops.editor)
+    try:
+        bounded = _bounded_pipeline(pipeline, limit, QUERY_TIMEOUT)
+    except Exception as exc:
+        raise ModelRetry(format_error(exc)) from exc
+    on = f"the first {limit} rows of {data!r}" if len(bounded.data) >= limit else repr(data)
+
+    change = _taken(ops, name, ANALYSIS_ID)
+    config: dict[str, Any] = {"analysis": analysis, "params": dict(params or {})}
+    before = _graph.config_of(ops, name) if change else None
+    wired = _graph.feeding_all(ops, f"{name}.pipeline") if change else []
+    existing = set(_graph.nodes(ops))
+    target = name
+    try:
+        if change:
+            _rewire(ops, [f"{data}.{port}"], f"{name}.pipeline")
+            ops.set_config(name, config)
+            target = _graph.edited(ops, name, existing)
+        else:
+            _place(ops, ANALYSIS_ID, name, config, f"{data}.{port}", f"{name}.pipeline")
+        view = _graph.output(ops, target, "view")
+        frame = _graph.output(ops, target, "data")
+    except PermissionError as exc:
+        raise PermissionError(f"{exc} Place an analysis node of your own under another name instead.") from exc
+    except (OperationError, ValueError) as exc:
+        if not change:
+            if name in _graph.nodes(ops):
+                ops.remove_node(name)
+        elif target in _graph.nodes(ops):
+            ops.set_config(target, {key: before.get(key) for key in config})
+            _rewire(ops, wired, f"{target}.pipeline")
+        raise ModelRetry(str(exc)) from exc
+
+    verb = "Changed" if change else "Placed"
+    if view is not None:
+        explore = ExplorationOps is not None and isinstance(ops, ExplorationOps)
+        if not explore and hasattr(ops, "place_tile"):
+            try:
+                ops.place_tile(target, visible=True)
+            except OperationError:
+                pass
+        return f"{verb} analysis node {target!r} ({analysis}) on {on}: view ({type(view).__name__})."
+    if frame is not None:
+        ceiling = effective_limit(ops.editor, None)
+        capped = f" (capped at {ceiling} rows)" if len(frame) >= ceiling else ""
+        return (
+            f"{verb} analysis node {target!r} ({analysis}) on {on}{capped}: "
+            f"{format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+        )
+    return f"{verb} analysis node {target!r} ({analysis}) on {on}."
+
+
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
     """Place a Vega-Lite chart of a SQL, metric, table or filter node's rows.
 
@@ -828,14 +931,15 @@ def _keep_followers_table(ops, name: str, before: dict[str, Any], config: dict[s
 
 def authoring_toolset() -> FunctionToolset[FlowDashDeps]:
     """
-    The authoring tools: add_sql, add_metric, add_chart, add_table, add_map,
-    add_text and update_chart. Each runs alone, as the calls of one response
+    The authoring tools: add_sql, add_metric, add_analysis, add_chart, add_table,
+    add_map, add_text and update_chart. Each runs alone, as the calls of one response
     change the same graph: e.g. update_chart waits for an add_sql adding the
     column a new layer shows, and two add_sql calls do not place a source
     node at once. The data tools, which only read, still run in parallel.
     """
     return FunctionToolset[FlowDashDeps](
-        [add_sql, add_metric, add_chart, add_table, add_map, add_text, update_chart], max_retries=3, sequential=True,
+        [add_sql, add_metric, add_analysis, add_chart, add_table, add_map, add_text, update_chart],
+        max_retries=3, sequential=True,
     )
 
 
@@ -880,6 +984,27 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
                 except ValueError as exc:
                     raise ModelRetry(str(exc)) from exc
             return await handler({**args, "config": config})
+        if component == ANALYSIS_ID:
+            merged = {**_graph.config_of(ops, name), **config}
+            analysis_name = merged.get("analysis")
+            if analysis_name:
+                available = _graph.analyses(ops)
+                if analysis_name not in available:
+                    raise ModelRetry(
+                        f"No analysis {analysis_name!r}. The analyses are: {', '.join(sorted(available)) or 'none'}."
+                    )
+                upstream = _graph.upstream(ops, name)
+                port = _graph.pipeline_port(ops, upstream) if upstream else None
+                try:
+                    pipeline = _graph.output(ops, upstream, port) if port else None
+                except OperationError:
+                    pipeline = None
+                columns = pipeline_columns(pipeline) if isinstance(pipeline, Pipeline) else None
+                try:
+                    build_analysis(available[analysis_name], merged.get("params"), name=analysis_name, columns=columns)
+                except ValueError as exc:
+                    raise ModelRetry(str(exc)) from exc
+            return await handler(args)
         if component != SQL_ID:
             return await handler(args)
         before = _graph.config_of(ops, name)

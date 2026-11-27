@@ -26,14 +26,15 @@ from ..data.sql import (
 from ..data.stats import get_stats_store
 from ..data.utils import slug_to_table_name
 from ..flowdash import (
-    AGGREGATE_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SELECT_ID,
-    SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, assistant_tables,
+    AGGREGATE_ID, ANALYSIS_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT,
+    SELECT_ID, SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, assistant_tables,
     bound_sources, check_query, hidden_tables, listed_tables, lookup_source,
 )
 from ..flowdash.access import (
     access_denied_source, access_denied_tables, authorized_sources,
     authorized_tables, can_access_source, can_access_table, sql_access_denied,
 )
+from ..flowdash.analysis import analysis_doc, analysis_param_summary
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.metrics import Metric
 from ..flowdash.nodes import effective_limit
@@ -356,6 +357,20 @@ def _node_line(ops, name: str, sql_chars: int | None) -> str | None:
         return f"- {name} (metric {config.get('metric')!r}; {'; '.join([*picked, columns])})"
     if component in TRANSFORM_COMPONENTS:
         return f"- {name} ({_transform_text(component, config)} of {_graph.upstream(ops, name)})"
+    if component == ANALYSIS_ID:
+        parts = [f"analysis {config.get('analysis')!r} of {_graph.upstream(ops, name)}"]
+        if params := config.get("params"):
+            parts.append(f"params {params}")
+        try:
+            view = _graph.output(ops, name, "view")
+            pipeline = _graph.output(ops, name, "result")
+            if view is not None:
+                parts.append(f"view ({type(view).__name__})")
+            elif pipeline is not None:
+                parts.append(f"columns: {', '.join(c for c in pipeline.schema if c != '__len__')}")
+        except OperationError as exc:
+            parts.append(str(exc))
+        return f"- {name} ({'; '.join(parts)})"
     return None
 
 
@@ -375,7 +390,7 @@ def _transform_text(component: str, config: dict) -> str:
 
 
 # The nodes list_tables shows besides the sources and the Lumen view nodes.
-LISTED = (SQL_ID, METRIC_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *TRANSFORM_COMPONENTS, *_graph.TEXT_FIELDS)
+LISTED = (SQL_ID, METRIC_ID, ANALYSIS_ID, VIEW_ID, TABLE_ID, FILTER_ID, DATA_ID, *TRANSFORM_COMPONENTS, *_graph.TEXT_FIELDS)
 
 
 def _line(text: Any, limit: int) -> str:
@@ -429,6 +444,34 @@ def metrics_listing(ops) -> str | None:
     return "\n".join(lines)
 
 
+def analysis_line(name: str, entry: Any) -> str:
+    """An analysis as list_tables shows it: its summary, required columns, and parameters."""
+    doc = _line(analysis_doc(entry), METRIC_TEXT_CHARS)
+    lines = [f"- {name}: {doc}".rstrip(": ")]
+    if cols := getattr(entry, "columns", None):
+        formatted = [
+            "one of (" + ", ".join(map(str, c)) + ")" if isinstance(c, tuple) else str(c)
+            for c in cols
+        ]
+        lines.append(f"  required columns: {', '.join(formatted)}")
+    if params := analysis_param_summary(entry):
+        lines.append("  params: " + ", ".join(_line(p, METRIC_FIELD_CHARS * 2) for p in params))
+    return "\n".join(lines)
+
+
+def analyses_listing(ops) -> str | None:
+    """The LLM-callable analyses the app provides, for list_tables, or None without any."""
+    available = _graph.analyses(ops)
+    if not available:
+        return None
+    items = list(available.items())
+    lines = [analysis_line(name, entry) for name, entry in items[:METRICS_SHOWN]]
+    if rest := items[METRICS_SHOWN:]:
+        names = _line(", ".join(name for name, _ in rest), METRIC_NAMES_CHARS)
+        lines.append(f"- and {len(rest)} more, which add_analysis runs by name: {names}")
+    return "\n".join(lines)
+
+
 def listed(component: str) -> bool:
     """Whether list_tables shows the nodes of ``component``: those in ``LISTED`` and every Lumen view node."""
     return component in LISTED or _graph.view_class(component) is not None
@@ -436,7 +479,7 @@ def listed(component: str) -> bool:
 
 def placed_nodes(ops) -> str | None:
     """
-    The SQL, metric, view, table, filter, data, transform and text nodes
+    The SQL, metric, analysis, view, table, filter, data, transform and text nodes
     on the dashboard, most recently placed first: each SQL node's query on
     one line, cut after ``NODE_SQL_CHARS`` characters, and its result's
     columns, each chart's mark, data node and encoded fields, each other
@@ -472,6 +515,9 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     if metrics := metrics_listing(ops):
         text += ("Metrics, the app's agreed definitions; place one with add_metric. Column dimensions "
                  "can be filtered by name through parameters:\n" + metrics + "\n\n")
+    if analyses := analyses_listing(ops):
+        text += ("Analyses, custom analyses the app provides; run one on a data node with add_analysis:\n"
+                 + analyses + "\n\n")
     if placed := placed_nodes(ops):
         text += "Nodes on the dashboard, most recent first:\n" + placed + "\n\n"
     found = _sources_by_name(ctx.deps)

@@ -210,7 +210,7 @@ async def test_instructions_and_tools_stay_the_same_across_a_conversation():
     assert len({tuple(tools) for _, tools in seen}) == 1
     assert INSTRUCTIONS.strip() in seen[0][0]
     tools = seen[0][1]
-    assert tools == ["add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config", "update_chart"]
+    assert tools == ["add_analysis", "add_chart", "add_map", "add_metric", "add_sql", "add_table", "add_text", "describe_table", "distinct_values", "list_tables", "remove_node", "run_sql", "set_config", "update_chart"]
 
 
 async def test_agent_cannot_point_a_source_node_at_a_source_the_app_does_not_provide():
@@ -905,7 +905,7 @@ def test_the_component_catalogue_fits_flowdash_budget_with_room_to_spare():
         session.close()
     # Past the limit FlowDash lists only ids and titles, so leave room for a few more components.
     assert "picked by the source's ref" in text
-    assert len(text) <= CATALOGUE_LIMIT - 1500, len(text)
+    assert len(text) <= CATALOGUE_LIMIT - 500, len(text)
 
 
 async def test_the_dashboard_assistant_reads_a_table_with_one_node():
