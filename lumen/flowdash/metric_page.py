@@ -197,7 +197,7 @@ class MetricPage(Viewer):
             css_classes=["lumen-metric-try"],
         )
         parts: list[t.Any] = [main, side]
-        if controller is not None:
+        if controller is not None and not status.read_only:
             parts += [controller._drawer, controller._dialog, controller._focus_guard]
         # An explicit least width, so Panel does not add up its children's into one a phone cannot fit.
         self._layout = pn.Row(
@@ -219,14 +219,18 @@ class MetricPage(Viewer):
         # so a Windows project path still shows just its file name in the breadcrumb.
         where = PureWindowsPath(self.project.path).name if self.project.path else "the project file"
         description = status.description
+        if status.origin:
+            origin_chips = f'{chip(f"From {status.origin}", "outlined")}{chip("Read-only", "outlined")}'
+        else:
+            origin_chips = chip(where, "outlined")
         head = cell(
             f'<div class="head"><div class="icon">Σ</div><div><div class="name">{esc(status.name)}</div>'
             + (f'<div class="label">{esc(description)}</div>' if description else "")
-            + f'<div class="chips">{check}{chip(where, "outlined")}</div></div></div>',
+            + f'<div class="chips">{check}{origin_chips}</div></div></div>',
             stylesheets=[_HEAD_CSS], css_classes=["lumen-metric-head"],
         )
         actions = []
-        if self.admin and self.controller is not None:
+        if self.admin and self.controller is not None and not status.read_only:
             edit = pmui.Button(label="Edit", icon="edit", variant="outlined", margin=0,
                                css_classes=["lumen-metric-edit"])
             edit.on_click(lambda _event: self.controller.open_metric(status.name))
@@ -253,7 +257,7 @@ class MetricPage(Viewer):
         if status.check == "valid":
             return []
         buttons = []
-        if self.admin and self.controller is not None:
+        if self.admin and self.controller is not None and not status.read_only:
             edit = pmui.Button(label="Edit definition", variant="text", size="small", margin=0,
                                sx={"textTransform": "none"})
             edit.on_click(lambda _event: self.controller.open_metric(status.name))
@@ -303,6 +307,9 @@ class MetricPage(Viewer):
             note = "opens the table" if spec.get("table") else "its SQL query reads it" if len(tables) == 1 else "its SQL query reads them"
             reads.append(caption(note))
         rows.append(self._fact("Reads", *reads))
+        if status.origin == "dbt":
+            detail = "dbt Semantic Layer (read-only · compiled SQL)" if self.metric and self.metric.form == "sql" else "dbt Semantic Layer (read-only)"
+            rows.append(self._fact("Origin", caption(detail)))
         if status.check == "valid":
             rows.append(self._fact("On dashboards", caption(f"Σ  Metric: {status.name}")))
         used = [self._link(d.title, f"/dash/{d.dashboard_id}", icon="space_dashboard") for d in self.used[:8]]
