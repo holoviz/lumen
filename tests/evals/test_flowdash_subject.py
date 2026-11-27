@@ -31,6 +31,14 @@ from lumen.flowdash import DECKGL_ID, SQL_ID
 
 from .cases import DATASET, metrics, source
 
+try:
+    from pydantic_ai.models.openai import OpenAIResponsesModel  # noqa: F401
+    PYDANTIC_AI_OPENAI_AVAILABLE = True
+except ImportError:
+    # conda-forge's instructor pins openai<3.0 (pixi.toml's `ai` feature), but
+    # pydantic-ai's openai/openrouter models need openai>=3.26.
+    PYDANTIC_AI_OPENAI_AVAILABLE = False
+
 SESSIONS = Path(__file__).parent / "sessions"
 SESSION_NAMES = sorted(path.stem for path in SESSIONS.glob("*.yaml"))
 
@@ -55,6 +63,8 @@ def test_flowdash_subject_is_registered_and_offline_with_a_model():
     assert resolve_subject("flowdash").requires_api_key is True
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE,
+                     reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 def test_openrouter_models_are_built_as_the_app_builds_them():
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel

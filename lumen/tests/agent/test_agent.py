@@ -34,6 +34,14 @@ from lumen.flowdash import (
 )
 from lumen.sources.duckdb import DuckDBSource
 
+try:
+    from pydantic_ai.models.openai import OpenAIChatModel  # noqa: F401
+    PYDANTIC_AI_OPENAI_AVAILABLE = True
+except ImportError:
+    # conda-forge's instructor pins openai<3.0 (pixi.toml's `ai` feature), but
+    # pydantic-ai's openai/openrouter models need openai>=3.26.
+    PYDANTIC_AI_OPENAI_AVAILABLE = False
+
 TABLES = {
     "customers": "SELECT * FROM (VALUES (1, 'Ada', 'east'), (2, 'Bo', 'west'), (3, 'Cy', 'east')) AS t(customer_id, customer, region)",
     "orders": "SELECT * FROM (VALUES (101, 1, 30, 'paid'), (102, 1, 20, 'paid'), (103, 2, 40, 'cancelled')) AS t(order_id, customer_id, amount, status)",
@@ -325,6 +333,7 @@ class OpenAIFunctionModel(FunctionModel):
         return "openai"
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE, reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 def test_openai_models_keep_openai_settings_and_others_get_neutral_ones():
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
@@ -382,6 +391,7 @@ async def ask(model, *prompts):
         session.close()
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE, reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_and_cache_the_prompt():
     model, bodies = openrouter("anthropic/claude-haiku-5.5")
     await ask(model, "Hi")
@@ -395,6 +405,7 @@ async def test_requests_to_an_anthropic_model_on_openrouter_turn_reasoning_off_a
     assert body["tools"][-1]["cache_control"] == breakpoints
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE, reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 async def test_a_model_known_to_always_reason_gets_its_lowest_effort():
     model, bodies = openrouter("google/gemini-3.8-flash")
     await ask(model, "Hi")
@@ -409,6 +420,7 @@ def effort(body):
     return body.get("reasoning", {}).get("effort")
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE, reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 async def test_a_model_refusing_reasoning_off_is_asked_again_at_low_effort():
     model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if effort(body) == "none" else None)
     first, second = await ask(model, "Hi", "Again")
@@ -418,6 +430,7 @@ async def test_a_model_refusing_reasoning_off_is_asked_again_at_low_effort():
     assert bodies[2]["max_tokens"] == 1000
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE, reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 async def test_a_model_refusing_low_effort_too_is_asked_again_with_its_default_reasoning():
     model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: MANDATORY if "reasoning" in body else None)
     first, second = await ask(model, "Hi", "Again")
@@ -441,6 +454,7 @@ async def test_a_rejected_request_without_an_http_status_is_asked_again_too():
     assert capability.levels == {"grpc:m": "low"}
 
 
+@pytest.mark.skipif(not PYDANTIC_AI_OPENAI_AVAILABLE, reason="conda-forge's instructor caps openai<3.0, below what pydantic-ai's openai support needs")
 async def test_other_bad_requests_are_not_asked_again():
     model, bodies = openrouter("z-ai/glm-9-unknown", refuse=lambda body: "Invalid tool schema")
     turn, = await ask(model, "Hi")
