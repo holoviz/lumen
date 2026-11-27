@@ -966,7 +966,8 @@ async def _aask_messages(
     llm: Llm | None, agents: list | None, confirm: bool = False, use_cache: bool = True, returns: Any = None,
 ) -> Answer:
     source, visible_slugs = _resolve(data)
-    planner = await _planner(source, llm or _default_llm(), _own_agents(_settings["agents"] if agents is None else agents))
+    own = _own_agents(_settings["agents"] if agents is None else agents)
+    planner = await _planner(source, llm or _default_llm(), own)
     # A retry or a preview is asked for a fresh answer, so neither is cached.
     # Nor is data read here from a frame or a dict: each question reads its own
     # copy, so no later question could hit it and it would only hold that copy.
@@ -978,7 +979,8 @@ async def _aask_messages(
             _answer_cache.move_to_end(key)
             return hit._cached_copy()
     context = _fresh_context(planner, source, visible_slugs)
-    answer, _ = await _respond(planner, question, messages, context, data, agents, confirm)
+    # The answer keeps its own copies, or None to follow configure(agents=...)
+    answer, _ = await _respond(planner, question, messages, context, data, None if agents is None else own, confirm)
     if returns is not None:
         await _typed(answer, returns, planner.llm)
     if key is not None and answer.status == "success":
@@ -1094,7 +1096,8 @@ async def _ask_many(
     llm = llm or _default_llm()
     agents = _settings["agents"] if agents is None else agents
     distinct = list(dict.fromkeys(questions))
-    asked = await _gather(data, [(q, llm, _own_agents(agents)) for q in distinct], returns, concurrency)
+    # _aask_messages copies the agents for each question
+    asked = await _gather(data, [(q, llm, agents) for q in distinct], returns, concurrency)
     by_question = dict(zip(distinct, zip(asked, asked.seconds, strict=True), strict=True))
     return Answers([by_question[q][0] for q in questions], seconds=[by_question[q][1] for q in questions])
 
