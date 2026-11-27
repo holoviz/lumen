@@ -77,6 +77,9 @@ _CARD_CSS = """
 .line { font-size: 0.8125rem; color: var(--mui-palette-text-secondary); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; margin-top: 2px; }
 .line.problem { color: var(--mui-palette-error-main, #d32f2f); }
+.line.access { color: var(--mui-palette-warning-dark, #e65100); }
+:host-context(.dark) .line.access, :host-context([data-mui-color-scheme="dark"]) .line.access {
+  color: var(--mui-palette-warning-light, #ffb74d); }
 """
 
 _EMPTY_CSS = """
@@ -295,12 +298,14 @@ class DataPage(Viewer):
     # Tables
 
     def _tables_page(self, query: dict[str, str]) -> pn.Column:
+        from .access_editor import AccessRuleDialog
         from .catalog_admin import CatalogSettings
 
         self.catalog = CatalogSettings(
             self.project, editable=self.admin, app=self.app, show_add=False,
             on_select=self._on_table, on_open=self.navigate, on_change=lambda: self.navigate(f"/{ROUTE}"),
         )
+        self._access_dialog = AccessRuleDialog(app=self.app, project=self.project) if self.admin else None
         add = pmui.Button(
             label="Add data", icon="add", variant="contained", margin=0, visible=self.catalog.may_add(),
             css_classes=["lumen-data-add"],
@@ -319,7 +324,11 @@ class DataPage(Viewer):
         if (table := query.get("table")) and "." in table:
             ref, name = table.split(".", 1)
             self.catalog.open_table(ref, name)
-        return self._content(heading, self._cards(), self.catalog)
+        self._cards_box = self._cards()
+        return self._content(
+            heading, self._cards_box, self.catalog,
+            *([self._access_dialog] if self._access_dialog is not None else []),
+        )
 
     def _content(self, *objects: t.Any) -> pn.Column:
         return pn.Column(
@@ -351,7 +360,16 @@ class DataPage(Viewer):
             variant="outlined", margin=0, sizing_mode="stretch_width", css_classes=["lumen-data-empty"],
         )
 
-    def _cards(self) -> pn.FlexBox:
+    def _card_items(self) -> list[pmui.Paper]:
+        from .access import describe_permission, effective_source_access
+        from .catalog import raw_section
+
+        section: dict[str, t.Any] = {}
+        if self.admin:
+            try:
+                section = raw_section(self.project)
+            except Exception:
+                section = {}
         cards = []
         for summary in self.sources:
             files = ", ".join(summary.files)
@@ -361,15 +379,35 @@ class DataPage(Viewer):
                 last = f'<div class="line problem" title="{esc(summary.problem)}">{esc(_short(summary.problem))}</div>'
             else:
                 last = f'<div class="line">{summary.tables} {noun} · {esc(summary.origin)}</div>'
+            access_line = ""
+            effective = effective_source_access(summary.ref, self.context, section=section) if self.admin else None
+            if effective is not None and not effective.is_empty:
+                if effective.has_own:
+                    rule_text = describe_permission(effective.own)
+                    if effective.has_inherited:
+                        rule_text += " (+ inherited)"
+                else:
+                    rule_text = f"Inherited: {describe_permission(effective.inherited[0].permission)}"
+                access_line = f'<div class="line access" title="{esc(rule_text)}">Access: {esc(rule_text)}</div>'
             body = cell(
                 f'<div class="card"><div class="icon">{UPLOAD_SVG if summary.upload is not None else DATABASE_SVG}'
                 f'</div><div class="text"><div class="name">{esc(summary.ref)}</div>'
-                f'<div class="line" title="{esc(line)}">{esc(line)}</div>{last}</div></div>',
+                f'<div class="line" title="{esc(line)}">{esc(line)}</div>{last}{access_line}</div></div>',
                 stylesheets=[_CARD_CSS],
             )
             open_it = pmui.Clickable(object=body, sizing_mode="stretch_width", margin=0)
             open_it.on_click(lambda *_args, ref=summary.ref: self.navigate(f"/{ROUTE}?source={quote(ref, safe='')}"))
-            parts = [open_it]
+            parts: list[t.Any] = [open_it]
+            if self.admin:
+                restricted = effective is not None and not effective.is_empty
+                access_btn = pmui.IconButton(
+                    icon="lock" if restricted else "lock_open", size="small", margin=0,
+                    color="warning" if restricted else "default",
+                    description=f"Edit access rules for {summary.ref}",
+                    css_classes=["lumen-data-source-access"],
+                )
+                access_btn.on_click(lambda _event, ref=summary.ref: self.edit_source_access(ref))
+                parts.append(access_btn)
             # Refreshing drops caches every session shares, so it is an admin's.
             if self.admin and not summary.problem:
                 refresh = pmui.IconButton(
@@ -405,10 +443,41 @@ class DataPage(Viewer):
                 sx={"p": "16px 12px 16px 16px", "borderRadius": "8px"},
                 css_classes=["lumen-data-source", f"lumen-data-source-{summary.ref}"],
             ))
+        return cards
+
+    def _cards(self) -> pn.FlexBox:
         return pn.FlexBox(
-            *cards, gap="12px", flex_wrap="wrap", margin=(0, 0, 16, 0), sizing_mode="stretch_width",
+            *self._card_items(), gap="12px", flex_wrap="wrap", margin=(0, 0, 16, 0), sizing_mode="stretch_width",
             css_classes=["lumen-data-sources"],
         )
+
+    def edit_source_access(self, ref: str) -> bool:
+        """Open the access rules editor dialog for source ``ref`` (admins only)."""
+        from .access import effective_source_access
+        from .catalog import raw_section, set_source_access
+
+        if not self.admin or getattr(self, "_access_dialog", None) is None:
+            return False
+        try:
+            section = raw_section(self.project)
+        except Exception:
+            section = {}
+        effective = effective_source_access(ref, self.context, section=section)
+
+        def on_save(perm):
+            problems = set_source_access(self.project, ref, perm, app=self.app)
+            if not problems:
+                if hasattr(self, "_cards_box"):
+                    self._cards_box[:] = self._card_items()
+                self.catalog.refresh()
+                if self.catalog.selected is not None and self.catalog.selected[0] == ref:
+                    self.catalog._render_head()
+                if hasattr(self.app, "_notify"):
+                    self.app._notify("success", f"Saved access rules for {ref}.")
+            return problems
+
+        self._access_dialog.open(f"Access rules: {ref}", effective, on_save, app=self.app, project=self.project)
+        return True
 
     def refresh_source(self, ref: str) -> None:
         """Explicitly invalidate and re-read schema, metadata and statistics for ``ref`` (admins only)."""

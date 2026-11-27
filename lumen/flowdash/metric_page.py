@@ -11,6 +11,8 @@ gets Edit, Duplicate and Delete, through the metrics' editor.
 """
 from __future__ import annotations
 
+import copy
+import dataclasses
 import typing as t
 
 from pathlib import PureWindowsPath
@@ -23,8 +25,13 @@ from panel.viewable import Viewer
 from panel_flowdash.admin.kit import (
     caption, cell, chip, esc,
 )
+from panel_flowdash.project import Problem
 
-from .metrics_edit import PREVIEW_ROWS, PREVIEW_TIMEOUT
+from .access import access_to_dict, effective_metric_access, normalize_access
+from .access_editor import _ACCESS_CSS, AccessRuleEditor, effective_access_html
+from .metrics_edit import (
+    NOT_ADMIN_ACCESS, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET, set_metric_access,
+)
 
 _MONO_SX = {"fontFamily": '"Roboto Mono", ui-monospace, monospace', "fontSize": "0.8125rem"}
 
@@ -175,10 +182,30 @@ class MetricPage(Viewer):
         self.context = project.context or {}
         self.metric = status.metric
         self.used = metric_usage(visible_dashboards(app)).get(status.name, [])
+        self._access_base: t.Any = UNSET
+        if self.admin:
+            self._access_summary: t.Any = cell("", stylesheets=[_ACCESS_CSS], css_classes=["lumen-metric-access-text"])
+            self._access_btn: t.Any = pmui.Button(
+                label="Edit access", icon="lock_open", variant="text", size="small", margin=0,
+                sx={"textTransform": "none", "minWidth": 0}, css_classes=["lumen-metric-access-edit"],
+            )
+            self._access_btn.on_click(lambda _event: self.open_access_editor())
+            self._access_editor: t.Any = AccessRuleEditor(
+                title=f"Access rules for {status.name}", framed=True, app=self.app, project=self.project,
+                on_save=self._save_access, on_cancel=self.close_access_editor,
+            )
+            self._access_panel: t.Any = pn.Column(
+                self._access_editor, margin=(4, 0, 4, 0), sizing_mode="stretch_width", visible=False,
+                css_classes=["lumen-metric-access-editor"],
+            )
+            self._render_access()
+        else:
+            self._access_summary = self._access_btn = self._access_editor = self._access_panel = None
         main = pn.Column(
             self._head(),
             *self._problem(),
             self._facts(),
+            *([self._access_panel] if self._access_panel is not None else []),
             *self._definition(),
             margin=0, sizing_mode="stretch_width", min_width=0,
             styles={"padding": "24px 32px 48px 32px", "box-sizing": "border-box", "min-width": "0", "gap": "12px",
@@ -311,8 +338,84 @@ class MetricPage(Viewer):
             names = ", ".join(hidden)
             rows.append(self._fact("Assistant", caption(
                 f"Leaves this metric out: {names} {'is' if len(hidden) == 1 else 'are'} turned off for the assistant.")))
+        if self.admin and self._access_summary is not None and self._access_btn is not None:
+            access_row = self._fact("Access", self._access_summary, self._access_btn)
+            access_row.css_classes = ["lumen-metric-access-row"]
+            rows.append(access_row)
         return pn.Column(*rows, margin=(4, 0, 4, 0), sizing_mode="stretch_width", styles={"gap": "4px"},
                          css_classes=["lumen-metric-facts"])
+
+    def _effective_access(self):
+        from .catalog import raw_section as raw_catalog_section
+
+        try:
+            catalog_section = raw_catalog_section(self.project)
+        except Exception:
+            catalog_section = None
+        return effective_metric_access(self.status, self.context, section=catalog_section)
+
+    def _render_access(self) -> None:
+        if not self.admin or self._access_summary is None or self._access_btn is None:
+            return
+        effective = self._effective_access()
+        self._access_summary.object = effective_access_html(effective, compact=True)
+        self._access_btn.icon = "lock" if not effective.is_empty else "lock_open"
+
+    def _sync_own_access(self, raw_access: t.Any) -> None:
+        perm, problems = normalize_access(raw_access)
+        if problems:
+            return
+        if access_dict := access_to_dict(perm):
+            self.status.spec["access"] = access_dict
+        else:
+            self.status.spec.pop("access", None)
+        if self.status.metric is not None:
+            self.status.metric = dataclasses.replace(self.status.metric, access=perm)
+            self.metric = self.status.metric
+
+    def open_access_editor(self) -> bool:
+        """Open the inline access rules editor for this metric (admins only)."""
+        from .metrics_edit import raw_section as raw_metrics_section
+
+        if not self.admin or self._access_editor is None or self._access_panel is None:
+            return False
+        self._access_base = UNSET
+        try:
+            section = raw_metrics_section(self.project)
+        except Exception:
+            section = {}
+        entry = section.get(self.status.name)
+        if isinstance(entry, dict):
+            self._access_base = copy.deepcopy(entry.get("access"))
+            self._sync_own_access(entry.get("access"))
+        effective = self._effective_access()
+        self._access_editor.load(
+            effective, title=f"Access rules for {self.status.name}", app=self.app, project=self.project,
+        )
+        self._access_panel.visible = True
+        return True
+
+    def close_access_editor(self) -> None:
+        """Close the inline access rules editor without saving."""
+        if self._access_panel is not None:
+            self._access_panel.visible = False
+        if self._access_editor is not None:
+            self._access_editor.show_problems([])
+
+    def _save_access(self, perm: t.Any) -> list[Problem]:
+        if not self.admin:
+            return [Problem(NOT_ADMIN_ACCESS)]
+        problems = set_metric_access(
+            self.project, self.status.name, perm, app=self.app, base=self._access_base,
+        )
+        if problems:
+            return problems
+        self._sync_own_access(perm)
+        self.close_access_editor()
+        self._render_access()
+        if hasattr(self.app, "_notify"):
+            self.app._notify("success", f"Saved access rules for {self.status.name}.")
+        return []
 
     def _definition(self) -> list[t.Any]:
         metric, spec = self.metric, self.status.spec
