@@ -2318,6 +2318,12 @@ class Answer(param.Parameterized):
                 f"The data stops at the first {self.truncated_at:,} rows. "
                 "Use lumen.ai.configure(max_rows=...) for more, or None for every row."
             )
+        if self.status == "success" and self.pipeline is not None and not len(self.pipeline.data):
+            # Otherwise an empty chart and no text: it looks broken, not empty
+            notes.append(
+                "The query returned no rows, so there is nothing to show: "
+                "the data may not cover what was asked, e.g. a month or place it does not hold."
+            )
         rows = 0 if self.pipeline is None or self.view is None else len(self.pipeline.data)
         dense = isinstance(self.view, hvPlotView) and (self.view.datashade or self.view.kwargs.get("rasterize"))
         if dense and self.view.kind in ("scatter", "points", "line"):
