@@ -2,6 +2,7 @@ from .analysis import AnalysisAgent
 from .base import Agent
 from .base_code import BaseCodeAgent
 from .chat import ChatAgent
+from .component_control import ComponentControlAgent
 from .dbtsl import DbtslAgent
 from .deck_gl import DeckGLAgent
 from .document_list import DocumentListAgent
@@ -18,6 +19,7 @@ __all__ = [
     "AnalysisAgent",
     "BaseCodeAgent",
     "ChatAgent",
+    "ComponentControlAgent",
     "DbtslAgent",
     "DeckGLAgent",
     "DocumentListAgent",
