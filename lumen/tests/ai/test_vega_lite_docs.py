@@ -9,8 +9,24 @@ except ModuleNotFoundError:
 
 import datetime
 
+from lumen.ai.agents.vega_lite import VegaLiteAgent
 from lumen.ai.config import PROMPTS_DIR
 from lumen.ai.utils import render_template
+
+
+@pytest.mark.parametrize("query", [
+    "Make a density plot of delivery times",
+    "Show revenue density plot",
+    "Plot revenue as density plot",
+])
+def test_chart_title_promotion_keeps_selected_sections(query):
+    transform = {"metadata": {"section_title": "View-level Transform Property"}}
+    example = {"metadata": {"section_title": "Example: Density Plot"}}
+    context = {"metadata": {"section_title": "Scale Ranges"}}
+
+    assert VegaLiteAgent._prioritize_chart_documentation(
+        query, [transform, example, context],
+    ) == [example, transform, context]
 
 
 def _base_context(doc_pages=None):

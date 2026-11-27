@@ -1,0 +1,268 @@
+"""Query preparation, rank fusion, and documentation selection."""
+
+from __future__ import annotations
+
+import re
+
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_RAW_STOP_WORDS = frozenset({
+    "a", "an", "and", "by", "controlled", "create", "data", "for", "from",
+    "in", "make", "of", "on", "show", "the", "to", "use", "with",
+})
+_CLAUSE_SPLIT_RE = re.compile(r"[,;]|\b(?:and|with|plus|including|using)\b")
+
+
+def normalize_retrieval_token(token: str) -> str:
+    """Apply lightweight English inflection normalization for retrieval."""
+    if len(token) > 4 and token.endswith("ies"):
+        token = f"{token[:-3]}y"
+    elif len(token) >= 4 and token.endswith("is"):
+        token = token[:-2]
+    elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        token = token[:-1]
+    for suffix in ("ing", "ed"):
+        if len(token) > len(suffix) + 3 and token.endswith(suffix):
+            token = token[:-len(suffix)]
+            if len(token) > 2 and token[-1] == token[-2] and token[-1] not in "lsz":
+                token = token[:-1]
+            break
+    if len(token) >= 3 and token.endswith("e"):
+        token = token[:-1]
+    return token
+
+
+# Embedding stop words include technical terms such as "line" and "mean".
+# Keep documentation stop words narrow and normalize them with the corpus.
+RETRIEVAL_STOP_WORDS = frozenset(map(normalize_retrieval_token, _RAW_STOP_WORDS))
+
+
+def retrieval_tokens(value: Any) -> list[str]:
+    """Tokenize text consistently for reranking and lexical retrieval."""
+    return [
+        normalize_retrieval_token(token)
+        for token in _TOKEN_RE.findall(str(value).lower())
+    ]
+
+
+def _tokens(value: Any) -> set[str]:
+    return set(retrieval_tokens(value))
+
+
+def _candidate_text(document: dict) -> str:
+    metadata = document.get("metadata") or {}
+    values = [
+        document.get("text", ""), metadata.get("category", ""),
+        metadata.get("description", ""), metadata.get("page_title", ""),
+        metadata.get("section_title", ""), metadata.get("slug", ""),
+    ]
+    values.extend(metadata.get("capabilities") or ())
+    for example in metadata.get("examples") or ():
+        values.append(example.get("name", ""))
+        values.extend(example.get("constructs") or ())
+        values.extend(example.get("capabilities") or ())
+    return " ".join(str(value) for value in values if value)
+
+
+def doc_title(metadata: dict) -> str:
+    return " ".join(str(metadata.get(key, "")) for key in (
+        "page_title", "section_title", "slug",
+    ))
+
+
+def doc_key(document: dict) -> tuple:
+    metadata = document.get("metadata") or {}
+    if document.get("id") is not None:
+        return ("id", document["id"])
+    return ("document", metadata.get("slug"), metadata.get("section_title"), document.get("text", ""))
+
+
+def _intent_score(query_terms: set[str], candidate_tokens: set[str]) -> float:
+    return len(query_terms & candidate_tokens) / len(query_terms) if query_terms else 0
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    union = left | right
+    return len(left & right) / len(union) if union else 0
+
+
+def focused_document_queries(query: str, limit: int = 4) -> list[str]:
+    """Extract concise documentation clauses, excluding chart data fields."""
+    clauses = []
+    for clause in _CLAUSE_SPLIT_RE.split(query.lower().replace("-", " ")):
+        raw_terms = _TOKEN_RE.findall(clause)
+        chart_positions = [i for i, term in enumerate(raw_terms) if term in {"chart", "plot"}]
+        if chart_positions:
+            position = chart_positions[0]
+            terms = raw_terms[max(0, position - 1):position]
+            if not terms or normalize_retrieval_token(terms[0]) in RETRIEVAL_STOP_WORDS:
+                terms = [raw_terms[position]]
+        else:
+            terms = raw_terms
+            # Field clauses use broad search rather than reserving a slot.
+            if set(terms) & {"by", "versus", "vs", "per"}:
+                continue
+        terms = [term for term in terms if normalize_retrieval_token(term) not in RETRIEVAL_STOP_WORDS]
+        if terms and len(terms) <= 3:
+            clauses.append(" ".join(terms))
+    return list(dict.fromkeys(clauses))[:limit]
+
+
+def fuse_ranked_documents(
+    searches: list[tuple[str | None, list[dict]]],
+    *,
+    rank_constant: int = 60,
+) -> list[dict]:
+    """Combine incomparable semantic and lexical rankings using RRF.
+
+    Focused lexical rankings carry the user clause into the result metadata
+    for coverage selection. Other primary rankings use ``None``.
+    """
+    fused: dict[tuple, dict] = {}
+    for query, documents in searches:
+        for rank, document in enumerate(documents, start=1):
+            metadata = document.get("metadata") or {}
+            key = doc_key(document)
+            if key not in fused:
+                fused[key] = {
+                    "document": {
+                        **document,
+                        "metadata": {**metadata},
+                    },
+                    "score": 0.0,
+                    "query_scores": {},
+                }
+            entry = fused[key]
+            contribution = 1 / (rank_constant + rank)
+            entry["score"] += contribution
+            if query:
+                entry["query_scores"][query] = (
+                    entry["query_scores"].get(query, 0) + contribution
+                )
+
+    if not fused:
+        return []
+    maximum = max(entry["score"] for entry in fused.values())
+    ranked = sorted(fused.values(), key=lambda entry: entry["score"], reverse=True)
+    results = []
+    for entry in ranked:
+        document = entry["document"]
+        metadata = document["metadata"]
+        query_scores = entry["query_scores"]
+        if query_scores:
+            metadata["_retrieval_query_scores"] = query_scores
+        document["fusion_score"] = entry["score"] / maximum
+        results.append(document)
+    return results
+
+
+@dataclass
+class _RankedDocument:
+    score: float
+    position: int
+    document: dict
+    tokens: set[str]
+    title_tokens: set[str]
+    group: Any
+    query_scores: dict[str, float]
+
+
+def rerank_documents(
+    query: str,
+    candidates: list[dict],
+    *,
+    limit: int,
+    group_key: str = "slug",
+    max_per_group: int = 2,
+    reserve_base_form: bool = True,
+    diversity_weight: float = 0.12,
+) -> list[dict]:
+    """Select relevant sections using fused rank, lexical evidence and diversity.
+
+    Give fused rank the largest weight. Token and title overlap break close
+    rankings, with smaller bonuses for base forms and runnable examples. These
+    weights are heuristic and apply to relative ranks within this request.
+    """
+    if limit <= 0 or not candidates:
+        return []
+
+    query_terms = _tokens(query) - RETRIEVAL_STOP_WORDS
+    ranked = []
+    for position, candidate in enumerate(candidates):
+        metadata = candidate.get("metadata") or {}
+        tokens = _tokens(_candidate_text(candidate))
+        relevance = float(candidate.get("fusion_score", candidate.get("similarity", 0)))
+        intent = _intent_score(query_terms, tokens)
+        title_tokens = _tokens(doc_title(metadata))
+        title_match = _intent_score(query_terms, title_tokens)
+        canonical = 0.08 if reserve_base_form and metadata.get("base_form") and intent else 0
+        example = 0.03 if metadata.get("examples") else 0
+        score = 0.52 * relevance + 0.30 * intent + 0.10 * title_match + canonical + example
+        ranked.append(_RankedDocument(
+            score, position, candidate, tokens, title_tokens, metadata.get(group_key),
+            metadata.get("_retrieval_query_scores") or {},
+        ))
+
+    selected: list[_RankedDocument] = []
+    groups: Counter = Counter()
+    covered_queries: set[str] = set()
+    remaining = ranked.copy()
+
+    def eligible_items():
+        return [
+            item for item in remaining
+            if item.group is None or groups[item.group] < max_per_group
+        ]
+
+    def selection_score(item):
+        redundancy = max(
+            (_jaccard(item.tokens, chosen.tokens) for chosen in selected),
+            default=0,
+        )
+        return item.score - diversity_weight * redundancy, -item.position
+
+    def focused_selection_score(item, focused_query):
+        focused_relevance = item.query_scores.get(focused_query, 0)
+        focused_terms = _tokens(focused_query) - RETRIEVAL_STOP_WORDS
+        literal_match = _intent_score(focused_terms, item.tokens)
+        title_match = _intent_score(focused_terms, item.title_tokens)
+        return (
+            focused_relevance + literal_match + 0.5 * title_match,
+            selection_score(item),
+        )
+
+    def select(item):
+        selected.append(item)
+        remaining.remove(item)
+        covered_queries.update(item.query_scores)
+        if item.group is not None:
+            groups[item.group] += 1
+
+    # Reserve space for clauses that a focused keyword search matched.
+    focused_queries = list(dict.fromkeys(
+        focused_query
+        for item in ranked
+        for focused_query in item.query_scores
+    ))
+    for focused_query in focused_queries:
+        if len(selected) >= limit:
+            break
+        if focused_query in covered_queries:
+            continue
+        matching = [
+            item for item in eligible_items()
+            if focused_query in item.query_scores
+        ]
+        if matching:
+            select(max(matching, key=lambda item: focused_selection_score(item, focused_query)))
+
+    while remaining and len(selected) < limit:
+        eligible = eligible_items()
+        if not eligible:
+            break
+        select(max(eligible, key=selection_score))
+
+    return [item.document for item in selected]
