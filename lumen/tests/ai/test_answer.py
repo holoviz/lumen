@@ -2923,3 +2923,11 @@ async def test_source_and_pipeline_ask_many_delegate(frame_source):
     assert sync_many.call_args.args == (frame_source, ["q"])
     assert sync_many.call_args.kwargs == {"llm": "x", "agents": None, "returns": None, "concurrency": 2}
     assert async_many.call_args.args == (pipeline, ["q"])
+
+
+async def test_chat_leaves_the_configured_agents_untouched(frame_source):
+    Named = _named_chat_llm_setup(["ChatAgent"])
+    agent = ChatAgent()
+    configure(agents=[agent])
+    assert (await chat(frame_source, llm=Named("A")).aask("How many rows?")).value == "answered by A"
+    assert agent.llm is None

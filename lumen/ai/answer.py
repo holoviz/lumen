@@ -1276,7 +1276,7 @@ class Chat(param.Parameterized):
         returns: Any = None, in_widget: bool = False,
     ) -> Answer:
         """Answer messages from the conversation as it stood (history and its context), and record the turn."""
-        agents = _settings["agents"] if self._agents is None else self._agents
+        agents = _own_agents(_settings["agents"]) if self._agents is None else self._agents
         planner = await _planner(self._source, self._llm or _default_llm(), agents)
         context = _fresh_context(planner, self._source, self._visible_slugs) if prior is None else dict(prior)
         answer, out_context = await _respond(planner, question, messages, context, self._data, self._agents, confirm)
